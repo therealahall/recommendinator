@@ -21,7 +21,11 @@ def build_recommendation_prompt(
     Returns:
         Formatted prompt string
     """
-    content_type_name = content_type.value.replace("_", " ").title()
+    # Handle both enum and string (Pydantic use_enum_values converts to string)
+    content_type_str = (
+        content_type.value if hasattr(content_type, "value") else str(content_type)
+    )
+    content_type_name = content_type_str.replace("_", " ").title()
 
     # Build context from consumed items
     high_rated = [item for item in consumed_items if item.rating and item.rating >= 4]
@@ -70,7 +74,11 @@ def build_recommendation_system_prompt(content_type: ContentType) -> str:
     Returns:
         System prompt string
     """
-    content_type_name = content_type.value.replace("_", " ").title()
+    # Handle both enum and string (Pydantic use_enum_values converts to string)
+    content_type_str = (
+        content_type.value if hasattr(content_type, "value") else str(content_type)
+    )
+    content_type_name = content_type_str.replace("_", " ").title()
 
     return f"""You are an expert recommendation assistant specializing in {content_type_name.lower()}s. 
 Your goal is to understand user preferences from their consumption history and provide personalized recommendations.
@@ -104,7 +112,13 @@ def build_content_description(item: ContentItem) -> str:
         # Add relevant metadata
         if "genre" in item.metadata:
             parts.append(f"Genre: {item.metadata['genre']}")
-        if "pages" in item.metadata and item.content_type.value == "book":
+        # Handle both enum and string (Pydantic use_enum_values converts to string)
+        content_type_str = (
+            item.content_type.value
+            if hasattr(item.content_type, "value")
+            else str(item.content_type)
+        )
+        if "pages" in item.metadata and content_type_str == "book":
             parts.append(f"Pages: {item.metadata['pages']}")
 
     return " | ".join(parts)

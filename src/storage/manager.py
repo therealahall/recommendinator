@@ -159,10 +159,17 @@ class StorageManager:
             exclude_ids = [item.id for item in consumed if item.id]
 
         # Search vector database
+        # Handle enum-to-string conversion (Pydantic use_enum_values converts to string)
+        def get_enum_value(val: Any) -> str:
+            """Get string value from enum or string."""
+            return val.value if hasattr(val, "value") else str(val)
+
+        content_type_str = get_enum_value(content_type) if content_type else None
+
         results = self.vector_db.search_similar(
             query_embedding=query_embedding,
             n_results=n_results,
-            content_type=content_type.value if content_type else None,
+            content_type=content_type_str,
             exclude_ids=exclude_ids,
         )
 

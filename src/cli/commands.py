@@ -2,6 +2,7 @@
 
 import click
 import json
+from pathlib import Path
 from typing import Optional
 from tabulate import tabulate
 
