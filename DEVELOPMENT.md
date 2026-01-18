@@ -17,7 +17,7 @@ This document tracks the development progress, decisions, and steps taken during
 
 ## Initial Setup
 
-**Date:** 2025-01-XX  
+**Date:** 2026-01-18  
 **Status:** ✅ Completed
 
 ### Steps Taken
@@ -49,7 +49,7 @@ This document tracks the development progress, decisions, and steps taken during
 
 ## Phase 1: Project Foundation
 
-**Date:** 2025-01-XX  
+**Date:** 2026-01-18  
 **Status:** ✅ Completed
 
 ### Steps Taken
@@ -101,7 +101,7 @@ This document tracks the development progress, decisions, and steps taken during
 
 ## Phase 2: Data Ingestion
 
-**Date:** 2025-01-XX  
+**Date:** 2026-01-18  
 **Status:** ✅ Completed
 
 ### Steps Taken
@@ -149,38 +149,62 @@ This document tracks the development progress, decisions, and steps taken during
 
 ## Phase 3: Storage Layer
 
-**Date:** TBD  
-**Status:** 🚧 Next Phase
+**Date:** 2026-01-18  
+**Status:** ✅ Completed
 
-### Planned Steps
+### Steps Taken
 
 1. **SQLite Database Setup**
-   - Create database schema for content items
-   - Tables: content_items, ratings, reviews, consumption_status
-   - Migration system (simple versioning)
-   - CRUD operations
+   - Created database schema in `src/storage/schema.py`
+   - Single `content_items` table with all necessary fields
+   - Indexes on common query fields (content_type, status, rating, date_completed)
+   - Schema versioning system for future migrations
+   - CRUD operations implemented in `src/storage/sqlite_db.py`
 
 2. **ChromaDB Vector Database Setup**
-   - Initialize ChromaDB collection
-   - Store embeddings for reviews and content descriptions
-   - Query interface for similarity search
+   - Created `src/storage/vector_db.py` for vector database management
+   - ChromaDB integration with persistent storage
+   - Embedding storage and retrieval
+   - Similarity search with filtering support
+   - Metadata storage for content items
 
 3. **Storage Manager**
-   - Unified interface for both databases
-   - Batch operations
-   - Transaction support
-   - Error handling
+   - Created unified `StorageManager` in `src/storage/manager.py`
+   - Combines SQLite and ChromaDB operations
+   - Save content items with optional embeddings
+   - Search similar content using vector similarity
+   - Delete operations clean up both databases
 
-4. **Data Persistence**
-   - Save ingested content to SQLite
-   - Generate and store embeddings in ChromaDB
-   - Update mechanisms (incremental vs full)
+4. **Test Suite**
+   - Comprehensive tests for SQLite database (`tests/test_sqlite_db.py`)
+   - Tests for vector database (`tests/test_vector_db.py`)
+   - Tests for storage manager (`tests/test_storage_manager.py`)
+   - **All 24 tests passing** ✅ (SQLite, ChromaDB, and Storage Manager)
+
+### Key Decisions
+- Single table design for content_items (simpler than normalized schema)
+- JSON storage for metadata (flexible, easy to extend)
+- Handle Pydantic enum-to-string conversion (use_enum_values=True)
+- ChromaDB for vector operations (lightweight, local-first)
+- Unified manager interface (simplifies usage)
+- Use Python 3.11 for ChromaDB compatibility (Python 3.14 not fully supported yet)
+- Handle numpy array conversion from ChromaDB (embeddings returned as numpy arrays)
+- Use approximate equality in tests for floating-point comparisons
+
+### Files Created
+- `src/storage/schema.py` - Database schema and migrations
+- `src/storage/sqlite_db.py` - SQLite database manager
+- `src/storage/vector_db.py` - ChromaDB vector database manager
+- `src/storage/manager.py` - Unified storage manager
+- `tests/test_sqlite_db.py` - SQLite tests
+- `tests/test_vector_db.py` - Vector DB tests
+- `tests/test_storage_manager.py` - Storage manager tests
 
 ### Design Considerations
-- Use SQLite for structured queries (ratings, status, metadata)
-- Use ChromaDB for semantic search (similarity matching)
-- Consider caching strategy for performance
-- Handle concurrent access if needed
+- Use SQLite for structured queries (ratings, status, metadata) ✅
+- Use ChromaDB for semantic search (similarity matching) ✅
+- Consider caching strategy for performance (future optimization)
+- Handle concurrent access if needed (SQLite handles this)
 
 ---
 
@@ -402,13 +426,13 @@ This document tracks the development progress, decisions, and steps taken during
 | Initial Setup | ✅ Complete | 100% |
 | Phase 1: Foundation | ✅ Complete | 100% |
 | Phase 2: Data Ingestion | ✅ Complete | 100% |
-| Phase 3: Storage Layer | 🚧 Next | 0% |
+| Phase 3: Storage Layer | ✅ Complete | 100% |
 | Phase 4: LLM Integration | ⏳ Pending | 0% |
 | Phase 5: Recommendation Engine | ⏳ Pending | 0% |
 | Phase 6: CLI Interface | ⏳ Pending | 0% |
 | Phase 7: Web Interface | ⏳ Pending | 0% |
 
-**Overall Progress:** ~30% (Foundation complete, ready for core features)
+**Overall Progress:** ~45% (Storage layer complete, ready for LLM integration)
 
 ---
 
@@ -421,4 +445,4 @@ This document tracks the development progress, decisions, and steps taken during
 
 ---
 
-*Last Updated: 2025-01-XX*
+*Last Updated: 2026-01-18*
