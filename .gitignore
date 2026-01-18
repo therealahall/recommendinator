@@ -60,10 +60,14 @@ vector_db/
 .env.local
 
 # Data files (keep structure, ignore actual data)
-inputs/*.csv
-inputs/*.json
-inputs/*.txt
+# Ignore all files in inputs/ except .gitkeep
+inputs/*
 !inputs/.gitkeep
+# Also ignore lock files and temporary files
+inputs/.~*
+inputs/*~
+inputs/.*.swp
+inputs/.*.swo
 
 # Config (keep example, ignore actual)
 config/*.yaml
