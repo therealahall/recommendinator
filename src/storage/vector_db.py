@@ -10,7 +10,9 @@ import numpy as np
 class VectorDB:
     """ChromaDB vector database manager for content embeddings."""
 
-    def __init__(self, db_path: Path, collection_name: str = "content_embeddings") -> None:
+    def __init__(
+        self, db_path: Path, collection_name: str = "content_embeddings"
+    ) -> None:
         """Initialize ChromaDB vector database manager.
 
         Args:
@@ -97,7 +99,11 @@ class VectorDB:
         """
         try:
             results = self.collection.get(ids=[content_id], include=["embeddings"])
-            if results["ids"] and len(results["ids"]) > 0 and results["embeddings"] is not None:
+            if (
+                results["ids"]
+                and len(results["ids"]) > 0
+                and results["embeddings"] is not None
+            ):
                 embedding = results["embeddings"][0]
                 # Convert numpy array to list if needed
                 if isinstance(embedding, np.ndarray):
@@ -129,34 +135,51 @@ class VectorDB:
         if content_type:
             where_clause["content_type"] = content_type
 
-        if exclude_ids:
-            where_clause["content_id"] = {"$nin": exclude_ids}
+        # ChromaDB's $nin doesn't work well with large lists, so we'll filter after
+        # Request more results if we need to exclude some
+        request_n_results = n_results * 3 if exclude_ids else n_results
 
         try:
             results = self.collection.query(
                 query_embeddings=[query_embedding],
-                n_results=n_results,
+                n_results=request_n_results,
                 where=where_clause if where_clause else None,
             )
 
             # Format results
             formatted_results = []
             if results["ids"] and len(results["ids"]) > 0:
+                exclude_set = set(exclude_ids) if exclude_ids else set()
                 for i, content_id in enumerate(results["ids"][0]):
+                    # Skip excluded IDs
+                    if content_id in exclude_set:
+                        continue
+
                     formatted_results.append(
                         {
                             "content_id": content_id,
-                            "score": 1.0 - results["distances"][0][i]
-                            if results.get("distances")
-                            else None,
-                            "metadata": results["metadatas"][0][i]
-                            if results.get("metadatas")
-                            else {},
+                            "score": (
+                                1.0 - results["distances"][0][i]
+                                if results.get("distances")
+                                else None
+                            ),
+                            "metadata": (
+                                results["metadatas"][0][i]
+                                if results.get("metadatas")
+                                else {}
+                            ),
                         }
                     )
 
+                    # Stop when we have enough results
+                    if len(formatted_results) >= n_results:
+                        break
+
             return formatted_results
-        except Exception:
+        except Exception as e:
+            import logging
+
+            logging.getLogger(__name__).error(f"Vector search failed: {e}")
             return []
 
     def delete_embedding(self, content_id: str) -> bool:
