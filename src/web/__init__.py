@@ -1,1 +1,1 @@
-"""Web interface."""
+"""Web interface for personal recommendations."""
