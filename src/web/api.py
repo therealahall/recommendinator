@@ -44,6 +44,7 @@ class RecommendationResponse(BaseModel):
     similarity_score: float
     preference_score: float
     reasoning: str
+    llm_reasoning: Optional[str] = None
 
 
 class StatusResponse(BaseModel):
@@ -60,7 +61,7 @@ async def get_recommendations(
         ..., description="Content type (book, movie, tv_show, video_game)"
     ),
     count: int = Query(5, ge=1, le=20, description="Number of recommendations"),
-    use_llm: bool = Query(False, description="Use LLM for enhanced reasoning"),
+    use_llm: bool = Query(True, description="Use LLM for enhanced reasoning"),
 ):
     """Get personalized recommendations.
 
@@ -109,6 +110,7 @@ async def get_recommendations(
                     similarity_score=rec["similarity_score"],
                     preference_score=rec["preference_score"],
                     reasoning=rec["reasoning"],
+                    llm_reasoning=rec.get("llm_reasoning"),
                 )
             )
 

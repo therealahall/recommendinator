@@ -182,9 +182,9 @@
                     <label for="count">Number of Recommendations</label>
                     <input type="number" id="count" min="1" max="20" value="5" required>
                 </div>
-                <div class="form-group">
+                <div class="form-group" style="display: none;">
                     <label>
-                        <input type="checkbox" id="useLLM"> Use LLM for enhanced reasoning
+                        <input type="checkbox" id="useLLM" checked> Use LLM for enhanced reasoning
                     </label>
                 </div>
                 <button type="submit">Get Recommendations</button>
@@ -269,7 +269,8 @@
                         <h3>${index + 1}. ${rec.title}</h3>
                         ${rec.author ? `<div class="author">by ${rec.author}</div>` : ''}
                         <div class="score">Score: ${rec.score.toFixed(2)}</div>
-                        <div class="reasoning">${rec.reasoning}</div>
+                        <div class="reasoning">${rec.reasoning || 'Recommended based on your preferences'}</div>
+                        ${rec.llm_reasoning ? `<div class="reasoning" style="margin-top: 10px; font-style: italic; color: #666;">${rec.llm_reasoning}</div>` : ''}
                     </div>
                 `).join('');
 
