@@ -67,11 +67,24 @@ class RecommendationRanker:
             diversity_bonus = 0.0  # Placeholder for future diversity logic
 
             # Combine scores
+            # Note: preference_score can be negative (for disliked authors/genres)
+            # We need to normalize it to [0, 1] range for combination, but preserve sign
+            normalized_preference = (
+                preference_score + 1.0
+            ) / 2.0  # Map [-1, 1] to [0, 1]
+
             final_score = (
                 self.similarity_weight * similarity_score
-                + self.preference_weight * preference_score
+                + self.preference_weight * normalized_preference
                 + self.diversity_weight * diversity_bonus
             )
+
+            # Apply penalty if preference_score is negative (disliked)
+            if preference_score < 0:
+                # Reduce final score proportionally to how much it's disliked
+                final_score *= (
+                    1.0 + preference_score
+                )  # preference_score is negative, so this reduces the score
 
             metadata = {
                 "similarity_score": similarity_score,
@@ -97,18 +110,18 @@ class RecommendationRanker:
             content_type: Content type
 
         Returns:
-            Preference score (0.0 to 1.0)
+            Preference score (-1.0 to 1.0, where negative means disliked)
         """
         score = 0.0
         factors = 0
 
-        # Author preference (for books)
+        # Author preference (for books) - can be negative if disliked
         if content_type == ContentType.BOOK and item.author:
             author_score = preferences.get_author_score(item.author)
             score += author_score
             factors += 1
 
-        # Genre preference
+        # Genre preference - can be negative if disliked
         if item.metadata and "genre" in item.metadata:
             genre_score = preferences.get_genre_score(item.metadata["genre"])
             score += genre_score
@@ -124,5 +137,8 @@ class RecommendationRanker:
         # Normalize by number of factors
         if factors > 0:
             score /= factors
+
+        # Clamp to [-1, 1] range
+        score = max(-1.0, min(1.0, score))
 
         return score
