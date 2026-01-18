@@ -1,0 +1,47 @@
+# Example configuration file
+# Copy this to config.yaml and modify as needed
+
+# Ollama configuration
+ollama:
+  base_url: "http://localhost:11434"
+  model: "mistral:7b"  # Default model for recommendations
+  embedding_model: "mistral:7b"  # Model for generating embeddings
+
+# Storage configuration
+storage:
+  # SQLite database path
+  database_path: "data/recommendations.db"
+  
+  # Vector database (ChromaDB) path
+  vector_db_path: "data/chroma_db"
+  
+  # Cache directory
+  cache_dir: "data/cache"
+
+# Input files configuration
+inputs:
+  goodreads:
+    path: "inputs/goodreads_library_export.csv"
+    enabled: true
+  
+  # Future sources can be added here
+  # games:
+  #   path: "/path/to/game/reviews"
+  #   enabled: true
+
+# Web interface configuration
+web:
+  host: "0.0.0.0"  # Listen on all interfaces (for internal network access)
+  port: 8000
+  debug: false
+
+# Recommendation settings
+recommendations:
+  default_count: 5
+  max_count: 20
+  min_rating_for_preference: 4  # Only consider items rated 4+ as "liked"
+
+# Logging
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  file: "logs/recommendations.log"
