@@ -84,6 +84,58 @@ We follow **Conventional Commits** specification:
 - `test`: Adding or updating tests
 - `chore`: Maintenance tasks
 
+### Commit Strategy
+
+**Break changes into logical, atomic commits** rather than large mega-commits. This makes:
+- Code review easier
+- History more readable
+- Rollbacks more precise
+- Debugging simpler
+
+#### Guidelines for Breaking Up Commits
+
+1. **One logical change per commit**
+   - Each commit should represent a complete, working change
+   - Related changes can be grouped, but keep them focused
+
+2. **Separate concerns**
+   - Schema changes → separate commit
+   - Implementation → separate commit
+   - Tests → separate commit
+   - Documentation → separate commit
+
+3. **Order matters**
+   - Schema before implementation
+   - Implementation before tests
+   - Tests should pass after each commit
+
+4. **Examples of good commit breakdowns:**
+
+   **Schema v2 Implementation:**
+   ```
+   feat(storage): add schema v2 with type-specific tables
+   feat(storage): add migration from v1 to v2
+   feat(storage): update SQLiteDB for schema v2
+   test(storage): update tests for schema v2
+   ```
+
+   **New Feature:**
+   ```
+   feat(models): add new content type model
+   feat(ingestion): add parser for new source
+   test(ingestion): add tests for new parser
+   docs: update architecture for new content type
+   ```
+
+5. **When to combine:**
+   - Trivial changes (typos, formatting) can be combined
+   - Very small related changes (e.g., adding a field and its test)
+
+6. **When to separate:**
+   - Different modules (storage vs ingestion)
+   - Different concerns (implementation vs tests)
+   - Breaking changes vs non-breaking changes
+
 ### Examples
 ```
 feat(ingestion): add Goodreads CSV parser
@@ -94,6 +146,12 @@ handling of rating, shelf status, and review fields.
 fix(llm): handle empty response from Ollama API
 
 test(storage): add tests for vector database operations
+
+feat(storage): add schema v2 with type-specific tables
+
+Implement hybrid schema approach with base content_items table
+and type-specific detail tables (book_details, movie_details, etc.)
+for better type safety and query efficiency.
 ```
 
 ## Project Structure
