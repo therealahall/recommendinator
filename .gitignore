@@ -76,4 +76,4 @@ config/*.yml
 
 # Outputs
 outputs/
-recommendations/
+# Note: recommendations/ is for output files, not src/recommendations/ code
