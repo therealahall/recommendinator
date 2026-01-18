@@ -13,4 +13,4 @@ ruff>=0.1.6
 
 # Type stubs
 types-pyyaml>=6.0.12
-types-click>=8.0.7
+types-click>=7.1.0
