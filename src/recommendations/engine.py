@@ -1,0 +1,188 @@
+"""Main recommendation engine orchestrating all components."""
+
+import logging
+from typing import List, Dict, Any, Optional
+
+from src.models.content import ContentItem, ContentType, ConsumptionStatus
+from src.storage.manager import StorageManager
+from src.llm.embeddings import EmbeddingGenerator
+from src.llm.recommendations import RecommendationGenerator
+from src.recommendations.preferences import PreferenceAnalyzer, UserPreferences
+from src.recommendations.similarity import SimilarityMatcher
+from src.recommendations.ranking import RecommendationRanker
+
+logger = logging.getLogger(__name__)
+
+
+class RecommendationEngine:
+    """Main recommendation engine."""
+
+    def __init__(
+        self,
+        storage_manager: StorageManager,
+        embedding_generator: EmbeddingGenerator,
+        recommendation_generator: Optional[RecommendationGenerator] = None,
+        min_rating: int = 4,
+    ) -> None:
+        """Initialize recommendation engine.
+
+        Args:
+            storage_manager: Storage manager for accessing data
+            embedding_generator: Generator for creating embeddings
+            recommendation_generator: Optional LLM-based recommendation generator
+            min_rating: Minimum rating to consider for preferences
+        """
+        self.storage = storage_manager
+        self.embedding_gen = embedding_generator
+        self.llm_generator = recommendation_generator
+        self.preference_analyzer = PreferenceAnalyzer(min_rating=min_rating)
+        self.similarity_matcher = SimilarityMatcher(
+            storage_manager, embedding_generator
+        )
+        self.ranker = RecommendationRanker()
+
+    def generate_recommendations(
+        self,
+        content_type: ContentType,
+        count: int = 5,
+        use_llm: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """Generate recommendations for a content type.
+
+        Args:
+            content_type: Type of content to recommend
+            count: Number of recommendations to generate
+            use_llm: Whether to use LLM for final recommendation generation
+
+        Returns:
+            List of recommendation dictionaries
+        """
+        # Get consumed items
+        consumed_items = self.storage.get_completed_items(
+            content_type=content_type, min_rating=self.preference_analyzer.min_rating
+        )
+
+        if not consumed_items:
+            logger.warning(f"No consumed items found for {content_type.value}")
+            return self._handle_cold_start(content_type, count)
+
+        # Get unconsumed items
+        unconsumed_items = self.storage.get_unconsumed_items(
+            content_type=content_type, limit=100
+        )
+
+        if not unconsumed_items:
+            logger.warning(f"No unconsumed items found for {content_type.value}")
+            return []
+
+        # Analyze preferences
+        preferences = self.preference_analyzer.analyze(consumed_items)
+
+        # Find similar items using vector similarity
+        # Use top-rated consumed items as reference
+        top_rated = [
+            item
+            for item in consumed_items
+            if item.rating and item.rating >= self.preference_analyzer.min_rating
+        ][
+            :5
+        ]  # Use top 5 for reference
+
+        exclude_ids = [item.id for item in consumed_items if item.id]
+
+        similar_candidates = self.similarity_matcher.find_similar(
+            reference_items=top_rated,
+            content_type=content_type,
+            exclude_ids=exclude_ids,
+            limit=count * 3,  # Get more candidates for ranking
+        )
+
+        # Rank candidates
+        ranked_items = self.ranker.rank(
+            candidates=similar_candidates,
+            preferences=preferences,
+            content_type=content_type,
+        )
+
+        # Take top N
+        top_recommendations = ranked_items[:count]
+
+        # Format recommendations
+        recommendations = []
+        for item, score, metadata in top_recommendations:
+            rec = {
+                "item": item,
+                "score": score,
+                "similarity_score": metadata["similarity_score"],
+                "preference_score": metadata["preference_score"],
+                "reasoning": self._generate_reasoning(item, preferences, metadata),
+            }
+            recommendations.append(rec)
+
+        # Optionally use LLM to refine recommendations
+        if use_llm and self.llm_generator:
+            try:
+                llm_recs = self.llm_generator.generate_recommendations(
+                    content_type=content_type,
+                    consumed_items=consumed_items,
+                    unconsumed_items=[rec["item"] for rec in recommendations],
+                    count=count,
+                )
+                # Merge LLM reasoning with similarity-based recommendations
+                for i, llm_rec in enumerate(llm_recs[:count]):
+                    if i < len(recommendations):
+                        recommendations[i]["llm_reasoning"] = llm_rec.get(
+                            "reasoning", ""
+                        )
+            except Exception as e:
+                logger.warning(f"LLM recommendation generation failed: {e}")
+
+        return recommendations
+
+    def _handle_cold_start(
+        self, content_type: ContentType, count: int
+    ) -> List[Dict[str, Any]]:
+        """Handle cold start scenario (no consumed items).
+
+        Args:
+            content_type: Content type
+            count: Number of recommendations
+
+        Returns:
+            List of recommendations (empty or generic)
+        """
+        # For cold start, return empty or use some default strategy
+        logger.info(f"Cold start: no consumed items for {content_type.value}")
+        return []
+
+    def _generate_reasoning(
+        self, item: ContentItem, preferences: UserPreferences, metadata: Dict[str, Any]
+    ) -> str:
+        """Generate reasoning for a recommendation.
+
+        Args:
+            item: Recommended item
+            preferences: User preferences
+            metadata: Recommendation metadata
+
+        Returns:
+            Reasoning string
+        """
+        reasons = []
+
+        if metadata["similarity_score"] > 0.7:
+            reasons.append("highly similar to items you've enjoyed")
+
+        if metadata["preference_score"] > 0.5:
+            if item.author and preferences.get_author_score(item.author) > 0.5:
+                reasons.append(f"by author {item.author}")
+
+            if item.metadata and "genre" in item.metadata:
+                genre = item.metadata["genre"]
+                if preferences.get_genre_score(genre) > 0.5:
+                    reasons.append(f"in the {genre} genre")
+
+        if not reasons:
+            reasons.append("based on your preferences")
+
+        return "Recommended " + " and ".join(reasons)
