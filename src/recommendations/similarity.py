@@ -104,15 +104,15 @@ class SimilarityMatcher:
             # The results contain content_id, score, and metadata
             # We need to look up the actual ContentItem objects
             similar_items: List[Tuple[ContentItem, float]] = []
-            
+
             if not similar_results:
                 return []
-            
+
             # Build a lookup dictionary for efficient item retrieval
             # Get all items of this content type and index by external_id
             all_items = self.storage.get_content_items(content_type=content_type)
             items_by_id = {item.id: item for item in all_items if item.id}
-            
+
             for result in similar_results:
                 content_id = result.get("content_id")
                 score = result.get("score", 0.0)

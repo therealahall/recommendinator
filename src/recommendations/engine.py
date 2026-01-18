@@ -57,9 +57,10 @@ class RecommendationEngine:
         Returns:
             List of recommendation dictionaries
         """
-        # Get consumed items
+        # Get consumed items (all completed items, not just high-rated)
+        # We'll filter for preference analysis later
         consumed_items = self.storage.get_completed_items(
-            content_type=content_type, min_rating=self.preference_analyzer.min_rating
+            content_type=content_type, min_rating=None
         )
 
         if not consumed_items:
@@ -79,23 +80,45 @@ class RecommendationEngine:
         preferences = self.preference_analyzer.analyze(consumed_items)
 
         # Find similar items using vector similarity
-        # Use top-rated consumed items as reference
-        top_rated = [
-            item
-            for item in consumed_items
-            if item.rating and item.rating >= self.preference_analyzer.min_rating
-        ][
-            :5
-        ]  # Use top 5 for reference
+        # Use ALL consumed items weighted by rating (high ratings = positive, low ratings = negative)
+        # Sort by absolute rating value, prioritizing both high and low ratings
+        rated_items = [item for item in consumed_items if item.rating is not None]
+
+        # Sort by rating (descending), so we get both high-rated (positive) and low-rated (negative) items
+        rated_items.sort(key=lambda x: x.rating or 0, reverse=True)
+
+        # Use top-rated items (for positive similarity) and low-rated items (to avoid similar content)
+        # Take top 5 high-rated and bottom 3 low-rated
+        high_rated_refs = [
+            item for item in rated_items if item.rating and item.rating >= 4
+        ][:5]
+        low_rated_refs = [
+            item for item in rated_items if item.rating and item.rating < 3
+        ][:3]
+
+        reference_items = high_rated_refs + low_rated_refs
+
+        # If no rated items, use all consumed items
+        if not reference_items:
+            logger.info("No rated items, using all consumed items for similarity")
+            reference_items = consumed_items[:5]
 
         exclude_ids = [item.id for item in consumed_items if item.id]
 
         similar_candidates = self.similarity_matcher.find_similar(
-            reference_items=top_rated,
+            reference_items=reference_items,
             content_type=content_type,
             exclude_ids=exclude_ids,
             limit=count * 3,  # Get more candidates for ranking
         )
+
+        # If similarity search returned no candidates, fall back to using unconsumed items directly
+        if not similar_candidates:
+            logger.warning(
+                "Similarity search returned no candidates, using unconsumed items directly"
+            )
+            # Use unconsumed items as candidates with default scores
+            similar_candidates = [(item, 0.5) for item in unconsumed_items[: count * 3]]
 
         # Rank candidates
         ranked_items = self.ranker.rank(
@@ -120,22 +143,72 @@ class RecommendationEngine:
             recommendations.append(rec)
 
         # Optionally use LLM to refine recommendations
+        # If we have no recommendations yet, try LLM-only approach
         if use_llm and self.llm_generator:
             try:
-                llm_recs = self.llm_generator.generate_recommendations(
-                    content_type=content_type,
-                    consumed_items=consumed_items,
-                    unconsumed_items=[rec["item"] for rec in recommendations],
-                    count=count,
-                )
-                # Merge LLM reasoning with similarity-based recommendations
-                for i, llm_rec in enumerate(llm_recs[:count]):
-                    if i < len(recommendations):
-                        recommendations[i]["llm_reasoning"] = llm_rec.get(
-                            "reasoning", ""
-                        )
+                # If we have recommendations, enhance them with LLM reasoning
+                # Otherwise, generate recommendations purely from LLM
+                if recommendations:
+                    llm_recs = self.llm_generator.generate_recommendations(
+                        content_type=content_type,
+                        consumed_items=consumed_items,
+                        unconsumed_items=[rec["item"] for rec in recommendations],
+                        count=count,
+                    )
+                    # Merge LLM reasoning with similarity-based recommendations
+                    for i, llm_rec in enumerate(llm_recs[:count]):
+                        if i < len(recommendations):
+                            recommendations[i]["llm_reasoning"] = llm_rec.get(
+                                "reasoning", ""
+                            )
+                else:
+                    # No similarity-based recommendations, use LLM directly
+                    logger.info("Using LLM-only recommendations")
+                    llm_recs = self.llm_generator.generate_recommendations(
+                        content_type=content_type,
+                        consumed_items=consumed_items,
+                        unconsumed_items=unconsumed_items,
+                        count=count,
+                    )
+                    # Convert LLM recommendations to our format
+                    for llm_rec in llm_recs:
+                        # Find the matching item from unconsumed_items
+                        matching_item = None
+                        for item in unconsumed_items:
+                            if item.title == llm_rec.get("title") and (
+                                not llm_rec.get("author")
+                                or item.author == llm_rec.get("author")
+                            ):
+                                matching_item = item
+                                break
+
+                        if matching_item:
+                            recommendations.append(
+                                {
+                                    "item": matching_item,
+                                    "score": 0.8,  # Default score for LLM recommendations
+                                    "similarity_score": 0.0,
+                                    "preference_score": 0.5,
+                                    "reasoning": llm_rec.get("reasoning", ""),
+                                    "llm_reasoning": llm_rec.get("reasoning", ""),
+                                }
+                            )
             except Exception as e:
                 logger.warning(f"LLM recommendation generation failed: {e}")
+
+        # Final fallback: if we still have no recommendations, return some unconsumed items
+        if not recommendations and unconsumed_items:
+            logger.info("Using fallback: returning unconsumed items as recommendations")
+            for item in unconsumed_items[:count]:
+                recommendations.append(
+                    {
+                        "item": item,
+                        "score": 0.5,
+                        "similarity_score": 0.0,
+                        "preference_score": 0.0,
+                        "reasoning": "Available in your library",
+                    }
+                )
 
         return recommendations
 
