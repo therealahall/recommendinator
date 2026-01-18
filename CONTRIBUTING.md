@@ -63,6 +63,57 @@ pytest tests/test_ingestion.py
 - Use fixtures for common setup
 - Mock external dependencies (Ollama API, file I/O, etc.)
 
+### Regression Testing
+
+**When fixing bugs, always write regression tests to prevent the bug from reoccurring.**
+
+#### Guidelines for Regression Tests
+
+1. **Write tests that reproduce the bug**
+   - The test should fail before the fix and pass after the fix
+   - Name the test clearly to indicate it's a regression test (e.g., `test_enum_handling_regression`)
+
+2. **Test the specific failure scenario**
+   - Focus on the exact conditions that caused the bug
+   - Test edge cases and boundary conditions related to the bug
+
+3. **Document the bug in the test**
+   - Include a docstring explaining what bug the test covers
+   - Reference the error message or issue that was fixed
+
+4. **Place regression tests appropriately**
+   - If the bug affects a specific module, add tests to that module's test file
+   - For complex bugs affecting multiple modules, create a dedicated regression test file (e.g., `test_<bug_name>_regression.py`)
+
+#### Example
+
+```python
+"""Regression tests for enum handling with Pydantic use_enum_values=True.
+
+This test suite covers the fix for the bug where code was trying to access
+.value on enum fields that were already converted to strings by Pydantic's
+use_enum_values=True configuration.
+
+Bug: 'str' object has no attribute 'value'
+Fixed in: src/llm/prompts.py, src/storage/manager.py
+"""
+
+def test_build_content_description_with_string_enum():
+    """Test that build_content_description works with ContentItem having string enums.
+    
+    Regression test for: 'str' object has no attribute 'value' when accessing
+    item.content_type.value in build_content_description.
+    """
+    # Test implementation...
+```
+
+#### Benefits
+
+- Prevents bugs from being reintroduced
+- Documents the bug and fix for future developers
+- Provides confidence when refactoring related code
+- Helps identify similar bugs in other parts of the codebase
+
 ## Commit Messages
 
 We follow **Conventional Commits** specification:
