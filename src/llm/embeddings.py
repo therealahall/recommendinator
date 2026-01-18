@@ -1,0 +1,87 @@
+"""Embedding generation and management."""
+
+import logging
+from typing import List, Optional
+from pathlib import Path
+
+from src.models.content import ContentItem
+from src.llm.client import OllamaClient
+from src.llm.prompts import build_content_description
+
+logger = logging.getLogger(__name__)
+
+
+class EmbeddingGenerator:
+    """Generate and manage embeddings for content items."""
+
+    def __init__(self, ollama_client: OllamaClient) -> None:
+        """Initialize embedding generator.
+
+        Args:
+            ollama_client: Ollama client instance
+        """
+        self.client = ollama_client
+
+    def generate_content_embedding(self, item: ContentItem) -> List[float]:
+        """Generate embedding for a content item.
+
+        Args:
+            item: ContentItem to generate embedding for
+
+        Returns:
+            Embedding vector
+
+        Raises:
+            RuntimeError: If embedding generation fails
+        """
+        description = build_content_description(item)
+        return self.client.generate_embedding(description)
+
+    def generate_review_embedding(self, review_text: str) -> List[float]:
+        """Generate embedding for a review text.
+
+        Args:
+            review_text: Review text to embed
+
+        Returns:
+            Embedding vector
+
+        Raises:
+            RuntimeError: If embedding generation fails
+        """
+        if not review_text or not review_text.strip():
+            raise ValueError("Review text cannot be empty")
+
+        return self.client.generate_embedding(review_text.strip())
+
+    def generate_embeddings_batch(
+        self, items: List[ContentItem], batch_size: int = 10
+    ) -> List[List[float]]:
+        """Generate embeddings for multiple content items in batches.
+
+        Args:
+            items: List of ContentItems to generate embeddings for
+            batch_size: Number of items to process per batch
+
+        Returns:
+            List of embedding vectors
+
+        Raises:
+            RuntimeError: If embedding generation fails
+        """
+        embeddings = []
+
+        for i in range(0, len(items), batch_size):
+            batch = items[i : i + batch_size]
+            logger.info(f"Generating embeddings for batch {i // batch_size + 1}")
+
+            for item in batch:
+                try:
+                    embedding = self.generate_content_embedding(item)
+                    embeddings.append(embedding)
+                except Exception as e:
+                    logger.error(f"Failed to generate embedding for {item.title}: {e}")
+                    # Append empty list or re-raise based on requirements
+                    raise
+
+        return embeddings
