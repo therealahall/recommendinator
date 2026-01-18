@@ -81,12 +81,53 @@ class SimilarityMatcher:
 
         # Search for similar items
         try:
-            similar_items = self.storage.search_similar(
+            # StorageManager.search_similar uses exclude_consumed (bool) and n_results (int)
+            # We need to handle exclude_ids by checking if items should be excluded
+            # For now, we'll use exclude_consumed=True to exclude completed items
+            # and filter out exclude_ids manually if needed
+            similar_results = self.storage.search_similar(
                 query_embedding=query_embedding,
+                n_results=limit,
                 content_type=content_type,
-                exclude_ids=exclude_ids,
-                limit=limit,
+                exclude_consumed=True,  # Exclude completed items by default
             )
+
+            # Filter out explicitly excluded IDs if provided
+            if exclude_ids:
+                similar_results = [
+                    result
+                    for result in similar_results
+                    if result.get("content_id") not in exclude_ids
+                ]
+
+            # Convert dictionary results to (ContentItem, float) tuples
+            # The results contain content_id, score, and metadata
+            # We need to look up the actual ContentItem objects
+            similar_items: List[Tuple[ContentItem, float]] = []
+            
+            if not similar_results:
+                return []
+            
+            # Build a lookup dictionary for efficient item retrieval
+            # Get all items of this content type and index by external_id
+            all_items = self.storage.get_content_items(content_type=content_type)
+            items_by_id = {item.id: item for item in all_items if item.id}
+            
+            for result in similar_results:
+                content_id = result.get("content_id")
+                score = result.get("score", 0.0)
+
+                if not content_id:
+                    continue
+
+                # Look up the ContentItem by external_id
+                matching_item = items_by_id.get(content_id)
+                if matching_item:
+                    similar_items.append((matching_item, score))
+
+            # Sort by score (descending)
+            similar_items.sort(key=lambda x: x[1], reverse=True)
+
             return similar_items
         except Exception as e:
             logger.error(f"Similarity search failed: {e}")
