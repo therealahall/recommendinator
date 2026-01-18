@@ -4,8 +4,10 @@
 # Ollama configuration
 ollama:
   base_url: "http://localhost:11434"
-  model: "mistral:7b"  # Default model for recommendations
-  embedding_model: "mistral:7b"  # Model for generating embeddings
+  model: "mistral:7b"  # Model for recommendations (text generation)
+  embedding_model: "nomic-embed-text"  # Model for generating embeddings
+  # Note: Install embedding model with: ollama pull nomic-embed-text
+  # See docs/MODEL_RECOMMENDATIONS.md for model selection guide
 
 # Storage configuration
 storage:
