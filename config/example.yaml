@@ -34,7 +34,7 @@ inputs:
 # Web interface configuration
 web:
   host: "0.0.0.0"  # Listen on all interfaces (for internal network access)
-  port: 8000
+  port: 18473  # Non-standard port to avoid collisions with other services
   debug: false
 
 # Recommendation settings
