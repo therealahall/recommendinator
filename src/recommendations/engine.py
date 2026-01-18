@@ -10,6 +10,7 @@ from src.llm.recommendations import RecommendationGenerator
 from src.recommendations.preferences import PreferenceAnalyzer, UserPreferences
 from src.recommendations.similarity import SimilarityMatcher
 from src.recommendations.ranking import RecommendationRanker
+from src.utils.series import build_series_tracking, should_recommend_book
 
 logger = logging.getLogger(__name__)
 
@@ -120,9 +121,30 @@ class RecommendationEngine:
             # Use unconsumed items as candidates with default scores
             similar_candidates = [(item, 0.5) for item in unconsumed_items[: count * 3]]
 
+        # Build series tracking to filter recommendations
+        series_tracking = build_series_tracking(consumed_items)
+
+        # Filter candidates based on series rules
+        # Only recommend first books in unstarted series or next books in started series
+        filtered_candidates = []
+        for item, score in similar_candidates:
+            if should_recommend_book(item, series_tracking):
+                filtered_candidates.append((item, score))
+            else:
+                logger.debug(
+                    f"Filtered out {item.title} - doesn't meet series recommendation rules"
+                )
+
+        # If filtering removed all candidates, use original candidates (fallback)
+        if not filtered_candidates:
+            logger.warning(
+                "Series filtering removed all candidates, using original candidates"
+            )
+            filtered_candidates = similar_candidates
+
         # Rank candidates
         ranked_items = self.ranker.rank(
-            candidates=similar_candidates,
+            candidates=filtered_candidates,
             preferences=preferences,
             content_type=content_type,
         )
@@ -182,7 +204,9 @@ class RecommendationEngine:
                                 matching_item = item
                                 break
 
-                        if matching_item:
+                        if matching_item and should_recommend_book(
+                            matching_item, series_tracking
+                        ):
                             recommendations.append(
                                 {
                                     "item": matching_item,
@@ -197,18 +221,22 @@ class RecommendationEngine:
                 logger.warning(f"LLM recommendation generation failed: {e}")
 
         # Final fallback: if we still have no recommendations, return some unconsumed items
+        # (filtered by series rules)
         if not recommendations and unconsumed_items:
             logger.info("Using fallback: returning unconsumed items as recommendations")
-            for item in unconsumed_items[:count]:
-                recommendations.append(
-                    {
-                        "item": item,
-                        "score": 0.5,
-                        "similarity_score": 0.0,
-                        "preference_score": 0.0,
-                        "reasoning": "Available in your library",
-                    }
-                )
+            for item in unconsumed_items:
+                if should_recommend_book(item, series_tracking):
+                    recommendations.append(
+                        {
+                            "item": item,
+                            "score": 0.5,
+                            "similarity_score": 0.0,
+                            "preference_score": 0.0,
+                            "reasoning": "Available in your library",
+                        }
+                    )
+                    if len(recommendations) >= count:
+                        break
 
         return recommendations
 

@@ -5,6 +5,7 @@ from typing import List, Tuple, Dict, Any
 
 from src.models.content import ContentItem, ContentType
 from src.recommendations.preferences import UserPreferences
+from src.utils.series import is_first_book_in_series
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +67,11 @@ class RecommendationRanker:
             # Calculate diversity bonus (simplified - could be enhanced)
             diversity_bonus = 0.0  # Placeholder for future diversity logic
 
+            # Series bonus: boost first books in unstarted series
+            series_bonus = 0.0
+            if content_type == ContentType.BOOK and is_first_book_in_series(item.title):
+                series_bonus = 0.1  # Small boost for first books
+
             # Combine scores
             # Note: preference_score can be negative (for disliked authors/genres)
             # We need to normalize it to [0, 1] range for combination, but preserve sign
@@ -77,6 +83,7 @@ class RecommendationRanker:
                 self.similarity_weight * similarity_score
                 + self.preference_weight * normalized_preference
                 + self.diversity_weight * diversity_bonus
+                + series_bonus
             )
 
             # Apply penalty if preference_score is negative (disliked)
@@ -90,6 +97,7 @@ class RecommendationRanker:
                 "similarity_score": similarity_score,
                 "preference_score": preference_score,
                 "diversity_bonus": diversity_bonus,
+                "series_bonus": series_bonus,
             }
 
             scored_items.append((item, final_score, metadata))

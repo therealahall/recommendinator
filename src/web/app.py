@@ -1,6 +1,7 @@
 """FastAPI application for web interface."""
 
 import logging
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -18,6 +19,9 @@ from src.cli.config import (
 from src.web.state import app_state
 
 logger = logging.getLogger(__name__)
+
+# Module-level app instance for uvicorn import string support
+_app: Optional[FastAPI] = None
 
 
 def create_app(config_path: Optional[Path] = None) -> FastAPI:
@@ -92,3 +96,31 @@ def create_app(config_path: Optional[Path] = None) -> FastAPI:
         )
 
     return app
+
+
+def get_app() -> FastAPI:
+    """Get or create the FastAPI app instance.
+    
+    This function is used when running with uvicorn reload mode,
+    which requires an import string. It will use the config path
+    from the CONFIG_PATH environment variable, or default to
+    config/example.yaml if not set.
+    
+    Returns:
+        FastAPI application instance
+    """
+    global _app
+    # Always recreate when called (allows reload to work properly)
+    # Get config path from environment or use default
+    config_path_str = os.environ.get("CONFIG_PATH")
+    config_path = Path(config_path_str) if config_path_str else None
+    if config_path is None:
+        default_config = Path("config/example.yaml")
+        if default_config.exists():
+            config_path = default_config
+    _app = create_app(config_path)
+    return _app
+
+
+# Create app instance for uvicorn import string support
+app = get_app()

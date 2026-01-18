@@ -111,12 +111,32 @@ def main() -> None:
     )
 
     # Start server
-    uvicorn.run(
-        app,
-        host=host,
-        port=port,
-        log_level="info",
-    )
+    # Enable auto-reload in debug mode (watches for file changes)
+    debug_mode = web_config.get("debug", False)
+
+    # When reload is enabled, uvicorn requires an import string instead of app object
+    if debug_mode:
+        # Set config path in environment for the imported app to use
+        import os
+        if config_path:
+            os.environ["CONFIG_PATH"] = str(config_path.resolve())
+        # Use import string format for reload support
+        uvicorn.run(
+            "src.web.app:app",  # Import string format
+            host=host,
+            port=port,
+            log_level="info",
+            reload=True,
+        )
+    else:
+        # When reload is disabled, we can pass the app object directly
+        uvicorn.run(
+            app,
+            host=host,
+            port=port,
+            log_level="info",
+            reload=False,
+        )
 
 
 if __name__ == "__main__":
