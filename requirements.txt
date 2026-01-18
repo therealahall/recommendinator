@@ -1,0 +1,18 @@
+# Core dependencies
+ollama>=0.1.0
+chromadb>=0.4.0
+pydantic>=2.0.0
+pyyaml>=6.0
+
+# Web framework (FastAPI)
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+
+# CLI
+click>=8.1.0
+
+# Data processing
+pandas>=2.0.0
+
+# Utilities
+python-dotenv>=1.0.0
