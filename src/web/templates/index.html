@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Personal Recommendations</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+
+        h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .card {
+            background: white;
+            border-radius: 10px;
+            padding: 30px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            color: #333;
+        }
+
+        select, input, button {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 5px;
+            font-size: 16px;
+        }
+
+        select:focus, input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-weight: 600;
+            transition: background 0.3s;
+        }
+
+        button:hover {
+            background: #5568d3;
+        }
+
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .recommendations {
+            display: grid;
+            gap: 15px;
+        }
+
+        .recommendation-item {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+        }
+
+        .recommendation-item h3 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .recommendation-item .author {
+            color: #666;
+            margin-bottom: 10px;
+        }
+
+        .recommendation-item .reasoning {
+            color: #555;
+            font-style: italic;
+            margin-top: 10px;
+        }
+
+        .score {
+            display: inline-block;
+            background: #667eea;
+            color: white;
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-size: 0.9em;
+            margin-top: 10px;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+        }
+
+        .error {
+            background: #fee;
+            color: #c33;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+
+        .status {
+            text-align: center;
+            padding: 10px;
+            background: #e8f5e9;
+            color: #2e7d32;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+
+        @media (max-width: 768px) {
+            h1 {
+                font-size: 2em;
+            }
+
+            .card {
+                padding: 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📚 Personal Recommendations</h1>
+            <p>Get intelligent recommendations based on your consumption history</p>
+        </header>
+
+        <div id="status" class="status" style="display: none;"></div>
+        <div id="error" class="error" style="display: none;"></div>
+
+        <div class="card">
+            <h2>Get Recommendations</h2>
+            <form id="recommendForm">
+                <div class="form-group">
+                    <label for="contentType">Content Type</label>
+                    <select id="contentType" required>
+                        <option value="book">Book</option>
+                        <option value="movie">Movie</option>
+                        <option value="tv_show">TV Show</option>
+                        <option value="video_game">Video Game</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="count">Number of Recommendations</label>
+                    <input type="number" id="count" min="1" max="20" value="5" required>
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="useLLM"> Use LLM for enhanced reasoning
+                    </label>
+                </div>
+                <button type="submit">Get Recommendations</button>
+            </form>
+        </div>
+
+        <div class="card" id="resultsCard" style="display: none;">
+            <h2>Recommendations</h2>
+            <div id="recommendations" class="recommendations"></div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '/api';
+
+        // Check status on load
+        async function checkStatus() {
+            try {
+                const response = await fetch(`${API_BASE}/status`);
+                const data = await response.json();
+                if (data.status === 'ready') {
+                    showStatus('System ready', 'success');
+                } else {
+                    showStatus('System initializing...', 'warning');
+                }
+            } catch (error) {
+                showError('Failed to connect to server');
+            }
+        }
+
+        function showStatus(message, type) {
+            const statusEl = document.getElementById('status');
+            statusEl.textContent = message;
+            statusEl.style.display = 'block';
+            statusEl.className = `status ${type === 'success' ? 'status' : 'error'}`;
+        }
+
+        function showError(message) {
+            const errorEl = document.getElementById('error');
+            errorEl.textContent = message;
+            errorEl.style.display = 'block';
+            setTimeout(() => {
+                errorEl.style.display = 'none';
+            }, 5000);
+        }
+
+        document.getElementById('recommendForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const contentType = document.getElementById('contentType').value;
+            const count = parseInt(document.getElementById('count').value);
+            const useLLM = document.getElementById('useLLM').checked;
+
+            const resultsCard = document.getElementById('resultsCard');
+            const recommendationsEl = document.getElementById('recommendations');
+            
+            resultsCard.style.display = 'block';
+            recommendationsEl.innerHTML = '<div class="loading">Loading recommendations...</div>';
+
+            try {
+                const params = new URLSearchParams({
+                    type: contentType,
+                    count: count.toString(),
+                    use_llm: useLLM.toString()
+                });
+
+                const response = await fetch(`${API_BASE}/recommendations?${params}`);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const recommendations = await response.json();
+
+                if (recommendations.length === 0) {
+                    recommendationsEl.innerHTML = '<div class="loading">No recommendations available. You may need to add more consumed content.</div>';
+                    return;
+                }
+
+                recommendationsEl.innerHTML = recommendations.map((rec, index) => `
+                    <div class="recommendation-item">
+                        <h3>${index + 1}. ${rec.title}</h3>
+                        ${rec.author ? `<div class="author">by ${rec.author}</div>` : ''}
+                        <div class="score">Score: ${rec.score.toFixed(2)}</div>
+                        <div class="reasoning">${rec.reasoning}</div>
+                    </div>
+                `).join('');
+
+            } catch (error) {
+                showError(`Failed to get recommendations: ${error.message}`);
+                recommendationsEl.innerHTML = '';
+            }
+        });
+
+        // Check status on page load
+        checkStatus();
+    </script>
+</body>
+</html>
