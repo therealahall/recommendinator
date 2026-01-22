@@ -64,18 +64,25 @@ Handles communication with Ollama and prompt engineering.
 
 ### 4. Recommendation Engine (`src/recommendations/`)
 
-Core logic for generating recommendations.
+Core logic for generating recommendations with **cross-content-type support**.
 
 **Process:**
-1. Analyze user's consumed content (ratings, reviews)
-2. Extract preferences and patterns
-3. Find unconsumed content similar to high-rated items
+1. Analyze user's consumed content (ratings, reviews) **across ALL content types**
+2. Extract preferences and patterns (genres, themes, authors) from all consumed content
+3. Find unconsumed content similar to high-rated items using semantic similarity
 4. Generate ranked recommendations with reasoning
+
+**Cross-Content-Type Recommendations:**
+- Preferences from all content types influence recommendations
+- Example: If you've read sci-fi books, the system may recommend sci-fi TV shows (The Expanse) or games (Mass Effect)
+- Uses vector embeddings to find semantic similarity across content types
+- Genre preferences extracted from books, games, TV shows, and movies
 
 **Filtering Logic:**
 - Separate consumed vs unconsumed based on data files
 - Handle explicit completion updates
 - Consider content type, genre, length, etc.
+- Series tracking (content-type specific, e.g., book series)
 
 ### 5. Interface Layer
 

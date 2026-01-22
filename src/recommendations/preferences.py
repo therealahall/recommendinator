@@ -149,17 +149,34 @@ class PreferenceAnalyzer:
             )
             if max_score > 0:
                 disliked_authors = {
-                    author: score / max_score for author, score in disliked_authors.items()
+                    author: score / max_score
+                    for author, score in disliked_authors.items()
                 }
 
         # Extract genres from metadata (positive and negative)
+        # Supports both single "genre" field and "genres" list (e.g., Steam games)
         genre_scores: Dict[str, float] = {}
         disliked_genres: Dict[str, float] = {}
 
         for item in consumed_items:
             if item.metadata and item.rating:
-                genre = item.metadata.get("genre")
-                if genre:
+                # Handle both single genre and genres list
+                genres = []
+                if "genre" in item.metadata and item.metadata["genre"]:
+                    genres.append(item.metadata["genre"])
+                if "genres" in item.metadata and item.metadata["genres"]:
+                    # Handle list of genres (e.g., Steam games)
+                    if isinstance(item.metadata["genres"], list):
+                        genres.extend(item.metadata["genres"])
+                    elif isinstance(item.metadata["genres"], str):
+                        # Some sources might store genres as comma-separated string
+                        genres.extend(
+                            [g.strip() for g in item.metadata["genres"].split(",")]
+                        )
+
+                for genre in genres:
+                    if not genre:
+                        continue
                     genre_lower = genre.lower()
                     if item.rating >= self.min_rating:
                         weight = (item.rating - 3) / 2.0

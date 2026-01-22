@@ -1,11 +1,11 @@
 """Ranking algorithm for recommendations."""
 
 import logging
-from typing import List, Tuple, Dict, Any
+from typing import List, Tuple, Dict, Any, Optional
 
 from src.models.content import ContentItem, ContentType
 from src.recommendations.preferences import UserPreferences
-from src.utils.series import is_first_book_in_series
+from src.utils.series import is_first_item_in_series
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +42,7 @@ class RecommendationRanker:
         candidates: List[Tuple[ContentItem, float]],
         preferences: UserPreferences,
         content_type: ContentType,
+        adaptations_map: Optional[Dict[str, List[ContentItem]]] = None,
     ) -> List[Tuple[ContentItem, float, Dict[str, Any]]]:
         """Rank candidate items.
 
@@ -49,12 +50,16 @@ class RecommendationRanker:
             candidates: List of (ContentItem, similarity_score) tuples
             preferences: User preferences
             content_type: Content type being ranked
+            adaptations_map: Optional map of item ID to list of adaptations found
 
         Returns:
             List of (ContentItem, final_score, metadata) tuples, sorted by score
         """
         if not candidates:
             return []
+
+        if adaptations_map is None:
+            adaptations_map = {}
 
         scored_items = []
 
@@ -67,10 +72,24 @@ class RecommendationRanker:
             # Calculate diversity bonus (simplified - could be enhanced)
             diversity_bonus = 0.0  # Placeholder for future diversity logic
 
-            # Series bonus: boost first books in unstarted series
+            # Series bonus: boost first items in unstarted series (all content types)
             series_bonus = 0.0
-            if content_type == ContentType.BOOK and is_first_book_in_series(item.title):
-                series_bonus = 0.1  # Small boost for first books
+            if is_first_item_in_series(item.title):
+                series_bonus = 0.1  # Small boost for first items
+
+            # Adaptation bonus: boost direct adaptations of consumed content
+            # (e.g., LOTR books -> LOTR movies)
+            adaptation_bonus = 0.0
+            if item.id and item.id in adaptations_map:
+                adaptations = adaptations_map[item.id]
+                if adaptations:
+                    # Boost based on rating of the adaptation
+                    # Higher-rated adaptations get bigger boost
+                    max_rating = max(
+                        (a.rating for a in adaptations if a.rating), default=4
+                    )
+                    # Boost ranges from 0.15 to 0.25 based on rating
+                    adaptation_bonus = 0.15 + (max_rating - 4) * 0.05
 
             # Combine scores
             # Note: preference_score can be negative (for disliked authors/genres)
@@ -84,6 +103,7 @@ class RecommendationRanker:
                 + self.preference_weight * normalized_preference
                 + self.diversity_weight * diversity_bonus
                 + series_bonus
+                + adaptation_bonus
             )
 
             # Apply penalty if preference_score is negative (disliked)
@@ -98,6 +118,7 @@ class RecommendationRanker:
                 "preference_score": preference_score,
                 "diversity_bonus": diversity_bonus,
                 "series_bonus": series_bonus,
+                "adaptation_bonus": adaptation_bonus,
             }
 
             scored_items.append((item, final_score, metadata))
@@ -130,10 +151,27 @@ class RecommendationRanker:
             factors += 1
 
         # Genre preference - can be negative if disliked
-        if item.metadata and "genre" in item.metadata:
-            genre_score = preferences.get_genre_score(item.metadata["genre"])
-            score += genre_score
-            factors += 1
+        # Supports both single "genre" field and "genres" list (e.g., Steam games)
+        if item.metadata:
+            genres = []
+            if "genre" in item.metadata and item.metadata["genre"]:
+                genres.append(item.metadata["genre"])
+            if "genres" in item.metadata and item.metadata["genres"]:
+                # Handle list of genres (e.g., Steam games)
+                if isinstance(item.metadata["genres"], list):
+                    genres.extend(item.metadata["genres"])
+                elif isinstance(item.metadata["genres"], str):
+                    # Some sources might store genres as comma-separated string
+                    genres.extend(
+                        [g.strip() for g in item.metadata["genres"].split(",")]
+                    )
+
+            # Use the highest-scoring genre if multiple genres exist
+            if genres:
+                genre_scores = [preferences.get_genre_score(genre) for genre in genres]
+                max_genre_score = max(genre_scores) if genre_scores else 0.0
+                score += max_genre_score
+                factors += 1
 
         # Average rating preference (prefer items similar to user's average)
         # This is a simplified version

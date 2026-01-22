@@ -16,6 +16,7 @@ This project consumes data files from various sources (Goodreads, game reviews, 
 
 - **Multi-source data ingestion**: Supports CSV, JSON, TXT, and Markdown files
 - **Content type support**: Books, Movies, TV Shows, Video Games
+- **Cross-content-type recommendations**: Preferences from all content types influence recommendations (e.g., sci-fi books can lead to sci-fi game/TV recommendations)
 - **Local LLM integration**: Uses Ollama for privacy-preserving recommendations
 - **Dual interface**: CLI and web interface (internal network only)
 - **Incremental updates**: Can process new data without full reprocessing
