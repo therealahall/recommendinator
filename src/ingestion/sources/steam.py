@@ -1,8 +1,7 @@
 """Steam Web API integration for fetching user game library."""
 
 import logging
-from typing import Iterator, Optional
-from datetime import datetime
+from typing import Iterator, Optional, Any, Dict
 
 import requests
 
@@ -38,7 +37,8 @@ def get_steam_id_from_vanity_url(api_key: str, vanity_url: str) -> Optional[str]
         data = response.json()
         result = data.get("response", {})
         if result.get("success") == 1:
-            return result.get("steamid")
+            steamid = result.get("steamid")
+            return str(steamid) if steamid else None
         return None
     except requests.RequestException as e:
         logger.error(f"Error resolving Steam vanity URL: {e}")
@@ -47,7 +47,7 @@ def get_steam_id_from_vanity_url(api_key: str, vanity_url: str) -> Optional[str]
 
 def get_owned_games(
     api_key: str, steam_id: str, include_appinfo: bool = True
-) -> list[dict]:
+) -> list[Dict[str, Any]]:
     """Fetch user's owned games from Steam API.
 
     Args:
@@ -71,13 +71,15 @@ def get_owned_games(
         response.raise_for_status()
         data = response.json()
         games = data.get("response", {}).get("games", [])
-        return games
+        return list(games) if games else []
     except requests.RequestException as e:
         logger.error(f"Error fetching Steam games: {e}")
         raise SteamAPIError(f"Failed to fetch Steam games: {e}")
 
 
-def get_game_details(app_ids: list[int]) -> dict[int, dict]:
+def get_game_details(
+    app_ids: list[int],
+) -> Dict[int, Dict[str, Any]]:
     """Fetch detailed information for multiple games.
 
     Args:
@@ -88,14 +90,26 @@ def get_game_details(app_ids: list[int]) -> dict[int, dict]:
     """
     # Steam Store API for game details
     # Note: This is a public API, no key required
-    details = {}
-    # Process in batches to avoid URL length limits
-    batch_size = 20
+    # Steam Store API has a limit on batch size (typically 1-5 app IDs)
+    # Using single requests to avoid 400 Bad Request errors
+    details: Dict[int, Dict[str, Any]] = {}
+    batch_size = 1  # Steam Store API works best with single requests
+    total = len(app_ids)
+
     for i in range(0, len(app_ids), batch_size):
         batch = app_ids[i : i + batch_size]
         app_ids_str = ",".join(str(app_id) for app_id in batch)
         url = "https://store.steampowered.com/api/appdetails"
         params = {"appids": app_ids_str, "l": "en"}
+
+        # Log progress every 10 games or for the first few
+        current = i + 1
+        if current <= 5 or current % 10 == 0 or current == total:
+            logger.info(
+                f"Fetching game details: {current}/{total} "
+                f"({current * 100 // total}%)"
+            )
+
         try:
             response = requests.get(url, params=params, timeout=30)
             response.raise_for_status()
@@ -104,7 +118,10 @@ def get_game_details(app_ids: list[int]) -> dict[int, dict]:
                 if app_data.get("success"):
                     details[int(app_id_str)] = app_data.get("data", {})
         except requests.RequestException as e:
-            logger.warning(f"Error fetching game details for batch: {e}")
+            logger.warning(
+                f"Error fetching game details for app IDs {batch}: {e}. "
+                "Skipping this batch."
+            )
     return details
 
 
@@ -118,8 +135,10 @@ def parse_steam_games(
 
     Args:
         api_key: Steam Web API key
-        steam_id: Steam ID (64-bit). If not provided, will try to resolve from vanity_url
-        vanity_url: Steam vanity URL (username or custom URL). Used if steam_id not provided
+        steam_id: Steam ID (64-bit). If not provided, will try to resolve
+            from vanity_url
+        vanity_url: Steam vanity URL (username or custom URL). Used if
+            steam_id not provided
         min_playtime_minutes: Minimum playtime in minutes to include a game
 
     Yields:
@@ -137,7 +156,9 @@ def parse_steam_games(
 
     # Fetch owned games
     try:
+        logger.info(f"Fetching owned games from Steam API for Steam ID: {steam_id}")
         games = get_owned_games(api_key, steam_id, include_appinfo=True)
+        logger.info(f"Found {len(games)} games in Steam library")
     except SteamAPIError:
         raise
 
@@ -147,7 +168,12 @@ def parse_steam_games(
 
     # Fetch additional game details for better metadata
     app_ids = [game["appid"] for game in games]
+    logger.info(
+        f"Fetching detailed information for {len(app_ids)} games "
+        "(this may take a while due to API rate limits)..."
+    )
     game_details = get_game_details(app_ids)
+    logger.info(f"Successfully fetched details for {len(game_details)} games")
 
     # Process each game
     for game in games:
@@ -170,7 +196,8 @@ def parse_steam_games(
                 continue  # Skip games without names
 
         # Determine status based on playtime
-        # Consider games with significant playtime as completed or currently playing
+        # Consider games with significant playtime as completed or
+        # currently playing
         if playtime_minutes == 0:
             status = ConsumptionStatus.UNREAD
         elif playtime_minutes < 60:  # Less than 1 hour
