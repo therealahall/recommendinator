@@ -214,7 +214,10 @@ def update(ctx: click.Context, source: str) -> None:
                                         err=True,
                                     )
 
-                            click.echo(f"✅ Updated {count} items from Steam")
+                            click.echo(
+                                f"✅ Updated {count} items from Steam "
+                                f"(total: {total_count} items)"
+                            )
                         except SteamAPIError as e:
                             click.echo(f"Error fetching Steam data: {e}", err=True)
                         except Exception as e:
