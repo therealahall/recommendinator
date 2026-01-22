@@ -7,9 +7,12 @@ from src.utils.series import (
     extract_series_info,
     get_series_name,
     get_series_book_number,
+    get_series_item_number,
     build_series_tracking,
     is_first_book_in_series,
+    is_first_item_in_series,
     should_recommend_book,
+    should_recommend_item,
 )
 
 
@@ -170,3 +173,147 @@ def test_should_recommend_book_zero_prequel():
     # User has read book #0 (prequel)
     series_tracking = {"Series A": {0}}
     assert should_recommend_book(item, series_tracking) is True
+
+
+def test_should_recommend_item_video_game_series():
+    """Test series filtering works for video games."""
+    # User has completed Mass Effect 1 and 2
+    series_tracking = {"Mass Effect": {1, 2}}
+
+    # Mass Effect 3 should be recommended (next in series)
+    item_me3 = ContentItem(
+        id="me3",
+        title="Mass Effect 3 (Mass Effect, #3)",
+        content_type=ContentType.VIDEO_GAME,
+        status=ConsumptionStatus.UNREAD,
+    )
+    assert should_recommend_item(item_me3, series_tracking) is True
+
+    # Mass Effect 1 should NOT be recommended (already completed)
+    item_me1 = ContentItem(
+        id="me1",
+        title="Mass Effect 1 (Mass Effect, #1)",
+        content_type=ContentType.VIDEO_GAME,
+        status=ConsumptionStatus.UNREAD,
+    )
+    assert should_recommend_item(item_me1, series_tracking) is False
+
+
+def test_should_not_recommend_item_if_previous_exists_unconsumed():
+    """Test that items are not recommended if previous items exist unconsumed."""
+    # User has NOT completed Mass Effect 1
+    series_tracking = {"Mass Effect": set()}
+
+    # Mass Effect 1 exists in unconsumed data
+    unconsumed_items = [
+        ContentItem(
+            id="me1",
+            title="Mass Effect 1 (Mass Effect, #1)",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+        ),
+    ]
+
+    # Mass Effect 3 should NOT be recommended (ME1 exists but not completed)
+    item_me3 = ContentItem(
+        id="me3",
+        title="Mass Effect 3 (Mass Effect, #3)",
+        content_type=ContentType.VIDEO_GAME,
+        status=ConsumptionStatus.UNREAD,
+    )
+    assert should_recommend_item(item_me3, series_tracking, unconsumed_items) is False
+
+    # Mass Effect 1 SHOULD be recommended (it's the first item)
+    item_me1 = ContentItem(
+        id="me1",
+        title="Mass Effect 1 (Mass Effect, #1)",
+        content_type=ContentType.VIDEO_GAME,
+        status=ConsumptionStatus.UNREAD,
+    )
+    assert should_recommend_item(item_me1, series_tracking, unconsumed_items) is True
+
+
+def test_should_recommend_item_if_previous_completed():
+    """Test that items are recommended if previous items are completed."""
+    # User has completed Mass Effect 1 and 2
+    series_tracking = {"Mass Effect": {1, 2}}
+
+    # Mass Effect 3 should be recommended (previous items completed)
+    item_me3 = ContentItem(
+        id="me3",
+        title="Mass Effect 3 (Mass Effect, #3)",
+        content_type=ContentType.VIDEO_GAME,
+        status=ConsumptionStatus.UNREAD,
+    )
+    assert should_recommend_item(item_me3, series_tracking) is True
+
+
+def test_should_recommend_item_if_previous_not_in_data():
+    """Test that items are recommended if previous items don't exist in data."""
+    # User has NOT started the series
+    series_tracking = {"Mass Effect": set()}
+
+    # Mass Effect 1 and 2 are NOT in unconsumed data (don't exist)
+    unconsumed_items = [
+        ContentItem(
+            id="me3",
+            title="Mass Effect 3 (Mass Effect, #3)",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+        ),
+    ]
+
+    # Mass Effect 3 CAN be recommended (previous items don't exist in data)
+    item_me3 = ContentItem(
+        id="me3",
+        title="Mass Effect 3 (Mass Effect, #3)",
+        content_type=ContentType.VIDEO_GAME,
+        status=ConsumptionStatus.UNREAD,
+    )
+    assert should_recommend_item(item_me3, series_tracking, unconsumed_items) is True
+
+
+def test_should_recommend_item_mixed_completion():
+    """Test series filtering with mixed completion status."""
+    # User has completed Mass Effect 1, but not 2
+    series_tracking = {"Mass Effect": {1}}
+
+    unconsumed_items = [
+        ContentItem(
+            id="me2",
+            title="Mass Effect 2 (Mass Effect, #2)",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+        ),
+        ContentItem(
+            id="me3",
+            title="Mass Effect 3 (Mass Effect, #3)",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+        ),
+    ]
+
+    # Mass Effect 2 should be recommended (next item after 1)
+    item_me2 = ContentItem(
+        id="me2",
+        title="Mass Effect 2 (Mass Effect, #2)",
+        content_type=ContentType.VIDEO_GAME,
+        status=ConsumptionStatus.UNREAD,
+    )
+    assert should_recommend_item(item_me2, series_tracking, unconsumed_items) is True
+
+    # Mass Effect 3 should NOT be recommended (ME2 exists but not completed)
+    item_me3 = ContentItem(
+        id="me3",
+        title="Mass Effect 3 (Mass Effect, #3)",
+        content_type=ContentType.VIDEO_GAME,
+        status=ConsumptionStatus.UNREAD,
+    )
+    assert should_recommend_item(item_me3, series_tracking, unconsumed_items) is False
+
+
+def test_get_series_item_number():
+    """Test getting item number from title (generic, not just books)."""
+    assert get_series_item_number("Mass Effect 3 (Mass Effect, #3)") == 3
+    assert get_series_item_number("Game (Series, #1)") == 1
+    assert get_series_item_number("Standalone Game") is None
