@@ -100,12 +100,12 @@ def create_app(config_path: Optional[Path] = None) -> FastAPI:
 
 def get_app() -> FastAPI:
     """Get or create the FastAPI app instance.
-    
+
     This function is used when running with uvicorn reload mode,
     which requires an import string. It will use the config path
     from the CONFIG_PATH environment variable, or default to
     config/example.yaml if not set.
-    
+
     Returns:
         FastAPI application instance
     """

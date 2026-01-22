@@ -118,6 +118,7 @@ def main() -> None:
     if debug_mode:
         # Set config path in environment for the imported app to use
         import os
+
         if config_path:
             os.environ["CONFIG_PATH"] = str(config_path.resolve())
         # Use import string format for reload support
