@@ -172,18 +172,18 @@ class TestGetGameDetails:
     def test_get_game_details_large_batch(self, mock_get):
         """Test game details fetch with large batch (should split)."""
         mock_response = Mock()
-        # Create response for batch of 20
+        # Create response for single game (batch_size = 1)
         mock_response.json.return_value = {
-            str(i): {"success": True, "data": {"name": f"Game {i}"}} for i in range(20)
+            "0": {"success": True, "data": {"name": "Game 0"}}
         }
         mock_response.raise_for_status = Mock()
         mock_get.return_value = mock_response
 
-        app_ids = list(range(25))  # 25 games should trigger 2 batches
+        app_ids = list(range(5))  # 5 games should trigger 5 calls
         details = get_game_details(app_ids)
 
-        # Should have made 2 calls (20 + 5)
-        assert mock_get.call_count == 2
+        # Should have made 5 calls (batch_size = 1)
+        assert mock_get.call_count == 5
 
 
 class TestParseSteamGames:
