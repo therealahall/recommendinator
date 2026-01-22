@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from src.models.content import ContentType, ConsumptionStatus
 from src.web.state import get_engine, get_storage, get_embedding_gen, get_config
 from src.ingestion.sources.goodreads import parse_goodreads_csv
+from src.ingestion.sources.steam import parse_steam_games, SteamAPIError
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,7 @@ class CompletionRequest(BaseModel):
 class UpdateRequest(BaseModel):
     """Request model for updating data."""
 
-    source: str = Field(..., description="Data source (goodreads, all)")
+    source: str = Field(..., description="Data source (goodreads, steam, all)")
 
 
 class RecommendationResponse(BaseModel):
@@ -206,24 +207,69 @@ async def update_data(request: UpdateRequest):
             goodreads_config = inputs_config.get("goodreads", {})
 
             if not goodreads_config.get("enabled", False):
-                return {"message": "Goodreads source is disabled", "count": 0}
-
-            goodreads_path = Path(
-                goodreads_config.get("path", "inputs/goodreads_library_export.csv")
-            )
-
-            if not goodreads_path.exists():
-                raise HTTPException(
-                    status_code=404, detail=f"File not found: {goodreads_path}"
+                if request.source == "goodreads":
+                    return {"message": "Goodreads source is disabled", "count": 0}
+            else:
+                goodreads_path = Path(
+                    goodreads_config.get("path", "inputs/goodreads_library_export.csv")
                 )
 
-            for item in parse_goodreads_csv(goodreads_path):
+                if not goodreads_path.exists():
+                    raise HTTPException(
+                        status_code=404, detail=f"File not found: {goodreads_path}"
+                    )
+
+                for item in parse_goodreads_csv(goodreads_path):
+                    try:
+                        embedding = embedding_gen.generate_content_embedding(item)
+                        storage.save_content_item(item, embedding)
+                        count += 1
+                    except Exception as e:
+                        logger.warning(f"Failed to process {item.title}: {e}")
+
+        if request.source == "steam" or request.source == "all":
+            inputs_config = config.get("inputs", {})
+            steam_config = inputs_config.get("steam", {})
+
+            if not steam_config.get("enabled", False):
+                if request.source == "steam":
+                    return {"message": "Steam source is disabled", "count": 0}
+            else:
+                api_key = steam_config.get("api_key", "").strip()
+                if not api_key:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Steam API key is required. Get one from https://steamcommunity.com/dev/apikey",
+                    )
+
+                steam_id = steam_config.get("steam_id", "").strip()
+                vanity_url = steam_config.get("vanity_url", "").strip()
+                min_playtime = steam_config.get("min_playtime_minutes", 0)
+
+                if not steam_id and not vanity_url:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Either steam_id or vanity_url must be provided in config",
+                    )
+
                 try:
-                    embedding = embedding_gen.generate_content_embedding(item)
-                    storage.save_content_item(item, embedding)
-                    count += 1
+                    for item in parse_steam_games(
+                        api_key=api_key,
+                        steam_id=steam_id if steam_id else None,
+                        vanity_url=vanity_url if vanity_url else None,
+                        min_playtime_minutes=min_playtime,
+                    ):
+                        try:
+                            embedding = embedding_gen.generate_content_embedding(item)
+                            storage.save_content_item(item, embedding)
+                            count += 1
+                        except Exception as e:
+                            logger.warning(f"Failed to process {item.title}: {e}")
+                except SteamAPIError as e:
+                    raise HTTPException(status_code=500, detail=f"Steam API error: {e}")
                 except Exception as e:
-                    logger.warning(f"Failed to process {item.title}: {e}")
+                    logger.error(f"Error processing Steam data: {e}")
+                    raise HTTPException(status_code=500, detail=str(e))
 
         return {"message": f"Updated {count} items", "count": count}
 

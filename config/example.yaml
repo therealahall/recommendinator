@@ -26,10 +26,18 @@ inputs:
     path: "inputs/goodreads_library_export.csv"
     enabled: true
   
+  steam:
+    # Steam Web API configuration
+    # Get your API key from: https://steamcommunity.com/dev/apikey
+    api_key: ""  # Your Steam Web API key
+    # Either provide steam_id (64-bit Steam ID) or vanity_url (username/custom URL)
+    steam_id: ""  # Your Steam ID (64-bit)
+    vanity_url: ""  # Alternative: Your Steam username or custom URL
+    # Minimum playtime in minutes to include a game (default: 0 = include all)
+    min_playtime_minutes: 0
+    enabled: false  # Set to true to enable Steam import
+  
   # Future sources can be added here
-  # games:
-  #   path: "/path/to/game/reviews"
-  #   enabled: true
 
 # Web interface configuration
 web:

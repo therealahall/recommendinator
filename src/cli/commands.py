@@ -8,6 +8,7 @@ from tabulate import tabulate
 
 from src.models.content import ContentType, ConsumptionStatus
 from src.ingestion.sources.goodreads import parse_goodreads_csv
+from src.ingestion.sources.steam import parse_steam_games, SteamAPIError
 
 
 @click.command()
@@ -112,7 +113,7 @@ def recommend(
 @click.command()
 @click.option(
     "--source",
-    type=click.Choice(["goodreads", "all"], case_sensitive=False),
+    type=click.Choice(["goodreads", "steam", "all"], case_sensitive=False),
     default="all",
     help="Data source to update",
 )
@@ -126,41 +127,103 @@ def update(ctx: click.Context, source: str) -> None:
     click.echo(f"Updating data from {source}...")
 
     try:
+        total_count = 0
+
         if source == "goodreads" or source == "all":
             inputs_config = config.get("inputs", {})
             goodreads_config = inputs_config.get("goodreads", {})
 
             if not goodreads_config.get("enabled", False):
                 click.echo("Goodreads source is disabled in config.")
-                return
-
-            goodreads_path = Path(
-                goodreads_config.get("path", "inputs/goodreads_library_export.csv")
-            )
-
-            if not goodreads_path.exists():
-                click.echo(
-                    f"Error: Goodreads file not found: {goodreads_path}", err=True
+            else:
+                goodreads_path = Path(
+                    goodreads_config.get("path", "inputs/goodreads_library_export.csv")
                 )
-                return
 
-            click.echo(f"Processing {goodreads_path}...")
-
-            count = 0
-            for item in parse_goodreads_csv(goodreads_path):
-                # Generate embedding
-                try:
-                    embedding = embedding_gen.generate_content_embedding(item)
-                    storage.save_content_item(item, embedding)
-                    count += 1
-                    if count % 10 == 0:
-                        click.echo(f"  Processed {count} items...")
-                except Exception as e:
+                if not goodreads_path.exists():
                     click.echo(
-                        f"  Warning: Failed to process {item.title}: {e}", err=True
+                        f"Error: Goodreads file not found: {goodreads_path}", err=True
                     )
+                else:
+                    click.echo(f"Processing {goodreads_path}...")
 
-            click.echo(f"✅ Updated {count} items from Goodreads")
+                    count = 0
+                    for item in parse_goodreads_csv(goodreads_path):
+                        # Generate embedding
+                        try:
+                            embedding = embedding_gen.generate_content_embedding(item)
+                            storage.save_content_item(item, embedding)
+                            count += 1
+                            total_count += 1
+                            if count % 10 == 0:
+                                click.echo(f"  Processed {count} items...")
+                        except Exception as e:
+                            click.echo(
+                                f"  Warning: Failed to process {item.title}: {e}",
+                                err=True,
+                            )
+
+                    click.echo(f"✅ Updated {count} items from Goodreads")
+
+        if source == "steam" or source == "all":
+            inputs_config = config.get("inputs", {})
+            steam_config = inputs_config.get("steam", {})
+
+            if not steam_config.get("enabled", False):
+                click.echo("Steam source is disabled in config.")
+            else:
+                api_key = steam_config.get("api_key", "").strip()
+                if not api_key:
+                    click.echo(
+                        "Error: Steam API key is required. Get one from https://steamcommunity.com/dev/apikey",
+                        err=True,
+                    )
+                else:
+                    steam_id = steam_config.get("steam_id", "").strip()
+                    vanity_url = steam_config.get("vanity_url", "").strip()
+                    min_playtime = steam_config.get("min_playtime_minutes", 0)
+
+                    if not steam_id and not vanity_url:
+                        click.echo(
+                            "Error: Either steam_id or vanity_url must be provided in config",
+                            err=True,
+                        )
+                    else:
+                        click.echo("Fetching games from Steam API...")
+                        try:
+                            count = 0
+                            for item in parse_steam_games(
+                                api_key=api_key,
+                                steam_id=steam_id if steam_id else None,
+                                vanity_url=vanity_url if vanity_url else None,
+                                min_playtime_minutes=min_playtime,
+                            ):
+                                # Generate embedding
+                                try:
+                                    embedding = (
+                                        embedding_gen.generate_content_embedding(item)
+                                    )
+                                    storage.save_content_item(item, embedding)
+                                    count += 1
+                                    total_count += 1
+                                    if count % 10 == 0:
+                                        click.echo(f"  Processed {count} games...")
+                                except Exception as e:
+                                    click.echo(
+                                        f"  Warning: Failed to process {item.title}: {e}",
+                                        err=True,
+                                    )
+
+                            click.echo(f"✅ Updated {count} items from Steam")
+                        except SteamAPIError as e:
+                            click.echo(f"Error fetching Steam data: {e}", err=True)
+                        except Exception as e:
+                            click.echo(f"Error processing Steam data: {e}", err=True)
+
+        if total_count == 0:
+            click.echo(
+                "No items were updated. Check your configuration and source settings."
+            )
 
     except Exception as e:
         click.echo(f"Error updating data: {e}", err=True)
