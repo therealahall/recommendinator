@@ -249,3 +249,158 @@ def test_complete_command_invalid_rating(mock_components):
 
     assert result.exit_code != 0
     assert "Rating must be between 1 and 5" in result.output
+
+
+def test_update_command_steam_success(mock_components):
+    """Test update command with Steam source."""
+    # Update mock config to include Steam
+    mock_config = {
+        "ollama": {
+            "base_url": "http://localhost:11434",
+            "model": "mistral:7b",
+            "embedding_model": "nomic-embed-text",
+        },
+        "storage": {
+            "database_path": "data/test.db",
+            "vector_db_path": "data/test_chroma",
+        },
+        "inputs": {
+            "steam": {
+                "api_key": "test_api_key",
+                "steam_id": "76561198000000000",
+                "enabled": True,
+            }
+        },
+        "recommendations": {
+            "min_rating_for_preference": 4,
+        },
+    }
+
+    mock_steam_item = ContentItem(
+        id="12345",
+        title="Test Game",
+        author=None,
+        content_type=ContentType.VIDEO_GAME,
+        status=ConsumptionStatus.COMPLETED,
+        rating=4,
+    )
+
+    with (
+        patch("src.cli.main.load_config", return_value=mock_config),
+        patch("src.cli.commands.parse_steam_games", return_value=[mock_steam_item]),
+    ):
+        mock_components["embedding_gen"].generate_content_embedding.return_value = [
+            0.1
+        ] * 768
+        mock_components["storage"].save_content_item.return_value = 1
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["update", "--source", "steam"])
+
+        assert result.exit_code == 0
+        assert "Updated" in result.output
+        assert "Steam" in result.output
+
+
+def test_update_command_steam_disabled(mock_components):
+    """Test update command with disabled Steam source."""
+    mock_config = {
+        "ollama": {
+            "base_url": "http://localhost:11434",
+            "model": "mistral:7b",
+            "embedding_model": "nomic-embed-text",
+        },
+        "storage": {
+            "database_path": "data/test.db",
+            "vector_db_path": "data/test_chroma",
+        },
+        "inputs": {
+            "steam": {
+                "api_key": "test_api_key",
+                "steam_id": "76561198000000000",
+                "enabled": False,
+            }
+        },
+        "recommendations": {
+            "min_rating_for_preference": 4,
+        },
+    }
+
+    with patch("src.cli.main.load_config", return_value=mock_config):
+        runner = CliRunner()
+        result = runner.invoke(cli, ["update", "--source", "steam"])
+
+        assert result.exit_code == 0
+        assert "disabled" in result.output.lower()
+
+
+def test_update_command_steam_missing_api_key(mock_components):
+    """Test update command with missing Steam API key."""
+    mock_config = {
+        "ollama": {
+            "base_url": "http://localhost:11434",
+            "model": "mistral:7b",
+            "embedding_model": "nomic-embed-text",
+        },
+        "storage": {
+            "database_path": "data/test.db",
+            "vector_db_path": "data/test_chroma",
+        },
+        "inputs": {
+            "steam": {
+                "api_key": "",
+                "steam_id": "76561198000000000",
+                "enabled": True,
+            }
+        },
+        "recommendations": {
+            "min_rating_for_preference": 4,
+        },
+    }
+
+    with patch("src.cli.main.load_config", return_value=mock_config):
+        runner = CliRunner()
+        result = runner.invoke(cli, ["update", "--source", "steam"])
+
+        assert result.exit_code == 0
+        assert "API key" in result.output or "required" in result.output.lower()
+
+
+def test_update_command_steam_api_error(mock_components):
+    """Test update command with Steam API error."""
+    from src.ingestion.sources.steam import SteamAPIError
+
+    mock_config = {
+        "ollama": {
+            "base_url": "http://localhost:11434",
+            "model": "mistral:7b",
+            "embedding_model": "nomic-embed-text",
+        },
+        "storage": {
+            "database_path": "data/test.db",
+            "vector_db_path": "data/test_chroma",
+        },
+        "inputs": {
+            "steam": {
+                "api_key": "test_api_key",
+                "steam_id": "76561198000000000",
+                "enabled": True,
+            }
+        },
+        "recommendations": {
+            "min_rating_for_preference": 4,
+        },
+    }
+
+    with (
+        patch("src.cli.main.load_config", return_value=mock_config),
+        patch(
+            "src.cli.commands.parse_steam_games",
+            side_effect=SteamAPIError("API error"),
+        ),
+    ):
+        runner = CliRunner()
+        result = runner.invoke(cli, ["update", "--source", "steam"])
+
+        assert result.exit_code == 0
+        assert "Error" in result.output or "error" in result.output.lower()

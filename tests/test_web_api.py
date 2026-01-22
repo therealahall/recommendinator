@@ -203,3 +203,143 @@ def test_update_endpoint(client, mock_components):
         data = response.json()
         assert "message" in data
         assert "count" in data
+
+
+def test_update_endpoint_steam(client, mock_components):
+    """Test update endpoint with Steam source."""
+    # Update app_state config to include Steam
+    app_state["config"]["inputs"]["steam"] = {
+        "api_key": "test_api_key",
+        "steam_id": "76561198000000000",
+        "enabled": True,
+    }
+
+    mock_steam_item = ContentItem(
+        id="12345",
+        title="Test Game",
+        author=None,
+        content_type=ContentType.VIDEO_GAME,
+        status=ConsumptionStatus.COMPLETED,
+        rating=4,
+    )
+
+    with patch("src.web.api.parse_steam_games", return_value=[mock_steam_item]):
+        mock_components["embedding_gen"].generate_content_embedding.return_value = [
+            0.1
+        ] * 768
+        mock_components["storage"].save_content_item.return_value = 1
+
+        response = client.post("/api/update", json={"source": "steam"})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "message" in data
+        assert "count" in data
+        assert data["count"] == 1
+
+
+def test_update_endpoint_steam_disabled(client, mock_components):
+    """Test update endpoint with disabled Steam source."""
+    app_state["config"]["inputs"]["steam"] = {
+        "api_key": "test_api_key",
+        "steam_id": "76561198000000000",
+        "enabled": False,
+    }
+
+    response = client.post("/api/update", json={"source": "steam"})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert "disabled" in data["message"].lower()
+    assert data["count"] == 0
+
+
+def test_update_endpoint_steam_missing_api_key(client, mock_components):
+    """Test update endpoint with missing Steam API key."""
+    app_state["config"]["inputs"]["steam"] = {
+        "api_key": "",
+        "steam_id": "76561198000000000",
+        "enabled": True,
+    }
+
+    response = client.post("/api/update", json={"source": "steam"})
+
+    assert response.status_code == 400
+    data = response.json()
+    assert "API key" in data["detail"] or "required" in data["detail"]
+
+
+def test_update_endpoint_steam_missing_id(client, mock_components):
+    """Test update endpoint with missing Steam ID."""
+    app_state["config"]["inputs"]["steam"] = {
+        "api_key": "test_api_key",
+        "steam_id": "",
+        "vanity_url": "",
+        "enabled": True,
+    }
+
+    response = client.post("/api/update", json={"source": "steam"})
+
+    assert response.status_code == 400
+    data = response.json()
+    assert "steam_id" in data["detail"] or "vanity_url" in data["detail"]
+
+
+def test_update_endpoint_steam_api_error(client, mock_components):
+    """Test update endpoint with Steam API error."""
+    from src.ingestion.sources.steam import SteamAPIError
+
+    app_state["config"]["inputs"]["steam"] = {
+        "api_key": "test_api_key",
+        "steam_id": "76561198000000000",
+        "enabled": True,
+    }
+
+    with patch("src.web.api.parse_steam_games", side_effect=SteamAPIError("API error")):
+        response = client.post("/api/update", json={"source": "steam"})
+
+        assert response.status_code == 500
+        data = response.json()
+        assert "error" in data["detail"].lower() or "Steam" in data["detail"]
+
+
+def test_update_endpoint_all_sources(client, mock_components):
+    """Test update endpoint with 'all' source including Steam."""
+    app_state["config"]["inputs"]["steam"] = {
+        "api_key": "test_api_key",
+        "steam_id": "76561198000000000",
+        "enabled": True,
+    }
+
+    mock_book = ContentItem(
+        id="1",
+        title="Test Book",
+        author="Author",
+        content_type=ContentType.BOOK,
+        status=ConsumptionStatus.COMPLETED,
+        rating=5,
+    )
+
+    mock_game = ContentItem(
+        id="12345",
+        title="Test Game",
+        author=None,
+        content_type=ContentType.VIDEO_GAME,
+        status=ConsumptionStatus.COMPLETED,
+        rating=4,
+    )
+
+    with (
+        patch("src.web.api.parse_goodreads_csv", return_value=[mock_book]),
+        patch("src.web.api.parse_steam_games", return_value=[mock_game]),
+    ):
+        mock_components["embedding_gen"].generate_content_embedding.return_value = [
+            0.1
+        ] * 768
+        mock_components["storage"].save_content_item.return_value = 1
+
+        response = client.post("/api/update", json={"source": "all"})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["count"] == 2  # Both book and game
