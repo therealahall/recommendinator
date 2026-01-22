@@ -239,12 +239,67 @@ for better type safety and query efficiency.
 5. Update documentation if needed
 6. Submit changes following commit message conventions
 
+## Documentation Maintenance
+
+**When defining new paradigms or changing documentation:**
+
+1. **Update ALL relevant documentation files**:
+   - README.md (if user-facing changes)
+   - ARCHITECTURE.md (if architectural changes)
+   - CONTRIBUTING.md (if development process changes)
+   - DEVELOPMENT.md (if tracking implementation changes)
+   - Relevant docs/ files (if technical details change)
+
+2. **Update .cursorrules file**:
+   - Add new rules or patterns to `.cursorrules`
+   - Update existing rules if they change
+   - Ensure consistency between documentation and rules
+
+3. **Documentation changes require documentation commits**:
+   - Use `docs:` commit type for documentation updates
+   - Update both the docs AND `.cursorrules` in the same commit if related
+   - Keep documentation and rules in sync
+
+## Security: Protected Configuration Files
+
+**NEVER use `config/config.yaml` in tests, commits, or code examples:**
+
+1. **`config/config.yaml` contains secrets**:
+   - API keys (Steam, etc.)
+   - Personal identifiers (Steam IDs, etc.)
+   - Other sensitive configuration
+   - This file is git-ignored and should NEVER be committed
+
+2. **Always use `config/example.yaml` instead**:
+   - Tests should use `config/example.yaml` or create temporary configs
+   - Code examples should reference `config/example.yaml`
+   - Documentation should reference `config/example.yaml`
+   - Mock configs in tests should not contain real secrets
+
+3. **Pre-commit checks**:
+   - Verify no references to `config/config.yaml` in test files
+   - Verify no hardcoded API keys or secrets in code
+   - Verify `config/config.yaml` is in `.gitignore` (it is)
+
+**Test Configuration Pattern:**
+```python
+# ✅ CORRECT: Use example.yaml or create mock config
+config = load_config(Path("config/example.yaml"))
+# OR
+mock_config = {"steam": {"api_key": "test_key", ...}}
+
+# ❌ WRONG: Never reference config.yaml
+config = load_config(Path("config/config.yaml"))  # NEVER DO THIS
+```
+
 ## Code Review Checklist
 
 - [ ] Code follows style guidelines
 - [ ] All tests pass
 - [ ] New code has tests
-- [ ] Documentation is updated
+- [ ] Documentation is updated (including .cursorrules for new paradigms)
+- [ ] No references to `config/config.yaml` in tests or code
+- [ ] No hardcoded secrets or API keys
 - [ ] No hardcoded values
 - [ ] Error handling is appropriate
 - [ ] Type hints are used

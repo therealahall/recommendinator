@@ -1,0 +1,311 @@
+# Cursor Rules for Personal Recommendations Project
+
+## Documentation First
+
+**CRITICAL: Before starting any work, you MUST read all project documentation:**
+
+1. **README.md** - Project overview, features, usage, and structure
+2. **ARCHITECTURE.md** - System architecture, components, data flow, and design decisions
+3. **CONTRIBUTING.md** - Development standards, code style, testing requirements, commit conventions
+4. **DEVELOPMENT.md** - Development log tracking progress, decisions, and implementation history
+5. **QUICKSTART.md** - Getting started guide
+6. **docs/** directory - Additional technical documentation:
+   - MODEL_RECOMMENDATIONS.md - LLM model selection guide
+   - CHROMADB_SETUP.md - Vector database setup
+   - SCHEMA_DESIGN.md - Database schema design
+   - PYTHON_VERSION.md - Python version requirements
+
+**Always reference these documents when:**
+- Adding new features
+- Modifying existing functionality
+- Making architectural decisions
+- Understanding the codebase structure
+- Following established patterns
+
+## Testing Requirements
+
+**ALL functionality MUST have tests:**
+
+1. **Test Coverage**: Aim for 80%+ coverage
+2. **Test Framework**: Use pytest
+3. **Test Location**: Place tests in `tests/` directory mirroring `src/` structure
+4. **Test Naming**: Test files `test_*.py`, test functions `test_*`
+5. **Mock External Dependencies**: 
+   - Mock Ollama API calls
+   - Mock file I/O operations
+   - Mock external API calls (Steam, etc.)
+   - Never make real network requests in tests
+6. **Regression Tests**: When fixing bugs, ALWAYS write regression tests that:
+   - Reproduce the bug (fails before fix, passes after)
+   - Are clearly named (e.g., `test_enum_handling_regression`)
+   - Document the bug in the test docstring
+7. **Test Structure**: Use fixtures for common setup, follow existing test patterns
+
+**Before committing, ALL tests MUST pass:**
+```bash
+pytest
+```
+
+## Code Quality Requirements
+
+**Before committing, ALL linters and static analysis MUST pass:**
+
+1. **Code Formatting** (Black):
+   ```bash
+   black src/ tests/
+   black --check src/ tests/  # Verify formatting
+   ```
+
+2. **Type Checking** (MyPy):
+   ```bash
+   mypy src/
+   ```
+
+3. **Linting** (Ruff):
+   ```bash
+   ruff check src/ tests/
+   ```
+
+**Pre-commit Checklist:**
+- [ ] All tests pass: `pytest`
+- [ ] Code is formatted: `black --check src/ tests/`
+- [ ] Type checking passes: `mypy src/`
+- [ ] Linting passes: `ruff check src/ tests/`
+- [ ] No hardcoded values (use config)
+- [ ] Error handling is appropriate
+- [ ] Type hints are used
+- [ ] Documentation is updated if needed
+
+## Commit Message Conventions
+
+**Follow Conventional Commits specification:**
+
+```
+<type>(<scope>): <subject>
+
+<body>
+
+<footer>
+```
+
+**Types:**
+- `feat`: New feature
+- `fix`: Bug fix
+- `docs`: Documentation changes
+- `style`: Code style changes (formatting, etc.)
+- `refactor`: Code refactoring
+- `test`: Adding or updating tests
+- `chore`: Maintenance tasks
+
+**Commit Strategy:**
+- **Break changes into logical, atomic commits** (not large mega-commits)
+- One logical change per commit
+- Separate concerns: schema → implementation → tests → docs
+- Tests should pass after each commit
+- Related changes can be grouped, but keep them focused
+
+**Examples:**
+```
+feat(ingestion): add Steam API integration
+
+Add support for fetching user game library from Steam Web API
+with playtime tracking and metadata extraction.
+
+feat(ingestion): add Steam data parser
+
+Convert Steam API responses to ContentItem format with proper
+status mapping based on playtime.
+
+test(ingestion): add comprehensive Steam API tests
+
+Mock all Steam API calls to avoid hitting real endpoints during
+testing. Cover success cases, error handling, and edge cases.
+
+fix(web): handle uvicorn reload warning
+
+Update web app to use import string format when reload is enabled
+to resolve uvicorn warning about application passing.
+```
+
+## Code Standards
+
+**Python Version:**
+- Minimum: Python 3.11+
+- Current development: 3.14.2
+
+**Code Style:**
+- Use Black for formatting (line length: 88)
+- Use MyPy for type checking (strict mode)
+- Use Ruff for linting
+- Follow Google-style docstrings
+- Include type hints in all function signatures
+
+**Import Organization:**
+1. Standard library imports
+2. Third-party imports
+3. Local application imports (from `src`)
+
+**Module Organization:**
+- Keep modules focused and single-purpose
+- Use clear, descriptive names
+- Group related functionality together
+
+## Architecture Principles
+
+1. **Separation of Concerns**: Keep ingestion, LLM interaction, and storage separate
+2. **Testability**: Design code to be easily testable (mock external dependencies)
+3. **Extensibility**: Make it easy to add new data sources and content types
+4. **Configuration**: Use configuration files for settings, not hardcoded values
+5. **Error Handling**: Handle errors gracefully with clear messages
+
+## Adding New Features
+
+1. **Read Documentation First**: Review ARCHITECTURE.md and CONTRIBUTING.md
+2. **Create Feature Branch**: `git checkout -b feat/feature-name`
+3. **Write Tests First**: TDD approach recommended
+4. **Implement Feature**: Follow existing patterns and architecture
+5. **Ensure All Checks Pass**: Tests, formatting, type checking, linting
+6. **Update Documentation**: If architecture or usage changes
+7. **Commit with Conventional Format**: Use proper commit message format
+
+## Adding New Data Sources
+
+1. Create parser in `src/ingestion/sources/`
+2. Follow existing parser patterns (e.g., `goodreads.py`, `steam.py`)
+3. Implement common interface (yield `ContentItem` objects)
+4. Map to content type models
+5. **Add comprehensive tests** (mock external APIs)
+6. Update config file structure if needed
+7. Update CLI and web API to support new source
+
+## Bug Fixes
+
+1. **Write Regression Test First**: Test that reproduces the bug
+2. Fix the bug
+3. Verify test passes
+4. Ensure all other tests still pass
+5. Document the bug in the test docstring
+6. Commit with `fix` type
+
+## Project Structure
+
+```
+personal-recommendations/
+├── src/
+│   ├── cli/              # Command-line interface
+│   ├── web/              # Web interface (FastAPI)
+│   ├── ingestion/        # Data ingestion modules
+│   │   └── sources/      # Source parsers
+│   ├── llm/              # LLM interaction and prompts
+│   ├── storage/          # Data storage (vector DB, SQLite)
+│   ├── recommendations/  # Recommendation engine
+│   ├── models/           # Data models and schemas
+│   └── utils/            # Utility functions
+├── tests/                # Test suite (mirrors src/ structure)
+├── inputs/               # Input data files
+├── config/               # Configuration files
+└── docs/                 # Additional documentation
+```
+
+## Technology Stack
+
+- **Python**: 3.11+
+- **LLM**: Ollama (local)
+- **Vector DB**: ChromaDB
+- **SQL Database**: SQLite
+- **Web Framework**: FastAPI
+- **CLI Framework**: Click
+- **Testing**: pytest
+- **Linting**: Black, MyPy, Ruff
+
+## Documentation Maintenance
+
+**CRITICAL: When defining new paradigms or changing documentation:**
+
+1. **Update ALL relevant documentation files**:
+   - README.md (if user-facing changes)
+   - ARCHITECTURE.md (if architectural changes)
+   - CONTRIBUTING.md (if development process changes)
+   - DEVELOPMENT.md (if tracking implementation changes)
+   - Relevant docs/ files (if technical details change)
+
+2. **Update .cursorrules file**:
+   - Add new rules or patterns to this file
+   - Update existing rules if they change
+   - Ensure consistency between documentation and rules
+
+3. **Documentation changes require documentation commits**:
+   - Use `docs:` commit type for documentation updates
+   - Update both the docs AND .cursorrules in the same commit if related
+   - Keep documentation and rules in sync
+
+**Examples:**
+- Adding a new data source → Update ARCHITECTURE.md, CONTRIBUTING.md, and .cursorrules
+- Changing testing requirements → Update CONTRIBUTING.md and .cursorrules
+- New architectural pattern → Update ARCHITECTURE.md, DEVELOPMENT.md, and .cursorrules
+
+## Security: Protected Configuration Files
+
+**NEVER use `config/config.yaml` in tests, commits, or code examples:**
+
+1. **`config/config.yaml` contains secrets**:
+   - API keys (Steam, etc.)
+   - Personal identifiers (Steam IDs, etc.)
+   - Other sensitive configuration
+   - This file is git-ignored and should NEVER be committed
+
+2. **Always use `config/example.yaml` instead**:
+   - Tests should use `config/example.yaml` or create temporary configs
+   - Code examples should reference `config/example.yaml`
+   - Documentation should reference `config/example.yaml`
+   - Mock configs in tests should not contain real secrets
+
+3. **Pre-commit checks**:
+   - Verify no references to `config/config.yaml` in test files
+   - Verify no hardcoded API keys or secrets in code
+   - Verify `config/config.yaml` is in `.gitignore` (it is)
+
+4. **If you accidentally commit secrets**:
+   - Immediately rotate/revoke the exposed secrets
+   - Remove from git history if possible
+   - Update .gitignore if needed
+   - Document the incident
+
+**Test Configuration Pattern:**
+```python
+# ✅ CORRECT: Use example.yaml or create mock config
+config = load_config(Path("config/example.yaml"))
+# OR
+mock_config = {"steam": {"api_key": "test_key", ...}}
+
+# ❌ WRONG: Never reference config.yaml
+config = load_config(Path("config/config.yaml"))  # NEVER DO THIS
+```
+
+## Important Reminders
+
+- **Never commit without running tests and linters**
+- **Always mock external dependencies in tests**
+- **Follow existing code patterns and architecture**
+- **Update documentation AND .cursorrules when defining new paradigms**
+- **Never use config/config.yaml in tests or commits (use example.yaml)**
+- **Use configuration files, not hardcoded values**
+- **Handle errors gracefully with clear messages**
+- **Write atomic, focused commits with proper messages**
+
+## Code Review Checklist
+
+Before submitting changes, ensure:
+- [ ] All documentation has been read and understood
+- [ ] Code follows style guidelines (Black, MyPy, Ruff)
+- [ ] All tests pass (`pytest`)
+- [ ] New code has comprehensive tests
+- [ ] External dependencies are mocked in tests
+- [ ] Documentation is updated if needed (including .cursorrules for new paradigms)
+- [ ] No references to `config/config.yaml` in tests or code
+- [ ] No hardcoded secrets or API keys
+- [ ] No hardcoded values (use config)
+- [ ] Error handling is appropriate
+- [ ] Type hints are used throughout
+- [ ] Commit messages follow Conventional Commits
+- [ ] Changes are broken into logical, atomic commits
