@@ -2,16 +2,19 @@
 
 This document tracks the development progress, decisions, and steps taken during the project build.
 
+> **V1 Roadmap:** For the forward-looking implementation plan, see [docs/V1_ROADMAP.md](docs/V1_ROADMAP.md).
+
 ## Table of Contents
 - [Initial Setup](#initial-setup)
 - [Phase 1: Project Foundation](#phase-1-project-foundation)
 - [Phase 2: Data Ingestion](#phase-2-data-ingestion)
-- [Phase 3: Storage Layer](#phase-3-storage-layer) - *Next*
+- [Phase 3: Storage Layer](#phase-3-storage-layer)
 - [Phase 4: LLM Integration](#phase-4-llm-integration)
 - [Phase 5: Recommendation Engine](#phase-5-recommendation-engine)
 - [Phase 6: CLI Interface](#phase-6-cli-interface)
 - [Phase 7: Web Interface](#phase-7-web-interface)
 - [Decisions & Notes](#decisions--notes)
+- [V1 Architecture Pivot](#v1-architecture-pivot)
 
 ---
 
@@ -709,4 +712,42 @@ python -m src.web.main --config config/config.yaml
 
 ---
 
-*Last Updated: 2026-01-18*
+## V1 Architecture Pivot
+
+**Date:** 2026-01-25
+**Status:** Planning Complete, Implementation Starting
+
+### Background
+
+The initial prototype (Phases 1-7 above) successfully demonstrated the core concept. However, after comprehensive review, several architectural changes are needed for v1:
+
+1. **AI should be optional** - The system must work without LLM/embeddings for users who prefer not to use AI
+2. **Multi-user support** - Schema should support multiple users from day 1
+3. **Plugin architecture** - Formalize the data source interface for community contributions
+4. **Scoring pipeline** - Replace monolithic recommendation engine with composable scorers
+
+### Key Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| AI as enhancement, not requirement | Broader user appeal, better engineering discipline |
+| Hybrid scoring (content-based + rule-based) | Works without AI, AI becomes just another scorer |
+| User table from day 1 | Avoid painful migration later |
+| Plugin interface for sources | Enable community contributions |
+| Preferences in database | Per-user, UI-editable, portable |
+
+### What's Changing
+
+- **Schema v3**: Add `users` table, add `user_id` to content_items
+- **StorageManager**: ChromaDB becomes optional (lazy init when AI enabled)
+- **Recommendation Engine**: Refactor to scoring pipeline architecture
+- **Ingestion**: Formalize plugin interface (SourcePlugin ABC)
+- **Configuration**: Add feature flags for AI on/off
+
+### Implementation Plan
+
+See [docs/V1_ROADMAP.md](docs/V1_ROADMAP.md) for the detailed phase-by-phase implementation plan.
+
+---
+
+*Last Updated: 2026-01-25*
