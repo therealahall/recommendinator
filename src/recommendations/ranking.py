@@ -1,7 +1,7 @@
 """Ranking algorithm for recommendations."""
 
 import logging
-from typing import List, Tuple, Dict, Any, Optional
+from typing import Any
 
 from src.models.content import ContentItem, ContentType
 from src.recommendations.preferences import UserPreferences
@@ -39,11 +39,11 @@ class RecommendationRanker:
 
     def rank(
         self,
-        candidates: List[Tuple[ContentItem, float]],
+        candidates: list[tuple[ContentItem, float]],
         preferences: UserPreferences,
         content_type: ContentType,
-        adaptations_map: Optional[Dict[str, List[ContentItem]]] = None,
-    ) -> List[Tuple[ContentItem, float, Dict[str, Any]]]:
+        adaptations_map: dict[str, list[ContentItem]] | None = None,
+    ) -> list[tuple[ContentItem, float, dict[str, Any]]]:
         """Rank candidate items.
 
         Args:
@@ -74,7 +74,7 @@ class RecommendationRanker:
 
             # Series bonus: boost first items in unstarted series (all content types)
             series_bonus = 0.0
-            if is_first_item_in_series(item.title):
+            if is_first_item_in_series(item=item):
                 series_bonus = 0.1  # Small boost for first items
 
             # Adaptation bonus: boost direct adaptations of consumed content
