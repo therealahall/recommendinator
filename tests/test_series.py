@@ -1,14 +1,11 @@
 """Tests for series detection and filtering utilities."""
 
-import pytest
-
-from src.models.content import ContentItem, ContentType, ConsumptionStatus
+from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.utils.series import (
-    extract_series_info,
-    get_series_name,
-    get_series_book_number,
-    get_series_item_number,
     build_series_tracking,
+    extract_series_info,
+    get_series_book_number,
+    get_series_name,
     is_first_book_in_series,
     is_first_item_in_series,
     should_recommend_book,
@@ -18,25 +15,94 @@ from src.utils.series import (
 
 def test_extract_series_info():
     """Test series information extraction from titles."""
-    # Pattern 1: (Series Name, #N)
+    # Pattern 1: (Series Name, #N) - works for all types
     assert extract_series_info("Book Title (The Witcher, #4)") == ("The Witcher", 4)
     assert extract_series_info("Book (Series, #1)") == ("Series", 1)
 
     # Pattern 2: (Series Name #N)
     assert extract_series_info("Book (Series #2)") == ("Series", 2)
 
-    # Pattern 3: (Series Name, Book N)
+    # Pattern 3: (Series Name, Book N) - books
     assert extract_series_info("Book (Series, Book 3)") == ("Series", 3)
+
+    # Pattern 4: (Series Name, Season N) - TV shows
+    assert extract_series_info("Show (The Expanse, Season 1)") == ("The Expanse", 1)
+    assert extract_series_info("Show (Breaking Bad, Season 2)") == ("Breaking Bad", 2)
+
+    # Pattern 5: (Series Name, S1) - TV shows shorthand
+    assert extract_series_info("Show (The Expanse, S1)") == ("The Expanse", 1)
+    assert extract_series_info("Show (Game of Thrones, S3)") == ("Game of Thrones", 3)
+
+    # Pattern 6: (Series Name, Part N) - movies/games
+    assert extract_series_info("Movie (Lord of the Rings, Part 1)") == (
+        "Lord of the Rings",
+        1,
+    )
+    assert extract_series_info("Game (Mass Effect, Part 2)") == ("Mass Effect", 2)
+
+    # Pattern 7: (Series Name, Episode N) - movies/TV
+    assert extract_series_info("Movie (Star Wars, Episode 4)") == ("Star Wars", 4)
 
     # No series
     assert extract_series_info("Standalone Book") is None
     assert extract_series_info("Book (Not a Series)") is None
 
 
+def test_extract_series_info_from_metadata():
+    """Test series information extraction from metadata."""
+    # TV show with season in metadata
+    metadata_tv = {"series": "The Expanse", "season": 2}
+    assert extract_series_info("The Expanse", metadata_tv, ContentType.TV_SHOW) == (
+        "The Expanse",
+        2,
+    )
+
+    # Movie with part in metadata
+    metadata_movie = {"series_name": "Lord of the Rings", "part": 1}
+    assert extract_series_info("Fellowship", metadata_movie, ContentType.MOVIE) == (
+        "Lord of the Rings",
+        1,
+    )
+
+    # Book with series_number in metadata
+    metadata_book = {"series": "The Witcher", "series_number": 3}
+    assert extract_series_info("Blood", metadata_book, ContentType.BOOK) == (
+        "The Witcher",
+        3,
+    )
+
+    # Game with part in metadata
+    metadata_game = {"series_title": "Mass Effect", "part_number": 2}
+    assert extract_series_info("ME2", metadata_game, ContentType.VIDEO_GAME) == (
+        "Mass Effect",
+        2,
+    )
+
+
 def test_get_series_name():
-    """Test getting series name from title."""
-    assert get_series_name("Book (The Witcher, #4)") == "The Witcher"
-    assert get_series_name("Standalone Book") is None
+    """Test getting series name from title or ContentItem."""
+    # Test with title string (backward compatibility)
+    assert get_series_name(title="Book (The Witcher, #4)") == "The Witcher"
+    assert get_series_name(title="Standalone Book") is None
+
+    # Test with ContentItem
+    item = ContentItem(
+        id="1",
+        title="Book (The Expanse, #1)",
+        content_type=ContentType.BOOK,
+        status=ConsumptionStatus.UNREAD,
+    )
+    assert get_series_name(item=item) == "The Expanse"
+
+    # Test with ContentItem and metadata
+    item_with_metadata = ContentItem(
+        id="2",
+        title="Show",
+        content_type=ContentType.TV_SHOW,
+        status=ConsumptionStatus.UNREAD,
+        metadata={"series": "Breaking Bad", "season": 1},
+    )
+    assert get_series_name(item=item_with_metadata) == "Breaking Bad"
 
 
 def test_get_series_book_number():
@@ -91,10 +157,47 @@ def test_build_series_tracking():
 
 
 def test_is_first_book_in_series():
-    """Test checking if book is first in series."""
-    assert is_first_book_in_series("Book (Series, #1)") is True
-    assert is_first_book_in_series("Book (Series, #2)") is False
-    assert is_first_book_in_series("Standalone Book") is False
+    """Test checking if book is first in series (backward compatibility)."""
+    assert is_first_book_in_series(title="Book (Series, #1)") is True
+    assert is_first_book_in_series(title="Book (Series, #2)") is False
+    assert is_first_book_in_series(title="Standalone Book") is False
+
+
+def test_is_first_item_in_series():
+    """Test checking if item is first in series for all content types."""
+    # Test with title string (backward compatibility)
+    assert is_first_item_in_series(title="Book (Series, #1)") is True
+    assert is_first_item_in_series(title="Show (Series, Season 1)") is True
+    assert is_first_item_in_series(title="Movie (Series, Part 1)") is True
+    assert is_first_item_in_series(title="Game (Series, #1)") is True
+    assert is_first_item_in_series(title="Book (Series, #2)") is False
+
+    # Test with ContentItem
+    item_first = ContentItem(
+        id="1",
+        title="The Expanse (The Expanse, Season 1)",
+        content_type=ContentType.TV_SHOW,
+        status=ConsumptionStatus.UNREAD,
+    )
+    assert is_first_item_in_series(item=item_first) is True
+
+    item_second = ContentItem(
+        id="2",
+        title="The Expanse (The Expanse, Season 2)",
+        content_type=ContentType.TV_SHOW,
+        status=ConsumptionStatus.UNREAD,
+    )
+    assert is_first_item_in_series(item=item_second) is False
+
+    # Test with ContentItem and metadata
+    item_with_metadata = ContentItem(
+        id="3",
+        title="Movie",
+        content_type=ContentType.MOVIE,
+        status=ConsumptionStatus.UNREAD,
+        metadata={"series": "Star Wars", "episode": 1},
+    )
+    assert is_first_item_in_series(item=item_with_metadata) is True
 
 
 def test_should_recommend_book_not_in_series():
@@ -312,8 +415,70 @@ def test_should_recommend_item_mixed_completion():
     assert should_recommend_item(item_me3, series_tracking, unconsumed_items) is False
 
 
-def test_get_series_item_number():
-    """Test getting item number from title (generic, not just books)."""
-    assert get_series_item_number("Mass Effect 3 (Mass Effect, #3)") == 3
-    assert get_series_item_number("Game (Series, #1)") == 1
-    assert get_series_item_number("Standalone Game") is None
+def test_should_recommend_item_tv_show_series():
+    """Test series filtering works for TV shows."""
+    # User has watched Season 1 of The Expanse
+    series_tracking = {"The Expanse": {1}}
+
+    # Season 2 should be recommended (next in series)
+    item_s2 = ContentItem(
+        id="s2",
+        title="The Expanse (The Expanse, Season 2)",
+        content_type=ContentType.TV_SHOW,
+        status=ConsumptionStatus.UNREAD,
+    )
+    assert should_recommend_item(item_s2, series_tracking) is True
+
+    # Season 3 should NOT be recommended (Season 2 not watched)
+    item_s3 = ContentItem(
+        id="s3",
+        title="The Expanse (The Expanse, Season 3)",
+        content_type=ContentType.TV_SHOW,
+        status=ConsumptionStatus.UNREAD,
+    )
+    assert should_recommend_item(item_s3, series_tracking) is False
+
+    # Season 1 should NOT be recommended (already watched)
+    item_s1 = ContentItem(
+        id="s1",
+        title="The Expanse (The Expanse, Season 1)",
+        content_type=ContentType.TV_SHOW,
+        status=ConsumptionStatus.UNREAD,
+    )
+    assert should_recommend_item(item_s1, series_tracking) is False
+
+
+def test_should_recommend_item_movie_series():
+    """Test series filtering works for movies."""
+    # User has watched Part 1 of Lord of the Rings
+    series_tracking = {"Lord of the Rings": {1}}
+
+    # Part 2 should be recommended (next in series)
+    item_part2 = ContentItem(
+        id="part2",
+        title="The Two Towers (Lord of the Rings, Part 2)",
+        content_type=ContentType.MOVIE,
+        status=ConsumptionStatus.UNREAD,
+    )
+    assert should_recommend_item(item_part2, series_tracking) is True
+
+    # Part 3 should NOT be recommended (Part 2 not watched)
+    item_part3 = ContentItem(
+        id="part3",
+        title="Return of the King (Lord of the Rings, Part 3)",
+        content_type=ContentType.MOVIE,
+        status=ConsumptionStatus.UNREAD,
+    )
+    assert should_recommend_item(item_part3, series_tracking) is False
+
+    # Test with metadata - Episode 4 (A New Hope) already watched
+    series_tracking_sw = {"Star Wars": {4}}
+    # Episode 5 should be recommended if Episode 4 is watched
+    item_ep5 = ContentItem(
+        id="ep5",
+        title="Empire Strikes Back",
+        content_type=ContentType.MOVIE,
+        status=ConsumptionStatus.UNREAD,
+        metadata={"series_name": "Star Wars", "episode": 5},
+    )
+    assert should_recommend_item(item_ep5, series_tracking_sw) is True
