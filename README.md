@@ -104,6 +104,12 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines, including:
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) for a detailed development log tracking progress, decisions, and implementation steps.
 
+### AI Development Tools
+
+This project includes configuration for AI coding assistants:
+- **Claude Code**: `CLAUDE.md` (primary)
+- **Cursor**: `.cursorrules`
+
 ## Configuration
 
 Configuration files are located in `config/`. See `config/example.yaml` for available options.

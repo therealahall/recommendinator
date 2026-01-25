@@ -229,20 +229,22 @@ personal-recommendations/
    - DEVELOPMENT.md (if tracking implementation changes)
    - Relevant docs/ files (if technical details change)
 
-2. **Update .cursorrules file**:
-   - Add new rules or patterns to this file
+2. **Update AI assistant configuration files**:
+   - **CLAUDE.md** (Claude Code - primary)
+   - **.cursorrules** (Cursor - maintained for compatibility)
+   - Add new rules or patterns to both files
    - Update existing rules if they change
    - Ensure consistency between documentation and rules
 
 3. **Documentation changes require documentation commits**:
    - Use `docs:` commit type for documentation updates
-   - Update both the docs AND .cursorrules in the same commit if related
+   - Update docs AND AI config files (CLAUDE.md, .cursorrules) in the same commit if related
    - Keep documentation and rules in sync
 
 **Examples:**
-- Adding a new data source → Update ARCHITECTURE.md, CONTRIBUTING.md, and .cursorrules
-- Changing testing requirements → Update CONTRIBUTING.md and .cursorrules
-- New architectural pattern → Update ARCHITECTURE.md, DEVELOPMENT.md, and .cursorrules
+- Adding a new data source → Update ARCHITECTURE.md, CONTRIBUTING.md, CLAUDE.md, and .cursorrules
+- Changing testing requirements → Update CONTRIBUTING.md, CLAUDE.md, and .cursorrules
+- New architectural pattern → Update ARCHITECTURE.md, DEVELOPMENT.md, CLAUDE.md, and .cursorrules
 
 ## Security: Protected Configuration Files
 
@@ -287,7 +289,7 @@ config = load_config(Path("config/config.yaml"))  # NEVER DO THIS
 - **Never commit without running tests and linters**
 - **Always mock external dependencies in tests**
 - **Follow existing code patterns and architecture**
-- **Update documentation AND .cursorrules when defining new paradigms**
+- **Update documentation AND AI config files (CLAUDE.md, .cursorrules) when defining new paradigms**
 - **Never use config/config.yaml in tests or commits (use example.yaml)**
 - **Use configuration files, not hardcoded values**
 - **Handle errors gracefully with clear messages**
@@ -301,7 +303,7 @@ Before submitting changes, ensure:
 - [ ] All tests pass (`pytest`)
 - [ ] New code has comprehensive tests
 - [ ] External dependencies are mocked in tests
-- [ ] Documentation is updated if needed (including .cursorrules for new paradigms)
+- [ ] Documentation is updated if needed (including CLAUDE.md and .cursorrules for new paradigms)
 - [ ] No references to `config/config.yaml` in tests or code
 - [ ] No hardcoded secrets or API keys
 - [ ] No hardcoded values (use config)

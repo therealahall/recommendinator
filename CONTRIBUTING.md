@@ -2,6 +2,15 @@
 
 This document outlines the development standards and practices for the Personal Recommendations project.
 
+## AI Development Tools
+
+This project supports multiple AI coding assistants:
+
+- **Claude Code** (primary): Configuration in `CLAUDE.md`
+- **Cursor**: Configuration in `.cursorrules`
+
+Both configuration files contain the same project rules and should be kept in sync. When updating development standards or patterns, update both files.
+
 ## Code Standards
 
 ### Python Version
@@ -250,14 +259,16 @@ for better type safety and query efficiency.
    - DEVELOPMENT.md (if tracking implementation changes)
    - Relevant docs/ files (if technical details change)
 
-2. **Update .cursorrules file**:
-   - Add new rules or patterns to `.cursorrules`
+2. **Update AI assistant configuration files**:
+   - **CLAUDE.md** (Claude Code - primary)
+   - **.cursorrules** (Cursor - maintained for compatibility)
+   - Add new rules or patterns to both files
    - Update existing rules if they change
    - Ensure consistency between documentation and rules
 
 3. **Documentation changes require documentation commits**:
    - Use `docs:` commit type for documentation updates
-   - Update both the docs AND `.cursorrules` in the same commit if related
+   - Update docs AND AI config files (CLAUDE.md, .cursorrules) in the same commit if related
    - Keep documentation and rules in sync
 
 ## Security: Protected Configuration Files
@@ -297,7 +308,7 @@ config = load_config(Path("config/config.yaml"))  # NEVER DO THIS
 - [ ] Code follows style guidelines
 - [ ] All tests pass
 - [ ] New code has tests
-- [ ] Documentation is updated (including .cursorrules for new paradigms)
+- [ ] Documentation is updated (including CLAUDE.md and .cursorrules for new paradigms)
 - [ ] No references to `config/config.yaml` in tests or code
 - [ ] No hardcoded secrets or API keys
 - [ ] No hardcoded values
