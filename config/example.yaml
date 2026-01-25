@@ -1,7 +1,21 @@
 # Example configuration file
 # Copy this to config.yaml and modify as needed
 
-# Ollama configuration
+# Feature flags - control optional functionality
+features:
+  # Master toggle for all AI features
+  # When false, the system uses only content-based and rule-based scoring
+  ai_enabled: false
+
+  # Vector embeddings for semantic similarity (requires ai_enabled)
+  # Uses ChromaDB to find semantically similar content
+  embeddings_enabled: false
+
+  # LLM-powered recommendation reasoning (requires ai_enabled)
+  # Uses Ollama to generate natural language explanations
+  llm_reasoning_enabled: false
+
+# Ollama configuration (only used if features.ai_enabled is true)
 ollama:
   base_url: "http://localhost:11434"
   model: "mistral:7b"  # Model for recommendations (text generation)

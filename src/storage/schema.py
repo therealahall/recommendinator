@@ -1,64 +1,9 @@
 """Database schema definitions and migrations."""
 
+import json
 import sqlite3
 
-
-SCHEMA_VERSION = 2
-
-
-def create_schema(conn: sqlite3.Connection) -> None:
-    """Create the database schema (legacy v1, kept for migration purposes).
-
-    Args:
-        conn: SQLite database connection
-    """
-    cursor = conn.cursor()
-
-    # Content items table (v1 schema)
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS content_items (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            external_id TEXT UNIQUE,
-            title TEXT NOT NULL,
-            author TEXT,
-            content_type TEXT NOT NULL,
-            status TEXT NOT NULL,
-            rating INTEGER CHECK (rating >= 1 AND rating <= 5),
-            review TEXT,
-            date_completed DATE,
-            metadata TEXT,  -- JSON string
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(external_id, content_type)
-        )
-        """
-    )
-
-    # Create indexes for common queries
-    cursor.execute(
-        "CREATE INDEX IF NOT EXISTS idx_content_type ON content_items(content_type)"
-    )
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_status ON content_items(status)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_rating ON content_items(rating)")
-    cursor.execute(
-        "CREATE INDEX IF NOT EXISTS idx_date_completed ON content_items(date_completed)"
-    )
-
-    # Schema version tracking
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS schema_version (
-            version INTEGER PRIMARY KEY,
-            applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-        """
-    )
-
-    # Insert initial schema version
-    cursor.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (?)", (1,))
-
-    conn.commit()
+SCHEMA_VERSION = 1
 
 
 def get_schema_version(conn: sqlite3.Connection) -> int:
@@ -80,19 +25,49 @@ def get_schema_version(conn: sqlite3.Connection) -> int:
         return 0
 
 
-def create_schema_v2(conn: sqlite3.Connection) -> None:
-    """Create schema version 2 with type-specific detail tables.
+def create_schema(conn: sqlite3.Connection) -> None:
+    """Create the database schema.
+
+    Schema v1 includes:
+    - Users table for multi-user support
+    - Content items with user_id foreign key
+    - Type-specific detail tables (books, movies, TV shows, games)
 
     Args:
         conn: SQLite database connection
     """
     cursor = conn.cursor()
 
-    # Base content items table (removed author column)
+    # Enable foreign keys
+    cursor.execute("PRAGMA foreign_keys = ON")
+
+    # Users table
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            display_name TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            settings TEXT  -- JSON for per-user settings (AI enabled, weights, etc.)
+        )
+        """
+    )
+
+    # Create default user
+    cursor.execute(
+        """
+        INSERT OR IGNORE INTO users (id, username, display_name)
+        VALUES (1, 'default', 'Default User')
+        """
+    )
+
+    # Base content items table with user_id
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS content_items (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL DEFAULT 1 REFERENCES users(id) ON DELETE CASCADE,
             external_id TEXT,
             title TEXT NOT NULL,
             content_type TEXT NOT NULL,
@@ -100,9 +75,10 @@ def create_schema_v2(conn: sqlite3.Connection) -> None:
             rating INTEGER CHECK (rating >= 1 AND rating <= 5),
             review TEXT,
             date_completed DATE,
+            source TEXT,  -- Which plugin/source this came from (goodreads, steam, etc.)
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(external_id, content_type)
+            UNIQUE(user_id, external_id, content_type)
         )
         """
     )
@@ -118,7 +94,8 @@ def create_schema_v2(conn: sqlite3.Connection) -> None:
             isbn13 TEXT,
             publisher TEXT,
             year_published INTEGER,
-            metadata TEXT
+            genres TEXT,  -- JSON array of genres
+            metadata TEXT  -- JSON for additional fields
         )
         """
     )
@@ -129,9 +106,9 @@ def create_schema_v2(conn: sqlite3.Connection) -> None:
         CREATE TABLE IF NOT EXISTS movie_details (
             content_item_id INTEGER PRIMARY KEY REFERENCES content_items(id) ON DELETE CASCADE,
             director TEXT,
-            runtime INTEGER,
+            runtime INTEGER,  -- minutes
             release_year INTEGER,
-            genre TEXT,
+            genres TEXT,  -- JSON array of genres
             studio TEXT,
             metadata TEXT
         )
@@ -148,6 +125,7 @@ def create_schema_v2(conn: sqlite3.Connection) -> None:
             episodes INTEGER,
             network TEXT,
             release_year INTEGER,
+            genres TEXT,  -- JSON array of genres
             metadata TEXT
         )
         """
@@ -160,8 +138,8 @@ def create_schema_v2(conn: sqlite3.Connection) -> None:
             content_item_id INTEGER PRIMARY KEY REFERENCES content_items(id) ON DELETE CASCADE,
             developer TEXT,
             publisher TEXT,
-            platform TEXT,
-            genre TEXT,
+            platforms TEXT,  -- JSON array of platforms
+            genres TEXT,  -- JSON array of genres
             release_year INTEGER,
             metadata TEXT
         )
@@ -170,12 +148,22 @@ def create_schema_v2(conn: sqlite3.Connection) -> None:
 
     # Create indexes for common queries
     cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_content_user ON content_items(user_id)"
+    )
+    cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_content_type ON content_items(content_type)"
     )
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_status ON content_items(status)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_rating ON content_items(rating)")
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_date_completed ON content_items(date_completed)"
+    )
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_source ON content_items(source)")
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_user_type ON content_items(user_id, content_type)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_user_status ON content_items(user_id, status)"
     )
 
     # Indexes for type-specific fields
@@ -205,153 +193,6 @@ def create_schema_v2(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-def migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
-    """Migrate from schema version 1 to version 2.
-
-    This migration:
-    1. Creates type-specific detail tables
-    2. Migrates author data from content_items to book_details
-    3. Migrates metadata JSON to appropriate detail tables
-    4. Removes author column from content_items (kept for compatibility initially)
-
-    Args:
-        conn: SQLite database connection
-    """
-    import json
-
-    cursor = conn.cursor()
-
-    # Create type-specific detail tables
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS book_details (
-            content_item_id INTEGER PRIMARY KEY REFERENCES content_items(id) ON DELETE CASCADE,
-            author TEXT,
-            pages INTEGER,
-            isbn TEXT,
-            isbn13 TEXT,
-            publisher TEXT,
-            year_published INTEGER,
-            metadata TEXT
-        )
-        """
-    )
-
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS movie_details (
-            content_item_id INTEGER PRIMARY KEY REFERENCES content_items(id) ON DELETE CASCADE,
-            director TEXT,
-            runtime INTEGER,
-            release_year INTEGER,
-            genre TEXT,
-            studio TEXT,
-            metadata TEXT
-        )
-        """
-    )
-
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS tv_show_details (
-            content_item_id INTEGER PRIMARY KEY REFERENCES content_items(id) ON DELETE CASCADE,
-            creators TEXT,
-            seasons INTEGER,
-            episodes INTEGER,
-            network TEXT,
-            release_year INTEGER,
-            metadata TEXT
-        )
-        """
-    )
-
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS video_game_details (
-            content_item_id INTEGER PRIMARY KEY REFERENCES content_items(id) ON DELETE CASCADE,
-            developer TEXT,
-            publisher TEXT,
-            platform TEXT,
-            genre TEXT,
-            release_year INTEGER,
-            metadata TEXT
-        )
-        """
-    )
-
-    # Create indexes for type-specific fields
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_book_author ON book_details(author)")
-    cursor.execute(
-        "CREATE INDEX IF NOT EXISTS idx_movie_director ON movie_details(director)"
-    )
-    cursor.execute(
-        "CREATE INDEX IF NOT EXISTS idx_game_developer ON video_game_details(developer)"
-    )
-
-    # Migrate existing data
-    cursor.execute("SELECT id, author, content_type, metadata FROM content_items")
-    rows = cursor.fetchall()
-
-    for row in rows:
-        content_id, author, content_type, metadata_json = row
-
-        if metadata_json:
-            try:
-                metadata = json.loads(metadata_json)
-            except (json.JSONDecodeError, TypeError):
-                metadata = {}
-        else:
-            metadata = {}
-
-        if content_type == "book":
-            # Migrate book data
-            cursor.execute(
-                """
-                INSERT OR REPLACE INTO book_details
-                (content_item_id, author, pages, isbn, isbn13, publisher, year_published, metadata)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    content_id,
-                    author,
-                    int(metadata.get("pages")) if metadata.get("pages") else None,
-                    metadata.get("isbn"),
-                    metadata.get("isbn13"),
-                    metadata.get("publisher"),
-                    (
-                        int(metadata.get("year_published"))
-                        if metadata.get("year_published")
-                        else None
-                    ),
-                    (
-                        json.dumps(
-                            {
-                                k: v
-                                for k, v in metadata.items()
-                                if k
-                                not in [
-                                    "pages",
-                                    "isbn",
-                                    "isbn13",
-                                    "publisher",
-                                    "year_published",
-                                ]
-                            }
-                        )
-                        if metadata
-                        else None
-                    ),
-                ),
-            )
-        # For other content types, we'll store remaining metadata in their detail tables
-        # when we have data for them
-
-    # Update schema version
-    cursor.execute("INSERT OR REPLACE INTO schema_version (version) VALUES (?)", (2,))
-
-    conn.commit()
-
-
 def migrate_schema(
     conn: sqlite3.Connection, target_version: int = SCHEMA_VERSION
 ) -> None:
@@ -359,20 +200,154 @@ def migrate_schema(
 
     Args:
         conn: SQLite database connection
-        target_version: Target schema version
+        target_version: Target schema version (default: current SCHEMA_VERSION)
     """
     current_version = get_schema_version(conn)
 
     if current_version == 0:
-        # Initial schema creation - use v2 schema
-        create_schema_v2(conn)
+        # Fresh database - create schema
+        create_schema(conn)
         return
 
-    if current_version == 1 and target_version >= 2:
-        # Migrate from v1 to v2
-        migrate_v1_to_v2(conn)
-        current_version = 2
+    # Future migrations would go here:
+    # if current_version == 1 and target_version >= 2:
+    #     migrate_v1_to_v2(conn)
+    #     current_version = 2
 
-    if current_version < target_version:
-        # Future migrations would go here
-        pass
+
+# User management functions
+
+
+def get_user_by_id(conn: sqlite3.Connection, user_id: int) -> dict | None:
+    """Get a user by ID.
+
+    Args:
+        conn: SQLite database connection
+        user_id: User ID
+
+    Returns:
+        User dict or None if not found
+    """
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT id, username, display_name, created_at, settings FROM users WHERE id = ?",
+        (user_id,),
+    )
+    row = cursor.fetchone()
+    if row:
+        settings = None
+        if row[4]:
+            try:
+                settings = json.loads(row[4])
+            except (json.JSONDecodeError, TypeError):
+                settings = {}
+        return {
+            "id": row[0],
+            "username": row[1],
+            "display_name": row[2],
+            "created_at": row[3],
+            "settings": settings,
+        }
+    return None
+
+
+def get_user_by_username(conn: sqlite3.Connection, username: str) -> dict | None:
+    """Get a user by username.
+
+    Args:
+        conn: SQLite database connection
+        username: Username
+
+    Returns:
+        User dict or None if not found
+    """
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT id, username, display_name, created_at, settings FROM users WHERE username = ?",
+        (username,),
+    )
+    row = cursor.fetchone()
+    if row:
+        settings = None
+        if row[4]:
+            try:
+                settings = json.loads(row[4])
+            except (json.JSONDecodeError, TypeError):
+                settings = {}
+        return {
+            "id": row[0],
+            "username": row[1],
+            "display_name": row[2],
+            "created_at": row[3],
+            "settings": settings,
+        }
+    return None
+
+
+def create_user(
+    conn: sqlite3.Connection,
+    username: str,
+    display_name: str | None = None,
+    settings: dict | None = None,
+) -> int:
+    """Create a new user.
+
+    Args:
+        conn: SQLite database connection
+        username: Unique username
+        display_name: Optional display name
+        settings: Optional settings dict
+
+    Returns:
+        New user ID
+    """
+    cursor = conn.cursor()
+    settings_json = json.dumps(settings) if settings else None
+    cursor.execute(
+        "INSERT INTO users (username, display_name, settings) VALUES (?, ?, ?)",
+        (username, display_name, settings_json),
+    )
+    conn.commit()
+    return cursor.lastrowid  # type: ignore
+
+
+def update_user_settings(
+    conn: sqlite3.Connection, user_id: int, settings: dict
+) -> None:
+    """Update user settings.
+
+    Args:
+        conn: SQLite database connection
+        user_id: User ID
+        settings: Settings dict to merge with existing
+    """
+    cursor = conn.cursor()
+
+    # Get existing settings
+    cursor.execute("SELECT settings FROM users WHERE id = ?", (user_id,))
+    row = cursor.fetchone()
+    if row and row[0]:
+        try:
+            existing = json.loads(row[0])
+        except (json.JSONDecodeError, TypeError):
+            existing = {}
+    else:
+        existing = {}
+
+    # Merge settings
+    existing.update(settings)
+
+    cursor.execute(
+        "UPDATE users SET settings = ? WHERE id = ?",
+        (json.dumps(existing), user_id),
+    )
+    conn.commit()
+
+
+def get_default_user_id() -> int:
+    """Get the default user ID.
+
+    Returns:
+        Default user ID (always 1)
+    """
+    return 1
