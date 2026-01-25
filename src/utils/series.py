@@ -1,82 +1,239 @@
-"""Series detection and parsing utilities for all content types."""
+"""Series detection and parsing utilities for all content types.
+
+Supports series detection for:
+- Books: Book 1, 2, 3, etc. (e.g., "The Witcher, Book 1")
+- TV Shows: Season 1, 2, 3, etc. (e.g., "The Expanse, Season 1")
+- Movies: Part 1, 2, 3, etc. or Episode N (e.g., "Lord of the Rings, Part 1")
+- Video Games: Part 1, 2, 3, etc. (e.g., "Mass Effect, #1")
+"""
 
 import re
-from typing import Optional, Tuple, Dict, Set, List
 from collections import defaultdict
 
-from src.models.content import ContentItem
+from src.models.content import ContentItem, ContentType
 
 
-def extract_series_info(title: str) -> Optional[Tuple[str, int]]:
-    """Extract series name and item number from title.
+def extract_series_info(
+    title: str,
+    metadata: dict | None = None,
+    content_type: ContentType | None = None,
+) -> tuple[str, int] | None:
+    """Extract series name and item number from title or metadata.
 
     Works for all content types (books, games, TV shows, movies, etc.).
 
     Handles patterns like:
-    - "Title (Series Name, #1)"
-    - "Title (Series Name #1)"
-    - "Title (Series Name, Book 1)"
-    - "Title (Series Name 1)"
+    - Books: "Title (Series Name, #1)", "Title (Series Name, Book 1)"
+    - TV Shows: "Title (Series Name, Season 1)", "Title (Series Name, S1)"
+    - Movies: "Title (Series Name, Part 1)", "Title (Series Name, Episode 1)"
+    - Games: "Title (Series Name, #1)", "Title (Series Name, Part 1)"
+
+    Also checks metadata for series information if title parsing fails.
 
     Args:
         title: Content title
+        metadata: Optional metadata dictionary that may contain series info
+        content_type: Optional content type to help with pattern matching
 
     Returns:
         Tuple of (series_name, item_number) if found, None otherwise
     """
-    # Pattern 1: (Series Name, #N) or (Series Name #N)
+    # First try to extract from metadata if available
+    if metadata:
+        series_info = _extract_from_metadata(metadata, content_type)
+        if series_info:
+            return series_info
+
+    # Pattern 1: (Series Name, #N) or (Series Name #N) - works for all types
     pattern1 = r"\(([^,]+?)(?:,\s*)?#\s*(\d+)\)"
     match = re.search(pattern1, title)
     if match:
         series_name = match.group(1).strip()
-        book_num = int(match.group(2))
-        return (series_name, book_num)
+        item_num = int(match.group(2))
+        if 1 <= item_num <= 1000:  # Reasonable range for any content type
+            return (series_name, item_num)
 
-    # Pattern 2: (Series Name, Book N)
+    # Pattern 2: (Series Name, Book N) - books
     pattern2 = r"\(([^,]+?),\s*Book\s+(\d+)\)"
     match = re.search(pattern2, title, re.IGNORECASE)
     if match:
         series_name = match.group(1).strip()
-        book_num = int(match.group(2))
-        return (series_name, book_num)
+        item_num = int(match.group(2))
+        if 1 <= item_num <= 1000:
+            return (series_name, item_num)
 
-    # Pattern 3: (Series Name N) - less common
-    pattern3 = r"\(([^,]+?)\s+(\d+)\)"
-    match = re.search(pattern3, title)
+    # Pattern 3: (Series Name, Season N) or (Series Name, S N) - TV shows
+    pattern3 = r"\(([^,]+?),\s*Season\s+(\d+)\)"
+    match = re.search(pattern3, title, re.IGNORECASE)
     if match:
-        # Check if the number is at the end and looks like a book number
         series_name = match.group(1).strip()
-        book_num = int(match.group(2))
-        # Only accept if it's a reasonable book number (1-100)
-        if 1 <= book_num <= 100:
-            return (series_name, book_num)
+        item_num = int(match.group(2))
+        if 1 <= item_num <= 100:  # Reasonable for seasons
+            return (series_name, item_num)
+
+    # Pattern 4: (Series Name, S1), (Series Name, S2), etc. - TV shows
+    # shorthand
+    pattern4 = r"\(([^,]+?),\s*S(\d+)\)"
+    match = re.search(pattern4, title, re.IGNORECASE)
+    if match:
+        series_name = match.group(1).strip()
+        item_num = int(match.group(2))
+        if 1 <= item_num <= 100:
+            return (series_name, item_num)
+
+    # Pattern 5: (Series Name, Part N) - movies, games, or books
+    pattern5 = r"\(([^,]+?),\s*Part\s+(\d+)\)"
+    match = re.search(pattern5, title, re.IGNORECASE)
+    if match:
+        series_name = match.group(1).strip()
+        item_num = int(match.group(2))
+        if 1 <= item_num <= 100:
+            return (series_name, item_num)
+
+    # Pattern 6: (Series Name, Episode N) - movies or TV shows
+    pattern6 = r"\(([^,]+?),\s*Episode\s+(\d+)\)"
+    match = re.search(pattern6, title, re.IGNORECASE)
+    if match:
+        series_name = match.group(1).strip()
+        item_num = int(match.group(2))
+        if 1 <= item_num <= 100:
+            return (series_name, item_num)
+
+    # Pattern 7: (Series Name N) - generic fallback
+    pattern7 = r"\(([^,]+?)\s+(\d+)\)"
+    match = re.search(pattern7, title)
+    if match:
+        series_name = match.group(1).strip()
+        item_num = int(match.group(2))
+        # Only accept if it's a reasonable number (1-100)
+        if 1 <= item_num <= 100:
+            return (series_name, item_num)
 
     return None
 
 
-def get_series_name(title: str) -> Optional[str]:
-    """Get series name from title if it's part of a series.
+def _extract_from_metadata(
+    metadata: dict, content_type: ContentType | None = None
+) -> tuple[str, int] | None:
+    """Extract series information from metadata.
+
+    Checks common metadata fields for series information:
+    - series_name, series, series_title
+    - series_number, series_num, season, episode, part
 
     Args:
-        title: Content title
+        metadata: Metadata dictionary
+        content_type: Optional content type to help with field selection
+
+    Returns:
+        Tuple of (series_name, item_number) if found, None otherwise
+    """
+    # Try to find series name
+    series_name = None
+    for key in ["series_name", "series", "series_title", "franchise"]:
+        if key in metadata and metadata[key]:
+            series_name = str(metadata[key]).strip()
+            break
+
+    if not series_name:
+        return None
+
+    # Try to find item number based on content type
+    item_num = None
+
+    if content_type == ContentType.TV_SHOW:
+        # For TV shows, look for season number
+        for key in ["season", "season_number", "season_num"]:
+            if key in metadata and metadata[key]:
+                try:
+                    item_num = int(metadata[key])
+                    break
+                except (ValueError, TypeError):
+                    continue
+    elif content_type == ContentType.MOVIE:
+        # For movies, look for part/episode number
+        for key in [
+            "part",
+            "part_number",
+            "episode",
+            "episode_number",
+            "movie_number",
+        ]:
+            if key in metadata and metadata[key]:
+                try:
+                    item_num = int(metadata[key])
+                    break
+                except (ValueError, TypeError):
+                    continue
+    else:
+        # For books and games, look for series number
+        for key in [
+            "series_number",
+            "series_num",
+            "book_number",
+            "book_num",
+            "part",
+            "part_number",
+        ]:
+            if key in metadata and metadata[key]:
+                try:
+                    item_num = int(metadata[key])
+                    break
+                except (ValueError, TypeError):
+                    continue
+
+    if series_name and item_num and 1 <= item_num <= 1000:
+        return (series_name, item_num)
+
+    return None
+
+
+def get_series_name(
+    item: ContentItem | None = None, title: str | None = None
+) -> str | None:
+    """Get series name from ContentItem or title (checks title and metadata).
+
+    Args:
+        item: Optional ContentItem to extract series name from
+        title: Optional title string (for backward compatibility)
 
     Returns:
         Series name if found, None otherwise
     """
-    series_info = extract_series_info(title)
+    if item:
+        series_info = extract_series_info(item.title, item.metadata, item.content_type)
+    elif title:
+        series_info = extract_series_info(title)
+    else:
+        return None
+
     return series_info[0] if series_info else None
 
 
-def get_series_item_number(title: str) -> Optional[int]:
-    """Get item number in series from title.
+def get_series_item_number(
+    item: ContentItem | str | None = None, title: str | None = None
+) -> int | None:
+    """Get item number in series from ContentItem or title.
 
     Args:
-        title: Content title
+        item: Optional ContentItem or string (for backward compatibility)
+        title: Optional title string (for backward compatibility)
 
     Returns:
         Item number if found, None otherwise
     """
-    series_info = extract_series_info(title)
+    # Handle backward compatibility: if first arg is a string, treat as title
+    if isinstance(item, str):
+        title = item
+        item = None
+
+    if item:
+        series_info = extract_series_info(item.title, item.metadata, item.content_type)
+    elif title:
+        series_info = extract_series_info(title)
+    else:
+        return None
+
     return series_info[1] if series_info else None
 
 
@@ -84,10 +241,12 @@ def get_series_item_number(title: str) -> Optional[int]:
 get_series_book_number = get_series_item_number
 
 
-def build_series_tracking(consumed_items: list[ContentItem]) -> Dict[str, Set[int]]:
+def build_series_tracking(
+    consumed_items: list[ContentItem],
+) -> dict[str, set[int]]:
     """Build a map of series names to item numbers the user has consumed.
 
-    Works for all content types.
+    Works for all content types (books, games, TV shows, movies).
 
     Args:
         consumed_items: List of consumed ContentItem objects
@@ -95,10 +254,10 @@ def build_series_tracking(consumed_items: list[ContentItem]) -> Dict[str, Set[in
     Returns:
         Dictionary mapping series names to sets of item numbers
     """
-    series_tracking: Dict[str, Set[int]] = defaultdict(set)
+    series_tracking: dict[str, set[int]] = defaultdict(set)
 
     for item in consumed_items:
-        series_info = extract_series_info(item.title)
+        series_info = extract_series_info(item.title, item.metadata, item.content_type)
         if series_info:
             series_name, item_num = series_info
             series_tracking[series_name].add(item_num)
@@ -106,7 +265,7 @@ def build_series_tracking(consumed_items: list[ContentItem]) -> Dict[str, Set[in
     return dict(series_tracking)
 
 
-def is_series_started(series_name: str, series_tracking: Dict[str, Set[int]]) -> bool:
+def is_series_started(series_name: str, series_tracking: dict[str, set[int]]) -> bool:
     """Check if user has started a series.
 
     Args:
@@ -119,16 +278,32 @@ def is_series_started(series_name: str, series_tracking: Dict[str, Set[int]]) ->
     return series_name in series_tracking and len(series_tracking[series_name]) > 0
 
 
-def is_first_item_in_series(title: str) -> bool:
+def is_first_item_in_series(
+    item: ContentItem | str | None = None, title: str | None = None
+) -> bool:
     """Check if this is the first item in a series.
 
+    Works for all content types (Book 1, Season 1, Part 1, etc.).
+
     Args:
-        title: Content title
+        item: Optional ContentItem or string (for backward compatibility)
+        title: Optional title string (for backward compatibility)
 
     Returns:
         True if this is item #1 in a series
     """
-    series_info = extract_series_info(title)
+    # Handle backward compatibility: if first arg is a string, treat as title
+    if isinstance(item, str):
+        title = item
+        item = None
+
+    if item:
+        series_info = extract_series_info(item.title, item.metadata, item.content_type)
+    elif title:
+        series_info = extract_series_info(title)
+    else:
+        return False
+
     return series_info is not None and series_info[1] == 1
 
 
@@ -138,29 +313,37 @@ is_first_book_in_series = is_first_item_in_series
 
 def should_recommend_item(
     item: ContentItem,
-    series_tracking: Dict[str, Set[int]],
-    unconsumed_items: Optional[List[ContentItem]] = None,
+    series_tracking: dict[str, set[int]],
+    unconsumed_items: list[ContentItem] | None = None,
 ) -> bool:
     """Determine if an item should be recommended based on series rules.
 
-    Works for all content types. Rules:
+    Works for all content types (books, games, TV shows, movies). Rules:
     - If not in a series: recommend
     - If first item (#1) in unstarted series: recommend
     - If user has completed all previous items: recommend
-    - If previous items exist in unconsumed data but aren't completed: don't recommend
-    - If previous items don't exist in unconsumed data: recommend (assume they don't exist)
+    - If previous items exist in unconsumed data but aren't completed:
+      don't recommend
+    - If previous items don't exist in unconsumed data: recommend
+      (assume they don't exist)
     - Special case: If user has consumed item #0 (prequel), recommend item #1
+
+    Examples:
+    - Books: If you've read Book 1 and 2, Book 3 is recommended
+    - TV Shows: If you've watched Season 1, Season 2 is recommended
+    - Movies: If you've watched Part 1, Part 2 is recommended
+    - Games: If you've played Game 1, Game 2 is recommended
 
     Args:
         item: ContentItem to check
         series_tracking: Series tracking dictionary (consumed items)
-        unconsumed_items: Optional list of unconsumed items to check if previous
-                         items exist in the data
+        unconsumed_items: Optional list of unconsumed items to check if
+                         previous items exist in the data
 
     Returns:
         True if item should be recommended
     """
-    series_info = extract_series_info(item.title)
+    series_info = extract_series_info(item.title, item.metadata, item.content_type)
     if not series_info:
         # Not in a series, always recommend
         return True
@@ -169,12 +352,17 @@ def should_recommend_item(
     consumed_items = series_tracking.get(series_name, set())
 
     # Build set of unconsumed item numbers for this series
-    unconsumed_item_nums: Set[int] = set()
+    unconsumed_item_nums: set[int] = set()
     if unconsumed_items:
         for unconsumed in unconsumed_items:
-            unconsumed_series_info = extract_series_info(unconsumed.title)
+            unconsumed_series_info = extract_series_info(
+                unconsumed.title, unconsumed.metadata, unconsumed.content_type
+            )
             if unconsumed_series_info:
-                unconsumed_series_name, unconsumed_item_num = unconsumed_series_info
+                (
+                    unconsumed_series_name,
+                    unconsumed_item_num,
+                ) = unconsumed_series_info
                 if unconsumed_series_name == series_name:
                     unconsumed_item_nums.add(unconsumed_item_num)
 
@@ -183,15 +371,17 @@ def should_recommend_item(
         # Only recommend if it's the first item (#1) or prequel (#0)
         if item_num == 1 or item_num == 0:
             return True
-        # If it's a later item, check if previous items exist in unconsumed data
-        # If unconsumed_items is None, be conservative and don't recommend
-        # (we can't verify if previous items exist)
+        # If it's a later item, check if previous items exist in
+        # unconsumed data. If unconsumed_items is None, be conservative
+        # and don't recommend (we can't verify if previous items exist)
         if unconsumed_items is None:
             return False
-        # If previous items exist in unconsumed data but aren't completed, don't recommend
+        # If previous items exist in unconsumed data but aren't
+        # completed, don't recommend
         for prev_num in range(1, item_num):
             if prev_num in unconsumed_item_nums:
-                # Previous item exists in unconsumed data but isn't completed
+                # Previous item exists in unconsumed data but isn't
+                # completed
                 return False
         # Previous items don't exist in unconsumed data, so recommend
         return True
@@ -208,21 +398,23 @@ def should_recommend_item(
         # Need to check all items from 1 to (item_num - 1)
         for prev_num in range(1, item_num):
             if prev_num not in consumed_items:
-                # Previous item not consumed - check if it exists in unconsumed data
+                # Previous item not consumed - check if it exists in
+                # unconsumed data
                 if prev_num in unconsumed_item_nums:
-                    # Previous item exists but isn't completed - don't recommend
+                    # Previous item exists but isn't completed - don't
+                    # recommend
                     return False
                 # Previous item doesn't exist in unconsumed data - assume OK
                 # (might be a gap in the data or user can start anywhere)
 
-        # User has completed all previous items (or they don't exist in data)
-        # Recommend if it's the next item
+        # User has completed all previous items (or they don't exist in
+        # data). Recommend if it's the next item
         return item_num == max_consumed + 1
 
 
 # Backward compatibility alias
 def should_recommend_book(
-    item: ContentItem, series_tracking: Dict[str, Set[int]]
+    item: ContentItem, series_tracking: dict[str, set[int]]
 ) -> bool:
     """Determine if a book should be recommended based on series rules.
 
