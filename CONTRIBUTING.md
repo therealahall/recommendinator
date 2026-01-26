@@ -17,6 +17,34 @@ Both configuration files contain the same project rules and should be kept in sy
 - Minimum Python version: 3.11+
 - Current development version: 3.14.2
 
+### Naming Conventions
+
+**Do not use abbreviated variable names.** Use clear, descriptive names that explain what the variable contains.
+
+```python
+# ✅ CORRECT: Clear, descriptive names
+for item, item_embedding in zip(items, embeddings, strict=True):
+    storage_manager.save_content_item(item, embedding=item_embedding)
+
+content_type_string = content_type.value if hasattr(content_type, "value") else str(content_type)
+
+# ❌ WRONG: Abbreviated names
+for i, emb in zip(items, embeddings):
+    storage_manager.save_content_item(i, embedding=emb)
+
+ct_str = content_type.value if hasattr(content_type, "value") else str(content_type)
+```
+
+Common abbreviations to avoid:
+- `i`, `j`, `k` → use `index`, `item`, or the actual entity name
+- `e`, `ex` → use `error`, `exception`
+- `emb` → use `embedding`, `item_embedding`
+- `ct` → use `content_type`
+- `cfg` → use `config`, `configuration`
+- Single letters in general → use full words
+
+Exception: Standard conventions like `_` for unused variables or `cls` for class methods are acceptable.
+
 ### Code Formatting
 
 We use **Black** for code formatting with default settings:

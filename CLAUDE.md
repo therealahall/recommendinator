@@ -47,6 +47,22 @@ ruff check src/ tests/        # Linting
 
 Or use the Makefile: `make check`
 
+### Naming Conventions
+
+**Do not use abbreviated variable names.** Use clear, descriptive names:
+
+```python
+# CORRECT
+for item, item_embedding in zip(items, embeddings, strict=True):
+    storage_manager.save_content_item(item, embedding=item_embedding)
+
+# WRONG - abbreviated names
+for i, emb in zip(items, embeddings):
+    storage_manager.save_content_item(i, embedding=emb)
+```
+
+Avoid: `i`, `j`, `e`, `emb`, `ct`, `cfg`, single letters. Use full words.
+
 ### Testing Requirements
 
 - **80%+ coverage target**
