@@ -119,11 +119,11 @@ A personal recommendation system that:
 **Goal:** Clean slate with proper project structure for v1
 
 **Tasks:**
-- [ ] Reset databases (delete data/*.db, data/chroma_db)
-- [ ] Update schema to v3 with `users` table and `user_id` foreign keys
-- [ ] Create configuration for AI on/off toggle
-- [ ] Update CLAUDE.md and documentation with v1 architecture
-- [ ] Set up feature flags system (simple config-based)
+- [x] Reset databases (delete data/*.db, data/chroma_db)
+- [x] Update schema to v1 with `users` table and `user_id` foreign keys
+- [x] Create configuration for AI on/off toggle
+- [x] Update documentation with v1 architecture (V1_ROADMAP.md)
+- [x] Set up feature flags system (simple config-based)
 
 **Schema Changes:**
 ```sql
@@ -379,7 +379,7 @@ GET  /api/recommendations/{content_type}?include_reasoning=true
 
 | Phase | Status | Started | Completed |
 |-------|--------|---------|-----------|
-| Phase 0: Foundation Reset | Not Started | - | - |
+| Phase 0: Foundation Reset | Complete | 2026-01-25 | 2026-01-25 |
 | Phase 1: Core Data Layer | Not Started | - | - |
 | Phase 2: Ingestion Framework | Not Started | - | - |
 | Phase 3: Non-AI Engine | Not Started | - | - |
