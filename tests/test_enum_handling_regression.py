@@ -8,12 +8,10 @@ Bug: 'str' object has no attribute 'value'
 Fixed in: src/llm/prompts.py, src/storage/manager.py
 """
 
-import pytest
 from pathlib import Path
-from unittest.mock import Mock, patch
 
-from src.models.content import ContentItem, ContentType, ConsumptionStatus
 from src.llm.prompts import build_content_description, build_recommendation_prompt
+from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.manager import StorageManager
 
 
@@ -134,6 +132,7 @@ def test_storage_manager_search_similar_with_string_enum(tmp_path: Path):
     storage_manager = StorageManager(
         sqlite_path=tmp_path / "test.db",
         vector_db_path=tmp_path / "vector_db",
+        ai_enabled=True,
     )
 
     # Create and save items - these will have string enums after saving/retrieving
@@ -153,8 +152,8 @@ def test_storage_manager_search_similar_with_string_enum(tmp_path: Path):
         [0.9, 0.8, 0.7],
     ]
 
-    for item, embedding in zip(items, embeddings):
-        storage_manager.save_content_item(item, embedding)
+    for item, item_embedding in zip(items, embeddings, strict=True):
+        storage_manager.save_content_item(item, embedding=item_embedding)
 
     # Retrieve items - these will have string enums due to use_enum_values=True
     retrieved_items = storage_manager.get_unconsumed_items()
@@ -208,8 +207,8 @@ def test_storage_manager_save_with_string_enum(tmp_path: Path):
     assert isinstance(item.status, str)
 
     # Save with embedding - should not raise AttributeError
-    embedding = [0.1, 0.2, 0.3, 0.4, 0.5]
-    db_id = storage_manager.save_content_item(item, embedding)
+    item_embedding = [0.1, 0.2, 0.3, 0.4, 0.5]
+    db_id = storage_manager.save_content_item(item, embedding=item_embedding)
     assert db_id > 0
 
     # Retrieve - should still work

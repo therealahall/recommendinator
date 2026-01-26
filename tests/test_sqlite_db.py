@@ -1,12 +1,12 @@
 """Tests for SQLite database manager."""
 
-from pathlib import Path
 from datetime import date
+from pathlib import Path
 
 import pytest
 
+from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.sqlite_db import SQLiteDB
-from src.models.content import ContentItem, ContentType, ConsumptionStatus
 
 
 @pytest.fixture

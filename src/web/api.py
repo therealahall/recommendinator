@@ -2,15 +2,14 @@
 
 import logging
 from pathlib import Path
-from typing import Optional, List, Dict, Any
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from src.models.content import ContentType, ConsumptionStatus
-from src.web.state import get_engine, get_storage, get_embedding_gen, get_config
 from src.ingestion.sources.goodreads import parse_goodreads_csv
-from src.ingestion.sources.steam import parse_steam_games, SteamAPIError
+from src.ingestion.sources.steam import SteamAPIError, parse_steam_games
+from src.models.content import ConsumptionStatus, ContentType
+from src.web.state import get_config, get_embedding_gen, get_engine, get_storage
 
 logger = logging.getLogger(__name__)
 
@@ -25,9 +24,9 @@ class CompletionRequest(BaseModel):
         ..., description="Content type (book, movie, tv_show, video_game)"
     )
     title: str = Field(..., description="Title of the content")
-    author: Optional[str] = Field(None, description="Author (for books)")
-    rating: Optional[int] = Field(None, ge=1, le=5, description="Rating (1-5)")
-    review: Optional[str] = Field(None, description="Review text")
+    author: str | None = Field(None, description="Author (for books)")
+    rating: int | None = Field(None, ge=1, le=5, description="Rating (1-5)")
+    review: str | None = Field(None, description="Review text")
 
 
 class UpdateRequest(BaseModel):
@@ -40,12 +39,12 @@ class RecommendationResponse(BaseModel):
     """Response model for recommendations."""
 
     title: str
-    author: Optional[str]
+    author: str | None
     score: float
     similarity_score: float
     preference_score: float
     reasoning: str
-    llm_reasoning: Optional[str] = None
+    llm_reasoning: str | None = None
 
 
 class StatusResponse(BaseModel):
@@ -53,10 +52,10 @@ class StatusResponse(BaseModel):
 
     status: str
     version: str
-    components: Dict[str, bool]
+    components: dict[str, bool]
 
 
-@router.get("/recommendations", response_model=List[RecommendationResponse])
+@router.get("/recommendations", response_model=list[RecommendationResponse])
 async def get_recommendations(
     type: str = Query(
         ..., description="Content type (book, movie, tv_show, video_game)"
@@ -119,7 +118,7 @@ async def get_recommendations(
 
     except Exception as e:
         logger.error(f"Error generating recommendations: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post("/complete")
@@ -179,7 +178,7 @@ async def mark_complete(request: CompletionRequest):
 
     except Exception as e:
         logger.error(f"Error marking content as completed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post("/update")
@@ -266,10 +265,10 @@ async def update_data(request: UpdateRequest):
                         except Exception as e:
                             logger.warning(f"Failed to process {item.title}: {e}")
                 except SteamAPIError as e:
-                    raise HTTPException(status_code=500, detail=f"Steam API error: {e}")
+                    raise HTTPException(status_code=500, detail=f"Steam API error: {e}") from e
                 except Exception as e:
                     logger.error(f"Error processing Steam data: {e}")
-                    raise HTTPException(status_code=500, detail=str(e))
+                    raise HTTPException(status_code=500, detail=str(e)) from e
 
         return {"message": f"Updated {count} items", "count": count}
 
@@ -277,7 +276,7 @@ async def update_data(request: UpdateRequest):
         raise
     except Exception as e:
         logger.error(f"Error updating data: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/status", response_model=StatusResponse)

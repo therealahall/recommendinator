@@ -1,10 +1,11 @@
 """Tests for web API endpoints."""
 
-import pytest
 from unittest.mock import Mock, patch
+
+import pytest
 from fastapi.testclient import TestClient
 
-from src.models.content import ContentItem, ContentType, ConsumptionStatus
+from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.web.app import create_app
 from src.web.state import app_state
 

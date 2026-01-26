@@ -3,28 +3,27 @@
 import logging
 import os
 from pathlib import Path
-from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from src.cli.config import (
-    load_config,
-    create_storage_manager,
     create_llm_components,
     create_recommendation_engine,
+    create_storage_manager,
+    load_config,
 )
 from src.web.state import app_state
 
 logger = logging.getLogger(__name__)
 
 # Module-level app instance for uvicorn import string support
-_app: Optional[FastAPI] = None
+_app: FastAPI | None = None
 
 
-def create_app(config_path: Optional[Path] = None) -> FastAPI:
+def create_app(config_path: Path | None = None) -> FastAPI:
     """Create and configure FastAPI application.
 
     Args:

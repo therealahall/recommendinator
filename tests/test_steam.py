@@ -1,17 +1,17 @@
 """Tests for Steam API integration."""
 
+from unittest.mock import Mock, patch
+
 import pytest
-from unittest.mock import Mock, patch, MagicMock
-from datetime import date
 
 from src.ingestion.sources.steam import (
-    get_steam_id_from_vanity_url,
-    get_owned_games,
-    get_game_details,
-    parse_steam_games,
     SteamAPIError,
+    get_game_details,
+    get_owned_games,
+    get_steam_id_from_vanity_url,
+    parse_steam_games,
 )
-from src.models.content import ContentType, ConsumptionStatus
+from src.models.content import ConsumptionStatus, ContentType
 
 
 class TestGetSteamIdFromVanityUrl:
@@ -180,7 +180,7 @@ class TestGetGameDetails:
         mock_get.return_value = mock_response
 
         app_ids = list(range(5))  # 5 games should trigger 5 calls
-        details = get_game_details(app_ids)
+        get_game_details(app_ids)
 
         # Should have made 5 calls (batch_size = 1)
         assert mock_get.call_count == 5

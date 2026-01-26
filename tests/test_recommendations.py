@@ -1,11 +1,12 @@
 """Tests for recommendation generation."""
 
-import pytest
 from unittest.mock import Mock, patch
 
-from src.models.content import ContentItem, ContentType, ConsumptionStatus
-from src.llm.recommendations import RecommendationGenerator
+import pytest
+
 from src.llm.client import OllamaClient
+from src.llm.recommendations import RecommendationGenerator
+from src.models.content import ConsumptionStatus, ContentItem, ContentType
 
 
 @pytest.fixture

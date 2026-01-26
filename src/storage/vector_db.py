@@ -1,10 +1,11 @@
 """ChromaDB vector database manager for embeddings."""
 
 from pathlib import Path
-from typing import List, Optional, Dict, Any
+from typing import Any
+
 import chromadb
-from chromadb.config import Settings
 import numpy as np
+from chromadb.config import Settings
 
 
 class VectorDB:
@@ -37,8 +38,8 @@ class VectorDB:
     def add_embedding(
         self,
         content_id: str,
-        embedding: List[float],
-        metadata: Optional[Dict[str, Any]] = None,
+        embedding: list[float],
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """Add or update an embedding for a content item.
 
@@ -88,7 +89,7 @@ class VectorDB:
                     metadatas=[doc_metadata],
                 )
 
-    def get_embedding(self, content_id: str) -> Optional[List[float]]:
+    def get_embedding(self, content_id: str) -> list[float] | None:
         """Get embedding for a content item.
 
         Args:
@@ -115,11 +116,11 @@ class VectorDB:
 
     def search_similar(
         self,
-        query_embedding: List[float],
+        query_embedding: list[float],
         n_results: int = 10,
-        content_type: Optional[str] = None,
-        exclude_ids: Optional[List[str]] = None,
-    ) -> List[Dict[str, Any]]:
+        content_type: str | None = None,
+        exclude_ids: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
         """Search for similar content using vector similarity.
 
         Args:
@@ -131,7 +132,7 @@ class VectorDB:
         Returns:
             List of similar content items with scores
         """
-        where_clause: Dict[str, Any] = {}
+        where_clause: dict[str, Any] = {}
         if content_type:
             where_clause["content_type"] = content_type
 

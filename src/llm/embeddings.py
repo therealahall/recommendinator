@@ -1,12 +1,10 @@
 """Embedding generation and management."""
 
 import logging
-from typing import List, Optional
-from pathlib import Path
 
-from src.models.content import ContentItem
 from src.llm.client import OllamaClient
 from src.llm.prompts import build_content_description
+from src.models.content import ContentItem
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +20,7 @@ class EmbeddingGenerator:
         """
         self.client = ollama_client
 
-    def generate_content_embedding(self, item: ContentItem) -> List[float]:
+    def generate_content_embedding(self, item: ContentItem) -> list[float]:
         """Generate embedding for a content item.
 
         Args:
@@ -37,7 +35,7 @@ class EmbeddingGenerator:
         description = build_content_description(item)
         return self.client.generate_embedding(description)
 
-    def generate_review_embedding(self, review_text: str) -> List[float]:
+    def generate_review_embedding(self, review_text: str) -> list[float]:
         """Generate embedding for a review text.
 
         Args:
@@ -55,8 +53,8 @@ class EmbeddingGenerator:
         return self.client.generate_embedding(review_text.strip())
 
     def generate_embeddings_batch(
-        self, items: List[ContentItem], batch_size: int = 10
-    ) -> List[List[float]]:
+        self, items: list[ContentItem], batch_size: int = 10
+    ) -> list[list[float]]:
         """Generate embeddings for multiple content items in batches.
 
         Args:

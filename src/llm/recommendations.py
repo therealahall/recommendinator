@@ -2,14 +2,14 @@
 
 import logging
 import re
-from typing import List, Dict, Any, Optional
+from typing import Any
 
-from src.models.content import ContentItem, ContentType
 from src.llm.client import OllamaClient
 from src.llm.prompts import (
     build_recommendation_prompt,
     build_recommendation_system_prompt,
 )
+from src.models.content import ContentItem, ContentType
 
 logger = logging.getLogger(__name__)
 
@@ -28,11 +28,11 @@ class RecommendationGenerator:
     def generate_recommendations(
         self,
         content_type: ContentType,
-        consumed_items: List[ContentItem],
-        unconsumed_items: List[ContentItem],
+        consumed_items: list[ContentItem],
+        unconsumed_items: list[ContentItem],
         count: int = 5,
-        model: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
+        model: str | None = None,
+    ) -> list[dict[str, Any]]:
         """Generate recommendations using LLM.
 
         Args:
@@ -81,8 +81,8 @@ class RecommendationGenerator:
             raise RuntimeError(f"Recommendation generation failed: {e}") from e
 
     def _parse_recommendations(
-        self, response: str, unconsumed_items: List[ContentItem]
-    ) -> List[Dict[str, Any]]:
+        self, response: str, unconsumed_items: list[ContentItem]
+    ) -> list[dict[str, Any]]:
         """Parse LLM response into structured recommendations.
 
         Args:

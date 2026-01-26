@@ -1,12 +1,12 @@
 """Tests for CLI commands."""
 
+from unittest.mock import Mock, patch
+
 import pytest
-from unittest.mock import Mock, patch, MagicMock
-from pathlib import Path
 from click.testing import CliRunner
 
 from src.cli.main import cli
-from src.models.content import ContentItem, ContentType, ConsumptionStatus
+from src.models.content import ConsumptionStatus, ContentItem, ContentType
 
 
 @pytest.fixture

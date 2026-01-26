@@ -1,12 +1,13 @@
 """Tests for recommendation engine cross-content-type recommendations."""
 
-import pytest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
-from src.models.content import ContentItem, ContentType, ConsumptionStatus
+import pytest
+
+from src.llm.embeddings import EmbeddingGenerator
+from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.recommendations.engine import RecommendationEngine
 from src.storage.manager import StorageManager
-from src.llm.embeddings import EmbeddingGenerator
 
 
 @pytest.fixture
@@ -107,9 +108,7 @@ def test_cross_content_type_preferences(engine, mock_storage, mock_embedding_gen
     # Mock vector DB
     mock_storage.vector_db.has_embedding = Mock(return_value=False)
 
-    recommendations = engine.generate_recommendations(
-        content_type=ContentType.VIDEO_GAME, count=1
-    )
+    engine.generate_recommendations(content_type=ContentType.VIDEO_GAME, count=1)
 
     # Should use preferences from all content types
     assert mock_storage.get_completed_items.call_count >= 1
@@ -171,9 +170,7 @@ def test_cross_content_type_similarity(engine, mock_storage, mock_embedding_gen)
     mock_storage.get_content_items = Mock(return_value=[unconsumed_tv])
     mock_storage.vector_db.has_embedding = Mock(return_value=False)
 
-    recommendations = engine.generate_recommendations(
-        content_type=ContentType.TV_SHOW, count=1
-    )
+    engine.generate_recommendations(content_type=ContentType.TV_SHOW, count=1)
 
     # Verify that similarity search was called (it uses all consumed items)
     assert mock_storage.search_similar.called
@@ -255,8 +252,9 @@ def test_reasoning_mentions_cross_content_type(
 
     if recommendations:
         reasoning = recommendations[0].get("reasoning", "")
-        # Reasoning should mention cross-content-type preferences
+        # Reasoning should mention cross-content-type source (e.g., "(book)" when recommending games)
         assert (
             "all content types" in reasoning.lower()
             or "preferences" in reasoning.lower()
+            or "(book)" in reasoning.lower()  # Cross-content reference
         )

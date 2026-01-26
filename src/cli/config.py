@@ -1,17 +1,18 @@
 """Configuration loading for CLI."""
 
-import yaml
 from pathlib import Path
-from typing import Dict, Any, Optional, Tuple
+from typing import Any
+
+import yaml
 
 from src.llm.client import OllamaClient
 from src.llm.embeddings import EmbeddingGenerator
 from src.llm.recommendations import RecommendationGenerator
-from src.storage.manager import StorageManager
 from src.recommendations.engine import RecommendationEngine
+from src.storage.manager import StorageManager
 
 
-def load_config(config_path: Optional[Path] = None) -> Dict[str, Any]:
+def load_config(config_path: Path | None = None) -> dict[str, Any]:
     """Load configuration from YAML file.
 
     Args:
@@ -37,13 +38,13 @@ def load_config(config_path: Optional[Path] = None) -> Dict[str, Any]:
                 "Copy config/example.yaml to config/config.yaml"
             )
 
-    with open(config_path, "r") as f:
+    with open(config_path) as f:
         config = yaml.safe_load(f)
 
     return config
 
 
-def create_storage_manager(config: Dict[str, Any]) -> StorageManager:
+def create_storage_manager(config: dict[str, Any]) -> StorageManager:
     """Create storage manager from config.
 
     Args:
@@ -63,8 +64,8 @@ def create_storage_manager(config: Dict[str, Any]) -> StorageManager:
 
 
 def create_llm_components(
-    config: Dict[str, Any],
-) -> Tuple[OllamaClient, EmbeddingGenerator, RecommendationGenerator]:
+    config: dict[str, Any],
+) -> tuple[OllamaClient, EmbeddingGenerator, RecommendationGenerator]:
     """Create LLM components from config.
 
     Args:
@@ -94,7 +95,7 @@ def create_recommendation_engine(
     storage_manager: StorageManager,
     embedding_generator: EmbeddingGenerator,
     recommendation_generator: RecommendationGenerator,
-    config: Dict[str, Any],
+    config: dict[str, Any],
 ) -> RecommendationEngine:
     """Create recommendation engine from components and config.
 

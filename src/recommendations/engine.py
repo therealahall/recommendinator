@@ -1,15 +1,15 @@
 """Main recommendation engine orchestrating all components."""
 
 import logging
-from typing import List, Dict, Any, Optional
+from typing import Any
 
-from src.models.content import ContentItem, ContentType
-from src.storage.manager import StorageManager
 from src.llm.embeddings import EmbeddingGenerator
 from src.llm.recommendations import RecommendationGenerator
+from src.models.content import ContentItem, ContentType
 from src.recommendations.preferences import PreferenceAnalyzer, UserPreferences
-from src.recommendations.similarity import SimilarityMatcher
 from src.recommendations.ranking import RecommendationRanker
+from src.recommendations.similarity import SimilarityMatcher
+from src.storage.manager import StorageManager
 from src.utils.series import build_series_tracking, should_recommend_item
 
 logger = logging.getLogger(__name__)
@@ -22,7 +22,7 @@ class RecommendationEngine:
         self,
         storage_manager: StorageManager,
         embedding_generator: EmbeddingGenerator,
-        recommendation_generator: Optional[RecommendationGenerator] = None,
+        recommendation_generator: RecommendationGenerator | None = None,
         min_rating: int = 4,
     ) -> None:
         """Initialize recommendation engine.
@@ -47,7 +47,7 @@ class RecommendationEngine:
         content_type: ContentType,
         count: int = 5,
         use_llm: bool = False,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Generate recommendations for a content type.
 
         Uses preferences from ALL consumed content types to provide
@@ -171,8 +171,8 @@ class RecommendationEngine:
 
         # Detect direct adaptations and find contributing reference items
         # This helps us provide better reasoning (e.g., "because you read LOTR books")
-        candidate_metadata: List[Dict[str, Any]] = []
-        adaptations_map: Dict[str, List[ContentItem]] = {}
+        candidate_metadata: list[dict[str, Any]] = []
+        adaptations_map: dict[str, list[ContentItem]] = {}
 
         for item, similarity_score in filtered_candidates:
             # Check for direct adaptations (same title/author across content types)
@@ -218,8 +218,8 @@ class RecommendationEngine:
                 (m for m in candidate_metadata if m["item"].id == item.id), None
             )
 
-            adaptations_list: List[ContentItem] = []
-            contributing_list: List[ContentItem] = []
+            adaptations_list: list[ContentItem] = []
+            contributing_list: list[ContentItem] = []
             if item_meta:
                 adaptations_list = item_meta.get("adaptations", []) or []
                 contributing_list = item_meta.get("contributing_items", []) or []
@@ -321,7 +321,7 @@ class RecommendationEngine:
 
     def _handle_cold_start(
         self, content_type: ContentType, count: int
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Handle cold start scenario (no consumed items across any content type).
 
         Args:
@@ -339,8 +339,8 @@ class RecommendationEngine:
         return []
 
     def _find_direct_adaptations(
-        self, item: ContentItem, consumed_items: List[ContentItem]
-    ) -> List[ContentItem]:
+        self, item: ContentItem, consumed_items: list[ContentItem]
+    ) -> list[ContentItem]:
         """Find direct adaptations of this item in consumed content.
 
         An adaptation is when the same title/author exists in a different content type.
@@ -428,9 +428,9 @@ class RecommendationEngine:
     def _find_contributing_reference_items(
         self,
         candidate: ContentItem,
-        reference_items: List[ContentItem],
-        all_consumed_items: List[ContentItem],
-    ) -> List[ContentItem]:
+        reference_items: list[ContentItem],
+        all_consumed_items: list[ContentItem],
+    ) -> list[ContentItem]:
         """Find which reference items contributed to this recommendation.
 
         Uses semantic similarity to find the top reference items that are most
@@ -486,9 +486,9 @@ class RecommendationEngine:
         self,
         item: ContentItem,
         preferences: UserPreferences,
-        metadata: Dict[str, Any],
-        adaptations: List[ContentItem],
-        contributing_items: List[ContentItem],
+        metadata: dict[str, Any],
+        adaptations: list[ContentItem],
+        contributing_items: list[ContentItem],
     ) -> str:
         """Generate reasoning for a recommendation.
 
@@ -535,7 +535,12 @@ class RecommendationEngine:
                 # Format the contributing items
                 item_refs = []
                 for ref in cross_type_items[:2]:  # Limit to top 2
-                    ref_type = ref.content_type.value.lower()
+                    # Handle both enum and string (Pydantic use_enum_values converts to string)
+                    ref_type = (
+                        ref.content_type.value.lower()
+                        if hasattr(ref.content_type, "value")
+                        else str(ref.content_type).lower()
+                    )
                     if ref.author:
                         item_refs.append(f"'{ref.title}' by {ref.author} ({ref_type})")
                     else:

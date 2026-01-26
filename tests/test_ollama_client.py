@@ -1,7 +1,8 @@
 """Tests for Ollama client."""
 
-import pytest
 from unittest.mock import Mock, patch
+
+import pytest
 
 from src.llm.client import OllamaClient
 
@@ -48,7 +49,7 @@ def test_generate_embedding_custom_model(mock_ollama_client):
     mock_ollama_client.embeddings.return_value = {"embedding": [0.1, 0.2, 0.3]}
 
     client = OllamaClient()
-    embedding = client.generate_embedding("test", model="custom-model")
+    client.generate_embedding("test", model="custom-model")
 
     mock_ollama_client.embeddings.assert_called_once_with(
         model="custom-model", prompt="test"

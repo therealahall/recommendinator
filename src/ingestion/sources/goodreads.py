@@ -1,11 +1,11 @@
 """Goodreads CSV export parser."""
 
-from typing import Iterator
 import csv
+from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
 
-from src.models.content import ContentItem, ContentType, ConsumptionStatus
+from src.models.content import ConsumptionStatus, ContentItem, ContentType
 
 
 def parse_goodreads_csv(file_path: Path) -> Iterator[ContentItem]:
@@ -17,7 +17,7 @@ def parse_goodreads_csv(file_path: Path) -> Iterator[ContentItem]:
     Yields:
         ContentItem objects for each book in the export
     """
-    with open(file_path, "r", encoding="utf-8") as f:
+    with open(file_path, encoding="utf-8") as f:
         reader = csv.DictReader(f)
 
         for row in reader:

@@ -1,9 +1,9 @@
 """Application state management."""
 
-from typing import Dict, Any, Optional
+from typing import Any
 
 # Global app state
-app_state: Dict[str, Any] = {}
+app_state: dict[str, Any] = {}
 
 
 def get_engine():

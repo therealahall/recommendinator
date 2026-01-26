@@ -1,11 +1,10 @@
 """Similarity matching using vector embeddings."""
 
 import logging
-from typing import List, Tuple, Optional
 
+from src.llm.embeddings import EmbeddingGenerator
 from src.models.content import ContentItem, ContentType
 from src.storage.manager import StorageManager
-from src.llm.embeddings import EmbeddingGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -27,11 +26,11 @@ class SimilarityMatcher:
 
     def find_similar(
         self,
-        reference_items: List[ContentItem],
-        content_type: Optional[ContentType] = None,
-        exclude_ids: Optional[List[str]] = None,
+        reference_items: list[ContentItem],
+        content_type: ContentType | None = None,
+        exclude_ids: list[str] | None = None,
         limit: int = 20,
-    ) -> List[Tuple[ContentItem, float]]:
+    ) -> list[tuple[ContentItem, float]]:
         """Find items similar to reference items.
 
         Args:
@@ -103,7 +102,7 @@ class SimilarityMatcher:
             # Convert dictionary results to (ContentItem, float) tuples
             # The results contain content_id, score, and metadata
             # We need to look up the actual ContentItem objects
-            similar_items: List[Tuple[ContentItem, float]] = []
+            similar_items: list[tuple[ContentItem, float]] = []
 
             if not similar_results:
                 return []
@@ -136,10 +135,10 @@ class SimilarityMatcher:
     def find_similar_to_item(
         self,
         item: ContentItem,
-        content_type: Optional[ContentType] = None,
-        exclude_ids: Optional[List[str]] = None,
+        content_type: ContentType | None = None,
+        exclude_ids: list[str] | None = None,
         limit: int = 20,
-    ) -> List[Tuple[ContentItem, float]]:
+    ) -> list[tuple[ContentItem, float]]:
         """Find items similar to a single item.
 
         Args:

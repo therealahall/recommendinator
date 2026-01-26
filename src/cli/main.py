@@ -1,19 +1,17 @@
 """Main CLI entry point."""
 
-import click
-import json
 import sys
 from pathlib import Path
-from typing import Optional
 
-from src.models.content import ContentType, ConsumptionStatus
+import click
+
+from src.cli.commands import complete, recommend, update
 from src.cli.config import (
-    load_config,
-    create_storage_manager,
     create_llm_components,
     create_recommendation_engine,
+    create_storage_manager,
+    load_config,
 )
-from src.cli.commands import recommend, update, complete
 
 
 @click.group()
@@ -24,7 +22,7 @@ from src.cli.commands import recommend, update, complete
     help="Path to configuration file",
 )
 @click.pass_context
-def cli(ctx: click.Context, config: Optional[Path]) -> None:
+def cli(ctx: click.Context, config: Path | None) -> None:
     """Personal Recommendations CLI - Get intelligent recommendations based on your consumption history."""
     ctx.ensure_object(dict)
 

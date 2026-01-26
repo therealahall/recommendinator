@@ -1,8 +1,8 @@
 """Ollama client wrapper for LLM interactions."""
 
 import logging
-from typing import List, Optional, Dict, Any
-import httpx
+from typing import Any
+
 from ollama import Client
 
 logger = logging.getLogger(__name__)
@@ -32,7 +32,7 @@ class OllamaClient:
         self.timeout = timeout
         self.client = Client(host=base_url, timeout=timeout)
 
-    def generate_embedding(self, text: str, model: Optional[str] = None) -> List[float]:
+    def generate_embedding(self, text: str, model: str | None = None) -> list[float]:
         """Generate embedding for text.
 
         Args:
@@ -58,8 +58,8 @@ class OllamaClient:
             raise RuntimeError(f"Embedding generation failed: {e}") from e
 
     def generate_embeddings(
-        self, texts: List[str], model: Optional[str] = None
-    ) -> List[List[float]]:
+        self, texts: list[str], model: str | None = None
+    ) -> list[list[float]]:
         """Generate embeddings for multiple texts.
 
         Args:
@@ -89,10 +89,10 @@ class OllamaClient:
     def generate_text(
         self,
         prompt: str,
-        system_prompt: Optional[str] = None,
-        model: Optional[str] = None,
+        system_prompt: str | None = None,
+        model: str | None = None,
         temperature: float = 0.7,
-        max_tokens: Optional[int] = None,
+        max_tokens: int | None = None,
     ) -> str:
         """Generate text using the LLM.
 
@@ -117,7 +117,7 @@ class OllamaClient:
                 messages.append({"role": "system", "content": system_prompt})
             messages.append({"role": "user", "content": prompt})
 
-            options: Dict[str, Any] = {"temperature": temperature}
+            options: dict[str, Any] = {"temperature": temperature}
             if max_tokens:
                 options["num_predict"] = max_tokens
 
@@ -148,7 +148,7 @@ class OllamaClient:
         except Exception:
             return False
 
-    def list_available_models(self) -> List[str]:
+    def list_available_models(self) -> list[str]:
         """List all available models in Ollama.
 
         Returns:

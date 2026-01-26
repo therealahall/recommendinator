@@ -97,8 +97,8 @@ def main() -> None:
     app = create_app(config_path)
 
     # Log accessible addresses
-    logger.info(f"Starting Personal Recommendations web server...")
-    logger.info(f"Server will be accessible at:")
+    logger.info("Starting Personal Recommendations web server...")
+    logger.info("Server will be accessible at:")
     logger.info(f"  - http://localhost:{port}")
     if host == "0.0.0.0":
         local_ips = get_local_ip_addresses()

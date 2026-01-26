@@ -1,12 +1,10 @@
 """Tests for Goodreads CSV parser."""
 
-from pathlib import Path
 from datetime import date
-
-import pytest
+from pathlib import Path
 
 from src.ingestion.sources.goodreads import parse_goodreads_csv
-from src.models.content import ContentType, ConsumptionStatus
+from src.models.content import ConsumptionStatus, ContentType
 
 
 def test_parse_goodreads_csv_basic(tmp_path: Path) -> None:

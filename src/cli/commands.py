@@ -1,14 +1,14 @@
 """CLI commands."""
 
-import click
 import json
 from pathlib import Path
-from typing import Optional
+
+import click
 from tabulate import tabulate
 
-from src.models.content import ContentType, ConsumptionStatus
 from src.ingestion.sources.goodreads import parse_goodreads_csv
-from src.ingestion.sources.steam import parse_steam_games, SteamAPIError
+from src.ingestion.sources.steam import SteamAPIError, parse_steam_games
+from src.models.content import ConsumptionStatus, ContentType
 
 
 @click.command()
@@ -107,7 +107,7 @@ def recommend(
 
     except Exception as e:
         click.echo(f"Error generating recommendations: {e}", err=True)
-        raise click.Abort()
+        raise click.Abort() from e
 
 
 @click.command()
@@ -230,7 +230,7 @@ def update(ctx: click.Context, source: str) -> None:
 
     except Exception as e:
         click.echo(f"Error updating data: {e}", err=True)
-        raise click.Abort()
+        raise click.Abort() from e
 
 
 @click.command()
@@ -254,9 +254,9 @@ def complete(
     ctx: click.Context,
     content_type_str: str,
     title: str,
-    author: Optional[str],
-    rating: Optional[int],
-    review: Optional[str],
+    author: str | None,
+    rating: int | None,
+    review: str | None,
 ) -> None:
     """Mark content as completed."""
     from src.models.content import ContentItem
@@ -297,4 +297,4 @@ def complete(
         click.echo(f"✅ Marked '{title}' as completed (ID: {db_id})")
     except Exception as e:
         click.echo(f"Error marking content as completed: {e}", err=True)
-        raise click.Abort()
+        raise click.Abort() from e

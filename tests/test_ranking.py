@@ -2,7 +2,7 @@
 
 import pytest
 
-from src.models.content import ContentItem, ContentType, ConsumptionStatus
+from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.recommendations.preferences import UserPreferences
 from src.recommendations.ranking import RecommendationRanker
 

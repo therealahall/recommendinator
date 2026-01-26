@@ -27,7 +27,7 @@ def test_add_and_get_embedding(temp_vector_db: VectorDB) -> None:
     assert len(retrieved) == 5
     # Use approximate equality for floating-point comparison
     assert len(retrieved) == len(embedding)
-    for r, e in zip(retrieved, embedding):
+    for r, e in zip(retrieved, embedding, strict=True):
         assert abs(r - e) < 1e-6
 
 
@@ -44,7 +44,7 @@ def test_update_embedding(temp_vector_db: VectorDB) -> None:
     assert retrieved is not None
     # Use approximate equality for floating-point comparison
     assert len(retrieved) == len(embedding2)
-    for r, e in zip(retrieved, embedding2):
+    for r, e in zip(retrieved, embedding2, strict=True):
         assert abs(r - e) < 1e-6
 
 

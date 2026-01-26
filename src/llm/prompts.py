@@ -1,13 +1,12 @@
 """Prompt templates for LLM interactions."""
 
-from typing import List, Dict, Any
 from src.models.content import ContentItem, ContentType
 
 
 def build_recommendation_prompt(
     content_type: ContentType,
-    consumed_items: List[ContentItem],
-    unconsumed_items: List[ContentItem],
+    consumed_items: list[ContentItem],
+    unconsumed_items: list[ContentItem],
     count: int = 5,
 ) -> str:
     """Build a prompt for generating recommendations.
@@ -80,7 +79,7 @@ def build_recommendation_system_prompt(content_type: ContentType) -> str:
     )
     content_type_name = content_type_str.replace("_", " ").title()
 
-    return f"""You are an expert recommendation assistant specializing in {content_type_name.lower()}s. 
+    return f"""You are an expert recommendation assistant specializing in {content_type_name.lower()}s.
 Your goal is to understand user preferences from their consumption history and provide personalized recommendations.
 
 Key principles:

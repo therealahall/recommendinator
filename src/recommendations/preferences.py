@@ -1,10 +1,9 @@
 """Preference analysis from consumed content."""
 
 import logging
-from typing import List, Dict, Set, Optional
 from collections import Counter
 
-from src.models.content import ContentItem, ContentType
+from src.models.content import ContentItem
 
 logger = logging.getLogger(__name__)
 
@@ -14,13 +13,13 @@ class UserPreferences:
 
     def __init__(
         self,
-        preferred_authors: Dict[str, float],
-        preferred_genres: Dict[str, float],
-        preferred_themes: Dict[str, float],
+        preferred_authors: dict[str, float],
+        preferred_genres: dict[str, float],
+        preferred_themes: dict[str, float],
         average_rating: float,
         total_items: int,
-        disliked_authors: Optional[Dict[str, float]] = None,
-        disliked_genres: Optional[Dict[str, float]] = None,
+        disliked_authors: dict[str, float] | None = None,
+        disliked_genres: dict[str, float] | None = None,
     ) -> None:
         """Initialize user preferences.
 
@@ -41,7 +40,7 @@ class UserPreferences:
         self.disliked_authors = disliked_authors or {}
         self.disliked_genres = disliked_genres or {}
 
-    def get_author_score(self, author: Optional[str]) -> float:
+    def get_author_score(self, author: str | None) -> float:
         """Get preference score for an author.
 
         Args:
@@ -58,7 +57,7 @@ class UserPreferences:
         negative = self.disliked_authors.get(author_lower, 0.0)
         return positive - negative
 
-    def get_genre_score(self, genre: Optional[str]) -> float:
+    def get_genre_score(self, genre: str | None) -> float:
         """Get preference score for a genre.
 
         Args:
@@ -87,7 +86,7 @@ class PreferenceAnalyzer:
         """
         self.min_rating = min_rating
 
-    def analyze(self, consumed_items: List[ContentItem]) -> UserPreferences:
+    def analyze(self, consumed_items: list[ContentItem]) -> UserPreferences:
         """Analyze consumed items to extract user preferences.
 
         Args:
@@ -99,16 +98,11 @@ class PreferenceAnalyzer:
         if not consumed_items:
             return UserPreferences({}, {}, {}, 0.0, 0)
 
-        # Separate items by rating
+        # Get high-rated items (used for theme extraction from reviews)
         high_rated = [
             item
             for item in consumed_items
             if item.rating and item.rating >= self.min_rating
-        ]
-        low_rated = [
-            item
-            for item in consumed_items
-            if item.rating and item.rating < self.min_rating
         ]
 
         # Calculate average rating
@@ -116,8 +110,8 @@ class PreferenceAnalyzer:
         avg_rating = sum(ratings) / len(ratings) if ratings else 0.0
 
         # Extract authors (weighted by rating - positive for high ratings, negative for low)
-        author_scores: Dict[str, float] = {}
-        disliked_authors: Dict[str, float] = {}
+        author_scores: dict[str, float] = {}
+        disliked_authors: dict[str, float] = {}
 
         for item in consumed_items:
             if item.author and item.rating:
@@ -155,8 +149,8 @@ class PreferenceAnalyzer:
 
         # Extract genres from metadata (positive and negative)
         # Supports both single "genre" field and "genres" list (e.g., Steam games)
-        genre_scores: Dict[str, float] = {}
-        disliked_genres: Dict[str, float] = {}
+        genre_scores: dict[str, float] = {}
+        disliked_genres: dict[str, float] = {}
 
         for item in consumed_items:
             if item.metadata and item.rating:
@@ -207,8 +201,8 @@ class PreferenceAnalyzer:
                 }
 
         # Extract themes from reviews (only from high-rated items for now)
-        theme_scores: Dict[str, float] = {}
-        review_words: List[str] = []
+        theme_scores: dict[str, float] = {}
+        review_words: list[str] = []
         for item in high_rated:
             if item.review and item.rating:
                 words = item.review.lower().split()

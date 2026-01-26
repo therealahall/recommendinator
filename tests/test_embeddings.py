@@ -1,11 +1,12 @@
 """Tests for embedding generation."""
 
-import pytest
 from unittest.mock import Mock, patch
 
-from src.models.content import ContentItem, ContentType, ConsumptionStatus
-from src.llm.embeddings import EmbeddingGenerator
+import pytest
+
 from src.llm.client import OllamaClient
+from src.llm.embeddings import EmbeddingGenerator
+from src.models.content import ConsumptionStatus, ContentItem, ContentType
 
 
 @pytest.fixture

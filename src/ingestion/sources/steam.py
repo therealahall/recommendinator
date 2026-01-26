@@ -1,11 +1,12 @@
 """Steam Web API integration for fetching user game library."""
 
 import logging
-from typing import Iterator, Optional, Any, Dict
+from collections.abc import Iterator
+from typing import Any
 
 import requests
 
-from src.models.content import ContentItem, ContentType, ConsumptionStatus
+from src.models.content import ConsumptionStatus, ContentItem, ContentType
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +20,7 @@ class SteamAPIError(Exception):
     pass
 
 
-def get_steam_id_from_vanity_url(api_key: str, vanity_url: str) -> Optional[str]:
+def get_steam_id_from_vanity_url(api_key: str, vanity_url: str) -> str | None:
     """Resolve Steam vanity URL to Steam ID.
 
     Args:
@@ -42,12 +43,12 @@ def get_steam_id_from_vanity_url(api_key: str, vanity_url: str) -> Optional[str]
         return None
     except requests.RequestException as e:
         logger.error(f"Error resolving Steam vanity URL: {e}")
-        raise SteamAPIError(f"Failed to resolve Steam ID: {e}")
+        raise SteamAPIError(f"Failed to resolve Steam ID: {e}") from e
 
 
 def get_owned_games(
     api_key: str, steam_id: str, include_appinfo: bool = True
-) -> list[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Fetch user's owned games from Steam API.
 
     Args:
@@ -74,12 +75,12 @@ def get_owned_games(
         return list(games) if games else []
     except requests.RequestException as e:
         logger.error(f"Error fetching Steam games: {e}")
-        raise SteamAPIError(f"Failed to fetch Steam games: {e}")
+        raise SteamAPIError(f"Failed to fetch Steam games: {e}") from e
 
 
 def get_game_details(
     app_ids: list[int],
-) -> Dict[int, Dict[str, Any]]:
+) -> dict[int, dict[str, Any]]:
     """Fetch detailed information for multiple games.
 
     Args:
@@ -92,7 +93,7 @@ def get_game_details(
     # Note: This is a public API, no key required
     # Steam Store API has a limit on batch size (typically 1-5 app IDs)
     # Using single requests to avoid 400 Bad Request errors
-    details: Dict[int, Dict[str, Any]] = {}
+    details: dict[int, dict[str, Any]] = {}
     batch_size = 1  # Steam Store API works best with single requests
     total = len(app_ids)
 
@@ -127,8 +128,8 @@ def get_game_details(
 
 def parse_steam_games(
     api_key: str,
-    steam_id: Optional[str] = None,
-    vanity_url: Optional[str] = None,
+    steam_id: str | None = None,
+    vanity_url: str | None = None,
     min_playtime_minutes: int = 0,
 ) -> Iterator[ContentItem]:
     """Parse Steam game library and yield ContentItem objects.
