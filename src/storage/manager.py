@@ -1,53 +1,69 @@
-"""Unified storage manager for SQLite and ChromaDB."""
+"""Unified storage manager for SQLite and optionally ChromaDB."""
 
 from pathlib import Path
-from typing import Any, List, Optional, Dict
+from typing import Any
 
-from src.models.content import ContentItem, ContentType, ConsumptionStatus
+from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.sqlite_db import SQLiteDB
-from src.storage.vector_db import VectorDB
 
 
 class StorageManager:
-    """Unified storage manager for both SQLite and ChromaDB."""
+    """Unified storage manager for SQLite and optionally ChromaDB.
+
+    When ai_enabled is False (default), only SQLite is used.
+    When ai_enabled is True, ChromaDB is also initialized for embeddings.
+    """
 
     def __init__(
         self,
         sqlite_path: Path,
-        vector_db_path: Path,
+        vector_db_path: Path | None = None,
         vector_collection_name: str = "content_embeddings",
+        ai_enabled: bool = False,
     ) -> None:
         """Initialize storage manager.
 
         Args:
             sqlite_path: Path to SQLite database file
-            vector_db_path: Path to ChromaDB database directory
+            vector_db_path: Path to ChromaDB database directory (optional)
             vector_collection_name: Name of ChromaDB collection
+            ai_enabled: Whether to enable AI features (embeddings)
         """
         self.sqlite_db = SQLiteDB(sqlite_path)
-        self.vector_db = VectorDB(vector_db_path, vector_collection_name)
+        self.vector_db = None
+        self.ai_enabled = ai_enabled
+
+        # Only initialize vector DB if AI is enabled and path provided
+        if ai_enabled and vector_db_path:
+            from src.storage.vector_db import VectorDB
+
+            self.vector_db = VectorDB(vector_db_path, vector_collection_name)
 
     def save_content_item(
-        self, item: ContentItem, embedding: Optional[List[float]] = None
+        self,
+        item: ContentItem,
+        user_id: int | None = None,
+        embedding: list[float] | None = None,
     ) -> int:
-        """Save a content item to both SQLite and optionally ChromaDB.
+        """Save a content item to SQLite and optionally ChromaDB.
 
         Args:
             item: ContentItem to save
-            embedding: Optional embedding vector to store
+            user_id: User ID (defaults to item.user_id)
+            embedding: Optional embedding vector to store (requires ai_enabled)
 
         Returns:
             Database ID of the saved item
         """
         # Save to SQLite
-        db_id = self.sqlite_db.save_content_item(item)
+        db_id = self.sqlite_db.save_content_item(item, user_id=user_id)
 
-        # Save embedding if provided
-        if embedding:
+        # Save embedding if provided and vector DB is enabled
+        if embedding and self.vector_db:
             # Use external_id if available, otherwise use db_id as string
             content_id = item.id if item.id else f"db_{db_id}"
 
-            # Handle enum-to-string conversion (Pydantic use_enum_values converts to string)
+            # Handle enum-to-string conversion
             def get_enum_value(val: Any) -> str:
                 """Get string value from enum or string."""
                 return val.value if hasattr(val, "value") else str(val)
@@ -57,32 +73,38 @@ class StorageManager:
                 "title": item.title,
                 "author": item.author or "",
                 "status": get_enum_value(item.status),
+                "user_id": str(user_id or item.user_id),
             }
             self.vector_db.add_embedding(content_id, embedding, metadata)
 
         return db_id
 
-    def get_content_item(self, db_id: int) -> Optional[ContentItem]:
+    def get_content_item(
+        self, db_id: int, user_id: int | None = None
+    ) -> ContentItem | None:
         """Get a content item by database ID.
 
         Args:
             db_id: Database ID
+            user_id: Optional user ID filter
 
         Returns:
             ContentItem if found, None otherwise
         """
-        return self.sqlite_db.get_content_item(db_id)
+        return self.sqlite_db.get_content_item(db_id, user_id=user_id)
 
     def get_content_items(
         self,
-        content_type: Optional[ContentType] = None,
-        status: Optional[ConsumptionStatus] = None,
-        min_rating: Optional[int] = None,
-        limit: Optional[int] = None,
-    ) -> List[ContentItem]:
+        user_id: int | None = None,
+        content_type: ContentType | None = None,
+        status: ConsumptionStatus | None = None,
+        min_rating: int | None = None,
+        limit: int | None = None,
+    ) -> list[ContentItem]:
         """Get content items with optional filters.
 
         Args:
+            user_id: Filter by user ID
             content_type: Filter by content type
             status: Filter by consumption status
             min_rating: Minimum rating (inclusive)
@@ -92,6 +114,7 @@ class StorageManager:
             List of ContentItem objects
         """
         return self.sqlite_db.get_content_items(
+            user_id=user_id,
             content_type=content_type,
             status=status,
             min_rating=min_rating,
@@ -99,11 +122,15 @@ class StorageManager:
         )
 
     def get_unconsumed_items(
-        self, content_type: Optional[ContentType] = None, limit: Optional[int] = None
-    ) -> List[ContentItem]:
+        self,
+        user_id: int | None = None,
+        content_type: ContentType | None = None,
+        limit: int | None = None,
+    ) -> list[ContentItem]:
         """Get unconsumed items (status = UNREAD).
 
         Args:
+            user_id: Filter by user ID
             content_type: Filter by content type
             limit: Maximum number of results
 
@@ -111,18 +138,20 @@ class StorageManager:
             List of unconsumed ContentItem objects
         """
         return self.sqlite_db.get_unconsumed_items(
-            content_type=content_type, limit=limit
+            user_id=user_id, content_type=content_type, limit=limit
         )
 
     def get_completed_items(
         self,
-        content_type: Optional[ContentType] = None,
-        min_rating: Optional[int] = None,
-        limit: Optional[int] = None,
-    ) -> List[ContentItem]:
+        user_id: int | None = None,
+        content_type: ContentType | None = None,
+        min_rating: int | None = None,
+        limit: int | None = None,
+    ) -> list[ContentItem]:
         """Get completed items with optional minimum rating.
 
         Args:
+            user_id: Filter by user ID
             content_type: Filter by content type
             min_rating: Minimum rating (inclusive)
             limit: Maximum number of results
@@ -131,35 +160,51 @@ class StorageManager:
             List of completed ContentItem objects
         """
         return self.sqlite_db.get_completed_items(
-            content_type=content_type, min_rating=min_rating, limit=limit
+            user_id=user_id,
+            content_type=content_type,
+            min_rating=min_rating,
+            limit=limit,
         )
 
     def search_similar(
         self,
-        query_embedding: List[float],
+        query_embedding: list[float],
+        user_id: int | None = None,
         n_results: int = 10,
-        content_type: Optional[ContentType] = None,
+        content_type: ContentType | None = None,
         exclude_consumed: bool = True,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Search for similar content using vector similarity.
+
+        Requires ai_enabled=True.
 
         Args:
             query_embedding: Query embedding vector
+            user_id: Filter by user ID
             n_results: Number of results to return
             content_type: Optional filter by content type
             exclude_consumed: If True, exclude consumed items
 
         Returns:
             List of similar content items with scores and metadata
+
+        Raises:
+            RuntimeError: If called when AI is not enabled
         """
+        if not self.vector_db:
+            raise RuntimeError(
+                "Vector search requires ai_enabled=True in StorageManager"
+            )
+
         # Get consumed item IDs to exclude
-        exclude_ids: Optional[List[str]] = None
+        exclude_ids: list[str] | None = None
         if exclude_consumed:
-            consumed = self.get_completed_items(content_type=content_type)
+            consumed = self.get_completed_items(
+                user_id=user_id, content_type=content_type
+            )
             exclude_ids = [item.id for item in consumed if item.id]
 
-        # Search vector database
-        # Handle enum-to-string conversion (Pydantic use_enum_values converts to string)
+        # Handle enum-to-string conversion
         def get_enum_value(val: Any) -> str:
             """Get string value from enum or string."""
             return val.value if hasattr(val, "value") else str(val)
@@ -173,78 +218,123 @@ class StorageManager:
             exclude_ids=exclude_ids,
         )
 
-        # Enrich results with full content item data
-        enriched_results = []
-        for result in results:
-            content_id = result["content_id"]
-            # Try to find the content item
-            # If content_id is an external_id, we need to search for it
-            # For now, return the vector DB result with metadata
-            enriched_results.append(result)
+        return results
 
-        return enriched_results
-
-    def delete_content_item(self, db_id: int) -> bool:
+    def delete_content_item(self, db_id: int, user_id: int | None = None) -> bool:
         """Delete a content item from both databases.
 
         Args:
             db_id: Database ID
+            user_id: Optional user ID filter
 
         Returns:
             True if item was deleted, False if not found
         """
         # Get item first to find its external_id
-        item = self.sqlite_db.get_content_item(db_id)
+        item = self.sqlite_db.get_content_item(db_id, user_id=user_id)
         if not item:
             return False
 
         # Delete from SQLite
-        deleted = self.sqlite_db.delete_content_item(db_id)
+        deleted = self.sqlite_db.delete_content_item(db_id, user_id=user_id)
 
-        # Delete embedding if it exists
-        if deleted and item.id:
+        # Delete embedding if it exists and vector DB is enabled
+        if deleted and item.id and self.vector_db:
             self.vector_db.delete_embedding(item.id)
 
         return deleted
 
     def count_items(
         self,
-        content_type: Optional[ContentType] = None,
-        status: Optional[ConsumptionStatus] = None,
+        user_id: int | None = None,
+        content_type: ContentType | None = None,
+        status: ConsumptionStatus | None = None,
     ) -> int:
         """Count content items with optional filters.
 
         Args:
+            user_id: Filter by user ID
             content_type: Filter by content type
             status: Filter by consumption status
 
         Returns:
             Number of matching items
         """
-        return self.sqlite_db.count_items(content_type=content_type, status=status)
+        return self.sqlite_db.count_items(
+            user_id=user_id, content_type=content_type, status=status
+        )
 
     def add_embedding(
         self,
         content_id: str,
-        embedding: List[float],
-        metadata: Optional[Dict[str, Any]] = None,
+        embedding: list[float],
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """Add or update an embedding for a content item.
+
+        Requires ai_enabled=True.
 
         Args:
             content_id: Unique identifier for the content item
             embedding: Vector embedding
             metadata: Optional metadata dictionary
+
+        Raises:
+            RuntimeError: If called when AI is not enabled
         """
+        if not self.vector_db:
+            raise RuntimeError("Embeddings require ai_enabled=True in StorageManager")
         self.vector_db.add_embedding(content_id, embedding, metadata)
 
-    def get_embedding(self, content_id: str) -> Optional[List[float]]:
+    def get_embedding(self, content_id: str) -> list[float] | None:
         """Get embedding for a content item.
+
+        Requires ai_enabled=True.
 
         Args:
             content_id: Unique identifier for the content item
 
         Returns:
             Embedding vector if found, None otherwise
+
+        Raises:
+            RuntimeError: If called when AI is not enabled
         """
+        if not self.vector_db:
+            raise RuntimeError("Embeddings require ai_enabled=True in StorageManager")
         return self.vector_db.get_embedding(content_id)
+
+    def has_embedding(self, content_id: str) -> bool:
+        """Check if an embedding exists for a content item.
+
+        Args:
+            content_id: Unique identifier for the content item
+
+        Returns:
+            True if embedding exists, False otherwise (or if AI disabled)
+        """
+        if not self.vector_db:
+            return False
+        return self.vector_db.has_embedding(content_id)
+
+    def get_content_item_by_external_id(
+        self,
+        external_id: str,
+        content_type: ContentType,
+        user_id: int | None = None,
+    ) -> ContentItem | None:
+        """Get a content item by external ID and content type.
+
+        Args:
+            external_id: External ID from source
+            content_type: Content type
+            user_id: Filter by user ID
+
+        Returns:
+            ContentItem if found, None otherwise
+        """
+        return self.sqlite_db.get_content_item_by_external_id(
+            external_id=external_id,
+            content_type=content_type,
+            user_id=user_id,
+        )
