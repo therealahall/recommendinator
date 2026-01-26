@@ -160,12 +160,12 @@ features:
 **Goal:** Solid storage foundation with multi-user support
 
 **Tasks:**
-- [ ] Update ContentItem model with `user_id`
-- [ ] Refactor SQLiteDB for user-scoped queries
-- [ ] Make ChromaDB truly optional (lazy initialization)
-- [ ] Create StorageManager that works without vector DB
-- [ ] Add user management functions
-- [ ] Update all tests
+- [x] Update ContentItem model with `user_id`
+- [x] Refactor SQLiteDB for user-scoped queries
+- [x] Make ChromaDB truly optional (lazy initialization)
+- [x] Create StorageManager that works without vector DB
+- [x] Add user management functions
+- [x] Update all tests
 
 **Key Changes:**
 ```python
@@ -380,7 +380,7 @@ GET  /api/recommendations/{content_type}?include_reasoning=true
 | Phase | Status | Started | Completed |
 |-------|--------|---------|-----------|
 | Phase 0: Foundation Reset | Complete | 2026-01-25 | 2026-01-25 |
-| Phase 1: Core Data Layer | Not Started | - | - |
+| Phase 1: Core Data Layer | Complete | 2026-01-25 | 2026-01-25 |
 | Phase 2: Ingestion Framework | Not Started | - | - |
 | Phase 3: Non-AI Engine | Not Started | - | - |
 | Phase 4: AI Enhancement | Not Started | - | - |
