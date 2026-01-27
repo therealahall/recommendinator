@@ -34,6 +34,15 @@ storage:
   # Cache directory
   cache_dir: "data/cache"
 
+# Ingestion settings
+ingestion:
+  # Conflict resolution strategy when the same item is imported from multiple sources.
+  # Options: last_write_wins, source_priority, keep_existing
+  conflict_strategy: "last_write_wins"
+  # Source priority ordering (highest priority first).
+  # Only used with source_priority strategy.
+  source_priority: ["goodreads", "steam"]
+
 # Input files configuration
 inputs:
   goodreads:

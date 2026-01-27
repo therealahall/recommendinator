@@ -3,6 +3,7 @@
 from pathlib import Path
 from typing import Any
 
+from src.ingestion.conflict import ConflictStrategy, resolve_conflict
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.sqlite_db import SQLiteDB
 
@@ -20,6 +21,8 @@ class StorageManager:
         vector_db_path: Path | None = None,
         vector_collection_name: str = "content_embeddings",
         ai_enabled: bool = False,
+        conflict_strategy: ConflictStrategy = ConflictStrategy.LAST_WRITE_WINS,
+        source_priority: list[str] | None = None,
     ) -> None:
         """Initialize storage manager.
 
@@ -28,10 +31,14 @@ class StorageManager:
             vector_db_path: Path to ChromaDB database directory (optional)
             vector_collection_name: Name of ChromaDB collection
             ai_enabled: Whether to enable AI features (embeddings)
+            conflict_strategy: Strategy for resolving duplicate content items
+            source_priority: Ordered list of source names (highest priority first)
         """
         self.sqlite_db = SQLiteDB(sqlite_path)
         self.vector_db = None
         self.ai_enabled = ai_enabled
+        self.conflict_strategy = conflict_strategy
+        self.source_priority = source_priority or []
 
         # Only initialize vector DB if AI is enabled and path provided
         if ai_enabled and vector_db_path:
@@ -47,6 +54,10 @@ class StorageManager:
     ) -> int:
         """Save a content item to SQLite and optionally ChromaDB.
 
+        If the item has an external ID, checks for an existing item with the
+        same external ID and content type. If found, applies the configured
+        conflict resolution strategy before saving.
+
         Args:
             item: ContentItem to save
             user_id: User ID (defaults to item.user_id)
@@ -55,8 +66,24 @@ class StorageManager:
         Returns:
             Database ID of the saved item
         """
+        # Apply conflict resolution if item has an external ID
+        resolved_item = item
+        if item.id:
+            existing = self.get_content_item_by_external_id(
+                external_id=item.id,
+                content_type=ContentType(item.content_type),
+                user_id=user_id or item.user_id,
+            )
+            if existing is not None:
+                resolved_item = resolve_conflict(
+                    existing=existing,
+                    incoming=item,
+                    strategy=self.conflict_strategy,
+                    source_priority=self.source_priority,
+                )
+
         # Save to SQLite
-        db_id = self.sqlite_db.save_content_item(item, user_id=user_id)
+        db_id = self.sqlite_db.save_content_item(resolved_item, user_id=user_id)
 
         # Save embedding if provided and vector DB is enabled
         if embedding and self.vector_db:

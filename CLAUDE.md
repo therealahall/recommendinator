@@ -36,13 +36,17 @@ config/               # Configuration files (example.yaml for tests)
 
 ## Development Standards
 
+### Python Version
+
+**Always use `python3.11` for all commands.** Do not use bare `python` or `python3`.
+
 ### Code Quality (ALL must pass before commit)
 
 ```bash
-pytest                        # All tests pass
-black --check src/ tests/     # Formatting
-mypy src/                     # Type checking (strict)
-ruff check src/ tests/        # Linting
+python3.11 -m pytest          # All tests pass
+python3.11 -m black --check src/ tests/     # Formatting
+python3.11 -m mypy src/                     # Type checking (strict)
+python3.11 -m ruff check src/ tests/        # Linting
 ```
 
 Or use the Makefile: `make check`
