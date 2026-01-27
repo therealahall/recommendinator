@@ -8,6 +8,14 @@ from src.llm.recommendations import RecommendationGenerator
 from src.models.content import ContentItem, ContentType
 from src.recommendations.preferences import PreferenceAnalyzer, UserPreferences
 from src.recommendations.ranking import RecommendationRanker
+from src.recommendations.scorers import (
+    DEFAULT_SCORERS,
+    Scorer,
+    ScoringContext,
+    _extract_creator,
+    _extract_genres,
+)
+from src.recommendations.scoring_pipeline import ScoringPipeline
 from src.recommendations.similarity import SimilarityMatcher
 from src.storage.manager import StorageManager
 from src.utils.series import build_series_tracking, should_recommend_item
@@ -16,31 +24,48 @@ logger = logging.getLogger(__name__)
 
 
 class RecommendationEngine:
-    """Main recommendation engine."""
+    """Main recommendation engine.
+
+    The scoring pipeline **always** runs using non-AI scorers.  When an
+    ``embedding_generator`` is provided the engine additionally uses
+    vector-similarity search (to be extended in Phase 4 with a
+    ``SemanticSimilarityScorer``).
+    """
 
     def __init__(
         self,
         storage_manager: StorageManager,
-        embedding_generator: EmbeddingGenerator,
+        embedding_generator: EmbeddingGenerator | None = None,
         recommendation_generator: RecommendationGenerator | None = None,
         min_rating: int = 4,
+        scorers: list[Scorer] | None = None,
     ) -> None:
         """Initialize recommendation engine.
 
         Args:
-            storage_manager: Storage manager for accessing data
-            embedding_generator: Generator for creating embeddings
-            recommendation_generator: Optional LLM-based recommendation generator
-            min_rating: Minimum rating to consider for preferences
+            storage_manager: Storage manager for accessing data.
+            embedding_generator: Optional generator for creating embeddings.
+                When ``None`` the engine operates in pure non-AI mode.
+            recommendation_generator: Optional LLM-based recommendation generator.
+            min_rating: Minimum rating to consider for preferences.
+            scorers: Scorer instances for the pipeline.  Defaults to
+                :data:`DEFAULT_SCORERS`.
         """
         self.storage = storage_manager
         self.embedding_gen = embedding_generator
         self.llm_generator = recommendation_generator
         self.preference_analyzer = PreferenceAnalyzer(min_rating=min_rating)
-        self.similarity_matcher = SimilarityMatcher(
-            storage_manager, embedding_generator
-        )
         self.ranker = RecommendationRanker()
+        self.pipeline = ScoringPipeline(
+            scorers if scorers is not None else list(DEFAULT_SCORERS)
+        )
+
+        # Only create SimilarityMatcher when embeddings are available
+        self.similarity_matcher: SimilarityMatcher | None = None
+        if embedding_generator is not None:
+            self.similarity_matcher = SimilarityMatcher(
+                storage_manager, embedding_generator
+            )
 
     def generate_recommendations(
         self,
@@ -54,23 +79,23 @@ class RecommendationEngine:
         cross-content-type recommendations. For example, if you've read
         sci-fi books, it may recommend sci-fi TV shows or games.
 
+        The scoring pipeline always runs.  When ``embedding_generator``
+        is set, vector-similarity search supplements the pipeline scores.
+
         Args:
-            content_type: Type of content to recommend
-            count: Number of recommendations to generate
-            use_llm: Whether to use LLM for final recommendation generation
+            content_type: Type of content to recommend.
+            count: Number of recommendations to generate.
+            use_llm: Whether to use LLM for final recommendation generation.
 
         Returns:
-            List of recommendation dictionaries
+            List of recommendation dictionaries.
         """
         # Get consumed items from ALL content types for preference analysis
-        # This allows cross-content-type recommendations (e.g., sci-fi books
-        # can influence sci-fi game/TV recommendations)
         all_consumed_items = self.storage.get_completed_items(
             content_type=None, min_rating=None
         )
 
         # Get consumed items of the requested type for series tracking
-        # (series tracking is content-type specific)
         consumed_items_of_type = self.storage.get_completed_items(
             content_type=content_type, min_rating=None
         )
@@ -83,7 +108,6 @@ class RecommendationEngine:
             return self._handle_cold_start(content_type, count)
 
         # Get unconsumed items of the requested type
-        # (we're recommending this specific content type)
         unconsumed_items = self.storage.get_unconsumed_items(
             content_type=content_type, limit=100
         )
@@ -93,7 +117,6 @@ class RecommendationEngine:
             return []
 
         # Analyze preferences from ALL consumed content types
-        # This captures themes, genres, and preferences across books, games, TV, etc.
         preferences = self.preference_analyzer.analyze(all_consumed_items)
 
         logger.info(
@@ -101,58 +124,78 @@ class RecommendationEngine:
             f"across all content types to recommend {content_type.value}s"
         )
 
-        # Find similar items using vector similarity
-        # Use ALL consumed items from ALL content types as reference
-        # This enables cross-content-type similarity (e.g., sci-fi books can
-        # find similar sci-fi games/TV shows)
-        rated_items = [item for item in all_consumed_items if item.rating is not None]
-
-        # Sort by rating (descending), so we get both high-rated (positive) and low-rated (negative) items
-        rated_items.sort(key=lambda x: x.rating or 0, reverse=True)
-
-        # Use top-rated items (for positive similarity) and low-rated items (to avoid similar content)
-        # Take top 5 high-rated and bottom 3 low-rated
-        high_rated_refs = [
-            item for item in rated_items if item.rating and item.rating >= 4
-        ][:5]
-        low_rated_refs = [
-            item for item in rated_items if item.rating and item.rating < 3
-        ][:3]
-
-        reference_items = high_rated_refs + low_rated_refs
-
-        # If no rated items, use all consumed items
-        if not reference_items:
-            logger.info("No rated items, using all consumed items for similarity")
-            reference_items = all_consumed_items[:5]
-
-        # Exclude all consumed items (across all types) from recommendations
-        exclude_ids = [item.id for item in all_consumed_items if item.id]
-
-        similar_candidates = self.similarity_matcher.find_similar(
-            reference_items=reference_items,
-            content_type=content_type,
-            exclude_ids=exclude_ids,
-            limit=count * 3,  # Get more candidates for ranking
-        )
-
-        # If similarity search returned no candidates, fall back to using unconsumed items directly
-        if not similar_candidates:
-            logger.warning(
-                "Similarity search returned no candidates, using unconsumed items directly"
-            )
-            # Use unconsumed items as candidates with default scores
-            similar_candidates = [(item, 0.5) for item in unconsumed_items[: count * 3]]
-
-        # Build series tracking to filter recommendations
-        # (series tracking is content-type specific, so use items of requested type)
-        # Apply series filtering to ALL content types
+        # Build series tracking (content-type specific)
         series_tracking = build_series_tracking(consumed_items_of_type)
 
-        # Filter candidates based on series rules (all content types)
-        # Check if previous items in series exist in unconsumed data
-        filtered_candidates = []
-        for item, score in similar_candidates:
+        # -----------------------------------------------------------------
+        # Score all unconsumed candidates via the pipeline (always runs)
+        # -----------------------------------------------------------------
+        scoring_context = ScoringContext(
+            preferences=preferences,
+            consumed_items=all_consumed_items,
+            series_tracking=series_tracking,
+            content_type=content_type,
+            all_unconsumed_items=unconsumed_items,
+        )
+
+        pipeline_scored = self.pipeline.score_candidates(
+            unconsumed_items, scoring_context
+        )
+
+        # Take top count*3 from pipeline for further processing
+        top_candidates: list[tuple[ContentItem, float]] = pipeline_scored[: count * 3]
+
+        # -----------------------------------------------------------------
+        # Optionally blend vector-similarity scores (AI path)
+        # -----------------------------------------------------------------
+        if self.similarity_matcher is not None:
+            rated_items = [
+                item for item in all_consumed_items if item.rating is not None
+            ]
+            rated_items.sort(key=lambda x: x.rating or 0, reverse=True)
+
+            high_rated_refs = [
+                item for item in rated_items if item.rating and item.rating >= 4
+            ][:5]
+            low_rated_refs = [
+                item for item in rated_items if item.rating and item.rating < 3
+            ][:3]
+
+            reference_items = high_rated_refs + low_rated_refs
+            if not reference_items:
+                reference_items = all_consumed_items[:5]
+
+            exclude_ids = [item.id for item in all_consumed_items if item.id]
+
+            similar_candidates = self.similarity_matcher.find_similar(
+                reference_items=reference_items,
+                content_type=content_type,
+                exclude_ids=exclude_ids,
+                limit=count * 3,
+            )
+
+            if similar_candidates:
+                # Build lookup of similarity scores by item id
+                sim_lookup: dict[str | None, float] = {
+                    item.id: sim_score for item, sim_score in similar_candidates
+                }
+                # Blend: average pipeline score and similarity score
+                blended: list[tuple[ContentItem, float]] = []
+                for item, pipeline_score in top_candidates:
+                    sim_score = sim_lookup.get(item.id, 0.0)
+                    blended_score = (pipeline_score + sim_score) / 2.0
+                    blended.append((item, blended_score))
+                blended.sort(key=lambda pair: pair[1], reverse=True)
+                top_candidates = blended
+        else:
+            # No similarity matcher — reference_items not used for embeddings
+            reference_items = []
+
+        # -----------------------------------------------------------------
+        # Filter candidates based on series rules
+        # -----------------------------------------------------------------
+        filtered_candidates: list[tuple[ContentItem, float]] = []
+        for item, score in top_candidates:
             if should_recommend_item(
                 item, series_tracking, unconsumed_items=unconsumed_items
             ):
@@ -162,26 +205,22 @@ class RecommendationEngine:
                     f"Filtered out {item.title} - doesn't meet series recommendation rules"
                 )
 
-        # If filtering removed all candidates, use original candidates (fallback)
         if not filtered_candidates:
             logger.warning(
                 "Series filtering removed all candidates, using original candidates"
             )
-            filtered_candidates = similar_candidates
+            filtered_candidates = top_candidates
 
-        # Detect direct adaptations and find contributing reference items
-        # This helps us provide better reasoning (e.g., "because you read LOTR books")
+        # -----------------------------------------------------------------
+        # Detect adaptations & find contributing reference items
+        # -----------------------------------------------------------------
         candidate_metadata: list[dict[str, Any]] = []
         adaptations_map: dict[str, list[ContentItem]] = {}
 
         for item, similarity_score in filtered_candidates:
-            # Check for direct adaptations (same title/author across content types)
             adaptations = self._find_direct_adaptations(item, all_consumed_items)
-
-            # Find which reference items contributed to this recommendation
-            # (items that are similar to this candidate)
             contributing_items = self._find_contributing_reference_items(
-                item, reference_items, all_consumed_items
+                item, all_consumed_items
             )
 
             candidate_metadata.append(
@@ -193,11 +232,12 @@ class RecommendationEngine:
                 }
             )
 
-            # Build adaptations map for ranker
             if item.id and adaptations:
                 adaptations_map[item.id] = adaptations
 
-        # Rank candidates (with adaptation boost applied in ranker)
+        # -----------------------------------------------------------------
+        # Rank (adaptation bonus, series bonus, preference adjustments)
+        # -----------------------------------------------------------------
         ranked_items = self.ranker.rank(
             candidates=[
                 (meta["item"], meta["similarity_score"]) for meta in candidate_metadata
@@ -207,13 +247,13 @@ class RecommendationEngine:
             adaptations_map=adaptations_map,
         )
 
-        # Take top N
         top_recommendations = ranked_items[:count]
 
-        # Format recommendations with enhanced reasoning
-        recommendations = []
+        # -----------------------------------------------------------------
+        # Format recommendations
+        # -----------------------------------------------------------------
+        recommendations: list[dict[str, Any]] = []
         for item, score, rank_metadata in top_recommendations:
-            # Find the metadata for this item
             item_meta = next(
                 (m for m in candidate_metadata if m["item"].id == item.id), None
             )
@@ -224,7 +264,7 @@ class RecommendationEngine:
                 adaptations_list = item_meta.get("adaptations", []) or []
                 contributing_list = item_meta.get("contributing_items", []) or []
 
-            rec = {
+            rec: dict[str, Any] = {
                 "item": item,
                 "score": score,
                 "similarity_score": rank_metadata["similarity_score"],
@@ -239,12 +279,11 @@ class RecommendationEngine:
             }
             recommendations.append(rec)
 
-        # Optionally use LLM to refine recommendations
-        # If we have no recommendations yet, try LLM-only approach
+        # -----------------------------------------------------------------
+        # Optionally enhance with LLM reasoning
+        # -----------------------------------------------------------------
         if use_llm and self.llm_generator:
             try:
-                # If we have recommendations, enhance them with LLM reasoning
-                # Otherwise, generate recommendations purely from LLM
                 if recommendations:
                     llm_recs = self.llm_generator.generate_recommendations(
                         content_type=content_type,
@@ -252,14 +291,12 @@ class RecommendationEngine:
                         unconsumed_items=[rec["item"] for rec in recommendations],
                         count=count,
                     )
-                    # Merge LLM reasoning with similarity-based recommendations
-                    for i, llm_rec in enumerate(llm_recs[:count]):
-                        if i < len(recommendations):
-                            recommendations[i]["llm_reasoning"] = llm_rec.get(
+                    for index, llm_rec in enumerate(llm_recs[:count]):
+                        if index < len(recommendations):
+                            recommendations[index]["llm_reasoning"] = llm_rec.get(
                                 "reasoning", ""
                             )
                 else:
-                    # No similarity-based recommendations, use LLM directly
                     logger.info("Using LLM-only recommendations")
                     llm_recs = self.llm_generator.generate_recommendations(
                         content_type=content_type,
@@ -267,9 +304,7 @@ class RecommendationEngine:
                         unconsumed_items=unconsumed_items,
                         count=count,
                     )
-                    # Convert LLM recommendations to our format
                     for llm_rec in llm_recs:
-                        # Find the matching item from unconsumed_items
                         matching_item = None
                         for item in unconsumed_items:
                             if item.title == llm_rec.get("title") and (
@@ -287,18 +322,19 @@ class RecommendationEngine:
                             recommendations.append(
                                 {
                                     "item": matching_item,
-                                    "score": 0.8,  # Default score for LLM recommendations
+                                    "score": 0.8,
                                     "similarity_score": 0.0,
                                     "preference_score": 0.5,
                                     "reasoning": llm_rec.get("reasoning", ""),
                                     "llm_reasoning": llm_rec.get("reasoning", ""),
                                 }
                             )
-            except Exception as e:
-                logger.warning(f"LLM recommendation generation failed: {e}")
+            except Exception as error:
+                logger.warning(f"LLM recommendation generation failed: {error}")
 
-        # Final fallback: if we still have no recommendations, return some unconsumed items
-        # (filtered by series rules for all content types)
+        # -----------------------------------------------------------------
+        # Final fallback
+        # -----------------------------------------------------------------
         if not recommendations and unconsumed_items:
             logger.info("Using fallback: returning unconsumed items as recommendations")
             for item in unconsumed_items:
@@ -319,19 +355,22 @@ class RecommendationEngine:
 
         return recommendations
 
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+
     def _handle_cold_start(
         self, content_type: ContentType, count: int
     ) -> list[dict[str, Any]]:
         """Handle cold start scenario (no consumed items across any content type).
 
         Args:
-            content_type: Content type
-            count: Number of recommendations
+            content_type: Content type.
+            count: Number of recommendations.
 
         Returns:
-            List of recommendations (empty or generic)
+            List of recommendations (empty or generic).
         """
-        # For cold start, return empty or use some default strategy
         logger.info(
             f"Cold start: no consumed items across any content type. "
             f"Cannot generate recommendations for {content_type.value}."
@@ -347,21 +386,18 @@ class RecommendationEngine:
         For example, "Lord of the Rings" book -> "Lord of the Rings" movie.
 
         Args:
-            item: Item to check for adaptations
-            consumed_items: List of consumed items to check against
+            item: Item to check for adaptations.
+            consumed_items: List of consumed items to check against.
 
         Returns:
-            List of consumed items that are adaptations of this item
+            List of consumed items that are adaptations of this item.
         """
         adaptations = []
 
-        # Normalize title for comparison (lowercase, remove common punctuation)
         def normalize_title(title: str) -> str:
             if not title:
                 return ""
-            # Remove common punctuation and extra spaces
             normalized = title.lower().strip()
-            # Remove common words that might differ (e.g., "The", "A")
             normalized = (
                 normalized.replace("the ", "").replace("a ", "").replace("an ", "")
             )
@@ -371,7 +407,6 @@ class RecommendationEngine:
         item_author_norm = normalize_title(item.author) if item.author else None
 
         for consumed in consumed_items:
-            # Skip if same content type (not an adaptation)
             if consumed.content_type == item.content_type:
                 continue
 
@@ -380,21 +415,14 @@ class RecommendationEngine:
                 normalize_title(consumed.author) if consumed.author else None
             )
 
-            # Check if titles match (allowing for minor variations)
             title_match = item_title_norm == consumed_title_norm
-
-            # Check if authors match (if both have authors)
             author_match = False
             if item_author_norm and consumed_author_norm:
                 author_match = item_author_norm == consumed_author_norm
 
-            # Consider it an adaptation if:
-            # 1. Titles match exactly (normalized)
-            # 2. Or titles are very similar and authors match
             if title_match or (
                 author_match and self._titles_similar(item.title, consumed.title)
             ):
-                # Only include high-rated adaptations (we want to boost things they enjoyed)
                 if consumed.rating and consumed.rating >= 4:
                     adaptations.append(consumed)
 
@@ -404,83 +432,71 @@ class RecommendationEngine:
         """Check if two titles are similar (fuzzy matching).
 
         Args:
-            title1: First title
-            title2: Second title
+            title1: First title.
+            title2: Second title.
 
         Returns:
-            True if titles are similar
+            True if titles are similar.
         """
         if not title1 or not title2:
             return False
 
-        # Simple similarity check: if one title contains the other (normalized)
         t1_norm = title1.lower().strip()
         t2_norm = title2.lower().strip()
 
-        # Remove common words
         for word in ["the", "a", "an"]:
             t1_norm = t1_norm.replace(f"{word} ", "")
             t2_norm = t2_norm.replace(f"{word} ", "")
 
-        # Check if one contains the other (for cases like "LOTR" vs "Lord of the Rings")
         return t1_norm in t2_norm or t2_norm in t1_norm
 
     def _find_contributing_reference_items(
         self,
         candidate: ContentItem,
-        reference_items: list[ContentItem],
         all_consumed_items: list[ContentItem],
     ) -> list[ContentItem]:
-        """Find which reference items contributed to this recommendation.
+        """Find consumed items that share metadata with *candidate*.
 
-        Uses semantic similarity to find the top reference items that are most
-        similar to the candidate. This helps explain why an item was recommended.
+        Uses genre and creator overlap to identify which consumed items
+        are most related — no embeddings required.
 
         Args:
-            candidate: The recommended item
-            reference_items: Reference items used for similarity search
-            all_consumed_items: All consumed items (for context)
+            candidate: The recommended item.
+            all_consumed_items: All consumed items.
 
         Returns:
-            List of contributing reference items (top 3 most similar)
+            Top 3 contributing consumed items (by overlap score).
         """
-        if not reference_items:
-            return []
+        candidate_genres = set(_extract_genres(candidate))
+        candidate_creator = _extract_creator(candidate)
 
-        # Generate embedding for candidate
-        try:
-            candidate_embedding = self.embedding_gen.generate_content_embedding(
-                candidate
-            )
-        except Exception as e:
-            logger.warning(f"Failed to generate embedding for {candidate.title}: {e}")
-            return []
-
-        # Calculate similarity to each reference item
-        similarities = []
-        for ref_item in reference_items:
-            try:
-                ref_embedding = self.embedding_gen.generate_content_embedding(ref_item)
-
-                # Calculate cosine similarity
-                import numpy as np
-
-                similarity = np.dot(candidate_embedding, ref_embedding) / (
-                    np.linalg.norm(candidate_embedding) * np.linalg.norm(ref_embedding)
-                )
-
-                # Only include high-rated items that are similar
-                if ref_item.rating and ref_item.rating >= 4 and similarity > 0.5:
-                    similarities.append((ref_item, similarity))
-            except Exception as e:
-                logger.debug(
-                    f"Failed to calculate similarity for {ref_item.title}: {e}"
-                )
+        scored: list[tuple[ContentItem, float]] = []
+        for consumed in all_consumed_items:
+            if not (consumed.rating and consumed.rating >= 4):
                 continue
 
-        # Sort by similarity and return top 3
-        similarities.sort(key=lambda x: x[1], reverse=True)
-        return [item for item, _ in similarities[:3]]
+            overlap = 0.0
+            consumed_genres = set(_extract_genres(consumed))
+            if candidate_genres and consumed_genres:
+                intersection = candidate_genres & consumed_genres
+                if intersection:
+                    overlap += len(intersection) / len(
+                        candidate_genres | consumed_genres
+                    )
+
+            consumed_creator = _extract_creator(consumed)
+            if (
+                candidate_creator
+                and consumed_creator
+                and candidate_creator == consumed_creator
+            ):
+                overlap += 0.5
+
+            if overlap > 0:
+                scored.append((consumed, overlap))
+
+        scored.sort(key=lambda pair: pair[1], reverse=True)
+        return [item for item, _ in scored[:3]]
 
     def _generate_reasoning(
         self,
@@ -492,26 +508,26 @@ class RecommendationEngine:
     ) -> str:
         """Generate reasoning for a recommendation.
 
-        Reasoning considers preferences from all consumed content types,
-        enabling cross-content-type recommendations. Now includes specific
-        references to source items that influenced the recommendation.
-
         Args:
-            item: Recommended item
-            preferences: User preferences (from all content types)
-            metadata: Recommendation metadata
-            adaptations: List of direct adaptations found in consumed content
-            contributing_items: List of reference items that contributed to this recommendation
+            item: Recommended item.
+            preferences: User preferences (from all content types).
+            metadata: Recommendation metadata.
+            adaptations: List of direct adaptations found in consumed content.
+            contributing_items: List of reference items that contributed.
 
         Returns:
-            Reasoning string
+            Reasoning string.
         """
-        reasons = []
+        reasons: list[str] = []
 
         # Check for direct adaptations first (highest priority)
         if adaptations:
-            adaptation = adaptations[0]  # Use the first/highest-rated adaptation
-            adaptation_type = adaptation.content_type.value.lower()
+            adaptation = adaptations[0]
+            adaptation_type = (
+                adaptation.content_type.lower()
+                if isinstance(adaptation.content_type, str)
+                else adaptation.content_type.value.lower()
+            )
             if adaptation.author:
                 reasons.append(
                     f"because you read and enjoyed '{adaptation.title}' "
@@ -524,7 +540,6 @@ class RecommendationEngine:
 
         # Mention specific contributing items from other content types
         elif contributing_items:
-            # Filter to items from different content types
             cross_type_items = [
                 ref
                 for ref in contributing_items
@@ -532,10 +547,8 @@ class RecommendationEngine:
             ]
 
             if cross_type_items:
-                # Format the contributing items
                 item_refs = []
-                for ref in cross_type_items[:2]:  # Limit to top 2
-                    # Handle both enum and string (Pydantic use_enum_values converts to string)
+                for ref in cross_type_items[:2]:
                     ref_type = (
                         ref.content_type.value.lower()
                         if hasattr(ref.content_type, "value")
@@ -564,8 +577,6 @@ class RecommendationEngine:
                 if item.author and preferences.get_author_score(item.author) > 0.5:
                     reasons.append(f"by author {item.author}")
 
-                # Check for genre preference (works across content types)
-                # Steam games use "genres" (plural) in metadata
                 genre = None
                 if item.metadata:
                     genre = item.metadata.get("genre") or (
