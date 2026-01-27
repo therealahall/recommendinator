@@ -202,7 +202,7 @@ class PreferenceAnalyzer:
 
         # Extract themes from reviews (only from high-rated items for now)
         theme_scores: dict[str, float] = {}
-        review_words: list[str] = []
+        review_words: list[tuple[str, float]] = []
         for item in high_rated:
             if item.review and item.rating:
                 words = item.review.lower().split()
@@ -210,9 +210,9 @@ class PreferenceAnalyzer:
                 review_words.extend([(w, weight) for w in words if len(w) > 4])
 
         # Count theme words
-        word_counts: Counter = Counter()
-        for word, weight in review_words:
-            word_counts[word] += weight
+        word_counts: Counter[str] = Counter()
+        for review_word, review_weight in review_words:
+            word_counts[review_word] += int(review_weight)
 
         # Normalize theme scores (top 20 themes)
         if word_counts:

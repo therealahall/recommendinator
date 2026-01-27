@@ -1,6 +1,5 @@
 """Tests for preference analysis."""
 
-
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.recommendations.preferences import PreferenceAnalyzer, UserPreferences
 

@@ -50,7 +50,11 @@ class SimilarityMatcher:
         for item in reference_items:
             # Check if embedding exists
             content_id = item.id if item.id else None
-            if content_id and self.storage.vector_db.has_embedding(content_id):
+            if (
+                content_id
+                and self.storage.vector_db is not None
+                and self.storage.vector_db.has_embedding(content_id)
+            ):
                 embedding = self.storage.vector_db.get_embedding(content_id)
                 if embedding is not None:
                     reference_embeddings.append(embedding)
@@ -61,7 +65,7 @@ class SimilarityMatcher:
                     reference_embeddings.append(embedding)
                     # Save embedding for future use
                     if content_id:
-                        self.storage.save_content_item(item, embedding)
+                        self.storage.save_content_item(item, embedding=embedding)
                 except Exception as e:
                     logger.warning(
                         f"Failed to generate embedding for {item.title}: {e}"

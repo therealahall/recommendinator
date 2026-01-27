@@ -39,7 +39,7 @@ def load_config(config_path: Path | None = None) -> dict[str, Any]:
             )
 
     with open(config_path) as f:
-        config = yaml.safe_load(f)
+        config: dict[str, Any] = yaml.safe_load(f)
 
     return config
 

@@ -17,7 +17,7 @@ from src.cli.config import (
 @click.group()
 @click.option(
     "--config",
-    type=click.Path(exists=True, path_type=Path),
+    type=click.Path(exists=True, path_type=Path),  # type: ignore[type-var]
     default=None,
     help="Path to configuration file",
 )

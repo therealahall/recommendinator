@@ -127,9 +127,7 @@ class RadarrPlugin(SourcePlugin):
             )
 
 
-def _fetch_radarr_movies(
-    base_url: str, api_key: str
-) -> list[dict[str, Any]]:
+def _fetch_radarr_movies(base_url: str, api_key: str) -> list[dict[str, Any]]:
     """Fetch all movies from Radarr API.
 
     Args:

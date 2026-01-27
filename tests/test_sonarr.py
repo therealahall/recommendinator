@@ -117,9 +117,7 @@ class TestSonarrPluginValidation:
         assert any("api_key" in error for error in errors)
 
     def test_validate_empty_api_key(self, plugin: SonarrPlugin) -> None:
-        errors = plugin.validate_config(
-            {"url": "http://localhost:8989", "api_key": ""}
-        )
+        errors = plugin.validate_config({"url": "http://localhost:8989", "api_key": ""})
         assert any("api_key" in error for error in errors)
 
     def test_validate_missing_url(self, plugin: SonarrPlugin) -> None:
@@ -144,9 +142,7 @@ class TestSonarrPluginFetch:
         mock_get.return_value = mock_response
 
         items = list(
-            plugin.fetch(
-                {"url": "http://localhost:8989", "api_key": "test_key"}
-            )
+            plugin.fetch({"url": "http://localhost:8989", "api_key": "test_key"})
         )
 
         # Only 2 monitored series (third is unmonitored)
@@ -168,9 +164,7 @@ class TestSonarrPluginFetch:
         mock_get.return_value = mock_response
 
         items = list(
-            plugin.fetch(
-                {"url": "http://localhost:8989", "api_key": "test_key"}
-            )
+            plugin.fetch({"url": "http://localhost:8989", "api_key": "test_key"})
         )
 
         for item in items:
@@ -189,9 +183,7 @@ class TestSonarrPluginFetch:
         mock_get.return_value = mock_response
 
         items = list(
-            plugin.fetch(
-                {"url": "http://localhost:8989", "api_key": "test_key"}
-            )
+            plugin.fetch({"url": "http://localhost:8989", "api_key": "test_key"})
         )
 
         for item in items:
@@ -211,9 +203,7 @@ class TestSonarrPluginFetch:
         mock_get.return_value = mock_response
 
         items = list(
-            plugin.fetch(
-                {"url": "http://localhost:8989", "api_key": "test_key"}
-            )
+            plugin.fetch({"url": "http://localhost:8989", "api_key": "test_key"})
         )
 
         assert items[0].id == "tvdb:81189"
@@ -233,9 +223,7 @@ class TestSonarrPluginFetch:
         mock_get.return_value = mock_response
 
         items = list(
-            plugin.fetch(
-                {"url": "http://localhost:8989", "api_key": "test_key"}
-            )
+            plugin.fetch({"url": "http://localhost:8989", "api_key": "test_key"})
         )
 
         # 9.5 / 2 = 4.75, rounds to 5
@@ -257,9 +245,7 @@ class TestSonarrPluginFetch:
         mock_get.return_value = mock_response
 
         items = list(
-            plugin.fetch(
-                {"url": "http://localhost:8989", "api_key": "test_key"}
-            )
+            plugin.fetch({"url": "http://localhost:8989", "api_key": "test_key"})
         )
 
         metadata = items[0].metadata
@@ -285,9 +271,7 @@ class TestSonarrPluginFetch:
         mock_get.return_value = mock_response
 
         items = list(
-            plugin.fetch(
-                {"url": "http://localhost:8989", "api_key": "test_key"}
-            )
+            plugin.fetch({"url": "http://localhost:8989", "api_key": "test_key"})
         )
 
         for item in items:
@@ -305,11 +289,7 @@ class TestSonarrPluginFetch:
         mock_response.raise_for_status = Mock()
         mock_get.return_value = mock_response
 
-        list(
-            plugin.fetch(
-                {"url": "http://localhost:8989", "api_key": "my_secret_key"}
-            )
-        )
+        list(plugin.fetch({"url": "http://localhost:8989", "api_key": "my_secret_key"}))
 
         mock_get.assert_called_once()
         call_kwargs = mock_get.call_args[1]
@@ -327,11 +307,7 @@ class TestSonarrPluginFetch:
         mock_response.raise_for_status = Mock()
         mock_get.return_value = mock_response
 
-        list(
-            plugin.fetch(
-                {"url": "http://mysonarr:8989", "api_key": "key"}
-            )
-        )
+        list(plugin.fetch({"url": "http://mysonarr:8989", "api_key": "key"}))
 
         call_args = mock_get.call_args[0]
         assert call_args[0] == "http://mysonarr:8989/api/v3/series"
@@ -348,11 +324,7 @@ class TestSonarrPluginFetch:
         mock_response.raise_for_status = Mock()
         mock_get.return_value = mock_response
 
-        list(
-            plugin.fetch(
-                {"url": "http://localhost:8989/", "api_key": "key"}
-            )
-        )
+        list(plugin.fetch({"url": "http://localhost:8989/", "api_key": "key"}))
 
         call_args = mock_get.call_args[0]
         assert "//" not in call_args[0].replace("http://", "")
@@ -368,11 +340,7 @@ class TestSonarrPluginFetch:
         mock_response.raise_for_status = Mock()
         mock_get.return_value = mock_response
 
-        items = list(
-            plugin.fetch(
-                {"url": "http://localhost:8989", "api_key": "key"}
-            )
-        )
+        items = list(plugin.fetch({"url": "http://localhost:8989", "api_key": "key"}))
 
         assert len(items) == 0
 
@@ -390,11 +358,7 @@ class TestSonarrPluginFetch:
         mock_response.raise_for_status = Mock()
         mock_get.return_value = mock_response
 
-        items = list(
-            plugin.fetch(
-                {"url": "http://localhost:8989", "api_key": "key"}
-            )
-        )
+        items = list(plugin.fetch({"url": "http://localhost:8989", "api_key": "key"}))
 
         assert len(items) == 1
         assert items[0].title == "Valid Show"
@@ -414,11 +378,7 @@ class TestSonarrPluginErrors:
         mock_get.side_effect = req.ConnectionError("Connection refused")
 
         with pytest.raises(SourceError, match="Failed to connect to Sonarr"):
-            list(
-                plugin.fetch(
-                    {"url": "http://localhost:8989", "api_key": "key"}
-                )
-            )
+            list(plugin.fetch({"url": "http://localhost:8989", "api_key": "key"}))
 
     @patch("src.ingestion.sources.sonarr.requests.get")
     def test_http_error_raises_source_error(
@@ -433,11 +393,7 @@ class TestSonarrPluginErrors:
         mock_get.return_value = mock_response
 
         with pytest.raises(SourceError, match="Failed to connect to Sonarr"):
-            list(
-                plugin.fetch(
-                    {"url": "http://localhost:8989", "api_key": "bad_key"}
-                )
-            )
+            list(plugin.fetch({"url": "http://localhost:8989", "api_key": "bad_key"}))
 
 
 class TestSonarrRatingNormalization:

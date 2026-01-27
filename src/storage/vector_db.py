@@ -1,7 +1,8 @@
 """ChromaDB vector database manager for embeddings."""
 
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import chromadb
 import numpy as np
@@ -59,14 +60,14 @@ class VectorDB:
                 # Update existing embedding
                 self.collection.update(
                     ids=[content_id],
-                    embeddings=[embedding],
+                    embeddings=cast(list[Sequence[float]], [embedding]),
                     metadatas=[doc_metadata],
                 )
             else:
                 # Add new embedding
                 self.collection.add(
                     ids=[content_id],
-                    embeddings=[embedding],
+                    embeddings=cast(list[Sequence[float]], [embedding]),
                     metadatas=[doc_metadata],
                 )
         except Exception:
@@ -74,7 +75,7 @@ class VectorDB:
             try:
                 self.collection.add(
                     ids=[content_id],
-                    embeddings=[embedding],
+                    embeddings=cast(list[Sequence[float]], [embedding]),
                     metadatas=[doc_metadata],
                 )
             except Exception:
@@ -85,7 +86,7 @@ class VectorDB:
                     pass
                 self.collection.add(
                     ids=[content_id],
-                    embeddings=[embedding],
+                    embeddings=cast(list[Sequence[float]], [embedding]),
                     metadatas=[doc_metadata],
                 )
 
@@ -105,11 +106,12 @@ class VectorDB:
                 and len(results["ids"]) > 0
                 and results["embeddings"] is not None
             ):
-                embedding = results["embeddings"][0]
+                raw_embedding = results["embeddings"][0]
                 # Convert numpy array to list if needed
-                if isinstance(embedding, np.ndarray):
-                    return embedding.tolist()
-                return list(embedding) if embedding else None
+                if isinstance(raw_embedding, np.ndarray):
+                    result: list[float] = raw_embedding.tolist()
+                    return result
+                return list(raw_embedding) if raw_embedding else None
             return None
         except Exception:
             return None
@@ -142,7 +144,7 @@ class VectorDB:
 
         try:
             results = self.collection.query(
-                query_embeddings=[query_embedding],
+                query_embeddings=cast(list[Sequence[float]], [query_embedding]),
                 n_results=request_n_results,
                 where=where_clause if where_clause else None,
             )
@@ -156,18 +158,16 @@ class VectorDB:
                     if content_id in exclude_set:
                         continue
 
+                    distances = results.get("distances")
+                    metadatas = results.get("metadatas")
                     formatted_results.append(
                         {
                             "content_id": content_id,
                             "score": (
-                                1.0 - results["distances"][0][i]
-                                if results.get("distances")
-                                else None
+                                1.0 - distances[0][i] if distances is not None else None
                             ),
                             "metadata": (
-                                results["metadatas"][0][i]
-                                if results.get("metadatas")
-                                else {}
+                                metadatas[0][i] if metadatas is not None else {}
                             ),
                         }
                     )

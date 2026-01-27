@@ -64,9 +64,7 @@ class TestMarkdownImportPluginValidation:
         )
         assert errors == []
 
-    def test_validate_missing_markdown_path(
-        self, plugin: MarkdownImportPlugin
-    ) -> None:
+    def test_validate_missing_markdown_path(self, plugin: MarkdownImportPlugin) -> None:
         errors = plugin.validate_config({"content_type": "book"})
         assert any("markdown_path" in error for error in errors)
 
@@ -158,9 +156,7 @@ class TestMarkdownImportPluginFetch:
         self, plugin: MarkdownImportPlugin, tmp_path: Path
     ) -> None:
         md_file = tmp_path / "books.md"
-        md_file.write_text(
-            "## Completed\n" "- **Some Book** | Rating: 3\n"
-        )
+        md_file.write_text("## Completed\n" "- **Some Book** | Rating: 3\n")
 
         items = list(
             plugin.fetch({"markdown_path": str(md_file), "content_type": "book"})
@@ -175,9 +171,7 @@ class TestMarkdownImportPluginFetch:
         self, plugin: MarkdownImportPlugin, tmp_path: Path
     ) -> None:
         md_file = tmp_path / "books.md"
-        md_file.write_text(
-            "## Completed\n" "- **Some Book** by Some Author\n"
-        )
+        md_file.write_text("## Completed\n" "- **Some Book** by Some Author\n")
 
         items = list(
             plugin.fetch({"markdown_path": str(md_file), "content_type": "book"})
@@ -206,9 +200,7 @@ class TestMarkdownImportPluginFetch:
         self, plugin: MarkdownImportPlugin, tmp_path: Path
     ) -> None:
         md_file = tmp_path / "books.md"
-        md_file.write_text(
-            "# My Books\n" "- **Orphaned Book** by Author\n"
-        )
+        md_file.write_text("# My Books\n" "- **Orphaned Book** by Author\n")
 
         items = list(
             plugin.fetch({"markdown_path": str(md_file), "content_type": "book"})
@@ -221,9 +213,7 @@ class TestMarkdownImportPluginFetch:
         self, plugin: MarkdownImportPlugin, tmp_path: Path
     ) -> None:
         md_file = tmp_path / "books.md"
-        md_file.write_text(
-            "## Completed\n" "* **Book A** by Author A | Rating: 5\n"
-        )
+        md_file.write_text("## Completed\n" "* **Book A** by Author A | Rating: 5\n")
 
         items = list(
             plugin.fetch({"markdown_path": str(md_file), "content_type": "book"})
@@ -268,9 +258,7 @@ class TestMarkdownImportPluginFetch:
 class TestMarkdownSectionMapping:
     """Tests for section heading to status mapping."""
 
-    def _make_file_with_section(
-        self, tmp_path: Path, section: str
-    ) -> Path:
+    def _make_file_with_section(self, tmp_path: Path, section: str) -> Path:
         md_file = tmp_path / "data.md"
         md_file.write_text(f"## {section}\n- **Test** by Author\n")
         return md_file
@@ -325,9 +313,7 @@ class TestMarkdownSectionMapping:
     ) -> None:
         md_file = self._make_file_with_section(tmp_path, "To Play")
         items = list(
-            plugin.fetch(
-                {"markdown_path": str(md_file), "content_type": "video_game"}
-            )
+            plugin.fetch({"markdown_path": str(md_file), "content_type": "video_game"})
         )
         assert items[0].status == ConsumptionStatus.UNREAD.value
 
@@ -345,9 +331,7 @@ class TestMarkdownSectionMapping:
     ) -> None:
         md_file = self._make_file_with_section(tmp_path, "Backlog")
         items = list(
-            plugin.fetch(
-                {"markdown_path": str(md_file), "content_type": "video_game"}
-            )
+            plugin.fetch({"markdown_path": str(md_file), "content_type": "video_game"})
         )
         assert items[0].status == ConsumptionStatus.UNREAD.value
 
@@ -372,9 +356,7 @@ class TestMarkdownSectionMapping:
 class TestMarkdownRating:
     """Tests for rating parsing."""
 
-    def test_valid_rating(
-        self, plugin: MarkdownImportPlugin, tmp_path: Path
-    ) -> None:
+    def test_valid_rating(self, plugin: MarkdownImportPlugin, tmp_path: Path) -> None:
         md_file = tmp_path / "data.md"
         md_file.write_text("## Completed\n- **Test** | Rating: 4\n")
         items = list(
@@ -416,9 +398,7 @@ class TestMarkdownRating:
 class TestMarkdownDate:
     """Tests for date parsing."""
 
-    def test_valid_date(
-        self, plugin: MarkdownImportPlugin, tmp_path: Path
-    ) -> None:
+    def test_valid_date(self, plugin: MarkdownImportPlugin, tmp_path: Path) -> None:
         md_file = tmp_path / "data.md"
         md_file.write_text("## Completed\n- **Test** | Date: 2024-06-15\n")
         items = list(
@@ -487,8 +467,7 @@ class TestMarkdownContentTypes:
     ) -> None:
         md_file = tmp_path / "movies.md"
         md_file.write_text(
-            "## Completed\n"
-            "- **Inception** by Christopher Nolan | Rating: 5\n"
+            "## Completed\n" "- **Inception** by Christopher Nolan | Rating: 5\n"
         )
 
         items = list(
@@ -504,8 +483,7 @@ class TestMarkdownContentTypes:
     ) -> None:
         md_file = tmp_path / "tv.md"
         md_file.write_text(
-            "## Completed\n"
-            "- **Breaking Bad** by Vince Gilligan | Rating: 5\n"
+            "## Completed\n" "- **Breaking Bad** by Vince Gilligan | Rating: 5\n"
         )
 
         items = list(
@@ -520,14 +498,11 @@ class TestMarkdownContentTypes:
     ) -> None:
         md_file = tmp_path / "games.md"
         md_file.write_text(
-            "## Completed\n"
-            "- **The Witcher 3** by CD Projekt Red | Rating: 5\n"
+            "## Completed\n" "- **The Witcher 3** by CD Projekt Red | Rating: 5\n"
         )
 
         items = list(
-            plugin.fetch(
-                {"markdown_path": str(md_file), "content_type": "video_game"}
-            )
+            plugin.fetch({"markdown_path": str(md_file), "content_type": "video_game"})
         )
 
         assert len(items) == 1

@@ -49,7 +49,7 @@ class OllamaClient:
 
         try:
             response = self.client.embeddings(model=model, prompt=text)
-            embedding = response.get("embedding", [])
+            embedding: list[float] = response.get("embedding", [])
             if not embedding:
                 raise RuntimeError(f"No embedding returned from model {model}")
             return embedding
@@ -123,7 +123,7 @@ class OllamaClient:
 
             response = self.client.chat(model=model, messages=messages, options=options)
 
-            content = response.get("message", {}).get("content", "")
+            content: str = response.get("message", {}).get("content", "")
             if not content:
                 raise RuntimeError(f"No content returned from model {model}")
 
@@ -158,16 +158,11 @@ class OllamaClient:
             response = self.client.list()
             # Ollama returns a ListResponse object with models attribute
             if hasattr(response, "models"):
+                models_attr = response.models
                 return [
-                    model.model for model in response.models if hasattr(model, "model")
-                ]
-            # Fallback for dict response
-            if isinstance(response, dict) and "models" in response:
-                models_list = response["models"]
-                return [
-                    m.get("name") or m.get("model")
-                    for m in models_list
-                    if m.get("name") or m.get("model")
+                    m.model
+                    for m in models_attr
+                    if hasattr(m, "model") and m.model is not None
                 ]
             return []
         except Exception as e:

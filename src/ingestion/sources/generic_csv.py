@@ -139,9 +139,7 @@ class CsvImportPlugin(SourcePlugin):
         try:
             yield from self._parse_csv(file_path, content_type)
         except FileNotFoundError as error:
-            raise SourceError(
-                self.name, f"CSV file not found: {file_path}"
-            ) from error
+            raise SourceError(self.name, f"CSV file not found: {file_path}") from error
         except csv.Error as error:
             raise SourceError(self.name, f"Failed to parse CSV: {error}") from error
 

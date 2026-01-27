@@ -152,9 +152,7 @@ class SonarrPlugin(SourcePlugin):
             return None
 
 
-def _fetch_sonarr_series(
-    base_url: str, api_key: str
-) -> list[dict[str, Any]]:
+def _fetch_sonarr_series(base_url: str, api_key: str) -> list[dict[str, Any]]:
     """Fetch all series from Sonarr API.
 
     Args:

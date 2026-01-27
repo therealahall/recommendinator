@@ -201,12 +201,12 @@ class StorageManager:
 - [x] Refactor Steam parser to implement interface
 - [x] Create plugin registry/discovery system
 - [x] Add rating normalization to interface
-- [ ] Handle source-of-truth conflicts (configurable)
-- [ ] Create Markdown ingestion system
-- [ ] Create generic CSV ingestion system
-- [ ] Create generic JSON ingestion system
-- [ ] Create Sonarr ingestion system
-- [ ] Create Radarr ingestion system
+- [x] Handle source-of-truth conflicts (configurable)
+- [x] Create generic CSV ingestion system (with prescriptive templates)
+- [x] Create generic JSON ingestion system (with prescriptive templates)
+- [x] Create Markdown ingestion system (with prescriptive templates)
+- [x] Create Sonarr ingestion system
+- [x] Create Radarr ingestion system
 
 **Plugin Interface:**
 ```python
@@ -386,7 +386,7 @@ GET  /api/recommendations/{content_type}?include_reasoning=true
 |-------|--------|---------|-----------|
 | Phase 0: Foundation Reset | Complete | 2026-01-25 | 2026-01-25 |
 | Phase 1: Core Data Layer | Complete | 2026-01-25 | 2026-01-25 |
-| Phase 2: Ingestion Framework | In Progress | 2026-01-26 | - |
+| Phase 2: Ingestion Framework | Complete | 2026-01-26 | 2026-01-27 |
 | Phase 3: Non-AI Engine | Not Started | - | - |
 | Phase 4: AI Enhancement | Not Started | - | - |
 | Phase 5: User Preferences | Not Started | - | - |

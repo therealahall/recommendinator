@@ -85,7 +85,7 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
     @app.get("/", response_class=HTMLResponse)
-    async def root():
+    async def root() -> HTMLResponse:
         """Serve the main web UI."""
         html_file = Path("src/web/templates/index.html")
         if html_file.exists():

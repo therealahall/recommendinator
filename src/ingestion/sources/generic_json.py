@@ -114,13 +114,9 @@ class JsonImportPlugin(SourcePlugin):
         try:
             entries = _load_json_or_jsonl(file_path)
         except FileNotFoundError as error:
-            raise SourceError(
-                self.name, f"JSON file not found: {file_path}"
-            ) from error
+            raise SourceError(self.name, f"JSON file not found: {file_path}") from error
         except (json.JSONDecodeError, ValueError) as error:
-            raise SourceError(
-                self.name, f"Failed to parse JSON: {error}"
-            ) from error
+            raise SourceError(self.name, f"Failed to parse JSON: {error}") from error
 
         yield from _parse_entries(entries, content_type, self.get_source_identifier())
 
@@ -160,11 +156,11 @@ def _load_json_or_jsonl(file_path: Path) -> list[dict[str, Any]]:
         try:
             entry = json.loads(line)
         except json.JSONDecodeError as error:
-            raise ValueError(
-                f"Invalid JSON on line {line_number}: {error}"
-            ) from error
+            raise ValueError(f"Invalid JSON on line {line_number}: {error}") from error
         if not isinstance(entry, dict):
-            raise ValueError(f"Line {line_number} must be a JSON object, not {type(entry).__name__}")
+            raise ValueError(
+                f"Line {line_number} must be a JSON object, not {type(entry).__name__}"
+            )
         entries.append(entry)
 
     return entries

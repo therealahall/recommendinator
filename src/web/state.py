@@ -6,21 +6,21 @@ from typing import Any
 app_state: dict[str, Any] = {}
 
 
-def get_engine():
+def get_engine() -> Any:
     """Get recommendation engine from app state."""
     return app_state.get("engine")
 
 
-def get_storage():
+def get_storage() -> Any:
     """Get storage manager from app state."""
     return app_state.get("storage")
 
 
-def get_embedding_gen():
+def get_embedding_gen() -> Any:
     """Get embedding generator from app state."""
     return app_state.get("embedding_gen")
 
 
-def get_config():
+def get_config() -> Any:
     """Get configuration from app state."""
     return app_state.get("config")

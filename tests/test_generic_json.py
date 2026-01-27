@@ -241,9 +241,7 @@ class TestJsonImportPluginFetch:
         assert len(items) == 1
         assert items[0].title == "Valid"
 
-    def test_fetch_empty_array(
-        self, plugin: JsonImportPlugin, tmp_path: Path
-    ) -> None:
+    def test_fetch_empty_array(self, plugin: JsonImportPlugin, tmp_path: Path) -> None:
         json_file = tmp_path / "data.json"
         json_file.write_text("[]")
 
@@ -253,9 +251,7 @@ class TestJsonImportPluginFetch:
 
         assert len(items) == 0
 
-    def test_fetch_empty_file(
-        self, plugin: JsonImportPlugin, tmp_path: Path
-    ) -> None:
+    def test_fetch_empty_file(self, plugin: JsonImportPlugin, tmp_path: Path) -> None:
         json_file = tmp_path / "data.json"
         json_file.write_text("")
 
@@ -370,9 +366,7 @@ class TestJsonImportPluginRating:
 class TestJsonImportPluginErrors:
     """Tests for error handling."""
 
-    def test_file_not_found_raises_source_error(
-        self, plugin: JsonImportPlugin
-    ) -> None:
+    def test_file_not_found_raises_source_error(self, plugin: JsonImportPlugin) -> None:
         with pytest.raises(SourceError, match="JSON file not found"):
             list(
                 plugin.fetch(
@@ -386,11 +380,7 @@ class TestJsonImportPluginErrors:
         json_file = tmp_path / "bad.json"
         json_file.write_text("{not valid json")
         with pytest.raises(SourceError, match="Failed to parse JSON"):
-            list(
-                plugin.fetch(
-                    {"json_path": str(json_file), "content_type": "book"}
-                )
-            )
+            list(plugin.fetch({"json_path": str(json_file), "content_type": "book"}))
 
     def test_invalid_jsonl_raises_source_error(
         self, plugin: JsonImportPlugin, tmp_path: Path
@@ -398,11 +388,7 @@ class TestJsonImportPluginErrors:
         jsonl_file = tmp_path / "bad.jsonl"
         jsonl_file.write_text('{"title": "ok"}\nnot json\n')
         with pytest.raises(SourceError, match="Failed to parse JSON"):
-            list(
-                plugin.fetch(
-                    {"json_path": str(jsonl_file), "content_type": "book"}
-                )
-            )
+            list(plugin.fetch({"json_path": str(jsonl_file), "content_type": "book"}))
 
     def test_invalid_content_type_raises_source_error(
         self, plugin: JsonImportPlugin, tmp_path: Path
@@ -410,11 +396,7 @@ class TestJsonImportPluginErrors:
         json_file = tmp_path / "data.json"
         json_file.write_text("[]")
         with pytest.raises(SourceError, match="Invalid content type"):
-            list(
-                plugin.fetch(
-                    {"json_path": str(json_file), "content_type": "podcast"}
-                )
-            )
+            list(plugin.fetch({"json_path": str(json_file), "content_type": "podcast"}))
 
     def test_invalid_date_does_not_crash(
         self, plugin: JsonImportPlugin, tmp_path: Path

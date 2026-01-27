@@ -625,8 +625,8 @@ class SQLiteDB:
                     metadata.update(remaining)
                 except (json.JSONDecodeError, TypeError):
                     pass
-        else:
-            author = None
+        else:  # pragma: no cover
+            author = None  # type: ignore[unreachable]
 
         # Parse date_completed
         date_completed = None

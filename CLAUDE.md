@@ -40,7 +40,9 @@ config/               # Configuration files (example.yaml for tests)
 
 **Always use `python3.11` for all commands.** Do not use bare `python` or `python3`.
 
-### Code Quality (ALL must pass before commit)
+### Code Quality (ALL must pass — always green)
+
+**The codebase must always be in a clean state.** All four quality tools must pass at all times — not just before commits, but after every change. If pre-existing code has issues, fix them immediately. Never leave the codebase in a failing state.
 
 ```bash
 python3.11 -m pytest          # All tests pass

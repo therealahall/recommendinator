@@ -1,6 +1,7 @@
 """REST API endpoints."""
 
 import logging
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -61,7 +62,7 @@ async def get_recommendations(
     ),
     count: int = Query(5, ge=1, le=20, description="Number of recommendations"),
     use_llm: bool = Query(True, description="Use LLM for enhanced reasoning"),
-):
+) -> list[RecommendationResponse]:
     """Get personalized recommendations.
 
     Args:
@@ -121,7 +122,7 @@ async def get_recommendations(
 
 
 @router.post("/complete")
-async def mark_complete(request: CompletionRequest):
+async def mark_complete(request: CompletionRequest) -> dict[str, Any]:
     """Mark content as completed.
 
     Args:
@@ -181,7 +182,7 @@ async def mark_complete(request: CompletionRequest):
 
 
 @router.post("/update")
-async def update_data(request: UpdateRequest):
+async def update_data(request: UpdateRequest) -> dict[str, Any]:
     """Update data from input files.
 
     Args:
@@ -284,7 +285,7 @@ async def update_data(request: UpdateRequest):
 
 
 @router.get("/status", response_model=StatusResponse)
-async def get_status():
+async def get_status() -> StatusResponse:
     """Get system status.
 
     Returns:
