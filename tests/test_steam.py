@@ -221,7 +221,7 @@ class TestParseSteamGames:
         assert item.id == "12345"
         assert item.author is None
         assert item.status == ConsumptionStatus.COMPLETED
-        assert item.rating == 2  # 2 hours = rating 2
+        assert item.rating is None  # Ratings are user-provided, not inferred
         assert item.metadata["playtime_hours"] == 2.0
         assert item.metadata["playtime_minutes"] == 120
 
@@ -256,21 +256,13 @@ class TestParseSteamGames:
 
     @patch("src.ingestion.sources.steam.get_game_details")
     @patch("src.ingestion.sources.steam.get_owned_games")
-    def test_parse_steam_games_rating_estimation(
+    def test_parse_steam_games_rating_always_none(
         self, mock_get_games, mock_get_details
     ):
-        """Test rating estimation based on playtime."""
+        """Test that ratings are always None (user-provided, not inferred from playtime)."""
         mock_get_details.return_value = {}
 
-        test_cases = [
-            (1, None),  # < 1 hour = no rating
-            (60, 2),  # 1 hour = rating 2
-            (300, 3),  # 5 hours = rating 3
-            (600, 4),  # 10 hours = rating 4
-            (1200, 5),  # 20 hours = rating 5
-        ]
-
-        for playtime_minutes, expected_rating in test_cases:
+        for playtime_minutes in [0, 1, 60, 300, 600, 1200]:
             mock_get_games.return_value = [
                 {
                     "appid": 12345,
@@ -280,8 +272,8 @@ class TestParseSteamGames:
             ]
             items = list(parse_steam_games("test_key", steam_id="76561198000000000"))
             assert (
-                items[0].rating == expected_rating
-            ), f"Expected rating {expected_rating} for {playtime_minutes} minutes"
+                items[0].rating is None
+            ), f"Expected None rating for {playtime_minutes} minutes, got {items[0].rating}"
 
     @patch("src.ingestion.sources.steam.get_game_details")
     @patch("src.ingestion.sources.steam.get_owned_games")

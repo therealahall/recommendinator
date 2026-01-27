@@ -338,17 +338,10 @@ def _fetch_steam_games(
                 }
             )
 
-        # Estimate rating based on playtime (rough heuristic)
+        # Rating is left as None — playtime does not reliably indicate
+        # enjoyment (e.g. a 100-hour RPG vs a 5-hour indie). Users can
+        # set ratings manually via the UI in a future update.
         rating = None
-        if playtime_hours >= 20:
-            rating = 5  # Highly engaged
-        elif playtime_hours >= 10:
-            rating = 4
-        elif playtime_hours >= 5:
-            rating = 3
-        elif playtime_hours >= 1:
-            rating = 2
-        # Don't assign rating for games with < 1 hour
 
         yield ContentItem(
             id=str(app_id),
