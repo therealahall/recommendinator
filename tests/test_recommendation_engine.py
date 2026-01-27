@@ -30,7 +30,7 @@ def mock_embedding_gen():
 
 @pytest.fixture
 def engine(mock_storage, mock_embedding_gen):
-    """Create a recommendation engine with mocked dependencies."""
+    """Create a recommendation engine with mocked dependencies (AI mode)."""
     return RecommendationEngine(
         storage_manager=mock_storage,
         embedding_generator=mock_embedding_gen,
@@ -39,9 +39,24 @@ def engine(mock_storage, mock_embedding_gen):
     )
 
 
+@pytest.fixture
+def non_ai_engine(mock_storage):
+    """Create a recommendation engine without embedding generator (non-AI mode)."""
+    return RecommendationEngine(
+        storage_manager=mock_storage,
+        embedding_generator=None,
+        recommendation_generator=None,
+        min_rating=4,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Existing tests (backward-compatible — engine with embedding_generator)
+# ---------------------------------------------------------------------------
+
+
 def test_cross_content_type_preferences(engine, mock_storage, mock_embedding_gen):
     """Test that preferences are extracted from all content types."""
-    # Consumed items across multiple content types
     sci_fi_book = ContentItem(
         id="1",
         title="Dune",
@@ -70,7 +85,6 @@ def test_cross_content_type_preferences(engine, mock_storage, mock_embedding_gen
         metadata={"genre": "Science Fiction"},
     )
 
-    # Unconsumed game to recommend
     unconsumed_game = ContentItem(
         id="4",
         title="Mass Effect 2",
@@ -79,7 +93,6 @@ def test_cross_content_type_preferences(engine, mock_storage, mock_embedding_gen
         metadata={"genres": ["Action", "RPG", "Science Fiction"]},
     )
 
-    # Mock storage to return all consumed items (cross-content-type)
     mock_storage.get_completed_items = Mock(
         side_effect=lambda content_type=None, **kwargs: (
             [sci_fi_book, sci_fi_game, sci_fi_tv]
@@ -88,10 +101,8 @@ def test_cross_content_type_preferences(engine, mock_storage, mock_embedding_gen
         )
     )
 
-    # Mock storage to return unconsumed games
     mock_storage.get_unconsumed_items = Mock(return_value=[unconsumed_game])
 
-    # Mock similarity search
     mock_storage.search_similar = Mock(
         return_value=[
             {
@@ -102,17 +113,12 @@ def test_cross_content_type_preferences(engine, mock_storage, mock_embedding_gen
         ]
     )
 
-    # Mock get_content_items for similarity matcher
     mock_storage.get_content_items = Mock(return_value=[unconsumed_game])
-
-    # Mock vector DB
     mock_storage.vector_db.has_embedding = Mock(return_value=False)
 
     engine.generate_recommendations(content_type=ContentType.VIDEO_GAME, count=1)
 
-    # Should use preferences from all content types
     assert mock_storage.get_completed_items.call_count >= 1
-    # First call should be with content_type=None to get all items
     call_args = mock_storage.get_completed_items.call_args_list
     assert any(
         call.kwargs.get("content_type") is None for call in call_args
@@ -121,7 +127,6 @@ def test_cross_content_type_preferences(engine, mock_storage, mock_embedding_gen
 
 def test_cross_content_type_similarity(engine, mock_storage, mock_embedding_gen):
     """Test that similarity search uses reference items from all content types."""
-    # Sci-fi book (consumed)
     sci_fi_book = ContentItem(
         id="1",
         title="Dune",
@@ -132,7 +137,6 @@ def test_cross_content_type_similarity(engine, mock_storage, mock_embedding_gen)
         metadata={"genre": "Science Fiction"},
     )
 
-    # Sci-fi game (consumed)
     sci_fi_game = ContentItem(
         id="2",
         title="Mass Effect",
@@ -142,7 +146,6 @@ def test_cross_content_type_similarity(engine, mock_storage, mock_embedding_gen)
         metadata={"genres": ["Science Fiction"]},
     )
 
-    # Unconsumed TV show to recommend
     unconsumed_tv = ContentItem(
         id="3",
         title="The Expanse",
@@ -151,7 +154,6 @@ def test_cross_content_type_similarity(engine, mock_storage, mock_embedding_gen)
         metadata={"genre": "Science Fiction"},
     )
 
-    # Mock storage
     mock_storage.get_completed_items = Mock(
         side_effect=lambda content_type=None, **kwargs: (
             [sci_fi_book, sci_fi_game] if content_type is None else []
@@ -172,15 +174,12 @@ def test_cross_content_type_similarity(engine, mock_storage, mock_embedding_gen)
 
     engine.generate_recommendations(content_type=ContentType.TV_SHOW, count=1)
 
-    # Verify that similarity search was called (it uses all consumed items)
     assert mock_storage.search_similar.called
-    # The similarity search should use embeddings from both book and game
     assert mock_embedding_gen.generate_content_embedding.call_count >= 1
 
 
 def test_cold_start_with_other_content_types(engine, mock_storage):
     """Test cold start when requesting type has no items but other types do."""
-    # Consumed book (different type)
     sci_fi_book = ContentItem(
         id="1",
         title="Dune",
@@ -189,7 +188,6 @@ def test_cold_start_with_other_content_types(engine, mock_storage):
         rating=5,
     )
 
-    # Mock: no consumed games, but books exist
     mock_storage.get_completed_items = Mock(
         side_effect=lambda content_type=None, **kwargs: (
             [sci_fi_book] if content_type is None else []
@@ -201,7 +199,6 @@ def test_cold_start_with_other_content_types(engine, mock_storage):
         content_type=ContentType.VIDEO_GAME, count=5
     )
 
-    # Should return empty (no unconsumed games to recommend)
     assert recommendations == []
 
 
@@ -209,7 +206,6 @@ def test_reasoning_mentions_cross_content_type(
     engine, mock_storage, mock_embedding_gen
 ):
     """Test that reasoning mentions cross-content-type preferences."""
-    # Consumed sci-fi book
     sci_fi_book = ContentItem(
         id="1",
         title="Dune",
@@ -219,7 +215,6 @@ def test_reasoning_mentions_cross_content_type(
         metadata={"genre": "Science Fiction"},
     )
 
-    # Unconsumed sci-fi game
     unconsumed_game = ContentItem(
         id="2",
         title="Mass Effect",
@@ -252,9 +247,243 @@ def test_reasoning_mentions_cross_content_type(
 
     if recommendations:
         reasoning = recommendations[0].get("reasoning", "")
-        # Reasoning should mention cross-content-type source (e.g., "(book)" when recommending games)
         assert (
             "all content types" in reasoning.lower()
             or "preferences" in reasoning.lower()
-            or "(book)" in reasoning.lower()  # Cross-content reference
+            or "(book)" in reasoning.lower()
         )
+
+
+# ---------------------------------------------------------------------------
+# Non-AI engine tests (Phase 3)
+# ---------------------------------------------------------------------------
+
+
+class TestNonAIEngine:
+    """Tests for the recommendation engine operating without embeddings."""
+
+    def test_non_ai_engine_produces_recommendations(self, non_ai_engine, mock_storage):
+        """Engine with embedding_generator=None still produces ranked recs."""
+        consumed_book = ContentItem(
+            id="1",
+            title="Dune",
+            author="Frank Herbert",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            metadata={"genre": "Science Fiction"},
+        )
+
+        unconsumed_book = ContentItem(
+            id="2",
+            title="Hyperion",
+            author="Dan Simmons",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genre": "Science Fiction"},
+        )
+
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: (
+                [consumed_book] if content_type is None else [consumed_book]
+            )
+        )
+        mock_storage.get_unconsumed_items = Mock(return_value=[unconsumed_book])
+
+        recommendations = non_ai_engine.generate_recommendations(
+            content_type=ContentType.BOOK, count=5
+        )
+
+        assert len(recommendations) >= 1
+        assert recommendations[0]["item"].title == "Hyperion"
+
+    def test_genre_preferences_boost_matching_candidates(
+        self, non_ai_engine, mock_storage
+    ):
+        """Items with preferred genres should rank higher."""
+        consumed = ContentItem(
+            id="1",
+            title="Dune",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            metadata={"genre": "Science Fiction"},
+        )
+
+        good_match = ContentItem(
+            id="2",
+            title="Hyperion",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genre": "Science Fiction"},
+        )
+
+        poor_match = ContentItem(
+            id="3",
+            title="Romance Novel",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genre": "Romance"},
+        )
+
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: (
+                [consumed] if content_type is None else [consumed]
+            )
+        )
+        mock_storage.get_unconsumed_items = Mock(return_value=[poor_match, good_match])
+
+        recommendations = non_ai_engine.generate_recommendations(
+            content_type=ContentType.BOOK, count=2
+        )
+
+        assert len(recommendations) >= 2
+        titles = [rec["item"].title for rec in recommendations]
+        # Sci-fi match should be ranked first
+        assert titles[0] == "Hyperion"
+
+    def test_creator_matching_across_types(self, non_ai_engine, mock_storage):
+        """Creator matching should work across content types."""
+        consumed_book = ContentItem(
+            id="1",
+            title="The Shining",
+            author="Stephen King",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            metadata={"genre": "Horror"},
+        )
+
+        unconsumed_by_same_author = ContentItem(
+            id="2",
+            title="It",
+            author="Stephen King",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genre": "Horror"},
+        )
+
+        unconsumed_other = ContentItem(
+            id="3",
+            title="Random Book",
+            author="Unknown Author",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genre": "Romance"},
+        )
+
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: (
+                [consumed_book] if content_type is None else [consumed_book]
+            )
+        )
+        mock_storage.get_unconsumed_items = Mock(
+            return_value=[unconsumed_other, unconsumed_by_same_author]
+        )
+
+        recommendations = non_ai_engine.generate_recommendations(
+            content_type=ContentType.BOOK, count=2
+        )
+
+        assert len(recommendations) >= 2
+        # Stephen King book should be ranked higher
+        assert recommendations[0]["item"].title == "It"
+
+    def test_cold_start_returns_empty(self, non_ai_engine, mock_storage):
+        """Non-AI engine should handle cold start gracefully."""
+        mock_storage.get_completed_items = Mock(return_value=[])
+
+        recommendations = non_ai_engine.generate_recommendations(
+            content_type=ContentType.BOOK, count=5
+        )
+
+        assert recommendations == []
+
+    def test_no_unconsumed_items_returns_empty(self, non_ai_engine, mock_storage):
+        """Non-AI engine returns empty when nothing to recommend."""
+        consumed = ContentItem(
+            id="1",
+            title="Dune",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+        )
+
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: (
+                [consumed] if content_type is None else [consumed]
+            )
+        )
+        mock_storage.get_unconsumed_items = Mock(return_value=[])
+
+        recommendations = non_ai_engine.generate_recommendations(
+            content_type=ContentType.BOOK, count=5
+        )
+
+        assert recommendations == []
+
+    def test_end_to_end_scoring_and_sorting(self, non_ai_engine, mock_storage):
+        """End-to-end: consumed items with genres -> unconsumed -> scored + sorted."""
+        consumed_items = [
+            ContentItem(
+                id="c1",
+                title="Foundation",
+                author="Isaac Asimov",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+                metadata={"genre": "Science Fiction"},
+            ),
+            ContentItem(
+                id="c2",
+                title="Neuromancer",
+                author="William Gibson",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+                metadata={"genre": "Science Fiction"},
+            ),
+        ]
+
+        unconsumed_items = [
+            ContentItem(
+                id="u1",
+                title="Left Hand of Darkness",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+                metadata={"genre": "Science Fiction"},
+            ),
+            ContentItem(
+                id="u2",
+                title="Pride and Prejudice",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+                metadata={"genre": "Romance"},
+            ),
+            ContentItem(
+                id="u3",
+                title="Dracula",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+                metadata={"genre": "Horror"},
+            ),
+        ]
+
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: (
+                consumed_items if content_type is None else consumed_items
+            )
+        )
+        mock_storage.get_unconsumed_items = Mock(return_value=unconsumed_items)
+
+        recommendations = non_ai_engine.generate_recommendations(
+            content_type=ContentType.BOOK, count=3
+        )
+
+        assert len(recommendations) == 3
+        # Sci-fi should be first since all consumed items are sci-fi
+        assert recommendations[0]["item"].title == "Left Hand of Darkness"
+        # All recs should have scores
+        for rec in recommendations:
+            assert "score" in rec
+            assert "reasoning" in rec
