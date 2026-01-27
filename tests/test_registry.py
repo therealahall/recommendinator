@@ -347,6 +347,9 @@ class TestPluginRegistryModuleDiscovery:
         fake_module = types.ModuleType("fake_module")
         fake_module._PrivatePlugin = FakeBookPlugin  # type: ignore[attr-defined]
 
+        clean_registry._discovered = (
+            True  # Prevent auto-discovery from clearing plugins
+        )
         clean_registry._register_plugins_from_module(fake_module, "test")
 
         assert len(clean_registry.get_all_plugins()) == 0

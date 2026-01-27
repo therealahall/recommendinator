@@ -192,7 +192,10 @@ def test_update_endpoint(client, mock_components):
         rating=5,
     )
 
-    with patch("src.web.api.parse_goodreads_csv", return_value=[mock_item]):
+    with (
+        patch("src.web.api.GoodreadsPlugin.fetch", return_value=iter([mock_item])),
+        patch("src.web.api.GoodreadsPlugin.validate_config", return_value=[]),
+    ):
         mock_components["embedding_gen"].generate_content_embedding.return_value = [
             0.1
         ] * 768
@@ -331,7 +334,8 @@ def test_update_endpoint_all_sources(client, mock_components):
     )
 
     with (
-        patch("src.web.api.parse_goodreads_csv", return_value=[mock_book]),
+        patch("src.web.api.GoodreadsPlugin.fetch", return_value=iter([mock_book])),
+        patch("src.web.api.GoodreadsPlugin.validate_config", return_value=[]),
         patch("src.web.api.parse_steam_games", return_value=[mock_game]),
     ):
         mock_components["embedding_gen"].generate_content_embedding.return_value = [

@@ -1,12 +1,11 @@
 """REST API endpoints."""
 
 import logging
-from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from src.ingestion.sources.goodreads import parse_goodreads_csv
+from src.ingestion.sources.goodreads import GoodreadsPlugin
 from src.ingestion.sources.steam import SteamAPIError, parse_steam_games
 from src.models.content import ConsumptionStatus, ContentType
 from src.web.state import get_config, get_embedding_gen, get_engine, get_storage
@@ -209,16 +208,19 @@ async def update_data(request: UpdateRequest):
                 if request.source == "goodreads":
                     return {"message": "Goodreads source is disabled", "count": 0}
             else:
-                goodreads_path = Path(
-                    goodreads_config.get("path", "inputs/goodreads_library_export.csv")
+                goodreads_path = goodreads_config.get(
+                    "path", "inputs/goodreads_library_export.csv"
                 )
+                goodreads_plugin = GoodreadsPlugin()
+                plugin_config = {"csv_path": str(goodreads_path)}
+                validation_errors = goodreads_plugin.validate_config(plugin_config)
 
-                if not goodreads_path.exists():
+                if validation_errors:
                     raise HTTPException(
-                        status_code=404, detail=f"File not found: {goodreads_path}"
+                        status_code=400, detail="; ".join(validation_errors)
                     )
 
-                for item in parse_goodreads_csv(goodreads_path):
+                for item in goodreads_plugin.fetch(plugin_config):
                     try:
                         embedding = embedding_gen.generate_content_embedding(item)
                         storage.save_content_item(item, embedding)
@@ -265,7 +267,9 @@ async def update_data(request: UpdateRequest):
                         except Exception as e:
                             logger.warning(f"Failed to process {item.title}: {e}")
                 except SteamAPIError as e:
-                    raise HTTPException(status_code=500, detail=f"Steam API error: {e}") from e
+                    raise HTTPException(
+                        status_code=500, detail=f"Steam API error: {e}"
+                    ) from e
                 except Exception as e:
                     logger.error(f"Error processing Steam data: {e}")
                     raise HTTPException(status_code=500, detail=str(e)) from e

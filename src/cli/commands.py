@@ -6,7 +6,7 @@ from pathlib import Path
 import click
 from tabulate import tabulate
 
-from src.ingestion.sources.goodreads import parse_goodreads_csv
+from src.ingestion.sources.goodreads import GoodreadsPlugin
 from src.ingestion.sources.steam import SteamAPIError, parse_steam_games
 from src.models.content import ConsumptionStatus, ContentType
 
@@ -140,15 +140,18 @@ def update(ctx: click.Context, source: str) -> None:
                     goodreads_config.get("path", "inputs/goodreads_library_export.csv")
                 )
 
-                if not goodreads_path.exists():
-                    click.echo(
-                        f"Error: Goodreads file not found: {goodreads_path}", err=True
-                    )
+                goodreads_plugin = GoodreadsPlugin()
+                plugin_config = {"csv_path": str(goodreads_path)}
+                validation_errors = goodreads_plugin.validate_config(plugin_config)
+
+                if validation_errors:
+                    for error in validation_errors:
+                        click.echo(f"Error: {error}", err=True)
                 else:
                     click.echo(f"Processing {goodreads_path}...")
 
                     count = 0
-                    for item in parse_goodreads_csv(goodreads_path):
+                    for item in goodreads_plugin.fetch(plugin_config):
                         # Generate embedding
                         try:
                             embedding = embedding_gen.generate_content_embedding(item)
