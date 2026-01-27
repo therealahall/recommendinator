@@ -104,6 +104,16 @@ recommendations:
   max_count: 20
   min_rating_for_preference: 4  # Only consider items rated 4+ as "liked"
 
+  # Scorer weights for the non-AI recommendation pipeline.
+  # Higher weight = more influence on final ranking.
+  # Set a weight to 0 to disable a scorer entirely.
+  scorer_weights:
+    genre_match: 2.0
+    creator_match: 1.5
+    tag_overlap: 1.0
+    series_order: 1.5
+    rating_pattern: 1.0
+
 # Logging
 logging:
   level: "INFO"  # DEBUG, INFO, WARNING, ERROR
