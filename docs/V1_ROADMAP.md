@@ -247,16 +247,18 @@ class SourcePlugin(ABC):
 **Goal:** Fully functional recommendations without any AI
 
 **Tasks:**
-- [ ] Build genre/tag extraction from metadata
-- [ ] Create content-based scorer (genre overlap, author match)
-- [ ] Create rule-based scorer (series logic, recency, variety)
-- [ ] Build scoring pipeline that combines scorers
-- [ ] Implement configurable weights
-- [ ] Keep existing series filtering logic
+- [x] Build genre/tag extraction from metadata
+- [x] Create content-based scorer (genre overlap, author match)
+- [x] Create rule-based scorer (series logic, rating patterns)
+- [x] Build scoring pipeline that combines scorers
+- [x] Implement configurable weights
+- [x] Keep existing series filtering logic
+- [x] Refactor engine to make embedding_generator optional
+- [x] Metadata-based contributing reference items (no embeddings needed)
 
 **Scorer Architecture:**
 ```python
-# src/recommendations/scorers/base.py
+# src/recommendations/scorers.py
 class Scorer(ABC):
     weight: float = 1.0
 
@@ -265,13 +267,23 @@ class Scorer(ABC):
         """Return score 0.0-1.0 for this candidate."""
         pass
 
-# Scorers to implement:
-# - GenreMatchScorer: Score based on genre overlap
-# - AuthorMatchScorer: Score based on author/developer preferences
-# - TagOverlapScorer: Score based on tag/theme overlap
-# - SeriesOrderScorer: Boost first-in-series, penalize out-of-order
-# - RatingPatternScorer: Boost similar to 5-star, penalize similar to 1-star
+# Implemented scorers:
+# - GenreMatchScorer (weight 2.0): Score based on genre preference [-1,1] mapped to [0,1]
+# - CreatorMatchScorer (weight 1.5): Unified author/director/developer matching
+# - TagOverlapScorer (weight 1.0): Jaccard overlap of candidate genres vs consumed genres
+# - SeriesOrderScorer (weight 1.5): 1.0 next-in-sequence, 0.8 first-unstarted, 0.3 too-far-ahead
+# - RatingPatternScorer (weight 1.0): Average rating in matching genres mapped to [0,1]
 ```
+
+**Files Created/Modified:**
+- `src/recommendations/scorers.py` — ScoringContext, Scorer ABC, 5 concrete scorers
+- `src/recommendations/scoring_pipeline.py` — ScoringPipeline (weight-normalized aggregation)
+- `src/recommendations/engine.py` — Refactored: embedding_generator optional, pipeline always runs
+- `src/recommendations/__init__.py` — New exports
+- `config/example.yaml` — Added `recommendations.scorer_weights` section
+- `tests/test_scorers.py` — 28 tests
+- `tests/test_scoring_pipeline.py` — 5 tests
+- `tests/test_recommendation_engine.py` — 6 new non-AI engine tests
 
 **Deliverable:** Can get recommendations without LLM using genre/tag matching and rules
 
@@ -387,7 +399,7 @@ GET  /api/recommendations/{content_type}?include_reasoning=true
 | Phase 0: Foundation Reset | Complete | 2026-01-25 | 2026-01-25 |
 | Phase 1: Core Data Layer | Complete | 2026-01-25 | 2026-01-25 |
 | Phase 2: Ingestion Framework | Complete | 2026-01-26 | 2026-01-27 |
-| Phase 3: Non-AI Engine | Not Started | - | - |
+| Phase 3: Non-AI Engine | Complete | 2026-01-27 | 2026-01-27 |
 | Phase 4: AI Enhancement | Not Started | - | - |
 | Phase 5: User Preferences | Not Started | - | - |
 | Phase 6: Web Interface | Not Started | - | - |

@@ -66,16 +66,35 @@ Handles communication with Ollama and prompt engineering.
 
 Core logic for generating recommendations with **cross-content-type support**.
 
+**Architecture:** The engine uses a **unified scoring pipeline** that always runs. AI (embeddings, LLM reasoning) is an optional enhancement, not a requirement.
+
+```
+RecommendationEngine
+  |-- ScoringPipeline (always runs)
+  |     |-- GenreMatchScorer      — genre preference scoring
+  |     |-- CreatorMatchScorer    — author/director/developer matching
+  |     |-- TagOverlapScorer      — Jaccard genre/tag overlap
+  |     |-- SeriesOrderScorer     — next-in-sequence boosting
+  |     |-- RatingPatternScorer   — rating history in matching genres
+  |     |-- [SemanticSimilarityScorer]  (Phase 4: when AI enabled)
+  |
+  |-- Ranker (adaptation bonus, series bonus, preference adjustments)
+  |-- [LLM reasoning post-processing]  (when AI enabled)
+```
+
 **Process:**
 1. Analyze user's consumed content (ratings, reviews) **across ALL content types**
 2. Extract preferences and patterns (genres, themes, authors) from all consumed content
-3. Find unconsumed content similar to high-rated items using semantic similarity
-4. Generate ranked recommendations with reasoning
+3. Score all unconsumed candidates through the scoring pipeline
+4. Optionally blend vector-similarity scores when AI is enabled
+5. Apply series filtering and ranking adjustments
+6. Generate ranked recommendations with reasoning
 
 **Cross-Content-Type Recommendations:**
 - Preferences from all content types influence recommendations
 - Example: If you've read sci-fi books, the system may recommend sci-fi TV shows (The Expanse) or games (Mass Effect)
-- Uses vector embeddings to find semantic similarity across content types
+- Metadata-based matching (genre/creator overlap) works without AI
+- Optional vector embeddings for semantic similarity across content types
 - Genre preferences extracted from books, games, TV shows, and movies
 
 **Filtering Logic:**
@@ -104,11 +123,13 @@ Input Files (CSV/JSON/etc.)
     ↓
 Ingestion Layer (parse & normalize)
     ↓
-Storage Layer (persist to DB + vector DB)
+Storage Layer (persist to SQLite; optionally ChromaDB if AI enabled)
     ↓
-LLM Layer (generate embeddings, analyze preferences)
-    ↓
-Recommendation Engine (match preferences to unconsumed content)
+Recommendation Engine
+    ├── Scoring Pipeline (always: genre, creator, tag, series, rating scorers)
+    ├── [AI: vector similarity blending]  ← optional, when AI enabled
+    ├── Ranker (adaptation bonus, series bonus, preferences)
+    └── [AI: LLM reasoning]              ← optional, when AI enabled
     ↓
 Interface Layer (CLI/Web) → User
 ```

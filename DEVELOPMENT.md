@@ -750,4 +750,92 @@ See [docs/V1_ROADMAP.md](docs/V1_ROADMAP.md) for the detailed phase-by-phase imp
 
 ---
 
-*Last Updated: 2026-01-25*
+## V1 Phase 3: Non-AI Recommendation Engine
+
+**Date:** 2026-01-27
+**Status:** ✅ Completed
+
+### Background
+
+The existing `RecommendationEngine` required `EmbeddingGenerator` (AI/Ollama) to function. When AI is off (the default), the system could not produce meaningful recommendations. Phase 3 builds the non-AI scoring foundation that **always runs**, with AI becoming an additional scorer on top (Phase 4).
+
+### Design Decision: Unified Flow
+
+The scoring pipeline always runs. AI is **not** a separate branch — it's an additional scorer added to the pipeline when enabled:
+
+```
+RecommendationEngine
+  |-- ScoringPipeline (always)
+  |     |-- GenreMatchScorer (weight 2.0)
+  |     |-- CreatorMatchScorer (weight 1.5)
+  |     |-- TagOverlapScorer (weight 1.0)
+  |     |-- SeriesOrderScorer (weight 1.5)
+  |     |-- RatingPatternScorer (weight 1.0)
+  |     |-- [SemanticSimilarityScorer]  <-- Phase 4: added when AI enabled
+  |
+  |-- Ranker (adaptation bonus, series bonus, preference adjustments)
+  |-- [LLM reasoning post-processing]  <-- Phase 4: added when AI enabled
+```
+
+### Completed Steps
+
+1. **Created Scorers Module** (`src/recommendations/scorers.py`) ✅
+   - `ScoringContext` dataclass: pre-computes consumed genres, creators, ratings by genre
+   - `Scorer` ABC with `weight` and `score()` method
+   - `GenreMatchScorer`: maps preference genre score [-1,1] into [0,1]
+   - `CreatorMatchScorer`: unified author/director/developer matching via preferences and consumed set
+   - `TagOverlapScorer`: Jaccard overlap of candidate genres vs consumed genres
+   - `SeriesOrderScorer`: 1.0 next-in-sequence, 0.8 first-unstarted, 0.3 too-far-ahead, 0.5 non-series
+   - `RatingPatternScorer`: average rating in matching genres mapped to [0,1]
+   - Helper functions: `_extract_genres()`, `_extract_creator()`
+
+2. **Created Scoring Pipeline** (`src/recommendations/scoring_pipeline.py`) ✅
+   - Weight-normalized aggregate scores in [0,1]
+   - Returns candidates sorted descending by score
+   - Handles edge cases: empty candidates, zero-weight scorers
+
+3. **Refactored Recommendation Engine** (`src/recommendations/engine.py`) ✅
+   - `embedding_generator` is now `EmbeddingGenerator | None = None`
+   - `SimilarityMatcher` only created when `embedding_generator` is provided
+   - `ScoringPipeline` always runs on all unconsumed candidates
+   - When AI available: pipeline scores blended with similarity scores
+   - `_find_contributing_reference_items()` uses metadata-based matching (genre/creator overlap) — no embeddings required
+   - LLM reasoning block preserved but guarded by `use_llm and self.llm_generator`
+
+4. **Updated Exports and Config** ✅
+   - `src/recommendations/__init__.py` exports all new symbols
+   - `config/example.yaml` adds `recommendations.scorer_weights` section
+
+5. **Comprehensive Test Suite** ✅
+   - `tests/test_scorers.py`: 28 tests covering helpers, context, and all 5 scorers
+   - `tests/test_scoring_pipeline.py`: 5 tests (sorting, empty, normalization, clamping, zero-weight)
+   - `tests/test_recommendation_engine.py`: 6 new non-AI tests + 4 existing tests still passing
+
+### Files Created/Modified
+
+| File | Action |
+|------|--------|
+| `src/recommendations/scorers.py` | **Created** — ScoringContext, Scorer ABC, 5 scorers |
+| `src/recommendations/scoring_pipeline.py` | **Created** — Weight-normalized pipeline |
+| `src/recommendations/engine.py` | **Modified** — AI optional, pipeline always runs |
+| `src/recommendations/__init__.py` | **Modified** — New exports |
+| `config/example.yaml` | **Modified** — scorer_weights config |
+| `tests/test_scorers.py` | **Created** — 28 tests |
+| `tests/test_scoring_pipeline.py` | **Created** — 5 tests |
+| `tests/test_recommendation_engine.py` | **Modified** — 6 new non-AI tests |
+
+### Key Design Decisions
+
+1. **Scorers return [0, 1]**: All scorers normalize their output to a unit interval. The pipeline weight-normalizes the aggregate.
+2. **ScoringContext pre-computes**: Lookup structures (consumed genres, creators, ratings by genre) are built once and shared across all scorers.
+3. **Metadata-based contributing items**: `_find_contributing_reference_items` uses genre/creator overlap instead of embeddings, so cross-content reasoning works without AI.
+4. **Blending strategy**: When AI is available, pipeline scores are averaged with similarity scores. This is a simple approach that Phase 4 can refine by adding a `SemanticSimilarityScorer` directly to the pipeline.
+
+### Testing
+
+- **476 total tests passing** (39 new)
+- All quality checks clean: ruff, black, mypy (no new errors)
+
+---
+
+*Last Updated: 2026-01-27*
