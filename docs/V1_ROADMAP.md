@@ -196,12 +196,17 @@ class StorageManager:
 **Goal:** Formalized plugin system for data sources
 
 **Tasks:**
-- [ ] Define `SourcePlugin` abstract interface
+- [x] Define `SourcePlugin` abstract interface
 - [ ] Refactor Goodreads parser to implement interface
 - [ ] Refactor Steam parser to implement interface
-- [ ] Create plugin registry/discovery system
-- [ ] Add rating normalization to interface
+- [x] Create plugin registry/discovery system
+- [x] Add rating normalization to interface
 - [ ] Handle source-of-truth conflicts (configurable)
+- [ ] Create Markdown ingestion system
+- [ ] Create generic CSV ingestion system
+- [ ] Create generic JSON ingestion system
+- [ ] Create Sonarr ingestion system
+- [ ] Create Radarr ingestion system
 
 **Plugin Interface:**
 ```python
@@ -381,7 +386,7 @@ GET  /api/recommendations/{content_type}?include_reasoning=true
 |-------|--------|---------|-----------|
 | Phase 0: Foundation Reset | Complete | 2026-01-25 | 2026-01-25 |
 | Phase 1: Core Data Layer | Complete | 2026-01-25 | 2026-01-25 |
-| Phase 2: Ingestion Framework | Not Started | - | - |
+| Phase 2: Ingestion Framework | In Progress | 2026-01-26 | - |
 | Phase 3: Non-AI Engine | Not Started | - | - |
 | Phase 4: AI Enhancement | Not Started | - | - |
 | Phase 5: User Preferences | Not Started | - | - |
