@@ -1,0 +1,14 @@
+[
+  {
+    "title": "The Witcher 3",
+    "developer": "CD Projekt Red",
+    "rating": 5,
+    "status": "completed",
+    "date_completed": "2024-05-01",
+    "review": "Masterpiece RPG",
+    "notes": "",
+    "platform": "PC",
+    "genre": "RPG",
+    "hours_played": 120
+  }
+]
