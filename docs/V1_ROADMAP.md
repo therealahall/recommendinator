@@ -197,8 +197,8 @@ class StorageManager:
 
 **Tasks:**
 - [x] Define `SourcePlugin` abstract interface
-- [ ] Refactor Goodreads parser to implement interface
-- [ ] Refactor Steam parser to implement interface
+- [x] Refactor Goodreads parser to implement interface
+- [x] Refactor Steam parser to implement interface
 - [x] Create plugin registry/discovery system
 - [x] Add rating normalization to interface
 - [ ] Handle source-of-truth conflicts (configurable)
