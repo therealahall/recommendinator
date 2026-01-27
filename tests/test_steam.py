@@ -4,8 +4,10 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from src.ingestion.plugin_base import SourceError, SourcePlugin
 from src.ingestion.sources.steam import (
     SteamAPIError,
+    SteamPlugin,
     get_game_details,
     get_owned_games,
     get_steam_id_from_vanity_url,
@@ -412,3 +414,156 @@ class TestParseSteamGames:
         assert len(items) == 0
         # Should not call get_game_details for empty library
         mock_get_details.assert_not_called()
+
+
+class TestSteamPluginProperties:
+    """Tests for SteamPlugin metadata properties."""
+
+    def test_is_source_plugin(self) -> None:
+        """Test that SteamPlugin is a SourcePlugin subclass."""
+        plugin = SteamPlugin()
+        assert isinstance(plugin, SourcePlugin)
+
+    def test_name(self) -> None:
+        """Test plugin name identifier."""
+        plugin = SteamPlugin()
+        assert plugin.name == "steam"
+
+    def test_display_name(self) -> None:
+        """Test human-readable display name."""
+        plugin = SteamPlugin()
+        assert plugin.display_name == "Steam"
+
+    def test_content_types(self) -> None:
+        """Test that plugin provides video games."""
+        plugin = SteamPlugin()
+        assert plugin.content_types == [ContentType.VIDEO_GAME]
+
+    def test_requires_api_key(self) -> None:
+        """Test that plugin requires an API key."""
+        plugin = SteamPlugin()
+        assert plugin.requires_api_key is True
+
+    def test_requires_network(self) -> None:
+        """Test that plugin requires network access."""
+        plugin = SteamPlugin()
+        assert plugin.requires_network is True
+
+    def test_config_schema(self) -> None:
+        """Test configuration schema fields."""
+        plugin = SteamPlugin()
+        schema = plugin.get_config_schema()
+
+        field_names = [field.name for field in schema]
+        assert "api_key" in field_names
+        assert "steam_id" in field_names
+        assert "vanity_url" in field_names
+        assert "min_playtime_minutes" in field_names
+
+        api_key_field = next(field for field in schema if field.name == "api_key")
+        assert api_key_field.required is True
+        assert api_key_field.sensitive is True
+
+    def test_get_source_identifier(self) -> None:
+        """Test source identifier matches plugin name."""
+        plugin = SteamPlugin()
+        assert plugin.get_source_identifier() == "steam"
+
+    def test_get_info(self) -> None:
+        """Test plugin info includes all metadata."""
+        plugin = SteamPlugin()
+        info = plugin.get_info()
+
+        assert info.name == "steam"
+        assert info.display_name == "Steam"
+        assert info.content_types == [ContentType.VIDEO_GAME]
+        assert info.requires_api_key is True
+        assert info.requires_network is True
+
+
+class TestSteamPluginValidation:
+    """Tests for SteamPlugin config validation."""
+
+    def test_validate_valid_config(self) -> None:
+        """Test validation passes with valid config."""
+        plugin = SteamPlugin()
+        errors = plugin.validate_config(
+            {"api_key": "test_key", "steam_id": "76561198000000000"}
+        )
+        assert errors == []
+
+    def test_validate_valid_vanity_url(self) -> None:
+        """Test validation passes with vanity URL instead of steam_id."""
+        plugin = SteamPlugin()
+        errors = plugin.validate_config(
+            {"api_key": "test_key", "vanity_url": "testuser"}
+        )
+        assert errors == []
+
+    def test_validate_missing_api_key(self) -> None:
+        """Test validation fails when api_key is missing."""
+        plugin = SteamPlugin()
+        errors = plugin.validate_config({"steam_id": "76561198000000000"})
+
+        assert len(errors) == 1
+        assert "'api_key' is required" in errors[0]
+
+    def test_validate_missing_id_and_vanity(self) -> None:
+        """Test validation fails when both steam_id and vanity_url are missing."""
+        plugin = SteamPlugin()
+        errors = plugin.validate_config({"api_key": "test_key"})
+
+        assert len(errors) == 1
+        assert "steam_id" in errors[0] or "vanity_url" in errors[0]
+
+    def test_validate_empty_api_key(self) -> None:
+        """Test validation fails when api_key is empty."""
+        plugin = SteamPlugin()
+        errors = plugin.validate_config(
+            {"api_key": "", "steam_id": "76561198000000000"}
+        )
+
+        assert any("api_key" in error for error in errors)
+
+    def test_validate_all_missing(self) -> None:
+        """Test validation reports all errors when everything is missing."""
+        plugin = SteamPlugin()
+        errors = plugin.validate_config({})
+
+        assert len(errors) == 2
+
+
+class TestSteamPluginFetch:
+    """Tests for SteamPlugin.fetch()."""
+
+    @patch("src.ingestion.sources.steam.get_game_details")
+    @patch("src.ingestion.sources.steam.get_owned_games")
+    def test_fetch_through_plugin(
+        self, mock_get_games: Mock, mock_get_details: Mock
+    ) -> None:
+        """Test fetching games through the plugin interface."""
+        mock_get_games.return_value = [
+            {"appid": 12345, "name": "Test Game", "playtime_forever": 120}
+        ]
+        mock_get_details.return_value = {12345: {"name": "Test Game"}}
+
+        plugin = SteamPlugin()
+        items = list(
+            plugin.fetch({"api_key": "test_key", "steam_id": "76561198000000000"})
+        )
+
+        assert len(items) == 1
+        assert items[0].title == "Test Game"
+        assert items[0].source == "steam"
+
+    @patch("src.ingestion.sources.steam.get_owned_games")
+    def test_fetch_api_error_raises_source_error(self, mock_get_games: Mock) -> None:
+        """Test that Steam API errors are wrapped in SourceError."""
+        mock_get_games.side_effect = SteamAPIError("API failure")
+
+        plugin = SteamPlugin()
+        with pytest.raises(SourceError) as exc_info:
+            list(plugin.fetch({"api_key": "test_key", "steam_id": "76561198000000000"}))
+
+        assert exc_info.value.plugin_name == "steam"
+        assert "API failure" in exc_info.value.message
