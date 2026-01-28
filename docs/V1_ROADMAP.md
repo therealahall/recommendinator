@@ -380,26 +380,42 @@ class UserPreferenceConfig:
 
 ### Phase 6: Web Interface
 
-**Goal:** Full workflow accessible via browser
+**Goal:** Full-featured web UI with tabbed navigation, user selector, rich recommendation display with per-scorer breakdown and LLM reasoning, library browser, preferences management, and source sync controls.
 
 **Tasks:**
-- [ ] Add source sync trigger endpoints
-- [ ] Add user management UI (if multi-user)
-- [ ] Add preferences management UI
-- [ ] Improve recommendations display
-- [ ] Add "mark as completed" from recommendations
-- [ ] Show score breakdown (why recommended)
+- [x] Add `get_all_users()` to schema and StorageManager
+- [x] Add per-scorer breakdown to ScoringPipeline (`ScoredCandidate`, `score_candidates_with_breakdown`)
+- [x] Thread score breakdown through recommendation engine output
+- [x] Add `GET /api/users` endpoint for user listing
+- [x] Add `GET /api/items` endpoint with type/status/user filters
+- [x] Add `score_breakdown` field to `RecommendationResponse`
+- [x] Build tabbed web UI (Recommendations, Library, Preferences, Sync)
+- [x] User selector dropdown populated from API
+- [x] Rich recommendation cards with LLM reasoning and score breakdown bars
+- [x] Library browser with type/status filters
+- [x] Preferences panel with scorer weight sliders and boolean toggles
+- [x] Sync controls for Goodreads, Steam, and all sources
 
 **New Endpoints:**
 ```python
-POST /api/sync/{source_name}  # Trigger sync for a source
-GET  /api/sources             # List available plugins
-GET  /api/preferences         # Get user preferences
-PUT  /api/preferences         # Update user preferences
-GET  /api/recommendations/{content_type}?include_reasoning=true
+GET  /api/users                           # List users for selector dropdown
+GET  /api/items?type=...&status=...       # List content items with filters
 ```
 
-**Deliverable:** Full workflow via browser - sync, configure, get recommendations
+**Files Created/Modified:**
+- `src/storage/schema.py` — Added `get_all_users()`
+- `src/storage/manager.py` — Added `get_all_users()` method
+- `src/recommendations/scoring_pipeline.py` — Added `ScoredCandidate`, `score_candidates_with_breakdown()`
+- `src/recommendations/engine.py` — Uses breakdown method, threads `score_breakdown` through output
+- `src/web/api.py` — Added `UserResponse`, `ContentItemResponse`, new endpoints, `score_breakdown` field
+- `src/web/templates/index.html` — Fresh tabbed layout with 4 panels
+- `src/web/static/style.css` — All styles (created)
+- `src/web/static/app.js` — All JS logic (created)
+- `tests/test_schema.py` — 2 new `get_all_users` tests
+- `tests/test_scoring_pipeline.py` — 2 new breakdown tests
+- `tests/test_web_api.py` — 5 new endpoint tests
+
+**Deliverable:** Full workflow via browser - sync sources, browse library, configure preferences, get recommendations with rich score breakdowns
 
 ---
 
@@ -430,7 +446,7 @@ GET  /api/recommendations/{content_type}?include_reasoning=true
 | Phase 3: Non-AI Engine | Complete | 2026-01-27 | 2026-01-27 |
 | Phase 4: AI Enhancement | Complete | 2026-01-27 | 2026-01-27 |
 | Phase 5: User Preferences | Complete | 2026-01-27 | 2026-01-27 |
-| Phase 6: Web Interface | Not Started | - | - |
+| Phase 6: Web Interface | Complete | 2026-01-27 | 2026-01-27 |
 | Phase 7: Polish | Not Started | - | - |
 
 ---

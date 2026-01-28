@@ -990,4 +990,66 @@ Implemented a configurable per-user preference system that affects recommendatio
 
 ---
 
+## V1 Phase 6: Web Interface
+
+**Date:** 2026-01-27
+**Status:** Complete
+
+### Overview
+
+Built a full-featured web UI with tabbed navigation (Recommendations, Library, Preferences, Sync), user selector dropdown, rich recommendation display with per-scorer breakdown bars and LLM reasoning, library browser with type/status filters, preferences management with scorer weight sliders and boolean toggles, and source sync controls.
+
+### Completed Steps
+
+1. **Added `get_all_users()` to schema and StorageManager**
+   - Returns all users ordered by id for populating the user selector dropdown
+   - 2 new tests
+
+2. **Added per-scorer breakdown to ScoringPipeline**
+   - `ScoredCandidate` dataclass with `item`, `aggregate_score`, `score_breakdown`
+   - `score_candidates_with_breakdown()` captures raw (clamped, pre-weight) scores per scorer
+   - Uses reverse `SCORER_NAME_MAP` lookup to label scores by config key
+   - 2 new tests
+
+3. **Threaded score breakdown through engine**
+   - Engine now uses `score_candidates_with_breakdown()` instead of `score_candidates()`
+   - `score_breakdown` dict included in all recommendation output paths (main, LLM-only, fallback)
+
+4. **Added API endpoints**
+   - `GET /api/users` returns user list for dropdown
+   - `GET /api/items?type=...&status=...&user_id=...&limit=...` returns filtered content items
+   - `score_breakdown` field added to `RecommendationResponse`
+   - 5 new tests
+
+5. **Built tabbed web UI from scratch**
+   - Fresh `index.html` with header, tab nav, 4 panels
+   - `style.css` with all styles (tabs, cards, score bars, sliders, responsive)
+   - `app.js` with vanilla JS (IIFE namespace, fetch-based API calls)
+   - Recommendation cards show LLM reasoning prominently when available, with expandable score breakdown bars
+   - Score breakdown expanded by default when AI is off
+
+### Files Created/Modified
+
+| File | Action |
+|------|--------|
+| `src/storage/schema.py` | **Modified** — Added `get_all_users()` |
+| `src/storage/manager.py` | **Modified** — Added `get_all_users()` method |
+| `src/recommendations/scoring_pipeline.py` | **Modified** — Added `ScoredCandidate`, `score_candidates_with_breakdown()` |
+| `src/recommendations/engine.py` | **Modified** — Uses breakdown method, threads `score_breakdown` |
+| `src/web/api.py` | **Modified** — Added `UserResponse`, `ContentItemResponse`, new endpoints |
+| `src/web/templates/index.html` | **Rewritten** — Fresh tabbed layout |
+| `src/web/static/style.css` | **Created** — All styles |
+| `src/web/static/app.js` | **Created** — All JS logic |
+| `tests/test_schema.py` | **Modified** — 2 new tests |
+| `tests/test_scoring_pipeline.py` | **Modified** — 2 new tests |
+| `tests/test_web_api.py` | **Modified** — 5 new tests |
+| `docs/V1_ROADMAP.md` | **Modified** — Marked Phase 6 complete |
+
+### Testing
+
+- **521 total tests passing** (9 new)
+- All quality checks clean (black, mypy, ruff)
+
+---
+
 *Last Updated: 2026-01-27*
