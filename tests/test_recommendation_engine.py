@@ -6,6 +6,7 @@ import pytest
 
 from src.llm.embeddings import EmbeddingGenerator
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.engine import RecommendationEngine
 from src.storage.manager import StorageManager
 
@@ -487,3 +488,83 @@ class TestNonAIEngine:
         for rec in recommendations:
             assert "score" in rec
             assert "reasoning" in rec
+
+
+# ---------------------------------------------------------------------------
+# User preference config override tests (Phase 5)
+# ---------------------------------------------------------------------------
+
+
+class TestUserPreferenceOverride:
+    """Tests for per-user preference config overrides."""
+
+    def test_generate_recommendations_without_user_config(
+        self, non_ai_engine, mock_storage
+    ):
+        """Engine works normally when no user_preference_config is passed."""
+        consumed = ContentItem(
+            id="1",
+            title="Dune",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            metadata={"genre": "Science Fiction"},
+        )
+        unconsumed = ContentItem(
+            id="2",
+            title="Hyperion",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genre": "Science Fiction"},
+        )
+
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: (
+                [consumed] if content_type is None else [consumed]
+            )
+        )
+        mock_storage.get_unconsumed_items = Mock(return_value=[unconsumed])
+
+        recommendations = non_ai_engine.generate_recommendations(
+            content_type=ContentType.BOOK,
+            count=1,
+            user_preference_config=None,
+        )
+        assert len(recommendations) >= 1
+
+    def test_generate_recommendations_with_user_config(
+        self, non_ai_engine, mock_storage
+    ):
+        """Engine uses overridden scorer weights when user config is provided."""
+        consumed = ContentItem(
+            id="1",
+            title="Dune",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            metadata={"genre": "Science Fiction"},
+        )
+        unconsumed = ContentItem(
+            id="2",
+            title="Hyperion",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genre": "Science Fiction"},
+        )
+
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: (
+                [consumed] if content_type is None else [consumed]
+            )
+        )
+        mock_storage.get_unconsumed_items = Mock(return_value=[unconsumed])
+
+        user_config = UserPreferenceConfig(
+            scorer_weights={"genre_match": 10.0, "creator_match": 0.0}
+        )
+        recommendations = non_ai_engine.generate_recommendations(
+            content_type=ContentType.BOOK,
+            count=1,
+            user_preference_config=user_config,
+        )
+        assert len(recommendations) >= 1

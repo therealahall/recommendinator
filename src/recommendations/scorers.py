@@ -320,3 +320,50 @@ DEFAULT_SCORERS: list[Scorer] = [
     SeriesOrderScorer(),
     RatingPatternScorer(),
 ]
+
+
+# ---------------------------------------------------------------------------
+# Scorer name map and user-override helpers
+# ---------------------------------------------------------------------------
+
+SCORER_NAME_MAP: dict[str, type[Scorer]] = {
+    "genre_match": GenreMatchScorer,
+    "creator_match": CreatorMatchScorer,
+    "tag_overlap": TagOverlapScorer,
+    "series_order": SeriesOrderScorer,
+    "rating_pattern": RatingPatternScorer,
+    "semantic_similarity": SemanticSimilarityScorer,
+}
+
+
+def build_scorers_with_overrides(
+    base_scorers: list[Scorer],
+    scorer_weight_overrides: dict[str, float],
+) -> list[Scorer]:
+    """Create a new scorer list with per-user weight overrides applied.
+
+    Clones each scorer, applying the overridden weight when a matching key
+    is present in *scorer_weight_overrides*. Scorers without an override
+    retain their original weight. The original scorers are not mutated.
+
+    Args:
+        base_scorers: List of scorer instances (from the engine pipeline).
+        scorer_weight_overrides: Sparse dict of scorer config key -> weight.
+
+    Returns:
+        New list of scorer instances with overridden weights.
+    """
+    # Build reverse map: scorer class -> config key
+    class_to_name: dict[type[Scorer], str] = {
+        scorer_class: name for name, scorer_class in SCORER_NAME_MAP.items()
+    }
+
+    overridden: list[Scorer] = []
+    for scorer in base_scorers:
+        config_key = class_to_name.get(type(scorer))
+        if config_key and config_key in scorer_weight_overrides:
+            overridden.append(type(scorer)(weight=scorer_weight_overrides[config_key]))
+        else:
+            # Clone with same weight (new instance, doesn't mutate original)
+            overridden.append(type(scorer)(weight=scorer.weight))
+    return overridden

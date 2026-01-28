@@ -12,6 +12,7 @@ from src.recommendations.scorers import (
     TagOverlapScorer,
     _extract_creator,
     _extract_genres,
+    build_scorers_with_overrides,
 )
 from src.utils.series import build_series_tracking
 
@@ -369,3 +370,46 @@ class TestSemanticSimilarityScorer:
         """SemanticSimilarityScorer default weight is 1.5."""
         scorer = SemanticSimilarityScorer()
         assert scorer.weight == 1.5
+
+
+# ---------------------------------------------------------------------------
+# build_scorers_with_overrides tests
+# ---------------------------------------------------------------------------
+
+
+class TestBuildScorersWithOverrides:
+    def test_no_overrides_preserves_weights(self) -> None:
+        """When no overrides are given, all weights remain unchanged."""
+        base = [GenreMatchScorer(weight=2.0), CreatorMatchScorer(weight=1.5)]
+        result = build_scorers_with_overrides(base, {})
+        assert len(result) == 2
+        assert result[0].weight == 2.0
+        assert result[1].weight == 1.5
+
+    def test_partial_override(self) -> None:
+        """Only specified scorers have their weight changed."""
+        base = [
+            GenreMatchScorer(weight=2.0),
+            CreatorMatchScorer(weight=1.5),
+            TagOverlapScorer(weight=1.0),
+        ]
+        overrides = {"genre_match": 5.0}
+        result = build_scorers_with_overrides(base, overrides)
+        assert result[0].weight == 5.0
+        assert isinstance(result[0], GenreMatchScorer)
+        assert result[1].weight == 1.5  # unchanged
+        assert result[2].weight == 1.0  # unchanged
+
+    def test_full_override(self) -> None:
+        """All scorers can be overridden at once."""
+        base = [GenreMatchScorer(weight=2.0), CreatorMatchScorer(weight=1.5)]
+        overrides = {"genre_match": 0.5, "creator_match": 3.0}
+        result = build_scorers_with_overrides(base, overrides)
+        assert result[0].weight == 0.5
+        assert result[1].weight == 3.0
+
+    def test_does_not_mutate_originals(self) -> None:
+        """Original scorer list and instances are not mutated."""
+        base = [GenreMatchScorer(weight=2.0)]
+        build_scorers_with_overrides(base, {"genre_match": 9.0})
+        assert base[0].weight == 2.0
