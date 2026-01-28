@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.models.user_preferences import UserPreferenceConfig
 from src.storage.manager import StorageManager
 
 
@@ -254,3 +255,64 @@ def test_content_item_with_source(temp_storage_manager: StorageManager) -> None:
 
     assert retrieved is not None
     assert retrieved.source == "goodreads"
+
+
+# ---------------------------------------------------------------------------
+# User preference config persistence tests (Phase 5)
+# ---------------------------------------------------------------------------
+
+
+def test_get_user_preference_config_defaults(
+    temp_storage_manager: StorageManager,
+) -> None:
+    """get_user_preference_config returns defaults for new user."""
+    config = temp_storage_manager.get_user_preference_config(user_id=1)
+    assert config == UserPreferenceConfig()
+
+
+def test_save_and_load_user_preference_config(
+    temp_storage_manager: StorageManager,
+) -> None:
+    """Round-trip: save then load produces equal config."""
+    preference_config = UserPreferenceConfig(
+        scorer_weights={"genre_match": 3.0, "tag_overlap": 0.5},
+        series_in_order=False,
+        minimum_book_pages=150,
+    )
+    temp_storage_manager.save_user_preference_config(
+        user_id=1, preference_config=preference_config
+    )
+    loaded = temp_storage_manager.get_user_preference_config(user_id=1)
+    assert loaded == preference_config
+
+
+def test_save_preference_config_does_not_clobber_other_settings(
+    temp_storage_manager: StorageManager,
+) -> None:
+    """Saving preference_config preserves other keys in users.settings."""
+    from src.storage.schema import update_user_settings
+
+    # Set some other setting first
+    conn = temp_storage_manager.sqlite_db._get_connection()
+    try:
+        update_user_settings(conn, 1, {"theme": "dark"})
+    finally:
+        conn.close()
+
+    # Now save preference config
+    preference_config = UserPreferenceConfig(scorer_weights={"genre_match": 2.5})
+    temp_storage_manager.save_user_preference_config(
+        user_id=1, preference_config=preference_config
+    )
+
+    # Verify both settings coexist
+    conn = temp_storage_manager.sqlite_db._get_connection()
+    try:
+        from src.storage.schema import get_user_by_id
+
+        user = get_user_by_id(conn, 1)
+        assert user is not None
+        assert user["settings"]["theme"] == "dark"
+        assert "preference_config" in user["settings"]
+    finally:
+        conn.close()

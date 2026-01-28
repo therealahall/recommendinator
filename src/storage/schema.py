@@ -42,8 +42,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
     cursor.execute("PRAGMA foreign_keys = ON")
 
     # Users table
-    cursor.execute(
-        """
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE NOT NULL,
@@ -51,20 +50,16 @@ def create_schema(conn: sqlite3.Connection) -> None:
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             settings TEXT  -- JSON for per-user settings (AI enabled, weights, etc.)
         )
-        """
-    )
+        """)
 
     # Create default user
-    cursor.execute(
-        """
+    cursor.execute("""
         INSERT OR IGNORE INTO users (id, username, display_name)
         VALUES (1, 'default', 'Default User')
-        """
-    )
+        """)
 
     # Base content items table with user_id
-    cursor.execute(
-        """
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS content_items (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL DEFAULT 1 REFERENCES users(id) ON DELETE CASCADE,
@@ -80,12 +75,10 @@ def create_schema(conn: sqlite3.Connection) -> None:
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(user_id, external_id, content_type)
         )
-        """
-    )
+        """)
 
     # Book-specific details
-    cursor.execute(
-        """
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS book_details (
             content_item_id INTEGER PRIMARY KEY REFERENCES content_items(id) ON DELETE CASCADE,
             author TEXT,
@@ -97,12 +90,10 @@ def create_schema(conn: sqlite3.Connection) -> None:
             genres TEXT,  -- JSON array of genres
             metadata TEXT  -- JSON for additional fields
         )
-        """
-    )
+        """)
 
     # Movie-specific details
-    cursor.execute(
-        """
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS movie_details (
             content_item_id INTEGER PRIMARY KEY REFERENCES content_items(id) ON DELETE CASCADE,
             director TEXT,
@@ -112,12 +103,10 @@ def create_schema(conn: sqlite3.Connection) -> None:
             studio TEXT,
             metadata TEXT
         )
-        """
-    )
+        """)
 
     # TV Show-specific details
-    cursor.execute(
-        """
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS tv_show_details (
             content_item_id INTEGER PRIMARY KEY REFERENCES content_items(id) ON DELETE CASCADE,
             creators TEXT,
@@ -128,12 +117,10 @@ def create_schema(conn: sqlite3.Connection) -> None:
             genres TEXT,  -- JSON array of genres
             metadata TEXT
         )
-        """
-    )
+        """)
 
     # Video Game-specific details
-    cursor.execute(
-        """
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS video_game_details (
             content_item_id INTEGER PRIMARY KEY REFERENCES content_items(id) ON DELETE CASCADE,
             developer TEXT,
@@ -143,8 +130,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
             release_year INTEGER,
             metadata TEXT
         )
-        """
-    )
+        """)
 
     # Create indexes for common queries
     cursor.execute(
@@ -176,14 +162,12 @@ def create_schema(conn: sqlite3.Connection) -> None:
     )
 
     # Schema version tracking
-    cursor.execute(
-        """
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS schema_version (
             version INTEGER PRIMARY KEY,
             applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
-        """
-    )
+        """)
 
     # Insert schema version
     cursor.execute(

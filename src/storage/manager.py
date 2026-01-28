@@ -5,6 +5,8 @@ from typing import Any
 
 from src.ingestion.conflict import ConflictStrategy, resolve_conflict
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.models.user_preferences import UserPreferenceConfig
+from src.storage.schema import get_user_by_id, update_user_settings
 from src.storage.sqlite_db import SQLiteDB
 
 
@@ -365,3 +367,49 @@ class StorageManager:
             content_type=content_type,
             user_id=user_id,
         )
+
+    def get_user_preference_config(self, user_id: int) -> UserPreferenceConfig:
+        """Load user preference config from DB.
+
+        Returns defaults if no preference config is stored for the user.
+
+        Args:
+            user_id: User ID to look up.
+
+        Returns:
+            UserPreferenceConfig for the user.
+        """
+        conn = self.sqlite_db._get_connection()
+        try:
+            user = get_user_by_id(conn, user_id)
+            if (
+                user
+                and user.get("settings")
+                and "preference_config" in user["settings"]
+            ):
+                return UserPreferenceConfig.from_dict(
+                    user["settings"]["preference_config"]
+                )
+            return UserPreferenceConfig()
+        finally:
+            conn.close()
+
+    def save_user_preference_config(
+        self, user_id: int, preference_config: UserPreferenceConfig
+    ) -> None:
+        """Save user preference config to DB.
+
+        Merges into the ``users.settings`` JSON blob under the
+        ``"preference_config"`` key without clobbering other settings.
+
+        Args:
+            user_id: User ID.
+            preference_config: Preference config to persist.
+        """
+        conn = self.sqlite_db._get_connection()
+        try:
+            update_user_settings(
+                conn, user_id, {"preference_config": preference_config.to_dict()}
+            )
+        finally:
+            conn.close()
