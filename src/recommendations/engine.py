@@ -18,7 +18,7 @@ from src.recommendations.scorers import (
     _extract_genres,
     build_scorers_with_overrides,
 )
-from src.recommendations.scoring_pipeline import ScoringPipeline
+from src.recommendations.scoring_pipeline import ScoredCandidate, ScoringPipeline
 from src.recommendations.similarity import SimilarityMatcher
 from src.storage.manager import StorageManager
 from src.utils.series import build_series_tracking, should_recommend_item
@@ -195,25 +195,27 @@ class RecommendationEngine:
         else:
             active_pipeline = self.pipeline
 
-        pipeline_scored = active_pipeline.score_candidates(
+        pipeline_scored = active_pipeline.score_candidates_with_breakdown(
             unconsumed_items, scoring_context
         )
 
         # Take top count*3 from pipeline for further processing
-        top_candidates: list[tuple[ContentItem, float]] = pipeline_scored[: count * 3]
+        top_candidates: list[ScoredCandidate] = pipeline_scored[: count * 3]
 
         # -----------------------------------------------------------------
         # Filter candidates based on series rules
         # -----------------------------------------------------------------
-        filtered_candidates: list[tuple[ContentItem, float]] = []
-        for item, score in top_candidates:
+        filtered_candidates: list[ScoredCandidate] = []
+        for scored_candidate in top_candidates:
             if should_recommend_item(
-                item, series_tracking, unconsumed_items=unconsumed_items
+                scored_candidate.item,
+                series_tracking,
+                unconsumed_items=unconsumed_items,
             ):
-                filtered_candidates.append((item, score))
+                filtered_candidates.append(scored_candidate)
             else:
                 logger.debug(
-                    f"Filtered out {item.title} - doesn't meet series recommendation rules"
+                    f"Filtered out {scored_candidate.item.title} - doesn't meet series recommendation rules"
                 )
 
         if not filtered_candidates:
@@ -228,7 +230,8 @@ class RecommendationEngine:
         candidate_metadata: list[dict[str, Any]] = []
         adaptations_map: dict[str, list[ContentItem]] = {}
 
-        for item, similarity_score in filtered_candidates:
+        for scored_candidate in filtered_candidates:
+            item = scored_candidate.item
             adaptations = self._find_direct_adaptations(item, all_consumed_items)
             contributing_items = self._find_contributing_reference_items(
                 item, all_consumed_items
@@ -237,9 +240,10 @@ class RecommendationEngine:
             candidate_metadata.append(
                 {
                     "item": item,
-                    "similarity_score": similarity_score,
+                    "similarity_score": scored_candidate.aggregate_score,
                     "adaptations": adaptations,
                     "contributing_items": contributing_items,
+                    "score_breakdown": scored_candidate.score_breakdown,
                 }
             )
 
@@ -249,6 +253,11 @@ class RecommendationEngine:
         # -----------------------------------------------------------------
         # Rank (adaptation bonus, series bonus, preference adjustments)
         # -----------------------------------------------------------------
+        # Build breakdown lookup for post-ranking output
+        breakdown_by_id: dict[str | None, dict[str, float]] = {
+            meta["item"].id: meta["score_breakdown"] for meta in candidate_metadata
+        }
+
         ranked_items = self.ranker.rank(
             candidates=[
                 (meta["item"], meta["similarity_score"]) for meta in candidate_metadata
@@ -287,6 +296,7 @@ class RecommendationEngine:
                     adaptations_list,
                     contributing_list,
                 ),
+                "score_breakdown": breakdown_by_id.get(item.id, {}),
             }
             recommendations.append(rec)
 
@@ -338,6 +348,7 @@ class RecommendationEngine:
                                     "preference_score": 0.5,
                                     "reasoning": llm_rec.get("reasoning", ""),
                                     "llm_reasoning": llm_rec.get("reasoning", ""),
+                                    "score_breakdown": {},
                                 }
                             )
             except Exception as error:
@@ -359,6 +370,7 @@ class RecommendationEngine:
                             "similarity_score": 0.0,
                             "preference_score": 0.0,
                             "reasoning": "Available in your library",
+                            "score_breakdown": {},
                         }
                     )
                     if len(recommendations) >= count:
