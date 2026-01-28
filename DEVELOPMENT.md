@@ -914,4 +914,80 @@ Engine.generate_recommendations()
 
 ---
 
+## V1 Phase 5: User Preferences System
+
+**Date:** 2026-01-27
+**Status:** Complete
+
+### Overview
+
+Implemented a configurable per-user preference system that affects recommendation scoring. Three-layer weight resolution: scorer class defaults → config YAML → per-user DB settings.
+
+### Completed Steps
+
+1. **Created `UserPreferenceConfig` dataclass** (`src/models/user_preferences.py`)
+   - Scorer weights as sparse dict (only user-set keys present)
+   - Toggle fields: `series_in_order`, `variety_after_completion`
+   - Constraint fields: `minimum_book_pages`, `maximum_movie_runtime` (stored, not enforced yet)
+   - `to_dict()` / `from_dict()` for JSON round-tripping to DB
+
+2. **Wired config YAML to scorer construction** (`src/cli/config.py`)
+   - `build_scorers_from_config(config)` reads `recommendations.scorer_weights` from YAML
+   - Maps config keys to scorer classes via `_SCORER_CONFIG_MAP`
+   - `create_recommendation_engine()` now passes constructed scorers and `semantic_similarity_weight`
+
+3. **Added per-user scorer weight override** (`src/recommendations/scorers.py`, `engine.py`)
+   - `SCORER_NAME_MAP` maps config keys to all scorer classes including `SemanticSimilarityScorer`
+   - `build_scorers_with_overrides()` creates new scorer list with overridden weights without mutating originals
+   - `generate_recommendations()` accepts `user_preference_config` param; creates temporary pipeline when overrides present
+
+4. **Added user preference persistence** (`src/storage/manager.py`)
+   - `get_user_preference_config(user_id)` loads from `users.settings` JSON → `"preference_config"` key
+   - `save_user_preference_config(user_id, config)` merges into settings blob without clobbering other keys
+
+5. **Added REST API endpoints** (`src/web/api.py`)
+   - `GET /api/users/{user_id}/preferences` returns current config
+   - `PUT /api/users/{user_id}/preferences` partial merge update
+   - `GET /api/recommendations` now accepts `user_id` query param
+
+6. **Added CLI commands** (`src/cli/commands.py`, `main.py`)
+   - `recommend --user N` loads user preferences
+   - `preferences get [--user N] [--format table|json]`
+   - `preferences set-weight SCORER_NAME WEIGHT [--user N]`
+   - `preferences reset [--user N]`
+
+### Files Modified/Created
+
+| File | Action |
+|------|--------|
+| `src/models/user_preferences.py` | **Created** — UserPreferenceConfig dataclass |
+| `src/cli/config.py` | **Modified** — build_scorers_from_config, updated create_recommendation_engine |
+| `src/recommendations/scorers.py` | **Modified** — SCORER_NAME_MAP, build_scorers_with_overrides |
+| `src/recommendations/engine.py` | **Modified** — user_preference_config param, semantic_similarity_weight |
+| `src/storage/manager.py` | **Modified** — get/save_user_preference_config |
+| `src/web/api.py` | **Modified** — Preference endpoints, user_id on recommendations |
+| `src/cli/commands.py` | **Modified** — preferences group, --user on recommend |
+| `src/cli/main.py` | **Modified** — Register preferences command |
+| `tests/test_user_preferences.py` | **Created** — 5 tests |
+| `tests/test_scorers.py` | **Modified** — 4 new build_scorers_with_overrides tests |
+| `tests/test_recommendation_engine.py` | **Modified** — 2 user preference override tests |
+| `tests/test_storage_manager.py` | **Modified** — 3 preference persistence tests |
+| `tests/test_web_api.py` | **Modified** — 4 preference endpoint tests |
+| `tests/test_cli.py` | **Modified** — 4 CLI preference tests |
+| `docs/V1_ROADMAP.md` | **Modified** — Marked Phase 5 complete |
+
+### Key Design Decisions
+
+1. **Sparse scorer_weights dict**: Only user-overridden keys are stored. Missing keys inherit from config YAML, which inherits from class defaults.
+2. **Temporary pipeline on override**: When user preferences are passed, a new `ScoringPipeline` is created for that call. The engine's base pipeline is never mutated.
+3. **Preference in users.settings**: Stored under `"preference_config"` key in the existing JSON settings column, avoiding schema changes.
+4. **No constraint enforcement yet**: Fields like `minimum_book_pages` are stored but not enforced — deferred to a future phase.
+
+### Testing
+
+- **503 total tests passing** (22 new)
+- All quality checks clean (black, mypy, ruff)
+
+---
+
 *Last Updated: 2026-01-27*

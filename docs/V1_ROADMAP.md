@@ -329,36 +329,52 @@ class SemanticSimilarityScorer(Scorer):
 
 ### Phase 5: User Preferences System
 
-**Goal:** Configurable personal rules per user
+**Goal:** Configurable per-user preferences that affect recommendation scoring
 
 **Tasks:**
-- [ ] Create preferences storage (in users.settings JSON or separate table)
-- [ ] Build simple preference types (toggles, sliders)
-- [ ] Add natural language preference interpreter (requires AI)
-- [ ] Create preference-to-scorer mapping
-- [ ] Web UI for preference management
+- [x] Create `UserPreferenceConfig` dataclass with scorer_weights, toggles, constraints
+- [x] Wire config YAML scorer_weights to scorer construction (`build_scorers_from_config`)
+- [x] Add per-user scorer weight override (`build_scorers_with_overrides`)
+- [x] Add user preference persistence to `StorageManager` (stored in users.settings JSON)
+- [x] Add REST API endpoints (`GET/PUT /api/users/{user_id}/preferences`)
+- [x] Add CLI commands (`preferences get/set-weight/reset`, `recommend --user`)
+- [ ] Web UI for preference management (deferred to Phase 6)
+- [ ] Natural language preference interpreter (deferred)
 
-**Preference Types:**
+**Weight Resolution Order (last wins):**
+1. Scorer class defaults (hardcoded: GenreMatch=2.0, etc.)
+2. `config/example.yaml` scorer_weights section
+3. User's DB settings (`users.settings` JSON → `"preference_config"` key)
+
+**Preference Model:**
 ```python
 @dataclass
 class UserPreferenceConfig:
-    # Simple toggles
+    scorer_weights: dict[str, float]  # Sparse: only user-set keys
     series_in_order: bool = True
     variety_after_completion: bool = False
-
-    # Weights (0.0-1.0)
-    genre_match_weight: float = 0.3
-    author_match_weight: float = 0.2
-
-    # Content-type specific
-    min_book_pages: int | None = None
-    max_movie_runtime: int | None = None
-
-    # Natural language rules (requires AI to interpret)
-    custom_rules: list[str] = []
+    minimum_book_pages: int | None = None
+    maximum_movie_runtime: int | None = None
+    custom_rules: list[str] = field(default_factory=list)
 ```
 
-**Deliverable:** Can save/load preferences per user, preferences affect recommendations
+**Files Created/Modified:**
+- `src/models/user_preferences.py` — UserPreferenceConfig dataclass
+- `src/cli/config.py` — `build_scorers_from_config`, updated `create_recommendation_engine`
+- `src/recommendations/scorers.py` — `SCORER_NAME_MAP`, `build_scorers_with_overrides`
+- `src/recommendations/engine.py` — `user_preference_config` param, `semantic_similarity_weight`
+- `src/storage/manager.py` — `get/save_user_preference_config`
+- `src/web/api.py` — Preference endpoints, `user_id` on recommendations
+- `src/cli/commands.py` — `preferences` group, `--user` option on `recommend`
+- `src/cli/main.py` — Register `preferences` command
+- `tests/test_user_preferences.py` — 5 tests
+- `tests/test_scorers.py` — 4 new `build_scorers_with_overrides` tests
+- `tests/test_recommendation_engine.py` — 2 user preference override tests
+- `tests/test_storage_manager.py` — 3 preference persistence tests
+- `tests/test_web_api.py` — 4 preference endpoint tests
+- `tests/test_cli.py` — 4 CLI preference tests
+
+**Deliverable:** Can save/load preferences per user, preferences affect recommendations via weight overrides
 
 ---
 
@@ -413,7 +429,7 @@ GET  /api/recommendations/{content_type}?include_reasoning=true
 | Phase 2: Ingestion Framework | Complete | 2026-01-26 | 2026-01-27 |
 | Phase 3: Non-AI Engine | Complete | 2026-01-27 | 2026-01-27 |
 | Phase 4: AI Enhancement | Complete | 2026-01-27 | 2026-01-27 |
-| Phase 5: User Preferences | Not Started | - | - |
+| Phase 5: User Preferences | Complete | 2026-01-27 | 2026-01-27 |
 | Phase 6: Web Interface | Not Started | - | - |
 | Phase 7: Polish | Not Started | - | - |
 
