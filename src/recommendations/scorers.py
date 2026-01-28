@@ -1,8 +1,9 @@
-"""Scoring components for the non-AI recommendation pipeline.
+"""Scoring components for the recommendation pipeline.
 
 Each scorer evaluates candidates on a specific dimension (genre match,
-creator match, etc.) and returns a 0.0-1.0 score.  A ScoringContext
-pre-computes lookup structures so scorers can work efficiently.
+creator match, semantic similarity, etc.) and returns a 0.0-1.0 score.
+A ScoringContext pre-computes lookup structures so scorers can work
+efficiently.
 """
 
 from __future__ import annotations
@@ -90,6 +91,9 @@ class ScoringContext:
     consumed_genres: set[str] = field(default_factory=set)
     consumed_creators: set[str] = field(default_factory=set)
     ratings_by_genre: dict[str, list[int]] = field(default_factory=dict)
+
+    # Pre-computed similarity scores (populated by engine when AI enabled)
+    similarity_scores: dict[str | None, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         """Build lookup structures from consumed items."""
@@ -284,6 +288,25 @@ class RatingPatternScorer(Scorer):
         average = sum(matching_ratings) / len(matching_ratings)
         # Map 1-5 rating scale to 0.0-1.0
         return (average - 1.0) / 4.0
+
+
+class SemanticSimilarityScorer(Scorer):
+    """Score based on pre-computed embedding similarity.
+
+    This scorer looks up a candidate's similarity score from a dict that
+    the engine populates before running the pipeline.  It is only added to
+    the pipeline when AI features are enabled.
+
+    Weight default: 1.5
+    """
+
+    def __init__(self, weight: float = 1.5) -> None:
+        super().__init__(weight)
+
+    def score(self, candidate: ContentItem, context: ScoringContext) -> float:
+        if not context.similarity_scores:
+            return 0.0
+        return context.similarity_scores.get(candidate.id, 0.0)
 
 
 # ---------------------------------------------------------------------------
