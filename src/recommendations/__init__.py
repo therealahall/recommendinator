@@ -9,6 +9,7 @@ from src.recommendations.scorers import (
     RatingPatternScorer,
     Scorer,
     ScoringContext,
+    SemanticSimilarityScorer,
     SeriesOrderScorer,
     TagOverlapScorer,
 )
@@ -29,4 +30,5 @@ __all__ = [
     "TagOverlapScorer",
     "SeriesOrderScorer",
     "RatingPatternScorer",
+    "SemanticSimilarityScorer",
 ]

@@ -12,6 +12,7 @@ from src.recommendations.scorers import (
     DEFAULT_SCORERS,
     Scorer,
     ScoringContext,
+    SemanticSimilarityScorer,
     _extract_creator,
     _extract_genres,
 )
@@ -26,10 +27,10 @@ logger = logging.getLogger(__name__)
 class RecommendationEngine:
     """Main recommendation engine.
 
-    The scoring pipeline **always** runs using non-AI scorers.  When an
-    ``embedding_generator`` is provided the engine additionally uses
-    vector-similarity search (to be extended in Phase 4 with a
-    ``SemanticSimilarityScorer``).
+    The scoring pipeline **always** runs.  When an ``embedding_generator``
+    is provided the engine pre-computes vector-similarity scores and adds
+    a ``SemanticSimilarityScorer`` to the pipeline so that AI scores
+    participate in weighted aggregation alongside all other scorers.
     """
 
     def __init__(
@@ -56,9 +57,10 @@ class RecommendationEngine:
         self.llm_generator = recommendation_generator
         self.preference_analyzer = PreferenceAnalyzer(min_rating=min_rating)
         self.ranker = RecommendationRanker()
-        self.pipeline = ScoringPipeline(
-            scorers if scorers is not None else list(DEFAULT_SCORERS)
-        )
+        scorers_list = list(scorers if scorers is not None else DEFAULT_SCORERS)
+        if embedding_generator is not None:
+            scorers_list.append(SemanticSimilarityScorer())
+        self.pipeline = ScoringPipeline(scorers_list)
 
         # Only create SimilarityMatcher when embeddings are available
         self.similarity_matcher: SimilarityMatcher | None = None
@@ -128,26 +130,9 @@ class RecommendationEngine:
         series_tracking = build_series_tracking(consumed_items_of_type)
 
         # -----------------------------------------------------------------
-        # Score all unconsumed candidates via the pipeline (always runs)
+        # Pre-compute similarity scores (AI path)
         # -----------------------------------------------------------------
-        scoring_context = ScoringContext(
-            preferences=preferences,
-            consumed_items=all_consumed_items,
-            series_tracking=series_tracking,
-            content_type=content_type,
-            all_unconsumed_items=unconsumed_items,
-        )
-
-        pipeline_scored = self.pipeline.score_candidates(
-            unconsumed_items, scoring_context
-        )
-
-        # Take top count*3 from pipeline for further processing
-        top_candidates: list[tuple[ContentItem, float]] = pipeline_scored[: count * 3]
-
-        # -----------------------------------------------------------------
-        # Optionally blend vector-similarity scores (AI path)
-        # -----------------------------------------------------------------
+        similarity_scores: dict[str | None, float] = {}
         if self.similarity_matcher is not None:
             rated_items = [
                 item for item in all_consumed_items if item.rating is not None
@@ -175,21 +160,28 @@ class RecommendationEngine:
             )
 
             if similar_candidates:
-                # Build lookup of similarity scores by item id
-                sim_lookup: dict[str | None, float] = {
+                similarity_scores = {
                     item.id: sim_score for item, sim_score in similar_candidates
                 }
-                # Blend: average pipeline score and similarity score
-                blended: list[tuple[ContentItem, float]] = []
-                for item, pipeline_score in top_candidates:
-                    sim_score = sim_lookup.get(item.id, 0.0)
-                    blended_score = (pipeline_score + sim_score) / 2.0
-                    blended.append((item, blended_score))
-                blended.sort(key=lambda pair: pair[1], reverse=True)
-                top_candidates = blended
-        else:
-            # No similarity matcher — reference_items not used for embeddings
-            reference_items = []
+
+        # -----------------------------------------------------------------
+        # Score all unconsumed candidates via the pipeline (always runs)
+        # -----------------------------------------------------------------
+        scoring_context = ScoringContext(
+            preferences=preferences,
+            consumed_items=all_consumed_items,
+            series_tracking=series_tracking,
+            content_type=content_type,
+            all_unconsumed_items=unconsumed_items,
+            similarity_scores=similarity_scores,
+        )
+
+        pipeline_scored = self.pipeline.score_candidates(
+            unconsumed_items, scoring_context
+        )
+
+        # Take top count*3 from pipeline for further processing
+        top_candidates: list[tuple[ContentItem, float]] = pipeline_scored[: count * 3]
 
         # -----------------------------------------------------------------
         # Filter candidates based on series rules
