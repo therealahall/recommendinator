@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from src.ingestion.sources.goodreads import GoodreadsPlugin
 from src.ingestion.sources.steam import SteamAPIError, parse_steam_games
 from src.models.content import ConsumptionStatus, ContentType
+from src.models.user_preferences import UserPreferenceConfig
 from src.web.state import get_config, get_embedding_gen, get_engine, get_storage
 
 logger = logging.getLogger(__name__)
@@ -55,6 +56,28 @@ class StatusResponse(BaseModel):
     components: dict[str, bool]
 
 
+class UserPreferenceResponse(BaseModel):
+    """Response model for user preferences."""
+
+    scorer_weights: dict[str, float]
+    series_in_order: bool
+    variety_after_completion: bool
+    minimum_book_pages: int | None
+    maximum_movie_runtime: int | None
+    custom_rules: list[str]
+
+
+class UserPreferenceUpdateRequest(BaseModel):
+    """Request model for updating user preferences (partial merge)."""
+
+    scorer_weights: dict[str, float] | None = None
+    series_in_order: bool | None = None
+    variety_after_completion: bool | None = None
+    minimum_book_pages: int | None = None
+    maximum_movie_runtime: int | None = None
+    custom_rules: list[str] | None = None
+
+
 @router.get("/recommendations", response_model=list[RecommendationResponse])
 async def get_recommendations(
     type: str = Query(
@@ -62,6 +85,7 @@ async def get_recommendations(
     ),
     count: int = Query(5, ge=1, le=20, description="Number of recommendations"),
     use_llm: bool = Query(True, description="Use LLM for enhanced reasoning"),
+    user_id: int = Query(1, ge=1, description="User ID for personalized preferences"),
 ) -> list[RecommendationResponse]:
     """Get personalized recommendations.
 
@@ -69,11 +93,13 @@ async def get_recommendations(
         type: Content type
         count: Number of recommendations
         use_llm: Whether to use LLM enhancement
+        user_id: User ID for loading per-user preferences
 
     Returns:
         List of recommendations
     """
     engine = get_engine()
+    storage = get_storage()
     if not engine:
         raise HTTPException(status_code=500, detail="Engine not initialized")
 
@@ -91,8 +117,16 @@ async def get_recommendations(
     content_type = type_map[type.lower()]
 
     try:
+        # Load user preferences if storage is available
+        user_preference_config: UserPreferenceConfig | None = None
+        if storage:
+            user_preference_config = storage.get_user_preference_config(user_id)
+
         recommendations = engine.generate_recommendations(
-            content_type=content_type, count=count, use_llm=use_llm
+            content_type=content_type,
+            count=count,
+            use_llm=use_llm,
+            user_preference_config=user_preference_config,
         )
 
         if not recommendations:
@@ -119,6 +153,66 @@ async def get_recommendations(
     except Exception as e:
         logger.error(f"Error generating recommendations: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/users/{user_id}/preferences", response_model=UserPreferenceResponse)
+async def get_user_preferences(user_id: int) -> UserPreferenceResponse:
+    """Get user preference configuration.
+
+    Args:
+        user_id: User ID.
+
+    Returns:
+        User preference configuration.
+    """
+    storage = get_storage()
+    if not storage:
+        raise HTTPException(status_code=500, detail="Storage not initialized")
+
+    preference_config = storage.get_user_preference_config(user_id)
+    return UserPreferenceResponse(**preference_config.to_dict())
+
+
+@router.put("/users/{user_id}/preferences", response_model=UserPreferenceResponse)
+async def update_user_preferences(
+    user_id: int, request: UserPreferenceUpdateRequest
+) -> UserPreferenceResponse:
+    """Update user preference configuration (partial merge).
+
+    Only fields present in the request body are updated; omitted fields
+    retain their current values.
+
+    Args:
+        user_id: User ID.
+        request: Partial preference update.
+
+    Returns:
+        Updated user preference configuration.
+    """
+    storage = get_storage()
+    if not storage:
+        raise HTTPException(status_code=500, detail="Storage not initialized")
+
+    # Load existing config
+    existing = storage.get_user_preference_config(user_id)
+
+    # Merge only provided fields
+    if request.scorer_weights is not None:
+        existing.scorer_weights.update(request.scorer_weights)
+    if request.series_in_order is not None:
+        existing.series_in_order = request.series_in_order
+    if request.variety_after_completion is not None:
+        existing.variety_after_completion = request.variety_after_completion
+    if request.minimum_book_pages is not None:
+        existing.minimum_book_pages = request.minimum_book_pages
+    if request.maximum_movie_runtime is not None:
+        existing.maximum_movie_runtime = request.maximum_movie_runtime
+    if request.custom_rules is not None:
+        existing.custom_rules = request.custom_rules
+
+    storage.save_user_preference_config(user_id, existing)
+
+    return UserPreferenceResponse(**existing.to_dict())
 
 
 @router.post("/complete")

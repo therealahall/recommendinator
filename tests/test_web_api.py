@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.models.user_preferences import UserPreferenceConfig
 from src.web.app import create_app
 from src.web.state import app_state
 
@@ -348,3 +349,102 @@ def test_update_endpoint_all_sources(client, mock_components):
         assert response.status_code == 200
         data = response.json()
         assert data["count"] == 2  # Both book and game
+
+
+# ---------------------------------------------------------------------------
+# User preferences endpoint tests (Phase 5)
+# ---------------------------------------------------------------------------
+
+
+def test_get_user_preferences_defaults(client, mock_components):
+    """GET /api/users/1/preferences returns defaults for new user."""
+    mock_components["storage"].get_user_preference_config = Mock(
+        return_value=UserPreferenceConfig()
+    )
+
+    response = client.get("/api/users/1/preferences")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["scorer_weights"] == {}
+    assert data["series_in_order"] is True
+    assert data["custom_rules"] == []
+
+
+def test_put_user_preferences_partial(client, mock_components):
+    """PUT /api/users/1/preferences merges partial update."""
+    mock_components["storage"].get_user_preference_config = Mock(
+        return_value=UserPreferenceConfig()
+    )
+    mock_components["storage"].save_user_preference_config = Mock()
+
+    response = client.put(
+        "/api/users/1/preferences",
+        json={"scorer_weights": {"genre_match": 3.0}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["scorer_weights"] == {"genre_match": 3.0}
+    assert data["series_in_order"] is True  # unchanged default
+
+
+def test_put_user_preferences_full(client, mock_components):
+    """PUT /api/users/1/preferences can update all fields."""
+    mock_components["storage"].get_user_preference_config = Mock(
+        return_value=UserPreferenceConfig()
+    )
+    mock_components["storage"].save_user_preference_config = Mock()
+
+    response = client.put(
+        "/api/users/1/preferences",
+        json={
+            "scorer_weights": {"genre_match": 5.0},
+            "series_in_order": False,
+            "variety_after_completion": True,
+            "minimum_book_pages": 100,
+            "maximum_movie_runtime": 180,
+            "custom_rules": ["no horror"],
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["scorer_weights"] == {"genre_match": 5.0}
+    assert data["series_in_order"] is False
+    assert data["variety_after_completion"] is True
+    assert data["custom_rules"] == ["no horror"]
+
+
+def test_recommendations_with_user_id(client, mock_components):
+    """GET /api/recommendations with user_id loads user preferences."""
+    mock_item = ContentItem(
+        id="1",
+        title="Test Book",
+        author="Test Author",
+        content_type=ContentType.BOOK,
+        status=ConsumptionStatus.UNREAD,
+    )
+
+    mock_recommendations = [
+        {
+            "item": mock_item,
+            "score": 0.85,
+            "similarity_score": 0.8,
+            "preference_score": 0.7,
+            "reasoning": "Recommended highly similar",
+        }
+    ]
+
+    mock_components["engine"].generate_recommendations.return_value = (
+        mock_recommendations
+    )
+    mock_components["storage"].get_user_preference_config = Mock(
+        return_value=UserPreferenceConfig(scorer_weights={"genre_match": 3.0})
+    )
+
+    response = client.get("/api/recommendations?type=book&count=1&user_id=1")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+
+    # Verify engine was called with user_preference_config
+    call_kwargs = mock_components["engine"].generate_recommendations.call_args.kwargs
+    assert call_kwargs["user_preference_config"] is not None
