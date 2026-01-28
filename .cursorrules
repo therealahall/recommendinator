@@ -208,18 +208,18 @@ to resolve uvicorn warning about application passing.
 ```
 personal-recommendations/
 ├── src/
-│   ├── cli/              # Command-line interface
-│   ├── web/              # Web interface (FastAPI)
+│   ├── cli/              # Click CLI interface (commands, config, main)
+│   ├── web/              # FastAPI web interface (api, app, state)
 │   ├── ingestion/        # Data ingestion modules
-│   │   └── sources/      # Source parsers
+│   │   └── sources/      # Source parsers (goodreads, steam, sonarr, radarr, etc.)
 │   ├── llm/              # LLM interaction and prompts
-│   ├── storage/          # Data storage (vector DB, SQLite)
-│   ├── recommendations/  # Recommendation engine
-│   ├── models/           # Data models and schemas
+│   ├── storage/          # Data storage (SQLite + optional ChromaDB)
+│   ├── recommendations/  # Recommendation engine (scorers, pipeline, ranking)
+│   ├── models/           # Data models (ContentItem, ContentType, UserPreferenceConfig)
 │   └── utils/            # Utility functions
 ├── tests/                # Test suite (mirrors src/ structure)
 ├── inputs/               # Input data files
-├── config/               # Configuration files
+├── config/               # Configuration files (example.yaml for tests)
 └── docs/                 # Additional documentation
 ```
 

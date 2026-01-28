@@ -39,61 +39,44 @@ This guide will help you get started with the Personal Recommendations system.
 ```
 personal-recommendations/
 ├── src/                    # Source code
-│   ├── cli/               # Command-line interface (to be implemented)
-│   ├── web/               # Web interface (to be implemented)
+│   ├── cli/               # Click CLI interface
+│   │   ├── commands.py    # recommend, update, complete, preferences
+│   │   ├── config.py      # Config loading and scorer construction
+│   │   └── main.py        # CLI entry point
+│   ├── web/               # FastAPI web interface
+│   │   ├── api.py         # REST API endpoints
+│   │   ├── app.py         # FastAPI app factory
+│   │   └── state.py       # Application state
 │   ├── ingestion/         # Data ingestion
-│   │   └── sources/       # Source-specific parsers
-│   │       └── goodreads.py  # ✅ Implemented
-│   ├── llm/               # LLM interaction (to be implemented)
-│   ├── storage/           # Storage layer (to be implemented)
-│   ├── recommendations/  # Recommendation engine (to be implemented)
+│   │   └── sources/       # Source parsers (goodreads, steam, sonarr, radarr, CSV, JSON, Markdown)
+│   ├── llm/               # Ollama interaction (optional AI layer)
+│   ├── storage/           # SQLite + ChromaDB (vector DB optional)
+│   ├── recommendations/   # Recommendation engine
+│   │   ├── scorers.py     # Scorer classes and weight override helpers
+│   │   ├── scoring_pipeline.py
+│   │   ├── engine.py      # Main recommendation engine
+│   │   ├── preferences.py # Preference analysis
+│   │   └── ranking.py     # Ranking and adjustments
 │   ├── models/            # Data models
-│   │   └── content.py     # ✅ Implemented
+│   │   ├── content.py     # ContentItem, ContentType, ConsumptionStatus
+│   │   └── user_preferences.py  # UserPreferenceConfig
 │   └── utils/             # Utility functions
-├── tests/                 # Test suite
-│   └── test_goodreads_parser.py  # ✅ Implemented
+├── tests/                 # Test suite (mirrors src/ structure)
 ├── inputs/                # Input data files
-│   └── goodreads_library_export.csv  # Your Goodreads data
 ├── config/                # Configuration files
-│   └── example.yaml       # ✅ Example config
+│   └── example.yaml       # Example config (use for tests)
 └── docs/                  # Additional documentation
 ```
 
 ## Current Status
 
-### ✅ Completed
-- Project structure and documentation
-- Goodreads CSV parser
-- Content data models
-- Test suite setup
-- Linting and formatting configuration
-
-### 🚧 Next Steps (To Be Implemented)
-1. **Storage Layer**
-   - SQLite database for structured data
-   - ChromaDB for vector embeddings
-   - Data persistence logic
-
-2. **LLM Integration**
-   - Ollama client wrapper
-   - Embedding generation
-   - Prompt templates
-   - Recommendation generation
-
-3. **CLI Interface**
-   - Command parsing
-   - Recommendation commands
-   - Update commands
-
-4. **Web Interface**
-   - FastAPI server setup
-   - REST API endpoints
-   - Simple web UI
-
-5. **Recommendation Engine**
-   - Preference analysis
-   - Similarity matching
-   - Ranking algorithm
+All core phases (0-5) are complete:
+- Multi-source data ingestion (Goodreads, Steam, Sonarr, Radarr, CSV, JSON, Markdown)
+- SQLite + optional ChromaDB storage with multi-user support
+- Non-AI scoring pipeline (genre, creator, tag, series, rating scorers)
+- AI enhancement layer (semantic similarity, LLM reasoning) - optional
+- Per-user preferences (configurable scorer weights, stored in DB)
+- CLI and REST API interfaces
 
 ## Development Workflow
 

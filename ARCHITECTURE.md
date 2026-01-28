@@ -66,7 +66,7 @@ Handles communication with Ollama and prompt engineering.
 
 Core logic for generating recommendations with **cross-content-type support**.
 
-**Architecture:** The engine uses a **unified scoring pipeline** that always runs. AI (embeddings, LLM reasoning) is an optional enhancement, not a requirement.
+**Architecture:** The engine uses a **unified scoring pipeline** that always runs. AI (embeddings, LLM reasoning) is an optional enhancement, not a requirement. Per-user preferences can override scorer weights at runtime.
 
 ```
 RecommendationEngine
@@ -76,19 +76,26 @@ RecommendationEngine
   |     |-- TagOverlapScorer      — Jaccard genre/tag overlap
   |     |-- SeriesOrderScorer     — next-in-sequence boosting
   |     |-- RatingPatternScorer   — rating history in matching genres
-  |     |-- [SemanticSimilarityScorer]  (Phase 4: when AI enabled)
+  |     |-- [SemanticSimilarityScorer]  (when AI enabled)
   |
+  |-- UserPreferenceConfig (optional per-user weight overrides)
   |-- Ranker (adaptation bonus, series bonus, preference adjustments)
   |-- [LLM reasoning post-processing]  (when AI enabled)
 ```
 
+**Weight Resolution Order (last wins):**
+1. Scorer class defaults (hardcoded: GenreMatch=2.0, etc.)
+2. `config.yaml` scorer_weights section
+3. Per-user DB settings (`users.settings` JSON → `"preference_config"` key)
+
 **Process:**
 1. Analyze user's consumed content (ratings, reviews) **across ALL content types**
 2. Extract preferences and patterns (genres, themes, authors) from all consumed content
-3. Score all unconsumed candidates through the scoring pipeline
-4. Optionally blend vector-similarity scores when AI is enabled
-5. Apply series filtering and ranking adjustments
-6. Generate ranked recommendations with reasoning
+3. Load per-user preference config (if available), apply scorer weight overrides
+4. Score all unconsumed candidates through the scoring pipeline
+5. Optionally blend vector-similarity scores when AI is enabled
+6. Apply series filtering and ranking adjustments
+7. Generate ranked recommendations with reasoning
 
 **Cross-Content-Type Recommendations:**
 - Preferences from all content types influence recommendations
@@ -205,8 +212,10 @@ Configuration files in `config/`:
 
 ## Future Enhancements
 
-- Multi-user support (if needed)
-- Advanced filtering (genre, length, etc.)
-- Recommendation explanations
+- Web UI for preference management
+- Natural language preference interpreter (AI-powered)
+- Content constraint enforcement (min pages, max runtime)
+- Discovery mode (surface things you didn't know about)
+- Interactive refinement ("I'm burnt out on sci-fi")
+- Scheduled sync (cron-style)
 - Export/import functionality
-- Integration with external APIs (optional)

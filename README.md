@@ -18,8 +18,10 @@ This project consumes data files from various sources (Goodreads, game reviews, 
 - **Content type support**: Books, Movies, TV Shows, Video Games
 - **Cross-content-type recommendations**: Preferences from all content types influence recommendations (e.g., sci-fi books can lead to sci-fi game/TV recommendations)
 - **AI optional**: Full recommendation pipeline works without LLM/embeddings; AI enhances but is not required
+- **Per-user preferences**: Configurable scorer weights and preference rules stored per-user, overriding system defaults
 - **Local LLM integration**: Uses Ollama for privacy-preserving recommendations (when AI enabled)
 - **Dual interface**: CLI and web interface (internal network only)
+- **Multi-user ready**: Schema supports multiple users with per-user settings
 - **Incremental updates**: Can process new data without full reprocessing
 - **Rating analysis**: Understands your 1-5 star rating preferences
 
@@ -59,13 +61,21 @@ ollama pull mistral:7b
 
 ```bash
 # Get recommendations
-python -m src.cli recommend --type books --count 5
+python -m src.cli recommend --type book --count 5
+
+# Get recommendations for a specific user
+python -m src.cli recommend --type book --count 5 --user 1
 
 # Update data from files
 python -m src.cli update --source goodreads
 
 # Mark content as completed
 python -m src.cli complete --type book --title "Book Title" --rating 4
+
+# Manage user preferences
+python -m src.cli preferences get --format json
+python -m src.cli preferences set-weight genre_match 3.0
+python -m src.cli preferences reset
 ```
 
 ### Web Interface

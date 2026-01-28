@@ -24,11 +24,11 @@ src/
 ├── cli/              # Click CLI interface
 ├── web/              # FastAPI web interface
 ├── ingestion/        # Data ingestion
-│   └── sources/      # Source parsers (goodreads.py, steam.py)
+│   └── sources/      # Source parsers (goodreads.py, steam.py, sonarr.py, radarr.py, etc.)
 ├── llm/              # Ollama interaction
 ├── storage/          # SQLite + ChromaDB
-├── recommendations/  # Recommendation engine
-├── models/           # Data models (ContentItem, ContentType, ConsumptionStatus)
+├── recommendations/  # Recommendation engine (scorers, pipeline, ranking)
+├── models/           # Data models (ContentItem, ContentType, UserPreferenceConfig)
 └── utils/            # Utility functions
 tests/                # Mirrors src/ structure
 config/               # Configuration files (example.yaml for tests)
