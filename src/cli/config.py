@@ -9,6 +9,14 @@ from src.llm.client import OllamaClient
 from src.llm.embeddings import EmbeddingGenerator
 from src.llm.recommendations import RecommendationGenerator
 from src.recommendations.engine import RecommendationEngine
+from src.recommendations.scorers import (
+    CreatorMatchScorer,
+    GenreMatchScorer,
+    RatingPatternScorer,
+    Scorer,
+    SeriesOrderScorer,
+    TagOverlapScorer,
+)
 from src.storage.manager import StorageManager
 
 
@@ -91,6 +99,43 @@ def create_llm_components(
     return client, embedding_gen, recommendation_gen
 
 
+_SCORER_CONFIG_MAP: dict[str, type[Scorer]] = {
+    "genre_match": GenreMatchScorer,
+    "creator_match": CreatorMatchScorer,
+    "tag_overlap": TagOverlapScorer,
+    "series_order": SeriesOrderScorer,
+    "rating_pattern": RatingPatternScorer,
+}
+
+
+def build_scorers_from_config(config: dict[str, Any]) -> list[Scorer]:
+    """Build scorer instances with weights from config YAML.
+
+    Reads ``config["recommendations"]["scorer_weights"]`` and creates scorer
+    instances with the specified weights. Falls back to each scorer's class
+    default weight for any scorer not listed in the config.
+
+    Does **not** include :class:`SemanticSimilarityScorer` — the engine
+    handles that conditionally based on whether AI is enabled.
+
+    Args:
+        config: Full configuration dictionary.
+
+    Returns:
+        List of scorer instances (without SemanticSimilarityScorer).
+    """
+    rec_config = config.get("recommendations", {})
+    weight_overrides = rec_config.get("scorer_weights", {})
+
+    scorers: list[Scorer] = []
+    for config_key, scorer_class in _SCORER_CONFIG_MAP.items():
+        if config_key in weight_overrides:
+            scorers.append(scorer_class(weight=float(weight_overrides[config_key])))
+        else:
+            scorers.append(scorer_class())
+    return scorers
+
+
 def create_recommendation_engine(
     storage_manager: StorageManager,
     embedding_generator: EmbeddingGenerator,
@@ -110,10 +155,16 @@ def create_recommendation_engine(
     """
     rec_config = config.get("recommendations", {})
     min_rating = rec_config.get("min_rating_for_preference", 4)
+    scorer_weights = rec_config.get("scorer_weights", {})
+    semantic_similarity_weight = float(scorer_weights.get("semantic_similarity", 1.5))
+
+    scorers = build_scorers_from_config(config)
 
     return RecommendationEngine(
         storage_manager=storage_manager,
         embedding_generator=embedding_generator,
         recommendation_generator=recommendation_generator,
         min_rating=min_rating,
+        scorers=scorers,
+        semantic_similarity_weight=semantic_similarity_weight,
     )

@@ -6,6 +6,7 @@ from typing import Any
 from src.llm.embeddings import EmbeddingGenerator
 from src.llm.recommendations import RecommendationGenerator
 from src.models.content import ContentItem, ContentType
+from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.preferences import PreferenceAnalyzer, UserPreferences
 from src.recommendations.ranking import RecommendationRanker
 from src.recommendations.scorers import (
@@ -15,6 +16,7 @@ from src.recommendations.scorers import (
     SemanticSimilarityScorer,
     _extract_creator,
     _extract_genres,
+    build_scorers_with_overrides,
 )
 from src.recommendations.scoring_pipeline import ScoringPipeline
 from src.recommendations.similarity import SimilarityMatcher
@@ -40,6 +42,7 @@ class RecommendationEngine:
         recommendation_generator: RecommendationGenerator | None = None,
         min_rating: int = 4,
         scorers: list[Scorer] | None = None,
+        semantic_similarity_weight: float = 1.5,
     ) -> None:
         """Initialize recommendation engine.
 
@@ -51,6 +54,8 @@ class RecommendationEngine:
             min_rating: Minimum rating to consider for preferences.
             scorers: Scorer instances for the pipeline.  Defaults to
                 :data:`DEFAULT_SCORERS`.
+            semantic_similarity_weight: Weight for the SemanticSimilarityScorer
+                when AI is enabled.
         """
         self.storage = storage_manager
         self.embedding_gen = embedding_generator
@@ -59,7 +64,9 @@ class RecommendationEngine:
         self.ranker = RecommendationRanker()
         scorers_list = list(scorers if scorers is not None else DEFAULT_SCORERS)
         if embedding_generator is not None:
-            scorers_list.append(SemanticSimilarityScorer())
+            scorers_list.append(
+                SemanticSimilarityScorer(weight=semantic_similarity_weight)
+            )
         self.pipeline = ScoringPipeline(scorers_list)
 
         # Only create SimilarityMatcher when embeddings are available
@@ -74,6 +81,7 @@ class RecommendationEngine:
         content_type: ContentType,
         count: int = 5,
         use_llm: bool = False,
+        user_preference_config: UserPreferenceConfig | None = None,
     ) -> list[dict[str, Any]]:
         """Generate recommendations for a content type.
 
@@ -88,6 +96,8 @@ class RecommendationEngine:
             content_type: Type of content to recommend.
             count: Number of recommendations to generate.
             use_llm: Whether to use LLM for final recommendation generation.
+            user_preference_config: Optional per-user preference config.
+                When provided, scorer weights are overridden for this call.
 
         Returns:
             List of recommendation dictionaries.
@@ -176,7 +186,16 @@ class RecommendationEngine:
             similarity_scores=similarity_scores,
         )
 
-        pipeline_scored = self.pipeline.score_candidates(
+        # Use a temporary pipeline with overridden weights if user prefs given
+        if user_preference_config is not None and user_preference_config.scorer_weights:
+            overridden_scorers = build_scorers_with_overrides(
+                self.pipeline.scorers, user_preference_config.scorer_weights
+            )
+            active_pipeline = ScoringPipeline(overridden_scorers)
+        else:
+            active_pipeline = self.pipeline
+
+        pipeline_scored = active_pipeline.score_candidates(
             unconsumed_items, scoring_context
         )
 
