@@ -294,22 +294,34 @@ class Scorer(ABC):
 **Goal:** AI features that enhance (but aren't required by) the engine
 
 **Tasks:**
-- [ ] Create AI scorer using embeddings for semantic similarity
-- [ ] Make embedding generation conditional on `ai_enabled`
-- [ ] Add LLM reasoning generator (optional post-processing)
-- [ ] Integrate AI scorer into pipeline when enabled
-- [ ] Natural language preference interpreter (for Phase 5)
+- [x] Create AI scorer using embeddings for semantic similarity
+- [x] Make embedding generation conditional on `ai_enabled` (already done by StorageManager)
+- [x] Add LLM reasoning generator (already exists, unchanged)
+- [x] Integrate AI scorer into pipeline when enabled
+- [ ] Natural language preference interpreter (deferred to Phase 5)
 
 **Key Design:**
-```python
-# src/recommendations/scorers/ai_scorer.py
-class SemanticSimilarityScorer(Scorer):
-    """Score based on embedding similarity. Requires AI enabled."""
 
-    def __init__(self, vector_db: VectorDB, embedding_generator: EmbeddingGenerator):
-        self.vector_db = vector_db
-        self.embedding_generator = embedding_generator
+The `SemanticSimilarityScorer` participates in the weighted pipeline like any other scorer. Similarity scores are pre-computed via `SimilarityMatcher.find_similar()` before the pipeline runs, stored in `ScoringContext.similarity_scores`, and the scorer does a simple dict lookup per candidate:
+
+```python
+# src/recommendations/scorers.py
+class SemanticSimilarityScorer(Scorer):
+    """Score based on pre-computed embedding similarity. Weight default: 1.5"""
+
+    def score(self, candidate: ContentItem, context: ScoringContext) -> float:
+        if not context.similarity_scores:
+            return 0.0
+        return context.similarity_scores.get(candidate.id, 0.0)
 ```
+
+**Files Modified:**
+- `src/recommendations/scorers.py` — Added `similarity_scores` to ScoringContext, added SemanticSimilarityScorer
+- `src/recommendations/engine.py` — Pre-compute similarity before pipeline, conditionally add AI scorer
+- `src/recommendations/__init__.py` — Export SemanticSimilarityScorer
+- `config/example.yaml` — Added `semantic_similarity: 1.5` to scorer_weights
+- `tests/test_scorers.py` — 5 new SemanticSimilarityScorer tests
+- `tests/test_recommendation_engine.py` — Existing AI-mode tests pass with new flow
 
 **Deliverable:** Recommendations work with AI off, enhanced scores with AI on
 
@@ -400,7 +412,7 @@ GET  /api/recommendations/{content_type}?include_reasoning=true
 | Phase 1: Core Data Layer | Complete | 2026-01-25 | 2026-01-25 |
 | Phase 2: Ingestion Framework | Complete | 2026-01-26 | 2026-01-27 |
 | Phase 3: Non-AI Engine | Complete | 2026-01-27 | 2026-01-27 |
-| Phase 4: AI Enhancement | Not Started | - | - |
+| Phase 4: AI Enhancement | Complete | 2026-01-27 | 2026-01-27 |
 | Phase 5: User Preferences | Not Started | - | - |
 | Phase 6: Web Interface | Not Started | - | - |
 | Phase 7: Polish | Not Started | - | - |

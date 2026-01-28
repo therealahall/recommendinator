@@ -838,4 +838,80 @@ RecommendationEngine
 
 ---
 
+## V1 Phase 4: AI Enhancement Layer
+
+**Date:** 2026-01-27
+**Status:** ✅ Completed
+
+### Background
+
+Phase 3 left AI similarity scores bolted on *after* the scoring pipeline as a separate blending step (naive 50/50 average of pipeline scores and similarity scores). Phase 4 moves AI into the pipeline as a proper `SemanticSimilarityScorer`, making it participate in weighted aggregation alongside all other scorers.
+
+### Design Decision: Pre-computed Similarity Scores
+
+The scorer pattern calls `score(candidate, context)` per-candidate, but vector similarity search is a batch operation (one query against ChromaDB). Solution: pre-compute similarity scores before the pipeline runs, store them in `ScoringContext.similarity_scores`, and the scorer does a simple dict lookup.
+
+```
+Engine.generate_recommendations()
+  |
+  |-- [If AI enabled] SimilarityMatcher.find_similar() → dict[id, score]
+  |-- Build ScoringContext (includes pre-computed similarity_scores)
+  |-- ScoringPipeline.score_candidates()
+  |     |-- GenreMatchScorer
+  |     |-- CreatorMatchScorer
+  |     |-- TagOverlapScorer
+  |     |-- SeriesOrderScorer
+  |     |-- RatingPatternScorer
+  |     |-- SemanticSimilarityScorer  ← looks up pre-computed score
+  |
+  |-- Ranker, filtering, formatting (unchanged)
+  |-- [LLM reasoning post-processing] (unchanged)
+```
+
+### Completed Steps
+
+1. **Added SemanticSimilarityScorer** (`src/recommendations/scorers.py`) ✅
+   - Added `similarity_scores: dict[str | None, float]` to `ScoringContext`
+   - `SemanticSimilarityScorer` (weight 1.5) looks up pre-computed score from context
+   - Returns 0.0 when AI is disabled (empty similarity_scores dict)
+
+2. **Integrated AI Scoring into Pipeline** (`src/recommendations/engine.py`) ✅
+   - Similarity scores pre-computed *before* the pipeline via `SimilarityMatcher.find_similar()`
+   - Scores passed into `ScoringContext` as `similarity_scores` dict
+   - `SemanticSimilarityScorer` conditionally added to pipeline when `embedding_generator` is provided
+   - Removed post-pipeline blending block (naive 50/50 average)
+
+3. **Updated Exports and Config** ✅
+   - `src/recommendations/__init__.py` exports `SemanticSimilarityScorer`
+   - `config/example.yaml` adds `semantic_similarity: 1.5` to scorer_weights
+
+4. **Comprehensive Test Suite** ✅
+   - 5 new `SemanticSimilarityScorer` tests in `tests/test_scorers.py`
+   - All existing AI-mode and non-AI engine tests pass with new flow
+
+### Files Modified
+
+| File | Action |
+|------|--------|
+| `src/recommendations/scorers.py` | **Modified** — Added similarity_scores to ScoringContext, added SemanticSimilarityScorer |
+| `src/recommendations/engine.py` | **Modified** — Pre-compute similarity before pipeline, conditionally add AI scorer, removed blending |
+| `src/recommendations/__init__.py` | **Modified** — Export SemanticSimilarityScorer |
+| `config/example.yaml` | **Modified** — Added semantic_similarity weight |
+| `tests/test_scorers.py` | **Modified** — 5 new SemanticSimilarityScorer tests |
+| `docs/V1_ROADMAP.md` | **Modified** — Marked Phase 4 tasks complete |
+
+### Key Design Decisions
+
+1. **Pre-computed scores**: Batch similarity search happens once before the pipeline, not per-candidate. The scorer is a simple lookup.
+2. **Conditional scorer addition**: `SemanticSimilarityScorer` is only appended to the pipeline when `embedding_generator` is not None. Non-AI mode is unaffected.
+3. **No AI module imports in scorer**: The scorer reads a plain dict — no dependency on embedding or vector DB modules.
+4. **Weight 1.5**: Same as CreatorMatchScorer, lower than GenreMatchScorer (2.0). AI similarity is important but shouldn't dominate.
+
+### Testing
+
+- **486 total tests passing** (5 new)
+- All quality checks clean for changed files
+
+---
+
 *Last Updated: 2026-01-27*
