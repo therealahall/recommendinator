@@ -7,6 +7,7 @@ from src.recommendations.scorers import (
     GenreMatchScorer,
     RatingPatternScorer,
     ScoringContext,
+    SemanticSimilarityScorer,
     SeriesOrderScorer,
     TagOverlapScorer,
     _extract_creator,
@@ -324,3 +325,47 @@ class TestRatingPatternScorer:
         candidate = _make_item(status=ConsumptionStatus.UNREAD)
         scorer = RatingPatternScorer()
         assert scorer.score(candidate, context) == 0.5
+
+
+# ---------------------------------------------------------------------------
+# SemanticSimilarityScorer tests
+# ---------------------------------------------------------------------------
+
+
+class TestSemanticSimilarityScorer:
+    def test_returns_precomputed_score(self) -> None:
+        """Scorer returns the pre-computed similarity score for a candidate."""
+        candidate = _make_item(item_id="item-1", status=ConsumptionStatus.UNREAD)
+        context = _build_context(consumed=[])
+        context.similarity_scores = {"item-1": 0.85}
+        scorer = SemanticSimilarityScorer()
+        assert scorer.score(candidate, context) == 0.85
+
+    def test_returns_zero_when_candidate_not_in_scores(self) -> None:
+        """Scorer returns 0.0 when candidate id is not in similarity_scores."""
+        candidate = _make_item(item_id="item-2", status=ConsumptionStatus.UNREAD)
+        context = _build_context(consumed=[])
+        context.similarity_scores = {"item-1": 0.85}
+        scorer = SemanticSimilarityScorer()
+        assert scorer.score(candidate, context) == 0.0
+
+    def test_returns_zero_when_similarity_scores_empty(self) -> None:
+        """Scorer returns 0.0 when no similarity scores are available."""
+        candidate = _make_item(item_id="item-1", status=ConsumptionStatus.UNREAD)
+        context = _build_context(consumed=[])
+        scorer = SemanticSimilarityScorer()
+        assert scorer.score(candidate, context) == 0.0
+
+    def test_handles_none_candidate_id(self) -> None:
+        """Scorer handles candidates with None id via dict lookup."""
+        candidate = _make_item(status=ConsumptionStatus.UNREAD)
+        assert candidate.id is None
+        context = _build_context(consumed=[])
+        context.similarity_scores = {None: 0.7}
+        scorer = SemanticSimilarityScorer()
+        assert scorer.score(candidate, context) == 0.7
+
+    def test_default_weight(self) -> None:
+        """SemanticSimilarityScorer default weight is 1.5."""
+        scorer = SemanticSimilarityScorer()
+        assert scorer.weight == 1.5
