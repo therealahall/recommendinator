@@ -7,6 +7,7 @@ from click.testing import CliRunner
 
 from src.cli.main import cli
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.models.user_preferences import UserPreferenceConfig
 
 
 @pytest.fixture
@@ -404,3 +405,86 @@ def test_update_command_steam_api_error(mock_components):
 
         assert result.exit_code == 0
         assert "Error" in result.output or "error" in result.output.lower()
+
+
+# ---------------------------------------------------------------------------
+# Preferences CLI tests (Phase 5)
+# ---------------------------------------------------------------------------
+
+
+def test_recommend_command_with_user(mock_components):
+    """Test recommend command with --user option."""
+    mock_item = ContentItem(
+        id="1",
+        title="Test Book",
+        author="Test Author",
+        content_type=ContentType.BOOK,
+        status=ConsumptionStatus.UNREAD,
+    )
+
+    mock_recommendations = [
+        {
+            "item": mock_item,
+            "score": 0.85,
+            "similarity_score": 0.8,
+            "preference_score": 0.7,
+            "reasoning": "Recommended highly similar",
+        }
+    ]
+
+    mock_components["engine"].generate_recommendations.return_value = (
+        mock_recommendations
+    )
+    mock_components["storage"].get_user_preference_config = Mock(
+        return_value=UserPreferenceConfig()
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli, ["recommend", "--type", "book", "--count", "1", "--user", "1"]
+    )
+
+    assert result.exit_code == 0
+    assert "Test Book" in result.output
+    mock_components["storage"].get_user_preference_config.assert_called_once_with(1)
+
+
+def test_preferences_get(mock_components):
+    """Test preferences get command."""
+    mock_components["storage"].get_user_preference_config = Mock(
+        return_value=UserPreferenceConfig(scorer_weights={"genre_match": 3.0})
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["preferences", "get", "--format", "json"])
+
+    assert result.exit_code == 0
+    assert "genre_match" in result.output
+    assert "3.0" in result.output
+
+
+def test_preferences_set_weight(mock_components):
+    """Test preferences set-weight command."""
+    mock_components["storage"].get_user_preference_config = Mock(
+        return_value=UserPreferenceConfig()
+    )
+    mock_components["storage"].save_user_preference_config = Mock()
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["preferences", "set-weight", "genre_match", "3.0"])
+
+    assert result.exit_code == 0
+    assert "Set genre_match weight to 3.0" in result.output
+    mock_components["storage"].save_user_preference_config.assert_called_once()
+
+
+def test_preferences_reset(mock_components):
+    """Test preferences reset command."""
+    mock_components["storage"].save_user_preference_config = Mock()
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["preferences", "reset"])
+
+    assert result.exit_code == 0
+    assert "Reset preferences to defaults" in result.output
+    mock_components["storage"].save_user_preference_config.assert_called_once()

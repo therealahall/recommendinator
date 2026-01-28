@@ -9,6 +9,8 @@ from tabulate import tabulate
 from src.ingestion.sources.goodreads import GoodreadsPlugin
 from src.ingestion.sources.steam import SteamAPIError, parse_steam_games
 from src.models.content import ConsumptionStatus, ContentType
+from src.models.user_preferences import UserPreferenceConfig
+from src.recommendations.scorers import SCORER_NAME_MAP
 
 
 @click.command()
@@ -37,6 +39,13 @@ from src.models.content import ConsumptionStatus, ContentType
     is_flag=True,
     help="Use LLM for enhanced recommendation reasoning",
 )
+@click.option(
+    "--user",
+    "user_id",
+    type=int,
+    default=1,
+    help="User ID for personalized preferences",
+)
 @click.pass_context
 def recommend(
     ctx: click.Context,
@@ -44,6 +53,7 @@ def recommend(
     count: int,
     output_format: str,
     use_llm: bool,
+    user_id: int,
 ) -> None:
     """Get personalized recommendations."""
     # Map string to ContentType enum
@@ -56,12 +66,19 @@ def recommend(
     content_type = type_map[content_type_str.lower()]
 
     engine = ctx.obj["engine"]
+    storage = ctx.obj["storage"]
 
     click.echo(f"Generating {count} {content_type_str} recommendations...")
 
     try:
+        # Load user preferences
+        user_preference_config = storage.get_user_preference_config(user_id)
+
         recommendations = engine.generate_recommendations(
-            content_type=content_type, count=count, use_llm=use_llm
+            content_type=content_type,
+            count=count,
+            use_llm=use_llm,
+            user_preference_config=user_preference_config,
         )
 
         if not recommendations:
@@ -166,7 +183,7 @@ def update(ctx: click.Context, source: str) -> None:
                                 err=True,
                             )
 
-                    click.echo(f"✅ Updated {count} items from Goodreads")
+                    click.echo(f"Updated {count} items from Goodreads")
 
         if source == "steam" or source == "all":
             inputs_config = config.get("inputs", {})
@@ -218,7 +235,7 @@ def update(ctx: click.Context, source: str) -> None:
                                     )
 
                             click.echo(
-                                f"✅ Updated {count} items from Steam "
+                                f"Updated {count} items from Steam "
                                 f"(total: {total_count} items)"
                             )
                         except SteamAPIError as e:
@@ -297,7 +314,99 @@ def complete(
         embedding = embedding_gen.generate_content_embedding(item)
         db_id = storage.save_content_item(item, embedding)
 
-        click.echo(f"✅ Marked '{title}' as completed (ID: {db_id})")
+        click.echo(f"Marked '{title}' as completed (ID: {db_id})")
     except Exception as e:
         click.echo(f"Error marking content as completed: {e}", err=True)
         raise click.Abort() from e
+
+
+# ---------------------------------------------------------------------------
+# Preferences command group
+# ---------------------------------------------------------------------------
+
+
+@click.group()
+def preferences() -> None:
+    """Manage user preference settings."""
+
+
+@preferences.command("get")
+@click.option(
+    "--user",
+    "user_id",
+    type=int,
+    default=1,
+    help="User ID",
+)
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    default="table",
+    help="Output format",
+)
+@click.pass_context
+def preferences_get(ctx: click.Context, user_id: int, output_format: str) -> None:
+    """Show current user preferences."""
+    storage = ctx.obj["storage"]
+    preference_config = storage.get_user_preference_config(user_id)
+    data = preference_config.to_dict()
+
+    if output_format == "json":
+        click.echo(json.dumps(data, indent=2))
+    else:
+        # Table output
+        table_data = []
+        for key, value in data.items():
+            table_data.append([key, str(value)])
+        click.echo(tabulate(table_data, headers=["Setting", "Value"], tablefmt="grid"))
+
+
+@preferences.command("set-weight")
+@click.argument("scorer_name")
+@click.argument("weight", type=float)
+@click.option(
+    "--user",
+    "user_id",
+    type=int,
+    default=1,
+    help="User ID",
+)
+@click.pass_context
+def preferences_set_weight(
+    ctx: click.Context, scorer_name: str, weight: float, user_id: int
+) -> None:
+    """Set a scorer weight for a user.
+
+    SCORER_NAME is the scorer to adjust (e.g. genre_match, creator_match).
+    WEIGHT is the new weight value (e.g. 2.5).
+    """
+    if scorer_name not in SCORER_NAME_MAP:
+        valid_names = ", ".join(sorted(SCORER_NAME_MAP.keys()))
+        click.echo(
+            f"Error: Unknown scorer '{scorer_name}'. " f"Valid scorers: {valid_names}",
+            err=True,
+        )
+        raise click.Abort()
+
+    storage = ctx.obj["storage"]
+    preference_config = storage.get_user_preference_config(user_id)
+    preference_config.scorer_weights[scorer_name] = weight
+    storage.save_user_preference_config(user_id, preference_config)
+    click.echo(f"Set {scorer_name} weight to {weight} for user {user_id}")
+
+
+@preferences.command("reset")
+@click.option(
+    "--user",
+    "user_id",
+    type=int,
+    default=1,
+    help="User ID",
+)
+@click.pass_context
+def preferences_reset(ctx: click.Context, user_id: int) -> None:
+    """Reset user preferences to defaults."""
+    storage = ctx.obj["storage"]
+    storage.save_user_preference_config(user_id, UserPreferenceConfig())
+    click.echo(f"Reset preferences to defaults for user {user_id}")
