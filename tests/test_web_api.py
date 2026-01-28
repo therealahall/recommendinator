@@ -413,6 +413,93 @@ def test_put_user_preferences_full(client, mock_components):
     assert data["custom_rules"] == ["no horror"]
 
 
+def test_list_users(client, mock_components):
+    """Test GET /api/users returns user list."""
+    mock_components["storage"].get_all_users = Mock(
+        return_value=[
+            {"id": 1, "username": "default", "display_name": "Default User"},
+            {"id": 2, "username": "alice", "display_name": "Alice"},
+        ]
+    )
+
+    response = client.get("/api/users")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 2
+    assert data[0]["username"] == "default"
+    assert data[1]["username"] == "alice"
+
+
+def test_list_items(client, mock_components):
+    """Test GET /api/items returns filtered items."""
+    mock_items = [
+        ContentItem(
+            id="1",
+            title="Test Book",
+            author="Author",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            source="goodreads",
+        )
+    ]
+    mock_components["storage"].get_content_items = Mock(return_value=mock_items)
+
+    response = client.get("/api/items?type=book&status=completed&user_id=1&limit=10")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["title"] == "Test Book"
+    assert data[0]["content_type"] == "book"
+    assert data[0]["status"] == "completed"
+
+
+def test_list_items_invalid_type(client, mock_components):
+    """Test GET /api/items with invalid type returns 400."""
+    response = client.get("/api/items?type=invalid")
+    assert response.status_code == 400
+
+
+def test_list_items_invalid_status(client, mock_components):
+    """Test GET /api/items with invalid status returns 400."""
+    response = client.get("/api/items?status=invalid")
+    assert response.status_code == 400
+
+
+def test_recommendations_include_breakdown(client, mock_components):
+    """Test recommendations response includes score_breakdown."""
+    mock_item = ContentItem(
+        id="1",
+        title="Test Book",
+        author="Test Author",
+        content_type=ContentType.BOOK,
+        status=ConsumptionStatus.UNREAD,
+    )
+
+    mock_recommendations = [
+        {
+            "item": mock_item,
+            "score": 0.85,
+            "similarity_score": 0.8,
+            "preference_score": 0.7,
+            "reasoning": "Recommended highly similar",
+            "score_breakdown": {"genre_match": 0.9, "creator_match": 0.5},
+        }
+    ]
+
+    mock_components["engine"].generate_recommendations.return_value = (
+        mock_recommendations
+    )
+
+    response = client.get("/api/recommendations?type=book&count=1")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    assert "score_breakdown" in data[0]
+    assert data[0]["score_breakdown"]["genre_match"] == 0.9
+    assert data[0]["score_breakdown"]["creator_match"] == 0.5
+
+
 def test_recommendations_with_user_id(client, mock_components):
     """GET /api/recommendations with user_id loads user preferences."""
     mock_item = ContentItem(

@@ -36,6 +36,27 @@ class UpdateRequest(BaseModel):
     source: str = Field(..., description="Data source (goodreads, steam, all)")
 
 
+class UserResponse(BaseModel):
+    """Response model for user listing."""
+
+    id: int
+    username: str
+    display_name: str | None
+
+
+class ContentItemResponse(BaseModel):
+    """Response model for content item listing."""
+
+    id: str | None
+    title: str
+    author: str | None
+    content_type: str
+    status: str
+    rating: int | None
+    review: str | None
+    source: str | None
+
+
 class RecommendationResponse(BaseModel):
     """Response model for recommendations."""
 
@@ -46,6 +67,7 @@ class RecommendationResponse(BaseModel):
     preference_score: float
     reasoning: str
     llm_reasoning: str | None = None
+    score_breakdown: dict[str, float] = Field(default_factory=dict)
 
 
 class StatusResponse(BaseModel):
@@ -145,6 +167,7 @@ async def get_recommendations(
                     preference_score=rec["preference_score"],
                     reasoning=rec["reasoning"],
                     llm_reasoning=rec.get("llm_reasoning"),
+                    score_breakdown=rec.get("score_breakdown", {}),
                 )
             )
 
@@ -153,6 +176,101 @@ async def get_recommendations(
     except Exception as e:
         logger.error(f"Error generating recommendations: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/users", response_model=list[UserResponse])
+async def list_users() -> list[UserResponse]:
+    """List all users.
+
+    Returns:
+        List of users.
+    """
+    storage = get_storage()
+    if not storage:
+        raise HTTPException(status_code=500, detail="Storage not initialized")
+
+    users = storage.get_all_users()
+    return [
+        UserResponse(
+            id=user["id"],
+            username=user["username"],
+            display_name=user.get("display_name"),
+        )
+        for user in users
+    ]
+
+
+@router.get("/items", response_model=list[ContentItemResponse])
+async def list_items(
+    type: str | None = Query(None, description="Content type filter"),
+    status: str | None = Query(None, description="Status filter"),
+    user_id: int = Query(1, ge=1, description="User ID"),
+    limit: int = Query(50, ge=1, le=200, description="Maximum results"),
+) -> list[ContentItemResponse]:
+    """List content items with optional filters.
+
+    Args:
+        type: Optional content type filter.
+        status: Optional consumption status filter.
+        user_id: User ID to filter by.
+        limit: Maximum number of results.
+
+    Returns:
+        List of content items.
+    """
+    storage = get_storage()
+    if not storage:
+        raise HTTPException(status_code=500, detail="Storage not initialized")
+
+    type_map = {
+        "book": ContentType.BOOK,
+        "movie": ContentType.MOVIE,
+        "tv_show": ContentType.TV_SHOW,
+        "video_game": ContentType.VIDEO_GAME,
+    }
+
+    status_map = {
+        "unread": ConsumptionStatus.UNREAD,
+        "currently_consuming": ConsumptionStatus.CURRENTLY_CONSUMING,
+        "completed": ConsumptionStatus.COMPLETED,
+    }
+
+    content_type = None
+    if type is not None:
+        if type.lower() not in type_map:
+            raise HTTPException(status_code=400, detail=f"Invalid content type: {type}")
+        content_type = type_map[type.lower()]
+
+    consumption_status = None
+    if status is not None:
+        if status.lower() not in status_map:
+            raise HTTPException(status_code=400, detail=f"Invalid status: {status}")
+        consumption_status = status_map[status.lower()]
+
+    items = storage.get_content_items(
+        user_id=user_id,
+        content_type=content_type,
+        status=consumption_status,
+        limit=limit,
+    )
+
+    return [
+        ContentItemResponse(
+            id=item.id,
+            title=item.title,
+            author=item.author,
+            content_type=(
+                item.content_type
+                if isinstance(item.content_type, str)
+                else item.content_type.value
+            ),
+            status=item.status if isinstance(item.status, str) else item.status.value,
+            rating=item.rating,
+            review=item.review,
+            source=item.source,
+        )
+        for item in items
+    ]
 
 
 @router.get("/users/{user_id}/preferences", response_model=UserPreferenceResponse)
