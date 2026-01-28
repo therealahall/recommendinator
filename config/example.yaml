@@ -113,6 +113,7 @@ recommendations:
     tag_overlap: 1.0
     series_order: 1.5
     rating_pattern: 1.0
+    semantic_similarity: 1.5  # Only active when ai_enabled is true
 
 # Logging
 logging:
