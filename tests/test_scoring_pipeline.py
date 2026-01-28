@@ -9,7 +9,7 @@ from src.recommendations.scorers import (
     ScoringContext,
     TagOverlapScorer,
 )
-from src.recommendations.scoring_pipeline import ScoringPipeline
+from src.recommendations.scoring_pipeline import ScoredCandidate, ScoringPipeline
 from src.utils.series import build_series_tracking
 
 
@@ -130,3 +130,53 @@ class TestScoringPipeline:
         )
         result = pipeline.score_candidates([candidate], context)
         assert result[0][1] == 0.0
+
+    def test_breakdown_keys_present(self) -> None:
+        """score_candidates_with_breakdown returns expected scorer keys."""
+        consumed = [
+            _make_item(
+                rating=5,
+                metadata={"genre": "Fantasy"},
+                status=ConsumptionStatus.COMPLETED,
+            )
+        ]
+        context = _build_context(consumed=consumed)
+        candidate = _make_item(title="Test", metadata={"genre": "Fantasy"})
+
+        pipeline = ScoringPipeline(DEFAULT_SCORERS)
+        results = pipeline.score_candidates_with_breakdown([candidate], context)
+
+        assert len(results) == 1
+        scored = results[0]
+        assert isinstance(scored, ScoredCandidate)
+        assert "genre_match" in scored.score_breakdown
+        assert "creator_match" in scored.score_breakdown
+        assert "tag_overlap" in scored.score_breakdown
+        assert "series_order" in scored.score_breakdown
+        assert "rating_pattern" in scored.score_breakdown
+        # All raw scores should be in [0, 1]
+        for raw_score in scored.score_breakdown.values():
+            assert 0.0 <= raw_score <= 1.0
+
+    def test_breakdown_sorted_descending(self) -> None:
+        """score_candidates_with_breakdown returns results sorted descending."""
+        consumed = [
+            _make_item(
+                rating=5,
+                metadata={"genre": "Fantasy"},
+                status=ConsumptionStatus.COMPLETED,
+            )
+        ]
+        context = _build_context(consumed=consumed)
+
+        good_match = _make_item(title="Good", metadata={"genre": "Fantasy"})
+        poor_match = _make_item(title="Poor", metadata={"genre": "Horror"})
+
+        pipeline = ScoringPipeline(DEFAULT_SCORERS)
+        results = pipeline.score_candidates_with_breakdown(
+            [poor_match, good_match], context
+        )
+
+        assert results[0].item.title == "Good"
+        assert results[1].item.title == "Poor"
+        assert results[0].aggregate_score >= results[1].aggregate_score
