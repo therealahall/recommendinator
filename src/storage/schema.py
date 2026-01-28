@@ -328,6 +328,39 @@ def update_user_settings(
     conn.commit()
 
 
+def get_all_users(conn: sqlite3.Connection) -> list[dict]:
+    """Get all users.
+
+    Args:
+        conn: SQLite database connection
+
+    Returns:
+        List of user dicts ordered by id
+    """
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT id, username, display_name, created_at, settings FROM users ORDER BY id"
+    )
+    users = []
+    for row in cursor.fetchall():
+        settings = None
+        if row[4]:
+            try:
+                settings = json.loads(row[4])
+            except (json.JSONDecodeError, TypeError):
+                settings = {}
+        users.append(
+            {
+                "id": row[0],
+                "username": row[1],
+                "display_name": row[2],
+                "created_at": row[3],
+                "settings": settings,
+            }
+        )
+    return users
+
+
 def get_default_user_id() -> int:
     """Get the default user ID.
 

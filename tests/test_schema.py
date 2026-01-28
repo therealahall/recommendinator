@@ -9,6 +9,7 @@ from src.storage.schema import (
     SCHEMA_VERSION,
     create_schema,
     create_user,
+    get_all_users,
     get_default_user_id,
     get_schema_version,
     get_user_by_id,
@@ -141,6 +142,31 @@ def test_migrate_schema_fresh_db(temp_db: sqlite3.Connection) -> None:
     # Verify default user exists
     user = get_user_by_id(temp_db, 1)
     assert user is not None
+
+
+def test_get_all_users_default_only(temp_db: sqlite3.Connection) -> None:
+    """Test get_all_users returns only the default user when no others exist."""
+    create_schema(temp_db)
+
+    users = get_all_users(temp_db)
+    assert len(users) == 1
+    assert users[0]["id"] == 1
+    assert users[0]["username"] == "default"
+    assert users[0]["display_name"] == "Default User"
+
+
+def test_get_all_users_multiple(temp_db: sqlite3.Connection) -> None:
+    """Test get_all_users returns all users ordered by id."""
+    create_schema(temp_db)
+
+    create_user(temp_db, username="alice", display_name="Alice")
+    create_user(temp_db, username="bob", display_name="Bob")
+
+    users = get_all_users(temp_db)
+    assert len(users) == 3
+    assert users[0]["username"] == "default"
+    assert users[1]["username"] == "alice"
+    assert users[2]["username"] == "bob"
 
 
 def test_content_items_has_user_id(temp_db: sqlite3.Connection) -> None:

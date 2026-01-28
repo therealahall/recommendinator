@@ -6,7 +6,7 @@ from typing import Any
 from src.ingestion.conflict import ConflictStrategy, resolve_conflict
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.user_preferences import UserPreferenceConfig
-from src.storage.schema import get_user_by_id, update_user_settings
+from src.storage.schema import get_all_users, get_user_by_id, update_user_settings
 from src.storage.sqlite_db import SQLiteDB
 
 
@@ -367,6 +367,18 @@ class StorageManager:
             content_type=content_type,
             user_id=user_id,
         )
+
+    def get_all_users(self) -> list[dict[str, Any]]:
+        """Get all users.
+
+        Returns:
+            List of user dicts ordered by id.
+        """
+        conn = self.sqlite_db._get_connection()
+        try:
+            return get_all_users(conn)
+        finally:
+            conn.close()
 
     def get_user_preference_config(self, user_id: int) -> UserPreferenceConfig:
         """Load user preference config from DB.
