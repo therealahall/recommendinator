@@ -13,6 +13,7 @@ class TestUserPreferenceConfig:
         assert config.minimum_book_pages is None
         assert config.maximum_movie_runtime is None
         assert config.custom_rules == []
+        assert config.content_length_preferences == {}
 
     def test_round_trip(self) -> None:
         """to_dict -> from_dict produces an equal object."""
@@ -23,6 +24,7 @@ class TestUserPreferenceConfig:
             minimum_book_pages=200,
             maximum_movie_runtime=120,
             custom_rules=["no horror"],
+            content_length_preferences={"book": "short", "movie": "long"},
         )
         restored = UserPreferenceConfig.from_dict(original.to_dict())
         assert restored == original
@@ -52,5 +54,6 @@ class TestUserPreferenceConfig:
             "minimum_book_pages",
             "maximum_movie_runtime",
             "custom_rules",
+            "content_length_preferences",
         }
         assert set(data.keys()) == expected_keys

@@ -17,9 +17,14 @@ class UserPreferenceConfig:
         series_in_order: Whether to prefer recommending series in order.
         variety_after_completion: Whether to recommend variety after completing
             a series.
-        minimum_book_pages: Minimum book page count filter (not enforced yet).
-        maximum_movie_runtime: Maximum movie runtime filter (not enforced yet).
-        custom_rules: Free-form rule descriptions (not enforced yet).
+        minimum_book_pages: Deprecated -- use content_length_preferences instead.
+        maximum_movie_runtime: Deprecated -- use content_length_preferences instead.
+        custom_rules: Free-form rule descriptions interpreted by the
+            pattern-based or LLM-powered preference interpreter.
+        content_length_preferences: Per-content-type length preference.
+            Maps content type string to length preference string
+            (e.g. ``{"book": "short", "movie": "any"}``).
+            Valid values: ``"any"``, ``"short"``, ``"medium"``, ``"long"``.
     """
 
     scorer_weights: dict[str, float] = field(default_factory=dict)
@@ -28,6 +33,7 @@ class UserPreferenceConfig:
     minimum_book_pages: int | None = None
     maximum_movie_runtime: int | None = None
     custom_rules: list[str] = field(default_factory=list)
+    content_length_preferences: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a dictionary for JSON storage.
@@ -42,6 +48,7 @@ class UserPreferenceConfig:
             "minimum_book_pages": self.minimum_book_pages,
             "maximum_movie_runtime": self.maximum_movie_runtime,
             "custom_rules": self.custom_rules,
+            "content_length_preferences": self.content_length_preferences,
         }
 
     @classmethod
@@ -61,4 +68,5 @@ class UserPreferenceConfig:
             minimum_book_pages=data.get("minimum_book_pages"),
             maximum_movie_runtime=data.get("maximum_movie_runtime"),
             custom_rules=data.get("custom_rules", []),
+            content_length_preferences=data.get("content_length_preferences", {}),
         )
