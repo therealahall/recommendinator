@@ -87,6 +87,7 @@ class UserPreferenceResponse(BaseModel):
     minimum_book_pages: int | None
     maximum_movie_runtime: int | None
     custom_rules: list[str]
+    content_length_preferences: dict[str, str] = Field(default_factory=dict)
 
 
 class UserPreferenceUpdateRequest(BaseModel):
@@ -98,6 +99,7 @@ class UserPreferenceUpdateRequest(BaseModel):
     minimum_book_pages: int | None = None
     maximum_movie_runtime: int | None = None
     custom_rules: list[str] | None = None
+    content_length_preferences: dict[str, str] | None = None
 
 
 @router.get("/recommendations", response_model=list[RecommendationResponse])
@@ -327,6 +329,8 @@ async def update_user_preferences(
         existing.maximum_movie_runtime = request.maximum_movie_runtime
     if request.custom_rules is not None:
         existing.custom_rules = request.custom_rules
+    if request.content_length_preferences is not None:
+        existing.content_length_preferences.update(request.content_length_preferences)
 
     storage.save_user_preference_config(user_id, existing)
 
