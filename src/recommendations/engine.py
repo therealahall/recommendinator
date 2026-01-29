@@ -7,6 +7,7 @@ from src.llm.embeddings import EmbeddingGenerator
 from src.llm.recommendations import RecommendationGenerator
 from src.models.content import ContentItem, ContentType
 from src.models.user_preferences import UserPreferenceConfig
+from src.recommendations.content_length import filter_by_length
 from src.recommendations.preferences import PreferenceAnalyzer, UserPreferences
 from src.recommendations.ranking import RecommendationRanker
 from src.recommendations.scorers import (
@@ -127,6 +128,24 @@ class RecommendationEngine:
         if not unconsumed_items:
             logger.warning(f"No unconsumed items found for {content_type.value}")
             return []
+
+        # -----------------------------------------------------------------
+        # Apply content length filtering (before scoring)
+        # -----------------------------------------------------------------
+        if (
+            user_preference_config is not None
+            and user_preference_config.content_length_preferences
+        ):
+            filtered_by_length = filter_by_length(
+                unconsumed_items,
+                user_preference_config.content_length_preferences,
+            )
+            if filtered_by_length:
+                unconsumed_items = filtered_by_length
+            else:
+                logger.warning(
+                    "Length filtering removed all candidates, using original list"
+                )
 
         # Analyze preferences from ALL consumed content types
         preferences = self.preference_analyzer.analyze(all_consumed_items)
