@@ -115,6 +115,24 @@ recommendations:
     rating_pattern: 1.0
     semantic_similarity: 1.5  # Only active when ai_enabled is true
 
+  # Content length preferences filter candidates before scoring.
+  # Set per content type: "any" (no filter), "short", "medium", or "long".
+  # Items missing length metadata pass through unfiltered.
+  #
+  # Thresholds:
+  #   book:       short <250 pages,   medium 250-500,  long 500+
+  #   movie:      short <90 min,      medium 90-150,   long 150+
+  #   tv_show:    short <3 seasons,   medium 3-6,      long 6+
+  #   video_game: short <10 hours,    medium 10-40,    long 40+
+  #
+  # These are stored per-user in the database (users.settings JSON).
+  # Example user preferences (set via CLI or Web UI):
+  #   content_length_preferences:
+  #     book: "short"
+  #     movie: "any"
+  #     tv_show: "medium"
+  #     video_game: "long"
+
 # Logging
 logging:
   level: "INFO"  # DEBUG, INFO, WARNING, ERROR
