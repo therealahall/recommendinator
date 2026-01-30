@@ -488,3 +488,128 @@ def test_preferences_reset(mock_components):
     assert result.exit_code == 0
     assert "Reset preferences to defaults" in result.output
     mock_components["storage"].save_user_preference_config.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Custom rules CLI tests (Phase 7)
+# ---------------------------------------------------------------------------
+
+
+def test_custom_rules_list_empty(mock_components):
+    """Test listing custom rules when none exist."""
+    mock_components["storage"].get_user_preference_config = Mock(
+        return_value=UserPreferenceConfig()
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["preferences", "custom-rules", "list"])
+
+    assert result.exit_code == 0
+    assert "No custom rules" in result.output
+
+
+def test_custom_rules_add(mock_components):
+    """Test adding a custom rule."""
+    mock_config = UserPreferenceConfig()
+    mock_components["storage"].get_user_preference_config = Mock(
+        return_value=mock_config
+    )
+    mock_components["storage"].save_user_preference_config = Mock()
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["preferences", "custom-rules", "add", "avoid horror"])
+
+    assert result.exit_code == 0
+    assert "Added rule" in result.output
+    assert "avoid horror" in result.output
+    mock_components["storage"].save_user_preference_config.assert_called_once()
+
+
+def test_custom_rules_list_with_rules(mock_components):
+    """Test listing custom rules when some exist."""
+    mock_config = UserPreferenceConfig(custom_rules=["avoid horror", "prefer sci-fi"])
+    mock_components["storage"].get_user_preference_config = Mock(
+        return_value=mock_config
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["preferences", "custom-rules", "list"])
+
+    assert result.exit_code == 0
+    assert "0: avoid horror" in result.output
+    assert "1: prefer sci-fi" in result.output
+
+
+def test_custom_rules_remove(mock_components):
+    """Test removing a custom rule."""
+    mock_config = UserPreferenceConfig(custom_rules=["avoid horror"])
+    mock_components["storage"].get_user_preference_config = Mock(
+        return_value=mock_config
+    )
+    mock_components["storage"].save_user_preference_config = Mock()
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["preferences", "custom-rules", "remove", "0"])
+
+    assert result.exit_code == 0
+    assert "Removed rule" in result.output
+    mock_components["storage"].save_user_preference_config.assert_called_once()
+
+
+def test_custom_rules_remove_invalid_index(mock_components):
+    """Test removing a rule with invalid index."""
+    mock_config = UserPreferenceConfig()  # No rules
+    mock_components["storage"].get_user_preference_config = Mock(
+        return_value=mock_config
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["preferences", "custom-rules", "remove", "99"])
+
+    assert result.exit_code != 0
+    assert "Invalid index" in result.output
+
+
+def test_custom_rules_clear(mock_components):
+    """Test clearing all custom rules."""
+    mock_config = UserPreferenceConfig(custom_rules=["avoid horror", "prefer sci-fi"])
+    mock_components["storage"].get_user_preference_config = Mock(
+        return_value=mock_config
+    )
+    mock_components["storage"].save_user_preference_config = Mock()
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["preferences", "custom-rules", "clear", "--yes"])
+
+    assert result.exit_code == 0
+    assert "Cleared 2" in result.output
+    mock_components["storage"].save_user_preference_config.assert_called_once()
+
+
+def test_custom_rules_interpret_pattern(mock_components):
+    """Test interpreting a rule using pattern matcher."""
+    runner = CliRunner()
+    result = runner.invoke(
+        cli, ["preferences", "custom-rules", "interpret", "avoid horror"]
+    )
+
+    assert result.exit_code == 0
+    assert "pattern-based" in result.output.lower()
+    assert "horror" in result.output
+
+
+def test_set_length_preference(mock_components):
+    """Test setting a length preference."""
+    mock_config = UserPreferenceConfig()
+    mock_components["storage"].get_user_preference_config = Mock(
+        return_value=mock_config
+    )
+    mock_components["storage"].save_user_preference_config = Mock()
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["preferences", "set-length", "book", "short"])
+
+    assert result.exit_code == 0
+    assert "book" in result.output
+    assert "short" in result.output
+    mock_components["storage"].save_user_preference_config.assert_called_once()

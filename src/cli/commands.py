@@ -410,3 +410,238 @@ def preferences_reset(ctx: click.Context, user_id: int) -> None:
     storage = ctx.obj["storage"]
     storage.save_user_preference_config(user_id, UserPreferenceConfig())
     click.echo(f"Reset preferences to defaults for user {user_id}")
+
+
+@preferences.command("set-length")
+@click.argument(
+    "content_type",
+    type=click.Choice(["book", "movie", "tv_show", "video_game"], case_sensitive=False),
+)
+@click.argument(
+    "length_preference",
+    type=click.Choice(["any", "short", "medium", "long"], case_sensitive=False),
+)
+@click.option(
+    "--user",
+    "user_id",
+    type=int,
+    default=1,
+    help="User ID",
+)
+@click.pass_context
+def preferences_set_length(
+    ctx: click.Context, content_type: str, length_preference: str, user_id: int
+) -> None:
+    """Set a length preference for a content type.
+
+    CONTENT_TYPE is the type (book, movie, tv_show, video_game).
+    LENGTH_PREFERENCE is the preferred length (any, short, medium, long).
+    """
+    storage = ctx.obj["storage"]
+    preference_config = storage.get_user_preference_config(user_id)
+    preference_config.content_length_preferences[content_type.lower()] = (
+        length_preference.lower()
+    )
+    storage.save_user_preference_config(user_id, preference_config)
+    click.echo(
+        f"Set {content_type} length preference to '{length_preference}' for user {user_id}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Custom rules subgroup
+# ---------------------------------------------------------------------------
+
+
+@preferences.group("custom-rules")
+def custom_rules() -> None:
+    """Manage custom preference rules."""
+
+
+@custom_rules.command("list")
+@click.option(
+    "--user",
+    "user_id",
+    type=int,
+    default=1,
+    help="User ID",
+)
+@click.pass_context
+def custom_rules_list(ctx: click.Context, user_id: int) -> None:
+    """List all custom rules for a user."""
+    storage = ctx.obj["storage"]
+    preference_config = storage.get_user_preference_config(user_id)
+    rules = preference_config.custom_rules
+
+    if not rules:
+        click.echo(f"No custom rules set for user {user_id}")
+        return
+
+    click.echo(f"Custom rules for user {user_id}:")
+    for index, rule in enumerate(rules):
+        click.echo(f"  {index}: {rule}")
+
+
+@custom_rules.command("add")
+@click.argument("rule_text")
+@click.option(
+    "--user",
+    "user_id",
+    type=int,
+    default=1,
+    help="User ID",
+)
+@click.pass_context
+def custom_rules_add(ctx: click.Context, rule_text: str, user_id: int) -> None:
+    """Add a custom preference rule.
+
+    RULE_TEXT is the natural language rule (e.g., "avoid horror", "prefer sci-fi").
+    """
+    storage = ctx.obj["storage"]
+    preference_config = storage.get_user_preference_config(user_id)
+    preference_config.custom_rules.append(rule_text)
+    storage.save_user_preference_config(user_id, preference_config)
+    click.echo(f"Added rule: '{rule_text}' for user {user_id}")
+    click.echo(f"Total rules: {len(preference_config.custom_rules)}")
+
+
+@custom_rules.command("remove")
+@click.argument("index", type=int)
+@click.option(
+    "--user",
+    "user_id",
+    type=int,
+    default=1,
+    help="User ID",
+)
+@click.pass_context
+def custom_rules_remove(ctx: click.Context, index: int, user_id: int) -> None:
+    """Remove a custom rule by index.
+
+    INDEX is the rule number (use 'list' to see indices).
+    """
+    storage = ctx.obj["storage"]
+    preference_config = storage.get_user_preference_config(user_id)
+
+    if index < 0 or index >= len(preference_config.custom_rules):
+        click.echo(
+            f"Error: Invalid index {index}. "
+            f"Valid range: 0-{len(preference_config.custom_rules) - 1}",
+            err=True,
+        )
+        raise click.Abort()
+
+    removed = preference_config.custom_rules.pop(index)
+    storage.save_user_preference_config(user_id, preference_config)
+    click.echo(f"Removed rule: '{removed}'")
+    click.echo(f"Remaining rules: {len(preference_config.custom_rules)}")
+
+
+@custom_rules.command("clear")
+@click.option(
+    "--user",
+    "user_id",
+    type=int,
+    default=1,
+    help="User ID",
+)
+@click.option(
+    "--yes",
+    is_flag=True,
+    help="Skip confirmation prompt",
+)
+@click.pass_context
+def custom_rules_clear(ctx: click.Context, user_id: int, yes: bool) -> None:
+    """Clear all custom rules for a user."""
+    storage = ctx.obj["storage"]
+    preference_config = storage.get_user_preference_config(user_id)
+
+    if not preference_config.custom_rules:
+        click.echo(f"No custom rules to clear for user {user_id}")
+        return
+
+    if not yes:
+        count = len(preference_config.custom_rules)
+        if not click.confirm(f"Clear {count} custom rule(s) for user {user_id}?"):
+            click.echo("Aborted.")
+            return
+
+    cleared_count = len(preference_config.custom_rules)
+    preference_config.custom_rules = []
+    storage.save_user_preference_config(user_id, preference_config)
+    click.echo(f"Cleared {cleared_count} custom rule(s) for user {user_id}")
+
+
+@custom_rules.command("interpret")
+@click.argument("rule_text")
+@click.option(
+    "--use-llm",
+    is_flag=True,
+    help="Use LLM for interpretation (requires AI to be enabled)",
+)
+@click.pass_context
+def custom_rules_interpret(ctx: click.Context, rule_text: str, use_llm: bool) -> None:
+    """Interpret a custom rule and show the parsed result.
+
+    RULE_TEXT is the natural language rule to interpret.
+
+    This command shows how the system would interpret a rule without saving it.
+    """
+    from src.recommendations.preference_interpreter import PatternBasedInterpreter
+
+    if use_llm:
+        # Check if LLM is available
+        llm_client = ctx.obj.get("llm_client")
+        if llm_client is None:
+            click.echo(
+                "Warning: LLM not available, falling back to pattern-based interpreter",
+                err=True,
+            )
+            use_llm = False
+
+    if use_llm:
+        from src.recommendations.preference_interpreter import LLMPreferenceInterpreter
+
+        llm_client = ctx.obj["llm_client"]
+        storage = ctx.obj["storage"]
+        llm_interpreter = LLMPreferenceInterpreter(
+            ollama_client=llm_client,
+            storage_manager=storage,
+        )
+        click.echo("Using LLM interpreter...")
+        result = llm_interpreter.interpret(rule_text)
+    else:
+        pattern_interpreter = PatternBasedInterpreter()
+        click.echo("Using pattern-based interpreter...")
+        result = pattern_interpreter.interpret(rule_text)
+
+    click.echo(f"\nRule: '{rule_text}'")
+    click.echo(f"Confidence: {result.confidence.value}")
+    click.echo(f"Notes: {result.interpretation_notes}")
+    click.echo("")
+
+    if result.genre_boosts:
+        click.echo("Genre boosts:")
+        for genre, boost in result.genre_boosts.items():
+            click.echo(f"  +{boost:.1f} {genre}")
+
+    if result.genre_penalties:
+        click.echo("Genre penalties:")
+        for genre, penalty in result.genre_penalties.items():
+            click.echo(f"  -{penalty:.1f} {genre}")
+
+    if result.content_type_filters:
+        click.echo(f"Content type filters: {', '.join(result.content_type_filters)}")
+
+    if result.content_type_exclusions:
+        click.echo(
+            f"Content type exclusions: {', '.join(result.content_type_exclusions)}"
+        )
+
+    if result.length_preferences:
+        click.echo("Length preferences:")
+        for content_type, length in result.length_preferences.items():
+            click.echo(f"  {content_type}: {length}")
+
+    if result.is_empty():
+        click.echo("(No preferences extracted from this rule)")
