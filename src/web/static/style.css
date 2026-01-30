@@ -444,6 +444,97 @@ body {
     height: 18px;
 }
 
+/* Length preferences dropdown */
+.dropdown-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.dropdown-label {
+    width: 100px;
+    font-size: 0.9em;
+    color: #555;
+    flex-shrink: 0;
+}
+
+.length-select {
+    padding: 6px 12px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    font-size: 0.9em;
+    background: white;
+    cursor: pointer;
+}
+
+.length-select:focus {
+    outline: none;
+    border-color: #667eea;
+}
+
+/* Custom rules */
+.help-text {
+    font-size: 0.85em;
+    color: #777;
+    margin: 0 0 12px 0;
+}
+
+.empty-rules {
+    font-size: 0.9em;
+    color: #999;
+    font-style: italic;
+    padding: 8px 0;
+}
+
+.rule-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    background: #f8f9fa;
+    border-radius: 6px;
+    margin-bottom: 8px;
+}
+
+.rule-text {
+    font-size: 0.9em;
+    color: #333;
+}
+
+.add-rule-form {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.add-rule-form input[type="text"] {
+    flex: 1;
+    padding: 8px 12px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    font-size: 0.9em;
+}
+
+.add-rule-form input[type="text"]:focus {
+    outline: none;
+    border-color: #667eea;
+}
+
+.btn-small {
+    padding: 6px 12px;
+    font-size: 0.85em;
+}
+
+.btn-danger {
+    background: #f44336;
+    color: white;
+}
+
+.btn-danger:hover {
+    background: #d32f2f;
+}
+
 /* Sync */
 .sync-grid {
     display: grid;

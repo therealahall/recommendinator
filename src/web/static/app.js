@@ -330,6 +330,9 @@
             });
     }
 
+    var contentTypes = ["book", "movie", "tv_show", "video_game"];
+    var lengthOptions = ["any", "short", "medium", "long"];
+
     function renderPreferences(prefs) {
         var container = document.getElementById("prefContent");
 
@@ -370,6 +373,49 @@
         html += '</div>';
         html += '</div>';
 
+        // Length preferences section
+        html += '<div class="pref-section">';
+        html += '<h3>Length Preferences</h3>';
+        html += '<p class="help-text">Prefer short, medium, or long content per type.</p>';
+        var lengthPrefs = prefs.content_length_preferences || {};
+        contentTypes.forEach(function (type) {
+            var value = lengthPrefs[type] || "any";
+            html += '<div class="dropdown-row">';
+            html += '<span class="dropdown-label">' + formatContentType(type) + '</span>';
+            html += '<select class="length-select" data-content-type="' + type + '">';
+            lengthOptions.forEach(function (opt) {
+                html += '<option value="' + opt + '"' + (value === opt ? ' selected' : '') + '>';
+                html += opt.charAt(0).toUpperCase() + opt.slice(1);
+                html += '</option>';
+            });
+            html += '</select>';
+            html += '</div>';
+        });
+        html += '</div>';
+
+        // Custom rules section
+        html += '<div class="pref-section">';
+        html += '<h3>Custom Rules</h3>';
+        html += '<p class="help-text">Natural language rules like "avoid horror" or "prefer sci-fi".</p>';
+        html += '<div id="customRulesList">';
+        var customRules = prefs.custom_rules || [];
+        if (customRules.length === 0) {
+            html += '<div class="empty-rules">No custom rules defined</div>';
+        } else {
+            customRules.forEach(function (rule, index) {
+                html += '<div class="rule-item">';
+                html += '<span class="rule-text">' + escapeHtml(rule) + '</span>';
+                html += '<button class="btn btn-small btn-danger remove-rule-btn" data-index="' + index + '">Remove</button>';
+                html += '</div>';
+            });
+        }
+        html += '</div>';
+        html += '<div class="add-rule-form">';
+        html += '<input type="text" id="newRuleInput" placeholder="e.g., avoid horror, prefer sci-fi">';
+        html += '<button class="btn btn-small" id="addRuleBtn">Add Rule</button>';
+        html += '</div>';
+        html += '</div>';
+
         html += '<button class="btn btn-primary" id="prefSaveBtn">Save Preferences</button>';
         html += ' <span id="prefSaveStatus"></span>';
 
@@ -383,8 +429,77 @@
             });
         });
 
+        // Attach remove rule listeners
+        container.querySelectorAll(".remove-rule-btn").forEach(function (btn) {
+            btn.addEventListener("click", function () {
+                removeCustomRule(parseInt(btn.dataset.index));
+            });
+        });
+
+        // Attach add rule listener
+        document.getElementById("addRuleBtn").addEventListener("click", addCustomRule);
+        document.getElementById("newRuleInput").addEventListener("keypress", function (e) {
+            if (e.key === "Enter") addCustomRule();
+        });
+
         // Attach save listener
         document.getElementById("prefSaveBtn").addEventListener("click", savePreferences);
+    }
+
+    // Custom rules state (loaded from prefs, modified locally, saved together)
+    var currentCustomRules = [];
+
+    function removeCustomRule(index) {
+        // Get current rules from DOM
+        var rules = [];
+        document.querySelectorAll("#customRulesList .rule-text").forEach(function (el) {
+            rules.push(el.textContent);
+        });
+        rules.splice(index, 1);
+        currentCustomRules = rules;
+        // Re-render just the rules list
+        renderCustomRulesList(rules);
+    }
+
+    function addCustomRule() {
+        var input = document.getElementById("newRuleInput");
+        var rule = input.value.trim();
+        if (!rule) return;
+
+        // Get current rules from DOM
+        var rules = [];
+        document.querySelectorAll("#customRulesList .rule-text").forEach(function (el) {
+            rules.push(el.textContent);
+        });
+        rules.push(rule);
+        currentCustomRules = rules;
+
+        input.value = "";
+        renderCustomRulesList(rules);
+    }
+
+    function renderCustomRulesList(rules) {
+        var container = document.getElementById("customRulesList");
+        if (!rules || rules.length === 0) {
+            container.innerHTML = '<div class="empty-rules">No custom rules defined</div>';
+            return;
+        }
+
+        var html = "";
+        rules.forEach(function (rule, index) {
+            html += '<div class="rule-item">';
+            html += '<span class="rule-text">' + escapeHtml(rule) + '</span>';
+            html += '<button class="btn btn-small btn-danger remove-rule-btn" data-index="' + index + '">Remove</button>';
+            html += '</div>';
+        });
+        container.innerHTML = html;
+
+        // Re-attach listeners
+        container.querySelectorAll(".remove-rule-btn").forEach(function (btn) {
+            btn.addEventListener("click", function () {
+                removeCustomRule(parseInt(btn.dataset.index));
+            });
+        });
     }
 
     function savePreferences() {
@@ -393,10 +508,24 @@
             weights[slider.dataset.scorer] = parseFloat(slider.value);
         });
 
+        // Collect length preferences
+        var lengthPrefs = {};
+        document.querySelectorAll(".length-select").forEach(function (select) {
+            lengthPrefs[select.dataset.contentType] = select.value;
+        });
+
+        // Collect custom rules from DOM
+        var customRules = [];
+        document.querySelectorAll("#customRulesList .rule-text").forEach(function (el) {
+            customRules.push(el.textContent);
+        });
+
         var payload = {
             scorer_weights: weights,
             series_in_order: document.getElementById("prefSeriesOrder").checked,
-            variety_after_completion: document.getElementById("prefVariety").checked
+            variety_after_completion: document.getElementById("prefVariety").checked,
+            content_length_preferences: lengthPrefs,
+            custom_rules: customRules
         };
 
         var statusSpan = document.getElementById("prefSaveStatus");
