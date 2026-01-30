@@ -7,12 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
-from src.storage.schema import (
-    SCHEMA_VERSION,
-    get_default_user_id,
-    get_schema_version,
-    migrate_schema,
-)
+from src.storage.schema import create_schema, get_default_user_id
 
 
 class SQLiteDB:
@@ -41,12 +36,10 @@ class SQLiteDB:
         return conn
 
     def _ensure_schema(self) -> None:
-        """Ensure database schema is created and up to date."""
+        """Ensure database schema is created."""
         conn = self._get_connection()
         try:
-            current_version = get_schema_version(conn)
-            if current_version < SCHEMA_VERSION:
-                migrate_schema(conn, SCHEMA_VERSION)
+            create_schema(conn)
         finally:
             conn.close()
 

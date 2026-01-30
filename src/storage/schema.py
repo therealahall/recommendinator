@@ -1,37 +1,17 @@
-"""Database schema definitions and migrations."""
+"""Database schema definitions."""
 
 import json
 import sqlite3
-
-SCHEMA_VERSION = 1
-
-
-def get_schema_version(conn: sqlite3.Connection) -> int:
-    """Get the current schema version.
-
-    Args:
-        conn: SQLite database connection
-
-    Returns:
-        Schema version number, or 0 if not initialized
-    """
-    cursor = conn.cursor()
-    try:
-        cursor.execute("SELECT MAX(version) FROM schema_version")
-        result = cursor.fetchone()
-        return result[0] if result and result[0] is not None else 0
-    except sqlite3.OperationalError:
-        # Table doesn't exist yet
-        return 0
 
 
 def create_schema(conn: sqlite3.Connection) -> None:
     """Create the database schema.
 
-    Schema v1 includes:
+    Includes:
     - Users table for multi-user support
     - Content items with user_id foreign key
     - Type-specific detail tables (books, movies, TV shows, games)
+    - Preference interpretation cache
 
     Args:
         conn: SQLite database connection
@@ -161,42 +141,16 @@ def create_schema(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_game_developer ON video_game_details(developer)"
     )
 
-    # Schema version tracking
+    # Preference interpretation cache (for LLM interpretations)
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS schema_version (
-            version INTEGER PRIMARY KEY,
-            applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        CREATE TABLE IF NOT EXISTS preference_interpretation_cache (
+            cache_key TEXT PRIMARY KEY,
+            interpretation_json TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """)
 
-    # Insert schema version
-    cursor.execute(
-        "INSERT OR IGNORE INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,)
-    )
-
     conn.commit()
-
-
-def migrate_schema(
-    conn: sqlite3.Connection, target_version: int = SCHEMA_VERSION
-) -> None:
-    """Migrate database schema to target version.
-
-    Args:
-        conn: SQLite database connection
-        target_version: Target schema version (default: current SCHEMA_VERSION)
-    """
-    current_version = get_schema_version(conn)
-
-    if current_version == 0:
-        # Fresh database - create schema
-        create_schema(conn)
-        return
-
-    # Future migrations would go here:
-    # if current_version == 1 and target_version >= 2:
-    #     migrate_v1_to_v2(conn)
-    #     current_version = 2
 
 
 # User management functions
@@ -368,3 +322,65 @@ def get_default_user_id() -> int:
         Default user ID (always 1)
     """
     return 1
+
+
+# Preference interpretation cache functions
+
+
+def get_cached_preference_interpretation(
+    conn: sqlite3.Connection, cache_key: str
+) -> str | None:
+    """Get a cached preference interpretation.
+
+    Args:
+        conn: SQLite database connection
+        cache_key: The cache key to look up
+
+    Returns:
+        Cached JSON string or None if not found
+    """
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT interpretation_json FROM preference_interpretation_cache WHERE cache_key = ?",
+        (cache_key,),
+    )
+    row = cursor.fetchone()
+    return row[0] if row else None
+
+
+def save_cached_preference_interpretation(
+    conn: sqlite3.Connection, cache_key: str, interpretation_json: str
+) -> None:
+    """Save a preference interpretation to the cache.
+
+    Args:
+        conn: SQLite database connection
+        cache_key: The cache key
+        interpretation_json: JSON string of the interpretation
+    """
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT OR REPLACE INTO preference_interpretation_cache
+        (cache_key, interpretation_json, created_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+        """,
+        (cache_key, interpretation_json),
+    )
+    conn.commit()
+
+
+def clear_cached_preference_interpretations(conn: sqlite3.Connection) -> int:
+    """Clear all cached preference interpretations.
+
+    Args:
+        conn: SQLite database connection
+
+    Returns:
+        Number of rows deleted
+    """
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM preference_interpretation_cache")
+    deleted = cursor.rowcount
+    conn.commit()
+    return deleted

@@ -6,15 +6,15 @@ from pathlib import Path
 import pytest
 
 from src.storage.schema import (
-    SCHEMA_VERSION,
+    clear_cached_preference_interpretations,
     create_schema,
     create_user,
     get_all_users,
+    get_cached_preference_interpretation,
     get_default_user_id,
-    get_schema_version,
     get_user_by_id,
     get_user_by_username,
-    migrate_schema,
+    save_cached_preference_interpretation,
     update_user_settings,
 )
 
@@ -28,18 +28,9 @@ def temp_db(tmp_path: Path) -> sqlite3.Connection:
     conn.close()
 
 
-def test_schema_version_empty_db(temp_db: sqlite3.Connection) -> None:
-    """Test that schema version is 0 for empty database."""
-    version = get_schema_version(temp_db)
-    assert version == 0
-
-
 def test_create_schema(temp_db: sqlite3.Connection) -> None:
     """Test schema creation."""
     create_schema(temp_db)
-
-    version = get_schema_version(temp_db)
-    assert version == SCHEMA_VERSION
 
     # Verify tables exist
     cursor = temp_db.cursor()
@@ -53,7 +44,7 @@ def test_create_schema(temp_db: sqlite3.Connection) -> None:
     assert "movie_details" in tables
     assert "tv_show_details" in tables
     assert "video_game_details" in tables
-    assert "schema_version" in tables
+    assert "preference_interpretation_cache" in tables
 
 
 def test_default_user_created(temp_db: sqlite3.Connection) -> None:
@@ -132,14 +123,12 @@ def test_update_user_settings(temp_db: sqlite3.Connection) -> None:
     assert user["settings"]["language"] == "en"  # Added
 
 
-def test_migrate_schema_fresh_db(temp_db: sqlite3.Connection) -> None:
-    """Test migrate_schema on fresh database creates schema."""
-    migrate_schema(temp_db)
+def test_create_schema_is_idempotent(temp_db: sqlite3.Connection) -> None:
+    """Test that create_schema can be called multiple times safely."""
+    create_schema(temp_db)
+    create_schema(temp_db)  # Should not raise
 
-    version = get_schema_version(temp_db)
-    assert version == SCHEMA_VERSION
-
-    # Verify default user exists
+    # Verify default user still exists (not duplicated)
     user = get_user_by_id(temp_db, 1)
     assert user is not None
 
@@ -218,3 +207,68 @@ def test_content_items_unique_constraint(temp_db: sqlite3.Connection) -> None:
         """)
 
     temp_db.commit()
+
+
+# Preference interpretation cache tests
+
+
+def test_preference_interpretation_cache_table_exists(
+    temp_db: sqlite3.Connection,
+) -> None:
+    """Test that preference_interpretation_cache table is created."""
+    create_schema(temp_db)
+
+    cursor = temp_db.cursor()
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+    tables = [row[0] for row in cursor.fetchall()]
+
+    assert "preference_interpretation_cache" in tables
+
+
+def test_save_and_get_cached_interpretation(temp_db: sqlite3.Connection) -> None:
+    """Test saving and retrieving cached interpretations."""
+    create_schema(temp_db)
+
+    cache_key = "test_key_123"
+    interpretation_json = '{"genre_boosts": {"horror": 1.0}}'
+
+    # Initially empty
+    result = get_cached_preference_interpretation(temp_db, cache_key)
+    assert result is None
+
+    # Save
+    save_cached_preference_interpretation(temp_db, cache_key, interpretation_json)
+
+    # Retrieve
+    result = get_cached_preference_interpretation(temp_db, cache_key)
+    assert result == interpretation_json
+
+
+def test_save_cached_interpretation_overwrites(temp_db: sqlite3.Connection) -> None:
+    """Test that saving with same key overwrites previous value."""
+    create_schema(temp_db)
+
+    cache_key = "test_key"
+    save_cached_preference_interpretation(temp_db, cache_key, "original")
+    save_cached_preference_interpretation(temp_db, cache_key, "updated")
+
+    result = get_cached_preference_interpretation(temp_db, cache_key)
+    assert result == "updated"
+
+
+def test_clear_cached_interpretations(temp_db: sqlite3.Connection) -> None:
+    """Test clearing all cached interpretations."""
+    create_schema(temp_db)
+
+    # Add some entries
+    save_cached_preference_interpretation(temp_db, "key1", "value1")
+    save_cached_preference_interpretation(temp_db, "key2", "value2")
+    save_cached_preference_interpretation(temp_db, "key3", "value3")
+
+    # Clear
+    deleted = clear_cached_preference_interpretations(temp_db)
+    assert deleted == 3
+
+    # Verify empty
+    assert get_cached_preference_interpretation(temp_db, "key1") is None
+    assert get_cached_preference_interpretation(temp_db, "key2") is None
