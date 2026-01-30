@@ -2,7 +2,9 @@
 
 ## Overview
 
-The Personal Recommendations system is designed to ingest data from multiple sources, process it through a local LLM (via Ollama), and generate personalized recommendations. The architecture emphasizes modularity, testability, and extensibility.
+The Personal Recommendations system ingests data from multiple sources and generates personalized recommendations using a smart scoring pipeline. **AI is entirely optional** — the system works fully without it. When enabled, a local LLM (via Ollama) provides semantic similarity and natural language explanations.
+
+The architecture emphasizes modularity, testability, and extensibility.
 
 ## System Components
 
@@ -11,8 +13,11 @@ The Personal Recommendations system is designed to ingest data from multiple sou
 Responsible for parsing and normalizing data from various sources.
 
 **Current Sources:**
-- Goodreads CSV exports
-- (Future: Game reviews repository, Letterboxd, etc.)
+- Goodreads CSV exports (books)
+- Steam Web API (video games)
+- Sonarr API (TV shows)
+- Radarr API (movies)
+- Generic CSV, JSON, Markdown (any content type)
 
 **Responsibilities:**
 - Parse different file formats (CSV, JSON, TXT, Markdown)
@@ -42,25 +47,24 @@ Manages persistent storage of processed data and embeddings.
 - User consumption status
 - LLM-generated embeddings
 
-### 3. LLM Interaction Layer (`src/llm/`)
+### 3. LLM Interaction Layer (`src/llm/`) — Optional
 
-Handles communication with Ollama and prompt engineering.
+Handles communication with Ollama when AI features are enabled. **This entire layer is optional** — the system works fully without it.
 
-**Responsibilities:**
-- Generate embeddings for content and reviews
-- Create recommendation prompts
-- Parse LLM responses
-- Manage conversation context
+**When Enabled, Provides:**
+- Semantic embeddings for content similarity (ChromaDB)
+- Natural language recommendation explanations
+- Advanced preference rule interpretation
 
 **Model Selection:**
-- Default: `mistral:7b` (good balance of quality and performance)
+- Default text model: `mistral:7b`
+- Default embedding model: `nomic-embed-text`
 - Configurable via config file
-- Supports model switching for different tasks
 
-**Prompt Engineering:**
-- System prompts for recommendation generation
-- Context building from user's consumption history
-- Rating and review analysis prompts
+**Feature Flags:**
+- `features.ai_enabled` — Master toggle for all AI features
+- `features.embeddings_enabled` — Vector similarity (requires ai_enabled)
+- `features.llm_reasoning_enabled` — Natural language explanations (requires ai_enabled)
 
 ### 4. Recommendation Engine (`src/recommendations/`)
 

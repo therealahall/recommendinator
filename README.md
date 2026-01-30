@@ -1,91 +1,172 @@
 # Personal Recommendations
 
-A personal recommendation system that analyzes your ratings, reviews, and consumption history across multiple media types (books, movies, TV shows, video games) to provide intelligent recommendations using a locally-running LLM via Ollama.
+A privacy-focused recommendation system that learns from your ratings and reviews across books, movies, TV shows, and video games. Runs entirely on your machine with **no AI required** — AI features are opt-in for users who want them.
 
-## Overview
+## Why This Project?
 
-This project consumes data files from various sources (Goodreads, game reviews, etc.) and uses a local LLM to understand your preferences and generate personalized recommendations. The system can:
+Most recommendation systems are black boxes that harvest your data. This one:
 
-- Ingest data from multiple sources (CSV, JSON, TXT, Markdown)
-- Filter between consumed and unconsumed content
-- Learn from your ratings and reviews
-- Generate recommendations based on your preferences
-- Update dynamically as you consume new content or update data files
+- **Runs locally** — Your data never leaves your machine
+- **Works without AI** — Smart scoring algorithms that don't need an LLM
+- **AI is optional** — Enable Ollama integration when you want deeper insights
+- **You own your data** — SQLite database you can query, backup, or delete
 
 ## Features
 
-- **Multi-source data ingestion**: Supports CSV, JSON, TXT, and Markdown files
-- **Content type support**: Books, Movies, TV Shows, Video Games
-- **Cross-content-type recommendations**: Preferences from all content types influence recommendations (e.g., sci-fi books can lead to sci-fi game/TV recommendations)
-- **AI optional**: Full recommendation pipeline works without LLM/embeddings; AI enhances but is not required
-- **Per-user preferences**: Configurable scorer weights and preference rules stored per-user, overriding system defaults
-- **Local LLM integration**: Uses Ollama for privacy-preserving recommendations (when AI enabled)
-- **Dual interface**: CLI and web interface (internal network only)
-- **Multi-user ready**: Schema supports multiple users with per-user settings
-- **Incremental updates**: Can process new data without full reprocessing
-- **Rating analysis**: Understands your 1-5 star rating preferences
+### Core Features (No AI Required)
 
-## Requirements
+- **Multi-source ingestion** — Import from Goodreads, Steam, Sonarr, Radarr, or generic CSV/JSON/Markdown files
+- **Cross-content recommendations** — Your love of sci-fi books influences game and movie suggestions
+- **Smart scoring pipeline** — Genre matching, creator preferences, series order, tag overlap, rating patterns
+- **Custom rules** — Natural language preferences like "avoid horror" or "prefer short books"
+- **Content length filtering** — Prefer short books, long games, any movie length
+- **Multi-user support** — Each user gets their own preferences and history
+- **Dual interface** — CLI for automation, web UI for browsing
 
-- Python 3.11+ (tested with 3.14.2)
-- Ollama installed and running locally
-- AMD architecture compatible (for Ollama models)
+### Optional AI Features (Opt-In)
 
-## Installation
+When you enable AI with a local Ollama instance:
 
-1. Clone the repository:
+- **Semantic similarity** — Find content similar in meaning, not just tags
+- **LLM reasoning** — Natural language explanations for recommendations
+- **Smart rule interpretation** — LLM understands complex preference rules
+
+## Quick Start
+
+### Option 1: Local Installation
+
 ```bash
-git clone <repository-url>
+# Clone and install
+git clone https://github.com/ahall/personal-recommendations.git
 cd personal-recommendations
-```
-
-2. Install dependencies:
-```bash
 pip install -r requirements.txt
-pip install -r requirements-dev.txt  # For development
-```
 
-3. Ensure Ollama is running:
-```bash
-ollama serve
-```
+# Set up config
+cp config/example.yaml config/config.yaml
 
-4. Pull a recommended model (if not already installed):
-```bash
-ollama pull mistral:7b
-```
+# Import your data
+python3.11 -m src.cli update --source goodreads
 
-## Usage
-
-### CLI Interface
-
-```bash
 # Get recommendations
-python -m src.cli recommend --type book --count 5
+python3.11 -m src.cli recommend --type book --count 5
 
-# Get recommendations for a specific user
-python -m src.cli recommend --type book --count 5 --user 1
+# Or start the web interface
+python3.11 -m src.web
+```
 
-# Update data from files
-python -m src.cli update --source goodreads
+### Option 2: Docker
+
+```bash
+# Without AI (default)
+docker compose up
+
+# With AI (Ollama sidecar)
+docker compose --profile ai up
+```
+
+Access the web interface at `http://localhost:18473`
+
+## Data Sources
+
+| Source | Type | Description |
+|--------|------|-------------|
+| **Goodreads** | Books | CSV export from your Goodreads library |
+| **Steam** | Games | Automatic import via Steam Web API |
+| **Sonarr** | TV Shows | Import from your Sonarr library |
+| **Radarr** | Movies | Import from your Radarr library |
+| **CSV** | Any | Generic CSV with customizable mapping |
+| **JSON** | Any | Generic JSON/JSONL import |
+| **Markdown** | Any | Human-readable markdown lists |
+
+See the `templates/` directory for import file examples.
+
+## Configuration
+
+Copy `config/example.yaml` to `config/config.yaml` and customize:
+
+```yaml
+# AI is disabled by default
+features:
+  ai_enabled: false
+  embeddings_enabled: false
+  llm_reasoning_enabled: false
+
+# Configure your data sources
+inputs:
+  goodreads:
+    path: "inputs/goodreads_library_export.csv"
+    enabled: true
+  
+  steam:
+    api_key: "your-steam-api-key"
+    steam_id: "your-steam-id"
+    enabled: true
+
+# Tune the scoring weights
+recommendations:
+  scorer_weights:
+    genre_match: 2.0
+    creator_match: 1.5
+    series_order: 1.5
+    tag_overlap: 1.0
+    rating_pattern: 1.0
+```
+
+## CLI Usage
+
+```bash
+# Import data
+python3.11 -m src.cli update --source goodreads
+python3.11 -m src.cli update --source steam
+python3.11 -m src.cli update --source all
+
+# Get recommendations
+python3.11 -m src.cli recommend --type book --count 10
+python3.11 -m src.cli recommend --type video_game --count 5
 
 # Mark content as completed
-python -m src.cli complete --type book --title "Book Title" --rating 4
+python3.11 -m src.cli complete --type book --title "Project Hail Mary" --rating 5
 
-# Manage user preferences
-python -m src.cli preferences get --format json
-python -m src.cli preferences set-weight genre_match 3.0
-python -m src.cli preferences reset
+# Manage preferences
+python3.11 -m src.cli preferences get
+python3.11 -m src.cli preferences set-weight genre_match 3.0
+python3.11 -m src.cli preferences set-length book short
+python3.11 -m src.cli preferences custom-rules add "avoid horror"
+python3.11 -m src.cli preferences custom-rules add "prefer sci-fi"
 ```
 
-### Web Interface
+## How Scoring Works
 
-Start the web server:
-```bash
-python -m src.web
-```
+The recommendation engine scores candidates through multiple factors:
 
-Access the interface at `http://localhost:8000` (or your configured host/port).
+| Scorer | What it does |
+|--------|--------------|
+| **Genre Match** | Boosts content matching genres you've rated highly |
+| **Creator Match** | Prefers authors/directors/developers you've enjoyed |
+| **Tag Overlap** | Jaccard similarity of tags and themes |
+| **Series Order** | Prioritizes next items in series you're reading/watching |
+| **Rating Pattern** | Learns from your rating history within genres |
+| **Custom Rules** | Applies your explicit preferences ("avoid X", "prefer Y") |
+| **Semantic Similarity** | *(AI only)* Finds conceptually similar content |
+
+Each scorer has a configurable weight. Set a weight to 0 to disable a scorer entirely.
+
+## Enabling AI Features
+
+If you want AI-enhanced recommendations:
+
+1. **Install Ollama**: https://ollama.ai
+2. **Pull a model**: `ollama pull mistral:7b`
+3. **Enable in config**:
+   ```yaml
+   features:
+     ai_enabled: true
+     embeddings_enabled: true      # For semantic similarity
+     llm_reasoning_enabled: true   # For natural language explanations
+   ```
+4. **For Docker**: Use `docker compose --profile ai up`
+
+See [docs/MODEL_RECOMMENDATIONS.md](docs/MODEL_RECOMMENDATIONS.md) for model selection guidance.
 
 ## Project Structure
 
@@ -93,38 +174,39 @@ Access the interface at `http://localhost:8000` (or your configured host/port).
 personal-recommendations/
 ├── src/
 │   ├── cli/              # Command-line interface
-│   ├── web/              # Web interface (Flask/FastAPI)
-│   ├── ingestion/        # Data ingestion modules
-│   ├── llm/              # LLM interaction and prompts
-│   ├── storage/          # Data storage (vector DB, SQLite, etc.)
-│   ├── models/           # Data models and schemas
-│   └── utils/            # Utility functions
+│   ├── web/              # FastAPI web interface
+│   ├── ingestion/        # Data source parsers
+│   ├── recommendations/  # Scoring pipeline and engine
+│   ├── storage/          # SQLite + optional ChromaDB
+│   ├── llm/              # Ollama integration (optional)
+│   └── models/           # Data models
 ├── tests/                # Test suite
-├── inputs/               # Input data files
 ├── config/               # Configuration files
+├── templates/            # Import file templates
+├── inputs/               # Your data files
+├── data/                 # Database and cache (gitignored)
 └── docs/                 # Additional documentation
 ```
 
-## Development
+## Documentation
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines, including:
-- Code style (Black, MyPy)
-- Testing requirements
-- Commit message conventions
-- Architecture decisions
+| Document | Description |
+|----------|-------------|
+| [QUICKSTART.md](QUICKSTART.md) | Getting started guide |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | System design and components |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Development guidelines |
+| [docs/CUSTOM_RULES.md](docs/CUSTOM_RULES.md) | Custom preference rules |
+| [docs/PLUGIN_DEVELOPMENT.md](docs/PLUGIN_DEVELOPMENT.md) | Adding new data sources |
+| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Common issues and solutions |
+| [docs/MODEL_RECOMMENDATIONS.md](docs/MODEL_RECOMMENDATIONS.md) | Ollama model selection |
+| [docs/SECURITY.md](docs/SECURITY.md) | Security considerations |
 
-See [DEVELOPMENT.md](DEVELOPMENT.md) for a detailed development log tracking progress, decisions, and implementation steps.
+## Requirements
 
-### AI Development Tools
-
-This project includes configuration for AI coding assistants:
-- **Claude Code**: `CLAUDE.md` (primary)
-- **Cursor**: `.cursorrules`
-
-## Configuration
-
-Configuration files are located in `config/`. See `config/example.yaml` for available options.
+- Python 3.11+
+- SQLite (included with Python)
+- Ollama (optional, for AI features)
 
 ## License
 
-[Your License Here]
+[PolyForm Noncommercial 1.0.0](LICENSE) — Free for personal and noncommercial use. See LICENSE for details.

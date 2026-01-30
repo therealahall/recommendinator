@@ -1,153 +1,150 @@
 # Quick Start Guide
 
-This guide will help you get started with the Personal Recommendations system.
+Get up and running with Personal Recommendations in under 5 minutes.
 
 ## Prerequisites
 
-1. **Python 3.11+** installed
-2. **Ollama** installed and running
-3. At least one Ollama model pulled (e.g., `mistral:7b`)
+- **Python 3.11+** installed
+- Your data (Goodreads export, Steam account, etc.)
 
-## Initial Setup
+That's it. No AI, no external services required.
 
-1. **Install dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   pip install -r requirements-dev.txt  # For development
-   ```
-
-2. **Set up configuration:**
-   ```bash
-   cp config/example.yaml config/config.yaml
-   # Edit config/config.yaml with your preferences
-   ```
-
-3. **Verify Ollama is running:**
-   ```bash
-   ollama serve
-   # In another terminal:
-   ollama list
-   ```
-
-4. **Run tests to verify setup:**
-   ```bash
-   pytest
-   ```
-
-## Project Structure Overview
-
-```
-personal-recommendations/
-├── src/                    # Source code
-│   ├── cli/               # Click CLI interface
-│   │   ├── commands.py    # recommend, update, complete, preferences
-│   │   ├── config.py      # Config loading and scorer construction
-│   │   └── main.py        # CLI entry point
-│   ├── web/               # FastAPI web interface
-│   │   ├── api.py         # REST API endpoints
-│   │   ├── app.py         # FastAPI app factory
-│   │   └── state.py       # Application state
-│   ├── ingestion/         # Data ingestion
-│   │   └── sources/       # Source parsers (goodreads, steam, sonarr, radarr, CSV, JSON, Markdown)
-│   ├── llm/               # Ollama interaction (optional AI layer)
-│   ├── storage/           # SQLite + ChromaDB (vector DB optional)
-│   ├── recommendations/   # Recommendation engine
-│   │   ├── scorers.py     # Scorer classes and weight override helpers
-│   │   ├── scoring_pipeline.py
-│   │   ├── engine.py      # Main recommendation engine
-│   │   ├── preferences.py # Preference analysis
-│   │   └── ranking.py     # Ranking and adjustments
-│   ├── models/            # Data models
-│   │   ├── content.py     # ContentItem, ContentType, ConsumptionStatus
-│   │   └── user_preferences.py  # UserPreferenceConfig
-│   └── utils/             # Utility functions
-├── tests/                 # Test suite (mirrors src/ structure)
-├── inputs/                # Input data files
-├── config/                # Configuration files
-│   └── example.yaml       # Example config (use for tests)
-└── docs/                  # Additional documentation
-```
-
-## Current Status
-
-All core phases (0-5) are complete:
-- Multi-source data ingestion (Goodreads, Steam, Sonarr, Radarr, CSV, JSON, Markdown)
-- SQLite + optional ChromaDB storage with multi-user support
-- Non-AI scoring pipeline (genre, creator, tag, series, rating scorers)
-- AI enhancement layer (semantic similarity, LLM reasoning) - optional
-- Per-user preferences (configurable scorer weights, stored in DB)
-- CLI and REST API interfaces
-
-## Development Workflow
-
-1. **Make changes:**
-   ```bash
-   # Create a feature branch
-   git checkout -b feat/your-feature-name
-   ```
-
-2. **Write tests:**
-   ```bash
-   # Write tests first (TDD)
-   # Add tests in tests/
-   ```
-
-3. **Run checks:**
-   ```bash
-   make check  # Runs format-check, lint, type-check, and tests
-   ```
-
-4. **Format code:**
-   ```bash
-   make format  # Auto-format with black
-   ```
-
-5. **Commit:**
-   ```bash
-   # Use conventional commits
-   git commit -m "feat(module): description"
-   ```
-
-## Testing the Goodreads Parser
-
-You can test the Goodreads parser with your actual data:
-
-```python
-from pathlib import Path
-from src.ingestion.sources.goodreads import parse_goodreads_csv
-
-# Parse your Goodreads export
-items = list(parse_goodreads_csv(Path("inputs/goodreads_library_export.csv")))
-
-print(f"Parsed {len(items)} books")
-for item in items[:5]:  # Show first 5
-    print(f"- {item.title} by {item.author} ({item.status})")
-```
-
-## Common Commands
+## Installation
 
 ```bash
-# Run tests
-pytest
+# Clone the repository
+git clone https://github.com/ahall/personal-recommendations.git
+cd personal-recommendations
 
-# Run tests with coverage
-pytest --cov=src --cov-report=html
+# Install dependencies
+pip install -r requirements.txt
 
-# Format code
-black src/ tests/
+# Set up configuration
+cp config/example.yaml config/config.yaml
+```
 
-# Type check
-mypy src/
+## Import Your Data
 
-# Lint
-ruff check src/ tests/
+### Option A: Goodreads (Books)
 
-# Run all checks
+1. Export your library from Goodreads: My Books → Import/Export → Export Library
+2. Save to `inputs/goodreads_library_export.csv`
+3. Enable in `config/config.yaml`:
+   ```yaml
+   inputs:
+     goodreads:
+       path: "inputs/goodreads_library_export.csv"
+       enabled: true
+   ```
+4. Import: `python3.11 -m src.cli update --source goodreads`
+
+### Option B: Steam (Games)
+
+1. Get your Steam API key: https://steamcommunity.com/dev/apikey
+2. Find your Steam ID (64-bit) from your profile URL
+3. Configure in `config/config.yaml`:
+   ```yaml
+   inputs:
+     steam:
+       api_key: "your-api-key"
+       steam_id: "your-steam-id"
+       enabled: true
+   ```
+4. Import: `python3.11 -m src.cli update --source steam`
+
+### Option C: Generic CSV/JSON/Markdown
+
+Use the templates in `templates/` as a starting point:
+
+```bash
+# Copy a template
+cp templates/movies.csv inputs/my_movies.csv
+
+# Edit with your data, then configure and import
+```
+
+## Get Recommendations
+
+```bash
+# Books
+python3.11 -m src.cli recommend --type book --count 5
+
+# Movies
+python3.11 -m src.cli recommend --type movie --count 5
+
+# Video games
+python3.11 -m src.cli recommend --type video_game --count 5
+
+# TV shows
+python3.11 -m src.cli recommend --type tv_show --count 5
+```
+
+## Use the Web Interface
+
+```bash
+python3.11 -m src.web
+```
+
+Open http://localhost:18473 in your browser.
+
+## Customize Your Preferences
+
+### Set scoring weights
+
+```bash
+# Emphasize genre matching
+python3.11 -m src.cli preferences set-weight genre_match 3.0
+
+# De-emphasize creator matching
+python3.11 -m src.cli preferences set-weight creator_match 0.5
+```
+
+### Add custom rules
+
+```bash
+python3.11 -m src.cli preferences custom-rules add "avoid horror"
+python3.11 -m src.cli preferences custom-rules add "prefer science fiction"
+python3.11 -m src.cli preferences custom-rules add "only short books"
+```
+
+### Set length preferences
+
+```bash
+python3.11 -m src.cli preferences set-length book short
+python3.11 -m src.cli preferences set-length movie any
+python3.11 -m src.cli preferences set-length video_game long
+```
+
+## Optional: Enable AI Features
+
+If you want semantic similarity and LLM-powered explanations:
+
+1. Install Ollama: https://ollama.ai
+2. Pull a model: `ollama pull mistral:7b`
+3. Pull an embedding model: `ollama pull nomic-embed-text`
+4. Enable in `config/config.yaml`:
+   ```yaml
+   features:
+     ai_enabled: true
+     embeddings_enabled: true
+     llm_reasoning_enabled: true
+   ```
+
+See [docs/MODEL_RECOMMENDATIONS.md](docs/MODEL_RECOMMENDATIONS.md) for model guidance.
+
+## Verify Your Setup
+
+```bash
+# Run the test suite
+python3.11 -m pytest
+
+# Check code quality
 make check
 ```
 
-## Getting Help
+## Next Steps
 
-- See [README.md](README.md) for project overview
-- See [ARCHITECTURE.md](ARCHITECTURE.md) for technical details
-- See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines
+- [README.md](README.md) — Full feature overview
+- [ARCHITECTURE.md](ARCHITECTURE.md) — How the system works
+- [docs/CUSTOM_RULES.md](docs/CUSTOM_RULES.md) — Advanced preference rules
+- [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) — Common issues
