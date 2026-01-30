@@ -4,6 +4,7 @@ from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.recommendations.preferences import PreferenceAnalyzer
 from src.recommendations.scorers import (
     CreatorMatchScorer,
+    CustomPreferenceScorer,
     GenreMatchScorer,
     RatingPatternScorer,
     ScoringContext,
@@ -413,3 +414,111 @@ class TestBuildScorersWithOverrides:
         base = [GenreMatchScorer(weight=2.0)]
         build_scorers_with_overrides(base, {"genre_match": 9.0})
         assert base[0].weight == 2.0
+
+
+# ---------------------------------------------------------------------------
+# CustomPreferenceScorer tests
+# ---------------------------------------------------------------------------
+
+
+class TestCustomPreferenceScorer:
+    """Tests for the CustomPreferenceScorer."""
+
+    def test_genre_boost_scores_high(self) -> None:
+        """Items matching a boosted genre should score above 0.5."""
+        candidate = _make_item(
+            metadata={"genre": "horror"}, status=ConsumptionStatus.UNREAD
+        )
+        context = _build_context(consumed=[])
+        scorer = CustomPreferenceScorer(genre_boosts={"horror": 1.0})
+        score = scorer.score(candidate, context)
+        assert score == 1.0
+
+    def test_genre_penalty_scores_low(self) -> None:
+        """Items matching a penalized genre should score below 0.5."""
+        candidate = _make_item(
+            metadata={"genre": "romance"}, status=ConsumptionStatus.UNREAD
+        )
+        context = _build_context(consumed=[])
+        scorer = CustomPreferenceScorer(genre_penalties={"romance": 1.0})
+        score = scorer.score(candidate, context)
+        assert score == 0.0
+
+    def test_partial_boost(self) -> None:
+        """Partial boost factor maps proportionally."""
+        candidate = _make_item(
+            metadata={"genre": "mystery"}, status=ConsumptionStatus.UNREAD
+        )
+        context = _build_context(consumed=[])
+        scorer = CustomPreferenceScorer(genre_boosts={"mystery": 0.5})
+        score = scorer.score(candidate, context)
+        assert score == 0.75  # 0.5 + (0.5 * 0.5)
+
+    def test_partial_penalty(self) -> None:
+        """Partial penalty factor maps proportionally."""
+        candidate = _make_item(
+            metadata={"genre": "thriller"}, status=ConsumptionStatus.UNREAD
+        )
+        context = _build_context(consumed=[])
+        scorer = CustomPreferenceScorer(genre_penalties={"thriller": 0.5})
+        score = scorer.score(candidate, context)
+        assert score == 0.25  # 0.5 - (0.5 * 0.5)
+
+    def test_no_matching_rules_returns_neutral(self) -> None:
+        """Items not matching any rule should return 0.5."""
+        candidate = _make_item(
+            metadata={"genre": "drama"}, status=ConsumptionStatus.UNREAD
+        )
+        context = _build_context(consumed=[])
+        scorer = CustomPreferenceScorer(
+            genre_boosts={"comedy": 1.0}, genre_penalties={"horror": 1.0}
+        )
+        score = scorer.score(candidate, context)
+        assert score == 0.5
+
+    def test_no_genre_info_returns_neutral(self) -> None:
+        """Items without genre metadata should return 0.5."""
+        candidate = _make_item(metadata={}, status=ConsumptionStatus.UNREAD)
+        context = _build_context(consumed=[])
+        scorer = CustomPreferenceScorer(genre_boosts={"comedy": 1.0})
+        score = scorer.score(candidate, context)
+        assert score == 0.5
+
+    def test_penalty_takes_precedence_over_boost(self) -> None:
+        """When a genre has both boost and penalty, penalty wins."""
+        candidate = _make_item(
+            metadata={"genres": ["horror", "comedy"]}, status=ConsumptionStatus.UNREAD
+        )
+        context = _build_context(consumed=[])
+        # horror is penalized, comedy is boosted
+        scorer = CustomPreferenceScorer(
+            genre_boosts={"comedy": 1.0}, genre_penalties={"horror": 1.0}
+        )
+        score = scorer.score(candidate, context)
+        # Penalty should be checked first
+        assert score == 0.0
+
+    def test_case_insensitive_matching(self) -> None:
+        """Genre matching should be case-insensitive."""
+        candidate = _make_item(
+            metadata={"genre": "Horror"}, status=ConsumptionStatus.UNREAD
+        )
+        context = _build_context(consumed=[])
+        scorer = CustomPreferenceScorer(genre_boosts={"horror": 1.0})
+        score = scorer.score(candidate, context)
+        assert score == 1.0
+
+    def test_default_weight(self) -> None:
+        """CustomPreferenceScorer default weight is 2.0."""
+        scorer = CustomPreferenceScorer()
+        assert scorer.weight == 2.0
+
+    def test_empty_rules_returns_neutral(self) -> None:
+        """Empty boost and penalty dicts should return 0.5."""
+        candidate = _make_item(
+            metadata={"genre": "fantasy"}, status=ConsumptionStatus.UNREAD
+        )
+        context = _build_context(consumed=[])
+        scorer = CustomPreferenceScorer(genre_boosts={}, genre_penalties={})
+        score = scorer.score(candidate, context)
+        assert score == 0.5

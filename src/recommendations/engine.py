@@ -8,10 +8,15 @@ from src.llm.recommendations import RecommendationGenerator
 from src.models.content import ContentItem, ContentType
 from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.content_length import filter_by_length
+from src.recommendations.preference_interpreter import (
+    InterpretedPreference,
+    PatternBasedInterpreter,
+)
 from src.recommendations.preferences import PreferenceAnalyzer, UserPreferences
 from src.recommendations.ranking import RecommendationRanker
 from src.recommendations.scorers import (
     DEFAULT_SCORERS,
+    CustomPreferenceScorer,
     Scorer,
     ScoringContext,
     SemanticSimilarityScorer,
@@ -147,6 +152,41 @@ class RecommendationEngine:
                     "Length filtering removed all candidates, using original list"
                 )
 
+        # -----------------------------------------------------------------
+        # Interpret custom rules (if present)
+        # -----------------------------------------------------------------
+        interpreted_prefs: InterpretedPreference | None = None
+        if user_preference_config is not None and user_preference_config.custom_rules:
+            interpreter = PatternBasedInterpreter()
+            interpreted_prefs = interpreter.interpret_all(
+                user_preference_config.custom_rules
+            )
+            logger.info(
+                f"Interpreted {len(user_preference_config.custom_rules)} custom rules: "
+                f"boosts={list(interpreted_prefs.genre_boosts.keys())}, "
+                f"penalties={list(interpreted_prefs.genre_penalties.keys())}"
+            )
+
+            # Apply content type exclusions from interpreted preferences
+            if interpreted_prefs.content_type_exclusions:
+                original_count = len(unconsumed_items)
+                unconsumed_items = [
+                    item
+                    for item in unconsumed_items
+                    if self._get_content_type_str(item.content_type)
+                    not in interpreted_prefs.content_type_exclusions
+                ]
+                if unconsumed_items:
+                    logger.info(
+                        f"Content type exclusions removed "
+                        f"{original_count - len(unconsumed_items)} items"
+                    )
+                else:
+                    logger.warning(
+                        "Content type exclusion removed all candidates, "
+                        "this shouldn't happen for same-type recommendations"
+                    )
+
         # Analyze preferences from ALL consumed content types
         preferences = self.preference_analyzer.analyze(all_consumed_items)
 
@@ -213,6 +253,15 @@ class RecommendationEngine:
             active_pipeline = ScoringPipeline(overridden_scorers)
         else:
             active_pipeline = self.pipeline
+
+        # Add CustomPreferenceScorer if we have interpreted custom rules
+        if interpreted_prefs is not None and not interpreted_prefs.is_empty():
+            custom_scorer = CustomPreferenceScorer(
+                genre_boosts=interpreted_prefs.genre_boosts,
+                genre_penalties=interpreted_prefs.genre_penalties,
+            )
+            # Create new pipeline with the custom scorer appended
+            active_pipeline = ScoringPipeline(active_pipeline.scorers + [custom_scorer])
 
         pipeline_scored = active_pipeline.score_candidates_with_breakdown(
             unconsumed_items, scoring_context
@@ -634,3 +683,16 @@ class RecommendationEngine:
             reasons.append("based on your preferences across all content types")
 
         return "Recommended " + " and ".join(reasons)
+
+    def _get_content_type_str(self, content_type: ContentType | str) -> str:
+        """Extract string value from a ContentType enum or string.
+
+        Args:
+            content_type: ContentType enum or string value.
+
+        Returns:
+            Lowercase string value.
+        """
+        if isinstance(content_type, ContentType):
+            return content_type.value.lower()
+        return str(content_type).lower()

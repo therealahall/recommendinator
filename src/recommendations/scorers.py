@@ -309,6 +309,71 @@ class SemanticSimilarityScorer(Scorer):
         return context.similarity_scores.get(candidate.id, 0.0)
 
 
+class CustomPreferenceScorer(Scorer):
+    """Score based on user-defined custom preference rules.
+
+    Applies genre boosts and penalties from interpreted natural language
+    rules. The interpreter output is passed at construction time.
+
+    Weight default: 2.0 (strong influence since these are explicit user prefs)
+    """
+
+    def __init__(
+        self,
+        genre_boosts: dict[str, float] | None = None,
+        genre_penalties: dict[str, float] | None = None,
+        weight: float = 2.0,
+    ) -> None:
+        """Initialize the custom preference scorer.
+
+        Args:
+            genre_boosts: Mapping of genre name to boost factor (0.0-1.0).
+            genre_penalties: Mapping of genre name to penalty factor (0.0-1.0).
+            weight: Scorer weight in the pipeline.
+        """
+        super().__init__(weight)
+        self.genre_boosts = genre_boosts or {}
+        self.genre_penalties = genre_penalties or {}
+
+    def score(self, candidate: ContentItem, context: ScoringContext) -> float:
+        """Score candidate based on custom preference rules.
+
+        Returns 0.5 (neutral) if no custom rules apply. Boosts push toward 1.0,
+        penalties push toward 0.0.
+
+        Args:
+            candidate: The item being evaluated.
+            context: Shared scoring context.
+
+        Returns:
+            Score between 0.0 and 1.0.
+        """
+        candidate_genres = _extract_genres(candidate)
+        if not candidate_genres:
+            return 0.5  # Neutral when no genre info
+
+        # Check for penalties first (avoid rules)
+        for genre in candidate_genres:
+            genre_lower = genre.lower()
+            if genre_lower in self.genre_penalties:
+                penalty_factor = self.genre_penalties[genre_lower]
+                # Map penalty factor to score: 1.0 penalty -> 0.0 score
+                return max(0.0, 0.5 - (penalty_factor * 0.5))
+
+        # Check for boosts (prefer rules)
+        max_boost = 0.0
+        for genre in candidate_genres:
+            genre_lower = genre.lower()
+            if genre_lower in self.genre_boosts:
+                max_boost = max(max_boost, self.genre_boosts[genre_lower])
+
+        if max_boost > 0:
+            # Map boost factor to score: 1.0 boost -> 1.0 score
+            return min(1.0, 0.5 + (max_boost * 0.5))
+
+        return 0.5  # Neutral when no rules match
+
+
 # ---------------------------------------------------------------------------
 # Default scorer set
 # ---------------------------------------------------------------------------
@@ -333,6 +398,7 @@ SCORER_NAME_MAP: dict[str, type[Scorer]] = {
     "series_order": SeriesOrderScorer,
     "rating_pattern": RatingPatternScorer,
     "semantic_similarity": SemanticSimilarityScorer,
+    "custom_preference": CustomPreferenceScorer,
 }
 
 

@@ -568,3 +568,180 @@ class TestUserPreferenceOverride:
             user_preference_config=user_config,
         )
         assert len(recommendations) >= 1
+
+
+# ---------------------------------------------------------------------------
+# Custom rules integration tests (Phase 7)
+# ---------------------------------------------------------------------------
+
+
+class TestCustomRulesIntegration:
+    """Tests for custom rules integration in the recommendation engine."""
+
+    def test_custom_rules_boost_matching_genre(self, non_ai_engine, mock_storage):
+        """Custom rule \"prefer sci-fi\" should boost sci-fi items."""
+        consumed = ContentItem(
+            id="1",
+            title="Old Book",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=4,
+            metadata={"genre": "Fantasy"},
+        )
+        scifi_item = ContentItem(
+            id="2",
+            title="Space Adventure",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genre": "science fiction"},
+        )
+        fantasy_item = ContentItem(
+            id="3",
+            title="Dragon Tale",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genre": "fantasy"},
+        )
+
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: [consumed]
+        )
+        mock_storage.get_unconsumed_items = Mock(
+            return_value=[scifi_item, fantasy_item]
+        )
+
+        user_config = UserPreferenceConfig(custom_rules=["prefer sci-fi"])
+        recommendations = non_ai_engine.generate_recommendations(
+            content_type=ContentType.BOOK,
+            count=2,
+            user_preference_config=user_config,
+        )
+        # The sci-fi item should be ranked higher due to the custom rule
+        assert len(recommendations) == 2
+        titles = [rec["item"].title for rec in recommendations]
+        assert "Space Adventure" in titles
+
+    def test_custom_rules_penalize_genre(self, non_ai_engine, mock_storage):
+        """Custom rule \"avoid horror\" should penalize horror items."""
+        consumed = ContentItem(
+            id="1",
+            title="Old Book",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=4,
+            metadata={"genre": "Drama"},  # Neutral genre, not horror
+        )
+        horror_item = ContentItem(
+            id="2",
+            title="Scary Story",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genre": "horror"},
+        )
+        comedy_item = ContentItem(
+            id="3",
+            title="Funny Book",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genre": "comedy"},
+        )
+
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: [consumed]
+        )
+        mock_storage.get_unconsumed_items = Mock(
+            return_value=[horror_item, comedy_item]
+        )
+
+        user_config = UserPreferenceConfig(custom_rules=["avoid horror"])
+        recommendations = non_ai_engine.generate_recommendations(
+            content_type=ContentType.BOOK,
+            count=2,
+            user_preference_config=user_config,
+        )
+        # With horror penalized, comedy should rank first
+        assert len(recommendations) == 2
+        assert recommendations[0]["item"].title == "Funny Book"
+
+    def test_multiple_custom_rules(self, non_ai_engine, mock_storage):
+        """Multiple custom rules are all applied."""
+        consumed = ContentItem(
+            id="1",
+            title="Consumed",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=4,
+            metadata={"genre": "Drama"},
+        )
+        items = [
+            ContentItem(
+                id="2",
+                title="Horror Book",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+                metadata={"genre": "horror"},
+            ),
+            ContentItem(
+                id="3",
+                title="Comedy Book",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+                metadata={"genre": "comedy"},
+            ),
+            ContentItem(
+                id="4",
+                title="Sci-Fi Book",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+                metadata={"genre": "science fiction"},
+            ),
+        ]
+
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: [consumed]
+        )
+        mock_storage.get_unconsumed_items = Mock(return_value=items)
+
+        user_config = UserPreferenceConfig(
+            custom_rules=["avoid horror", "prefer sci-fi"]
+        )
+        recommendations = non_ai_engine.generate_recommendations(
+            content_type=ContentType.BOOK,
+            count=3,
+            user_preference_config=user_config,
+        )
+        titles = [rec["item"].title for rec in recommendations]
+        # Sci-fi should be boosted (first), horror should be penalized (last)
+        assert titles[0] == "Sci-Fi Book"
+        assert titles[-1] == "Horror Book"
+
+    def test_custom_rules_empty_does_not_add_scorer(self, non_ai_engine, mock_storage):
+        """Empty custom_rules list should not affect scoring."""
+        consumed = ContentItem(
+            id="1",
+            title="Consumed",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=4,
+            metadata={"genre": "Drama"},
+        )
+        unconsumed = ContentItem(
+            id="2",
+            title="Unconsumed",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genre": "drama"},
+        )
+
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: [consumed]
+        )
+        mock_storage.get_unconsumed_items = Mock(return_value=[unconsumed])
+
+        user_config = UserPreferenceConfig(custom_rules=[])
+        recommendations = non_ai_engine.generate_recommendations(
+            content_type=ContentType.BOOK,
+            count=1,
+            user_preference_config=user_config,
+        )
+        assert len(recommendations) == 1
