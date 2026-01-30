@@ -1,0 +1,54 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv
+venv
+ENV
+env
+.eggs
+*.egg-info
+.pytest_cache
+.mypy_cache
+.ruff_cache
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+.cursor
+
+# Data (mounted as volume instead)
+data/*
+!data/.gitkeep
+
+# Config with secrets (mounted as volume)
+config/config.yaml
+
+# Inputs (mounted as volume)
+inputs/*
+!inputs/.gitkeep
+
+# Tests (not needed in production image)
+tests/
+
+# Development files
+*.md
+!README.md
+Makefile
+requirements-dev.txt
+pyproject.toml
+phase-7-plan.md
+docs/
+
+# Docker files (avoid recursion)
+Dockerfile
+docker-compose.yml
+.dockerignore

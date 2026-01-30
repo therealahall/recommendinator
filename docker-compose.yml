@@ -1,0 +1,65 @@
+# Personal Recommendations - Docker Compose
+#
+# Usage:
+#   docker compose up              # App only (no AI features)
+#   docker compose --profile ai up # App + Ollama (AI features enabled)
+#
+# Note: Set ai.enabled: true in config/config.yaml when using --profile ai
+
+services:
+  # Main application
+  app:
+    build: .
+    container_name: personal-recommendations
+    ports:
+      - "18473:8000"  # External:Internal - external port avoids collisions
+    volumes:
+      # Persist data between restarts
+      - ./data:/app/data
+      # Mount config file (copy example.yaml to config.yaml first)
+      - ./config:/app/config:ro
+      # Mount input files
+      - ./inputs:/app/inputs:ro
+    environment:
+      # Ollama URL - only used when ai.enabled: true in config
+      # Points to sidecar when using --profile ai
+      - OLLAMA_BASE_URL=http://ollama:11434
+    restart: unless-stopped
+    networks:
+      - recommendations-net
+
+  # Ollama LLM sidecar (only starts with --profile ai)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: personal-recommendations-ollama
+    profiles: ["ai"]
+    ports:
+      - "11434:11434"
+    volumes:
+      # Persist downloaded models
+      - ollama-data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - recommendations-net
+    # Uncomment for GPU support (NVIDIA)
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+volumes:
+  ollama-data:
+    name: personal-recommendations-ollama-data
+
+networks:
+  recommendations-net:
+    name: personal-recommendations-network
