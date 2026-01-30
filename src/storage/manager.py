@@ -6,7 +6,14 @@ from typing import Any
 from src.ingestion.conflict import ConflictStrategy, resolve_conflict
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.user_preferences import UserPreferenceConfig
-from src.storage.schema import get_all_users, get_user_by_id, update_user_settings
+from src.storage.schema import (
+    clear_cached_preference_interpretations,
+    get_all_users,
+    get_cached_preference_interpretation,
+    get_user_by_id,
+    save_cached_preference_interpretation,
+    update_user_settings,
+)
 from src.storage.sqlite_db import SQLiteDB
 
 
@@ -423,5 +430,47 @@ class StorageManager:
             update_user_settings(
                 conn, user_id, {"preference_config": preference_config.to_dict()}
             )
+        finally:
+            conn.close()
+
+    def get_cached_preference_interpretation(self, cache_key: str) -> str | None:
+        """Get a cached preference interpretation.
+
+        Args:
+            cache_key: The cache key to look up.
+
+        Returns:
+            Cached JSON string or None if not found.
+        """
+        conn = self.sqlite_db._get_connection()
+        try:
+            return get_cached_preference_interpretation(conn, cache_key)
+        finally:
+            conn.close()
+
+    def save_cached_preference_interpretation(
+        self, cache_key: str, interpretation_json: str
+    ) -> None:
+        """Save a preference interpretation to the cache.
+
+        Args:
+            cache_key: The cache key.
+            interpretation_json: JSON string of the interpretation.
+        """
+        conn = self.sqlite_db._get_connection()
+        try:
+            save_cached_preference_interpretation(conn, cache_key, interpretation_json)
+        finally:
+            conn.close()
+
+    def clear_cached_preference_interpretations(self) -> int:
+        """Clear all cached preference interpretations.
+
+        Returns:
+            Number of rows deleted.
+        """
+        conn = self.sqlite_db._get_connection()
+        try:
+            return clear_cached_preference_interpretations(conn)
         finally:
             conn.close()
