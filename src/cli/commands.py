@@ -141,6 +141,12 @@ def update(ctx: click.Context, source: str) -> None:
     embedding_gen = ctx.obj["embedding_gen"]
     config = ctx.obj["config"]
 
+    # Check if embeddings are enabled
+    features_config = config.get("features", {})
+    ai_enabled = features_config.get("ai_enabled", False)
+    embeddings_enabled = features_config.get("embeddings_enabled", False)
+    use_embeddings = ai_enabled and embeddings_enabled
+
     click.echo(f"Updating data from {source}...")
 
     try:
@@ -169,9 +175,13 @@ def update(ctx: click.Context, source: str) -> None:
 
                     count = 0
                     for item in goodreads_plugin.fetch(plugin_config):
-                        # Generate embedding
                         try:
-                            embedding = embedding_gen.generate_content_embedding(item)
+                            # Only generate embedding if AI features are enabled
+                            embedding = None
+                            if use_embeddings:
+                                embedding = embedding_gen.generate_content_embedding(
+                                    item
+                                )
                             storage.save_content_item(item, embedding)
                             count += 1
                             total_count += 1
@@ -218,11 +228,15 @@ def update(ctx: click.Context, source: str) -> None:
                                 vanity_url=vanity_url if vanity_url else None,
                                 min_playtime_minutes=min_playtime,
                             ):
-                                # Generate embedding
                                 try:
-                                    embedding = (
-                                        embedding_gen.generate_content_embedding(item)
-                                    )
+                                    # Only generate embedding if AI features are enabled
+                                    embedding = None
+                                    if use_embeddings:
+                                        embedding = (
+                                            embedding_gen.generate_content_embedding(
+                                                item
+                                            )
+                                        )
                                     storage.save_content_item(item, embedding)
                                     count += 1
                                     total_count += 1
@@ -292,6 +306,13 @@ def complete(
 
     storage = ctx.obj["storage"]
     embedding_gen = ctx.obj["embedding_gen"]
+    config = ctx.obj["config"]
+
+    # Check if embeddings are enabled
+    features_config = config.get("features", {})
+    ai_enabled = features_config.get("ai_enabled", False)
+    embeddings_enabled = features_config.get("embeddings_enabled", False)
+    use_embeddings = ai_enabled and embeddings_enabled
 
     # Validate rating
     if rating is not None and (rating < 1 or rating > 5):
@@ -310,8 +331,10 @@ def complete(
     )
 
     try:
-        # Generate embedding and save
-        embedding = embedding_gen.generate_content_embedding(item)
+        # Only generate embedding if AI features are enabled
+        embedding = None
+        if use_embeddings:
+            embedding = embedding_gen.generate_content_embedding(item)
         db_id = storage.save_content_item(item, embedding)
 
         click.echo(f"Marked '{title}' as completed (ID: {db_id})")

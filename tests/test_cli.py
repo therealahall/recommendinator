@@ -613,3 +613,94 @@ def test_set_length_preference(mock_components):
     assert "book" in result.output
     assert "short" in result.output
     mock_components["storage"].save_user_preference_config.assert_called_once()
+
+
+class TestConfigLoadingRegression:
+    """Regression tests for configuration loading bugs."""
+
+    def test_load_config_prefers_config_yaml_over_example_regression(self, tmp_path):
+        """Regression test: load_config should prefer config.yaml over example.yaml.
+
+        Bug reported: User had Steam enabled in config/config.yaml but web app
+        was loading config/example.yaml (where Steam is disabled).
+
+        Root cause: get_app() in web/app.py was explicitly defaulting to
+        example.yaml instead of letting load_config() handle the default
+        logic (which correctly tries config.yaml first).
+
+        Fix: Removed the explicit example.yaml default from get_app().
+        """
+
+        from src.cli.config import load_config
+
+        # Create a config directory with both files
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+
+        # config.yaml has steam enabled
+        config_yaml = config_dir / "config.yaml"
+        config_yaml.write_text(
+            """
+inputs:
+  steam:
+    enabled: true
+    api_key: "test"
+"""
+        )
+
+        # example.yaml has steam disabled
+        example_yaml = config_dir / "example.yaml"
+        example_yaml.write_text(
+            """
+inputs:
+  steam:
+    enabled: false
+"""
+        )
+
+        # When load_config is called with None, it should use config.yaml
+        # We need to temporarily change the working directory
+        import os
+
+        original_cwd = os.getcwd()
+        try:
+            os.chdir(tmp_path)
+            config = load_config(None)
+            steam_enabled = config.get("inputs", {}).get("steam", {}).get("enabled")
+            assert steam_enabled is True, (
+                "load_config should prefer config.yaml (steam enabled) "
+                "over example.yaml (steam disabled)"
+            )
+        finally:
+            os.chdir(original_cwd)
+
+    def test_load_config_falls_back_to_example_when_no_config(self, tmp_path):
+        """Test that load_config falls back to example.yaml when config.yaml is missing."""
+
+        from src.cli.config import load_config
+
+        # Create a config directory with only example.yaml
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+
+        example_yaml = config_dir / "example.yaml"
+        example_yaml.write_text(
+            """
+inputs:
+  steam:
+    enabled: false
+"""
+        )
+
+        import os
+
+        original_cwd = os.getcwd()
+        try:
+            os.chdir(tmp_path)
+            config = load_config(None)
+            steam_enabled = config.get("inputs", {}).get("steam", {}).get("enabled")
+            assert (
+                steam_enabled is False
+            ), "load_config should fall back to example.yaml when config.yaml missing"
+        finally:
+            os.chdir(original_cwd)

@@ -244,7 +244,8 @@ class TestTagOverlapScorer:
 
 
 class TestSeriesOrderScorer:
-    def test_next_in_sequence(self) -> None:
+    def test_next_in_sequence_high_rating(self) -> None:
+        """Next in series with high rating (5) should score 1.0."""
         consumed = [
             _make_item(title="Mistborn (Mistborn, #1)", rating=5),
         ]
@@ -254,6 +255,85 @@ class TestSeriesOrderScorer:
         )
         scorer = SeriesOrderScorer()
         assert scorer.score(candidate, context) == 1.0
+
+    def test_next_in_sequence_good_rating(self) -> None:
+        """Next in series with good rating (4) should score 1.0."""
+        consumed = [
+            _make_item(title="Mistborn (Mistborn, #1)", rating=4),
+        ]
+        context = _build_context(consumed=consumed)
+        candidate = _make_item(
+            title="Mistborn (Mistborn, #2)", status=ConsumptionStatus.UNREAD
+        )
+        scorer = SeriesOrderScorer()
+        assert scorer.score(candidate, context) == 1.0
+
+    def test_next_in_sequence_moderate_rating(self) -> None:
+        """Next in series with moderate rating (3) should score ~0.85."""
+        consumed = [
+            _make_item(title="Mistborn (Mistborn, #1)", rating=3),
+        ]
+        context = _build_context(consumed=consumed)
+        candidate = _make_item(
+            title="Mistborn (Mistborn, #2)", status=ConsumptionStatus.UNREAD
+        )
+        scorer = SeriesOrderScorer()
+        score = scorer.score(candidate, context)
+        assert 0.8 <= score <= 0.9  # Should be around 0.85
+
+    def test_next_in_sequence_low_rating(self) -> None:
+        """Next in series with low rating (2) should score ~0.7."""
+        consumed = [
+            _make_item(title="Mistborn (Mistborn, #1)", rating=2),
+        ]
+        context = _build_context(consumed=consumed)
+        candidate = _make_item(
+            title="Mistborn (Mistborn, #2)", status=ConsumptionStatus.UNREAD
+        )
+        scorer = SeriesOrderScorer()
+        score = scorer.score(candidate, context)
+        assert 0.65 <= score <= 0.75  # Should be around 0.7
+
+    def test_next_in_sequence_very_low_rating(self) -> None:
+        """Next in series with very low rating (1) should score ~0.6."""
+        consumed = [
+            _make_item(title="Mistborn (Mistborn, #1)", rating=1),
+        ]
+        context = _build_context(consumed=consumed)
+        candidate = _make_item(
+            title="Mistborn (Mistborn, #2)", status=ConsumptionStatus.UNREAD
+        )
+        scorer = SeriesOrderScorer()
+        score = scorer.score(candidate, context)
+        assert 0.55 <= score <= 0.65  # Should be around 0.6
+
+    def test_next_in_sequence_no_rating(self) -> None:
+        """Next in series with no rating should score ~0.85 (default)."""
+        consumed = [
+            _make_item(title="Mistborn (Mistborn, #1)", rating=None),
+        ]
+        context = _build_context(consumed=consumed)
+        candidate = _make_item(
+            title="Mistborn (Mistborn, #2)", status=ConsumptionStatus.UNREAD
+        )
+        scorer = SeriesOrderScorer()
+        score = scorer.score(candidate, context)
+        assert score == 0.85
+
+    def test_next_in_sequence_average_of_multiple_books(self) -> None:
+        """Rating boost should use average of all consumed books in series."""
+        consumed = [
+            _make_item(title="Mistborn (Mistborn, #1)", rating=5),
+            _make_item(title="Mistborn (Mistborn, #2)", rating=3),
+        ]
+        context = _build_context(consumed=consumed)
+        candidate = _make_item(
+            title="Mistborn (Mistborn, #3)", status=ConsumptionStatus.UNREAD
+        )
+        scorer = SeriesOrderScorer()
+        score = scorer.score(candidate, context)
+        # Average rating is 4.0, so should score 1.0
+        assert score == 1.0
 
     def test_first_in_unstarted_series(self) -> None:
         context = _build_context(consumed=[])

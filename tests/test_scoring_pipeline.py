@@ -180,3 +180,130 @@ class TestScoringPipeline:
         assert results[0].item.title == "Good"
         assert results[1].item.title == "Poor"
         assert results[0].aggregate_score >= results[1].aggregate_score
+
+
+class TestTiebreakerRegression:
+    """Regression tests for tiebreaker logic to prevent alphabetical ordering.
+
+    Bug reported: Recommendations appeared in alphabetical order when scores
+    were similar, because Python's stable sort preserved the original order
+    (which was alphabetical from the database query).
+
+    Fix: Added tiebreaker that prioritizes first-in-series items and uses
+    a stable hash for pseudo-random ordering among equal scores.
+    """
+
+    def test_first_in_series_prioritized_over_alphabetical_order_regression(
+        self,
+    ) -> None:
+        """Regression test: First-in-series items should rank higher than later items.
+
+        Bug: When scores were tied, items sorted alphabetically. This meant
+        "An Amazing Sequel #2" would appear before "The Zebra Adventure #1"
+        even though #1 should be recommended first.
+
+        Fix: Tiebreaker prioritizes first-in-series items.
+        """
+        # All items have same genre, so all scores will be similar
+        consumed = [
+            _make_item(
+                rating=5,
+                metadata={"genre": "Adventure"},
+                status=ConsumptionStatus.COMPLETED,
+            )
+        ]
+        context = _build_context(consumed=consumed)
+
+        # Create items that would sort differently alphabetically vs by series
+        # "An Amazing Sequel" sorts before "The Zebra Adventure" alphabetically
+        # (after article stripping: "Amazing Sequel" < "Zebra Adventure")
+        book_2 = _make_item(
+            title="An Amazing Sequel (Test Series #2)",
+            metadata={"genre": "Adventure"},
+            item_id="2",
+        )
+        book_1 = _make_item(
+            title="The Zebra Adventure (Test Series #1)",
+            metadata={"genre": "Adventure"},
+            item_id="1",
+        )
+
+        # Feed in alphabetical order (book_2 first)
+        pipeline = ScoringPipeline(DEFAULT_SCORERS)
+        results = pipeline.score_candidates_with_breakdown([book_2, book_1], context)
+
+        # Book #1 should be first due to tiebreaker prioritizing first-in-series
+        assert (
+            "Zebra Adventure" in results[0].item.title
+        ), "First-in-series should be prioritized over alphabetical order"
+        assert "Amazing Sequel" in results[1].item.title
+
+    def test_tiebreaker_consistent_ordering(self) -> None:
+        """Tiebreaker should produce consistent results across multiple runs.
+
+        The tiebreaker uses a hash of the title, so ordering should be
+        deterministic (not random) but also not purely alphabetical.
+        """
+        consumed = [
+            _make_item(
+                rating=5,
+                metadata={"genre": "Fiction"},
+                status=ConsumptionStatus.COMPLETED,
+            )
+        ]
+        context = _build_context(consumed=consumed)
+
+        # Create multiple items with same genre (similar scores)
+        items = [
+            _make_item(
+                title=f"Book {chr(65 + i)}",  # Book A, Book B, Book C, ...
+                metadata={"genre": "Fiction"},
+                item_id=str(i),
+            )
+            for i in range(5)
+        ]
+
+        pipeline = ScoringPipeline(DEFAULT_SCORERS)
+
+        # Run multiple times and verify consistent ordering
+        first_run = pipeline.score_candidates_with_breakdown(items, context)
+        first_order = [r.item.title for r in first_run]
+
+        for _ in range(3):
+            subsequent_run = pipeline.score_candidates_with_breakdown(items, context)
+            subsequent_order = [r.item.title for r in subsequent_run]
+            assert (
+                first_order == subsequent_order
+            ), "Tiebreaker should produce consistent ordering"
+
+    def test_tiebreaker_does_not_affect_different_scores(self) -> None:
+        """Items with genuinely different scores should still sort by score."""
+        consumed = [
+            _make_item(
+                rating=5,
+                metadata={"genre": "Fantasy"},
+                status=ConsumptionStatus.COMPLETED,
+            )
+        ]
+        context = _build_context(consumed=consumed)
+
+        # Different genres = different scores
+        fantasy_book = _make_item(
+            title="Zzz Last Alphabetically",
+            metadata={"genre": "Fantasy"},  # Matches consumed genre
+            item_id="1",
+        )
+        horror_book = _make_item(
+            title="Aaa First Alphabetically",
+            metadata={"genre": "Horror"},  # Different genre
+            item_id="2",
+        )
+
+        pipeline = ScoringPipeline(DEFAULT_SCORERS)
+        results = pipeline.score_candidates_with_breakdown(
+            [horror_book, fantasy_book], context
+        )
+
+        # Fantasy book should be first despite being last alphabetically
+        assert "Zzz Last" in results[0].item.title
+        assert results[0].aggregate_score > results[1].aggregate_score

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from dataclasses import dataclass, field
 
 from src.models.content import ContentItem
 from src.recommendations.scorers import SCORER_NAME_MAP, Scorer, ScoringContext
+from src.utils.series import is_first_item_in_series
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +16,26 @@ logger = logging.getLogger(__name__)
 _CLASS_TO_NAME: dict[type[Scorer], str] = {
     scorer_class: name for name, scorer_class in SCORER_NAME_MAP.items()
 }
+
+
+def _tiebreaker_key(item: ContentItem) -> tuple[int, str]:
+    """Generate a tiebreaker key for sorting items with equal scores.
+
+    Priority:
+    1. First items in a series (to encourage starting new series)
+    2. Stable hash of title (for pseudo-random but consistent ordering)
+
+    Args:
+        item: Content item to generate key for.
+
+    Returns:
+        Tuple of (is_not_first_in_series, title_hash) for sorting.
+        Lower values sort first, so first-in-series items come first.
+    """
+    is_first = is_first_item_in_series(item=item)
+    # Hash the title for stable pseudo-random ordering (avoids pure alphabetical)
+    title_hash = hashlib.md5(item.title.encode()).hexdigest()
+    return (0 if is_first else 1, title_hash)
 
 
 @dataclass
@@ -89,8 +111,11 @@ class ScoringPipeline:
             aggregate = max(0.0, min(1.0, aggregate))
             scored.append((candidate, aggregate))
 
-        # Sort descending by score
-        scored.sort(key=lambda pair: pair[1], reverse=True)
+        # Sort descending by score, with tiebreaker for equal scores
+        # Tiebreaker prioritizes first-in-series items, then uses stable hash
+        scored.sort(
+            key=lambda pair: (-pair[1], _tiebreaker_key(pair[0])),
+        )
         return scored
 
     def score_candidates_with_breakdown(
@@ -141,5 +166,8 @@ class ScoringPipeline:
                 )
             )
 
-        results.sort(key=lambda scored: scored.aggregate_score, reverse=True)
+        # Sort descending by score, with tiebreaker for equal scores
+        results.sort(
+            key=lambda scored: (-scored.aggregate_score, _tiebreaker_key(scored.item)),
+        )
         return results

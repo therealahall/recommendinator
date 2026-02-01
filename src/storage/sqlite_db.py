@@ -383,6 +383,8 @@ class SQLiteDB:
         status: ConsumptionStatus | None = None,
         min_rating: int | None = None,
         limit: int | None = None,
+        offset: int = 0,
+        sort_by: str = "title",
     ) -> list[ContentItem]:
         """Get content items with optional filters.
 
@@ -392,6 +394,9 @@ class SQLiteDB:
             status: Filter by consumption status
             min_rating: Minimum rating (inclusive)
             limit: Maximum number of results
+            offset: Number of results to skip (for pagination)
+            sort_by: Sort order - "title" (default, ignores articles),
+                "updated_at", "rating", or "created_at"
 
         Returns:
             List of ContentItem objects
@@ -442,15 +447,41 @@ class SQLiteDB:
                 query += " AND ci.rating >= ?"
                 params.append(min_rating)
 
-            query += " ORDER BY ci.updated_at DESC"
+            # Apply SQL-level sorting for non-title sorts
+            # Title sorting is done in Python to handle article stripping
+            if sort_by == "updated_at":
+                query += " ORDER BY ci.updated_at DESC"
+            elif sort_by == "created_at":
+                query += " ORDER BY ci.created_at DESC"
+            elif sort_by == "rating":
+                query += " ORDER BY ci.rating DESC NULLS LAST, ci.title ASC"
+            # For "title" sort, we do it in Python after fetching
 
-            if limit:
-                query += " LIMIT ?"
-                params.append(limit)
+            if sort_by != "title":
+                # Apply SQL LIMIT/OFFSET for non-title sorts
+                if limit:
+                    query += " LIMIT ?"
+                    params.append(limit)
+                if offset > 0:
+                    query += " OFFSET ?"
+                    params.append(offset)
 
             cursor.execute(query, params)
             rows = cursor.fetchall()
-            return [self._row_to_content_item(row) for row in rows]
+            items = [self._row_to_content_item(row) for row in rows]
+
+            # Apply title sorting in Python (ignoring articles)
+            if sort_by == "title":
+                from src.utils.sorting import get_sort_title
+
+                items.sort(key=lambda item: get_sort_title(item.title))
+                # Apply offset and limit after sorting
+                if offset > 0:
+                    items = items[offset:]
+                if limit:
+                    items = items[:limit]
+
+            return items
         finally:
             conn.close()
 

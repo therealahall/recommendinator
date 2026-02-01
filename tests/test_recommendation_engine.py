@@ -745,3 +745,138 @@ class TestCustomRulesIntegration:
             user_preference_config=user_config,
         )
         assert len(recommendations) == 1
+
+
+class TestSeriesOrderingRegression:
+    """Regression tests for series ordering bugs.
+
+    These tests document and prevent regressions of bugs found in production.
+    """
+
+    def test_series_book_2_not_recommended_when_book_1_unread_regression(
+        self, non_ai_engine, mock_storage
+    ):
+        """Regression test: Book #2 should not be recommended when book #1 exists but is unread.
+
+        Bug reported: "The Black Unicorn (Magic Kingdom of Landover #2)" was
+        recommended as #16 when the user had not read book #1.
+
+        Root cause: The engine fetched only 100 unconsumed items sorted by title
+        (ignoring articles). "The Black Unicorn" sorted as "Black Unicorn" (B)
+        was included, but "Magic Kingdom for Sale—Sold! #1" sorted as "Magic..."
+        (M) was position 171, outside the 100-item limit. The series filter
+        couldn't find book #1 in the limited list and incorrectly assumed it
+        didn't exist.
+
+        Fix: Removed the 100-item limit when fetching unconsumed items for
+        recommendations, ensuring all items are available for series checking.
+        """
+        consumed = ContentItem(
+            id="0",
+            title="Some Other Book",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=4,
+            metadata={"genre": "Fantasy"},
+        )
+
+        # Simulate the Landover series scenario - book #1 and #2 both unread
+        # With article-stripping sort, "The Black Unicorn" (B) comes before
+        # "Magic Kingdom for Sale—Sold!" (M)
+        book_1 = ContentItem(
+            id="1",
+            title="Magic Kingdom for Sale—Sold! (Magic Kingdom of Landover #1)",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genre": "Fantasy"},
+        )
+        book_2 = ContentItem(
+            id="2",
+            title="The Black Unicorn (Magic Kingdom of Landover #2)",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genre": "Fantasy"},
+        )
+
+        # Both books must be in the unconsumed list for correct series filtering
+        unconsumed_items = [book_2, book_1]  # Intentionally out of order
+
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: [consumed]
+        )
+        mock_storage.get_unconsumed_items = Mock(return_value=unconsumed_items)
+
+        recommendations = non_ai_engine.generate_recommendations(
+            content_type=ContentType.BOOK,
+            count=5,
+        )
+
+        recommended_titles = [rec["item"].title for rec in recommendations]
+
+        # Book #1 SHOULD be recommended (first in series, unstarted)
+        assert any(
+            "Magic Kingdom for Sale" in title for title in recommended_titles
+        ), "Book #1 should be recommended"
+
+        # Book #2 should NOT be recommended (book #1 exists but not read)
+        assert not any(
+            "Black Unicorn" in title for title in recommended_titles
+        ), "Book #2 should NOT be recommended when book #1 is unread"
+
+    def test_series_filtering_with_all_items_available(
+        self, non_ai_engine, mock_storage
+    ):
+        """Verify series filtering works correctly when all series items are available.
+
+        This tests the fix ensuring the engine passes all unconsumed items to
+        the series filter, not a limited subset.
+        """
+        consumed = ContentItem(
+            id="0",
+            title="Consumed Book",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            metadata={"genre": "Sci-Fi"},
+        )
+
+        # Create a series where items would sort in wrong order alphabetically
+        # "The Zebra Adventure #1" -> sorts as "Zebra..." (Z)
+        # "An Amazing Sequel #2" -> sorts as "Amazing..." (A)
+        book_1 = ContentItem(
+            id="1",
+            title="The Zebra Adventure (Test Series #1)",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genre": "Sci-Fi"},
+        )
+        book_2 = ContentItem(
+            id="2",
+            title="An Amazing Sequel (Test Series #2)",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genre": "Sci-Fi"},
+        )
+
+        # After article stripping: "Amazing Sequel" (A) before "Zebra Adventure" (Z)
+        unconsumed_items = [book_2, book_1]  # book_2 sorts first alphabetically
+
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: [consumed]
+        )
+        mock_storage.get_unconsumed_items = Mock(return_value=unconsumed_items)
+
+        recommendations = non_ai_engine.generate_recommendations(
+            content_type=ContentType.BOOK,
+            count=5,
+        )
+
+        recommended_titles = [rec["item"].title for rec in recommendations]
+
+        # Only book #1 should be recommended, not book #2
+        assert any(
+            "Zebra Adventure" in title for title in recommended_titles
+        ), "Book #1 (Zebra Adventure) should be recommended"
+        assert not any(
+            "Amazing Sequel" in title for title in recommended_titles
+        ), "Book #2 (Amazing Sequel) should NOT be recommended"

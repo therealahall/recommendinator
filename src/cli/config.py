@@ -62,12 +62,19 @@ def create_storage_manager(config: dict[str, Any]) -> StorageManager:
         StorageManager instance
     """
     storage_config = config.get("storage", {})
+    features_config = config.get("features", {})
     db_path = Path(storage_config.get("database_path", "data/recommendations.db"))
     vector_db_path = Path(storage_config.get("vector_db_path", "data/chroma_db"))
+
+    # AI features must be enabled for embeddings
+    ai_enabled = features_config.get("ai_enabled", False)
+    embeddings_enabled = features_config.get("embeddings_enabled", False)
+    use_embeddings = ai_enabled and embeddings_enabled
 
     return StorageManager(
         sqlite_path=db_path,
         vector_db_path=vector_db_path,
+        ai_enabled=use_embeddings,
     )
 
 

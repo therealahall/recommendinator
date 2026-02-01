@@ -136,6 +136,8 @@ class StorageManager:
         status: ConsumptionStatus | None = None,
         min_rating: int | None = None,
         limit: int | None = None,
+        offset: int = 0,
+        sort_by: str = "title",
     ) -> list[ContentItem]:
         """Get content items with optional filters.
 
@@ -145,6 +147,9 @@ class StorageManager:
             status: Filter by consumption status
             min_rating: Minimum rating (inclusive)
             limit: Maximum number of results
+            offset: Number of results to skip (for pagination)
+            sort_by: Sort order - "title" (default, ignores articles),
+                "updated_at", "rating", or "created_at"
 
         Returns:
             List of ContentItem objects
@@ -155,6 +160,8 @@ class StorageManager:
             status=status,
             min_rating=min_rating,
             limit=limit,
+            offset=offset,
+            sort_by=sort_by,
         )
 
     def get_unconsumed_items(

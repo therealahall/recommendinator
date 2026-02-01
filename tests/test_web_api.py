@@ -9,6 +9,7 @@ from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.user_preferences import UserPreferenceConfig
 from src.web.app import create_app
 from src.web.state import app_state
+from src.web.sync_manager import reset_sync_manager
 
 
 @pytest.fixture
@@ -43,6 +44,9 @@ def mock_config():
 @pytest.fixture
 def mock_components(mock_config):
     """Create mock components."""
+    # Reset sync manager to ensure clean state between tests
+    reset_sync_manager()
+
     with (
         patch("src.web.app.load_config", return_value=mock_config),
         patch("src.web.app.create_storage_manager") as mock_storage,
@@ -80,6 +84,9 @@ def mock_components(mock_config):
             "engine": mock_engine_instance,
         }
 
+        # Clean up sync manager after test
+        reset_sync_manager()
+
 
 @pytest.fixture
 def client(mock_components):
@@ -102,6 +109,51 @@ def test_status_endpoint(client):
     assert "status" in data
     assert "version" in data
     assert "components" in data
+
+
+def test_sync_sources_endpoint(client, mock_config):
+    """Test sync sources endpoint returns only enabled sources from config."""
+    response = client.get("/api/sync/sources")
+    assert response.status_code == 200
+    sources = response.json()
+    assert isinstance(sources, list)
+    # mock_config has goodreads enabled
+    assert len(sources) >= 1
+    goodreads = next((s for s in sources if s["id"] == "goodreads"), None)
+    assert goodreads is not None
+    assert goodreads["display_name"] == "Goodreads"
+    assert "description" in goodreads
+
+
+def test_sync_sources_only_enabled(client):
+    """Test that disabled sources (enabled: false) are not returned."""
+    # Override config: only goodreads and sonarr enabled
+    app_state["config"] = {
+        "inputs": {
+            "goodreads": {"path": "inputs/books.csv", "enabled": True},
+            "steam": {"api_key": "x", "steam_id": "y", "enabled": False},
+            "sonarr": {
+                "url": "http://localhost:8989",
+                "api_key": "key",
+                "enabled": True,
+            },
+            "radarr": {
+                "url": "http://localhost:7878",
+                "api_key": "key",
+                "enabled": False,
+            },
+        },
+    }
+
+    response = client.get("/api/sync/sources")
+    assert response.status_code == 200
+    sources = response.json()
+    source_ids = [s["id"] for s in sources]
+
+    assert "goodreads" in source_ids
+    assert "sonarr" in source_ids
+    assert "steam" not in source_ids
+    assert "radarr" not in source_ids
 
 
 def test_recommendations_endpoint(client, mock_components):
@@ -182,7 +234,7 @@ def test_complete_invalid_rating(client):
 
 
 def test_update_endpoint(client, mock_components):
-    """Test update endpoint."""
+    """Test update endpoint starts background sync."""
     # Mock the parser
     mock_item = ContentItem(
         id="1",
@@ -194,8 +246,14 @@ def test_update_endpoint(client, mock_components):
     )
 
     with (
-        patch("src.web.api.GoodreadsPlugin.fetch", return_value=iter([mock_item])),
-        patch("src.web.api.GoodreadsPlugin.validate_config", return_value=[]),
+        patch(
+            "src.ingestion.sources.goodreads.GoodreadsPlugin.fetch",
+            return_value=iter([mock_item]),
+        ),
+        patch(
+            "src.ingestion.sources.goodreads.GoodreadsPlugin.validate_config",
+            return_value=[],
+        ),
     ):
         mock_components["embedding_gen"].generate_content_embedding.return_value = [
             0.1
@@ -207,11 +265,12 @@ def test_update_endpoint(client, mock_components):
         assert response.status_code == 200
         data = response.json()
         assert "message" in data
-        assert "count" in data
+        # New async behavior: returns "sync started" message, not count
+        assert "started" in data["message"].lower() or "sources" in data
 
 
 def test_update_endpoint_steam(client, mock_components):
-    """Test update endpoint with Steam source."""
+    """Test update endpoint starts background sync for Steam."""
     # Update app_state config to include Steam
     app_state["config"]["inputs"]["steam"] = {
         "api_key": "test_api_key",
@@ -224,8 +283,8 @@ def test_update_endpoint_steam(client, mock_components):
         title="Test Game",
         author=None,
         content_type=ContentType.VIDEO_GAME,
-        status=ConsumptionStatus.COMPLETED,
-        rating=4,
+        status=ConsumptionStatus.CURRENTLY_CONSUMING,
+        rating=None,
     )
 
     with patch("src.web.api.parse_steam_games", return_value=[mock_steam_item]):
@@ -239,8 +298,8 @@ def test_update_endpoint_steam(client, mock_components):
         assert response.status_code == 200
         data = response.json()
         assert "message" in data
-        assert "count" in data
-        assert data["count"] == 1
+        # New async behavior: returns "sync started" message
+        assert "started" in data["message"].lower() or "sources" in data
 
 
 def test_update_endpoint_steam_disabled(client, mock_components):
@@ -291,25 +350,28 @@ def test_update_endpoint_steam_missing_id(client, mock_components):
 
 
 def test_update_endpoint_steam_api_error(client, mock_components):
-    """Test update endpoint with Steam API error."""
-    from src.ingestion.sources.steam import SteamAPIError
+    """Test update endpoint handles Steam API error during validation.
 
+    Note: With background sync, API errors during the actual sync are handled
+    asynchronously. This test verifies the sync can be started when config is valid.
+    """
     app_state["config"]["inputs"]["steam"] = {
         "api_key": "test_api_key",
         "steam_id": "76561198000000000",
         "enabled": True,
     }
 
-    with patch("src.web.api.parse_steam_games", side_effect=SteamAPIError("API error")):
-        response = client.post("/api/update", json={"source": "steam"})
+    # With background sync, the endpoint returns 200 to start the sync
+    # API errors are reported via the sync status endpoint
+    response = client.post("/api/update", json={"source": "steam"})
 
-        assert response.status_code == 500
-        data = response.json()
-        assert "error" in data["detail"].lower() or "Steam" in data["detail"]
+    assert response.status_code == 200
+    data = response.json()
+    assert "message" in data
 
 
 def test_update_endpoint_all_sources(client, mock_components):
-    """Test update endpoint with 'all' source including Steam."""
+    """Test update endpoint with 'all' source starts background sync."""
     app_state["config"]["inputs"]["steam"] = {
         "api_key": "test_api_key",
         "steam_id": "76561198000000000",
@@ -335,8 +397,14 @@ def test_update_endpoint_all_sources(client, mock_components):
     )
 
     with (
-        patch("src.web.api.GoodreadsPlugin.fetch", return_value=iter([mock_book])),
-        patch("src.web.api.GoodreadsPlugin.validate_config", return_value=[]),
+        patch(
+            "src.ingestion.sources.goodreads.GoodreadsPlugin.fetch",
+            return_value=iter([mock_book]),
+        ),
+        patch(
+            "src.ingestion.sources.goodreads.GoodreadsPlugin.validate_config",
+            return_value=[],
+        ),
         patch("src.web.api.parse_steam_games", return_value=[mock_game]),
     ):
         mock_components["embedding_gen"].generate_content_embedding.return_value = [
@@ -348,7 +416,11 @@ def test_update_endpoint_all_sources(client, mock_components):
 
         assert response.status_code == 200
         data = response.json()
-        assert data["count"] == 2  # Both book and game
+        # New async behavior: returns sync started message with sources list
+        assert "message" in data
+        assert "sources" in data
+        assert "goodreads" in data["sources"]
+        assert "steam" in data["sources"]
 
 
 # ---------------------------------------------------------------------------
