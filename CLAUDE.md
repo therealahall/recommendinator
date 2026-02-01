@@ -36,6 +36,15 @@ config/               # Configuration files (example.yaml for tests)
 
 ## Development Standards
 
+### Running Commands
+
+- **Never use `cd` in front of commands.** The workspace path is already the project root.
+- **Never pipe test output or use head, tail, etc.** Run each command directly:
+  - `python3.11 -m pytest tests/` (not `pytest | head` or similar)
+  - `python3.11 -m black --check src/ tests/`
+  - `python3.11 -m mypy src/`
+  - `python3.11 -m ruff check src/ tests/`
+
 ### Python Version
 
 **Always use `python3.11` for all commands.** Do not use bare `python` or `python3`.
@@ -75,7 +84,39 @@ Avoid: `i`, `j`, `e`, `emb`, `ct`, `cfg`, single letters. Use full words.
 - **ALL functionality must have tests**
 - Mock external dependencies (Ollama API, file I/O, Steam API)
 - Never make real network requests in tests
-- Regression tests required for bug fixes
+
+### Regression Testing for User-Reported Bugs
+
+**CRITICAL: When a user reports a bug, ALWAYS write a regression test:**
+
+1. **Before fixing**: Write a test that reproduces the bug (should fail)
+2. **Document the bug**: Include in the test docstring:
+   - What was reported ("Bug reported: ...")
+   - Root cause analysis ("Root cause: ...")
+   - The fix applied ("Fix: ...")
+3. **After fixing**: Verify the test passes
+4. **Naming**: Use descriptive names ending in `_regression` (e.g., `test_series_book_2_not_recommended_regression`)
+5. **Location**: Add to relevant test file in a `Test*Regression` class
+
+Example structure:
+```python
+class TestSeriesOrderingRegression:
+    """Regression tests for series ordering bugs."""
+
+    def test_series_book_2_not_recommended_when_book_1_unread_regression(self):
+        """Regression test: Book #2 should not be recommended when #1 is unread.
+
+        Bug reported: "The Black Unicorn #2" was recommended when user
+        hadn't read book #1.
+
+        Root cause: Engine fetched only 100 items; book #1 was position 171.
+
+        Fix: Removed the 100-item limit for series checking.
+        """
+        # Test implementation...
+```
+
+This ensures bugs don't resurface and documents the project's bug history.
 
 ### Commit Conventions
 
@@ -121,6 +162,26 @@ config = load_config(Path("config/config.yaml"))
 3. **Extensibility**: Easy to add new data sources/content types
 4. **Configuration**: No hardcoded values
 5. **Error Handling**: Graceful with clear messages
+
+## Configuration Documentation Requirements
+
+**CRITICAL: When adding or modifying configuration values:**
+
+1. **Update `config/example.yaml`** with the new option, including:
+   - Clear comments explaining what the option does
+   - Sensible default value
+   - Valid values/ranges where applicable
+
+2. **Update user documentation** in one or more of:
+   - `README.md` - if it affects basic usage
+   - `QUICKSTART.md` - if users need to know about it to get started
+   - Relevant `docs/*.md` file - for detailed technical docs
+
+3. **Update code documentation**:
+   - Docstrings where the config is read/used
+   - Type hints for config structures
+
+This ensures users can discover and understand all configuration options.
 
 ## Adding New Features
 

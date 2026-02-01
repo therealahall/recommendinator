@@ -35,16 +35,44 @@
    - Mock file I/O operations
    - Mock external API calls (Steam, etc.)
    - Never make real network requests in tests
-6. **Regression Tests**: When fixing bugs, ALWAYS write regression tests that:
-   - Reproduce the bug (fails before fix, passes after)
-   - Are clearly named (e.g., `test_enum_handling_regression`)
-   - Document the bug in the test docstring
+6. **Regression Tests**: When a user reports a bug, ALWAYS write regression tests:
+   - **Before fixing**: Write a test that reproduces the bug (should fail)
+   - **Document the bug** in the test docstring:
+     - What was reported ("Bug reported: ...")
+     - Root cause analysis ("Root cause: ...")
+     - The fix applied ("Fix: ...")
+   - **After fixing**: Verify the test passes
+   - **Naming**: Use descriptive names ending in `_regression` (e.g., `test_series_book_2_not_recommended_regression`)
+   - **Location**: Add to relevant test file in a `Test*Regression` class
 7. **Test Structure**: Use fixtures for common setup, follow existing test patterns
+
+**Regression Test Example:**
+```python
+class TestSeriesOrderingRegression:
+    """Regression tests for series ordering bugs."""
+
+    def test_series_book_2_not_recommended_when_book_1_unread_regression(self):
+        """Regression test: Book #2 should not be recommended when #1 is unread.
+
+        Bug reported: "The Black Unicorn #2" was recommended when user
+        hadn't read book #1.
+
+        Root cause: Engine fetched only 100 items; book #1 was at position 171.
+
+        Fix: Removed the 100-item limit for series checking.
+        """
+        # Test implementation...
+```
 
 **Before committing, ALL tests MUST pass:**
 ```bash
 pytest
 ```
+
+## Running Commands
+
+- **Never use `cd` in front of commands.** The workspace path is already the project root.
+- **Never pipe test output or use head, tail, etc.** Run each command directly (e.g., `python3.11 -m pytest tests/`, not `pytest | head` or similar).
 
 ## Code Quality Requirements
 
@@ -173,6 +201,26 @@ to resolve uvicorn warning about application passing.
 3. **Extensibility**: Make it easy to add new data sources and content types
 4. **Configuration**: Use configuration files for settings, not hardcoded values
 5. **Error Handling**: Handle errors gracefully with clear messages
+
+## Configuration Documentation Requirements
+
+**CRITICAL: When adding or modifying configuration values:**
+
+1. **Update `config/example.yaml`** with the new option, including:
+   - Clear comments explaining what the option does
+   - Sensible default value
+   - Valid values/ranges where applicable
+
+2. **Update user documentation** in one or more of:
+   - `README.md` - if it affects basic usage
+   - `QUICKSTART.md` - if users need to know about it to get started
+   - Relevant `docs/*.md` file - for detailed technical docs
+
+3. **Update code documentation**:
+   - Docstrings where the config is read/used
+   - Type hints for config structures
+
+This ensures users can discover and understand all configuration options.
 
 ## Adding New Features
 
