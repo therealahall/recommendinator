@@ -79,6 +79,7 @@ class ScoringContext:
         consumed_genres: Set of all genres from consumed items.
         consumed_creators: Set of all creators from consumed items.
         ratings_by_genre: Genre -> list of ratings from consumed items.
+        series_ratings: Series name -> list of ratings from consumed items.
     """
 
     preferences: UserPreferences
@@ -91,6 +92,7 @@ class ScoringContext:
     consumed_genres: set[str] = field(default_factory=set)
     consumed_creators: set[str] = field(default_factory=set)
     ratings_by_genre: dict[str, list[int]] = field(default_factory=dict)
+    series_ratings: dict[str, list[int]] = field(default_factory=dict)
 
     # Pre-computed similarity scores (populated by engine when AI enabled)
     similarity_scores: dict[str | None, float] = field(default_factory=dict)
@@ -98,6 +100,7 @@ class ScoringContext:
     def __post_init__(self) -> None:
         """Build lookup structures from consumed items."""
         genre_ratings: dict[str, list[int]] = defaultdict(list)
+        series_ratings: dict[str, list[int]] = defaultdict(list)
         creators: set[str] = set()
         genres: set[str] = set()
 
@@ -112,9 +115,18 @@ class ScoringContext:
             if creator:
                 creators.add(creator)
 
+            # Track series ratings
+            series_info = extract_series_info(
+                item.title, item.metadata, item.content_type
+            )
+            if series_info and item.rating is not None:
+                series_name, _ = series_info
+                series_ratings[series_name].append(item.rating)
+
         self.consumed_genres = genres
         self.consumed_creators = creators
         self.ratings_by_genre = dict(genre_ratings)
+        self.series_ratings = dict(series_ratings)
 
 
 # ---------------------------------------------------------------------------
@@ -223,12 +235,18 @@ class TagOverlapScorer(Scorer):
 
 
 class SeriesOrderScorer(Scorer):
-    """Score based on series ordering.
+    """Score based on series ordering and previous ratings in the series.
 
-    - 1.0 if candidate is the next item in a started series.
+    Base scores:
+    - 0.8-1.0 if candidate is the next item in a started series (boosted by rating)
     - 0.8 if candidate is the first item in an unstarted series.
     - 0.3 if candidate is too far ahead in a started series.
     - 0.5 for non-series items (neutral).
+
+    Rating boost for next-in-sequence items:
+    - If user rated previous items in series 4+ avg: score = 1.0
+    - If user rated previous items 3-4 avg: score = 0.9
+    - If user rated previous items <3 avg: score = 0.7 (still continue, but lower priority)
 
     Weight default: 1.5
     """
@@ -254,11 +272,47 @@ class SeriesOrderScorer(Scorer):
 
         max_consumed = max(consumed_numbers)
         if item_number == max_consumed + 1:
-            return 1.0  # next in sequence
+            # Next in sequence - boost based on how much user enjoyed the series
+            return self._rating_boosted_score(series_name, context)
         if item_number > max_consumed + 1:
             return 0.3  # too far ahead
         # Item is at or before max_consumed (already consumed or earlier)
         return 0.2
+
+    def _rating_boosted_score(self, series_name: str, context: ScoringContext) -> float:
+        """Calculate score for next-in-sequence item based on series ratings.
+
+        Args:
+            series_name: Name of the series
+            context: Scoring context with series_ratings
+
+        Returns:
+            Score between 0.7 and 1.0 based on average rating of series
+        """
+        series_ratings = context.series_ratings.get(series_name, [])
+
+        if not series_ratings:
+            # No ratings available, use base score
+            return 0.85
+
+        avg_rating = sum(series_ratings) / len(series_ratings)
+
+        # Map average rating to score:
+        # 4-5 stars -> 1.0 (highly enjoyed, definitely continue)
+        # 3-4 stars -> 0.85-0.95 (liked it, should continue)
+        # 2-3 stars -> 0.7-0.85 (lukewarm, lower priority to continue)
+        # 1-2 stars -> 0.6-0.7 (didn't like, but still might finish)
+        if avg_rating >= 4.0:
+            return 1.0
+        elif avg_rating >= 3.0:
+            # Linear interpolation: 3.0 -> 0.85, 4.0 -> 1.0
+            return 0.85 + (avg_rating - 3.0) * 0.15
+        elif avg_rating >= 2.0:
+            # Linear interpolation: 2.0 -> 0.7, 3.0 -> 0.85
+            return 0.7 + (avg_rating - 2.0) * 0.15
+        else:
+            # Below 2.0: 1.0 -> 0.6, 2.0 -> 0.7
+            return 0.6 + (avg_rating - 1.0) * 0.1
 
 
 class RatingPatternScorer(Scorer):
@@ -306,7 +360,13 @@ class SemanticSimilarityScorer(Scorer):
     def score(self, candidate: ContentItem, context: ScoringContext) -> float:
         if not context.similarity_scores:
             return 0.0
-        return context.similarity_scores.get(candidate.id, 0.0)
+        lookup_id = candidate.id
+        score = context.similarity_scores.get(lookup_id, 0.0)
+        # For TV season items (id like "tvdb:123:s1"), fall back to parent show score
+        if score == 0.0 and lookup_id and ":s" in str(lookup_id):
+            base_id = str(lookup_id).rsplit(":", 1)[0]
+            score = context.similarity_scores.get(base_id, 0.0)
+        return score
 
 
 class CustomPreferenceScorer(Scorer):

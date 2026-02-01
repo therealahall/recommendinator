@@ -241,6 +241,66 @@ def get_series_item_number(
 get_series_book_number = get_series_item_number
 
 
+def expand_tv_shows_to_seasons(items: list[ContentItem]) -> list[ContentItem]:
+    """Expand TV show items into season-level items for granular recommendations.
+
+    Library stays at show level; this expansion is for recommendation scoring only.
+    Each show with total_seasons in metadata becomes N items (one per season).
+    Shows without season info are passed through unchanged.
+
+    Args:
+        items: List of ContentItem (expected ContentType.TV_SHOW)
+
+    Returns:
+        Expanded list with season-level items where applicable
+    """
+    expanded: list[ContentItem] = []
+    for item in items:
+        if item.content_type != ContentType.TV_SHOW:
+            expanded.append(item)
+            continue
+
+        total_seasons = None
+        for key in ["total_seasons", "seasons", "number_of_seasons"]:
+            val = (item.metadata or {}).get(key)
+            if val is not None:
+                try:
+                    total_seasons = int(val)
+                    break
+                except (ValueError, TypeError):
+                    continue
+
+        if total_seasons is None or total_seasons < 1:
+            expanded.append(item)
+            continue
+
+        base_id = item.id or ""
+        show_title = item.title
+
+        for season_num in range(1, total_seasons + 1):
+            season_title = f"{show_title} (Season {season_num})"
+            season_id = f"{base_id}:s{season_num}" if base_id else None
+            season_metadata = dict(item.metadata or {})
+            season_metadata["series_name"] = show_title
+            season_metadata["season"] = season_num
+            season_metadata["season_number"] = season_num
+
+            expanded.append(
+                ContentItem(
+                    id=season_id,
+                    title=season_title,
+                    author=item.author,
+                    content_type=ContentType.TV_SHOW,
+                    rating=item.rating,
+                    status=item.status,
+                    metadata=season_metadata,
+                    source=item.source,
+                )
+            )
+
+    return expanded
+
+
 def build_series_tracking(
     consumed_items: list[ContentItem],
 ) -> dict[str, set[int]]:

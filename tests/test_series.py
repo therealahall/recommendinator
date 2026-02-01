@@ -3,6 +3,7 @@
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.utils.series import (
     build_series_tracking,
+    expand_tv_shows_to_seasons,
     extract_series_info,
     get_series_book_number,
     get_series_name,
@@ -77,6 +78,36 @@ def test_extract_series_info_from_metadata():
         "Mass Effect",
         2,
     )
+
+
+def test_expand_tv_shows_to_seasons():
+    """Test expanding TV shows into season-level items for recommendations."""
+    show_with_seasons = ContentItem(
+        id="tvdb:280619",
+        title="The Expanse",
+        content_type=ContentType.TV_SHOW,
+        status=ConsumptionStatus.UNREAD,
+        metadata={"total_seasons": 6, "genres": ["Sci-Fi"]},
+    )
+    show_without_seasons = ContentItem(
+        id="tvdb:999",
+        title="Unknown Show",
+        content_type=ContentType.TV_SHOW,
+        status=ConsumptionStatus.UNREAD,
+        metadata={},
+    )
+
+    expanded = expand_tv_shows_to_seasons([show_with_seasons, show_without_seasons])
+
+    # The Expanse: 6 seasons; Unknown Show: 1 (passthrough, no expansion)
+    assert len(expanded) == 7
+    assert expanded[0].title == "The Expanse (Season 1)"
+    assert expanded[0].id == "tvdb:280619:s1"
+    assert expanded[0].metadata.get("season_number") == 1
+    assert expanded[5].title == "The Expanse (Season 6)"
+    assert expanded[5].id == "tvdb:280619:s6"
+    assert expanded[6].title == "Unknown Show"
+    assert expanded[6].id == "tvdb:999"
 
 
 def test_get_series_name():

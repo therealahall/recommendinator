@@ -27,7 +27,11 @@ from src.recommendations.scorers import (
 from src.recommendations.scoring_pipeline import ScoredCandidate, ScoringPipeline
 from src.recommendations.similarity import SimilarityMatcher
 from src.storage.manager import StorageManager
-from src.utils.series import build_series_tracking, should_recommend_item
+from src.utils.series import (
+    build_series_tracking,
+    expand_tv_shows_to_seasons,
+    should_recommend_item,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -125,14 +129,28 @@ class RecommendationEngine:
             )
             return self._handle_cold_start(content_type, count)
 
-        # Get unconsumed items of the requested type
+        # Get ALL unconsumed items of the requested type.
+        # We need the full list for accurate series ordering checks - a limit
+        # would break series detection when earlier entries sort after later ones
+        # (e.g., "The Black Unicorn #2" sorts before "Magic Kingdom... #1" when
+        # ignoring articles). The scoring pipeline limits results after scoring.
         unconsumed_items = self.storage.get_unconsumed_items(
-            content_type=content_type, limit=100
+            content_type=content_type, limit=None
         )
 
         if not unconsumed_items:
             logger.warning(f"No unconsumed items found for {content_type.value}")
             return []
+
+        # -----------------------------------------------------------------
+        # Expand TV shows to season-level for granular recommendations
+        # (library stays show-level; expansion is for scoring only)
+        # -----------------------------------------------------------------
+        if content_type == ContentType.TV_SHOW:
+            unconsumed_items = expand_tv_shows_to_seasons(unconsumed_items)
+            logger.info(
+                f"Expanded TV shows to {len(unconsumed_items)} season-level candidates"
+            )
 
         # -----------------------------------------------------------------
         # Apply content length filtering (before scoring)
