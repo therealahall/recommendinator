@@ -8,6 +8,20 @@
     // State
     var currentUserId = 1;
     var currentTab = "recommendations";
+    var aiFeatures = {
+        ai_enabled: false,
+        embeddings_enabled: false,
+        llm_reasoning_enabled: false
+    };
+
+    // Library pagination state
+    var libraryState = {
+        offset: 0,
+        limit: 50,
+        loading: false,
+        hasMore: true,
+        items: []
+    };
 
     // -----------------------------------------------------------------------
     // Initialization
@@ -63,12 +77,34 @@
                     statusBar.className = "status-bar loading";
                     statusBar.textContent = "System initializing...";
                 }
+
+                // Store feature flags
+                if (data.features) {
+                    aiFeatures = data.features;
+                }
+
+                // Hide AI reasoning checkbox if LLM reasoning is disabled
+                updateAiReasoningVisibility();
             })
             .catch(function () {
                 var statusBar = document.getElementById("statusBar");
                 statusBar.className = "status-bar error";
                 statusBar.textContent = "Failed to connect to server";
             });
+    }
+
+    function updateAiReasoningVisibility() {
+        var aiReasoningContainer = document.getElementById("recUseLlm");
+        if (aiReasoningContainer) {
+            var container = aiReasoningContainer.parentElement;
+            if (!aiFeatures.ai_enabled || !aiFeatures.llm_reasoning_enabled) {
+                // Hide the checkbox and uncheck it
+                container.style.display = "none";
+                aiReasoningContainer.checked = false;
+            } else {
+                container.style.display = "";
+            }
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -101,7 +137,7 @@
 
     function onTabActivated(name) {
         if (name === "library") {
-            loadLibrary();
+            resetAndLoadLibrary();
         } else if (name === "preferences") {
             loadPreferences();
         }
@@ -217,20 +253,84 @@
     function setupLibraryFilters() {
         var typeFilter = document.getElementById("libType");
         var statusFilter = document.getElementById("libStatus");
-        typeFilter.addEventListener("change", loadLibrary);
-        statusFilter.addEventListener("change", loadLibrary);
+        typeFilter.addEventListener("change", function() {
+            updateStatusFilterLabels();
+            resetAndLoadLibrary();
+        });
+        statusFilter.addEventListener("change", resetAndLoadLibrary);
+
+        // Setup infinite scroll
+        window.addEventListener("scroll", handleLibraryScroll);
+
+        // Initialize status labels based on default type selection
+        updateStatusFilterLabels();
     }
 
-    function loadLibrary() {
+    function updateStatusFilterLabels() {
+        // Update the "unread" option label based on selected content type
+        var typeFilter = document.getElementById("libType");
+        var statusFilter = document.getElementById("libStatus");
+        var contentType = typeFilter.value;
+
+        var unreadOption = statusFilter.querySelector('option[value="unread"]');
+        if (unreadOption) {
+            var label;
+            if (contentType === "book") {
+                label = unreadOption.getAttribute("data-book");
+            } else if (contentType === "movie") {
+                label = unreadOption.getAttribute("data-movie");
+            } else if (contentType === "tv_show") {
+                label = unreadOption.getAttribute("data-tv_show");
+            } else if (contentType === "video_game") {
+                label = unreadOption.getAttribute("data-video_game");
+            } else {
+                label = unreadOption.getAttribute("data-default");
+            }
+            unreadOption.textContent = label || "Not Started";
+        }
+    }
+
+    function handleLibraryScroll() {
+        // Only handle scroll when on library tab
+        if (currentTab !== "library") return;
+        if (libraryState.loading || !libraryState.hasMore) return;
+
+        // Check if user scrolled near bottom (within 200px)
+        var scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+        var windowHeight = window.innerHeight;
+        var docHeight = document.documentElement.scrollHeight;
+
+        if (scrollTop + windowHeight >= docHeight - 200) {
+            loadMoreLibraryItems();
+        }
+    }
+
+    function resetAndLoadLibrary() {
+        // Reset pagination state when filters change
+        libraryState.offset = 0;
+        libraryState.items = [];
+        libraryState.hasMore = true;
+        libraryState.loading = false;
+        loadLibrary(true);
+    }
+
+    function loadLibrary(isReset) {
+        if (libraryState.loading) return;
+
         var typeFilter = document.getElementById("libType").value;
         var statusFilter = document.getElementById("libStatus").value;
         var container = document.getElementById("libraryResults");
 
-        container.innerHTML = '<div class="empty-state"><span class="spinner"></span> Loading library...</div>';
+        libraryState.loading = true;
+
+        if (isReset) {
+            container.innerHTML = '<div class="empty-state"><span class="spinner"></span> Loading library...</div>';
+        }
 
         var params = new URLSearchParams({
             user_id: currentUserId.toString(),
-            limit: "100"
+            limit: libraryState.limit.toString(),
+            offset: libraryState.offset.toString()
         });
         if (typeFilter) params.set("type", typeFilter);
         if (statusFilter) params.set("status", statusFilter);
@@ -241,14 +341,34 @@
                 return response.json();
             })
             .then(function (items) {
-                renderLibrary(items);
+                libraryState.loading = false;
+
+                if (items.length < libraryState.limit) {
+                    libraryState.hasMore = false;
+                }
+
+                if (isReset) {
+                    libraryState.items = items;
+                } else {
+                    libraryState.items = libraryState.items.concat(items);
+                }
+
+                libraryState.offset += items.length;
+                renderLibrary(libraryState.items, libraryState.hasMore);
             })
             .catch(function (error) {
-                container.innerHTML = '<div class="status-bar error" style="display:block">Failed to load library: ' + escapeHtml(error.message) + '</div>';
+                libraryState.loading = false;
+                if (isReset) {
+                    container.innerHTML = '<div class="status-bar error" style="display:block">Failed to load library: ' + escapeHtml(error.message) + '</div>';
+                }
             });
     }
 
-    function renderLibrary(items) {
+    function loadMoreLibraryItems() {
+        loadLibrary(false);
+    }
+
+    function renderLibrary(items, hasMore) {
         var container = document.getElementById("libraryResults");
 
         if (!items || items.length === 0) {
@@ -265,7 +385,7 @@
             }
             html += '<div>';
             html += '<span class="badge badge-type">' + formatContentType(item.content_type) + '</span>';
-            html += '<span class="badge badge-status ' + item.status + '">' + formatStatus(item.status) + '</span>';
+            html += '<span class="badge badge-status ' + item.status + '">' + formatStatus(item.status, item.content_type) + '</span>';
             if (item.rating) {
                 html += '<span class="badge badge-rating">' + renderStars(item.rating) + '</span>';
             }
@@ -273,6 +393,13 @@
             html += '</div>';
         });
         html += '</div>';
+
+        // Add loading indicator if more items available
+        if (hasMore) {
+            html += '<div class="library-load-more"><span class="spinner"></span> Loading more...</div>';
+        } else if (items.length > 0) {
+            html += '<div class="library-end">All ' + items.length + ' items loaded</div>';
+        }
 
         container.innerHTML = html;
     }
@@ -287,13 +414,25 @@
         return map[type] || type;
     }
 
-    function formatStatus(status) {
-        var map = {
-            unread: "Unread",
-            currently_consuming: "In Progress",
-            completed: "Completed"
-        };
-        return map[status] || status;
+    function formatStatus(status, contentType) {
+        // "In Progress" and "Completed" work for all content types
+        if (status === "currently_consuming") {
+            return "In Progress";
+        }
+        if (status === "completed") {
+            return "Completed";
+        }
+        // "Unread" status has content-type-specific labels
+        if (status === "unread") {
+            if (contentType === "video_game") {
+                return "Unplayed";
+            }
+            if (contentType === "movie" || contentType === "tv_show") {
+                return "Unwatched";
+            }
+            return "Unread";  // books and default
+        }
+        return status;
     }
 
     function renderStars(rating) {
@@ -349,6 +488,11 @@
         };
 
         scorerKeys.forEach(function (key) {
+            // Hide semantic_similarity if embeddings are disabled
+            if (key === "semantic_similarity" && (!aiFeatures.ai_enabled || !aiFeatures.embeddings_enabled)) {
+                return;
+            }
+
             var value = prefs.scorer_weights[key] !== undefined
                 ? prefs.scorer_weights[key]
                 : defaultWeights[key];
@@ -557,19 +701,69 @@
     // Sync Tab
     // -----------------------------------------------------------------------
 
+    var syncState = {
+        polling: false,
+        pollInterval: null
+    };
+
     function setupSyncButtons() {
-        document.querySelectorAll(".sync-btn").forEach(function (btn) {
+        loadSyncSources();
+        checkSyncStatus();
+    }
+
+    function loadSyncSources() {
+        var grid = document.getElementById("syncSourcesGrid");
+        if (!grid) return;
+
+        fetch(API_BASE + "/sync/sources")
+            .then(function (response) {
+                if (!response.ok) throw new Error("HTTP " + response.status);
+                return response.json();
+            })
+            .then(function (sources) {
+                renderSyncSources(grid, sources);
+            })
+            .catch(function (error) {
+                grid.innerHTML = '<div class="empty-state" style="color:#c62828">Failed to load sync sources: ' + escapeHtml(error.message) + '</div>';
+            });
+    }
+
+    function renderSyncSources(container, sources) {
+        if (!sources || sources.length === 0) {
+            container.innerHTML = '<div class="empty-state"><p>No sync sources configured. Add sources to config.yaml with enabled: true.</p></div>';
+            return;
+        }
+
+        var html = "";
+        sources.forEach(function (source) {
+            html += '<div class="sync-card">';
+            html += '<h3>' + escapeHtml(source.display_name) + '</h3>';
+            html += '<p style="font-size:0.85em; color:#666; margin-bottom:8px;">' + escapeHtml(source.description) + '</p>';
+            html += '<button class="btn btn-primary sync-btn" data-source="' + escapeHtml(source.id) + '" data-display-name="' + escapeHtml(source.display_name) + '">Sync ' + escapeHtml(source.display_name) + '</button>';
+            html += '</div>';
+        });
+
+        if (sources.length > 1) {
+            html += '<div class="sync-card">';
+            html += '<h3>All Sources</h3>';
+            html += '<p style="font-size:0.85em; color:#666; margin-bottom:8px;">Sync all enabled sources at once</p>';
+            html += '<button class="btn btn-secondary sync-btn" data-source="all" data-display-name="All Sources">Sync All Sources</button>';
+            html += '</div>';
+        }
+
+        container.innerHTML = html;
+
+        container.querySelectorAll(".sync-btn").forEach(function (btn) {
             btn.addEventListener("click", function () {
-                triggerSync(btn.dataset.source, btn);
+                triggerSync(btn.dataset.source);
             });
         });
     }
 
-    function triggerSync(source, btn) {
-        var resultDiv = btn.parentElement.querySelector(".sync-result");
-        btn.disabled = true;
-        btn.textContent = "Syncing...";
-        resultDiv.innerHTML = '<span class="spinner"></span> Running...';
+    function triggerSync(source) {
+        // Disable all sync buttons
+        setSyncButtonsDisabled(true, "Starting...");
+        updateSyncStatus("Starting sync for " + formatSourceName(source) + "...", "info");
 
         fetch(API_BASE + "/update", {
             method: "POST",
@@ -577,26 +771,168 @@
             body: JSON.stringify({ source: source })
         })
             .then(function (response) {
-                if (!response.ok) return response.json().then(function (d) { throw new Error(d.detail || "HTTP " + response.status); });
+                if (!response.ok) {
+                    return response.json().then(function (d) {
+                        throw new Error(d.detail || "HTTP " + response.status);
+                    });
+                }
                 return response.json();
             })
             .then(function (data) {
-                resultDiv.textContent = data.message || ("Updated " + data.count + " items");
-                resultDiv.style.color = "#2e7d32";
+                updateSyncStatus(data.message, "info");
+                // Start polling for progress
+                startSyncPolling();
             })
             .catch(function (error) {
-                resultDiv.textContent = "Error: " + error.message;
-                resultDiv.style.color = "#c62828";
-            })
-            .finally(function () {
-                btn.disabled = false;
-                btn.textContent = "Sync " + formatSourceName(source);
+                updateSyncStatus("Error: " + error.message, "error");
+                setSyncButtonsDisabled(false);
             });
+    }
+
+    function startSyncPolling() {
+        if (syncState.polling) return;
+        syncState.polling = true;
+        syncState.pollInterval = setInterval(checkSyncStatus, 2000);
+    }
+
+    function stopSyncPolling() {
+        syncState.polling = false;
+        if (syncState.pollInterval) {
+            clearInterval(syncState.pollInterval);
+            syncState.pollInterval = null;
+        }
+    }
+
+    function checkSyncStatus() {
+        fetch(API_BASE + "/sync/status")
+            .then(function (response) { return response.json(); })
+            .then(function (data) {
+                var status = data.status;
+                var job = data.job;
+
+                if (status === "running" && job) {
+                    // Sync is running - update UI
+                    setSyncButtonsDisabled(true, "Syncing...");
+                    var message = buildProgressMessage(job);
+                    updateSyncStatus(message, "info", job);
+
+                    // Start polling if not already
+                    if (!syncState.polling) {
+                        startSyncPolling();
+                    }
+                } else if (status === "completed" && job) {
+                    // Sync completed
+                    stopSyncPolling();
+                    setSyncButtonsDisabled(false);
+                    var completedMsg = "Completed: " + job.items_processed + " items synced";
+                    if (job.error_count > 0) {
+                        completedMsg += " (" + job.error_count + " errors)";
+                    }
+                    updateSyncStatus(completedMsg, "success", null);
+                } else if (status === "failed" && job) {
+                    // Sync failed
+                    stopSyncPolling();
+                    setSyncButtonsDisabled(false);
+                    updateSyncStatus("Failed: " + (job.error_message || "Unknown error"), "error", null);
+                } else {
+                    // Idle - no sync running
+                    stopSyncPolling();
+                    setSyncButtonsDisabled(false);
+                    updateSyncStatus("", "", null);
+                }
+            })
+            .catch(function (error) {
+                console.error("Error checking sync status:", error);
+            });
+    }
+
+    function buildProgressMessage(job) {
+        var parts = [];
+
+        // Lead with progress count when we have it (e.g. "20/133")
+        if (job.total_items != null && job.total_items > 0) {
+            parts.push(job.items_processed + "/" + job.total_items);
+            if (job.progress_percent != null) {
+                parts.push("(" + job.progress_percent + "%)");
+            }
+        } else if (job.items_processed > 0) {
+            parts.push(job.items_processed + " items so far");
+        }
+
+        // Add source and phase
+        parts.push("—");
+        parts.push("Syncing " + job.source);
+
+        // Current activity (e.g. "Fetching game details" or current item name)
+        if (job.current_item) {
+            parts.push(":");
+            parts.push(truncate(job.current_item, 50));
+        } else {
+            parts.push("...");
+        }
+
+        return parts.join(" ");
+    }
+
+    function truncate(str, maxLen) {
+        if (!str || str.length <= maxLen) return str;
+        return str.substring(0, maxLen - 3) + "...";
+    }
+
+    function setSyncButtonsDisabled(disabled, buttonText) {
+        document.querySelectorAll(".sync-btn").forEach(function (btn) {
+            btn.disabled = disabled;
+            if (buttonText && disabled) {
+                btn.textContent = buttonText;
+            } else if (!disabled) {
+                var displayName = btn.dataset.displayName || formatSourceName(btn.dataset.source);
+                btn.textContent = "Sync " + displayName;
+            }
+        });
+    }
+
+    function updateSyncStatus(message, type, job) {
+        var container = document.getElementById("syncStatusContainer");
+        var statusDiv = document.getElementById("syncStatusMessage");
+        var progressBar = document.getElementById("syncProgressBar");
+        if (!container || !statusDiv) return;
+
+        statusDiv.textContent = message;
+        container.style.display = message ? "block" : "none";
+        statusDiv.className = "sync-status-message";
+
+        if (type === "error") {
+            statusDiv.classList.add("sync-status-error");
+        } else if (type === "success") {
+            statusDiv.classList.add("sync-status-success");
+        } else {
+            statusDiv.classList.add("sync-status-info");
+        }
+
+        // Show progress bar when we have total and job is running
+        if (progressBar) {
+            if (job && job.total_items != null && job.total_items > 0) {
+                progressBar.style.display = "block";
+                var pct = (job.progress_percent != null ? job.progress_percent : 0) + "%";
+                var fill = progressBar.querySelector(".sync-progress-fill");
+                if (fill) fill.style.width = pct;
+            } else {
+                progressBar.style.display = "none";
+            }
+        }
+    }
+
+    function clearSyncStatus() {
+        var container = document.getElementById("syncStatusContainer");
+        if (container) {
+            container.style.display = "none";
+        }
     }
 
     function formatSourceName(source) {
         if (source === "all") return "All Sources";
-        return source.charAt(0).toUpperCase() + source.slice(1);
+        if (!source) return "Unknown";
+        return source.replace(/_/g, " ").replace(/\b\w/g, function (c) { return c.toUpperCase(); });
     }
 
     // -----------------------------------------------------------------------

@@ -6,11 +6,17 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from src.ingestion.sources.goodreads import GoodreadsPlugin
+from src.ingestion.plugin_base import SourceError
 from src.ingestion.sources.steam import SteamAPIError, parse_steam_games
 from src.models.content import ConsumptionStatus, ContentType
 from src.models.user_preferences import UserPreferenceConfig
 from src.web.state import get_config, get_embedding_gen, get_engine, get_storage
+from src.web.sync_manager import SyncJob, get_sync_manager
+from src.web.sync_sources import (
+    get_available_sync_sources,
+    get_sync_handler,
+    validate_source_config,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +39,18 @@ class CompletionRequest(BaseModel):
 class UpdateRequest(BaseModel):
     """Request model for updating data."""
 
-    source: str = Field(..., description="Data source (goodreads, steam, all)")
+    source: str = Field(
+        ...,
+        description="Data source (e.g. goodreads, steam, sonarr, radarr, or 'all')",
+    )
+
+
+class SyncSourceResponse(BaseModel):
+    """Response model for a sync source."""
+
+    id: str
+    display_name: str
+    description: str
 
 
 class UserResponse(BaseModel):
@@ -70,12 +87,21 @@ class RecommendationResponse(BaseModel):
     score_breakdown: dict[str, float] = Field(default_factory=dict)
 
 
+class FeaturesStatus(BaseModel):
+    """Feature flags status."""
+
+    ai_enabled: bool = False
+    embeddings_enabled: bool = False
+    llm_reasoning_enabled: bool = False
+
+
 class StatusResponse(BaseModel):
     """Response model for system status."""
 
     status: str
     version: str
     components: dict[str, bool]
+    features: FeaturesStatus = Field(default_factory=FeaturesStatus)
 
 
 class UserPreferenceResponse(BaseModel):
@@ -88,6 +114,28 @@ class UserPreferenceResponse(BaseModel):
     maximum_movie_runtime: int | None
     custom_rules: list[str]
     content_length_preferences: dict[str, str] = Field(default_factory=dict)
+
+
+class SyncJobResponse(BaseModel):
+    """Response model for sync job status."""
+
+    source: str
+    status: str
+    started_at: str | None
+    completed_at: str | None
+    items_processed: int
+    total_items: int | None
+    current_item: str | None
+    error_message: str | None
+    progress_percent: int | None
+    error_count: int
+
+
+class SyncStatusResponse(BaseModel):
+    """Response model for overall sync status."""
+
+    status: str
+    job: SyncJobResponse | None = None
 
 
 class UserPreferenceUpdateRequest(BaseModel):
@@ -107,7 +155,7 @@ async def get_recommendations(
     type: str = Query(
         ..., description="Content type (book, movie, tv_show, video_game)"
     ),
-    count: int = Query(5, ge=1, le=20, description="Number of recommendations"),
+    count: int = Query(5, ge=1, description="Number of recommendations"),
     use_llm: bool = Query(True, description="Use LLM for enhanced reasoning"),
     user_id: int = Query(1, ge=1, description="User ID for personalized preferences"),
 ) -> list[RecommendationResponse]:
@@ -124,8 +172,18 @@ async def get_recommendations(
     """
     engine = get_engine()
     storage = get_storage()
+    config = get_config()
     if not engine:
         raise HTTPException(status_code=500, detail="Engine not initialized")
+
+    # Validate count against max_count from config
+    rec_config = config.get("recommendations", {}) if config else {}
+    max_count = rec_config.get("max_count", 20)
+    if count > max_count:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Count exceeds maximum allowed ({max_count})",
+        )
 
     # Map string to ContentType enum
     type_map = {
@@ -207,7 +265,14 @@ async def list_items(
     type: str | None = Query(None, description="Content type filter"),
     status: str | None = Query(None, description="Status filter"),
     user_id: int = Query(1, ge=1, description="User ID"),
-    limit: int = Query(50, ge=1, le=200, description="Maximum results"),
+    limit: int = Query(50, ge=1, le=200, description="Maximum results per page"),
+    offset: int = Query(
+        0, ge=0, description="Number of items to skip (for pagination)"
+    ),
+    sort_by: str = Query(
+        "title",
+        description="Sort order: title (ignores articles), updated_at, rating, created_at",
+    ),
 ) -> list[ContentItemResponse]:
     """List content items with optional filters.
 
@@ -215,7 +280,9 @@ async def list_items(
         type: Optional content type filter.
         status: Optional consumption status filter.
         user_id: User ID to filter by.
-        limit: Maximum number of results.
+        limit: Maximum number of results per page.
+        offset: Number of items to skip (for pagination).
+        sort_by: Sort order (default: title, which ignores leading articles).
 
     Returns:
         List of content items.
@@ -249,11 +316,21 @@ async def list_items(
             raise HTTPException(status_code=400, detail=f"Invalid status: {status}")
         consumption_status = status_map[status.lower()]
 
+    # Validate sort_by parameter
+    valid_sort_options = {"title", "updated_at", "rating", "created_at"}
+    if sort_by.lower() not in valid_sort_options:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid sort_by: {sort_by}. Valid options: {', '.join(sorted(valid_sort_options))}",
+        )
+
     items = storage.get_content_items(
         user_id=user_id,
         content_type=content_type,
         status=consumption_status,
         limit=limit,
+        offset=offset,
+        sort_by=sort_by.lower(),
     )
 
     return [
@@ -351,9 +428,16 @@ async def mark_complete(request: CompletionRequest) -> dict[str, Any]:
 
     storage = get_storage()
     embedding_gen = get_embedding_gen()
+    config = get_config()
 
-    if not storage or not embedding_gen:
-        raise HTTPException(status_code=500, detail="Components not initialized")
+    if not storage:
+        raise HTTPException(status_code=500, detail="Storage not initialized")
+
+    # Check if embeddings are enabled
+    features_config = config.get("features", {}) if config else {}
+    ai_enabled = features_config.get("ai_enabled", False)
+    embeddings_enabled = features_config.get("embeddings_enabled", False)
+    use_embeddings = ai_enabled and embeddings_enabled
 
     # Map string to ContentType enum
     type_map = {
@@ -386,8 +470,10 @@ async def mark_complete(request: CompletionRequest) -> dict[str, Any]:
     )
 
     try:
-        # Generate embedding and save
-        embedding = embedding_gen.generate_content_embedding(item)
+        # Only generate embedding if AI features are enabled
+        embedding = None
+        if use_embeddings and embedding_gen:
+            embedding = embedding_gen.generate_content_embedding(item)
         db_id = storage.save_content_item(item, embedding)
 
         return {"message": f"Marked '{request.title}' as completed", "id": db_id}
@@ -399,105 +485,362 @@ async def mark_complete(request: CompletionRequest) -> dict[str, Any]:
 
 @router.post("/update")
 async def update_data(request: UpdateRequest) -> dict[str, Any]:
-    """Update data from input files.
+    """Start a background sync job for the specified data source.
+
+    The sync runs in the background. Use GET /sync/status to monitor progress.
+    Only one sync job can run at a time.
 
     Args:
-        request: Update request
+        request: Update request specifying the source to sync.
 
     Returns:
-        Success message with count
+        Message indicating sync was started or error if already running.
     """
     storage = get_storage()
     embedding_gen = get_embedding_gen()
     config = get_config()
 
-    if not storage or not embedding_gen or not config:
+    if not storage or not config:
         raise HTTPException(status_code=500, detail="Components not initialized")
 
+    sync_manager = get_sync_manager()
+
+    # Check if a sync is already running
+    if sync_manager.is_running():
+        status = sync_manager.get_status()
+        job = status.get("job", {})
+        raise HTTPException(
+            status_code=409,
+            detail=f"Sync already in progress for {job.get('source', 'unknown')}. "
+            "Please wait for it to complete.",
+        )
+
+    # Validate source configuration before starting
+    source = request.source
+    inputs_config = config.get("inputs", {})
+
+    # Resolve which sources to sync (dynamic from config)
+    if source == "all":
+        available = get_available_sync_sources(config)
+        sources_to_sync = [s.id for s in available]
+    else:
+        # Single source - check it exists and is enabled
+        source_config = inputs_config.get(source, {})
+        if not isinstance(source_config, dict) or not source_config.get(
+            "enabled", False
+        ):
+            return {
+                "message": f"{source} source is disabled or not configured",
+                "count": 0,
+            }
+        validation_errors = validate_source_config(source, inputs_config)
+        if validation_errors:
+            raise HTTPException(status_code=400, detail="; ".join(validation_errors))
+        sources_to_sync = [source]
+
+    if not sources_to_sync:
+        return {"message": "No sources enabled or configured for sync", "count": 0}
+
+    # Create the sync function that will run in background
+    def run_sync(job: SyncJob) -> int:
+        return _execute_sync(
+            job=job,
+            sources=sources_to_sync,
+            config=config,
+            storage=storage,
+            embedding_gen=embedding_gen,
+            sync_manager=sync_manager,
+        )
+
+    # Start background sync
+    source_label = source if source != "all" else ", ".join(sources_to_sync)
+    success, message = sync_manager.start_sync(source_label, run_sync)
+
+    if not success:
+        raise HTTPException(status_code=409, detail=message)
+
+    logger.info(f"[SYNC] Started background sync for: {source_label}")
+    return {
+        "message": f"Sync started for {source_label}. Use GET /api/sync/status to monitor progress.",
+        "sources": sources_to_sync,
+    }
+
+
+def _execute_sync(
+    job: SyncJob,
+    sources: list[str],
+    config: dict[str, Any],
+    storage: Any,
+    embedding_gen: Any,
+    sync_manager: Any,
+) -> int:
+    """Execute sync for specified sources (runs in background thread).
+
+    Args:
+        job: The sync job for progress tracking.
+        sources: List of source names to sync.
+        config: Application configuration.
+        storage: Storage manager instance.
+        embedding_gen: Embedding generator (may be None).
+        sync_manager: Sync manager for progress updates.
+
+    Returns:
+        Total count of items processed.
+    """
+    features_config = config.get("features", {})
+    ai_enabled = features_config.get("ai_enabled", False)
+    embeddings_enabled = features_config.get("embeddings_enabled", False)
+    use_embeddings = ai_enabled and embeddings_enabled
+
+    inputs_config = config.get("inputs", {})
+    total_count = 0
+
+    for source_id in sources:
+        logger.info(f"[SYNC] === Starting sync for source: {source_id} ===")
+
+        handler = get_sync_handler(source_id)
+        if handler is None:
+            logger.warning(f"[SYNC] No handler for source {source_id}, skipping")
+            continue
+
+        plugin, config_transform = handler
+        source_config = inputs_config.get(source_id, {})
+        plugin_config = config_transform(source_config)
+
+        if plugin is None:
+            # Steam - special handling
+            total_count += _sync_steam(
+                job=job,
+                config=source_config,
+                storage=storage,
+                embedding_gen=embedding_gen,
+                use_embeddings=use_embeddings,
+                sync_manager=sync_manager,
+            )
+        else:
+            # Plugin-based source
+            item_label = _get_item_label_for_source(source_id)
+            total_count += _sync_plugin_source(
+                job=job,
+                source_name=plugin.display_name,
+                item_label=item_label,
+                plugin=plugin,
+                plugin_config=plugin_config,
+                storage=storage,
+                embedding_gen=embedding_gen,
+                use_embeddings=use_embeddings,
+                sync_manager=sync_manager,
+            )
+
+    logger.info(f"[SYNC] === Completed. Total items processed: {total_count} ===")
+    return total_count
+
+
+def _sync_steam(
+    job: SyncJob,
+    config: dict[str, Any],
+    storage: Any,
+    embedding_gen: Any,
+    use_embeddings: bool,
+    sync_manager: Any,
+) -> int:
+    """Sync Steam data.
+
+    Args:
+        job: The sync job for progress tracking.
+        config: Steam configuration.
+        storage: Storage manager.
+        embedding_gen: Embedding generator (may be None).
+        use_embeddings: Whether to generate embeddings.
+        sync_manager: Sync manager for progress updates.
+
+    Returns:
+        Count of items processed.
+    """
+    api_key = config.get("api_key", "").strip()
+    steam_id = config.get("steam_id", "").strip() or None
+    vanity_url = config.get("vanity_url", "").strip() or None
+    min_playtime = config.get("min_playtime_minutes", 0)
+
+    logger.info(
+        "[SYNC] Steam: Fetching game library (this may take several minutes)..."
+    )
+    sync_manager.update_progress(
+        total_items=None, items_processed=0, current_item="Fetching Steam library..."
+    )
+
+    def steam_progress_callback(fetched_count: int, total: int, phase: str) -> None:
+        """Update sync progress and log during Steam fetch phase."""
+        sync_manager.update_progress(
+            items_processed=fetched_count,
+            total_items=total,
+            current_item="Fetching game details from Steam API...",
+        )
+        if fetched_count > 0 and (
+            fetched_count <= 5 or fetched_count % 20 == 0 or fetched_count == total
+        ):
+            pct = int(fetched_count * 100 / total) if total > 0 else 0
+            logger.info(
+                f"[SYNC] Steam: Fetching game details {fetched_count}/{total} ({pct}%)"
+            )
+
     try:
+        # Collect all items (progress_callback reports during game details fetch)
+        items = list(
+            parse_steam_games(
+                api_key=api_key,
+                steam_id=steam_id,
+                vanity_url=vanity_url,
+                min_playtime_minutes=min_playtime,
+                progress_callback=steam_progress_callback,
+            )
+        )
+        total_items = len(items)
+
+        sync_manager.update_progress(total_items=total_items, items_processed=0)
+        logger.info(f"[SYNC] Steam: Found {total_items} games, starting to save...")
+
         count = 0
-
-        if request.source == "goodreads" or request.source == "all":
-            inputs_config = config.get("inputs", {})
-            goodreads_config = inputs_config.get("goodreads", {})
-
-            if not goodreads_config.get("enabled", False):
-                if request.source == "goodreads":
-                    return {"message": "Goodreads source is disabled", "count": 0}
-            else:
-                goodreads_path = goodreads_config.get(
-                    "path", "inputs/goodreads_library_export.csv"
+        for index, item in enumerate(items):
+            try:
+                sync_manager.update_progress(
+                    items_processed=index,
+                    current_item=item.title,
                 )
-                goodreads_plugin = GoodreadsPlugin()
-                plugin_config = {"csv_path": str(goodreads_path)}
-                validation_errors = goodreads_plugin.validate_config(plugin_config)
 
-                if validation_errors:
-                    raise HTTPException(
-                        status_code=400, detail="; ".join(validation_errors)
+                embedding = None
+                if use_embeddings and embedding_gen:
+                    embedding = embedding_gen.generate_content_embedding(item)
+
+                storage.save_content_item(item, embedding)
+                count += 1
+
+                # Log progress every 10 items (Steam is slower, more frequent logs)
+                if count % 10 == 0 or count == total_items:
+                    pct = int(count * 100 / total_items) if total_items > 0 else 0
+                    logger.info(
+                        f"[SYNC] Steam: Saved {count}/{total_items} games ({pct}%)"
                     )
 
-                for item in goodreads_plugin.fetch(plugin_config):
-                    try:
-                        embedding = embedding_gen.generate_content_embedding(item)
-                        storage.save_content_item(item, embedding)
-                        count += 1
-                    except Exception as e:
-                        logger.warning(f"Failed to process {item.title}: {e}")
+            except Exception as error:
+                error_msg = f"Failed to process '{item.title}': {error}"
+                logger.warning(f"[SYNC] Steam: {error_msg}")
+                sync_manager.add_error(error_msg)
 
-        if request.source == "steam" or request.source == "all":
-            inputs_config = config.get("inputs", {})
-            steam_config = inputs_config.get("steam", {})
+        sync_manager.update_progress(items_processed=count)
+        logger.info(f"[SYNC] Steam: Completed. {count}/{total_items} games saved.")
+        return count
 
-            if not steam_config.get("enabled", False):
-                if request.source == "steam":
-                    return {"message": "Steam source is disabled", "count": 0}
-            else:
-                api_key = steam_config.get("api_key", "").strip()
-                if not api_key:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Steam API key is required. Get one from https://steamcommunity.com/dev/apikey",
-                    )
-
-                steam_id = steam_config.get("steam_id", "").strip()
-                vanity_url = steam_config.get("vanity_url", "").strip()
-                min_playtime = steam_config.get("min_playtime_minutes", 0)
-
-                if not steam_id and not vanity_url:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Either steam_id or vanity_url must be provided in config",
-                    )
-
-                try:
-                    for item in parse_steam_games(
-                        api_key=api_key,
-                        steam_id=steam_id if steam_id else None,
-                        vanity_url=vanity_url if vanity_url else None,
-                        min_playtime_minutes=min_playtime,
-                    ):
-                        try:
-                            embedding = embedding_gen.generate_content_embedding(item)
-                            storage.save_content_item(item, embedding)
-                            count += 1
-                        except Exception as e:
-                            logger.warning(f"Failed to process {item.title}: {e}")
-                except SteamAPIError as e:
-                    raise HTTPException(
-                        status_code=500, detail=f"Steam API error: {e}"
-                    ) from e
-                except Exception as e:
-                    logger.error(f"Error processing Steam data: {e}")
-                    raise HTTPException(status_code=500, detail=str(e)) from e
-
-        return {"message": f"Updated {count} items", "count": count}
-
-    except HTTPException:
+    except SteamAPIError as error:
+        error_msg = f"Steam API error: {error}"
+        logger.error(f"[SYNC] Steam: {error_msg}")
+        sync_manager.add_error(error_msg)
         raise
-    except Exception as e:
-        logger.error(f"Error updating data: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+    except Exception as error:
+        error_msg = f"Error processing Steam data: {error}"
+        logger.error(f"[SYNC] Steam: {error_msg}")
+        sync_manager.add_error(error_msg)
+        raise
+
+
+def _get_item_label_for_source(source_id: str) -> str:
+    """Get plural item label for a source (e.g. 'books', 'games')."""
+    labels = {
+        "goodreads": "books",
+        "steam": "games",
+        "sonarr": "series",
+        "radarr": "movies",
+        "csv_import": "items",
+        "json_import": "items",
+        "markdown_import": "items",
+    }
+    return labels.get(source_id, "items")
+
+
+def _sync_plugin_source(
+    job: SyncJob,
+    source_name: str,
+    item_label: str,
+    plugin: Any,
+    plugin_config: dict[str, Any],
+    storage: Any,
+    embedding_gen: Any,
+    use_embeddings: bool,
+    sync_manager: Any,
+) -> int:
+    """Sync data from a plugin source (Sonarr, Radarr, etc.)."""
+    logger.info(f"[SYNC] {source_name}: Fetching {item_label}...")
+    sync_manager.update_progress(
+        total_items=None, items_processed=0, current_item=f"Fetching {item_label}..."
+    )
+
+    def progress_callback(
+        items_processed: int, total_items: int | None, current_item: str | None
+    ) -> None:
+        sync_manager.update_progress(
+            items_processed=items_processed,
+            total_items=total_items,
+            current_item=current_item,
+        )
+        if (
+            total_items
+            and items_processed > 0
+            and (
+                items_processed <= 5
+                or items_processed % 25 == 0
+                or items_processed == total_items
+            )
+        ):
+            pct = int(items_processed * 100 / total_items) if total_items else 0
+            logger.info(
+                f"[SYNC] {source_name}: Loaded {items_processed}/{total_items} "
+                f"{item_label} ({pct}%)"
+            )
+
+    try:
+        items = list(plugin.fetch(plugin_config, progress_callback=progress_callback))
+    except SourceError as error:
+        error_msg = str(error)
+        logger.error(f"[SYNC] {source_name}: {error_msg}")
+        sync_manager.add_error(error_msg)
+        raise
+
+    total_items = len(items)
+    sync_manager.update_progress(total_items=total_items, items_processed=0)
+    logger.info(f"[SYNC] {source_name}: Found {total_items} {item_label}, saving...")
+
+    count = 0
+    for index, item in enumerate(items):
+        try:
+            sync_manager.update_progress(
+                items_processed=index,
+                current_item=item.title,
+            )
+
+            embedding = None
+            if use_embeddings and embedding_gen:
+                embedding = embedding_gen.generate_content_embedding(item)
+
+            storage.save_content_item(item, embedding)
+            count += 1
+
+            if count % 25 == 0 or count == total_items:
+                pct = int(count * 100 / total_items) if total_items > 0 else 0
+                logger.info(
+                    f"[SYNC] {source_name}: Saved {count}/{total_items} "
+                    f"{item_label} ({pct}%)"
+                )
+
+        except Exception as error:
+            error_msg = f"Failed to process '{item.title}': {error}"
+            logger.warning(f"[SYNC] {source_name}: {error_msg}")
+            sync_manager.add_error(error_msg)
+
+    sync_manager.update_progress(items_processed=count)
+    logger.info(
+        f"[SYNC] {source_name}: Completed. {count}/{total_items} {item_label} saved."
+    )
+    return count
 
 
 @router.get("/status", response_model=StatusResponse)
@@ -510,6 +853,7 @@ async def get_status() -> StatusResponse:
     engine = get_engine()
     storage = get_storage()
     embedding_gen = get_embedding_gen()
+    config = get_config()
 
     components = {
         "engine": engine is not None,
@@ -519,8 +863,60 @@ async def get_status() -> StatusResponse:
 
     all_ready = all(components.values())
 
+    # Read feature flags from config
+    features_config = config.get("features", {}) if config else {}
+    features = FeaturesStatus(
+        ai_enabled=features_config.get("ai_enabled", False),
+        embeddings_enabled=features_config.get("embeddings_enabled", False),
+        llm_reasoning_enabled=features_config.get("llm_reasoning_enabled", False),
+    )
+
     return StatusResponse(
         status="ready" if all_ready else "initializing",
         version="1.0.0",
         components=components,
+        features=features,
+    )
+
+
+@router.get("/sync/sources", response_model=list[SyncSourceResponse])
+async def get_sync_sources() -> list[SyncSourceResponse]:
+    """Get list of available sync sources from config.
+
+    Returns sources defined in config.inputs with enabled: true.
+    No fallback to example config - uses the loaded config only.
+    """
+    config = get_config()
+    if not config:
+        return []
+
+    sources = get_available_sync_sources(config)
+    return [
+        SyncSourceResponse(
+            id=source.id,
+            display_name=source.display_name,
+            description=source.description,
+        )
+        for source in sources
+    ]
+
+
+@router.get("/sync/status", response_model=SyncStatusResponse)
+async def get_sync_status() -> SyncStatusResponse:
+    """Get current sync job status.
+
+    Returns:
+        Current sync status including job progress if running.
+    """
+    sync_manager = get_sync_manager()
+    status_dict = sync_manager.get_status()
+
+    job_data = status_dict.get("job")
+    job_response = None
+    if job_data:
+        job_response = SyncJobResponse(**job_data)
+
+    return SyncStatusResponse(
+        status=status_dict["status"],
+        job=job_response,
     )

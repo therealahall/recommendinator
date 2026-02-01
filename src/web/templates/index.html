@@ -84,7 +84,7 @@
                         <label for="libStatus">Status</label>
                         <select id="libStatus">
                             <option value="">All Statuses</option>
-                            <option value="unread">Unread</option>
+                            <option value="unread" data-book="Unread" data-movie="Unwatched" data-tv_show="Unwatched" data-video_game="Unplayed" data-default="Not Started">Not Started</option>
                             <option value="currently_consuming">In Progress</option>
                             <option value="completed">Completed</option>
                         </select>
@@ -108,24 +108,19 @@
         <div id="panel-sync" class="tab-panel">
             <div class="card">
                 <h2>Sync Sources</h2>
+                <div id="syncStatusContainer" style="display:none;">
+                    <div id="syncStatusMessage" class="sync-status-message sync-status-info"></div>
+                    <div id="syncProgressBar" class="sync-progress-bar" style="display:none;">
+                        <div class="sync-progress-fill"></div>
+                    </div>
+                </div>
                 <p style="margin-bottom:16px; color:#666; font-size:0.9em;">
-                    Trigger data syncs from your configured sources.
+                    Sync data from your configured sources. Only one sync can run at a time.
+                    Add sources in config.yaml and set enabled: true to see them here.
                 </p>
-                <div class="sync-grid">
-                    <div class="sync-card">
-                        <h3>Goodreads</h3>
-                        <button class="btn btn-primary sync-btn" data-source="goodreads">Sync Goodreads</button>
-                        <div class="sync-result"></div>
-                    </div>
-                    <div class="sync-card">
-                        <h3>Steam</h3>
-                        <button class="btn btn-primary sync-btn" data-source="steam">Sync Steam</button>
-                        <div class="sync-result"></div>
-                    </div>
-                    <div class="sync-card">
-                        <h3>All Sources</h3>
-                        <button class="btn btn-secondary sync-btn" data-source="all">Sync All Sources</button>
-                        <div class="sync-result"></div>
+                <div id="syncSourcesGrid" class="sync-grid">
+                    <div class="empty-state sync-loading">
+                        <span class="spinner"></span> Loading sync sources...
                     </div>
                 </div>
             </div>

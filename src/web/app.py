@@ -102,21 +102,19 @@ def get_app() -> FastAPI:
 
     This function is used when running with uvicorn reload mode,
     which requires an import string. It will use the config path
-    from the CONFIG_PATH environment variable, or default to
-    config/example.yaml if not set.
+    from the CONFIG_PATH environment variable, or let load_config()
+    use its default logic (config/config.yaml -> config/example.yaml).
 
     Returns:
         FastAPI application instance
     """
     global _app
     # Always recreate when called (allows reload to work properly)
-    # Get config path from environment or use default
+    # Get config path from environment, or None to let load_config() decide
     config_path_str = os.environ.get("CONFIG_PATH")
     config_path = Path(config_path_str) if config_path_str else None
-    if config_path is None:
-        default_config = Path("config/example.yaml")
-        if default_config.exists():
-            config_path = default_config
+    # Don't override with example.yaml - let load_config() handle defaults
+    # (it correctly tries config/config.yaml first, then example.yaml)
     _app = create_app(config_path)
     return _app
 

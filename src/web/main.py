@@ -54,7 +54,7 @@ def main() -> None:
         "--config",
         type=Path,
         default=None,
-        help="Path to configuration file (default: config/example.yaml)",
+        help="Path to configuration file (default: config/config.yaml, falls back to example.yaml)",
     )
     parser.add_argument(
         "--host",
@@ -72,14 +72,8 @@ def main() -> None:
     args = parser.parse_args()
 
     # Load config to get default host/port
+    # Let load_config() handle defaults (config.yaml -> example.yaml)
     config_path = args.config
-    if config_path is None:
-        # Try to find config file
-        default_config = Path("config/example.yaml")
-        if default_config.exists():
-            config_path = default_config
-        else:
-            logger.warning("No config file found, using defaults")
 
     # Load config first to get web settings
     from src.cli.config import load_config
