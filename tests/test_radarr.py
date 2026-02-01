@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from src.ingestion.plugin_base import SourceError, SourcePlugin
-from src.ingestion.sources.radarr import RadarrPlugin, _extract_movie_rating
+from src.ingestion.sources.radarr import RadarrPlugin
 from src.models.content import ConsumptionStatus, ContentType
 
 
@@ -127,6 +127,22 @@ class TestRadarrPluginValidation:
 class TestRadarrPluginFetch:
     """Tests for RadarrPlugin fetch functionality."""
 
+    def _mock_radarr_responses(
+        self, mock_get: Mock, movies: list, collections: list | None = None
+    ) -> None:
+        """Configure mock to return movies and collections for Radarr API calls."""
+        if collections is None:
+            collections = []
+
+        def side_effect(*args, **kwargs):
+            response = Mock()
+            response.raise_for_status = Mock()
+            url = args[0] if args else ""
+            response.json.return_value = collections if "collection" in url else movies
+            return response
+
+        mock_get.side_effect = side_effect
+
     @patch("src.ingestion.sources.radarr.requests.get")
     def test_fetch_monitored_movies(
         self,
@@ -135,10 +151,7 @@ class TestRadarrPluginFetch:
         sample_movies: list[dict],
     ) -> None:
         """Monitored movies should be imported, unmonitored skipped."""
-        mock_response = Mock()
-        mock_response.json.return_value = sample_movies
-        mock_response.raise_for_status = Mock()
-        mock_get.return_value = mock_response
+        self._mock_radarr_responses(mock_get, sample_movies)
 
         items = list(
             plugin.fetch({"url": "http://localhost:7878", "api_key": "test_key"})
@@ -157,10 +170,7 @@ class TestRadarrPluginFetch:
         sample_movies: list[dict],
     ) -> None:
         """All imported items should have UNREAD status."""
-        mock_response = Mock()
-        mock_response.json.return_value = sample_movies
-        mock_response.raise_for_status = Mock()
-        mock_get.return_value = mock_response
+        self._mock_radarr_responses(mock_get, sample_movies)
 
         items = list(
             plugin.fetch({"url": "http://localhost:7878", "api_key": "test_key"})
@@ -176,10 +186,7 @@ class TestRadarrPluginFetch:
         plugin: RadarrPlugin,
         sample_movies: list[dict],
     ) -> None:
-        mock_response = Mock()
-        mock_response.json.return_value = sample_movies
-        mock_response.raise_for_status = Mock()
-        mock_get.return_value = mock_response
+        self._mock_radarr_responses(mock_get, sample_movies)
 
         items = list(
             plugin.fetch({"url": "http://localhost:7878", "api_key": "test_key"})
@@ -196,10 +203,7 @@ class TestRadarrPluginFetch:
         sample_movies: list[dict],
     ) -> None:
         """External ID should be tmdb:{tmdbId} for deduplication."""
-        mock_response = Mock()
-        mock_response.json.return_value = sample_movies
-        mock_response.raise_for_status = Mock()
-        mock_get.return_value = mock_response
+        self._mock_radarr_responses(mock_get, sample_movies)
 
         items = list(
             plugin.fetch({"url": "http://localhost:7878", "api_key": "test_key"})
@@ -209,26 +213,21 @@ class TestRadarrPluginFetch:
         assert items[1].id == "tmdb:335984"
 
     @patch("src.ingestion.sources.radarr.requests.get")
-    def test_fetch_rating_from_imdb(
+    def test_fetch_rating_is_none(
         self,
         mock_get: Mock,
         plugin: RadarrPlugin,
         sample_movies: list[dict],
     ) -> None:
-        """Ratings should prefer IMDb, normalized from 0-10 to 1-5."""
-        mock_response = Mock()
-        mock_response.json.return_value = sample_movies
-        mock_response.raise_for_status = Mock()
-        mock_get.return_value = mock_response
+        """Radarr does not track personal ratings; rating should always be None."""
+        self._mock_radarr_responses(mock_get, sample_movies)
 
         items = list(
             plugin.fetch({"url": "http://localhost:7878", "api_key": "test_key"})
         )
 
-        # 8.8 / 2 = 4.4, rounds to 4
-        assert items[0].rating == 4
-        # 8.0 / 2 = 4.0, rounds to 4
-        assert items[1].rating == 4
+        for item in items:
+            assert item.rating is None
 
     @patch("src.ingestion.sources.radarr.requests.get")
     def test_fetch_metadata(
@@ -238,10 +237,7 @@ class TestRadarrPluginFetch:
         sample_movies: list[dict],
     ) -> None:
         """Metadata should include genres, studio, runtime, etc."""
-        mock_response = Mock()
-        mock_response.json.return_value = sample_movies
-        mock_response.raise_for_status = Mock()
-        mock_get.return_value = mock_response
+        self._mock_radarr_responses(mock_get, sample_movies)
 
         items = list(
             plugin.fetch({"url": "http://localhost:7878", "api_key": "test_key"})
@@ -263,10 +259,7 @@ class TestRadarrPluginFetch:
         plugin: RadarrPlugin,
         sample_movies: list[dict],
     ) -> None:
-        mock_response = Mock()
-        mock_response.json.return_value = sample_movies
-        mock_response.raise_for_status = Mock()
-        mock_get.return_value = mock_response
+        self._mock_radarr_responses(mock_get, sample_movies)
 
         items = list(
             plugin.fetch({"url": "http://localhost:7878", "api_key": "test_key"})
@@ -281,14 +274,11 @@ class TestRadarrPluginFetch:
         mock_get: Mock,
         plugin: RadarrPlugin,
     ) -> None:
-        mock_response = Mock()
-        mock_response.json.return_value = []
-        mock_response.raise_for_status = Mock()
-        mock_get.return_value = mock_response
+        self._mock_radarr_responses(mock_get, [])
 
         list(plugin.fetch({"url": "http://localhost:7878", "api_key": "my_secret_key"}))
 
-        mock_get.assert_called_once()
+        assert mock_get.call_count >= 1
         call_kwargs = mock_get.call_args[1]
         assert call_kwargs["headers"]["X-Api-Key"] == "my_secret_key"
 
@@ -298,15 +288,12 @@ class TestRadarrPluginFetch:
         mock_get: Mock,
         plugin: RadarrPlugin,
     ) -> None:
-        mock_response = Mock()
-        mock_response.json.return_value = []
-        mock_response.raise_for_status = Mock()
-        mock_get.return_value = mock_response
+        self._mock_radarr_responses(mock_get, [])
 
         list(plugin.fetch({"url": "http://myradarr:7878", "api_key": "key"}))
 
-        call_args = mock_get.call_args[0]
-        assert call_args[0] == "http://myradarr:7878/api/v3/movie"
+        calls = [call[0][0] for call in mock_get.call_args_list]
+        assert "http://myradarr:7878/api/v3/movie" in calls
 
     @patch("src.ingestion.sources.radarr.requests.get")
     def test_fetch_trailing_slash_handled(
@@ -314,15 +301,13 @@ class TestRadarrPluginFetch:
         mock_get: Mock,
         plugin: RadarrPlugin,
     ) -> None:
-        mock_response = Mock()
-        mock_response.json.return_value = []
-        mock_response.raise_for_status = Mock()
-        mock_get.return_value = mock_response
+        self._mock_radarr_responses(mock_get, [])
 
         list(plugin.fetch({"url": "http://localhost:7878/", "api_key": "key"}))
 
-        call_args = mock_get.call_args[0]
-        assert "//" not in call_args[0].replace("http://", "")
+        for call in mock_get.call_args_list:
+            url = call[0][0]
+            assert "//" not in url.replace("http://", "").replace("https://", "")
 
     @patch("src.ingestion.sources.radarr.requests.get")
     def test_fetch_empty_library(
@@ -330,10 +315,7 @@ class TestRadarrPluginFetch:
         mock_get: Mock,
         plugin: RadarrPlugin,
     ) -> None:
-        mock_response = Mock()
-        mock_response.json.return_value = []
-        mock_response.raise_for_status = Mock()
-        mock_get.return_value = mock_response
+        self._mock_radarr_responses(mock_get, [])
 
         items = list(plugin.fetch({"url": "http://localhost:7878", "api_key": "key"}))
 
@@ -345,13 +327,11 @@ class TestRadarrPluginFetch:
         mock_get: Mock,
         plugin: RadarrPlugin,
     ) -> None:
-        mock_response = Mock()
-        mock_response.json.return_value = [
+        movies = [
             {"title": "", "monitored": True, "tmdbId": 123},
             {"title": "Valid Movie", "monitored": True, "tmdbId": 456},
         ]
-        mock_response.raise_for_status = Mock()
-        mock_get.return_value = mock_response
+        self._mock_radarr_responses(mock_get, movies)
 
         items = list(plugin.fetch({"url": "http://localhost:7878", "api_key": "key"}))
 
@@ -391,64 +371,57 @@ class TestRadarrPluginErrors:
             list(plugin.fetch({"url": "http://localhost:7878", "api_key": "bad_key"}))
 
 
-class TestRadarrRatingNormalization:
-    """Tests for rating extraction and normalization."""
+class TestRadarrCollections:
+    """Tests for Radarr collection metadata (movie series)."""
 
-    def test_imdb_rating_preferred(self) -> None:
-        """IMDb rating should be used first."""
-        movie = {
-            "ratings": {
-                "imdb": {"value": 8.0},
-                "tmdb": {"value": 6.0},
+    @patch("src.ingestion.sources.radarr.requests.get")
+    def test_fetch_adds_collection_metadata(
+        self,
+        mock_get: Mock,
+        plugin: RadarrPlugin,
+    ) -> None:
+        """Movies in collections should get series_name and movie_number."""
+        movies = [
+            {
+                "title": "Back to the Future",
+                "monitored": True,
+                "tmdbId": 105,
+                "year": 1985,
+            },
+            {
+                "title": "Back to the Future Part II",
+                "monitored": True,
+                "tmdbId": 165,
+                "year": 1989,
+            },
+        ]
+        collections = [
+            {
+                "title": "Back to the Future Collection",
+                "movies": [
+                    {"tmdbId": 105},
+                    {"tmdbId": 165},
+                    {"tmdbId": 166},  # Part III - not in our library
+                ],
             }
-        }
-        assert _extract_movie_rating(movie) == 4  # 8.0 / 2 = 4.0
+        ]
+        # Need to return different responses for movie vs collection endpoints
+        call_count = [0]
 
-    def test_tmdb_fallback_when_no_imdb(self) -> None:
-        """TMDB rating should be used when IMDb is not available."""
-        movie = {
-            "ratings": {
-                "tmdb": {"value": 7.0},
-            }
-        }
-        assert _extract_movie_rating(movie) == 4  # 7.0 / 2 = 3.5, rounds to 4
+        def side_effect(*args, **kwargs):
+            response = Mock()
+            response.raise_for_status = Mock()
+            call_count[0] += 1
+            url = args[0] if args else ""
+            response.json.return_value = collections if "collection" in url else movies
+            return response
 
-    def test_tmdb_fallback_when_imdb_zero(self) -> None:
-        """TMDB rating should be used when IMDb rating is 0."""
-        movie = {
-            "ratings": {
-                "imdb": {"value": 0},
-                "tmdb": {"value": 6.0},
-            }
-        }
-        assert _extract_movie_rating(movie) == 3  # 6.0 / 2 = 3.0
+        mock_get.side_effect = side_effect
 
-    def test_rating_10_becomes_5(self) -> None:
-        assert _extract_movie_rating({"ratings": {"imdb": {"value": 10.0}}}) == 5
+        items = list(plugin.fetch({"url": "http://localhost:7878", "api_key": "key"}))
 
-    def test_rating_2_becomes_1(self) -> None:
-        assert _extract_movie_rating({"ratings": {"imdb": {"value": 2.0}}}) == 1
-
-    def test_no_ratings_is_none(self) -> None:
-        assert _extract_movie_rating({}) is None
-
-    def test_empty_ratings_is_none(self) -> None:
-        assert _extract_movie_rating({"ratings": {}}) is None
-
-    def test_all_zero_ratings_is_none(self) -> None:
-        movie = {
-            "ratings": {
-                "imdb": {"value": 0},
-                "tmdb": {"value": 0},
-            }
-        }
-        assert _extract_movie_rating(movie) is None
-
-    def test_null_values_is_none(self) -> None:
-        movie = {
-            "ratings": {
-                "imdb": {"value": None},
-                "tmdb": {"value": None},
-            }
-        }
-        assert _extract_movie_rating(movie) is None
+        assert len(items) == 2
+        assert items[0].metadata.get("series_name") == "Back to the Future Collection"
+        assert items[0].metadata.get("movie_number") == 1
+        assert items[1].metadata.get("series_name") == "Back to the Future Collection"
+        assert items[1].metadata.get("movie_number") == 2

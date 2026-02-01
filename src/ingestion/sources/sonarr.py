@@ -6,7 +6,12 @@ from typing import Any
 
 import requests
 
-from src.ingestion.plugin_base import ConfigField, SourceError, SourcePlugin
+from src.ingestion.plugin_base import (
+    ConfigField,
+    ProgressCallback,
+    SourceError,
+    SourcePlugin,
+)
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 
 logger = logging.getLogger(__name__)
@@ -68,11 +73,16 @@ class SonarrPlugin(SourcePlugin):
             errors.append("'url' is required")
         return errors
 
-    def fetch(self, config: dict[str, Any]) -> Iterator[ContentItem]:
+    def fetch(
+        self,
+        config: dict[str, Any],
+        progress_callback: ProgressCallback | None = None,
+    ) -> Iterator[ContentItem]:
         """Fetch TV series from Sonarr API.
 
         Args:
             config: Must contain 'url' and 'api_key'
+            progress_callback: Optional callback for progress updates
 
         Yields:
             ContentItem for each monitored series
@@ -91,6 +101,8 @@ class SonarrPlugin(SourcePlugin):
             ) from error
 
         source = self.get_source_identifier()
+        total = len(series_list)
+        count = 0
 
         for series in series_list:
             # Skip unmonitored series (user doesn't care about these)
@@ -105,8 +117,9 @@ class SonarrPlugin(SourcePlugin):
             # All imported items are UNREAD (wishlisted).
             status = ConsumptionStatus.UNREAD
 
-            # Extract rating if available (Sonarr's 0-10 scale → 1-5)
-            rating = self._extract_rating(series)
+            # No personal ratings - Sonarr doesn't track user ratings, only
+            # external aggregate scores (TVDB) which would mislead recommendations
+            rating = None
 
             # Build external ID for deduplication
             tvdb_id = series.get("tvdbId")
@@ -114,6 +127,9 @@ class SonarrPlugin(SourcePlugin):
 
             # Extract metadata
             metadata = _build_sonarr_metadata(series)
+
+            if progress_callback:
+                progress_callback(count, total, title)
 
             yield ContentItem(
                 id=external_id,
@@ -125,31 +141,7 @@ class SonarrPlugin(SourcePlugin):
                 metadata=metadata,
                 source=source,
             )
-
-    def _extract_rating(self, series: dict[str, Any]) -> int | None:
-        """Extract and normalize rating from Sonarr series data.
-
-        Sonarr provides ratings on a 0-10 scale. We divide by 2 to get 1-5.
-
-        Args:
-            series: Sonarr series data dict
-
-        Returns:
-            Normalized rating (1-5) or None
-        """
-        ratings = series.get("ratings", {})
-        if not ratings:
-            return None
-
-        raw_value = ratings.get("value")
-        if raw_value is None or raw_value == 0:
-            return None
-
-        try:
-            scaled = float(raw_value) / 2.0
-            return max(1, min(5, round(scaled)))
-        except (ValueError, TypeError):
-            return None
+            count += 1
 
 
 def _fetch_sonarr_series(base_url: str, api_key: str) -> list[dict[str, Any]]:

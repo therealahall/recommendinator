@@ -6,7 +6,12 @@ from typing import Any
 
 import requests
 
-from src.ingestion.plugin_base import ConfigField, SourceError, SourcePlugin
+from src.ingestion.plugin_base import (
+    ConfigField,
+    ProgressCallback,
+    SourceError,
+    SourcePlugin,
+)
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 
 logger = logging.getLogger(__name__)
@@ -68,11 +73,16 @@ class RadarrPlugin(SourcePlugin):
             errors.append("'url' is required")
         return errors
 
-    def fetch(self, config: dict[str, Any]) -> Iterator[ContentItem]:
+    def fetch(
+        self,
+        config: dict[str, Any],
+        progress_callback: ProgressCallback | None = None,
+    ) -> Iterator[ContentItem]:
         """Fetch movies from Radarr API.
 
         Args:
             config: Must contain 'url' and 'api_key'
+            progress_callback: Optional callback for progress updates
 
         Yields:
             ContentItem for each monitored movie
@@ -85,12 +95,15 @@ class RadarrPlugin(SourcePlugin):
 
         try:
             movie_list = _fetch_radarr_movies(base_url, api_key)
+            collection_map = _fetch_radarr_collections(base_url, api_key)
         except requests.RequestException as error:
             raise SourceError(
                 self.name, f"Failed to connect to Radarr at {base_url}: {error}"
             ) from error
 
         source = self.get_source_identifier()
+        total = len(movie_list)
+        count = 0
 
         for movie in movie_list:
             # Skip unmonitored movies
@@ -105,8 +118,9 @@ class RadarrPlugin(SourcePlugin):
             # All imported items are UNREAD (wishlisted).
             status = ConsumptionStatus.UNREAD
 
-            # Extract rating
-            rating = _extract_movie_rating(movie)
+            # No personal ratings - Radarr doesn't track user ratings, only
+            # external aggregate scores (IMDb/TMDB) which would mislead recommendations
+            rating = None
 
             # Build external ID for deduplication
             tmdb_id = movie.get("tmdbId")
@@ -114,6 +128,15 @@ class RadarrPlugin(SourcePlugin):
 
             # Extract metadata
             metadata = _build_radarr_metadata(movie)
+
+            # Add series info from Radarr collections (e.g., Back to the Future 1,2,3)
+            collection_info = collection_map.get(tmdb_id) if tmdb_id else None
+            if collection_info:
+                metadata["series_name"] = collection_info["title"]
+                metadata["movie_number"] = collection_info["order"]
+
+            if progress_callback:
+                progress_callback(count, total, title)
 
             yield ContentItem(
                 id=external_id,
@@ -125,6 +148,7 @@ class RadarrPlugin(SourcePlugin):
                 metadata=metadata,
                 source=source,
             )
+            count += 1
 
 
 def _fetch_radarr_movies(base_url: str, api_key: str) -> list[dict[str, Any]]:
@@ -155,33 +179,50 @@ def _fetch_radarr_movies(base_url: str, api_key: str) -> list[dict[str, Any]]:
     return list(data)
 
 
-def _extract_movie_rating(movie: dict[str, Any]) -> int | None:
-    """Extract and normalize rating from Radarr movie data.
+def _fetch_radarr_collections(base_url: str, api_key: str) -> dict[int, dict[str, Any]]:
+    """Fetch collections and build tmdb_id -> (title, order) map.
 
-    Tries IMDb rating first, then TMDB. Both use 0-10 scale, divided by 2.
+    Radarr collections (e.g., Back to the Future) provide movie order for
+    series-aware recommendations.
 
     Args:
-        movie: Radarr movie data dict
+        base_url: Radarr base URL
+        api_key: Radarr API key
 
     Returns:
-        Normalized rating (1-5) or None
+        Map of tmdb_id -> {"title": str, "order": int} for movies in collections
     """
-    ratings = movie.get("ratings", {})
-    if not ratings:
-        return None
+    url = f"{base_url}/api/v3/collection"
+    headers = {"X-Api-Key": api_key}
 
-    # Try IMDb rating first, then TMDB
-    for source_key in ("imdb", "tmdb"):
-        source_ratings = ratings.get(source_key, {})
-        raw_value = source_ratings.get("value")
-        if raw_value is not None and raw_value != 0:
-            try:
-                scaled = float(raw_value) / 2.0
-                return max(1, min(5, round(scaled)))
-            except (ValueError, TypeError):
-                continue
+    try:
+        response = requests.get(url, headers=headers, timeout=30)
+        response.raise_for_status()
+    except requests.RequestException as error:
+        logger.warning(f"Could not fetch Radarr collections: {error}")
+        return {}
 
-    return None
+    data = response.json()
+    if not isinstance(data, list):
+        return {}
+
+    result: dict[int, dict[str, Any]] = {}
+    for collection in data:
+        title = collection.get("title") or collection.get("name") or ""
+        if not title:
+            continue
+
+        movies = collection.get("movies") or collection.get("items") or []
+        for order, movie in enumerate(movies, start=1):
+            tmdb_id = None
+            if isinstance(movie, dict):
+                tmdb_id = movie.get("tmdbId") or movie.get("tmdb_id")
+            if tmdb_id is not None:
+                result[int(tmdb_id)] = {"title": title, "order": order}
+
+    if result:
+        logger.info(f"Loaded collection info for {len(result)} movies")
+    return result
 
 
 def _build_radarr_metadata(movie: dict[str, Any]) -> dict[str, Any]:

@@ -210,13 +210,13 @@ class TestSonarrPluginFetch:
         assert items[1].id == "tvdb:280619"
 
     @patch("src.ingestion.sources.sonarr.requests.get")
-    def test_fetch_rating_normalization(
+    def test_fetch_rating_is_none(
         self,
         mock_get: Mock,
         plugin: SonarrPlugin,
         sample_series: list[dict],
     ) -> None:
-        """Ratings should be normalized from 0-10 to 1-5."""
+        """Sonarr does not track personal ratings; rating should always be None."""
         mock_response = Mock()
         mock_response.json.return_value = sample_series
         mock_response.raise_for_status = Mock()
@@ -226,10 +226,8 @@ class TestSonarrPluginFetch:
             plugin.fetch({"url": "http://localhost:8989", "api_key": "test_key"})
         )
 
-        # 9.5 / 2 = 4.75, rounds to 5
-        assert items[0].rating == 5
-        # 8.4 / 2 = 4.2, rounds to 4
-        assert items[1].rating == 4
+        for item in items:
+            assert item.rating is None
 
     @patch("src.ingestion.sources.sonarr.requests.get")
     def test_fetch_metadata(
@@ -394,34 +392,3 @@ class TestSonarrPluginErrors:
 
         with pytest.raises(SourceError, match="Failed to connect to Sonarr"):
             list(plugin.fetch({"url": "http://localhost:8989", "api_key": "bad_key"}))
-
-
-class TestSonarrRatingNormalization:
-    """Tests for rating normalization from 0-10 to 1-5 scale."""
-
-    def test_rating_10_becomes_5(self, plugin: SonarrPlugin) -> None:
-        assert plugin._extract_rating({"ratings": {"value": 10.0}}) == 5
-
-    def test_rating_8_becomes_4(self, plugin: SonarrPlugin) -> None:
-        assert plugin._extract_rating({"ratings": {"value": 8.0}}) == 4
-
-    def test_rating_6_becomes_3(self, plugin: SonarrPlugin) -> None:
-        assert plugin._extract_rating({"ratings": {"value": 6.0}}) == 3
-
-    def test_rating_4_becomes_2(self, plugin: SonarrPlugin) -> None:
-        assert plugin._extract_rating({"ratings": {"value": 4.0}}) == 2
-
-    def test_rating_2_becomes_1(self, plugin: SonarrPlugin) -> None:
-        assert plugin._extract_rating({"ratings": {"value": 2.0}}) == 1
-
-    def test_rating_0_is_none(self, plugin: SonarrPlugin) -> None:
-        assert plugin._extract_rating({"ratings": {"value": 0}}) is None
-
-    def test_no_ratings_is_none(self, plugin: SonarrPlugin) -> None:
-        assert plugin._extract_rating({}) is None
-
-    def test_empty_ratings_is_none(self, plugin: SonarrPlugin) -> None:
-        assert plugin._extract_rating({"ratings": {}}) is None
-
-    def test_no_value_is_none(self, plugin: SonarrPlugin) -> None:
-        assert plugin._extract_rating({"ratings": {"value": None}}) is None
