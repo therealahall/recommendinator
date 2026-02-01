@@ -1,11 +1,17 @@
 """Abstract base class for source plugins."""
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
 from src.models.content import ContentItem, ContentType
+
+# Progress callback: (items_processed, total_items, current_item) -> None
+# - items_processed: Number of items fetched/processed so far
+# - total_items: Total expected (None if unknown)
+# - current_item: Title of current item or phase description (e.g. "Fetching...")
+ProgressCallback = Callable[[int, int | None, str | None], None]
 
 
 @dataclass
@@ -199,15 +205,26 @@ class SourcePlugin(ABC):
         ...
 
     @abstractmethod
-    def fetch(self, config: dict[str, Any]) -> Iterator[ContentItem]:
+    def fetch(
+        self,
+        config: dict[str, Any],
+        progress_callback: ProgressCallback | None = None,
+    ) -> Iterator[ContentItem]:
         """Fetch content items from this source.
 
         Main entry point for retrieving data. Yields ContentItem objects
         for each piece of content found. Should set item.source to
         self.get_source_identifier().
 
+        Plugins should call progress_callback(items_processed, total_items,
+        current_item) during long-running operations (API fetches, file
+        parsing) so callers can report progress to users. Call with
+        total_items=None when the total is unknown.
+
         Args:
             config: Plugin-specific configuration dict from inputs.<name>
+            progress_callback: Optional callback for progress updates during
+                fetch. Signature: (items_processed, total_items, current_item).
 
         Yields:
             ContentItem objects for each piece of content

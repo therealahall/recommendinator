@@ -8,6 +8,7 @@ import pytest
 from src.ingestion.plugin_base import (
     ConfigField,
     PluginInfo,
+    ProgressCallback,
     SourceError,
     SourcePlugin,
 )
@@ -56,7 +57,11 @@ class MockPlugin(SourcePlugin):
             errors.append("'path' is required")
         return errors
 
-    def fetch(self, config: dict[str, Any]) -> Iterator[ContentItem]:
+    def fetch(
+        self,
+        config: dict[str, Any],
+        progress_callback: ProgressCallback | None = None,
+    ) -> Iterator[ContentItem]:
         yield ContentItem(
             id="test_1",
             title="Test Item",
@@ -101,7 +106,11 @@ class MockAPIPlugin(SourcePlugin):
             errors.append("'api_key' is required")
         return errors
 
-    def fetch(self, config: dict[str, Any]) -> Iterator[ContentItem]:
+    def fetch(
+        self,
+        config: dict[str, Any],
+        progress_callback: ProgressCallback | None = None,
+    ) -> Iterator[ContentItem]:
         yield ContentItem(
             id="game_1",
             title="Test Game",

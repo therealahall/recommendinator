@@ -220,7 +220,9 @@ class TestParseSteamGames:
         assert item.content_type == ContentType.VIDEO_GAME
         assert item.id == "12345"
         assert item.author is None
-        assert item.status == ConsumptionStatus.COMPLETED
+        # Games with playtime are marked as "currently consuming" since Steam
+        # doesn't provide completion data and playtime is unreliable
+        assert item.status == ConsumptionStatus.CURRENTLY_CONSUMING
         assert item.rating is None  # Ratings are user-provided, not inferred
         assert item.metadata["playtime_hours"] == 2.0
         assert item.metadata["playtime_minutes"] == 120
@@ -228,10 +230,16 @@ class TestParseSteamGames:
     @patch("src.ingestion.sources.steam.get_game_details")
     @patch("src.ingestion.sources.steam.get_owned_games")
     def test_parse_steam_games_status_mapping(self, mock_get_games, mock_get_details):
-        """Test status mapping based on playtime."""
+        """Test status mapping based on playtime.
+
+        Steam doesn't provide completion data, and playtime is unreliable for
+        determining completion (a 5-hour indie game vs a 100-hour RPG). We only
+        distinguish between "never played" (UNREAD) and "has been played"
+        (CURRENTLY_CONSUMING). Users can manually mark games as completed.
+        """
         mock_get_details.return_value = {}
 
-        # Test unread (0 minutes)
+        # Test unread (0 minutes playtime = never played)
         mock_get_games.return_value = [
             {"appid": 1, "name": "Unread Game", "playtime_forever": 0}
         ]
@@ -239,20 +247,21 @@ class TestParseSteamGames:
         assert items[0].status == ConsumptionStatus.UNREAD
         assert items[0].rating is None
 
-        # Test currently consuming (< 1 hour)
+        # Test currently consuming (any playtime = has been played)
         mock_get_games.return_value = [
             {"appid": 2, "name": "Playing Game", "playtime_forever": 30}
         ]
         items = list(parse_steam_games("test_key", steam_id="76561198000000000"))
         assert items[0].status == ConsumptionStatus.CURRENTLY_CONSUMING
-        assert items[0].rating is None  # < 1 hour = no rating
+        assert items[0].rating is None
 
-        # Test completed (1+ hours)
+        # Test that even high playtime doesn't mean "completed"
+        # (a 100-hour RPG vs a 5-hour indie game)
         mock_get_games.return_value = [
-            {"appid": 3, "name": "Completed Game", "playtime_forever": 60}
+            {"appid": 3, "name": "Long Game", "playtime_forever": 6000}  # 100 hours
         ]
         items = list(parse_steam_games("test_key", steam_id="76561198000000000"))
-        assert items[0].status == ConsumptionStatus.COMPLETED
+        assert items[0].status == ConsumptionStatus.CURRENTLY_CONSUMING
 
     @patch("src.ingestion.sources.steam.get_game_details")
     @patch("src.ingestion.sources.steam.get_owned_games")

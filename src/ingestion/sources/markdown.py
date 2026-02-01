@@ -7,7 +7,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from src.ingestion.plugin_base import ConfigField, SourceError, SourcePlugin
+from src.ingestion.plugin_base import (
+    ConfigField,
+    ProgressCallback,
+    SourceError,
+    SourcePlugin,
+)
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 
 logger = logging.getLogger(__name__)
@@ -120,11 +125,16 @@ class MarkdownImportPlugin(SourcePlugin):
 
         return errors
 
-    def fetch(self, config: dict[str, Any]) -> Iterator[ContentItem]:
+    def fetch(
+        self,
+        config: dict[str, Any],
+        progress_callback: ProgressCallback | None = None,
+    ) -> Iterator[ContentItem]:
         """Fetch content items from a Markdown file.
 
         Args:
             config: Must contain 'markdown_path' and 'content_type'
+            progress_callback: Optional callback for progress updates
 
         Yields:
             ContentItem for each list entry in the file
@@ -150,13 +160,16 @@ class MarkdownImportPlugin(SourcePlugin):
                 self.name, f"Markdown file not found: {file_path}"
             ) from error
 
-        yield from _parse_markdown(content, content_type, self.get_source_identifier())
+        yield from _parse_markdown(
+            content, content_type, self.get_source_identifier(), progress_callback
+        )
 
 
 def _parse_markdown(
     content: str,
     content_type: ContentType,
     source: str,
+    progress_callback: ProgressCallback | None = None,
 ) -> Iterator[ContentItem]:
     """Parse a Markdown file into ContentItem objects.
 
@@ -164,11 +177,13 @@ def _parse_markdown(
         content: Full markdown content
         content_type: Content type to assign to all items
         source: Source identifier
+        progress_callback: Optional callback for progress updates
 
     Yields:
         ContentItem objects
     """
     current_status = ConsumptionStatus.UNREAD
+    count = 0
 
     for line in content.splitlines():
         stripped = line.strip()
@@ -226,6 +241,9 @@ def _parse_markdown(
                     "Expected YYYY-MM-DD."
                 )
 
+        if progress_callback:
+            progress_callback(count, None, title)
+
         yield ContentItem(
             title=title,
             author=creator or None,
@@ -236,6 +254,7 @@ def _parse_markdown(
             metadata=parsed_metadata if parsed_metadata else {},
             source=source,
         )
+        count += 1
 
 
 def _match_section_status(heading_text: str) -> ConsumptionStatus | None:

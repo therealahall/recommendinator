@@ -23,12 +23,19 @@ Example usage:
         process(item)
 """
 
-from src.ingestion.plugin_base import ConfigField, PluginInfo, SourceError, SourcePlugin
+from src.ingestion.plugin_base import (
+    ConfigField,
+    PluginInfo,
+    ProgressCallback,
+    SourceError,
+    SourcePlugin,
+)
 from src.ingestion.registry import PluginRegistry, get_registry
 
 __all__ = [
     "ConfigField",
     "PluginInfo",
+    "ProgressCallback",
     "PluginRegistry",
     "SourceError",
     "SourcePlugin",

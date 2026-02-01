@@ -6,7 +6,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from src.ingestion.plugin_base import ConfigField, SourceError, SourcePlugin
+from src.ingestion.plugin_base import (
+    ConfigField,
+    ProgressCallback,
+    SourceError,
+    SourcePlugin,
+)
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 
 
@@ -58,11 +63,16 @@ class GoodreadsPlugin(SourcePlugin):
             errors.append(f"CSV file not found: {csv_path}")
         return errors
 
-    def fetch(self, config: dict[str, Any]) -> Iterator[ContentItem]:
+    def fetch(
+        self,
+        config: dict[str, Any],
+        progress_callback: ProgressCallback | None = None,
+    ) -> Iterator[ContentItem]:
         """Fetch content items from a Goodreads CSV export.
 
         Args:
             config: Must contain 'csv_path' pointing to the CSV file
+            progress_callback: Optional callback for progress updates
 
         Yields:
             ContentItem for each book in the export
@@ -74,17 +84,22 @@ class GoodreadsPlugin(SourcePlugin):
         file_path = Path(csv_path)
 
         try:
-            yield from self._parse_csv(file_path)
+            yield from self._parse_csv(file_path, progress_callback)
         except FileNotFoundError as error:
             raise SourceError(self.name, f"CSV file not found: {file_path}") from error
         except csv.Error as error:
             raise SourceError(self.name, f"Failed to parse CSV: {error}") from error
 
-    def _parse_csv(self, file_path: Path) -> Iterator[ContentItem]:
+    def _parse_csv(
+        self,
+        file_path: Path,
+        progress_callback: ProgressCallback | None = None,
+    ) -> Iterator[ContentItem]:
         """Parse a Goodreads CSV export file.
 
         Args:
             file_path: Path to the Goodreads CSV export file
+            progress_callback: Optional callback for progress updates
 
         Yields:
             ContentItem objects for each book in the export
@@ -93,65 +108,68 @@ class GoodreadsPlugin(SourcePlugin):
 
         with open(file_path, encoding="utf-8") as csv_file:
             reader = csv.DictReader(csv_file)
+            rows = list(reader)
 
-            for row in reader:
-                title = row.get("Title", "").strip()
-                if not title:
-                    continue
+        total = len(rows)
+        count = 0
+        for row in rows:
+            title = row.get("Title", "").strip()
+            if not title:
+                continue
 
-                author = row.get("Author", "").strip() or None
+            if progress_callback:
+                progress_callback(count, total, title)
 
-                # Parse rating (0 means unrated/unread)
-                rating_str = row.get("My Rating", "0").strip()
+            author = row.get("Author", "").strip() or None
+
+            # Parse rating (0 means unrated/unread)
+            rating_str = row.get("My Rating", "0").strip()
+            try:
+                rating = int(rating_str) if rating_str and rating_str != "0" else None
+            except ValueError:
+                rating = None
+
+            # Parse status from Exclusive Shelf
+            shelf = row.get("Exclusive Shelf", "").strip().lower()
+            if shelf == "read":
+                status = ConsumptionStatus.COMPLETED
+            elif shelf == "currently-reading":
+                status = ConsumptionStatus.CURRENTLY_CONSUMING
+            else:  # to-read or empty
+                status = ConsumptionStatus.UNREAD
+
+            # Parse date read
+            date_read_str = row.get("Date Read", "").strip()
+            date_completed = None
+            if date_read_str:
                 try:
-                    rating = (
-                        int(rating_str) if rating_str and rating_str != "0" else None
-                    )
+                    date_completed = datetime.strptime(date_read_str, "%Y/%m/%d").date()
                 except ValueError:
-                    rating = None
+                    pass
 
-                # Parse status from Exclusive Shelf
-                shelf = row.get("Exclusive Shelf", "").strip().lower()
-                if shelf == "read":
-                    status = ConsumptionStatus.COMPLETED
-                elif shelf == "currently-reading":
-                    status = ConsumptionStatus.CURRENTLY_CONSUMING
-                else:  # to-read or empty
-                    status = ConsumptionStatus.UNREAD
+            # Extract review
+            review = row.get("My Review", "").strip() or None
 
-                # Parse date read
-                date_read_str = row.get("Date Read", "").strip()
-                date_completed = None
-                if date_read_str:
-                    try:
-                        date_completed = datetime.strptime(
-                            date_read_str, "%Y/%m/%d"
-                        ).date()
-                    except ValueError:
-                        pass
+            # Extract additional metadata
+            metadata = {
+                "book_id": row.get("Book Id", "").strip(),
+                "isbn": row.get("ISBN", "").strip() or None,
+                "isbn13": row.get("ISBN13", "").strip() or None,
+                "pages": row.get("Number of Pages", "").strip() or None,
+                "year_published": row.get("Year Published", "").strip() or None,
+                "publisher": row.get("Publisher", "").strip() or None,
+            }
 
-                # Extract review
-                review = row.get("My Review", "").strip() or None
-
-                # Extract additional metadata
-                metadata = {
-                    "book_id": row.get("Book Id", "").strip(),
-                    "isbn": row.get("ISBN", "").strip() or None,
-                    "isbn13": row.get("ISBN13", "").strip() or None,
-                    "pages": row.get("Number of Pages", "").strip() or None,
-                    "year_published": row.get("Year Published", "").strip() or None,
-                    "publisher": row.get("Publisher", "").strip() or None,
-                }
-
-                yield ContentItem(
-                    id=metadata.get("book_id"),
-                    title=title,
-                    author=author,
-                    content_type=ContentType.BOOK,
-                    rating=rating,
-                    review=review,
-                    status=status,
-                    date_completed=date_completed,
-                    metadata=metadata,
-                    source=source,
-                )
+            yield ContentItem(
+                id=metadata.get("book_id"),
+                title=title,
+                author=author,
+                content_type=ContentType.BOOK,
+                rating=rating,
+                review=review,
+                status=status,
+                date_completed=date_completed,
+                metadata=metadata,
+                source=source,
+            )
+            count += 1

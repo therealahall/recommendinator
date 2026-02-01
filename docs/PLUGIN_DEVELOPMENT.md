@@ -11,7 +11,7 @@ Plugins are Python classes that fetch content items from external sources (APIs,
 All plugins inherit from `SourcePlugin` in `src/ingestion/plugin_base.py`:
 
 ```python
-from src.ingestion.plugin_base import SourcePlugin
+from src.ingestion.plugin_base import ProgressCallback, SourcePlugin
 from src.models.content import ContentItem, ContentType, ConsumptionStatus
 
 class MyPlugin(SourcePlugin):
@@ -49,8 +49,17 @@ class MyPlugin(SourcePlugin):
             errors.append("API key is required")
         return errors
     
-    def fetch(self, config: dict) -> Iterator[ContentItem]:
-        """Yield ContentItem objects from the source."""
+    def fetch(
+        self,
+        config: dict,
+        progress_callback: ProgressCallback | None = None,
+    ) -> Iterator[ContentItem]:
+        """Yield ContentItem objects from the source.
+
+        Call progress_callback(items_processed, total_items, current_item)
+        during long-running operations so callers can report progress.
+        Use total_items=None when the total is unknown.
+        """
         # Your implementation here
         yield ContentItem(
             id="external-id-123",
@@ -348,6 +357,9 @@ class TestMyPlugin:
 6. **Use unique IDs** - Ensure `id` is unique within content type
 7. **Skip invalid items** - Don't yield items with missing required fields
 8. **Log useful info** - Help users debug issues
+9. **Support progress reporting** - Accept `progress_callback` in `fetch()` and
+   call it during long operations: `progress_callback(items_processed,
+   total_items, current_item)`. Use `total_items=None` when unknown.
 
 ## Existing Plugins to Reference
 

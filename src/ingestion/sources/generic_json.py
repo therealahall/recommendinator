@@ -7,7 +7,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from src.ingestion.plugin_base import ConfigField, SourceError, SourcePlugin
+from src.ingestion.plugin_base import (
+    ConfigField,
+    ProgressCallback,
+    SourceError,
+    SourcePlugin,
+)
 from src.ingestion.sources.generic_csv import (
     CONTENT_TYPE_COLUMNS,
     CREATOR_FIELD,
@@ -88,11 +93,16 @@ class JsonImportPlugin(SourcePlugin):
 
         return errors
 
-    def fetch(self, config: dict[str, Any]) -> Iterator[ContentItem]:
+    def fetch(
+        self,
+        config: dict[str, Any],
+        progress_callback: ProgressCallback | None = None,
+    ) -> Iterator[ContentItem]:
         """Fetch content items from a JSON or JSONL file.
 
         Args:
             config: Must contain 'json_path' and 'content_type'
+            progress_callback: Optional callback for progress updates
 
         Yields:
             ContentItem for each entry in the file
@@ -118,7 +128,12 @@ class JsonImportPlugin(SourcePlugin):
         except (json.JSONDecodeError, ValueError) as error:
             raise SourceError(self.name, f"Failed to parse JSON: {error}") from error
 
-        yield from _parse_entries(entries, content_type, self.get_source_identifier())
+        yield from _parse_entries(
+            entries,
+            content_type,
+            self.get_source_identifier(),
+            progress_callback,
+        )
 
 
 def _load_json_or_jsonl(file_path: Path) -> list[dict[str, Any]]:
@@ -170,6 +185,7 @@ def _parse_entries(
     entries: list[dict[str, Any]],
     content_type: ContentType,
     source: str,
+    progress_callback: ProgressCallback | None = None,
 ) -> Iterator[ContentItem]:
     """Parse JSON entries into ContentItem objects.
 
@@ -177,16 +193,22 @@ def _parse_entries(
         entries: List of entry dictionaries
         content_type: The content type to parse as
         source: Source identifier for the items
+        progress_callback: Optional callback for progress updates
 
     Yields:
         ContentItem objects
     """
     creator_field = CREATOR_FIELD.get(content_type.value)
+    total = len(entries)
+    count = 0
 
     for entry in entries:
         title = str(entry.get("title", "")).strip()
         if not title:
             continue
+
+        if progress_callback:
+            progress_callback(count, total, title)
 
         # Parse rating
         raw_rating = entry.get("rating")
@@ -233,6 +255,7 @@ def _parse_entries(
             metadata=metadata,
             source=source,
         )
+        count += 1
 
 
 def _normalize_json_rating(raw_rating: Any) -> int | None:
