@@ -81,6 +81,40 @@ class TestGetSortTitle:
         assert get_sort_title("Them") == "them"
 
 
+class TestSortTitleArticleRegression:
+    """Regression tests for article stripping bugs."""
+
+    def test_i_am_legend_stays_intact_regression(self) -> None:
+        """Regression test: "I Am Legend" should not be stripped.
+
+        Bug reported: Italian article "i" in ARTICLES caused titles starting
+        with "I " (English pronoun) to be incorrectly stripped.
+
+        Root cause: "i" was included as an Italian plural article, but it
+        collides with the very common English word "I".
+
+        Fix: Removed "i" from ARTICLES frozenset.
+        """
+        assert get_sort_title("I Am Legend") == "i am legend"
+        assert get_sort_title("I, Robot") == "i, robot"
+
+    def test_il_postino_still_strips_regression(self) -> None:
+        """Regression test: "Il Postino" should still strip the Italian article.
+
+        Ensures removing "i" didn't break "il" stripping.
+        """
+        assert get_sort_title("Il Postino") == "postino"
+
+    def test_l_apostrophe_was_unreachable_regression(self) -> None:
+        """Regression test: "l'" was dead code in ARTICLES.
+
+        The regex requires \\s+ after the article, but "l'" uses an
+        apostrophe (no space), so it could never match. Removed as dead code.
+        Titles like "L'Étranger" are unaffected (were never stripped).
+        """
+        assert get_sort_title("L'Étranger") == "l'étranger"
+
+
 class TestSortTitleOrdering:
     """Tests for sorting behavior with get_sort_title."""
 

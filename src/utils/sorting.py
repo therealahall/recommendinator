@@ -13,7 +13,6 @@ ARTICLES = frozenset(
         "le",
         "la",
         "les",
-        "l'",
         "un",
         "une",
         # Spanish
@@ -29,7 +28,6 @@ ARTICLES = frozenset(
         # Italian
         "il",
         "lo",
-        "i",
         "gli",
     }
 )
