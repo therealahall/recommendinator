@@ -1,0 +1,202 @@
+"""Tests for the shared sync executor."""
+
+from unittest.mock import MagicMock
+
+import pytest
+
+from src.ingestion.plugin_base import SourceError
+from src.ingestion.sync import SyncResult, execute_sync
+from src.models.content import ConsumptionStatus, ContentItem, ContentType
+
+
+def _make_item(title: str) -> ContentItem:
+    """Create a minimal ContentItem for testing."""
+    return ContentItem(
+        id=None,
+        title=title,
+        author=None,
+        content_type=ContentType.BOOK,
+        status=ConsumptionStatus.COMPLETED,
+    )
+
+
+class TestSyncResult:
+    """Tests for SyncResult dataclass."""
+
+    def test_defaults(self) -> None:
+        result = SyncResult(source_name="Test")
+        assert result.source_name == "Test"
+        assert result.items_synced == 0
+        assert result.total_items == 0
+        assert result.errors == []
+
+    def test_errors_not_shared(self) -> None:
+        """Each SyncResult gets its own error list (no mutable default sharing)."""
+        result_a = SyncResult(source_name="A")
+        result_b = SyncResult(source_name="B")
+        result_a.errors.append("oops")
+        assert result_b.errors == []
+
+
+class TestExecuteSync:
+    """Tests for execute_sync function."""
+
+    def test_basic_sync(self) -> None:
+        """Items are fetched, saved, and counted."""
+        items = [_make_item("Book 1"), _make_item("Book 2")]
+        plugin = MagicMock()
+        plugin.display_name = "TestPlugin"
+        plugin.fetch.return_value = iter(items)
+
+        storage = MagicMock()
+
+        result = execute_sync(
+            plugin=plugin,
+            plugin_config={"key": "val"},
+            storage_manager=storage,
+        )
+
+        assert result.source_name == "TestPlugin"
+        assert result.items_synced == 2
+        assert result.total_items == 2
+        assert result.errors == []
+        assert storage.save_content_item.call_count == 2
+
+    def test_sync_with_embeddings(self) -> None:
+        """Embeddings are generated when enabled."""
+        items = [_make_item("Book 1")]
+        plugin = MagicMock()
+        plugin.display_name = "TestPlugin"
+        plugin.fetch.return_value = iter(items)
+
+        storage = MagicMock()
+        embedding_gen = MagicMock()
+        embedding_gen.generate_content_embedding.return_value = [0.1, 0.2]
+
+        result = execute_sync(
+            plugin=plugin,
+            plugin_config={},
+            storage_manager=storage,
+            embedding_generator=embedding_gen,
+            use_embeddings=True,
+        )
+
+        assert result.items_synced == 1
+        embedding_gen.generate_content_embedding.assert_called_once()
+        storage.save_content_item.assert_called_once_with(items[0], [0.1, 0.2])
+
+    def test_sync_without_embeddings(self) -> None:
+        """Embedding generator is not called when use_embeddings is False."""
+        items = [_make_item("Book 1")]
+        plugin = MagicMock()
+        plugin.display_name = "TestPlugin"
+        plugin.fetch.return_value = iter(items)
+
+        storage = MagicMock()
+        embedding_gen = MagicMock()
+
+        result = execute_sync(
+            plugin=plugin,
+            plugin_config={},
+            storage_manager=storage,
+            embedding_generator=embedding_gen,
+            use_embeddings=False,
+        )
+
+        assert result.items_synced == 1
+        embedding_gen.generate_content_embedding.assert_not_called()
+        storage.save_content_item.assert_called_once_with(items[0], None)
+
+    def test_sync_records_save_errors(self) -> None:
+        """Errors during save are recorded but don't stop the sync."""
+        items = [_make_item("Good"), _make_item("Bad"), _make_item("Also Good")]
+        plugin = MagicMock()
+        plugin.display_name = "TestPlugin"
+        plugin.fetch.return_value = iter(items)
+
+        storage = MagicMock()
+        storage.save_content_item.side_effect = [None, ValueError("db error"), None]
+
+        result = execute_sync(
+            plugin=plugin,
+            plugin_config={},
+            storage_manager=storage,
+        )
+
+        assert result.items_synced == 2
+        assert result.total_items == 3
+        assert len(result.errors) == 1
+        assert "Bad" in result.errors[0]
+
+    def test_progress_callback_called(self) -> None:
+        """Progress callback receives updates during sync."""
+        items = [_make_item("Book 1")]
+        plugin = MagicMock()
+        plugin.display_name = "TestPlugin"
+        plugin.fetch.return_value = iter(items)
+
+        storage = MagicMock()
+        progress = MagicMock()
+
+        execute_sync(
+            plugin=plugin,
+            plugin_config={},
+            storage_manager=storage,
+            progress_callback=progress,
+        )
+
+        # Should be called at least: initial, post-fetch, and per-item
+        assert progress.call_count >= 3
+
+    def test_fetch_error_propagates(self) -> None:
+        """SourceError from plugin.fetch propagates to caller."""
+        plugin = MagicMock()
+        plugin.display_name = "TestPlugin"
+        plugin.fetch.side_effect = SourceError("test", "connection failed")
+
+        storage = MagicMock()
+
+        with pytest.raises(SourceError, match="connection failed"):
+            execute_sync(
+                plugin=plugin,
+                plugin_config={},
+                storage_manager=storage,
+            )
+
+    def test_empty_source(self) -> None:
+        """Sync with no items returns zero counts."""
+        plugin = MagicMock()
+        plugin.display_name = "EmptyPlugin"
+        plugin.fetch.return_value = iter([])
+
+        storage = MagicMock()
+
+        result = execute_sync(
+            plugin=plugin,
+            plugin_config={},
+            storage_manager=storage,
+        )
+
+        assert result.items_synced == 0
+        assert result.total_items == 0
+        assert result.errors == []
+        storage.save_content_item.assert_not_called()
+
+    def test_plugin_config_passed_through(self) -> None:
+        """Plugin receives the exact config dict."""
+        plugin = MagicMock()
+        plugin.display_name = "TestPlugin"
+        plugin.fetch.return_value = iter([])
+
+        storage = MagicMock()
+        config = {"url": "http://example.com", "api_key": "secret"}
+
+        execute_sync(
+            plugin=plugin,
+            plugin_config=config,
+            storage_manager=storage,
+        )
+
+        plugin.fetch.assert_called_once()
+        call_args = plugin.fetch.call_args
+        assert call_args[0][0] == config
