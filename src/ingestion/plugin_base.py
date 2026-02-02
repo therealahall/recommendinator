@@ -263,6 +263,22 @@ class SourcePlugin(ABC):
         except (ValueError, TypeError):
             return None
 
+    @classmethod
+    def transform_config(cls, raw_config: dict[str, Any]) -> dict[str, Any]:
+        """Transform raw YAML config into the dict expected by fetch/validate.
+
+        Override in subclasses when the YAML keys differ from the keys
+        that ``fetch()`` and ``validate_config()`` expect.  The default
+        implementation returns *raw_config* unchanged.
+
+        Args:
+            raw_config: The ``inputs.<source>`` section from the YAML config.
+
+        Returns:
+            Transformed config dict ready for ``validate_config`` / ``fetch``.
+        """
+        return dict(raw_config)
+
     def get_source_identifier(self) -> str:
         """Get the source identifier to store in ContentItem.source.
 

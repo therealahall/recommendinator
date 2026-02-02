@@ -44,6 +44,14 @@ class RadarrPlugin(SourcePlugin):
     def requires_api_key(self) -> bool:
         return True
 
+    @classmethod
+    def transform_config(cls, raw_config: dict[str, Any]) -> dict[str, Any]:
+        """Strip and normalise Radarr YAML config."""
+        return {
+            "url": (raw_config.get("url", "http://localhost:7878") or "").rstrip("/"),
+            "api_key": (raw_config.get("api_key") or "").strip(),
+        }
+
     def get_config_schema(self) -> list[ConfigField]:
         return [
             ConfigField(

@@ -44,6 +44,12 @@ class GoodreadsPlugin(SourcePlugin):
     def requires_network(self) -> bool:
         return False
 
+    @classmethod
+    def transform_config(cls, raw_config: dict[str, Any]) -> dict[str, Any]:
+        """Map YAML ``path`` key to the ``csv_path`` key expected by fetch."""
+        path = raw_config.get("path", "inputs/goodreads_library_export.csv")
+        return {"csv_path": str(path)}
+
     def get_config_schema(self) -> list[ConfigField]:
         return [
             ConfigField(

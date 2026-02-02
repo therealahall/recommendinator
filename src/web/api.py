@@ -15,6 +15,7 @@ from src.web.sync_manager import SyncJob, get_sync_manager
 from src.web.sync_sources import (
     get_available_sync_sources,
     get_sync_handler,
+    transform_source_config,
     validate_source_config,
 )
 
@@ -595,9 +596,9 @@ def _execute_sync(
             logger.warning(f"[SYNC] No handler for source {source_id}, skipping")
             continue
 
-        plugin, config_transform = handler
+        plugin, _description = handler
         source_config = inputs_config.get(source_id, {})
-        plugin_config = config_transform(source_config)
+        plugin_config = transform_source_config(source_id, source_config)
 
         if plugin is None:
             # Steam - special handling

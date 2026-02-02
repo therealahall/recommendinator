@@ -203,6 +203,16 @@ class SteamPlugin(SourcePlugin):
     def requires_api_key(self) -> bool:
         return True
 
+    @classmethod
+    def transform_config(cls, raw_config: dict[str, Any]) -> dict[str, Any]:
+        """Normalise Steam YAML config (strip whitespace, coerce empty to None)."""
+        return {
+            "api_key": raw_config.get("api_key", "").strip(),
+            "steam_id": raw_config.get("steam_id", "").strip() or None,
+            "vanity_url": raw_config.get("vanity_url", "").strip() or None,
+            "min_playtime_minutes": raw_config.get("min_playtime_minutes", 0),
+        }
+
     def get_config_schema(self) -> list[ConfigField]:
         return [
             ConfigField(
