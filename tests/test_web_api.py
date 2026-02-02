@@ -472,8 +472,6 @@ def test_put_user_preferences_full(client, mock_components):
             "scorer_weights": {"genre_match": 5.0},
             "series_in_order": False,
             "variety_after_completion": True,
-            "minimum_book_pages": 100,
-            "maximum_movie_runtime": 180,
             "custom_rules": ["no horror"],
         },
     )

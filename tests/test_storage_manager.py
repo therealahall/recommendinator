@@ -277,7 +277,6 @@ def test_save_and_load_user_preference_config(
     preference_config = UserPreferenceConfig(
         scorer_weights={"genre_match": 3.0, "tag_overlap": 0.5},
         series_in_order=False,
-        minimum_book_pages=150,
     )
     temp_storage_manager.save_user_preference_config(
         user_id=1, preference_config=preference_config

@@ -10,8 +10,6 @@ class TestUserPreferenceConfig:
         assert config.scorer_weights == {}
         assert config.series_in_order is True
         assert config.variety_after_completion is False
-        assert config.minimum_book_pages is None
-        assert config.maximum_movie_runtime is None
         assert config.custom_rules == []
         assert config.content_length_preferences == {}
 
@@ -21,8 +19,6 @@ class TestUserPreferenceConfig:
             scorer_weights={"genre_match": 3.0, "creator_match": 0.5},
             series_in_order=False,
             variety_after_completion=True,
-            minimum_book_pages=200,
-            maximum_movie_runtime=120,
             custom_rules=["no horror"],
             content_length_preferences={"book": "short", "movie": "long"},
         )
@@ -51,9 +47,19 @@ class TestUserPreferenceConfig:
             "scorer_weights",
             "series_in_order",
             "variety_after_completion",
-            "minimum_book_pages",
-            "maximum_movie_runtime",
             "custom_rules",
             "content_length_preferences",
         }
         assert set(data.keys()) == expected_keys
+
+    def test_from_dict_ignores_deprecated_keys(self) -> None:
+        """from_dict safely ignores old deprecated keys in stored JSON."""
+        data = {
+            "scorer_weights": {},
+            "minimum_book_pages": 200,
+            "maximum_movie_runtime": 120,
+        }
+        config = UserPreferenceConfig.from_dict(data)
+        assert config.scorer_weights == {}
+        assert not hasattr(config, "minimum_book_pages")
+        assert not hasattr(config, "maximum_movie_runtime")

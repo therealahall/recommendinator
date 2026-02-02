@@ -110,8 +110,6 @@ class UserPreferenceResponse(BaseModel):
     scorer_weights: dict[str, float]
     series_in_order: bool
     variety_after_completion: bool
-    minimum_book_pages: int | None
-    maximum_movie_runtime: int | None
     custom_rules: list[str]
     content_length_preferences: dict[str, str] = Field(default_factory=dict)
 
@@ -144,8 +142,6 @@ class UserPreferenceUpdateRequest(BaseModel):
     scorer_weights: dict[str, float] | None = None
     series_in_order: bool | None = None
     variety_after_completion: bool | None = None
-    minimum_book_pages: int | None = None
-    maximum_movie_runtime: int | None = None
     custom_rules: list[str] | None = None
     content_length_preferences: dict[str, str] | None = None
 
@@ -400,10 +396,6 @@ async def update_user_preferences(
         existing.series_in_order = request.series_in_order
     if request.variety_after_completion is not None:
         existing.variety_after_completion = request.variety_after_completion
-    if request.minimum_book_pages is not None:
-        existing.minimum_book_pages = request.minimum_book_pages
-    if request.maximum_movie_runtime is not None:
-        existing.maximum_movie_runtime = request.maximum_movie_runtime
     if request.custom_rules is not None:
         existing.custom_rules = request.custom_rules
     if request.content_length_preferences is not None:
