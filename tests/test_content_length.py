@@ -7,6 +7,7 @@ from src.recommendations.content_length import (
     filter_by_length,
     get_length_value,
     passes_length_filter,
+    score_length_match,
 )
 
 
@@ -133,6 +134,42 @@ class TestClassifyLength:
 # ---------------------------------------------------------------------------
 # passes_length_filter tests
 # ---------------------------------------------------------------------------
+
+
+class TestScoreLengthMatch:
+    """Tests for the soft scoring function."""
+
+    def test_any_preference_returns_1(self) -> None:
+        item = _make_item(ContentType.BOOK, {"pages": 1000})
+        assert score_length_match(item, {"book": "any"}) == 1.0
+
+    def test_no_preference_defaults_to_1(self) -> None:
+        item = _make_item(ContentType.BOOK, {"pages": 1000})
+        assert score_length_match(item, {}) == 1.0
+
+    def test_exact_match_returns_1(self) -> None:
+        item = _make_item(ContentType.BOOK, {"pages": 200})
+        assert score_length_match(item, {"book": "short"}) == 1.0
+
+    def test_adjacent_category_returns_07(self) -> None:
+        """Medium item with short preference is adjacent (distance 1)."""
+        item = _make_item(ContentType.BOOK, {"pages": 350})
+        assert score_length_match(item, {"book": "short"}) == 0.7
+
+    def test_opposite_ends_returns_04(self) -> None:
+        """Long item with short preference is opposite (distance 2)."""
+        item = _make_item(ContentType.BOOK, {"pages": 800})
+        assert score_length_match(item, {"book": "short"}) == 0.4
+
+    def test_no_metadata_returns_08(self) -> None:
+        """Items without length metadata get benefit of the doubt."""
+        item = _make_item(ContentType.BOOK, {})
+        assert score_length_match(item, {"book": "short"}) == 0.8
+
+    def test_different_content_type_not_affected(self) -> None:
+        """A movie preference does not penalize a book."""
+        item = _make_item(ContentType.BOOK, {"pages": 800})
+        assert score_length_match(item, {"movie": "short"}) == 1.0
 
 
 class TestPassesLengthFilter:

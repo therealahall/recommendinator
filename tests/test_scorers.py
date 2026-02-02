@@ -3,6 +3,7 @@
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.recommendations.preferences import PreferenceAnalyzer
 from src.recommendations.scorers import (
+    ContentLengthScorer,
     CreatorMatchScorer,
     CustomPreferenceScorer,
     GenreMatchScorer,
@@ -675,3 +676,52 @@ class TestCustomPreferenceScorer:
         scorer = CustomPreferenceScorer(genre_boosts={}, genre_penalties={})
         score = scorer.score(candidate, context)
         assert score == 0.5
+
+
+# ---------------------------------------------------------------------------
+# ContentLengthScorer tests
+# ---------------------------------------------------------------------------
+
+
+class TestContentLengthScorer:
+    """Tests for the ContentLengthScorer."""
+
+    def test_no_preferences_returns_1(self) -> None:
+        """No content_length_preferences in context returns 1.0."""
+        candidate = _make_item(
+            content_type=ContentType.BOOK,
+            metadata={"pages": 800},
+            status=ConsumptionStatus.UNREAD,
+        )
+        context = _build_context(consumed=[])
+        scorer = ContentLengthScorer()
+        assert scorer.score(candidate, context) == 1.0
+
+    def test_exact_match_returns_1(self) -> None:
+        """Short book with short preference returns 1.0."""
+        candidate = _make_item(
+            content_type=ContentType.BOOK,
+            metadata={"pages": 200},
+            status=ConsumptionStatus.UNREAD,
+        )
+        context = _build_context(consumed=[])
+        context.content_length_preferences = {"book": "short"}
+        scorer = ContentLengthScorer()
+        assert scorer.score(candidate, context) == 1.0
+
+    def test_opposite_returns_04(self) -> None:
+        """Long book with short preference returns 0.4."""
+        candidate = _make_item(
+            content_type=ContentType.BOOK,
+            metadata={"pages": 800},
+            status=ConsumptionStatus.UNREAD,
+        )
+        context = _build_context(consumed=[])
+        context.content_length_preferences = {"book": "short"}
+        scorer = ContentLengthScorer()
+        assert scorer.score(candidate, context) == 0.4
+
+    def test_default_weight_is_1(self) -> None:
+        """ContentLengthScorer default weight is 1.0."""
+        scorer = ContentLengthScorer()
+        assert scorer.weight == 1.0

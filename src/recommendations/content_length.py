@@ -111,6 +111,52 @@ def classify_length(
     return LengthPreference.LONG
 
 
+def score_length_match(
+    item: ContentItem,
+    content_length_preferences: dict[str, str],
+) -> float:
+    """Score how well an item matches the user's length preference.
+
+    Returns a score between 0.0 and 1.0:
+    - 1.0: exact match or ``"any"`` preference or no metadata
+    - 0.7: adjacent category (short↔medium or medium↔long)
+    - 0.4: opposite ends (short↔long)
+    - 0.8: no length metadata available (benefit of the doubt)
+
+    Args:
+        item: Content item to score.
+        content_length_preferences: Mapping of content type string to
+            length preference string.
+
+    Returns:
+        A float between 0.0 and 1.0.
+    """
+    content_type_str = _get_content_type_value(item.content_type)
+    preference_str = content_length_preferences.get(content_type_str, "any")
+
+    if preference_str == "any":
+        return 1.0
+
+    classification = classify_length(item)
+    if classification is None:
+        return 0.8  # no metadata — benefit of the doubt
+
+    if classification.value == preference_str:
+        return 1.0
+
+    # Adjacent vs opposite penalty
+    order = [LengthPreference.SHORT, LengthPreference.MEDIUM, LengthPreference.LONG]
+    try:
+        pref_enum = LengthPreference(preference_str)
+    except ValueError:
+        return 1.0  # unrecognised preference string — no penalty
+
+    distance = abs(order.index(classification) - order.index(pref_enum))
+    if distance == 1:
+        return 0.7  # adjacent
+    return 0.4  # opposite ends
+
+
 def passes_length_filter(
     item: ContentItem,
     content_length_preferences: dict[str, str],

@@ -114,10 +114,12 @@ recommendations:
     series_order: 1.5
     rating_pattern: 1.0
     semantic_similarity: 1.5  # Only active when ai_enabled is true
+    content_length: 1.0  # Soft penalty for items not matching length preferences
 
-  # Content length preferences filter candidates before scoring.
-  # Set per content type: "any" (no filter), "short", "medium", or "long".
-  # Items missing length metadata pass through unfiltered.
+  # Content length preferences apply a soft scoring penalty to candidates.
+  # Set per content type: "any" (no penalty), "short", "medium", or "long".
+  # Non-matching items still appear but rank lower. Items without metadata
+  # receive a small benefit-of-the-doubt score.
   #
   # Thresholds:
   #   book:       short <250 pages,   medium 250-500,  long 500+

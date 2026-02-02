@@ -14,6 +14,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 
 from src.models.content import ContentItem, ContentType
+from src.recommendations.content_length import score_length_match
 from src.recommendations.preferences import UserPreferences
 from src.utils.series import extract_series_info
 
@@ -96,6 +97,9 @@ class ScoringContext:
 
     # Pre-computed similarity scores (populated by engine when AI enabled)
     similarity_scores: dict[str | None, float] = field(default_factory=dict)
+
+    # User content-length preferences (e.g. {"book": "short", "movie": "any"})
+    content_length_preferences: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         """Build lookup structures from consumed items."""
@@ -466,12 +470,31 @@ class CustomPreferenceScorer(Scorer):
 # Default scorer set
 # ---------------------------------------------------------------------------
 
+class ContentLengthScorer(Scorer):
+    """Score based on how well the candidate matches user's length preference.
+
+    Uses :func:`score_length_match` from the content_length module to
+    produce a soft penalty rather than a hard filter.
+
+    Weight default: 1.0
+    """
+
+    def __init__(self, weight: float = 1.0) -> None:
+        super().__init__(weight)
+
+    def score(self, candidate: ContentItem, context: ScoringContext) -> float:
+        if not context.content_length_preferences:
+            return 1.0  # No preferences set — neutral
+        return score_length_match(candidate, context.content_length_preferences)
+
+
 DEFAULT_SCORERS: list[Scorer] = [
     GenreMatchScorer(),
     CreatorMatchScorer(),
     TagOverlapScorer(),
     SeriesOrderScorer(),
     RatingPatternScorer(),
+    ContentLengthScorer(),
 ]
 
 
@@ -487,6 +510,7 @@ SCORER_NAME_MAP: dict[str, type[Scorer]] = {
     "rating_pattern": RatingPatternScorer,
     "semantic_similarity": SemanticSimilarityScorer,
     "custom_preference": CustomPreferenceScorer,
+    "content_length": ContentLengthScorer,
 }
 
 

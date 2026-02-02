@@ -7,7 +7,6 @@ from src.llm.embeddings import EmbeddingGenerator
 from src.llm.recommendations import RecommendationGenerator
 from src.models.content import ContentItem, ContentType
 from src.models.user_preferences import UserPreferenceConfig
-from src.recommendations.content_length import filter_by_length
 from src.recommendations.preference_interpreter import (
     InterpretedPreference,
     PatternBasedInterpreter,
@@ -153,24 +152,6 @@ class RecommendationEngine:
             )
 
         # -----------------------------------------------------------------
-        # Apply content length filtering (before scoring)
-        # -----------------------------------------------------------------
-        if (
-            user_preference_config is not None
-            and user_preference_config.content_length_preferences
-        ):
-            filtered_by_length = filter_by_length(
-                unconsumed_items,
-                user_preference_config.content_length_preferences,
-            )
-            if filtered_by_length:
-                unconsumed_items = filtered_by_length
-            else:
-                logger.warning(
-                    "Length filtering removed all candidates, using original list"
-                )
-
-        # -----------------------------------------------------------------
         # Interpret custom rules (if present)
         # -----------------------------------------------------------------
         interpreted_prefs: InterpretedPreference | None = None
@@ -254,6 +235,10 @@ class RecommendationEngine:
         # -----------------------------------------------------------------
         # Score all unconsumed candidates via the pipeline (always runs)
         # -----------------------------------------------------------------
+        content_length_preferences: dict[str, str] = {}
+        if user_preference_config is not None:
+            content_length_preferences = user_preference_config.content_length_preferences
+
         scoring_context = ScoringContext(
             preferences=preferences,
             consumed_items=all_consumed_items,
@@ -261,6 +246,7 @@ class RecommendationEngine:
             content_type=content_type,
             all_unconsumed_items=unconsumed_items,
             similarity_scores=similarity_scores,
+            content_length_preferences=content_length_preferences,
         )
 
         # Use a temporary pipeline with overridden weights if user prefs given
