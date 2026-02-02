@@ -190,7 +190,7 @@ def test_update_command_help(mock_components):
     result = runner.invoke(cli, ["update", "--help"])
 
     assert result.exit_code == 0
-    assert "Update data from input files" in result.output
+    assert "Update data from configured sources" in result.output
     assert "--source" in result.output
 
 
@@ -288,7 +288,14 @@ def test_update_command_steam_success(mock_components):
 
     with (
         patch("src.cli.main.load_config", return_value=mock_config),
-        patch("src.cli.commands.parse_steam_games", return_value=[mock_steam_item]),
+        patch(
+            "src.ingestion.sources.steam.SteamPlugin.fetch",
+            return_value=iter([mock_steam_item]),
+        ),
+        patch(
+            "src.ingestion.sources.steam.SteamPlugin.validate_config",
+            return_value=[],
+        ),
     ):
         mock_components["embedding_gen"].generate_content_embedding.return_value = [
             0.1
@@ -299,7 +306,7 @@ def test_update_command_steam_success(mock_components):
         result = runner.invoke(cli, ["update", "--source", "steam"])
 
         assert result.exit_code == 0
-        assert "Updated" in result.output
+        assert "Updated" in result.output or "updated" in result.output
         assert "Steam" in result.output
 
 
@@ -363,13 +370,14 @@ def test_update_command_steam_missing_api_key(mock_components):
         runner = CliRunner()
         result = runner.invoke(cli, ["update", "--source", "steam"])
 
-        assert result.exit_code == 0
-        assert "API key" in result.output or "required" in result.output.lower()
+        # Validation errors cause abort
+        assert result.exit_code != 0
+        assert "api_key" in result.output.lower() or "required" in result.output.lower()
 
 
 def test_update_command_steam_api_error(mock_components):
     """Test update command with Steam API error."""
-    from src.ingestion.sources.steam import SteamAPIError
+    from src.ingestion.plugin_base import SourceError
 
     mock_config = {
         "ollama": {
@@ -396,8 +404,12 @@ def test_update_command_steam_api_error(mock_components):
     with (
         patch("src.cli.main.load_config", return_value=mock_config),
         patch(
-            "src.cli.commands.parse_steam_games",
-            side_effect=SteamAPIError("API error"),
+            "src.ingestion.sources.steam.SteamPlugin.fetch",
+            side_effect=SourceError("steam", "API error"),
+        ),
+        patch(
+            "src.ingestion.sources.steam.SteamPlugin.validate_config",
+            return_value=[],
         ),
     ):
         runner = CliRunner()

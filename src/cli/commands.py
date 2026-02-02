@@ -1,16 +1,17 @@
 """CLI commands."""
 
 import json
-from pathlib import Path
 
 import click
 from tabulate import tabulate
 
-from src.ingestion.sources.goodreads import GoodreadsPlugin
-from src.ingestion.sources.steam import SteamAPIError, parse_steam_games
+from src.ingestion.plugin_base import SourceError
+from src.ingestion.registry import get_registry
+from src.ingestion.sync import execute_sync
 from src.models.content import ConsumptionStatus, ContentType
 from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.scorers import SCORER_NAME_MAP
+from src.web.sync_sources import transform_source_config, validate_source_config
 
 
 @click.command()
@@ -130,16 +131,39 @@ def recommend(
 @click.command()
 @click.option(
     "--source",
-    type=click.Choice(["goodreads", "steam", "all"], case_sensitive=False),
     default="all",
-    help="Data source to update",
+    help="Data source to update (use 'list' to see available sources, 'all' for everything)",
 )
 @click.pass_context
 def update(ctx: click.Context, source: str) -> None:
-    """Update data from input files."""
+    """Update data from configured sources."""
     storage = ctx.obj["storage"]
     embedding_gen = ctx.obj["embedding_gen"]
     config = ctx.obj["config"]
+
+    registry = get_registry()
+    inputs_config = config.get("inputs", {})
+
+    # Handle 'list' to show available sources
+    if source == "list":
+        enabled_plugins = registry.get_enabled_plugins(config)
+        all_plugins = registry.get_all_plugins()
+
+        if not all_plugins:
+            click.echo("No plugins discovered.")
+            return
+
+        click.echo("Available sources:")
+        for name in sorted(all_plugins):
+            plugin = all_plugins[name]
+            source_config = inputs_config.get(name, {})
+            enabled = (
+                isinstance(source_config, dict)
+                and source_config.get("enabled", False)
+            )
+            status = "enabled" if enabled else "disabled"
+            click.echo(f"  {name:20s} {plugin.description} [{status}]")
+        return
 
     # Check if embeddings are enabled
     features_config = config.get("features", {})
@@ -147,124 +171,95 @@ def update(ctx: click.Context, source: str) -> None:
     embeddings_enabled = features_config.get("embeddings_enabled", False)
     use_embeddings = ai_enabled and embeddings_enabled
 
-    click.echo(f"Updating data from {source}...")
+    # Determine which sources to sync
+    if source == "all":
+        enabled_plugins = registry.get_enabled_plugins(config)
+        if not enabled_plugins:
+            click.echo("No sources enabled in config. Use --source list to see available sources.")
+            return
+        sources_to_sync = [(plugin.name, plugin) for plugin in enabled_plugins]
+    else:
+        found_plugin = registry.get_plugin(source)
+        if found_plugin is None:
+            click.echo(
+                f"Error: Unknown source '{source}'. "
+                "Use --source list to see available sources.",
+                err=True,
+            )
+            raise click.Abort()
+
+        source_config = inputs_config.get(source, {})
+        if not isinstance(source_config, dict) or not source_config.get("enabled", False):
+            click.echo(f"{source} source is disabled in config.")
+            return
+
+        validation_errors = validate_source_config(source, inputs_config)
+        if validation_errors:
+            for error in validation_errors:
+                click.echo(f"Error: {error}", err=True)
+            raise click.Abort()
+
+        sources_to_sync = [(source, found_plugin)]
+
+    click.echo(f"Updating data from {', '.join(name for name, _ in sources_to_sync)}...")
 
     try:
         total_count = 0
 
-        if source == "goodreads" or source == "all":
-            inputs_config = config.get("inputs", {})
-            goodreads_config = inputs_config.get("goodreads", {})
+        for source_id, plugin in sources_to_sync:
+            source_config = inputs_config.get(source_id, {})
+            plugin_config = transform_source_config(source_id, source_config)
 
-            if not goodreads_config.get("enabled", False):
-                click.echo("Goodreads source is disabled in config.")
-            else:
-                goodreads_path = Path(
-                    goodreads_config.get("path", "inputs/goodreads_library_export.csv")
+            validation_errors = validate_source_config(source_id, inputs_config)
+            if validation_errors:
+                for error in validation_errors:
+                    click.echo(f"  {plugin.display_name}: Error: {error}", err=True)
+                continue
+
+            click.echo(f"  Syncing {plugin.display_name}...")
+
+            def cli_progress(
+                items_processed: int,
+                total_items: int | None,
+                current_item: str | None,
+            ) -> None:
+                if total_items and items_processed > 0 and items_processed % 10 == 0:
+                    click.echo(f"    Processed {items_processed}/{total_items}...")
+
+            try:
+                result = execute_sync(
+                    plugin=plugin,
+                    plugin_config=plugin_config,
+                    storage_manager=storage,
+                    embedding_generator=embedding_gen,
+                    use_embeddings=use_embeddings,
+                    progress_callback=cli_progress,
                 )
 
-                goodreads_plugin = GoodreadsPlugin()
-                plugin_config = {"csv_path": str(goodreads_path)}
-                validation_errors = goodreads_plugin.validate_config(plugin_config)
+                click.echo(
+                    f"  Updated {result.items_synced} items from {plugin.display_name}"
+                )
+                if result.errors:
+                    for error in result.errors:
+                        click.echo(f"    Warning: {error}", err=True)
 
-                if validation_errors:
-                    for error in validation_errors:
-                        click.echo(f"Error: {error}", err=True)
-                else:
-                    click.echo(f"Processing {goodreads_path}...")
+                total_count += result.items_synced
 
-                    count = 0
-                    for item in goodreads_plugin.fetch(plugin_config):
-                        try:
-                            # Only generate embedding if AI features are enabled
-                            embedding = None
-                            if use_embeddings:
-                                embedding = embedding_gen.generate_content_embedding(
-                                    item
-                                )
-                            storage.save_content_item(item, embedding)
-                            count += 1
-                            total_count += 1
-                            if count % 10 == 0:
-                                click.echo(f"  Processed {count} items...")
-                        except Exception as e:
-                            click.echo(
-                                f"  Warning: Failed to process {item.title}: {e}",
-                                err=True,
-                            )
-
-                    click.echo(f"Updated {count} items from Goodreads")
-
-        if source == "steam" or source == "all":
-            inputs_config = config.get("inputs", {})
-            steam_config = inputs_config.get("steam", {})
-
-            if not steam_config.get("enabled", False):
-                click.echo("Steam source is disabled in config.")
-            else:
-                api_key = steam_config.get("api_key", "").strip()
-                if not api_key:
-                    click.echo(
-                        "Error: Steam API key is required. Get one from https://steamcommunity.com/dev/apikey",
-                        err=True,
-                    )
-                else:
-                    steam_id = steam_config.get("steam_id", "").strip()
-                    vanity_url = steam_config.get("vanity_url", "").strip()
-                    min_playtime = steam_config.get("min_playtime_minutes", 0)
-
-                    if not steam_id and not vanity_url:
-                        click.echo(
-                            "Error: Either steam_id or vanity_url must be provided in config",
-                            err=True,
-                        )
-                    else:
-                        click.echo("Fetching games from Steam API...")
-                        try:
-                            count = 0
-                            for item in parse_steam_games(
-                                api_key=api_key,
-                                steam_id=steam_id if steam_id else None,
-                                vanity_url=vanity_url if vanity_url else None,
-                                min_playtime_minutes=min_playtime,
-                            ):
-                                try:
-                                    # Only generate embedding if AI features are enabled
-                                    embedding = None
-                                    if use_embeddings:
-                                        embedding = (
-                                            embedding_gen.generate_content_embedding(
-                                                item
-                                            )
-                                        )
-                                    storage.save_content_item(item, embedding)
-                                    count += 1
-                                    total_count += 1
-                                    if count % 10 == 0:
-                                        click.echo(f"  Processed {count} games...")
-                                except Exception as e:
-                                    click.echo(
-                                        f"  Warning: Failed to process {item.title}: {e}",
-                                        err=True,
-                                    )
-
-                            click.echo(
-                                f"Updated {count} items from Steam "
-                                f"(total: {total_count} items)"
-                            )
-                        except SteamAPIError as e:
-                            click.echo(f"Error fetching Steam data: {e}", err=True)
-                        except Exception as e:
-                            click.echo(f"Error processing Steam data: {e}", err=True)
+            except SourceError as error:
+                click.echo(f"  Error syncing {plugin.display_name}: {error}", err=True)
+            except Exception as error:
+                click.echo(f"  Error syncing {plugin.display_name}: {error}", err=True)
 
         if total_count == 0:
             click.echo(
                 "No items were updated. Check your configuration and source settings."
             )
+        else:
+            click.echo(f"Total: {total_count} items updated.")
 
-    except Exception as e:
-        click.echo(f"Error updating data: {e}", err=True)
-        raise click.Abort() from e
+    except Exception as error:
+        click.echo(f"Error updating data: {error}", err=True)
+        raise click.Abort() from error
 
 
 @click.command()
