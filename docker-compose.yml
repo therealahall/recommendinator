@@ -33,8 +33,6 @@ services:
     image: ollama/ollama:latest
     container_name: personal-recommendations-ollama
     profiles: ["ai"]
-    ports:
-      - "11434:11434"
     volumes:
       # Persist downloaded models
       - ollama-data:/root/.ollama
