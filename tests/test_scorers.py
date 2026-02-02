@@ -447,6 +447,29 @@ class TestSemanticSimilarityScorer:
         scorer = SemanticSimilarityScorer()
         assert scorer.score(candidate, context) == 0.7
 
+    def test_falls_back_to_parent_id(self) -> None:
+        """Scorer falls back to parent_id when candidate id has no score."""
+        candidate = ContentItem(
+            id="tvdb:123:s1",
+            title="Show (Season 1)",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            parent_id="tvdb:123",
+        )
+        context = _build_context(consumed=[])
+        context.similarity_scores = {"tvdb:123": 0.9}
+        scorer = SemanticSimilarityScorer()
+        assert scorer.score(candidate, context) == 0.9
+
+    def test_no_fallback_without_parent_id(self) -> None:
+        """Scorer does not fall back when parent_id is None."""
+        candidate = _make_item(item_id="tvdb:123:s1", status=ConsumptionStatus.UNREAD)
+        assert candidate.parent_id is None
+        context = _build_context(consumed=[])
+        context.similarity_scores = {"tvdb:123": 0.9}
+        scorer = SemanticSimilarityScorer()
+        assert scorer.score(candidate, context) == 0.0
+
     def test_default_weight(self) -> None:
         """SemanticSimilarityScorer default weight is 1.5."""
         scorer = SemanticSimilarityScorer()
@@ -456,6 +479,56 @@ class TestSemanticSimilarityScorer:
 # ---------------------------------------------------------------------------
 # build_scorers_with_overrides tests
 # ---------------------------------------------------------------------------
+
+
+class TestScorerClone:
+    """Tests for the Scorer.clone() method."""
+
+    def test_clone_preserves_type(self) -> None:
+        """Cloning a scorer preserves its type."""
+        scorer = GenreMatchScorer(weight=2.0)
+        cloned = scorer.clone(weight=5.0)
+        assert isinstance(cloned, GenreMatchScorer)
+        assert cloned.weight == 5.0
+
+    def test_clone_custom_preference_preserves_args(self) -> None:
+        """Cloning a CustomPreferenceScorer preserves genre_boosts and genre_penalties."""
+        scorer = CustomPreferenceScorer(
+            genre_boosts={"fantasy": 1.0},
+            genre_penalties={"horror": 0.8},
+            weight=2.0,
+        )
+        cloned = scorer.clone(weight=3.0)
+        assert isinstance(cloned, CustomPreferenceScorer)
+        assert cloned.weight == 3.0
+        assert cloned.genre_boosts == {"fantasy": 1.0}
+        assert cloned.genre_penalties == {"horror": 0.8}
+
+    def test_clone_does_not_share_dicts(self) -> None:
+        """Cloned CustomPreferenceScorer has independent copies of dicts."""
+        scorer = CustomPreferenceScorer(
+            genre_boosts={"fantasy": 1.0},
+            weight=2.0,
+        )
+        cloned = scorer.clone(weight=3.0)
+        cloned.genre_boosts["sci-fi"] = 0.5
+        assert "sci-fi" not in scorer.genre_boosts
+
+    def test_override_round_trip_preserves_custom_scorer(self) -> None:
+        """build_scorers_with_overrides preserves CustomPreferenceScorer args."""
+        base = [
+            CustomPreferenceScorer(
+                genre_boosts={"fantasy": 1.0},
+                genre_penalties={"romance": 0.5},
+                weight=2.0,
+            )
+        ]
+        result = build_scorers_with_overrides(base, {"custom_preference": 4.0})
+        assert len(result) == 1
+        assert isinstance(result[0], CustomPreferenceScorer)
+        assert result[0].weight == 4.0
+        assert result[0].genre_boosts == {"fantasy": 1.0}
+        assert result[0].genre_penalties == {"romance": 0.5}
 
 
 class TestBuildScorersWithOverrides:

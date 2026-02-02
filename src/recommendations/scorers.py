@@ -144,6 +144,20 @@ class Scorer(ABC):
     def __init__(self, weight: float = 1.0) -> None:
         self.weight = weight
 
+    def clone(self, weight: float) -> Scorer:
+        """Create a copy of this scorer with a different weight.
+
+        Subclasses with extra constructor arguments should override this
+        method to preserve those arguments.
+
+        Args:
+            weight: The new weight for the cloned scorer.
+
+        Returns:
+            A new scorer instance of the same type with the given weight.
+        """
+        return type(self)(weight=weight)
+
     @abstractmethod
     def score(self, candidate: ContentItem, context: ScoringContext) -> float:
         """Return a score in ``[0.0, 1.0]`` for *candidate*.
@@ -362,10 +376,9 @@ class SemanticSimilarityScorer(Scorer):
             return 0.0
         lookup_id = candidate.id
         score = context.similarity_scores.get(lookup_id, 0.0)
-        # For TV season items (id like "tvdb:123:s1"), fall back to parent show score
-        if score == 0.0 and lookup_id and ":s" in str(lookup_id):
-            base_id = str(lookup_id).rsplit(":", 1)[0]
-            score = context.similarity_scores.get(base_id, 0.0)
+        # For TV season items, fall back to the parent show's similarity score
+        if score == 0.0 and candidate.parent_id is not None:
+            score = context.similarity_scores.get(candidate.parent_id, 0.0)
         return score
 
 
@@ -394,6 +407,21 @@ class CustomPreferenceScorer(Scorer):
         super().__init__(weight)
         self.genre_boosts = genre_boosts or {}
         self.genre_penalties = genre_penalties or {}
+
+    def clone(self, weight: float) -> CustomPreferenceScorer:
+        """Clone preserving genre_boosts and genre_penalties.
+
+        Args:
+            weight: The new weight for the cloned scorer.
+
+        Returns:
+            A new CustomPreferenceScorer with the same boosts/penalties.
+        """
+        return CustomPreferenceScorer(
+            genre_boosts=dict(self.genre_boosts),
+            genre_penalties=dict(self.genre_penalties),
+            weight=weight,
+        )
 
     def score(self, candidate: ContentItem, context: ScoringContext) -> float:
         """Score candidate based on custom preference rules.
@@ -488,8 +516,8 @@ def build_scorers_with_overrides(
     for scorer in base_scorers:
         config_key = class_to_name.get(type(scorer))
         if config_key and config_key in scorer_weight_overrides:
-            overridden.append(type(scorer)(weight=scorer_weight_overrides[config_key]))
+            overridden.append(scorer.clone(weight=scorer_weight_overrides[config_key]))
         else:
             # Clone with same weight (new instance, doesn't mutate original)
-            overridden.append(type(scorer)(weight=scorer.weight))
+            overridden.append(scorer.clone(weight=scorer.weight))
     return overridden
