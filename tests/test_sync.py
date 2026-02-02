@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from src.ingestion.plugin_base import SourceError
-from src.ingestion.sync import SyncResult, execute_sync
+from src.ingestion.sync import SyncResult, execute_multi_source_sync, execute_sync
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 
 
@@ -200,3 +200,69 @@ class TestExecuteSync:
         plugin.fetch.assert_called_once()
         call_args = plugin.fetch.call_args
         assert call_args[0][0] == config
+
+
+class TestExecuteMultiSourceSync:
+    """Tests for execute_multi_source_sync function."""
+
+    def test_multiple_sources(self) -> None:
+        """Syncs multiple sources sequentially and returns results."""
+        plugin_a = MagicMock()
+        plugin_a.name = "source_a"
+        plugin_a.display_name = "Source A"
+        plugin_a.fetch.return_value = iter([_make_item("A1")])
+
+        plugin_b = MagicMock()
+        plugin_b.name = "source_b"
+        plugin_b.display_name = "Source B"
+        plugin_b.fetch.return_value = iter([_make_item("B1"), _make_item("B2")])
+
+        storage = MagicMock()
+
+        results = execute_multi_source_sync(
+            sources=[(plugin_a, {"k": "v"}), (plugin_b, {"k": "v"})],
+            storage_manager=storage,
+        )
+
+        assert len(results) == 2
+        assert results[0].items_synced == 1
+        assert results[1].items_synced == 2
+        assert storage.save_content_item.call_count == 3
+
+    def test_source_error_continues(self) -> None:
+        """A failing source doesn't block subsequent sources."""
+        plugin_a = MagicMock()
+        plugin_a.name = "failing"
+        plugin_a.display_name = "Failing"
+        plugin_a.fetch.side_effect = SourceError("failing", "boom")
+
+        plugin_b = MagicMock()
+        plugin_b.name = "working"
+        plugin_b.display_name = "Working"
+        plugin_b.fetch.return_value = iter([_make_item("B1")])
+
+        storage = MagicMock()
+        error_callback = MagicMock()
+
+        results = execute_multi_source_sync(
+            sources=[(plugin_a, {}), (plugin_b, {})],
+            storage_manager=storage,
+            error_callback=error_callback,
+        )
+
+        assert len(results) == 2
+        assert results[0].items_synced == 0
+        assert len(results[0].errors) == 1
+        assert results[1].items_synced == 1
+        error_callback.assert_called()
+
+    def test_empty_sources(self) -> None:
+        """Empty source list returns empty results."""
+        storage = MagicMock()
+
+        results = execute_multi_source_sync(
+            sources=[],
+            storage_manager=storage,
+        )
+
+        assert results == []

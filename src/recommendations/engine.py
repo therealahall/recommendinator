@@ -237,7 +237,9 @@ class RecommendationEngine:
         # -----------------------------------------------------------------
         content_length_preferences: dict[str, str] = {}
         if user_preference_config is not None:
-            content_length_preferences = user_preference_config.content_length_preferences
+            content_length_preferences = (
+                user_preference_config.content_length_preferences
+            )
 
         scoring_context = ScoringContext(
             preferences=preferences,

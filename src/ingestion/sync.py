@@ -73,9 +73,7 @@ def execute_sync(
     if progress_callback:
         progress_callback(0, result.total_items, None)
 
-    logger.info(
-        f"[SYNC] {source_name}: Found {result.total_items} items, saving..."
-    )
+    logger.info(f"[SYNC] {source_name}: Found {result.total_items} items, saving...")
 
     # Save each item
     for index, item in enumerate(items):
@@ -100,3 +98,61 @@ def execute_sync(
         f"{result.items_synced}/{result.total_items} items saved."
     )
     return result
+
+
+def execute_multi_source_sync(
+    sources: list[tuple[SourcePlugin, dict[str, Any]]],
+    storage_manager: Any,
+    embedding_generator: Any | None = None,
+    use_embeddings: bool = False,
+    progress_callback: SyncProgressCallback | None = None,
+    error_callback: Callable[[str], None] | None = None,
+) -> list[SyncResult]:
+    """Execute sync for multiple plugin sources sequentially.
+
+    Args:
+        sources: List of (plugin, plugin_config) tuples to sync.
+        storage_manager: Storage manager for saving items.
+        embedding_generator: Optional embedding generator.
+        use_embeddings: Whether to generate embeddings.
+        progress_callback: Optional callback for progress updates.
+        error_callback: Optional callback for error reporting.
+
+    Returns:
+        List of SyncResult, one per source.
+    """
+    results: list[SyncResult] = []
+
+    for plugin, plugin_config in sources:
+        logger.info(f"[SYNC] === Starting sync for source: {plugin.name} ===")
+
+        try:
+            result = execute_sync(
+                plugin=plugin,
+                plugin_config=plugin_config,
+                storage_manager=storage_manager,
+                embedding_generator=embedding_generator,
+                use_embeddings=use_embeddings,
+                progress_callback=progress_callback,
+            )
+            results.append(result)
+
+            if result.errors and error_callback:
+                for error_message in result.errors:
+                    error_callback(error_message)
+
+        except Exception as error:
+            error_message = f"Sync failed for {plugin.name}: {error}"
+            logger.error(f"[SYNC] {error_message}")
+            if error_callback:
+                error_callback(error_message)
+            results.append(
+                SyncResult(
+                    source_name=plugin.display_name,
+                    errors=[error_message],
+                )
+            )
+
+    total_synced = sum(result.items_synced for result in results)
+    logger.info(f"[SYNC] === Completed. Total items processed: {total_synced} ===")
+    return results

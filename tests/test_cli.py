@@ -651,24 +651,20 @@ class TestConfigLoadingRegression:
 
         # config.yaml has steam enabled
         config_yaml = config_dir / "config.yaml"
-        config_yaml.write_text(
-            """
+        config_yaml.write_text("""
 inputs:
   steam:
     enabled: true
     api_key: "test"
-"""
-        )
+""")
 
         # example.yaml has steam disabled
         example_yaml = config_dir / "example.yaml"
-        example_yaml.write_text(
-            """
+        example_yaml.write_text("""
 inputs:
   steam:
     enabled: false
-"""
-        )
+""")
 
         # When load_config is called with None, it should use config.yaml
         # We need to temporarily change the working directory
@@ -696,13 +692,11 @@ inputs:
         config_dir.mkdir()
 
         example_yaml = config_dir / "example.yaml"
-        example_yaml.write_text(
-            """
+        example_yaml.write_text("""
 inputs:
   steam:
     enabled: false
-"""
-        )
+""")
 
         import os
 

@@ -6,7 +6,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from src.ingestion.plugin_base import SourceError
+from src.ingestion.sync import execute_multi_source_sync
 from src.models.content import ConsumptionStatus, ContentType
 from src.models.user_preferences import UserPreferenceConfig
 from src.web.state import get_config, get_embedding_gen, get_engine, get_storage
@@ -533,16 +533,44 @@ async def update_data(request: UpdateRequest) -> dict[str, Any]:
     if not sources_to_sync:
         return {"message": "No sources enabled or configured for sync", "count": 0}
 
+    # Build plugin/config pairs for the sync executor
+    inputs_config = config.get("inputs", {})
+    features_config = config.get("features", {})
+    ai_enabled = features_config.get("ai_enabled", False)
+    embeddings_enabled = features_config.get("embeddings_enabled", False)
+    use_embeddings = ai_enabled and embeddings_enabled
+
+    source_pairs = []
+    for source_id in sources_to_sync:
+        plugin = get_sync_handler(source_id)
+        if plugin is None:
+            continue
+        source_config = inputs_config.get(source_id, {})
+        plugin_config = transform_source_config(source_id, source_config)
+        source_pairs.append((plugin, plugin_config))
+
     # Create the sync function that will run in background
     def run_sync(job: SyncJob) -> int:
-        return _execute_sync(
-            job=job,
-            sources=sources_to_sync,
-            config=config,
-            storage=storage,
-            embedding_gen=embedding_gen,
-            sync_manager=sync_manager,
+        def progress_callback(
+            items_processed: int,
+            total_items: int | None,
+            current_item: str | None,
+        ) -> None:
+            sync_manager.update_progress(
+                items_processed=items_processed,
+                total_items=total_items,
+                current_item=current_item,
+            )
+
+        results = execute_multi_source_sync(
+            sources=source_pairs,
+            storage_manager=storage,
+            embedding_generator=embedding_gen,
+            use_embeddings=use_embeddings,
+            progress_callback=progress_callback,
+            error_callback=sync_manager.add_error,
         )
+        return sum(result.items_synced for result in results)
 
     # Start background sync
     source_label = source if source != "all" else ", ".join(sources_to_sync)
@@ -556,164 +584,6 @@ async def update_data(request: UpdateRequest) -> dict[str, Any]:
         "message": f"Sync started for {source_label}. Use GET /api/sync/status to monitor progress.",
         "sources": sources_to_sync,
     }
-
-
-def _execute_sync(
-    job: SyncJob,
-    sources: list[str],
-    config: dict[str, Any],
-    storage: Any,
-    embedding_gen: Any,
-    sync_manager: Any,
-) -> int:
-    """Execute sync for specified sources (runs in background thread).
-
-    Args:
-        job: The sync job for progress tracking.
-        sources: List of source names to sync.
-        config: Application configuration.
-        storage: Storage manager instance.
-        embedding_gen: Embedding generator (may be None).
-        sync_manager: Sync manager for progress updates.
-
-    Returns:
-        Total count of items processed.
-    """
-    features_config = config.get("features", {})
-    ai_enabled = features_config.get("ai_enabled", False)
-    embeddings_enabled = features_config.get("embeddings_enabled", False)
-    use_embeddings = ai_enabled and embeddings_enabled
-
-    inputs_config = config.get("inputs", {})
-    total_count = 0
-
-    for source_id in sources:
-        logger.info(f"[SYNC] === Starting sync for source: {source_id} ===")
-
-        plugin = get_sync_handler(source_id)
-        if plugin is None:
-            logger.warning(f"[SYNC] No handler for source {source_id}, skipping")
-            continue
-
-        source_config = inputs_config.get(source_id, {})
-        plugin_config = transform_source_config(source_id, source_config)
-
-        item_label = _get_item_label_for_source(source_id)
-        total_count += _sync_plugin_source(
-            job=job,
-            source_name=plugin.display_name,
-            item_label=item_label,
-            plugin=plugin,
-            plugin_config=plugin_config,
-            storage=storage,
-            embedding_gen=embedding_gen,
-            use_embeddings=use_embeddings,
-            sync_manager=sync_manager,
-        )
-
-    logger.info(f"[SYNC] === Completed. Total items processed: {total_count} ===")
-    return total_count
-
-
-
-def _get_item_label_for_source(source_id: str) -> str:
-    """Get plural item label for a source (e.g. 'books', 'games')."""
-    labels = {
-        "goodreads": "books",
-        "steam": "games",
-        "sonarr": "series",
-        "radarr": "movies",
-        "csv_import": "items",
-        "json_import": "items",
-        "markdown_import": "items",
-    }
-    return labels.get(source_id, "items")
-
-
-def _sync_plugin_source(
-    job: SyncJob,
-    source_name: str,
-    item_label: str,
-    plugin: Any,
-    plugin_config: dict[str, Any],
-    storage: Any,
-    embedding_gen: Any,
-    use_embeddings: bool,
-    sync_manager: Any,
-) -> int:
-    """Sync data from a plugin source (Sonarr, Radarr, etc.)."""
-    logger.info(f"[SYNC] {source_name}: Fetching {item_label}...")
-    sync_manager.update_progress(
-        total_items=None, items_processed=0, current_item=f"Fetching {item_label}..."
-    )
-
-    def progress_callback(
-        items_processed: int, total_items: int | None, current_item: str | None
-    ) -> None:
-        sync_manager.update_progress(
-            items_processed=items_processed,
-            total_items=total_items,
-            current_item=current_item,
-        )
-        if (
-            total_items
-            and items_processed > 0
-            and (
-                items_processed <= 5
-                or items_processed % 25 == 0
-                or items_processed == total_items
-            )
-        ):
-            pct = int(items_processed * 100 / total_items) if total_items else 0
-            logger.info(
-                f"[SYNC] {source_name}: Loaded {items_processed}/{total_items} "
-                f"{item_label} ({pct}%)"
-            )
-
-    try:
-        items = list(plugin.fetch(plugin_config, progress_callback=progress_callback))
-    except SourceError as error:
-        error_msg = str(error)
-        logger.error(f"[SYNC] {source_name}: {error_msg}")
-        sync_manager.add_error(error_msg)
-        raise
-
-    total_items = len(items)
-    sync_manager.update_progress(total_items=total_items, items_processed=0)
-    logger.info(f"[SYNC] {source_name}: Found {total_items} {item_label}, saving...")
-
-    count = 0
-    for index, item in enumerate(items):
-        try:
-            sync_manager.update_progress(
-                items_processed=index,
-                current_item=item.title,
-            )
-
-            embedding = None
-            if use_embeddings and embedding_gen:
-                embedding = embedding_gen.generate_content_embedding(item)
-
-            storage.save_content_item(item, embedding)
-            count += 1
-
-            if count % 25 == 0 or count == total_items:
-                pct = int(count * 100 / total_items) if total_items > 0 else 0
-                logger.info(
-                    f"[SYNC] {source_name}: Saved {count}/{total_items} "
-                    f"{item_label} ({pct}%)"
-                )
-
-        except Exception as error:
-            error_msg = f"Failed to process '{item.title}': {error}"
-            logger.warning(f"[SYNC] {source_name}: {error_msg}")
-            sync_manager.add_error(error_msg)
-
-    sync_manager.update_progress(items_processed=count)
-    logger.info(
-        f"[SYNC] {source_name}: Completed. {count}/{total_items} {item_label} saved."
-    )
-    return count
 
 
 @router.get("/status", response_model=StatusResponse)

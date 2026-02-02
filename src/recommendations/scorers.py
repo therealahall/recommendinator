@@ -470,6 +470,7 @@ class CustomPreferenceScorer(Scorer):
 # Default scorer set
 # ---------------------------------------------------------------------------
 
+
 class ContentLengthScorer(Scorer):
     """Score based on how well the candidate matches user's length preference.
 

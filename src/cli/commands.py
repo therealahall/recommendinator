@@ -157,9 +157,8 @@ def update(ctx: click.Context, source: str) -> None:
         for name in sorted(all_plugins):
             plugin = all_plugins[name]
             source_config = inputs_config.get(name, {})
-            enabled = (
-                isinstance(source_config, dict)
-                and source_config.get("enabled", False)
+            enabled = isinstance(source_config, dict) and source_config.get(
+                "enabled", False
             )
             status = "enabled" if enabled else "disabled"
             click.echo(f"  {name:20s} {plugin.description} [{status}]")
@@ -175,7 +174,9 @@ def update(ctx: click.Context, source: str) -> None:
     if source == "all":
         enabled_plugins = registry.get_enabled_plugins(config)
         if not enabled_plugins:
-            click.echo("No sources enabled in config. Use --source list to see available sources.")
+            click.echo(
+                "No sources enabled in config. Use --source list to see available sources."
+            )
             return
         sources_to_sync = [(plugin.name, plugin) for plugin in enabled_plugins]
     else:
@@ -189,7 +190,9 @@ def update(ctx: click.Context, source: str) -> None:
             raise click.Abort()
 
         source_config = inputs_config.get(source, {})
-        if not isinstance(source_config, dict) or not source_config.get("enabled", False):
+        if not isinstance(source_config, dict) or not source_config.get(
+            "enabled", False
+        ):
             click.echo(f"{source} source is disabled in config.")
             return
 
@@ -201,7 +204,9 @@ def update(ctx: click.Context, source: str) -> None:
 
         sources_to_sync = [(source, found_plugin)]
 
-    click.echo(f"Updating data from {', '.join(name for name, _ in sources_to_sync)}...")
+    click.echo(
+        f"Updating data from {', '.join(name for name, _ in sources_to_sync)}..."
+    )
 
     try:
         total_count = 0
