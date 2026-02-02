@@ -103,11 +103,14 @@ def test_expand_tv_shows_to_seasons():
     assert len(expanded) == 7
     assert expanded[0].title == "The Expanse (Season 1)"
     assert expanded[0].id == "tvdb:280619:s1"
+    assert expanded[0].parent_id == "tvdb:280619"
     assert expanded[0].metadata.get("season_number") == 1
     assert expanded[5].title == "The Expanse (Season 6)"
     assert expanded[5].id == "tvdb:280619:s6"
+    assert expanded[5].parent_id == "tvdb:280619"
     assert expanded[6].title == "Unknown Show"
     assert expanded[6].id == "tvdb:999"
+    assert expanded[6].parent_id is None  # passthrough items have no parent
 
 
 def test_get_series_name():

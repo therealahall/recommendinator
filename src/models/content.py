@@ -48,5 +48,9 @@ class ContentItem(BaseModel):
     # Source tracking - which plugin/source this came from
     source: str | None = None  # e.g., "goodreads", "steam", "manual"
 
+    # Runtime-only: parent item ID (e.g., TV show ID for a season item).
+    # Set during recommendation expansion, not persisted.
+    parent_id: str | None = None
+
     # Flexible metadata for type-specific fields
     metadata: dict = Field(default_factory=dict)
