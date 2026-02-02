@@ -278,28 +278,13 @@ def test_update_endpoint_steam(client, mock_components):
         "enabled": True,
     }
 
-    mock_steam_item = ContentItem(
-        id="12345",
-        title="Test Game",
-        author=None,
-        content_type=ContentType.VIDEO_GAME,
-        status=ConsumptionStatus.CURRENTLY_CONSUMING,
-        rating=None,
-    )
+    response = client.post("/api/update", json={"source": "steam"})
 
-    with patch("src.web.api.parse_steam_games", return_value=[mock_steam_item]):
-        mock_components["embedding_gen"].generate_content_embedding.return_value = [
-            0.1
-        ] * 768
-        mock_components["storage"].save_content_item.return_value = 1
-
-        response = client.post("/api/update", json={"source": "steam"})
-
-        assert response.status_code == 200
-        data = response.json()
-        assert "message" in data
-        # New async behavior: returns "sync started" message
-        assert "started" in data["message"].lower() or "sources" in data
+    assert response.status_code == 200
+    data = response.json()
+    assert "message" in data
+    # Background sync: returns "sync started" message
+    assert "started" in data["message"].lower() or "sources" in data
 
 
 def test_update_endpoint_steam_disabled(client, mock_components):
@@ -405,7 +390,14 @@ def test_update_endpoint_all_sources(client, mock_components):
             "src.ingestion.sources.goodreads.GoodreadsPlugin.validate_config",
             return_value=[],
         ),
-        patch("src.web.api.parse_steam_games", return_value=[mock_game]),
+        patch(
+            "src.ingestion.sources.steam.SteamPlugin.fetch",
+            return_value=iter([mock_game]),
+        ),
+        patch(
+            "src.ingestion.sources.steam.SteamPlugin.validate_config",
+            return_value=[],
+        ),
     ):
         mock_components["embedding_gen"].generate_content_embedding.return_value = [
             0.1

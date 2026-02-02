@@ -245,15 +245,14 @@ class SteamPlugin(SourcePlugin):
 
     def validate_config(self, config: dict[str, Any]) -> list[str]:
         errors = []
-        if not config.get("api_key", "").strip():
+        if not (config.get("api_key") or "").strip():
             errors.append(
                 "'api_key' is required. "
                 "Get one from https://steamcommunity.com/dev/apikey"
             )
-        if (
-            not config.get("steam_id", "").strip()
-            and not config.get("vanity_url", "").strip()
-        ):
+        if not (config.get("steam_id") or "").strip() and not (
+            config.get("vanity_url") or ""
+        ).strip():
             errors.append("Either 'steam_id' or 'vanity_url' must be provided")
         return errors
 

@@ -7,7 +7,6 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from src.ingestion.plugin_base import SourceError
-from src.ingestion.sources.steam import SteamAPIError, parse_steam_games
 from src.models.content import ConsumptionStatus, ContentType
 from src.models.user_preferences import UserPreferenceConfig
 from src.web.state import get_config, get_embedding_gen, get_engine, get_storage
@@ -600,140 +599,22 @@ def _execute_sync(
         source_config = inputs_config.get(source_id, {})
         plugin_config = transform_source_config(source_id, source_config)
 
-        if plugin is None:
-            # Steam - special handling
-            total_count += _sync_steam(
-                job=job,
-                config=source_config,
-                storage=storage,
-                embedding_gen=embedding_gen,
-                use_embeddings=use_embeddings,
-                sync_manager=sync_manager,
-            )
-        else:
-            # Plugin-based source
-            item_label = _get_item_label_for_source(source_id)
-            total_count += _sync_plugin_source(
-                job=job,
-                source_name=plugin.display_name,
-                item_label=item_label,
-                plugin=plugin,
-                plugin_config=plugin_config,
-                storage=storage,
-                embedding_gen=embedding_gen,
-                use_embeddings=use_embeddings,
-                sync_manager=sync_manager,
-            )
+        item_label = _get_item_label_for_source(source_id)
+        total_count += _sync_plugin_source(
+            job=job,
+            source_name=plugin.display_name,
+            item_label=item_label,
+            plugin=plugin,
+            plugin_config=plugin_config,
+            storage=storage,
+            embedding_gen=embedding_gen,
+            use_embeddings=use_embeddings,
+            sync_manager=sync_manager,
+        )
 
     logger.info(f"[SYNC] === Completed. Total items processed: {total_count} ===")
     return total_count
 
-
-def _sync_steam(
-    job: SyncJob,
-    config: dict[str, Any],
-    storage: Any,
-    embedding_gen: Any,
-    use_embeddings: bool,
-    sync_manager: Any,
-) -> int:
-    """Sync Steam data.
-
-    Args:
-        job: The sync job for progress tracking.
-        config: Steam configuration.
-        storage: Storage manager.
-        embedding_gen: Embedding generator (may be None).
-        use_embeddings: Whether to generate embeddings.
-        sync_manager: Sync manager for progress updates.
-
-    Returns:
-        Count of items processed.
-    """
-    api_key = config.get("api_key", "").strip()
-    steam_id = config.get("steam_id", "").strip() or None
-    vanity_url = config.get("vanity_url", "").strip() or None
-    min_playtime = config.get("min_playtime_minutes", 0)
-
-    logger.info(
-        "[SYNC] Steam: Fetching game library (this may take several minutes)..."
-    )
-    sync_manager.update_progress(
-        total_items=None, items_processed=0, current_item="Fetching Steam library..."
-    )
-
-    def steam_progress_callback(fetched_count: int, total: int, phase: str) -> None:
-        """Update sync progress and log during Steam fetch phase."""
-        sync_manager.update_progress(
-            items_processed=fetched_count,
-            total_items=total,
-            current_item="Fetching game details from Steam API...",
-        )
-        if fetched_count > 0 and (
-            fetched_count <= 5 or fetched_count % 20 == 0 or fetched_count == total
-        ):
-            pct = int(fetched_count * 100 / total) if total > 0 else 0
-            logger.info(
-                f"[SYNC] Steam: Fetching game details {fetched_count}/{total} ({pct}%)"
-            )
-
-    try:
-        # Collect all items (progress_callback reports during game details fetch)
-        items = list(
-            parse_steam_games(
-                api_key=api_key,
-                steam_id=steam_id,
-                vanity_url=vanity_url,
-                min_playtime_minutes=min_playtime,
-                progress_callback=steam_progress_callback,
-            )
-        )
-        total_items = len(items)
-
-        sync_manager.update_progress(total_items=total_items, items_processed=0)
-        logger.info(f"[SYNC] Steam: Found {total_items} games, starting to save...")
-
-        count = 0
-        for index, item in enumerate(items):
-            try:
-                sync_manager.update_progress(
-                    items_processed=index,
-                    current_item=item.title,
-                )
-
-                embedding = None
-                if use_embeddings and embedding_gen:
-                    embedding = embedding_gen.generate_content_embedding(item)
-
-                storage.save_content_item(item, embedding)
-                count += 1
-
-                # Log progress every 10 items (Steam is slower, more frequent logs)
-                if count % 10 == 0 or count == total_items:
-                    pct = int(count * 100 / total_items) if total_items > 0 else 0
-                    logger.info(
-                        f"[SYNC] Steam: Saved {count}/{total_items} games ({pct}%)"
-                    )
-
-            except Exception as error:
-                error_msg = f"Failed to process '{item.title}': {error}"
-                logger.warning(f"[SYNC] Steam: {error_msg}")
-                sync_manager.add_error(error_msg)
-
-        sync_manager.update_progress(items_processed=count)
-        logger.info(f"[SYNC] Steam: Completed. {count}/{total_items} games saved.")
-        return count
-
-    except SteamAPIError as error:
-        error_msg = f"Steam API error: {error}"
-        logger.error(f"[SYNC] Steam: {error_msg}")
-        sync_manager.add_error(error_msg)
-        raise
-    except Exception as error:
-        error_msg = f"Error processing Steam data: {error}"
-        logger.error(f"[SYNC] Steam: {error_msg}")
-        sync_manager.add_error(error_msg)
-        raise
 
 
 def _get_item_label_for_source(source_id: str) -> str:

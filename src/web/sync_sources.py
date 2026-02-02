@@ -26,15 +26,15 @@ class SyncSourceInfo:
     description: str
 
 
-# Registry of sync handlers: config key -> (plugin or None for steam, description)
+# Registry of sync handlers: config key -> (plugin, description)
 # Only sources in this dict can be synced. Config must have inputs.<key> with enabled: true.
 # Each plugin owns its own config transformation via transform_config().
 _SYNC_HANDLERS: dict[
     str,
-    tuple[SourcePlugin | None, str],
+    tuple[SourcePlugin, str],
 ] = {
     "goodreads": (GoodreadsPlugin(), "Import books from Goodreads export"),
-    "steam": (None, "Import games from Steam library"),
+    "steam": (SteamPlugin(), "Import games from Steam library"),
     "sonarr": (SonarrPlugin(), "Import TV series from Sonarr"),
     "radarr": (RadarrPlugin(), "Import movies from Radarr"),
     "csv_import": (CsvImportPlugin(), "Import from CSV file"),
@@ -67,15 +67,11 @@ def get_available_sync_sources(config: dict[str, Any]) -> list[SyncSourceInfo]:
             continue
 
         plugin, description = handler
-        if plugin is None:
-            display_name = "Steam"
-        else:
-            display_name = plugin.display_name
 
         sources.append(
             SyncSourceInfo(
                 id=source_id,
-                display_name=display_name,
+                display_name=plugin.display_name,
                 description=description,
             )
         )
@@ -85,11 +81,11 @@ def get_available_sync_sources(config: dict[str, Any]) -> list[SyncSourceInfo]:
 
 def get_sync_handler(
     source_id: str,
-) -> tuple[SourcePlugin | None, str] | None:
-    """Get the handler (plugin or None for steam) and description for a source.
+) -> tuple[SourcePlugin, str] | None:
+    """Get the handler (plugin, description) for a source.
 
     Returns:
-        (plugin_or_none, description) or None if unknown source
+        (plugin, description) or None if unknown source
     """
     if source_id not in _SYNC_HANDLERS:
         return None
@@ -101,8 +97,7 @@ def transform_source_config(
 ) -> dict[str, Any]:
     """Transform raw YAML config for a source into plugin-ready config.
 
-    Delegates to the plugin's ``transform_config`` classmethod.  For the
-    Steam special case (no plugin), uses ``SteamPlugin.transform_config``.
+    Delegates to the plugin's ``transform_config`` classmethod.
 
     Args:
         source_id: Source identifier (e.g. "goodreads", "steam").
@@ -116,11 +111,7 @@ def transform_source_config(
         return dict(source_config)
 
     plugin, _description = handler
-    if plugin is not None:
-        return type(plugin).transform_config(source_config)
-
-    # Steam has no plugin instance yet — call class method directly
-    return SteamPlugin.transform_config(source_config)
+    return type(plugin).transform_config(source_config)
 
 
 def validate_source_config(source_id: str, inputs_config: dict[str, Any]) -> list[str]:
@@ -137,15 +128,4 @@ def validate_source_config(source_id: str, inputs_config: dict[str, Any]) -> lis
     source_config = inputs_config.get(source_id, {})
     plugin_config = transform_source_config(source_id, source_config)
 
-    if plugin is None:
-        # Steam - special validation
-        if not plugin_config.get("api_key"):
-            return [
-                "Steam API key is required. Get one from https://steamcommunity.com/dev/apikey"
-            ]
-        if not plugin_config.get("steam_id") and not plugin_config.get("vanity_url"):
-            return ["Either steam_id or vanity_url must be provided in config"]
-        return []
-
-    errors: list[str] = plugin.validate_config(plugin_config)
-    return errors
+    return plugin.validate_config(plugin_config)
