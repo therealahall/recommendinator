@@ -72,6 +72,10 @@ class MarkdownImportPlugin(SourcePlugin):
         return "Markdown Import"
 
     @property
+    def description(self) -> str:
+        return "Import from Markdown file"
+
+    @property
     def content_types(self) -> list[ContentType]:
         return [
             ContentType.BOOK,

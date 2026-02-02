@@ -37,6 +37,10 @@ class RadarrPlugin(SourcePlugin):
         return "Radarr"
 
     @property
+    def description(self) -> str:
+        return "Import movies from Radarr"
+
+    @property
     def content_types(self) -> list[ContentType]:
         return [ContentType.MOVIE]
 

@@ -164,6 +164,17 @@ class SourcePlugin(ABC):
         ...
 
     @property
+    def description(self) -> str:
+        """Short description of what this plugin does.
+
+        Used in UI and CLI help text. Default derives from display_name.
+
+        Returns:
+            Human-readable description string
+        """
+        return f"Import from {self.display_name}"
+
+    @property
     def requires_network(self) -> bool:
         """Whether this plugin requires network access.
 

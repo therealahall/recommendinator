@@ -65,6 +65,10 @@ class CsvImportPlugin(SourcePlugin):
         return "CSV Import"
 
     @property
+    def description(self) -> str:
+        return "Import from CSV file"
+
+    @property
     def content_types(self) -> list[ContentType]:
         return [
             ContentType.BOOK,

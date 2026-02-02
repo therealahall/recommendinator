@@ -196,6 +196,10 @@ class SteamPlugin(SourcePlugin):
         return "Steam"
 
     @property
+    def description(self) -> str:
+        return "Import games from Steam library"
+
+    @property
     def content_types(self) -> list[ContentType]:
         return [ContentType.VIDEO_GAME]
 

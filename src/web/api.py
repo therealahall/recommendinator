@@ -590,12 +590,11 @@ def _execute_sync(
     for source_id in sources:
         logger.info(f"[SYNC] === Starting sync for source: {source_id} ===")
 
-        handler = get_sync_handler(source_id)
-        if handler is None:
+        plugin = get_sync_handler(source_id)
+        if plugin is None:
             logger.warning(f"[SYNC] No handler for source {source_id}, skipping")
             continue
 
-        plugin, _description = handler
         source_config = inputs_config.get(source_id, {})
         plugin_config = transform_source_config(source_id, source_config)
 

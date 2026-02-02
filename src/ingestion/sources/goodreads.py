@@ -33,6 +33,10 @@ class GoodreadsPlugin(SourcePlugin):
         return "Goodreads"
 
     @property
+    def description(self) -> str:
+        return "Import books from Goodreads export"
+
+    @property
     def content_types(self) -> list[ContentType]:
         return [ContentType.BOOK]
 

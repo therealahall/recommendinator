@@ -37,6 +37,10 @@ class SonarrPlugin(SourcePlugin):
         return "Sonarr"
 
     @property
+    def description(self) -> str:
+        return "Import TV series from Sonarr"
+
+    @property
     def content_types(self) -> list[ContentType]:
         return [ContentType.TV_SHOW]
 

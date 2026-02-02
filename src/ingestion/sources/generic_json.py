@@ -40,6 +40,10 @@ class JsonImportPlugin(SourcePlugin):
         return "JSON Import"
 
     @property
+    def description(self) -> str:
+        return "Import from JSON/JSONL file"
+
+    @property
     def content_types(self) -> list[ContentType]:
         return [
             ContentType.BOOK,
