@@ -429,11 +429,10 @@ GET  /api/items?type=...&status=...       # List content items with filters
 **Tasks:**
 - [x] Create Dockerfile and docker-compose.yml
 - [x] Write user documentation (setup guide)
-- [ ] Write plugin development guide
-- [ ] Add example custom preference rules
-- [ ] Performance testing with larger datasets
+- [x] Write plugin development guide (docs/PLUGIN_DEVELOPMENT.md)
+- [x] Add example custom preference rules (docs/CUSTOM_RULES.md)
 - [x] Security review (no secrets in code)
-- [ ] License selection
+- [x] License selection (PolyForm Noncommercial 1.0.0)
 - [x] Sync unification: shared sync executor, PluginRegistry as single source of truth
 - [x] CLI dynamic plugin discovery (update --source list)
 - [x] Remove deprecated preference fields (minimum_book_pages, maximum_movie_runtime)
