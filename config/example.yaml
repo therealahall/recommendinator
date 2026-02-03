@@ -135,6 +135,37 @@ recommendations:
   #     tv_show: "medium"
   #     video_game: "long"
 
+# Metadata enrichment configuration
+# Enriches content items with additional metadata (genres, tags, descriptions)
+# from external APIs in a background process.
+enrichment:
+  # Enable enrichment feature
+  enabled: false
+
+  # Automatically queue new items for enrichment after sync
+  auto_enrich_on_sync: false
+
+  # Number of items to process per batch
+  batch_size: 50
+
+  # Provider-specific configuration
+  providers:
+    # TMDB - The Movie Database (movies and TV shows)
+    # Get API key from: https://www.themoviedb.org/settings/api
+    tmdb:
+      api_key: ""
+      enabled: false
+
+    # Open Library (books) - No API key required
+    openlibrary:
+      enabled: false
+
+    # RAWG - Video Game Database
+    # Get API key from: https://rawg.io/apidocs
+    rawg:
+      api_key: ""
+      enabled: false
+
 # Logging
 logging:
   level: "INFO"  # DEBUG, INFO, WARNING, ERROR

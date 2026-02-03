@@ -175,6 +175,8 @@ class SQLiteDB:
         if content_type == "book":
             author = item.author or metadata.get("author")
             genres = metadata.get("genres") or metadata.get("genre")
+            tags = metadata.get("tags")
+            description = metadata.get("description")
 
             # Store remaining metadata as JSON
             remaining_metadata = {
@@ -190,6 +192,8 @@ class SQLiteDB:
                     "year_published",
                     "genres",
                     "genre",
+                    "tags",
+                    "description",
                 ]
             }
             metadata_json = (
@@ -200,8 +204,8 @@ class SQLiteDB:
                 """
                 INSERT OR REPLACE INTO book_details
                 (content_item_id, author, pages, isbn, isbn13, publisher, year_published,
-                 genres, metadata)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 genres, tags, description, metadata)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     db_id,
@@ -212,11 +216,15 @@ class SQLiteDB:
                     metadata.get("publisher"),
                     safe_int(metadata.get("year_published")),
                     to_json_array(genres),
+                    to_json_array(tags),
+                    description,
                     metadata_json,
                 ),
             )
         elif content_type == "movie":
             genres = metadata.get("genres") or metadata.get("genre")
+            tags = metadata.get("tags")
+            description = metadata.get("description")
             remaining_metadata = {
                 k: v
                 for k, v in metadata.items()
@@ -228,6 +236,8 @@ class SQLiteDB:
                     "genres",
                     "genre",
                     "studio",
+                    "tags",
+                    "description",
                 ]
             }
             metadata_json = (
@@ -237,8 +247,9 @@ class SQLiteDB:
             cursor.execute(
                 """
                 INSERT OR REPLACE INTO movie_details
-                (content_item_id, director, runtime, release_year, genres, studio, metadata)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                (content_item_id, director, runtime, release_year, genres, studio,
+                 tags, description, metadata)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     db_id,
@@ -247,11 +258,15 @@ class SQLiteDB:
                     safe_int(metadata.get("release_year")),
                     to_json_array(genres),
                     metadata.get("studio"),
+                    to_json_array(tags),
+                    description,
                     metadata_json,
                 ),
             )
         elif content_type == "tv_show":
             genres = metadata.get("genres") or metadata.get("genre")
+            tags = metadata.get("tags")
+            description = metadata.get("description")
             remaining_metadata = {
                 k: v
                 for k, v in metadata.items()
@@ -264,6 +279,8 @@ class SQLiteDB:
                     "release_year",
                     "genres",
                     "genre",
+                    "tags",
+                    "description",
                 ]
             }
             metadata_json = (
@@ -274,8 +291,8 @@ class SQLiteDB:
                 """
                 INSERT OR REPLACE INTO tv_show_details
                 (content_item_id, creators, seasons, episodes, network, release_year,
-                 genres, metadata)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                 genres, tags, description, metadata)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     db_id,
@@ -285,11 +302,15 @@ class SQLiteDB:
                     metadata.get("network"),
                     safe_int(metadata.get("release_year")),
                     to_json_array(genres),
+                    to_json_array(tags),
+                    description,
                     metadata_json,
                 ),
             )
         elif content_type == "video_game":
             genres = metadata.get("genres") or metadata.get("genre")
+            tags = metadata.get("tags")
+            description = metadata.get("description")
             platforms = metadata.get("platforms") or metadata.get("platform")
             remaining_metadata = {
                 k: v
@@ -303,6 +324,8 @@ class SQLiteDB:
                     "genres",
                     "genre",
                     "release_year",
+                    "tags",
+                    "description",
                 ]
             }
             metadata_json = (
@@ -313,8 +336,8 @@ class SQLiteDB:
                 """
                 INSERT OR REPLACE INTO video_game_details
                 (content_item_id, developer, publisher, platforms, genres, release_year,
-                 metadata)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                 tags, description, metadata)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     db_id,
@@ -323,6 +346,8 @@ class SQLiteDB:
                     to_json_array(platforms),
                     to_json_array(genres),
                     safe_int(metadata.get("release_year")),
+                    to_json_array(tags),
+                    description,
                     metadata_json,
                 ),
             )
@@ -346,15 +371,21 @@ class SQLiteDB:
                 SELECT ci.*,
                        bd.author as book_author, bd.pages, bd.isbn, bd.isbn13,
                        bd.publisher, bd.year_published as book_year,
-                       bd.genres as book_genres, bd.metadata as book_metadata,
+                       bd.genres as book_genres, bd.tags as book_tags,
+                       bd.description as book_description, bd.metadata as book_metadata,
                        md.director, md.runtime, md.release_year as movie_year,
-                       md.genres as movie_genres, md.studio, md.metadata as movie_metadata,
+                       md.genres as movie_genres, md.studio,
+                       md.tags as movie_tags, md.description as movie_description,
+                       md.metadata as movie_metadata,
                        td.creators, td.seasons, td.episodes, td.network,
                        td.release_year as tv_year, td.genres as tv_genres,
+                       td.tags as tv_tags, td.description as tv_description,
                        td.metadata as tv_metadata,
                        vgd.developer, vgd.publisher as game_publisher,
                        vgd.platforms, vgd.genres as game_genres,
-                       vgd.release_year as game_year, vgd.metadata as game_metadata
+                       vgd.release_year as game_year,
+                       vgd.tags as game_tags, vgd.description as game_description,
+                       vgd.metadata as game_metadata
                 FROM content_items ci
                 LEFT JOIN book_details bd ON ci.id = bd.content_item_id
                 LEFT JOIN movie_details md ON ci.id = md.content_item_id
@@ -411,15 +442,21 @@ class SQLiteDB:
                 SELECT ci.*,
                        bd.author as book_author, bd.pages, bd.isbn, bd.isbn13,
                        bd.publisher, bd.year_published as book_year,
-                       bd.genres as book_genres, bd.metadata as book_metadata,
+                       bd.genres as book_genres, bd.tags as book_tags,
+                       bd.description as book_description, bd.metadata as book_metadata,
                        md.director, md.runtime, md.release_year as movie_year,
-                       md.genres as movie_genres, md.studio, md.metadata as movie_metadata,
+                       md.genres as movie_genres, md.studio,
+                       md.tags as movie_tags, md.description as movie_description,
+                       md.metadata as movie_metadata,
                        td.creators, td.seasons, td.episodes, td.network,
                        td.release_year as tv_year, td.genres as tv_genres,
+                       td.tags as tv_tags, td.description as tv_description,
                        td.metadata as tv_metadata,
                        vgd.developer, vgd.publisher as game_publisher,
                        vgd.platforms, vgd.genres as game_genres,
-                       vgd.release_year as game_year, vgd.metadata as game_metadata
+                       vgd.release_year as game_year,
+                       vgd.tags as game_tags, vgd.description as game_description,
+                       vgd.metadata as game_metadata
                 FROM content_items ci
                 LEFT JOIN book_details bd ON ci.id = bd.content_item_id
                 LEFT JOIN movie_details md ON ci.id = md.content_item_id
@@ -584,6 +621,10 @@ class SQLiteDB:
                 metadata["year_published"] = book_year
             if genres := parse_json_array(get_row_value("book_genres")):
                 metadata["genres"] = genres
+            if tags := parse_json_array(get_row_value("book_tags")):
+                metadata["tags"] = tags
+            if description := get_row_value("book_description"):
+                metadata["description"] = description
             if book_metadata := get_row_value("book_metadata"):
                 try:
                     remaining = json.loads(book_metadata)
@@ -603,6 +644,10 @@ class SQLiteDB:
                 metadata["genres"] = genres
             if studio := get_row_value("studio"):
                 metadata["studio"] = studio
+            if tags := parse_json_array(get_row_value("movie_tags")):
+                metadata["tags"] = tags
+            if description := get_row_value("movie_description"):
+                metadata["description"] = description
             if movie_metadata := get_row_value("movie_metadata"):
                 try:
                     remaining = json.loads(movie_metadata)
@@ -624,6 +669,10 @@ class SQLiteDB:
                 metadata["release_year"] = tv_year
             if genres := parse_json_array(get_row_value("tv_genres")):
                 metadata["genres"] = genres
+            if tags := parse_json_array(get_row_value("tv_tags")):
+                metadata["tags"] = tags
+            if description := get_row_value("tv_description"):
+                metadata["description"] = description
             if tv_metadata := get_row_value("tv_metadata"):
                 try:
                     remaining = json.loads(tv_metadata)
@@ -643,6 +692,10 @@ class SQLiteDB:
                 metadata["genres"] = genres
             if game_year := get_row_value("game_year"):
                 metadata["release_year"] = game_year
+            if tags := parse_json_array(get_row_value("game_tags")):
+                metadata["tags"] = tags
+            if description := get_row_value("game_description"):
+                metadata["description"] = description
             if game_metadata := get_row_value("game_metadata"):
                 try:
                     remaining = json.loads(game_metadata)
@@ -782,5 +835,104 @@ class SQLiteDB:
             if row:
                 return self.get_content_item(row["id"], user_id=effective_user_id)
             return None
+        finally:
+            conn.close()
+
+    def get_items_needing_enrichment(
+        self,
+        content_type: ContentType | None = None,
+        user_id: int | None = None,
+        limit: int = 100,
+    ) -> list[tuple[int, ContentItem]]:
+        """Get content items that need enrichment.
+
+        Returns items where:
+        1. No enrichment_status record exists (new items), OR
+        2. needs_enrichment = TRUE
+
+        Args:
+            content_type: Optional filter by content type
+            user_id: Filter by user ID (defaults to default user)
+            limit: Maximum number of items to return
+
+        Returns:
+            List of (db_id, ContentItem) tuples for items needing enrichment
+        """
+        effective_user_id = user_id if user_id is not None else get_default_user_id()
+
+        conn = self._get_connection()
+        try:
+            cursor = conn.cursor()
+
+            # Find items without enrichment status or with needs_enrichment=TRUE
+            query = """
+                SELECT ci.id
+                FROM content_items ci
+                LEFT JOIN enrichment_status es ON ci.id = es.content_item_id
+                WHERE ci.user_id = ?
+                  AND (es.content_item_id IS NULL OR es.needs_enrichment = 1)
+            """
+            params: list[Any] = [effective_user_id]
+
+            if content_type:
+                query += " AND ci.content_type = ?"
+                content_type_value = (
+                    content_type.value
+                    if hasattr(content_type, "value")
+                    else str(content_type)
+                )
+                params.append(content_type_value)
+
+            query += " ORDER BY ci.id LIMIT ?"
+            params.append(limit)
+
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+
+            # Fetch full items for each ID
+            results = []
+            for row in rows:
+                db_id = row["id"]
+                item = self.get_content_item(db_id, user_id=effective_user_id)
+                if item:
+                    results.append((db_id, item))
+
+            return results
+        finally:
+            conn.close()
+
+    def get_content_item_db_id(
+        self,
+        external_id: str,
+        content_type: ContentType,
+        user_id: int | None = None,
+    ) -> int | None:
+        """Get the database ID of a content item by external ID.
+
+        Args:
+            external_id: External ID from source
+            content_type: Content type
+            user_id: Filter by user ID (defaults to default user)
+
+        Returns:
+            Database ID if found, None otherwise
+        """
+        effective_user_id = user_id if user_id is not None else get_default_user_id()
+
+        conn = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            content_type_value = (
+                content_type.value
+                if hasattr(content_type, "value")
+                else str(content_type)
+            )
+            cursor.execute(
+                """SELECT id FROM content_items
+                   WHERE user_id = ? AND external_id = ? AND content_type = ?""",
+                (effective_user_id, external_id, content_type_value),
+            )
+            row = cursor.fetchone()
+            return row["id"] if row else None
         finally:
             conn.close()

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import click
 
-from src.cli.commands import complete, preferences, recommend, update
+from src.cli.commands import complete, enrichment, preferences, recommend, update
 from src.cli.config import (
     create_llm_components,
     create_recommendation_engine,
@@ -55,6 +55,7 @@ cli.add_command(recommend)
 cli.add_command(update)
 cli.add_command(complete)
 cli.add_command(preferences)
+cli.add_command(enrichment)
 
 
 if __name__ == "__main__":

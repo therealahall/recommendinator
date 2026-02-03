@@ -10,7 +10,13 @@ from src.storage.schema import (
     clear_cached_preference_interpretations,
     get_all_users,
     get_cached_preference_interpretation,
+    get_enrichment_stats,
+    get_enrichment_status,
     get_user_by_id,
+    mark_enrichment_complete,
+    mark_enrichment_failed,
+    mark_item_needs_enrichment,
+    reset_enrichment_status,
     save_cached_preference_interpretation,
     update_user_settings,
 )
@@ -481,3 +487,163 @@ class StorageManager:
             return clear_cached_preference_interpretations(conn)
         finally:
             conn.close()
+
+    # Enrichment status methods
+
+    def get_items_needing_enrichment(
+        self,
+        content_type: ContentType | None = None,
+        user_id: int | None = None,
+        limit: int = 100,
+    ) -> list[tuple[int, ContentItem]]:
+        """Get content items that need enrichment.
+
+        Returns items where no enrichment_status record exists (new items)
+        or where needs_enrichment = TRUE.
+
+        Args:
+            content_type: Optional filter by content type
+            user_id: Filter by user ID
+            limit: Maximum number of items to return
+
+        Returns:
+            List of (db_id, ContentItem) tuples
+        """
+        return self.sqlite_db.get_items_needing_enrichment(
+            content_type=content_type,
+            user_id=user_id,
+            limit=limit,
+        )
+
+    def get_enrichment_status(self, content_item_id: int) -> dict | None:
+        """Get enrichment status for a content item.
+
+        Args:
+            content_item_id: Content item database ID
+
+        Returns:
+            Enrichment status dict or None if not found
+        """
+        conn = self.sqlite_db._get_connection()
+        try:
+            return get_enrichment_status(conn, content_item_id)
+        finally:
+            conn.close()
+
+    def mark_enrichment_complete(
+        self,
+        content_item_id: int,
+        provider: str,
+        quality: str,
+    ) -> None:
+        """Mark an item as successfully enriched.
+
+        Args:
+            content_item_id: Content item database ID
+            provider: Name of the provider that enriched the item
+            quality: Match quality ("high", "medium", "not_found")
+        """
+        conn = self.sqlite_db._get_connection()
+        try:
+            mark_enrichment_complete(conn, content_item_id, provider, quality)
+        finally:
+            conn.close()
+
+    def mark_enrichment_failed(
+        self,
+        content_item_id: int,
+        error: str,
+    ) -> None:
+        """Mark an item's enrichment as failed.
+
+        Args:
+            content_item_id: Content item database ID
+            error: Error message describing the failure
+        """
+        conn = self.sqlite_db._get_connection()
+        try:
+            mark_enrichment_failed(conn, content_item_id, error)
+        finally:
+            conn.close()
+
+    def mark_item_needs_enrichment(self, content_item_id: int) -> None:
+        """Mark an item as needing enrichment.
+
+        Args:
+            content_item_id: Content item database ID
+        """
+        conn = self.sqlite_db._get_connection()
+        try:
+            mark_item_needs_enrichment(conn, content_item_id)
+        finally:
+            conn.close()
+
+    def reset_enrichment_status(
+        self,
+        provider: str | None = None,
+        content_type: ContentType | None = None,
+        user_id: int | None = None,
+    ) -> int:
+        """Reset enrichment status for items to allow re-enrichment.
+
+        Args:
+            provider: If specified, only reset items enriched by this provider.
+                      If None, reset all items.
+            content_type: If specified, only reset items of this content type.
+            user_id: If specified, only reset items for this user.
+
+        Returns:
+            Number of items reset
+        """
+        conn = self.sqlite_db._get_connection()
+        try:
+            content_type_str = content_type.value if content_type else None
+            return reset_enrichment_status(conn, provider, content_type_str, user_id)
+        finally:
+            conn.close()
+
+    def get_enrichment_stats(
+        self, user_id: int | None = None
+    ) -> dict[str, int | dict[str, int]]:
+        """Get overall enrichment statistics.
+
+        Args:
+            user_id: If specified, only count items for this user.
+
+        Returns:
+            Dict with enrichment statistics including:
+            - total: Total content items
+            - enriched: Successfully enriched items
+            - pending: Items pending enrichment
+            - not_found: Items where no match was found
+            - failed: Items with enrichment errors
+            - by_provider: Breakdown by provider
+            - by_quality: Breakdown by match quality
+        """
+        conn = self.sqlite_db._get_connection()
+        try:
+            return get_enrichment_stats(conn, user_id)
+        finally:
+            conn.close()
+
+    def get_content_item_db_id(
+        self,
+        external_id: str,
+        content_type: ContentType,
+        user_id: int | None = None,
+    ) -> int | None:
+        """Get the database ID of a content item by external ID.
+
+        Args:
+            external_id: External ID from source
+            content_type: Content type
+            user_id: Filter by user ID
+
+        Returns:
+            Database ID if found, None otherwise
+        """
+        return self.sqlite_db.get_content_item_db_id(
+            external_id=external_id,
+            content_type=content_type,
+            user_id=user_id,
+        )

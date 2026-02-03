@@ -1,0 +1,276 @@
+"""Tests for the RAWG enrichment provider."""
+
+from typing import Any
+from unittest.mock import MagicMock, patch
+
+import pytest
+import requests
+
+from src.enrichment.provider_base import ProviderError
+from src.enrichment.providers.rawg import RAWGProvider
+from src.models.content import ConsumptionStatus, ContentItem, ContentType
+
+
+class TestRAWGProviderProperties:
+    """Tests for RAWG provider properties."""
+
+    def test_name(self) -> None:
+        """Test provider name."""
+        provider = RAWGProvider()
+        assert provider.name == "rawg"
+
+    def test_display_name(self) -> None:
+        """Test display name."""
+        provider = RAWGProvider()
+        assert provider.display_name == "RAWG"
+
+    def test_content_types(self) -> None:
+        """Test supported content types."""
+        provider = RAWGProvider()
+        assert provider.content_types == [ContentType.VIDEO_GAME]
+        assert ContentType.MOVIE not in provider.content_types
+
+    def test_requires_api_key(self) -> None:
+        """Test that API key IS required."""
+        provider = RAWGProvider()
+        assert provider.requires_api_key is True
+
+    def test_rate_limit(self) -> None:
+        """Test rate limit setting."""
+        provider = RAWGProvider()
+        assert provider.rate_limit_requests_per_second == 5.0
+
+
+class TestRAWGProviderValidation:
+    """Tests for RAWG provider config validation."""
+
+    def test_validate_valid_config(self) -> None:
+        """Test validation with valid config."""
+        provider = RAWGProvider()
+        errors = provider.validate_config({"api_key": "test-key"})
+        assert errors == []
+
+    def test_validate_missing_api_key(self) -> None:
+        """Test validation with missing API key."""
+        provider = RAWGProvider()
+        errors = provider.validate_config({})
+        assert "'api_key' is required for RAWG provider" in errors
+
+
+class TestRAWGProviderEnrichment:
+    """Tests for RAWG game enrichment."""
+
+    @pytest.fixture
+    def provider(self) -> RAWGProvider:
+        """Create provider instance."""
+        return RAWGProvider()
+
+    @pytest.fixture
+    def game_item(self) -> ContentItem:
+        """Create sample game item."""
+        return ContentItem(
+            id="game1",
+            title="The Witcher 3: Wild Hunt",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"release_year": 2015},
+        )
+
+    @pytest.fixture
+    def config(self) -> dict[str, Any]:
+        """Create test config."""
+        return {"api_key": "test-api-key"}
+
+    def test_enrich_game_success(
+        self,
+        provider: RAWGProvider,
+        game_item: ContentItem,
+        config: dict[str, Any],
+    ) -> None:
+        """Test successful game enrichment."""
+        mock_search = {
+            "results": [
+                {
+                    "id": 3328,
+                    "name": "The Witcher 3: Wild Hunt",
+                    "released": "2015-05-18",
+                }
+            ]
+        }
+
+        mock_game = {
+            "id": 3328,
+            "name": "The Witcher 3: Wild Hunt",
+            "released": "2015-05-18",
+            "genres": [{"name": "RPG"}, {"name": "Action"}],
+            "tags": [
+                {"name": "Open World"},
+                {"name": "Story Rich"},
+                {"name": "Atmospheric"},
+            ],
+            "description": "<p>The Witcher 3 is an <b>epic</b> RPG.</p>",
+            "developers": [{"name": "CD Projekt Red"}],
+            "publishers": [{"name": "CD Projekt"}],
+            "platforms": [
+                {"platform": {"name": "PC"}},
+                {"platform": {"name": "PlayStation 4"}},
+            ],
+            "rating": 4.66,
+            "metacritic": 93,
+            "playtime": 46,
+            "esrb_rating": {"name": "Mature"},
+        }
+
+        with patch("requests.get") as mock_get:
+            mock_get.side_effect = [
+                MagicMock(status_code=200, json=lambda: mock_search),
+                MagicMock(status_code=200, json=lambda: mock_game),
+            ]
+
+            result = provider.enrich(game_item, config)
+
+        assert result is not None
+        assert result.external_id == "rawg:3328"
+        assert result.genres == ["RPG", "Action"]
+        assert "Open World" in result.tags
+        assert "epic" in result.description.lower()
+        assert result.match_quality == "high"
+        assert result.extra_metadata.get("developer") == "CD Projekt Red"
+        assert result.extra_metadata.get("metacritic") == 93
+        assert result.extra_metadata.get("release_year") == 2015
+
+    def test_enrich_game_not_found(
+        self,
+        provider: RAWGProvider,
+        config: dict[str, Any],
+    ) -> None:
+        """Test enrichment when game is not found."""
+        item = ContentItem(
+            id="game1",
+            title="Nonexistent Game",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+        )
+
+        mock_search = {"results": []}
+
+        with patch("requests.get") as mock_get:
+            mock_get.return_value = MagicMock(status_code=200, json=lambda: mock_search)
+
+            result = provider.enrich(item, config)
+
+        assert result is not None
+        assert result.match_quality == "not_found"
+
+    def test_enrich_game_api_error(
+        self,
+        provider: RAWGProvider,
+        game_item: ContentItem,
+        config: dict[str, Any],
+    ) -> None:
+        """Test that API errors raise ProviderError."""
+        with patch("requests.get") as mock_get:
+            mock_get.side_effect = requests.RequestException("Connection failed")
+
+            with pytest.raises(ProviderError) as exc_info:
+                provider.enrich(game_item, config)
+
+            assert "Failed to search RAWG" in str(exc_info.value)
+
+    def test_enrich_game_matches_by_year(
+        self,
+        provider: RAWGProvider,
+        config: dict[str, Any],
+    ) -> None:
+        """Test that search prefers matches with correct year."""
+        item = ContentItem(
+            id="game1",
+            title="Doom",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"release_year": 2016},
+        )
+
+        mock_search = {
+            "results": [
+                {"id": 1, "name": "Doom", "released": "1993-12-10"},  # Wrong year
+                {"id": 2, "name": "Doom", "released": "2016-05-13"},  # Correct year
+            ]
+        }
+
+        mock_game = {
+            "id": 2,
+            "name": "Doom",
+            "genres": [{"name": "Shooter"}],
+            "tags": [],
+        }
+
+        with patch("requests.get") as mock_get:
+            mock_get.side_effect = [
+                MagicMock(status_code=200, json=lambda: mock_search),
+                MagicMock(status_code=200, json=lambda: mock_game),
+            ]
+
+            result = provider.enrich(item, config)
+
+        assert result is not None
+        assert result.external_id == "rawg:2"  # Should match 2016 version
+
+
+class TestRAWGProviderDescriptionCleaning:
+    """Tests for HTML description cleaning."""
+
+    def test_clean_description_removes_html(self) -> None:
+        """Test that HTML tags are removed."""
+        provider = RAWGProvider()
+        html = "<p>This is a <b>great</b> game with <i>amazing</i> graphics.</p>"
+
+        cleaned = provider._clean_description(html)
+
+        assert cleaned == "This is a great game with amazing graphics."
+        assert "<" not in cleaned
+
+    def test_clean_description_handles_none(self) -> None:
+        """Test that None description returns None."""
+        provider = RAWGProvider()
+        assert provider._clean_description(None) is None
+
+    def test_clean_description_limits_length(self) -> None:
+        """Test that long descriptions are truncated."""
+        provider = RAWGProvider()
+        long_desc = "A" * 3000
+
+        cleaned = provider._clean_description(long_desc)
+
+        assert len(cleaned) == 2000
+        assert cleaned.endswith("...")
+
+
+class TestRAWGProviderUnsupportedTypes:
+    """Tests for handling unsupported content types."""
+
+    def test_enrich_movie_returns_none(self) -> None:
+        """Test that enriching a movie returns None."""
+        provider = RAWGProvider()
+        item = ContentItem(
+            id="movie1",
+            title="Some Movie",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+        )
+
+        result = provider.enrich(item, {"api_key": "test"})
+        assert result is None
+
+    def test_enrich_book_returns_none(self) -> None:
+        """Test that enriching a book returns None."""
+        provider = RAWGProvider()
+        item = ContentItem(
+            id="book1",
+            title="Some Book",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        )
+
+        result = provider.enrich(item, {"api_key": "test"})
+        assert result is None

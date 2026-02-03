@@ -266,3 +266,135 @@ class TestExecuteMultiSourceSync:
         )
 
         assert results == []
+
+    def test_mark_for_enrichment_passed_through(self) -> None:
+        """mark_for_enrichment flag is passed to execute_sync."""
+        plugin = MagicMock()
+        plugin.name = "test"
+        plugin.display_name = "Test"
+        plugin.fetch.return_value = iter([_make_item("Book 1")])
+
+        storage = MagicMock()
+        storage.save_content_item.return_value = 1
+
+        results = execute_multi_source_sync(
+            sources=[(plugin, {})],
+            storage_manager=storage,
+            mark_for_enrichment=True,
+        )
+
+        assert len(results) == 1
+        assert results[0].items_synced == 1
+        # Should have called mark_item_needs_enrichment
+        storage.mark_item_needs_enrichment.assert_called_once_with(1)
+
+
+class TestAutoEnrichmentHook:
+    """Tests for auto-enrichment marking during sync."""
+
+    def test_mark_for_enrichment_enabled(self) -> None:
+        """Items are marked for enrichment when flag is True."""
+        items = [_make_item("Book 1"), _make_item("Book 2")]
+        plugin = MagicMock()
+        plugin.display_name = "TestPlugin"
+        plugin.fetch.return_value = iter(items)
+
+        storage = MagicMock()
+        storage.save_content_item.side_effect = [1, 2]
+
+        result = execute_sync(
+            plugin=plugin,
+            plugin_config={},
+            storage_manager=storage,
+            mark_for_enrichment=True,
+        )
+
+        assert result.items_synced == 2
+        assert storage.mark_item_needs_enrichment.call_count == 2
+        storage.mark_item_needs_enrichment.assert_any_call(1)
+        storage.mark_item_needs_enrichment.assert_any_call(2)
+
+    def test_mark_for_enrichment_disabled(self) -> None:
+        """Items are not marked for enrichment when flag is False."""
+        items = [_make_item("Book 1")]
+        plugin = MagicMock()
+        plugin.display_name = "TestPlugin"
+        plugin.fetch.return_value = iter(items)
+
+        storage = MagicMock()
+        storage.save_content_item.return_value = 1
+
+        result = execute_sync(
+            plugin=plugin,
+            plugin_config={},
+            storage_manager=storage,
+            mark_for_enrichment=False,
+        )
+
+        assert result.items_synced == 1
+        storage.mark_item_needs_enrichment.assert_not_called()
+
+    def test_mark_for_enrichment_default_disabled(self) -> None:
+        """mark_for_enrichment defaults to False."""
+        items = [_make_item("Book 1")]
+        plugin = MagicMock()
+        plugin.display_name = "TestPlugin"
+        plugin.fetch.return_value = iter(items)
+
+        storage = MagicMock()
+        storage.save_content_item.return_value = 1
+
+        # Don't pass mark_for_enrichment - should default to False
+        result = execute_sync(
+            plugin=plugin,
+            plugin_config={},
+            storage_manager=storage,
+        )
+
+        assert result.items_synced == 1
+        storage.mark_item_needs_enrichment.assert_not_called()
+
+    def test_mark_for_enrichment_error_does_not_fail_sync(self) -> None:
+        """Errors from marking for enrichment don't stop the sync."""
+        items = [_make_item("Book 1"), _make_item("Book 2")]
+        plugin = MagicMock()
+        plugin.display_name = "TestPlugin"
+        plugin.fetch.return_value = iter(items)
+
+        storage = MagicMock()
+        storage.save_content_item.side_effect = [1, 2]
+        storage.mark_item_needs_enrichment.side_effect = [
+            Exception("enrichment error"),
+            None,
+        ]
+
+        result = execute_sync(
+            plugin=plugin,
+            plugin_config={},
+            storage_manager=storage,
+            mark_for_enrichment=True,
+        )
+
+        # Both items should be synced even though first enrichment marking failed
+        assert result.items_synced == 2
+        assert storage.mark_item_needs_enrichment.call_count == 2
+
+    def test_mark_for_enrichment_skipped_when_no_db_id(self) -> None:
+        """Enrichment marking is skipped when save returns None/0."""
+        items = [_make_item("Book 1")]
+        plugin = MagicMock()
+        plugin.display_name = "TestPlugin"
+        plugin.fetch.return_value = iter(items)
+
+        storage = MagicMock()
+        storage.save_content_item.return_value = None  # No DB ID
+
+        result = execute_sync(
+            plugin=plugin,
+            plugin_config={},
+            storage_manager=storage,
+            mark_for_enrichment=True,
+        )
+
+        assert result.items_synced == 1
+        storage.mark_item_needs_enrichment.assert_not_called()

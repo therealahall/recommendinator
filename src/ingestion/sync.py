@@ -35,6 +35,7 @@ def execute_sync(
     embedding_generator: Any | None = None,
     use_embeddings: bool = False,
     progress_callback: SyncProgressCallback | None = None,
+    mark_for_enrichment: bool = False,
 ) -> SyncResult:
     """Execute a sync for a single plugin source.
 
@@ -48,6 +49,7 @@ def execute_sync(
         embedding_generator: Optional embedding generator.
         use_embeddings: Whether to generate embeddings for each item.
         progress_callback: Optional callback(items_processed, total, current_item).
+        mark_for_enrichment: Whether to mark items as needing enrichment after save.
 
     Returns:
         SyncResult with counts and any errors.
@@ -85,8 +87,18 @@ def execute_sync(
             if use_embeddings and embedding_generator:
                 embedding = embedding_generator.generate_content_embedding(item)
 
-            storage_manager.save_content_item(item, embedding)
+            db_id = storage_manager.save_content_item(item, embedding)
             result.items_synced += 1
+
+            # Mark for enrichment if enabled
+            if mark_for_enrichment and db_id:
+                try:
+                    storage_manager.mark_item_needs_enrichment(db_id)
+                except Exception as enrich_error:
+                    logger.warning(
+                        f"[SYNC] Failed to mark '{item.title}' for enrichment: "
+                        f"{enrich_error}"
+                    )
 
         except Exception as error:
             error_message = f"Failed to process '{item.title}': {error}"
@@ -107,6 +119,7 @@ def execute_multi_source_sync(
     use_embeddings: bool = False,
     progress_callback: SyncProgressCallback | None = None,
     error_callback: Callable[[str], None] | None = None,
+    mark_for_enrichment: bool = False,
 ) -> list[SyncResult]:
     """Execute sync for multiple plugin sources sequentially.
 
@@ -117,6 +130,7 @@ def execute_multi_source_sync(
         use_embeddings: Whether to generate embeddings.
         progress_callback: Optional callback for progress updates.
         error_callback: Optional callback for error reporting.
+        mark_for_enrichment: Whether to mark items as needing enrichment after save.
 
     Returns:
         List of SyncResult, one per source.
@@ -134,6 +148,7 @@ def execute_multi_source_sync(
                 embedding_generator=embedding_generator,
                 use_embeddings=use_embeddings,
                 progress_callback=progress_callback,
+                mark_for_enrichment=mark_for_enrichment,
             )
             results.append(result)
 

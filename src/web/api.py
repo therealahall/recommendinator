@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from src.ingestion.sync import execute_multi_source_sync
 from src.models.content import ConsumptionStatus, ContentType
 from src.models.user_preferences import UserPreferenceConfig
+from src.web.enrichment_manager import get_enrichment_manager
 from src.web.state import get_config, get_embedding_gen, get_engine, get_storage
 from src.web.sync_manager import SyncJob, get_sync_manager
 from src.web.sync_sources import (
@@ -144,6 +145,58 @@ class UserPreferenceUpdateRequest(BaseModel):
     variety_after_completion: bool | None = None
     custom_rules: list[str] | None = None
     content_length_preferences: dict[str, str] | None = None
+
+
+class EnrichmentStartRequest(BaseModel):
+    """Request model for starting enrichment."""
+
+    content_type: str | None = Field(
+        None, description="Content type filter (book, movie, tv_show, video_game)"
+    )
+    user_id: int = Field(1, ge=1, description="User ID for filtering items")
+
+
+class EnrichmentResetRequest(BaseModel):
+    """Request model for resetting enrichment status."""
+
+    provider: str | None = Field(
+        None,
+        description="Reset items enriched by this provider (tmdb, openlibrary, rawg)",
+    )
+    content_type: str | None = Field(
+        None, description="Reset items of this content type"
+    )
+    user_id: int = Field(1, ge=1, description="User ID for filtering items")
+
+
+class EnrichmentJobStatusResponse(BaseModel):
+    """Response model for enrichment job status."""
+
+    running: bool = False
+    completed: bool = False
+    cancelled: bool = False
+    items_processed: int = 0
+    items_enriched: int = 0
+    items_failed: int = 0
+    items_not_found: int = 0
+    total_items: int = 0
+    current_item: str = ""
+    content_type: str | None = None
+    errors: list[str] = Field(default_factory=list)
+    elapsed_seconds: float = 0.0
+    progress_percent: float = 0.0
+
+
+class EnrichmentStatsResponse(BaseModel):
+    """Response model for enrichment statistics."""
+
+    total: int = 0
+    enriched: int = 0
+    pending: int = 0
+    not_found: int = 0
+    failed: int = 0
+    by_provider: dict[str, int] = Field(default_factory=dict)
+    by_quality: dict[str, int] = Field(default_factory=dict)
 
 
 @router.get("/recommendations", response_model=list[RecommendationResponse])
@@ -540,6 +593,12 @@ async def update_data(request: UpdateRequest) -> dict[str, Any]:
     embeddings_enabled = features_config.get("embeddings_enabled", False)
     use_embeddings = ai_enabled and embeddings_enabled
 
+    # Check if auto-enrichment is enabled
+    enrichment_config = config.get("enrichment", {})
+    auto_enrich = enrichment_config.get("enabled", False) and enrichment_config.get(
+        "auto_enrich_on_sync", False
+    )
+
     source_pairs = []
     for source_id in sources_to_sync:
         plugin = get_sync_handler(source_id)
@@ -569,6 +628,7 @@ async def update_data(request: UpdateRequest) -> dict[str, Any]:
             use_embeddings=use_embeddings,
             progress_callback=progress_callback,
             error_callback=sync_manager.add_error,
+            mark_for_enrichment=auto_enrich,
         )
         return sum(result.items_synced for result in results)
 
@@ -663,3 +723,188 @@ async def get_sync_status() -> SyncStatusResponse:
         status=status_dict["status"],
         job=job_response,
     )
+
+
+# ---------------------------------------------------------------------------
+# Enrichment endpoints
+# ---------------------------------------------------------------------------
+
+
+@router.post("/enrichment/start")
+async def start_enrichment(
+    request: EnrichmentStartRequest,
+) -> dict[str, Any]:
+    """Start background metadata enrichment.
+
+    Enriches content items with genres, tags, and descriptions from
+    external APIs (TMDB, OpenLibrary, RAWG).
+
+    Args:
+        request: Enrichment start request with optional filters
+
+    Returns:
+        Message indicating enrichment was started or error
+    """
+    storage = get_storage()
+    config = get_config()
+
+    if not storage or not config:
+        raise HTTPException(status_code=500, detail="Components not initialized")
+
+    # Check if enrichment is enabled
+    enrichment_config = config.get("enrichment", {})
+    if not enrichment_config.get("enabled", False):
+        raise HTTPException(
+            status_code=400,
+            detail="Enrichment is disabled. Set enrichment.enabled: true in config",
+        )
+
+    # Map content type if provided
+    content_type = None
+    if request.content_type:
+        type_map = {
+            "book": ContentType.BOOK,
+            "movie": ContentType.MOVIE,
+            "tv_show": ContentType.TV_SHOW,
+            "video_game": ContentType.VIDEO_GAME,
+        }
+        if request.content_type.lower() not in type_map:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid content type: {request.content_type}",
+            )
+        content_type = type_map[request.content_type.lower()]
+
+    enrichment_manager = get_enrichment_manager()
+    success, message = enrichment_manager.start_enrichment(
+        storage_manager=storage,
+        config=config,
+        content_type=content_type,
+        user_id=request.user_id,
+    )
+
+    if not success:
+        raise HTTPException(status_code=409, detail=message)
+
+    return {"message": message, "status": "started"}
+
+
+@router.post("/enrichment/stop")
+async def stop_enrichment() -> dict[str, Any]:
+    """Stop the current enrichment job.
+
+    Returns:
+        Message indicating enrichment was stopped
+    """
+    enrichment_manager = get_enrichment_manager()
+    success, message = enrichment_manager.stop_enrichment()
+
+    if not success:
+        raise HTTPException(status_code=400, detail=message)
+
+    return {"message": message, "status": "stopping"}
+
+
+@router.get("/enrichment/status", response_model=EnrichmentJobStatusResponse | None)
+async def get_enrichment_status() -> EnrichmentJobStatusResponse | None:
+    """Get current enrichment job status.
+
+    Returns:
+        Current enrichment job status or null if no job exists
+    """
+    enrichment_manager = get_enrichment_manager()
+    status = enrichment_manager.get_status()
+
+    if status is None:
+        return EnrichmentJobStatusResponse()
+
+    return EnrichmentJobStatusResponse(
+        running=status.running,
+        completed=status.completed,
+        cancelled=status.cancelled,
+        items_processed=status.items_processed,
+        items_enriched=status.items_enriched,
+        items_failed=status.items_failed,
+        items_not_found=status.items_not_found,
+        total_items=status.total_items,
+        current_item=status.current_item,
+        content_type=status.content_type,
+        errors=status.errors,
+        elapsed_seconds=status.elapsed_seconds,
+        progress_percent=status.progress_percent,
+    )
+
+
+@router.get("/enrichment/stats", response_model=EnrichmentStatsResponse)
+async def get_enrichment_stats(
+    user_id: int = Query(1, ge=1, description="User ID for filtering stats"),
+) -> EnrichmentStatsResponse:
+    """Get enrichment statistics.
+
+    Args:
+        user_id: User ID for filtering stats
+
+    Returns:
+        Enrichment statistics
+    """
+    storage = get_storage()
+
+    if not storage:
+        raise HTTPException(status_code=500, detail="Storage not initialized")
+
+    stats = storage.get_enrichment_stats(user_id=user_id)
+
+    return EnrichmentStatsResponse(
+        total=stats.get("total", 0),
+        enriched=stats.get("enriched", 0),
+        pending=stats.get("pending", 0),
+        not_found=stats.get("not_found", 0),
+        failed=stats.get("failed", 0),
+        by_provider=stats.get("by_provider", {}),
+        by_quality=stats.get("by_quality", {}),
+    )
+
+
+@router.post("/enrichment/reset")
+async def reset_enrichment(
+    request: EnrichmentResetRequest,
+) -> dict[str, Any]:
+    """Reset enrichment status for re-processing.
+
+    Marks items as needing enrichment again, allowing them to be
+    re-processed by the enrichment providers.
+
+    Args:
+        request: Reset request with optional filters
+
+    Returns:
+        Count of items reset
+    """
+    storage = get_storage()
+
+    if not storage:
+        raise HTTPException(status_code=500, detail="Storage not initialized")
+
+    # Map content type if provided
+    content_type = None
+    if request.content_type:
+        type_map = {
+            "book": ContentType.BOOK,
+            "movie": ContentType.MOVIE,
+            "tv_show": ContentType.TV_SHOW,
+            "video_game": ContentType.VIDEO_GAME,
+        }
+        if request.content_type.lower() not in type_map:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid content type: {request.content_type}",
+            )
+        content_type = type_map[request.content_type.lower()]
+
+    count = storage.reset_enrichment_status(
+        provider=request.provider,
+        content_type=content_type,
+        user_id=request.user_id,
+    )
+
+    return {"message": f"Reset enrichment status for {count} item(s)", "count": count}

@@ -3,7 +3,8 @@
 This document outlines the implementation plan for v1 of the Personal Recommendations system.
 
 **Created:** 2026-01-25
-**Status:** In Progress
+**Updated:** 2026-02-03
+**Status:** In Progress (Phase 8 complete)
 
 ---
 
@@ -95,18 +96,18 @@ A personal recommendation system that:
 ┌─────────────────────────────────────────────────────────────────────┐
 │                       Ingestion Layer                                │
 │  ┌─────────────────────────────────────────────────────────────────┐│
-│  │                    Source Plugin Interface                       ││
-│  │   • fetch() - retrieve data from source                         ││
-│  │   • parse() - convert to ContentItem                            ││
-│  │   • normalize_rating() - convert to 1-5 scale                   ││
+│  │              PluginRegistry + Shared Sync Executor               ││
+│  │   • SourcePlugin ABC with transform_config(), fetch()           ││
+│  │   • execute_sync() — single save-and-embed loop                 ││
+│  │   • Dynamic discovery from src/ingestion/sources/               ││
 │  └─────────────────────────────────────────────────────────────────┘│
 │                                                                      │
 │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐  │
-│  │Goodreads │ │  Steam   │ │  Plex    │ │ Sonarr   │ │  Radarr  │  │
+│  │Goodreads │ │  Steam   │ │ Sonarr   │ │  Radarr  │ │   CSV    │  │
 │  └──────────┘ └──────────┘ └──────────┘ └──────────┘ └──────────┘  │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐               │
-│  │   GOG    │ │   Epic   │ │ Nintendo │ │Custom CSV│  ...         │
-│  └──────────┘ └──────────┘ └──────────┘ └──────────┘               │
+│  ┌──────────┐ ┌──────────┐ ┌──────────────────────────┐            │
+│  │   JSON   │ │ Markdown │ │  + private plugins dir   │  ...       │
+│  └──────────┘ └──────────┘ └──────────────────────────┘            │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -267,12 +268,15 @@ class Scorer(ABC):
         """Return score 0.0-1.0 for this candidate."""
         pass
 
-# Implemented scorers:
+# Implemented scorers (8 total):
 # - GenreMatchScorer (weight 2.0): Score based on genre preference [-1,1] mapped to [0,1]
 # - CreatorMatchScorer (weight 1.5): Unified author/director/developer matching
 # - TagOverlapScorer (weight 1.0): Jaccard overlap of candidate genres vs consumed genres
 # - SeriesOrderScorer (weight 1.5): 1.0 next-in-sequence, 0.8 first-unstarted, 0.3 too-far-ahead
 # - RatingPatternScorer (weight 1.0): Average rating in matching genres mapped to [0,1]
+# - SemanticSimilarityScorer (weight 1.5): Embedding-based similarity (AI-only)
+# - CustomPreferenceScorer (weight varies): User NL rule-based scoring
+# - ContentLengthScorer (weight 1.0): Soft penalty for length preference mismatch
 ```
 
 **Files Created/Modified:**
@@ -298,7 +302,7 @@ class Scorer(ABC):
 - [x] Make embedding generation conditional on `ai_enabled` (already done by StorageManager)
 - [x] Add LLM reasoning generator (already exists, unchanged)
 - [x] Integrate AI scorer into pipeline when enabled
-- [ ] Natural language preference interpreter (deferred to Phase 5)
+- [x] Natural language preference interpreter (implemented as CustomPreferenceScorer)
 
 **Key Design:**
 
@@ -338,8 +342,8 @@ class SemanticSimilarityScorer(Scorer):
 - [x] Add user preference persistence to `StorageManager` (stored in users.settings JSON)
 - [x] Add REST API endpoints (`GET/PUT /api/users/{user_id}/preferences`)
 - [x] Add CLI commands (`preferences get/set-weight/reset`, `recommend --user`)
-- [ ] Web UI for preference management (deferred to Phase 6)
-- [ ] Natural language preference interpreter (deferred)
+- [x] Web UI for preference management (implemented in Phase 6)
+- [x] Natural language preference interpreter (CustomPreferenceScorer with genre boosts/penalties)
 
 **Weight Resolution Order (last wins):**
 1. Scorer class defaults (hardcoded: GenreMatch=2.0, etc.)
@@ -353,8 +357,7 @@ class UserPreferenceConfig:
     scorer_weights: dict[str, float]  # Sparse: only user-set keys
     series_in_order: bool = True
     variety_after_completion: bool = False
-    minimum_book_pages: int | None = None
-    maximum_movie_runtime: int | None = None
+    content_length_preferences: dict[str, str] | None = None  # e.g., {"book": "short", "movie": "long"}
     custom_rules: list[str] = field(default_factory=list)
 ```
 
@@ -424,43 +427,122 @@ GET  /api/items?type=...&status=...       # List content items with filters
 **Goal:** Ready for open source
 
 **Tasks:**
-- [ ] Create Dockerfile and docker-compose.yml
-- [ ] Write user documentation (setup guide)
+- [x] Create Dockerfile and docker-compose.yml
+- [x] Write user documentation (setup guide)
 - [ ] Write plugin development guide
 - [ ] Add example custom preference rules
 - [ ] Performance testing with larger datasets
-- [ ] Security review (no secrets in code)
+- [x] Security review (no secrets in code)
 - [ ] License selection
+- [x] Sync unification: shared sync executor, PluginRegistry as single source of truth
+- [x] CLI dynamic plugin discovery (update --source list)
+- [x] Remove deprecated preference fields (minimum_book_pages, maximum_movie_runtime)
+- [x] Fix Italian article "i" in sorting (collided with "I Am Legend")
+- [x] Fix scorer cloning bug (CustomPreferenceScorer lost genre_boosts on weight override)
+- [x] Add parent_id to ContentItem for TV season parent tracking
+- [x] Convert content length from hard filter to soft scoring penalty
 
 **Deliverable:** Ready for others to use
 
+### Phase 8: Metadata Enrichment
+
+**Goal:** Plugin-based metadata enrichment system that runs in background to fill gaps in content metadata (genres, tags, descriptions) from external APIs.
+
+**Tasks:**
+- [x] Create EnrichmentProvider ABC and EnrichmentResult dataclass
+- [x] Create EnrichmentRegistry singleton for provider discovery
+- [x] Add enrichment_status table and tags/description columns to schema
+- [x] Create thread-safe token bucket rate limiter
+- [x] Create TMDB provider for movies and TV shows
+- [x] Create OpenLibrary provider for books (no API key required)
+- [x] Create RAWG provider for video games
+- [x] Create EnrichmentManager background worker with gap-filling merge
+- [x] Add CLI commands (enrichment start/status/reset)
+- [x] Add REST API endpoints (start, stop, status, stats, reset)
+- [x] Add auto-enrichment hook after sync (configurable)
+- [x] Update config/example.yaml with enrichment configuration
+
+**Architecture:**
+```
+src/enrichment/
+├── __init__.py
+├── provider_base.py     # EnrichmentProvider ABC, EnrichmentResult dataclass
+├── registry.py          # EnrichmentRegistry singleton
+├── rate_limiter.py      # Token bucket rate limiter
+├── manager.py           # EnrichmentManager background worker
+└── providers/
+    ├── __init__.py
+    ├── tmdb.py          # Movies + TV shows
+    ├── openlibrary.py   # Books (no API key)
+    └── rawg.py          # Video games
+```
+
+**Key Design Decisions:**
+- Gap-filling merge strategy: never overwrites existing metadata
+- Providers are auto-discovered from src/enrichment/providers/
+- Rate limiting per provider to respect API limits
+- enrichment_status table tracks what's been enriched and match quality
+- Auto-enrich hook marks new items for enrichment after sync (opt-in)
+
+**Files Created/Modified:**
+- `src/enrichment/*` — New enrichment module (8 files)
+- `src/storage/schema.py` — Added enrichment_status table, tags/description columns
+- `src/storage/manager.py` — Added enrichment methods
+- `src/cli/commands.py` — Added enrichment command group
+- `src/web/api.py` — Added enrichment endpoints
+- `src/web/enrichment_manager.py` — Web layer wrapper
+- `src/ingestion/sync.py` — Added mark_for_enrichment parameter
+- `config/example.yaml` — Added enrichment configuration section
+- `tests/enrichment/*` — 72+ new tests
+
+**Deliverable:** Background enrichment fills in missing genres/tags/descriptions from TMDB, OpenLibrary, and RAWG
+
+### Phase 9: UI tweaks
+
+**Goal:** Increase user capabilities to manage their own content
+
+**Tasks:**
+- [ ] Allow for users to ignore content from recommendations / weightings in the library view
+- [ ] Allow for users to add a recommended item to the ignore list (eg: if you recommend a book I'm not interested that got ingested, I should be able to quickly ignore that)
+
+### Phase 10: LLM Integration
+**Goal:** Implement full LLM integration
+**Docs:** See @V1_ROADMAP_LLM_INTEGRATION.md, @V1_EXAMPLE_PROMPT_OPTIONS.md, @V1_EXAMPLE_OUTPUT_FORMAT.md
 ---
 
 ## Progress Tracking
 
-| Phase | Status | Started | Completed |
-|-------|--------|---------|-----------|
-| Phase 0: Foundation Reset | Complete | 2026-01-25 | 2026-01-25 |
-| Phase 1: Core Data Layer | Complete | 2026-01-25 | 2026-01-25 |
-| Phase 2: Ingestion Framework | Complete | 2026-01-26 | 2026-01-27 |
-| Phase 3: Non-AI Engine | Complete | 2026-01-27 | 2026-01-27 |
-| Phase 4: AI Enhancement | Complete | 2026-01-27 | 2026-01-27 |
-| Phase 5: User Preferences | Complete | 2026-01-27 | 2026-01-27 |
-| Phase 6: Web Interface | Complete | 2026-01-27 | 2026-01-27 |
-| Phase 7: Polish | Not Started | - | - |
+| Phase                        | Status      | Started    | Completed  |
+|------------------------------|-------------|------------|------------|
+| Phase 0: Foundation Reset    | Complete    | 2026-01-25 | 2026-01-25 |
+| Phase 1: Core Data Layer     | Complete    | 2026-01-25 | 2026-01-25 |
+| Phase 2: Ingestion Framework | Complete    | 2026-01-26 | 2026-01-27 |
+| Phase 3: Non-AI Engine       | Complete    | 2026-01-27 | 2026-01-27 |
+| Phase 4: AI Enhancement      | Complete    | 2026-01-27 | 2026-01-27 |
+| Phase 5: User Preferences    | Complete    | 2026-01-27 | 2026-01-27 |
+| Phase 6: Web Interface       | Complete    | 2026-01-27 | 2026-01-27 |
+| Phase 7: Polish              | In Progress | 2026-02-01 | -          |
+| Phase 8: Metadata Enrichment | Complete    | 2026-02-03 | 2026-02-03 |
+| Phase 9: UI Tweaks           | Not Started | -          | -          |
+| Phase 10: LLM Integration    | Not Started | -          | -          |
 
 ---
 
 ## Key Architectural Decisions
 
-| Decision | Rationale |
-|----------|-----------|
-| SQLite as primary store | Simple, portable, no external dependencies |
-| ChromaDB optional | Only initialized if AI features enabled |
-| Plugin interface for sources | Community can contribute, each plugin self-contained |
-| User table from day 1 | Even if v1 is single-user, schema supports multi-user |
-| Scoring pipeline | Each scorer independent, easy to add/remove/weight |
-| Preferences in DB | Portable, UI-editable, per-user in multi-user mode |
+| Decision                      | Rationale                                                            |
+|-------------------------------|----------------------------------------------------------------------|
+| SQLite as primary store       | Simple, portable, no external dependencies                           |
+| ChromaDB optional             | Only initialized if AI features enabled                              |
+| Plugin interface for sources  | Community can contribute, each plugin self-contained                  |
+| User table from day 1         | Even if v1 is single-user, schema supports multi-user                |
+| Scoring pipeline              | Each scorer independent, easy to add/remove/weight                   |
+| Preferences in DB             | Portable, UI-editable, per-user in multi-user mode                   |
+| PluginRegistry single source  | Eliminates duplicate plugin lists in CLI, web API, and sync_sources  |
+| Shared sync executor          | One save-and-embed loop used by both CLI and web, reduces duplication |
+| Plugins own config transform  | Each plugin knows its own YAML→config mapping, no central switch     |
+| Soft scoring over hard filter | Content length is a scoring penalty, not a filter — nothing excluded |
+| parent_id runtime-only        | TV season→show link needed only during scoring, not persisted        |
 
 ---
 

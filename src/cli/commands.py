@@ -170,6 +170,12 @@ def update(ctx: click.Context, source: str) -> None:
     embeddings_enabled = features_config.get("embeddings_enabled", False)
     use_embeddings = ai_enabled and embeddings_enabled
 
+    # Check if auto-enrichment is enabled
+    enrichment_config = config.get("enrichment", {})
+    auto_enrich = enrichment_config.get("enabled", False) and enrichment_config.get(
+        "auto_enrich_on_sync", False
+    )
+
     # Determine which sources to sync
     if source == "all":
         enabled_plugins = registry.get_enabled_plugins(config)
@@ -239,6 +245,7 @@ def update(ctx: click.Context, source: str) -> None:
                     embedding_generator=embedding_gen,
                     use_embeddings=use_embeddings,
                     progress_callback=cli_progress,
+                    mark_for_enrichment=auto_enrich,
                 )
 
                 click.echo(
@@ -668,3 +675,235 @@ def custom_rules_interpret(ctx: click.Context, rule_text: str, use_llm: bool) ->
 
     if result.is_empty():
         click.echo("(No preferences extracted from this rule)")
+
+
+# ---------------------------------------------------------------------------
+# Enrichment command group
+# ---------------------------------------------------------------------------
+
+
+@click.group()
+def enrichment() -> None:
+    """Manage metadata enrichment."""
+
+
+@enrichment.command("start")
+@click.option(
+    "--type",
+    "content_type_str",
+    type=click.Choice(["book", "movie", "tv_show", "video_game"], case_sensitive=False),
+    default=None,
+    help="Content type to enrich (default: all types)",
+)
+@click.option(
+    "--user",
+    "user_id",
+    type=int,
+    default=1,
+    help="User ID for filtering items",
+)
+@click.pass_context
+def enrichment_start(
+    ctx: click.Context, content_type_str: str | None, user_id: int
+) -> None:
+    """Start background metadata enrichment.
+
+    Enriches content items with genres, tags, and descriptions from
+    external APIs (TMDB, OpenLibrary, RAWG).
+    """
+    from src.enrichment.manager import EnrichmentManager
+
+    storage = ctx.obj["storage"]
+    config = ctx.obj["config"]
+
+    # Check if enrichment is enabled
+    enrichment_config = config.get("enrichment", {})
+    if not enrichment_config.get("enabled", False):
+        click.echo(
+            "Enrichment is disabled in config. "
+            "Set enrichment.enabled: true in config.yaml",
+            err=True,
+        )
+        raise click.Abort()
+
+    # Map string to ContentType enum if provided
+    content_type = None
+    if content_type_str:
+        type_map = {
+            "book": ContentType.BOOK,
+            "movie": ContentType.MOVIE,
+            "tv_show": ContentType.TV_SHOW,
+            "video_game": ContentType.VIDEO_GAME,
+        }
+        content_type = type_map[content_type_str.lower()]
+
+    manager = EnrichmentManager(storage, config)
+
+    if not manager.start_enrichment(content_type=content_type, user_id=user_id):
+        click.echo("Enrichment job is already running.", err=True)
+        raise click.Abort()
+
+    type_desc = content_type_str if content_type_str else "all types"
+    click.echo(f"Started enrichment for {type_desc}...")
+
+    # Poll for completion
+    import time
+
+    try:
+        while True:
+            status = manager.get_status()
+            if not status.running:
+                break
+
+            progress = status.progress_percent
+            current = status.current_item or "..."
+            click.echo(
+                f"  Progress: {progress:.1f}% - Processing: {current[:40]}",
+                nl=False,
+            )
+            click.echo("\r", nl=False)
+            time.sleep(1)
+
+        # Final status
+        click.echo("")
+        if status.cancelled:
+            click.echo("Enrichment cancelled.")
+        else:
+            click.echo("Enrichment completed.")
+
+        click.echo(f"  Items processed: {status.items_processed}")
+        click.echo(f"  Items enriched: {status.items_enriched}")
+        click.echo(f"  Items not found: {status.items_not_found}")
+        click.echo(f"  Items failed: {status.items_failed}")
+        click.echo(f"  Elapsed time: {status.elapsed_seconds:.1f}s")
+
+        if status.errors:
+            click.echo("  Errors:")
+            for error in status.errors[:5]:
+                click.echo(f"    - {error}")
+            if len(status.errors) > 5:
+                click.echo(f"    ... and {len(status.errors) - 5} more")
+
+    except KeyboardInterrupt:
+        click.echo("\nStopping enrichment...")
+        manager.stop_enrichment()
+        click.echo("Enrichment stopped.")
+
+
+@enrichment.command("status")
+@click.option(
+    "--user",
+    "user_id",
+    type=int,
+    default=1,
+    help="User ID for filtering stats",
+)
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    default="table",
+    help="Output format",
+)
+@click.pass_context
+def enrichment_status(ctx: click.Context, user_id: int, output_format: str) -> None:
+    """Show enrichment statistics."""
+    storage = ctx.obj["storage"]
+
+    stats = storage.get_enrichment_stats(user_id=user_id)
+
+    if output_format == "json":
+        click.echo(json.dumps(stats, indent=2))
+    else:
+        click.echo("Enrichment Statistics:")
+        click.echo(f"  Total items: {stats['total']}")
+        click.echo(f"  Enriched: {stats['enriched']}")
+        click.echo(f"  Pending: {stats['pending']}")
+        click.echo(f"  Not found: {stats['not_found']}")
+        click.echo(f"  Failed: {stats['failed']}")
+
+        if stats["by_provider"]:
+            click.echo("\nBy Provider:")
+            for provider, count in stats["by_provider"].items():
+                click.echo(f"  {provider}: {count}")
+
+        if stats["by_quality"]:
+            click.echo("\nBy Match Quality:")
+            for quality, count in stats["by_quality"].items():
+                click.echo(f"  {quality}: {count}")
+
+
+@enrichment.command("reset")
+@click.option(
+    "--provider",
+    type=click.Choice(["tmdb", "openlibrary", "rawg", "all"], case_sensitive=False),
+    default="all",
+    help="Reset items enriched by specific provider (default: all)",
+)
+@click.option(
+    "--type",
+    "content_type_str",
+    type=click.Choice(["book", "movie", "tv_show", "video_game"], case_sensitive=False),
+    default=None,
+    help="Reset only items of this content type",
+)
+@click.option(
+    "--user",
+    "user_id",
+    type=int,
+    default=1,
+    help="User ID for filtering items",
+)
+@click.option(
+    "--yes",
+    is_flag=True,
+    help="Skip confirmation prompt",
+)
+@click.pass_context
+def enrichment_reset(
+    ctx: click.Context,
+    provider: str,
+    content_type_str: str | None,
+    user_id: int,
+    yes: bool,
+) -> None:
+    """Reset enrichment status to re-queue items for enrichment.
+
+    This marks items as needing enrichment again, allowing them to be
+    re-processed by the enrichment providers.
+    """
+    storage = ctx.obj["storage"]
+
+    # Map string to ContentType enum if provided
+    content_type = None
+    if content_type_str:
+        type_map = {
+            "book": ContentType.BOOK,
+            "movie": ContentType.MOVIE,
+            "tv_show": ContentType.TV_SHOW,
+            "video_game": ContentType.VIDEO_GAME,
+        }
+        content_type = type_map[content_type_str.lower()]
+
+    provider_filter = None if provider == "all" else provider
+
+    # Confirm action
+    desc_parts = []
+    if provider_filter:
+        desc_parts.append(f"provider={provider_filter}")
+    if content_type_str:
+        desc_parts.append(f"type={content_type_str}")
+    desc = f" ({', '.join(desc_parts)})" if desc_parts else ""
+
+    if not yes:
+        if not click.confirm(f"Reset enrichment status for items{desc}?"):
+            click.echo("Aborted.")
+            return
+
+    count = storage.reset_enrichment_status(
+        provider=provider_filter,
+        content_type=content_type,
+        user_id=user_id,
+    )
+
+    click.echo(f"Reset enrichment status for {count} item(s).")
