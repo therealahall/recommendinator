@@ -293,6 +293,23 @@ class StorageManager:
 
         return deleted
 
+    def set_item_ignored(
+        self, db_id: int, ignored: bool, user_id: int | None = None
+    ) -> bool:
+        """Set the ignored status of a content item.
+
+        Ignored items are excluded from recommendations.
+
+        Args:
+            db_id: Database ID of the item
+            ignored: Whether the item should be ignored
+            user_id: Optional user ID filter (for security)
+
+        Returns:
+            True if item was updated, False if not found
+        """
+        return self.sqlite_db.set_item_ignored(db_id, ignored, user_id=user_id)
+
     def count_items(
         self,
         user_id: int | None = None,

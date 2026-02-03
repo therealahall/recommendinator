@@ -4,7 +4,7 @@ This document outlines the implementation plan for v1 of the Personal Recommenda
 
 **Created:** 2026-01-25
 **Updated:** 2026-02-03
-**Status:** In Progress (Phase 8 complete)
+**Status:** In Progress (Phase 9 complete)
 
 ---
 
@@ -501,8 +501,32 @@ src/enrichment/
 **Goal:** Increase user capabilities to manage their own content
 
 **Tasks:**
-- [ ] Allow for users to ignore content from recommendations / weightings in the library view
-- [ ] Allow for users to add a recommended item to the ignore list (eg: if you recommend a book I'm not interested that got ingested, I should be able to quickly ignore that)
+- [x] Allow for users to ignore content from recommendations / weightings in the library view
+- [x] Allow for users to add a recommended item to the ignore list (eg: if you recommend a book I'm not interested that got ingested, I should be able to quickly ignore that)
+
+**Implementation Details:**
+- Added `ignored` boolean column to content_items table (with safe migration)
+- Added `ignored` field to ContentItem model and db_id for API responses
+- Added PATCH /api/items/{db_id}/ignore endpoint to toggle ignored status
+- Updated recommendation engine to filter out ignored items from candidates
+- Library view shows "Ignore" button on each item, with visual state for ignored items
+- Recommendation cards include "Ignore" button to quickly hide unwanted suggestions
+- Ignored items show "Unignore" button to restore them
+
+**Files Created/Modified:**
+- `src/storage/schema.py` — Added `ignored` column migration
+- `src/models/content.py` — Added `ignored: bool` and `db_id: int` fields
+- `src/storage/sqlite_db.py` — Added `set_item_ignored()` method, `db_id` in row conversion
+- `src/storage/manager.py` — Added `set_item_ignored()` wrapper
+- `src/web/api.py` — Added PATCH endpoint, updated response models with db_id/ignored
+- `src/recommendations/engine.py` — Filter out ignored items from unconsumed candidates
+- `src/web/static/app.js` — Ignore buttons in library and recommendations
+- `src/web/static/style.css` — Styles for ignore buttons and ignored state
+- `tests/test_web_api.py` — 5 new tests for ignore API
+- `tests/test_sqlite_db.py` — 5 new tests for set_item_ignored
+- `tests/test_recommendation_engine.py` — 2 new tests for ignored filtering
+
+**Deliverable:** Users can ignore items from library view and recommendations; ignored items do not appear in recommendations
 
 ### Phase 10: LLM Integration
 **Goal:** Implement full LLM integration
@@ -520,9 +544,9 @@ src/enrichment/
 | Phase 4: AI Enhancement      | Complete    | 2026-01-27 | 2026-01-27 |
 | Phase 5: User Preferences    | Complete    | 2026-01-27 | 2026-01-27 |
 | Phase 6: Web Interface       | Complete    | 2026-01-27 | 2026-01-27 |
-| Phase 7: Polish              | In Progress | 2026-02-01 | -          |
+| Phase 7: Polish              | Complete    | 2026-02-01 | 2026-02-03 |
 | Phase 8: Metadata Enrichment | Complete    | 2026-02-03 | 2026-02-03 |
-| Phase 9: UI Tweaks           | Not Started | -          | -          |
+| Phase 9: UI Tweaks           | Complete    | 2026-02-03 | 2026-02-03 |
 | Phase 10: LLM Integration    | Not Started | -          | -          |
 
 ---

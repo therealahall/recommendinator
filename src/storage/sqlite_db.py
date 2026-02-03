@@ -720,6 +720,7 @@ class SQLiteDB:
         return ContentItem(
             user_id=row["user_id"],
             id=row["external_id"],
+            db_id=row["id"],
             title=row["title"],
             author=author,
             content_type=content_type,
@@ -728,6 +729,7 @@ class SQLiteDB:
             status=ConsumptionStatus(row["status"]),
             date_completed=date_completed,
             source=get_row_value("source"),
+            ignored=bool(get_row_value("ignored")),
             metadata=metadata,
         )
 
@@ -751,6 +753,41 @@ class SQLiteDB:
                 )
             else:
                 cursor.execute("DELETE FROM content_items WHERE id = ?", (db_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
+
+    def set_item_ignored(
+        self, db_id: int, ignored: bool, user_id: int | None = None
+    ) -> bool:
+        """Set the ignored status of a content item.
+
+        Args:
+            db_id: Database ID of the item
+            ignored: Whether the item should be ignored
+            user_id: Optional user ID filter (for security)
+
+        Returns:
+            True if item was updated, False if not found
+        """
+        conn = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            if user_id is not None:
+                cursor.execute(
+                    """UPDATE content_items
+                       SET ignored = ?, updated_at = CURRENT_TIMESTAMP
+                       WHERE id = ? AND user_id = ?""",
+                    (1 if ignored else 0, db_id, user_id),
+                )
+            else:
+                cursor.execute(
+                    """UPDATE content_items
+                       SET ignored = ?, updated_at = CURRENT_TIMESTAMP
+                       WHERE id = ?""",
+                    (1 if ignored else 0, db_id),
+                )
             conn.commit()
             return cursor.rowcount > 0
         finally:

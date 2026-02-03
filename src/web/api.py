@@ -66,6 +66,7 @@ class ContentItemResponse(BaseModel):
     """Response model for content item listing."""
 
     id: str | None
+    db_id: int | None = None  # Database ID for actions like ignore
     title: str
     author: str | None
     content_type: str
@@ -73,11 +74,13 @@ class ContentItemResponse(BaseModel):
     rating: int | None
     review: str | None
     source: str | None
+    ignored: bool = False
 
 
 class RecommendationResponse(BaseModel):
     """Response model for recommendations."""
 
+    db_id: int | None = None  # Database ID for actions like ignore
     title: str
     author: str | None
     score: float
@@ -145,6 +148,12 @@ class UserPreferenceUpdateRequest(BaseModel):
     variety_after_completion: bool | None = None
     custom_rules: list[str] | None = None
     content_length_preferences: dict[str, str] | None = None
+
+
+class IgnoreItemRequest(BaseModel):
+    """Request model for setting item ignored status."""
+
+    ignored: bool = Field(..., description="Whether to ignore the item")
 
 
 class EnrichmentStartRequest(BaseModel):
@@ -269,6 +278,7 @@ async def get_recommendations(
             item = rec["item"]
             response.append(
                 RecommendationResponse(
+                    db_id=item.db_id,
                     title=item.title,
                     author=item.author,
                     score=rec["score"],
@@ -385,6 +395,7 @@ async def list_items(
     return [
         ContentItemResponse(
             id=item.id,
+            db_id=item.db_id,
             title=item.title,
             author=item.author,
             content_type=(
@@ -396,9 +407,49 @@ async def list_items(
             rating=item.rating,
             review=item.review,
             source=item.source,
+            ignored=item.ignored,
         )
         for item in items
     ]
+
+
+@router.patch("/items/{db_id}/ignore")
+async def set_item_ignored(
+    db_id: int,
+    request: IgnoreItemRequest,
+    user_id: int = Query(1, ge=1, description="User ID for authorization"),
+) -> dict[str, Any]:
+    """Set the ignored status of a content item.
+
+    Ignored items are excluded from recommendations.
+
+    Args:
+        db_id: Database ID of the item
+        request: Request with ignored status
+        user_id: User ID for authorization
+
+    Returns:
+        Updated item info
+    """
+    storage = get_storage()
+    if not storage:
+        raise HTTPException(status_code=500, detail="Storage not initialized")
+
+    # Verify item exists and belongs to user
+    item = storage.get_content_item(db_id, user_id=user_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    success = storage.set_item_ignored(db_id, request.ignored, user_id=user_id)
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to update item")
+
+    return {
+        "db_id": db_id,
+        "title": item.title,
+        "ignored": request.ignored,
+        "message": f"Item '{item.title}' {'ignored' if request.ignored else 'unignored'}",
+    }
 
 
 @router.get("/users/{user_id}/preferences", response_model=UserPreferenceResponse)

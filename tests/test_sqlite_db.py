@@ -182,3 +182,119 @@ def test_count_items(temp_db: SQLiteDB) -> None:
     assert temp_db.count_items() == 5
     assert temp_db.count_items(content_type=ContentType.BOOK) == 3
     assert temp_db.count_items(status=ConsumptionStatus.COMPLETED) == 3
+
+
+# ---------------------------------------------------------------------------
+# Ignore Item Tests
+# ---------------------------------------------------------------------------
+
+
+def test_set_item_ignored(temp_db: SQLiteDB) -> None:
+    """Test setting item ignored status."""
+    item = ContentItem(
+        id="123",
+        title="Test Book",
+        content_type=ContentType.BOOK,
+        status=ConsumptionStatus.UNREAD,
+    )
+
+    db_id = temp_db.save_content_item(item)
+
+    # Verify item is not ignored initially
+    retrieved = temp_db.get_content_item(db_id)
+    assert retrieved is not None
+    assert retrieved.ignored is False
+
+    # Set ignored to True
+    success = temp_db.set_item_ignored(db_id, True)
+    assert success is True
+
+    # Verify item is now ignored
+    retrieved = temp_db.get_content_item(db_id)
+    assert retrieved is not None
+    assert retrieved.ignored is True
+
+    # Set ignored back to False
+    success = temp_db.set_item_ignored(db_id, False)
+    assert success is True
+
+    # Verify item is no longer ignored
+    retrieved = temp_db.get_content_item(db_id)
+    assert retrieved is not None
+    assert retrieved.ignored is False
+
+
+def test_set_item_ignored_not_found(temp_db: SQLiteDB) -> None:
+    """Test setting ignored status on non-existent item."""
+    success = temp_db.set_item_ignored(9999, True)
+    assert success is False
+
+
+def test_set_item_ignored_with_user_id(temp_db: SQLiteDB) -> None:
+    """Test setting ignored status with user_id filter."""
+    item = ContentItem(
+        id="123",
+        title="Test Book",
+        content_type=ContentType.BOOK,
+        status=ConsumptionStatus.UNREAD,
+        user_id=1,
+    )
+
+    db_id = temp_db.save_content_item(item)
+
+    # Try to ignore with wrong user_id (should fail)
+    success = temp_db.set_item_ignored(db_id, True, user_id=2)
+    assert success is False
+
+    # Verify item is still not ignored
+    retrieved = temp_db.get_content_item(db_id)
+    assert retrieved is not None
+    assert retrieved.ignored is False
+
+    # Ignore with correct user_id
+    success = temp_db.set_item_ignored(db_id, True, user_id=1)
+    assert success is True
+
+    # Verify item is now ignored
+    retrieved = temp_db.get_content_item(db_id)
+    assert retrieved is not None
+    assert retrieved.ignored is True
+
+
+def test_item_has_db_id(temp_db: SQLiteDB) -> None:
+    """Test that retrieved items have their db_id set."""
+    item = ContentItem(
+        id="external_123",
+        title="Test Book",
+        content_type=ContentType.BOOK,
+        status=ConsumptionStatus.UNREAD,
+    )
+
+    db_id = temp_db.save_content_item(item)
+    assert db_id > 0
+
+    retrieved = temp_db.get_content_item(db_id)
+    assert retrieved is not None
+    assert retrieved.db_id == db_id
+
+
+def test_get_content_items_with_db_ids(temp_db: SQLiteDB) -> None:
+    """Test that items from get_content_items have db_ids set."""
+    items = [
+        ContentItem(
+            id=f"item_{i}",
+            title=f"Item {i}",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        )
+        for i in range(3)
+    ]
+
+    for item in items:
+        temp_db.save_content_item(item)
+
+    retrieved = temp_db.get_content_items()
+    assert len(retrieved) == 3
+    for item in retrieved:
+        assert item.db_id is not None
+        assert item.db_id > 0

@@ -137,6 +137,9 @@ class RecommendationEngine:
             content_type=content_type, limit=None
         )
 
+        # Filter out ignored items - they should not be recommended
+        unconsumed_items = [item for item in unconsumed_items if not item.ignored]
+
         if not unconsumed_items:
             logger.warning(f"No unconsumed items found for {content_type.value}")
             return []

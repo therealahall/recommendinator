@@ -180,6 +180,9 @@ def create_schema(conn: sqlite3.Connection) -> None:
     _add_column_if_not_exists(cursor, "video_game_details", "tags", "TEXT")
     _add_column_if_not_exists(cursor, "video_game_details", "description", "TEXT")
 
+    # Add ignored column to content_items for filtering from recommendations
+    _add_column_if_not_exists(cursor, "content_items", "ignored", "BOOLEAN DEFAULT 0")
+
     conn.commit()
 
 

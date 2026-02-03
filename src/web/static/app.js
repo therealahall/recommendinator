@@ -205,7 +205,12 @@
                 html += '<div class="rec-author">by ' + escapeHtml(rec.author) + '</div>';
             }
             html += '</div>';
+            html += '<div class="rec-actions">';
             html += '<span class="score-badge">Score: ' + rec.score.toFixed(2) + '</span>';
+            if (rec.db_id) {
+                html += '<button class="btn btn-small btn-ignore ignore-rec-btn" data-db-id="' + rec.db_id + '" title="Ignore this item">Ignore</button>';
+            }
+            html += '</div>';
             html += '</div>';
 
             // LLM reasoning (main position when available)
@@ -240,6 +245,13 @@
         });
 
         resultsDiv.innerHTML = html;
+
+        // Attach ignore button listeners
+        resultsDiv.querySelectorAll(".ignore-rec-btn").forEach(function (btn) {
+            btn.addEventListener("click", function () {
+                ignoreItem(parseInt(btn.dataset.dbId), true, btn);
+            });
+        });
     }
 
     function formatScorerName(key) {
@@ -378,16 +390,27 @@
 
         var html = '<div class="library-grid">';
         items.forEach(function (item) {
-            html += '<div class="library-item">';
+            var ignoredClass = item.ignored ? " ignored" : "";
+            html += '<div class="library-item' + ignoredClass + '" data-db-id="' + (item.db_id || "") + '">';
+            html += '<div class="library-item-header">';
             html += '<h3>' + escapeHtml(item.title) + '</h3>';
+            if (item.db_id) {
+                var ignoreLabel = item.ignored ? "Unignore" : "Ignore";
+                var ignoreClass = item.ignored ? "btn-unignore" : "btn-ignore";
+                html += '<button class="btn btn-small ' + ignoreClass + ' ignore-lib-btn" data-db-id="' + item.db_id + '" data-ignored="' + (item.ignored ? "true" : "false") + '" title="' + ignoreLabel + ' this item">' + ignoreLabel + '</button>';
+            }
+            html += '</div>';
             if (item.author) {
                 html += '<div class="item-author">' + escapeHtml(item.author) + '</div>';
             }
-            html += '<div>';
+            html += '<div class="library-item-badges">';
             html += '<span class="badge badge-type">' + formatContentType(item.content_type) + '</span>';
             html += '<span class="badge badge-status ' + item.status + '">' + formatStatus(item.status, item.content_type) + '</span>';
             if (item.rating) {
                 html += '<span class="badge badge-rating">' + renderStars(item.rating) + '</span>';
+            }
+            if (item.ignored) {
+                html += '<span class="badge badge-ignored">Ignored</span>';
             }
             html += '</div>';
             html += '</div>';
@@ -402,6 +425,14 @@
         }
 
         container.innerHTML = html;
+
+        // Attach ignore button listeners
+        container.querySelectorAll(".ignore-lib-btn").forEach(function (btn) {
+            btn.addEventListener("click", function () {
+                var isIgnored = btn.dataset.ignored === "true";
+                ignoreItem(parseInt(btn.dataset.dbId), !isIgnored, btn);
+            });
+        });
     }
 
     function formatContentType(type) {
@@ -933,6 +964,84 @@
         if (source === "all") return "All Sources";
         if (!source) return "Unknown";
         return source.replace(/_/g, " ").replace(/\b\w/g, function (c) { return c.toUpperCase(); });
+    }
+
+    // -----------------------------------------------------------------------
+    // Ignore Item
+    // -----------------------------------------------------------------------
+
+    function ignoreItem(dbId, ignored, button) {
+        // Disable button during request
+        button.disabled = true;
+        var originalText = button.textContent;
+        button.textContent = "...";
+
+        fetch(API_BASE + "/items/" + dbId + "/ignore?user_id=" + currentUserId, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ignored: ignored })
+        })
+            .then(function (response) {
+                if (!response.ok) {
+                    return response.json().then(function (d) {
+                        throw new Error(d.detail || "HTTP " + response.status);
+                    });
+                }
+                return response.json();
+            })
+            .then(function (data) {
+                // Update button state
+                button.disabled = false;
+                if (ignored) {
+                    // Item is now ignored
+                    button.textContent = "Unignore";
+                    button.dataset.ignored = "true";
+                    button.classList.remove("btn-ignore");
+                    button.classList.add("btn-unignore");
+                    // If in recommendations, remove the card
+                    var recCard = button.closest(".rec-card");
+                    if (recCard) {
+                        recCard.style.opacity = "0.5";
+                        recCard.style.transition = "opacity 0.3s";
+                        setTimeout(function () {
+                            recCard.remove();
+                        }, 300);
+                    }
+                    // If in library, update visual state
+                    var libItem = button.closest(".library-item");
+                    if (libItem) {
+                        libItem.classList.add("ignored");
+                        // Add ignored badge if not present
+                        var badges = libItem.querySelector(".library-item-badges");
+                        if (badges && !badges.querySelector(".badge-ignored")) {
+                            var badge = document.createElement("span");
+                            badge.className = "badge badge-ignored";
+                            badge.textContent = "Ignored";
+                            badges.appendChild(badge);
+                        }
+                    }
+                } else {
+                    // Item is now unignored
+                    button.textContent = "Ignore";
+                    button.dataset.ignored = "false";
+                    button.classList.remove("btn-unignore");
+                    button.classList.add("btn-ignore");
+                    // Update library item visual state
+                    var libItem = button.closest(".library-item");
+                    if (libItem) {
+                        libItem.classList.remove("ignored");
+                        var ignoredBadge = libItem.querySelector(".badge-ignored");
+                        if (ignoredBadge) {
+                            ignoredBadge.remove();
+                        }
+                    }
+                }
+            })
+            .catch(function (error) {
+                button.disabled = false;
+                button.textContent = originalText;
+                alert("Failed to update item: " + error.message);
+            });
     }
 
     // -----------------------------------------------------------------------

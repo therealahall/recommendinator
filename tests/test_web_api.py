@@ -597,3 +597,143 @@ def test_recommendations_with_user_id(client, mock_components):
     # Verify engine was called with user_preference_config
     call_kwargs = mock_components["engine"].generate_recommendations.call_args.kwargs
     assert call_kwargs["user_preference_config"] is not None
+
+
+# ---------------------------------------------------------------------------
+# Ignore Item Tests
+# ---------------------------------------------------------------------------
+
+
+def test_ignore_item_success(client, mock_components):
+    """PATCH /api/items/{db_id}/ignore sets item ignored status."""
+    mock_item = ContentItem(
+        id="ext_1",
+        db_id=42,
+        title="Test Book",
+        author="Test Author",
+        content_type=ContentType.BOOK,
+        status=ConsumptionStatus.UNREAD,
+        ignored=False,
+    )
+
+    mock_components["storage"].get_content_item = Mock(return_value=mock_item)
+    mock_components["storage"].set_item_ignored = Mock(return_value=True)
+
+    response = client.patch(
+        "/api/items/42/ignore?user_id=1",
+        json={"ignored": True},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["db_id"] == 42
+    assert data["title"] == "Test Book"
+    assert data["ignored"] is True
+
+    # Verify storage method was called
+    mock_components["storage"].set_item_ignored.assert_called_once_with(
+        42, True, user_id=1
+    )
+
+
+def test_ignore_item_not_found(client, mock_components):
+    """PATCH /api/items/{db_id}/ignore returns 404 if item not found."""
+    mock_components["storage"].get_content_item = Mock(return_value=None)
+
+    response = client.patch(
+        "/api/items/999/ignore?user_id=1",
+        json={"ignored": True},
+    )
+    assert response.status_code == 404
+
+
+def test_unignore_item(client, mock_components):
+    """PATCH /api/items/{db_id}/ignore can unignore an item."""
+    mock_item = ContentItem(
+        id="ext_1",
+        db_id=42,
+        title="Test Book",
+        author="Test Author",
+        content_type=ContentType.BOOK,
+        status=ConsumptionStatus.UNREAD,
+        ignored=True,
+    )
+
+    mock_components["storage"].get_content_item = Mock(return_value=mock_item)
+    mock_components["storage"].set_item_ignored = Mock(return_value=True)
+
+    response = client.patch(
+        "/api/items/42/ignore?user_id=1",
+        json={"ignored": False},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ignored"] is False
+
+    mock_components["storage"].set_item_ignored.assert_called_once_with(
+        42, False, user_id=1
+    )
+
+
+def test_list_items_includes_ignored(client, mock_components):
+    """GET /api/items returns items with ignored field."""
+    mock_items = [
+        ContentItem(
+            id="1",
+            db_id=1,
+            title="Book 1",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            ignored=False,
+        ),
+        ContentItem(
+            id="2",
+            db_id=2,
+            title="Book 2",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            ignored=True,
+        ),
+    ]
+    mock_components["storage"].get_content_items = Mock(return_value=mock_items)
+
+    response = client.get("/api/items?user_id=1")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 2
+    assert data[0]["ignored"] is False
+    assert data[0]["db_id"] == 1
+    assert data[1]["ignored"] is True
+    assert data[1]["db_id"] == 2
+
+
+def test_recommendations_include_db_id(client, mock_components):
+    """GET /api/recommendations includes db_id in response."""
+    mock_item = ContentItem(
+        id="ext_1",
+        db_id=42,
+        title="Test Book",
+        author="Test Author",
+        content_type=ContentType.BOOK,
+        status=ConsumptionStatus.UNREAD,
+    )
+
+    mock_recommendations = [
+        {
+            "item": mock_item,
+            "score": 0.85,
+            "similarity_score": 0.8,
+            "preference_score": 0.7,
+            "reasoning": "Recommended highly similar",
+        }
+    ]
+
+    mock_components["engine"].generate_recommendations.return_value = (
+        mock_recommendations
+    )
+
+    response = client.get("/api/recommendations?type=book&count=1")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["db_id"] == 42
+    assert data[0]["title"] == "Test Book"

@@ -33,6 +33,7 @@ class ContentItem(BaseModel):
 
     # Core fields
     id: str | None = None  # External ID from source (Goodreads ID, Steam app ID, etc.)
+    db_id: int | None = None  # Internal database ID (populated when loaded from DB)
     title: str
     content_type: ContentType
     status: ConsumptionStatus
@@ -51,6 +52,9 @@ class ContentItem(BaseModel):
     # Runtime-only: parent item ID (e.g., TV show ID for a season item).
     # Set during recommendation expansion, not persisted.
     parent_id: str | None = None
+
+    # Whether this item is ignored (excluded from recommendations)
+    ignored: bool = False
 
     # Flexible metadata for type-specific fields
     metadata: dict = Field(default_factory=dict)

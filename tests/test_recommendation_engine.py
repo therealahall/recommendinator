@@ -880,3 +880,107 @@ class TestSeriesOrderingRegression:
         assert not any(
             "Amazing Sequel" in title for title in recommended_titles
         ), "Book #2 (Amazing Sequel) should NOT be recommended"
+
+
+# ---------------------------------------------------------------------------
+# Ignored Items Tests (Phase 9)
+# ---------------------------------------------------------------------------
+
+
+class TestIgnoredItems:
+    """Tests for ignored items filtering in recommendations."""
+
+    def test_ignored_items_filtered_from_recommendations(
+        self, non_ai_engine, mock_storage
+    ):
+        """Ignored unconsumed items should not appear in recommendations."""
+        consumed = ContentItem(
+            id="1",
+            title="Consumed Book",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            metadata={"genre": "Science Fiction"},
+        )
+
+        normal_item = ContentItem(
+            id="2",
+            title="Normal Book",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            ignored=False,
+            metadata={"genre": "Science Fiction"},
+        )
+
+        ignored_item = ContentItem(
+            id="3",
+            title="Ignored Book",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            ignored=True,
+            metadata={"genre": "Science Fiction"},
+        )
+
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: [consumed]
+        )
+        mock_storage.get_unconsumed_items = Mock(
+            return_value=[normal_item, ignored_item]
+        )
+
+        recommendations = non_ai_engine.generate_recommendations(
+            content_type=ContentType.BOOK,
+            count=5,
+        )
+
+        recommended_titles = [rec["item"].title for rec in recommendations]
+
+        # Normal item should be recommended
+        assert "Normal Book" in recommended_titles
+
+        # Ignored item should NOT be recommended
+        assert "Ignored Book" not in recommended_titles
+
+    def test_all_ignored_items_returns_empty(self, non_ai_engine, mock_storage):
+        """If all unconsumed items are ignored, return empty recommendations."""
+        consumed = ContentItem(
+            id="1",
+            title="Consumed Book",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            metadata={"genre": "Drama"},
+        )
+
+        ignored_item_1 = ContentItem(
+            id="2",
+            title="Ignored Book 1",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            ignored=True,
+            metadata={"genre": "Drama"},
+        )
+
+        ignored_item_2 = ContentItem(
+            id="3",
+            title="Ignored Book 2",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            ignored=True,
+            metadata={"genre": "Drama"},
+        )
+
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: [consumed]
+        )
+        mock_storage.get_unconsumed_items = Mock(
+            return_value=[ignored_item_1, ignored_item_2]
+        )
+
+        recommendations = non_ai_engine.generate_recommendations(
+            content_type=ContentType.BOOK,
+            count=5,
+        )
+
+        # No recommendations should be returned
+        assert recommendations == []
