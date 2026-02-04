@@ -8,16 +8,25 @@ from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.user_preferences import UserPreferenceConfig
 from src.storage.schema import (
     clear_cached_preference_interpretations,
+    clear_conversation_history,
+    delete_core_memory,
     get_all_users,
     get_cached_preference_interpretation,
+    get_conversation_history,
+    get_core_memories,
     get_enrichment_stats,
     get_enrichment_status,
+    get_preference_profile,
     get_user_by_id,
     mark_enrichment_complete,
     mark_enrichment_failed,
     mark_item_needs_enrichment,
     reset_enrichment_status,
     save_cached_preference_interpretation,
+    save_conversation_message,
+    save_core_memory,
+    save_preference_profile,
+    update_core_memory,
     update_user_settings,
 )
 from src.storage.sqlite_db import SQLiteDB
@@ -664,3 +673,206 @@ class StorageManager:
             content_type=content_type,
             user_id=user_id,
         )
+
+    # Core memory methods
+
+    def get_core_memories(
+        self,
+        user_id: int,
+        active_only: bool = True,
+        memory_type: str | None = None,
+    ) -> list[dict]:
+        """Get core memories for a user.
+
+        Args:
+            user_id: User ID
+            active_only: If True, only return active memories
+            memory_type: Filter by type ("user_stated" or "inferred")
+
+        Returns:
+            List of memory dicts
+        """
+        conn = self.sqlite_db._get_connection()
+        try:
+            return get_core_memories(
+                conn, user_id, active_only=active_only, memory_type=memory_type
+            )
+        finally:
+            conn.close()
+
+    def save_core_memory(
+        self,
+        user_id: int,
+        memory_text: str,
+        memory_type: str,
+        source: str,
+        confidence: float = 1.0,
+    ) -> int:
+        """Save a new core memory.
+
+        Args:
+            user_id: User ID
+            memory_text: The preference statement
+            memory_type: "user_stated" or "inferred"
+            source: "conversation", "rating_pattern", or "manual"
+            confidence: Confidence score (0.0-1.0)
+
+        Returns:
+            New memory ID
+        """
+        conn = self.sqlite_db._get_connection()
+        try:
+            return save_core_memory(
+                conn,
+                user_id=user_id,
+                memory_text=memory_text,
+                memory_type=memory_type,
+                source=source,
+                confidence=confidence,
+            )
+        finally:
+            conn.close()
+
+    def update_core_memory(
+        self,
+        memory_id: int,
+        memory_text: str | None = None,
+        is_active: bool | None = None,
+    ) -> bool:
+        """Update a core memory.
+
+        Args:
+            memory_id: Memory ID to update
+            memory_text: New memory text (optional)
+            is_active: New active status (optional)
+
+        Returns:
+            True if updated, False if not found
+        """
+        conn = self.sqlite_db._get_connection()
+        try:
+            return update_core_memory(
+                conn,
+                memory_id=memory_id,
+                memory_text=memory_text,
+                is_active=is_active,
+            )
+        finally:
+            conn.close()
+
+    def delete_core_memory(self, memory_id: int) -> bool:
+        """Delete a core memory.
+
+        Args:
+            memory_id: Memory ID to delete
+
+        Returns:
+            True if deleted, False if not found
+        """
+        conn = self.sqlite_db._get_connection()
+        try:
+            return delete_core_memory(conn, memory_id)
+        finally:
+            conn.close()
+
+    # Conversation history methods
+
+    def get_conversation_history(
+        self,
+        user_id: int,
+        limit: int = 50,
+    ) -> list[dict]:
+        """Get recent conversation history for a user.
+
+        Args:
+            user_id: User ID
+            limit: Maximum number of messages to return
+
+        Returns:
+            List of message dicts ordered chronologically (oldest first)
+        """
+        conn = self.sqlite_db._get_connection()
+        try:
+            return get_conversation_history(conn, user_id, limit=limit)
+        finally:
+            conn.close()
+
+    def save_conversation_message(
+        self,
+        user_id: int,
+        role: str,
+        content: str,
+        tool_calls: list[dict] | None = None,
+    ) -> int:
+        """Save a conversation message.
+
+        Args:
+            user_id: User ID
+            role: "user" or "assistant"
+            content: Message content
+            tool_calls: Optional list of tool calls made
+
+        Returns:
+            New message ID
+        """
+        conn = self.sqlite_db._get_connection()
+        try:
+            return save_conversation_message(
+                conn,
+                user_id=user_id,
+                role=role,
+                content=content,
+                tool_calls=tool_calls,
+            )
+        finally:
+            conn.close()
+
+    def clear_conversation_history(self, user_id: int) -> int:
+        """Clear conversation history for a user (the "reset" functionality).
+
+        Note: This clears the conversation but preserves core memories.
+
+        Args:
+            user_id: User ID
+
+        Returns:
+            Number of messages deleted
+        """
+        conn = self.sqlite_db._get_connection()
+        try:
+            return clear_conversation_history(conn, user_id)
+        finally:
+            conn.close()
+
+    # Preference profile methods
+
+    def get_preference_profile(self, user_id: int) -> dict | None:
+        """Get the preference profile for a user.
+
+        Args:
+            user_id: User ID
+
+        Returns:
+            Profile dict or None if not found
+        """
+        conn = self.sqlite_db._get_connection()
+        try:
+            return get_preference_profile(conn, user_id)
+        finally:
+            conn.close()
+
+    def save_preference_profile(self, user_id: int, profile_json: str) -> int:
+        """Save or update a preference profile.
+
+        Args:
+            user_id: User ID
+            profile_json: JSON string of the profile
+
+        Returns:
+            Profile ID
+        """
+        conn = self.sqlite_db._get_connection()
+        try:
+            return save_preference_profile(conn, user_id, profile_json)
+        finally:
+            conn.close()

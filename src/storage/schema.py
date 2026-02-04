@@ -183,6 +183,61 @@ def create_schema(conn: sqlite3.Connection) -> None:
     # Add ignored column to content_items for filtering from recommendations
     _add_column_if_not_exists(cursor, "content_items", "ignored", "BOOLEAN DEFAULT 0")
 
+    # Core memories: significant preference signals
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS core_memories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            memory_text TEXT NOT NULL,
+            memory_type TEXT NOT NULL,  -- "user_stated" or "inferred"
+            source TEXT,  -- "conversation", "rating_pattern", "manual"
+            confidence REAL DEFAULT 1.0,  -- 0.0-1.0 for inferred memories
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            is_active BOOLEAN DEFAULT 1  -- User can deactivate inferred memories
+        )
+    """)
+
+    # Conversation history (for context rebuilding)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS conversation_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            role TEXT NOT NULL,  -- "user" or "assistant"
+            content TEXT NOT NULL,
+            tool_calls TEXT,  -- JSON array of tool calls made
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    # Preference profile snapshots (regenerated periodically)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS preference_profiles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            profile_json TEXT NOT NULL,  -- Distilled preference summary
+            generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id)  -- One active profile per user
+        )
+    """)
+
+    # Indexes for conversation tables
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_core_memories_user " "ON core_memories(user_id)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_core_memories_active "
+        "ON core_memories(user_id, is_active)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_conversation_messages_user "
+        "ON conversation_messages(user_id)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_conversation_messages_user_created "
+        "ON conversation_messages(user_id, created_at DESC)"
+    )
+
     conn.commit()
 
 
@@ -733,3 +788,322 @@ def get_enrichment_stats(
         "by_provider": by_provider,
         "by_quality": by_quality,
     }
+
+
+# Core memory functions
+
+
+def get_core_memories(
+    conn: sqlite3.Connection,
+    user_id: int,
+    active_only: bool = True,
+    memory_type: str | None = None,
+) -> list[dict]:
+    """Get core memories for a user.
+
+    Args:
+        conn: SQLite database connection
+        user_id: User ID
+        active_only: If True, only return active memories
+        memory_type: Filter by type ("user_stated" or "inferred")
+
+    Returns:
+        List of memory dicts
+    """
+    cursor = conn.cursor()
+    query = """
+        SELECT id, user_id, memory_text, memory_type, source, confidence,
+               created_at, updated_at, is_active
+        FROM core_memories
+        WHERE user_id = ?
+    """
+    params: list[int | str] = [user_id]
+
+    if active_only:
+        query += " AND is_active = 1"
+
+    if memory_type:
+        query += " AND memory_type = ?"
+        params.append(memory_type)
+
+    query += " ORDER BY created_at DESC"
+
+    cursor.execute(query, params)
+    memories = []
+    for row in cursor.fetchall():
+        memories.append(
+            {
+                "id": row[0],
+                "user_id": row[1],
+                "memory_text": row[2],
+                "memory_type": row[3],
+                "source": row[4],
+                "confidence": row[5],
+                "created_at": row[6],
+                "updated_at": row[7],
+                "is_active": bool(row[8]),
+            }
+        )
+    return memories
+
+
+def save_core_memory(
+    conn: sqlite3.Connection,
+    user_id: int,
+    memory_text: str,
+    memory_type: str,
+    source: str,
+    confidence: float = 1.0,
+) -> int:
+    """Save a new core memory.
+
+    Args:
+        conn: SQLite database connection
+        user_id: User ID
+        memory_text: The preference statement
+        memory_type: "user_stated" or "inferred"
+        source: "conversation", "rating_pattern", or "manual"
+        confidence: Confidence score (0.0-1.0)
+
+    Returns:
+        New memory ID
+    """
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO core_memories
+        (user_id, memory_text, memory_type, source, confidence)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (user_id, memory_text, memory_type, source, confidence),
+    )
+    conn.commit()
+    return cursor.lastrowid  # type: ignore
+
+
+def update_core_memory(
+    conn: sqlite3.Connection,
+    memory_id: int,
+    memory_text: str | None = None,
+    is_active: bool | None = None,
+) -> bool:
+    """Update a core memory.
+
+    Args:
+        conn: SQLite database connection
+        memory_id: Memory ID to update
+        memory_text: New memory text (optional)
+        is_active: New active status (optional)
+
+    Returns:
+        True if updated, False if not found
+    """
+    if memory_text is None and is_active is None:
+        return False
+
+    cursor = conn.cursor()
+    updates = ["updated_at = CURRENT_TIMESTAMP"]
+    params: list[str | int] = []
+
+    if memory_text is not None:
+        updates.append("memory_text = ?")
+        params.append(memory_text)
+
+    if is_active is not None:
+        updates.append("is_active = ?")
+        params.append(1 if is_active else 0)
+
+    params.append(memory_id)
+
+    query = f"UPDATE core_memories SET {', '.join(updates)} WHERE id = ?"
+    cursor.execute(query, params)
+    conn.commit()
+    return cursor.rowcount > 0
+
+
+def delete_core_memory(conn: sqlite3.Connection, memory_id: int) -> bool:
+    """Delete a core memory.
+
+    Args:
+        conn: SQLite database connection
+        memory_id: Memory ID to delete
+
+    Returns:
+        True if deleted, False if not found
+    """
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM core_memories WHERE id = ?", (memory_id,))
+    conn.commit()
+    return cursor.rowcount > 0
+
+
+# Conversation message functions
+
+
+def get_conversation_history(
+    conn: sqlite3.Connection,
+    user_id: int,
+    limit: int = 50,
+) -> list[dict]:
+    """Get recent conversation history for a user.
+
+    Args:
+        conn: SQLite database connection
+        user_id: User ID
+        limit: Maximum number of messages to return
+
+    Returns:
+        List of message dicts ordered by created_at ascending (oldest first)
+    """
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT id, user_id, role, content, tool_calls, created_at
+        FROM conversation_messages
+        WHERE user_id = ?
+        ORDER BY id DESC
+        LIMIT ?
+        """,
+        (user_id, limit),
+    )
+    messages = []
+    for row in cursor.fetchall():
+        tool_calls = None
+        if row[4]:
+            try:
+                tool_calls = json.loads(row[4])
+            except (json.JSONDecodeError, TypeError):
+                pass
+        messages.append(
+            {
+                "id": row[0],
+                "user_id": row[1],
+                "role": row[2],
+                "content": row[3],
+                "tool_calls": tool_calls,
+                "created_at": row[5],
+            }
+        )
+    # Return in chronological order (oldest first)
+    return list(reversed(messages))
+
+
+def save_conversation_message(
+    conn: sqlite3.Connection,
+    user_id: int,
+    role: str,
+    content: str,
+    tool_calls: list[dict] | None = None,
+) -> int:
+    """Save a conversation message.
+
+    Args:
+        conn: SQLite database connection
+        user_id: User ID
+        role: "user" or "assistant"
+        content: Message content
+        tool_calls: Optional list of tool calls made
+
+    Returns:
+        New message ID
+    """
+    cursor = conn.cursor()
+    tool_calls_json = json.dumps(tool_calls) if tool_calls else None
+    cursor.execute(
+        """
+        INSERT INTO conversation_messages
+        (user_id, role, content, tool_calls)
+        VALUES (?, ?, ?, ?)
+        """,
+        (user_id, role, content, tool_calls_json),
+    )
+    conn.commit()
+    return cursor.lastrowid  # type: ignore
+
+
+def clear_conversation_history(conn: sqlite3.Connection, user_id: int) -> int:
+    """Clear conversation history for a user (the "reset" functionality).
+
+    Args:
+        conn: SQLite database connection
+        user_id: User ID
+
+    Returns:
+        Number of messages deleted
+    """
+    cursor = conn.cursor()
+    cursor.execute(
+        "DELETE FROM conversation_messages WHERE user_id = ?",
+        (user_id,),
+    )
+    conn.commit()
+    return cursor.rowcount
+
+
+# Preference profile functions
+
+
+def get_preference_profile(conn: sqlite3.Connection, user_id: int) -> dict | None:
+    """Get the preference profile for a user.
+
+    Args:
+        conn: SQLite database connection
+        user_id: User ID
+
+    Returns:
+        Profile dict or None if not found
+    """
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT id, user_id, profile_json, generated_at
+        FROM preference_profiles
+        WHERE user_id = ?
+        """,
+        (user_id,),
+    )
+    row = cursor.fetchone()
+    if row:
+        try:
+            profile_data = json.loads(row[2])
+        except (json.JSONDecodeError, TypeError):
+            profile_data = {}
+        return {
+            "id": row[0],
+            "user_id": row[1],
+            "profile": profile_data,
+            "generated_at": row[3],
+        }
+    return None
+
+
+def save_preference_profile(
+    conn: sqlite3.Connection,
+    user_id: int,
+    profile_json: str,
+) -> int:
+    """Save or update a preference profile.
+
+    Uses UPSERT to replace existing profile for the user.
+
+    Args:
+        conn: SQLite database connection
+        user_id: User ID
+        profile_json: JSON string of the profile
+
+    Returns:
+        Profile ID
+    """
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO preference_profiles (user_id, profile_json, generated_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(user_id) DO UPDATE SET
+            profile_json = excluded.profile_json,
+            generated_at = CURRENT_TIMESTAMP
+        """,
+        (user_id, profile_json),
+    )
+    conn.commit()
+    return cursor.lastrowid  # type: ignore
