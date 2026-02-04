@@ -15,6 +15,7 @@ from src.cli.config import (
     create_storage_manager,
     load_config,
 )
+from src.conversation.engine import create_conversation_engine
 from src.web.state import app_state
 
 logger = logging.getLogger(__name__)
@@ -51,6 +52,19 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         app_state["embedding_gen"] = embedding_gen
         app_state["rec_gen"] = rec_gen
         app_state["engine"] = engine
+        app_state["ollama_client"] = llm_client
+
+        # Initialize conversation engine if LLM is available
+        if llm_client:
+            conversation_engine = create_conversation_engine(
+                storage_manager=storage,
+                ollama_client=llm_client,
+            )
+            app_state["conversation_engine"] = conversation_engine
+            logger.info("Conversation engine initialized")
+        else:
+            app_state["conversation_engine"] = None
+            logger.info("Conversation engine not available (LLM disabled)")
     except Exception as e:
         logger.error(f"Failed to initialize components: {e}")
         raise
@@ -74,10 +88,12 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         allow_headers=["*"],
     )
 
-    # Include API router (import here to avoid circular import)
+    # Include API routers (import here to avoid circular import)
     from src.web.api import router
+    from src.web.chat_api import router as chat_router
 
     app.include_router(router)
+    app.include_router(chat_router)
 
     # Serve static files (for web UI)
     static_dir = Path("src/web/static")
