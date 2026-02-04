@@ -135,6 +135,37 @@ recommendations:
   #     tv_show: "medium"
   #     video_game: "long"
 
+# Conversation AI configuration
+# Enables the chat interface for natural language interactions
+conversation:
+  # Enable the chat feature (requires ai_enabled in features)
+  enabled: true
+
+  # Maximum conversation messages to keep in context
+  max_history_messages: 50
+
+  # Extract memories/preferences from conversations automatically
+  memory_extraction_enabled: true
+
+  # Hours between automatic preference profile regeneration (0 to disable)
+  profile_regeneration_interval: 24
+
+  # LLM settings for conversation
+  llm:
+    # Temperature for response generation (0.0-1.0, higher = more creative)
+    temperature: 0.7
+    # Maximum tokens in response
+    max_tokens: 2000
+
+  # Context assembly settings
+  context:
+    # Maximum items to retrieve via semantic search for context
+    max_relevant_items: 10
+    # Maximum unconsumed/backlog items to include in context
+    max_unconsumed_items: 20
+    # Include algorithmic recommendations in context
+    include_algorithmic_recs: true
+
 # Metadata enrichment configuration
 # Enriches content items with additional metadata (genres, tags, descriptions)
 # from external APIs in a background process.
