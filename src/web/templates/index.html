@@ -21,6 +21,7 @@
     <!-- Tab Navigation -->
     <nav class="tab-nav">
         <button class="tab-btn active" data-tab="recommendations">Recommendations</button>
+        <button class="tab-btn" data-tab="chat">Chat</button>
         <button class="tab-btn" data-tab="library">Library</button>
         <button class="tab-btn" data-tab="preferences">Preferences</button>
         <button class="tab-btn" data-tab="sync">Sync</button>
@@ -63,6 +64,55 @@
                 </form>
             </div>
             <div id="recResults"></div>
+        </div>
+
+        <!-- Chat Tab -->
+        <div id="panel-chat" class="tab-panel">
+            <div class="chat-container">
+                <div class="chat-main">
+                    <div class="chat-messages" id="chatMessages">
+                        <div class="chat-welcome">
+                            <h3>Chat with your personal recommendation advisor</h3>
+                            <p>Ask for recommendations, mark items as completed, or tell me about your preferences.</p>
+                            <div class="chat-suggestions">
+                                <button class="suggestion-btn" onclick="window.sendChatSuggestion('What game should I play next?')">What game should I play next?</button>
+                                <button class="suggestion-btn" onclick="window.sendChatSuggestion('Recommend a book similar to my favorites')">Recommend a book similar to my favorites</button>
+                                <button class="suggestion-btn" onclick="window.sendChatSuggestion('What\'s in my backlog?')">What's in my backlog?</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="chat-input-container">
+                        <div class="chat-input-wrapper">
+                            <textarea id="chatInput" placeholder="Ask for recommendations, mark items as completed..." rows="1"></textarea>
+                            <button id="chatSendBtn" class="btn btn-primary chat-send-btn" title="Send message">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
+                                </svg>
+                            </button>
+                        </div>
+                        <div class="chat-actions">
+                            <button id="chatResetBtn" class="btn btn-small btn-secondary" title="Reset conversation">Reset Chat</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="chat-sidebar">
+                    <div class="memory-panel">
+                        <h4>Memories</h4>
+                        <p class="memory-help">Your preferences and statements I remember.</p>
+                        <div id="memoryList" class="memory-list">
+                            <div class="empty-state">No memories yet</div>
+                        </div>
+                        <button id="addMemoryBtn" class="btn btn-small btn-secondary" style="margin-top: 8px;">Add Memory</button>
+                    </div>
+                    <div class="profile-panel">
+                        <h4>Your Profile</h4>
+                        <div id="profileSummary" class="profile-summary">
+                            <div class="empty-state">No profile generated</div>
+                        </div>
+                        <button id="regenerateProfileBtn" class="btn btn-small btn-secondary" style="margin-top: 8px;">Regenerate</button>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <!-- Library Tab -->

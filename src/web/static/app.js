@@ -35,6 +35,7 @@
         setupLibraryFilters();
         setupPreferencesSave();
         setupSyncButtons();
+        setupChat();
     }
 
     // -----------------------------------------------------------------------
@@ -140,6 +141,8 @@
             resetAndLoadLibrary();
         } else if (name === "preferences") {
             loadPreferences();
+        } else if (name === "chat") {
+            loadChatData();
         }
     }
 
@@ -1041,6 +1044,437 @@
                 button.disabled = false;
                 button.textContent = originalText;
                 alert("Failed to update item: " + error.message);
+            });
+    }
+
+    // -----------------------------------------------------------------------
+    // Chat Tab
+    // -----------------------------------------------------------------------
+
+    var chatState = {
+        isStreaming: false,
+        currentMessageEl: null
+    };
+
+    function setupChat() {
+        var input = document.getElementById("chatInput");
+        var sendBtn = document.getElementById("chatSendBtn");
+        var resetBtn = document.getElementById("chatResetBtn");
+        var addMemoryBtn = document.getElementById("addMemoryBtn");
+        var regenerateBtn = document.getElementById("regenerateProfileBtn");
+
+        if (!input) return; // Chat tab might not exist
+
+        // Send on Enter (but Shift+Enter for new line)
+        input.addEventListener("keydown", function (e) {
+            if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                sendChatMessage();
+            }
+        });
+
+        // Auto-resize textarea
+        input.addEventListener("input", function () {
+            this.style.height = "auto";
+            this.style.height = Math.min(this.scrollHeight, 120) + "px";
+        });
+
+        sendBtn.addEventListener("click", sendChatMessage);
+        resetBtn.addEventListener("click", resetChat);
+        addMemoryBtn.addEventListener("click", showAddMemoryModal);
+        regenerateBtn.addEventListener("click", regenerateProfile);
+
+        // Expose for suggestion buttons
+        window.sendChatSuggestion = function (text) {
+            input.value = text;
+            sendChatMessage();
+        };
+    }
+
+    function loadChatData() {
+        loadMemories();
+        loadProfile();
+    }
+
+    function sendChatMessage() {
+        var input = document.getElementById("chatInput");
+        var message = input.value.trim();
+        if (!message || chatState.isStreaming) return;
+
+        input.value = "";
+        input.style.height = "auto";
+
+        // Clear welcome message if present
+        var welcome = document.querySelector(".chat-welcome");
+        if (welcome) welcome.remove();
+
+        // Add user message
+        addChatMessage(message, "user");
+
+        // Show typing indicator
+        var typingEl = addTypingIndicator();
+
+        // Start streaming response
+        chatState.isStreaming = true;
+        updateSendButton();
+
+        var assistantEl = null;
+        var responseText = "";
+
+        fetch(API_BASE + "/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                user_id: currentUserId,
+                message: message
+            })
+        })
+            .then(function (response) {
+                if (!response.ok) {
+                    throw new Error("Chat request failed");
+                }
+
+                var reader = response.body.getReader();
+                var decoder = new TextDecoder();
+
+                function read() {
+                    return reader.read().then(function (result) {
+                        if (result.done) {
+                            typingEl.remove();
+                            chatState.isStreaming = false;
+                            updateSendButton();
+                            return;
+                        }
+
+                        var text = decoder.decode(result.value, { stream: true });
+                        var lines = text.split("\n");
+
+                        lines.forEach(function (line) {
+                            if (!line.startsWith("data: ")) return;
+
+                            try {
+                                var data = JSON.parse(line.substring(6));
+                                handleChatEvent(data, typingEl, function (el) {
+                                    assistantEl = el;
+                                }, function (t) {
+                                    responseText += t;
+                                });
+                            } catch (e) {
+                                // Ignore parse errors (partial data)
+                            }
+                        });
+
+                        return read();
+                    });
+                }
+
+                return read();
+            })
+            .catch(function (error) {
+                typingEl.remove();
+                chatState.isStreaming = false;
+                updateSendButton();
+                addChatMessage("Sorry, I encountered an error. Please try again.", "assistant");
+                console.error("Chat error:", error);
+            });
+    }
+
+    function handleChatEvent(data, typingEl, setAssistantEl, appendText) {
+        if (data.type === "text" && data.content) {
+            typingEl.style.display = "none";
+
+            var messagesEl = document.getElementById("chatMessages");
+            var existingAssistant = messagesEl.querySelector(".chat-message.assistant:last-child");
+
+            if (existingAssistant && !existingAssistant.classList.contains("tool-indicator")) {
+                // Append to existing message
+                existingAssistant.querySelector(".message-content").textContent += data.content;
+            } else {
+                // Create new assistant message
+                var el = addChatMessage("", "assistant");
+                el.querySelector(".message-content").textContent = data.content;
+                setAssistantEl(el);
+            }
+            appendText(data.content);
+            scrollChatToBottom();
+        } else if (data.type === "tool_call") {
+            addToolIndicator(data.tool, "executing");
+        } else if (data.type === "tool_result") {
+            updateToolIndicator(data.tool, data.result);
+            // Refresh memories if relevant tool was called
+            if (["save_memory", "mark_completed", "update_rating"].indexOf(data.tool) >= 0) {
+                loadMemories();
+            }
+        } else if (data.type === "done") {
+            typingEl.remove();
+            chatState.isStreaming = false;
+            updateSendButton();
+        } else if (data.type === "error") {
+            typingEl.remove();
+            chatState.isStreaming = false;
+            updateSendButton();
+            addChatMessage("Error: " + data.message, "assistant");
+        }
+    }
+
+    function addChatMessage(text, role) {
+        var messagesEl = document.getElementById("chatMessages");
+        var msgEl = document.createElement("div");
+        msgEl.className = "chat-message " + role;
+
+        var contentEl = document.createElement("div");
+        contentEl.className = "message-content";
+        contentEl.textContent = text;
+        msgEl.appendChild(contentEl);
+
+        messagesEl.appendChild(msgEl);
+        scrollChatToBottom();
+        return msgEl;
+    }
+
+    function addTypingIndicator() {
+        var messagesEl = document.getElementById("chatMessages");
+        var el = document.createElement("div");
+        el.className = "chat-message assistant typing";
+        el.innerHTML = '<div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div>';
+        messagesEl.appendChild(el);
+        scrollChatToBottom();
+        return el;
+    }
+
+    function addToolIndicator(toolName, status) {
+        var messagesEl = document.getElementById("chatMessages");
+        var el = document.createElement("div");
+        el.className = "tool-indicator";
+        el.dataset.tool = toolName;
+
+        var icon = status === "executing" ? "⚙️" : "✓";
+        var text = formatToolName(toolName);
+        el.innerHTML = '<span class="tool-icon">' + icon + '</span> ' + text + '...';
+
+        messagesEl.appendChild(el);
+        scrollChatToBottom();
+    }
+
+    function updateToolIndicator(toolName, result) {
+        var indicators = document.querySelectorAll('.tool-indicator[data-tool="' + toolName + '"]');
+        indicators.forEach(function (el) {
+            if (result && result.success) {
+                el.classList.add("success");
+                el.innerHTML = '<span class="tool-icon">✓</span> ' + result.message;
+            } else {
+                el.innerHTML = '<span class="tool-icon">✗</span> ' + (result ? result.message : "Failed");
+            }
+        });
+    }
+
+    function formatToolName(name) {
+        var names = {
+            mark_completed: "Marking as completed",
+            update_rating: "Updating rating",
+            add_to_wishlist: "Adding to wishlist",
+            save_memory: "Saving preference",
+            search_items: "Searching items",
+            clarify_item: "Clarifying item"
+        };
+        return names[name] || name;
+    }
+
+    function scrollChatToBottom() {
+        var messagesEl = document.getElementById("chatMessages");
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    function updateSendButton() {
+        var sendBtn = document.getElementById("chatSendBtn");
+        sendBtn.disabled = chatState.isStreaming;
+    }
+
+    function resetChat() {
+        if (!confirm("Reset the conversation? Memories will be preserved.")) return;
+
+        fetch(API_BASE + "/chat/reset?user_id=" + currentUserId, { method: "POST" })
+            .then(function (response) { return response.json(); })
+            .then(function () {
+                // Clear chat messages
+                var messagesEl = document.getElementById("chatMessages");
+                messagesEl.innerHTML = '<div class="chat-welcome">' +
+                    '<h3>Chat with your personal recommendation advisor</h3>' +
+                    '<p>Ask for recommendations, mark items as completed, or tell me about your preferences.</p>' +
+                    '<div class="chat-suggestions">' +
+                    '<button class="suggestion-btn" onclick="window.sendChatSuggestion(\'What game should I play next?\')">What game should I play next?</button>' +
+                    '<button class="suggestion-btn" onclick="window.sendChatSuggestion(\'Recommend a book similar to my favorites\')">Recommend a book similar to my favorites</button>' +
+                    '<button class="suggestion-btn" onclick="window.sendChatSuggestion(\\\'What\\\'s in my backlog?\\\')">What\'s in my backlog?</button>' +
+                    '</div></div>';
+            })
+            .catch(function (error) {
+                alert("Failed to reset chat: " + error.message);
+            });
+    }
+
+    // Memories
+    function loadMemories() {
+        fetch(API_BASE + "/memories?user_id=" + currentUserId + "&include_inactive=true")
+            .then(function (response) { return response.json(); })
+            .then(function (memories) {
+                renderMemories(memories);
+            })
+            .catch(function () {
+                document.getElementById("memoryList").innerHTML = '<div class="empty-state">Failed to load memories</div>';
+            });
+    }
+
+    function renderMemories(memories) {
+        var container = document.getElementById("memoryList");
+
+        if (!memories || memories.length === 0) {
+            container.innerHTML = '<div class="empty-state">No memories yet</div>';
+            return;
+        }
+
+        container.innerHTML = memories.map(function (m) {
+            var typeClass = m.memory_type === "user_stated" ? "user-stated" : "inferred";
+            var inactiveClass = m.is_active ? "" : " inactive";
+            var typeLabel = m.memory_type === "user_stated" ? "Stated" : "Inferred";
+
+            return '<div class="memory-item ' + typeClass + inactiveClass + '" data-id="' + m.id + '">' +
+                '<div class="memory-text">' + escapeHtml(m.memory_text) + '</div>' +
+                '<div class="memory-meta">' +
+                '<span class="memory-type">' + typeLabel + '</span>' +
+                '<div class="memory-actions">' +
+                '<button onclick="window.toggleMemory(' + m.id + ', ' + m.is_active + ')">' + (m.is_active ? "Disable" : "Enable") + '</button>' +
+                '<button class="delete" onclick="window.deleteMemory(' + m.id + ')">Delete</button>' +
+                '</div></div></div>';
+        }).join("");
+    }
+
+    function showAddMemoryModal() {
+        var modal = document.createElement("div");
+        modal.className = "memory-modal";
+        modal.innerHTML = '<div class="memory-modal-content">' +
+            '<h3>Add Memory</h3>' +
+            '<textarea id="newMemoryText" placeholder="e.g., I prefer shorter games during weekdays"></textarea>' +
+            '<div class="memory-modal-actions">' +
+            '<button class="btn btn-secondary" onclick="this.closest(\'.memory-modal\').remove()">Cancel</button>' +
+            '<button class="btn btn-primary" onclick="window.saveNewMemory()">Save</button>' +
+            '</div></div>';
+        document.body.appendChild(modal);
+        document.getElementById("newMemoryText").focus();
+    }
+
+    window.saveNewMemory = function () {
+        var text = document.getElementById("newMemoryText").value.trim();
+        if (!text) return;
+
+        fetch(API_BASE + "/memories", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                user_id: currentUserId,
+                memory_text: text
+            })
+        })
+            .then(function (response) { return response.json(); })
+            .then(function () {
+                document.querySelector(".memory-modal").remove();
+                loadMemories();
+            })
+            .catch(function (error) {
+                alert("Failed to save memory: " + error.message);
+            });
+    };
+
+    window.toggleMemory = function (id, currentlyActive) {
+        fetch(API_BASE + "/memories/" + id, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ is_active: !currentlyActive })
+        })
+            .then(function () { loadMemories(); })
+            .catch(function (error) {
+                alert("Failed to update memory: " + error.message);
+            });
+    };
+
+    window.deleteMemory = function (id) {
+        if (!confirm("Delete this memory?")) return;
+
+        fetch(API_BASE + "/memories/" + id, { method: "DELETE" })
+            .then(function () { loadMemories(); })
+            .catch(function (error) {
+                alert("Failed to delete memory: " + error.message);
+            });
+    };
+
+    // Profile
+    function loadProfile() {
+        fetch(API_BASE + "/profile?user_id=" + currentUserId)
+            .then(function (response) { return response.json(); })
+            .then(function (profile) {
+                renderProfile(profile);
+            })
+            .catch(function () {
+                document.getElementById("profileSummary").innerHTML = '<div class="empty-state">Failed to load profile</div>';
+            });
+    }
+
+    function renderProfile(profile) {
+        var container = document.getElementById("profileSummary");
+
+        var html = "";
+
+        // Genre affinities
+        var genres = Object.keys(profile.genre_affinities || {});
+        if (genres.length > 0) {
+            var topGenres = genres.slice(0, 6);
+            html += '<div class="profile-section"><h5>Genres You Love</h5><div class="profile-tags">';
+            topGenres.forEach(function (g) {
+                html += '<span class="profile-tag">' + escapeHtml(g) + '</span>';
+            });
+            html += '</div></div>';
+        }
+
+        // Anti-preferences
+        if (profile.anti_preferences && profile.anti_preferences.length > 0) {
+            html += '<div class="profile-section"><h5>Not Your Style</h5><div class="profile-tags">';
+            profile.anti_preferences.slice(0, 4).forEach(function (p) {
+                html += '<span class="profile-tag anti">' + escapeHtml(p) + '</span>';
+            });
+            html += '</div></div>';
+        }
+
+        // Patterns
+        if (profile.cross_media_patterns && profile.cross_media_patterns.length > 0) {
+            html += '<div class="profile-section"><h5>Patterns</h5>';
+            profile.cross_media_patterns.slice(0, 2).forEach(function (p) {
+                html += '<p style="font-size:0.85em;margin:4px 0;color:#666;">' + escapeHtml(p) + '</p>';
+            });
+            html += '</div>';
+        }
+
+        if (!html) {
+            html = '<div class="empty-state">No profile generated yet. Click Regenerate to analyze your preferences.</div>';
+        }
+
+        container.innerHTML = html;
+    }
+
+    function regenerateProfile() {
+        var btn = document.getElementById("regenerateProfileBtn");
+        btn.disabled = true;
+        btn.textContent = "Generating...";
+
+        fetch(API_BASE + "/profile/regenerate?user_id=" + currentUserId, { method: "POST" })
+            .then(function (response) { return response.json(); })
+            .then(function (profile) {
+                renderProfile(profile);
+            })
+            .catch(function (error) {
+                alert("Failed to regenerate profile: " + error.message);
+            })
+            .finally(function () {
+                btn.disabled = false;
+                btn.textContent = "Regenerate";
             });
     }
 
