@@ -1,6 +1,7 @@
 """Ollama client wrapper for LLM interactions."""
 
 import logging
+from collections.abc import Iterator
 from typing import Any
 
 from ollama import Client
@@ -168,3 +169,101 @@ class OllamaClient:
         except Exception as e:
             logger.error(f"Failed to list models: {e}")
             return []
+
+    def generate_text_stream(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        model: str | None = None,
+        temperature: float = 0.7,
+        max_tokens: int | None = None,
+    ) -> Iterator[str]:
+        """Generate text using the LLM with streaming response.
+
+        Args:
+            prompt: User prompt
+            system_prompt: Optional system prompt
+            model: Model to use (defaults to default_model)
+            temperature: Sampling temperature (0.0-1.0)
+            max_tokens: Maximum tokens to generate
+
+        Yields:
+            Text chunks as they are generated
+
+        Raises:
+            RuntimeError: If text generation fails
+        """
+        model = model or self.default_model
+
+        try:
+            messages = []
+            if system_prompt:
+                messages.append({"role": "system", "content": system_prompt})
+            messages.append({"role": "user", "content": prompt})
+
+            options: dict[str, Any] = {"temperature": temperature}
+            if max_tokens:
+                options["num_predict"] = max_tokens
+
+            response = self.client.chat(
+                model=model, messages=messages, options=options, stream=True
+            )
+
+            for chunk in response:
+                if hasattr(chunk, "message") and chunk.message:
+                    content = chunk.message.content
+                    if content:
+                        yield content
+
+        except Exception as e:
+            logger.error(f"Failed to generate streaming text: {e}")
+            raise RuntimeError(f"Streaming text generation failed: {e}") from e
+
+    def chat_stream(
+        self,
+        messages: list[dict[str, str]],
+        system_prompt: str | None = None,
+        model: str | None = None,
+        temperature: float = 0.7,
+        max_tokens: int | None = None,
+    ) -> Iterator[str]:
+        """Multi-turn chat with streaming response.
+
+        Args:
+            messages: List of message dicts with 'role' and 'content'
+            system_prompt: Optional system prompt (prepended to messages)
+            model: Model to use (defaults to default_model)
+            temperature: Sampling temperature (0.0-1.0)
+            max_tokens: Maximum tokens to generate
+
+        Yields:
+            Text chunks as they are generated
+
+        Raises:
+            RuntimeError: If chat fails
+        """
+        model = model or self.default_model
+
+        try:
+            full_messages = []
+            if system_prompt:
+                full_messages.append({"role": "system", "content": system_prompt})
+            full_messages.extend(messages)
+
+            options: dict[str, Any] = {"temperature": temperature}
+            if max_tokens:
+                options["num_predict"] = max_tokens
+
+            response = self.client.chat(
+                model=model, messages=full_messages, options=options, stream=True
+            )
+
+            for chunk in response:
+                if hasattr(chunk, "message") and chunk.message:
+                    content = chunk.message.content
+                    if content:
+                        yield content
+
+        except Exception as e:
+            logger.error(f"Failed to stream chat: {e}")
+            raise RuntimeError(f"Chat streaming failed: {e}") from e
