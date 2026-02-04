@@ -2,6 +2,7 @@
 
 from src.conversation.context import ContextAssembler, build_user_context_block
 from src.conversation.engine import ConversationEngine, create_conversation_engine
+from src.conversation.extractor import MemoryExtractor
 from src.conversation.memory import MemoryManager
 from src.conversation.tools import (
     CONVERSATION_TOOLS,
@@ -14,6 +15,7 @@ __all__ = [
     "CONVERSATION_TOOLS",
     "ContextAssembler",
     "ConversationEngine",
+    "MemoryExtractor",
     "MemoryManager",
     "ToolExecutor",
     "build_user_context_block",
