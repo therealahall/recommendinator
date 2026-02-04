@@ -4,6 +4,7 @@ from src.conversation.context import ContextAssembler, build_user_context_block
 from src.conversation.engine import ConversationEngine, create_conversation_engine
 from src.conversation.extractor import MemoryExtractor
 from src.conversation.memory import MemoryManager
+from src.conversation.profile import ProfileGenerator
 from src.conversation.tools import (
     CONVERSATION_TOOLS,
     ToolExecutor,
@@ -17,6 +18,7 @@ __all__ = [
     "ConversationEngine",
     "MemoryExtractor",
     "MemoryManager",
+    "ProfileGenerator",
     "ToolExecutor",
     "build_user_context_block",
     "create_conversation_engine",
