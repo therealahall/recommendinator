@@ -143,6 +143,8 @@
             loadPreferences();
         } else if (name === "chat") {
             loadChatData();
+        } else if (name === "sync") {
+            loadEnrichmentStats();
         }
     }
 
@@ -743,6 +745,7 @@
     function setupSyncButtons() {
         loadSyncSources();
         checkSyncStatus();
+        loadEnrichmentStats();
     }
 
     function loadSyncSources() {
@@ -967,6 +970,98 @@
         if (source === "all") return "All Sources";
         if (!source) return "Unknown";
         return source.replace(/_/g, " ").replace(/\b\w/g, function (c) { return c.toUpperCase(); });
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment Stats
+    // -----------------------------------------------------------------------
+
+    function loadEnrichmentStats() {
+        var container = document.getElementById("enrichmentStats");
+        if (!container) return;
+
+        fetch(API_BASE + "/enrichment/stats?user_id=" + currentUserId)
+            .then(function (response) {
+                if (!response.ok) throw new Error("HTTP " + response.status);
+                return response.json();
+            })
+            .then(function (stats) {
+                renderEnrichmentStats(container, stats);
+            })
+            .catch(function (error) {
+                container.innerHTML = '<div class="empty-state" style="color:#c62828">Failed to load enrichment stats: ' + escapeHtml(error.message) + '</div>';
+            });
+    }
+
+    function renderEnrichmentStats(container, stats) {
+        if (stats.total === 0) {
+            container.innerHTML = '<div class="empty-state"><p>No items to enrich. Sync some content first.</p></div>';
+            return;
+        }
+
+        var enrichedPercent = Math.round((stats.enriched / stats.total) * 100);
+        var pendingPercent = Math.round((stats.pending / stats.total) * 100);
+
+        var html = '<div class="enrichment-summary">';
+
+        // Main progress indicator
+        html += '<div class="enrichment-progress-row">';
+        html += '<div class="enrichment-progress-label">';
+        html += '<span class="enrichment-count">' + stats.enriched + '/' + stats.total + '</span>';
+        html += '<span class="enrichment-percent">(' + enrichedPercent + '% enriched)</span>';
+        html += '</div>';
+        html += '<div class="enrichment-progress-bar">';
+        html += '<div class="enrichment-progress-fill enriched" style="width:' + enrichedPercent + '%"></div>';
+        html += '</div>';
+        html += '</div>';
+
+        // Status breakdown
+        html += '<div class="enrichment-breakdown">';
+
+        if (stats.pending > 0) {
+            html += '<div class="enrichment-stat pending">';
+            html += '<span class="stat-value">' + stats.pending + '</span>';
+            html += '<span class="stat-label">Pending</span>';
+            html += '</div>';
+        }
+
+        if (stats.enriched > 0) {
+            html += '<div class="enrichment-stat enriched">';
+            html += '<span class="stat-value">' + stats.enriched + '</span>';
+            html += '<span class="stat-label">Enriched</span>';
+            html += '</div>';
+        }
+
+        if (stats.not_found > 0) {
+            html += '<div class="enrichment-stat not-found">';
+            html += '<span class="stat-value">' + stats.not_found + '</span>';
+            html += '<span class="stat-label">Not Found</span>';
+            html += '</div>';
+        }
+
+        if (stats.failed > 0) {
+            html += '<div class="enrichment-stat failed">';
+            html += '<span class="stat-value">' + stats.failed + '</span>';
+            html += '<span class="stat-label">Failed</span>';
+            html += '</div>';
+        }
+
+        html += '</div>';
+
+        // Provider breakdown if available
+        var providers = Object.keys(stats.by_provider || {});
+        if (providers.length > 0) {
+            html += '<div class="enrichment-providers">';
+            html += '<span class="providers-label">By provider:</span>';
+            providers.forEach(function (provider) {
+                html += '<span class="provider-badge">' + provider + ': ' + stats.by_provider[provider] + '</span>';
+            });
+            html += '</div>';
+        }
+
+        html += '</div>';
+
+        container.innerHTML = html;
     }
 
     // -----------------------------------------------------------------------
