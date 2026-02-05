@@ -20,12 +20,13 @@ logger = logging.getLogger(__name__)
 class RadarrPlugin(SourcePlugin):
     """Plugin for importing movies from Radarr.
 
-    Radarr is a movie management tool. This plugin fetches all monitored
-    movies and imports them as UNREAD (wishlisted) movie items.
+    Radarr is a movie management tool. This plugin fetches all movies
+    in your Radarr library and imports them as UNREAD (wishlisted) movie items.
 
     Note: Radarr tracks downloads, not watch status. All imported items
-    are set to UNREAD. To mark items as completed/in-progress, use a
-    watch tracker like Trakt, Jellyfin, or Plex (future integration).
+    are set to UNREAD. The monitored state is ignored since it can change
+    based on file availability. Use ratings and manual status updates to
+    track what you've actually watched.
     """
 
     @property
@@ -97,7 +98,7 @@ class RadarrPlugin(SourcePlugin):
             progress_callback: Optional callback for progress updates
 
         Yields:
-            ContentItem for each monitored movie
+            ContentItem for each movie in the library
 
         Raises:
             SourceError: If the Radarr API returns an error
@@ -118,10 +119,6 @@ class RadarrPlugin(SourcePlugin):
         count = 0
 
         for movie in movie_list:
-            # Skip unmonitored movies
-            if not movie.get("monitored", False):
-                continue
-
             title = movie.get("title", "").strip()
             if not title:
                 continue

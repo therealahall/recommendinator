@@ -20,12 +20,13 @@ logger = logging.getLogger(__name__)
 class SonarrPlugin(SourcePlugin):
     """Plugin for importing TV series from Sonarr.
 
-    Sonarr is a TV series management tool. This plugin fetches all monitored
-    series and imports them as UNREAD (wishlisted) TV show items.
+    Sonarr is a TV series management tool. This plugin fetches all series
+    in your Sonarr library and imports them as UNREAD (wishlisted) TV show items.
 
     Note: Sonarr tracks downloads, not watch status. All imported items
-    are set to UNREAD. To mark items as completed/in-progress, use a
-    watch tracker like Trakt, Jellyfin, or Plex (future integration).
+    are set to UNREAD. The monitored state is ignored since it can change
+    based on file availability. Use ratings and manual status updates to
+    track what you've actually watched.
     """
 
     @property
@@ -97,7 +98,7 @@ class SonarrPlugin(SourcePlugin):
             progress_callback: Optional callback for progress updates
 
         Yields:
-            ContentItem for each monitored series
+            ContentItem for each series in the library
 
         Raises:
             SourceError: If the Sonarr API returns an error
@@ -117,10 +118,6 @@ class SonarrPlugin(SourcePlugin):
         count = 0
 
         for series in series_list:
-            # Skip unmonitored series (user doesn't care about these)
-            if not series.get("monitored", False):
-                continue
-
             title = series.get("title", "").strip()
             if not title:
                 continue

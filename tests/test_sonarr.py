@@ -129,13 +129,13 @@ class TestSonarrPluginFetch:
     """Tests for SonarrPlugin fetch functionality."""
 
     @patch("src.ingestion.sources.sonarr.requests.get")
-    def test_fetch_monitored_series(
+    def test_fetch_all_series(
         self,
         mock_get: Mock,
         plugin: SonarrPlugin,
         sample_series: list[dict],
     ) -> None:
-        """Monitored series should be imported, unmonitored skipped."""
+        """All series should be imported regardless of monitored state."""
         mock_response = Mock()
         mock_response.json.return_value = sample_series
         mock_response.raise_for_status = Mock()
@@ -145,10 +145,11 @@ class TestSonarrPluginFetch:
             plugin.fetch({"url": "http://localhost:8989", "api_key": "test_key"})
         )
 
-        # Only 2 monitored series (third is unmonitored)
-        assert len(items) == 2
+        # All 3 series imported (monitored state is ignored)
+        assert len(items) == 3
         assert items[0].title == "Breaking Bad"
         assert items[1].title == "The Expanse"
+        assert items[2].title == "Old Unmonitored Show"
 
     @patch("src.ingestion.sources.sonarr.requests.get")
     def test_fetch_all_items_are_unread(

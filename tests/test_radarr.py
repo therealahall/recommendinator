@@ -144,23 +144,24 @@ class TestRadarrPluginFetch:
         mock_get.side_effect = side_effect
 
     @patch("src.ingestion.sources.radarr.requests.get")
-    def test_fetch_monitored_movies(
+    def test_fetch_all_movies(
         self,
         mock_get: Mock,
         plugin: RadarrPlugin,
         sample_movies: list[dict],
     ) -> None:
-        """Monitored movies should be imported, unmonitored skipped."""
+        """All movies should be imported regardless of monitored state."""
         self._mock_radarr_responses(mock_get, sample_movies)
 
         items = list(
             plugin.fetch({"url": "http://localhost:7878", "api_key": "test_key"})
         )
 
-        # Only 2 monitored movies (third is unmonitored)
-        assert len(items) == 2
+        # All 3 movies imported (monitored state is ignored)
+        assert len(items) == 3
         assert items[0].title == "Inception"
         assert items[1].title == "Blade Runner 2049"
+        assert items[2].title == "Old Unmonitored Movie"
 
     @patch("src.ingestion.sources.radarr.requests.get")
     def test_fetch_all_items_are_unread(
