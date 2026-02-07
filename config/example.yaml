@@ -47,8 +47,9 @@ ingestion:
 inputs:
   goodreads:
     path: "inputs/goodreads_library_export.csv"
+    content_type: "book"  # Content type for enrichment (book, movie, tv_show, video_game)
     enabled: true
-  
+
   steam:
     # Steam Web API configuration
     # Get your API key from: https://steamcommunity.com/dev/apikey
@@ -58,6 +59,7 @@ inputs:
     vanity_url: ""  # Alternative: Your Steam username or custom URL
     # Minimum playtime in minutes to include a game (default: 0 = include all)
     min_playtime_minutes: 0
+    content_type: "video_game"  # Content type for enrichment
     enabled: false  # Set to true to enable Steam import
   
   # Generic CSV import — use templates from templates/ directory
@@ -82,12 +84,14 @@ inputs:
   sonarr:
     url: "http://localhost:8989"  # Sonarr base URL
     api_key: ""  # Sonarr API key (Settings > General > API Key)
+    content_type: "tv_show"  # Content type for enrichment
     enabled: false
 
   # Radarr integration (Movie library manager)
   radarr:
     url: "http://localhost:7878"  # Radarr base URL
     api_key: ""  # Radarr API key (Settings > General > API Key)
+    content_type: "movie"  # Content type for enrichment
     enabled: false
 
   # Future sources can be added here

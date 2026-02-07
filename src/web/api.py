@@ -684,6 +684,22 @@ async def update_data(request: UpdateRequest) -> dict[str, Any]:
         )
         return sum(result.items_synced for result in results)
 
+    # Determine content type for enrichment based on synced source config
+    # If syncing a single source with a configured content_type, use that type
+    # Otherwise (multiple sources or "all"), enrich all types
+    enrichment_content_type: ContentType | None = None
+    if len(sources_to_sync) == 1:
+        source_config = inputs_config.get(sources_to_sync[0], {})
+        content_type_str = source_config.get("content_type")
+        if content_type_str:
+            try:
+                enrichment_content_type = ContentType(content_type_str)
+            except ValueError:
+                logger.warning(
+                    f"Invalid content_type '{content_type_str}' for source "
+                    f"{sources_to_sync[0]}, enriching all types"
+                )
+
     # Create completion callback for auto-enrichment
     def on_sync_complete() -> None:
         if auto_enrich:
@@ -691,6 +707,7 @@ async def update_data(request: UpdateRequest) -> dict[str, Any]:
             started, msg = enrichment_manager.start_enrichment(
                 storage_manager=storage,
                 config=config,
+                content_type=enrichment_content_type,
             )
             if started:
                 logger.info(f"[ENRICHMENT] Auto-started after sync: {msg}")
