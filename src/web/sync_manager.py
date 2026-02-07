@@ -103,6 +103,7 @@ class SyncManager:
         self,
         source: str,
         sync_function: Callable[[SyncJob], int],
+        on_complete: Callable[[], None] | None = None,
     ) -> tuple[bool, str]:
         """Start a background sync job.
 
@@ -110,6 +111,7 @@ class SyncManager:
             source: Name of the source being synced (e.g., "steam", "goodreads").
             sync_function: Function that performs the sync. Should accept a SyncJob
                 parameter for progress updates and return the count of items processed.
+            on_complete: Optional callback to run after sync completes successfully.
 
         Returns:
             Tuple of (success, message). Success is False if a job is already running.
@@ -130,18 +132,23 @@ class SyncManager:
         # Start background thread
         self._thread = threading.Thread(
             target=self._run_sync,
-            args=(sync_function,),
+            args=(sync_function, on_complete),
             daemon=True,
         )
         self._thread.start()
 
         return True, f"Started sync for {source}"
 
-    def _run_sync(self, sync_function: Callable[[SyncJob], int]) -> None:
+    def _run_sync(
+        self,
+        sync_function: Callable[[SyncJob], int],
+        on_complete: Callable[[], None] | None = None,
+    ) -> None:
         """Run the sync function in a background thread.
 
         Args:
             sync_function: Function that performs the sync.
+            on_complete: Optional callback to run after sync completes successfully.
         """
         job = self._current_job
         if job is None:
@@ -154,6 +161,13 @@ class SyncManager:
                 job.completed_at = datetime.now()
                 job.items_processed = count
             logger.info(f"Sync completed for {job.source}: {count} items processed")
+
+            # Run completion callback if provided
+            if on_complete is not None:
+                try:
+                    on_complete()
+                except Exception as callback_error:
+                    logger.error(f"Sync on_complete callback failed: {callback_error}")
         except Exception as error:
             with self._lock:
                 job.status = SyncStatus.FAILED

@@ -684,9 +684,24 @@ async def update_data(request: UpdateRequest) -> dict[str, Any]:
         )
         return sum(result.items_synced for result in results)
 
+    # Create completion callback for auto-enrichment
+    def on_sync_complete() -> None:
+        if auto_enrich:
+            enrichment_manager = get_enrichment_manager()
+            started, msg = enrichment_manager.start_enrichment(
+                storage_manager=storage,
+                config=config,
+            )
+            if started:
+                logger.info(f"[ENRICHMENT] Auto-started after sync: {msg}")
+            else:
+                logger.info(f"[ENRICHMENT] Auto-start skipped: {msg}")
+
     # Start background sync
     source_label = source if source != "all" else ", ".join(sources_to_sync)
-    success, message = sync_manager.start_sync(source_label, run_sync)
+    success, message = sync_manager.start_sync(
+        source_label, run_sync, on_complete=on_sync_complete
+    )
 
     if not success:
         raise HTTPException(status_code=409, detail=message)
