@@ -978,6 +978,7 @@
 
     function loadEnrichmentStats() {
         var container = document.getElementById("enrichmentStats");
+        var card = document.getElementById("enrichmentStatsCard");
         if (!container) return;
 
         fetch(API_BASE + "/enrichment/stats?user_id=" + currentUserId)
@@ -986,6 +987,11 @@
                 return response.json();
             })
             .then(function (stats) {
+                if (!stats.enabled) {
+                    if (card) card.style.display = "none";
+                    return;
+                }
+                if (card) card.style.display = "";
                 renderEnrichmentStats(container, stats);
             })
             .catch(function (error) {

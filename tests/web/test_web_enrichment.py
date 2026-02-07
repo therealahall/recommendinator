@@ -205,10 +205,43 @@ class TestEnrichmentStats:
 
         assert response.status_code == 200
         data = response.json()
+        assert data["enabled"] is False
         assert data["total"] == 100
         assert data["enriched"] == 80
         assert data["pending"] == 15
         assert data["by_provider"]["tmdb"] == 50
+
+        reset_enrichment_manager()
+
+    def test_get_stats_with_enrichment_enabled(self) -> None:
+        """Test that enabled field is True when enrichment is enabled in config."""
+        mock_stats = {
+            "total": 10,
+            "enriched": 5,
+            "pending": 5,
+            "not_found": 0,
+            "failed": 0,
+            "by_provider": {},
+            "by_quality": {},
+        }
+
+        reset_enrichment_manager()
+
+        with patch("src.web.api.get_storage") as mock_storage:
+            with patch("src.web.api.get_config") as mock_get_config:
+                mock_storage_instance = MagicMock()
+                mock_storage_instance.get_enrichment_stats.return_value = mock_stats
+                mock_storage.return_value = mock_storage_instance
+                mock_get_config.return_value = {"enrichment": {"enabled": True}}
+
+                from src.web.app import app
+
+                client = TestClient(app)
+                response = client.get("/api/enrichment/stats")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["enabled"] is True
 
         reset_enrichment_manager()
 

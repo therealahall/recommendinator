@@ -199,6 +199,7 @@ class EnrichmentJobStatusResponse(BaseModel):
 class EnrichmentStatsResponse(BaseModel):
     """Response model for enrichment statistics."""
 
+    enabled: bool = False
     total: int = 0
     enriched: int = 0
     pending: int = 0
@@ -898,6 +899,10 @@ async def get_enrichment_stats(
     Returns:
         Enrichment statistics
     """
+    config = get_config()
+    enrichment_config = config.get("enrichment", {})
+    enrichment_enabled = enrichment_config.get("enabled", False)
+
     storage = get_storage()
 
     if not storage:
@@ -906,6 +911,7 @@ async def get_enrichment_stats(
     stats = storage.get_enrichment_stats(user_id=user_id)
 
     return EnrichmentStatsResponse(
+        enabled=enrichment_enabled,
         total=stats.get("total", 0),
         enriched=stats.get("enriched", 0),
         pending=stats.get("pending", 0),
