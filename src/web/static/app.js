@@ -742,10 +742,16 @@
         pollInterval: null
     };
 
+    var enrichmentState = {
+        polling: false,
+        pollInterval: null
+    };
+
     function setupSyncButtons() {
         loadSyncSources();
         checkSyncStatus();
         loadEnrichmentStats();
+        checkEnrichmentStatus();
     }
 
     function loadSyncSources() {
@@ -866,6 +872,9 @@
                         completedMsg += " (" + job.error_count + " errors)";
                     }
                     updateSyncStatus(completedMsg, "success", null);
+                    // Refresh enrichment stats after sync
+                    loadEnrichmentStats();
+                    checkEnrichmentStatus();
                 } else if (status === "failed" && job) {
                     // Sync failed
                     stopSyncPolling();
@@ -1068,6 +1077,48 @@
         html += '</div>';
 
         container.innerHTML = html;
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment Status Polling
+    // -----------------------------------------------------------------------
+
+    function startEnrichmentPolling() {
+        if (enrichmentState.polling) return;
+        enrichmentState.polling = true;
+        enrichmentState.pollInterval = setInterval(checkEnrichmentStatus, 2000);
+    }
+
+    function stopEnrichmentPolling() {
+        enrichmentState.polling = false;
+        if (enrichmentState.pollInterval) {
+            clearInterval(enrichmentState.pollInterval);
+            enrichmentState.pollInterval = null;
+        }
+    }
+
+    function checkEnrichmentStatus() {
+        fetch(API_BASE + "/enrichment/status")
+            .then(function (response) { return response.json(); })
+            .then(function (status) {
+                if (status.running) {
+                    // Enrichment is running - start polling and refresh stats
+                    if (!enrichmentState.polling) {
+                        startEnrichmentPolling();
+                    }
+                    loadEnrichmentStats();
+                } else if (status.completed || status.cancelled) {
+                    // Enrichment finished - stop polling and refresh stats
+                    stopEnrichmentPolling();
+                    loadEnrichmentStats();
+                } else {
+                    // Idle - stop polling
+                    stopEnrichmentPolling();
+                }
+            })
+            .catch(function (error) {
+                console.error("Error checking enrichment status:", error);
+            });
     }
 
     // -----------------------------------------------------------------------
