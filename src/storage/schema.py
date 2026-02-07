@@ -713,18 +713,22 @@ def get_enrichment_stats(
         )
     needs_enrichment: int = cursor.fetchone()[0]
 
-    # Successfully enriched (needs_enrichment = 0 and no error)
+    # Successfully enriched (needs_enrichment = 0, no error, and not "not_found")
     if user_id:
         cursor.execute(
             """SELECT COUNT(*) FROM enrichment_status es
                JOIN content_items ci ON es.content_item_id = ci.id
-               WHERE es.needs_enrichment = 0 AND es.enrichment_error IS NULL"""
+               WHERE es.needs_enrichment = 0
+                 AND es.enrichment_error IS NULL
+                 AND es.enrichment_provider != 'none'"""
             + user_filter,
             user_params,
         )
     else:
         cursor.execute("""SELECT COUNT(*) FROM enrichment_status
-               WHERE needs_enrichment = 0 AND enrichment_error IS NULL""")
+               WHERE needs_enrichment = 0
+                 AND enrichment_error IS NULL
+                 AND enrichment_provider != 'none'""")
     enriched: int = cursor.fetchone()[0]
 
     # Failed enrichment
