@@ -5,6 +5,7 @@ an API key.
 """
 
 import logging
+import re
 from typing import Any
 
 import requests
@@ -21,6 +22,26 @@ logger = logging.getLogger(__name__)
 
 # Open Library API base URL
 OPENLIBRARY_API_BASE = "https://openlibrary.org"
+
+# Pattern to match series info in titles like "(Series Name, #1)" or "(Series Name #1)"
+SERIES_PATTERN = re.compile(r"\s*\([^)]*#\d+[^)]*\)\s*$")
+
+
+def clean_title_for_search(title: str) -> str:
+    """Remove series info from title for better search matching.
+
+    Examples:
+        "For We Are Many (Bobiverse, #2)" -> "For We Are Many"
+        "The Name of the Wind (The Kingkiller Chronicle #1)" -> "The Name of the Wind"
+
+    Args:
+        title: Original book title
+
+    Returns:
+        Cleaned title without series info
+    """
+    cleaned = SERIES_PATTERN.sub("", title).strip()
+    return cleaned if cleaned else title
 
 
 class OpenLibraryProvider(EnrichmentProvider):
@@ -160,8 +181,13 @@ class OpenLibraryProvider(EnrichmentProvider):
         Returns:
             EnrichmentResult
         """
+        # Clean title to remove series info like "(Bobiverse, #2)"
+        search_title = clean_title_for_search(item.title)
+        if search_title != item.title:
+            logger.debug(f"Cleaned title for search: '{item.title}' -> '{search_title}'")
+
         params: dict[str, Any] = {
-            "title": item.title,
+            "title": search_title,
             "limit": 5,
         }
 
