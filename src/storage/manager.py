@@ -521,6 +521,7 @@ class StorageManager:
         content_type: ContentType | None = None,
         user_id: int | None = None,
         limit: int = 100,
+        include_not_found: bool = False,
     ) -> list[tuple[int, ContentItem]]:
         """Get content items that need enrichment.
 
@@ -531,6 +532,7 @@ class StorageManager:
             content_type: Optional filter by content type
             user_id: Filter by user ID
             limit: Maximum number of items to return
+            include_not_found: Also include items previously marked as not_found
 
         Returns:
             List of (db_id, ContentItem) tuples
@@ -539,6 +541,7 @@ class StorageManager:
             content_type=content_type,
             user_id=user_id,
             limit=limit,
+            include_not_found=include_not_found,
         )
 
     def get_enrichment_status(self, content_item_id: int) -> dict | None:
