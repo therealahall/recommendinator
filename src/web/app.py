@@ -68,6 +68,7 @@ def configure_logging(config: dict) -> None:
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+    logging.getLogger("watchfiles").setLevel(logging.WARNING)
 
 # Module-level app instance for uvicorn import string support
 _app: FastAPI | None = None
