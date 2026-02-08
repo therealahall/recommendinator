@@ -163,6 +163,9 @@ class EnrichmentStartRequest(BaseModel):
         None, description="Content type filter (book, movie, tv_show, video_game)"
     )
     user_id: int = Field(1, ge=1, description="User ID for filtering items")
+    retry_not_found: bool = Field(
+        False, description="Re-process items previously marked as not_found"
+    )
 
 
 class EnrichmentResetRequest(BaseModel):
@@ -865,6 +868,7 @@ async def start_enrichment(
         config=config,
         content_type=content_type,
         user_id=request.user_id,
+        include_not_found=request.retry_not_found,
     )
 
     if not success:

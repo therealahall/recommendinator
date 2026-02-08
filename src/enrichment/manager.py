@@ -123,12 +123,14 @@ class EnrichmentManager:
         self,
         content_type: ContentType | None = None,
         user_id: int | None = None,
+        include_not_found: bool = False,
     ) -> bool:
         """Start background enrichment job.
 
         Args:
             content_type: Optional filter to only enrich one content type
             user_id: User ID for filtering items
+            include_not_found: Also retry items previously marked as not_found
 
         Returns:
             True if job started, False if already running
@@ -148,14 +150,15 @@ class EnrichmentManager:
             # Start background thread
             self._thread = threading.Thread(
                 target=self._run_enrichment,
-                args=(content_type, user_id),
+                args=(content_type, user_id, include_not_found),
                 daemon=True,
             )
             self._thread.start()
 
+            retry_msg = " (including not_found)" if include_not_found else ""
             logger.info(
                 f"[ENRICHMENT] === Starting enrichment job"
-                f"{f' for {content_type.value}' if content_type else ' for all types'} ==="
+                f"{f' for {content_type.value}' if content_type else ' for all types'}{retry_msg} ==="
             )
             return True
 
@@ -198,12 +201,14 @@ class EnrichmentManager:
         self,
         content_type: ContentType | None,
         user_id: int | None,
+        include_not_found: bool = False,
     ) -> None:
         """Run the enrichment job in background thread.
 
         Args:
             content_type: Optional content type filter
             user_id: User ID for filtering items
+            include_not_found: Also retry items previously marked as not_found
         """
         try:
             with self._lock:
@@ -220,6 +225,7 @@ class EnrichmentManager:
                     content_type=content_type,
                     user_id=user_id,
                     limit=batch_size,
+                    include_not_found=include_not_found,
                 )
 
                 if not items:

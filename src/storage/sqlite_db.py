@@ -882,17 +882,20 @@ class SQLiteDB:
         content_type: ContentType | None = None,
         user_id: int | None = None,
         limit: int = 100,
+        include_not_found: bool = False,
     ) -> list[tuple[int, ContentItem]]:
         """Get content items that need enrichment.
 
         Returns items where:
         1. No enrichment_status record exists (new items), OR
-        2. needs_enrichment = TRUE
+        2. needs_enrichment = TRUE, OR
+        3. enrichment_quality = 'not_found' (if include_not_found is True)
 
         Args:
             content_type: Optional filter by content type
             user_id: Filter by user ID (defaults to default user)
             limit: Maximum number of items to return
+            include_not_found: Also include items previously marked as not_found
 
         Returns:
             List of (db_id, ContentItem) tuples for items needing enrichment
@@ -904,12 +907,17 @@ class SQLiteDB:
             cursor = conn.cursor()
 
             # Find items without enrichment status or with needs_enrichment=TRUE
-            query = """
+            # Optionally also include items with enrichment_quality='not_found'
+            not_found_clause = ""
+            if include_not_found:
+                not_found_clause = " OR es.enrichment_quality = 'not_found'"
+
+            query = f"""
                 SELECT ci.id
                 FROM content_items ci
                 LEFT JOIN enrichment_status es ON ci.id = es.content_item_id
                 WHERE ci.user_id = ?
-                  AND (es.content_item_id IS NULL OR es.needs_enrichment = 1)
+                  AND (es.content_item_id IS NULL OR es.needs_enrichment = 1{not_found_clause})
             """
             params: list[Any] = [effective_user_id]
 

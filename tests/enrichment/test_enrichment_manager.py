@@ -430,6 +430,7 @@ class TestEnrichmentManager:
             content_type=ContentType.MOVIE,
             user_id=None,
             limit=10,
+            include_not_found=False,
         )
 
     def test_enrichment_applies_gap_filling(

@@ -1145,12 +1145,14 @@
     window.triggerEnrichment = function() {
         var btn = document.getElementById("enrichAllBtn");
         var select = document.getElementById("enrichTypeSelect");
+        var retryCheckbox = document.getElementById("retryNotFoundCheck");
         var statusDiv = document.getElementById("enrichmentStatus");
         var contentType = select ? select.value : "";
+        var retryNotFound = retryCheckbox ? retryCheckbox.checked : false;
 
         if (btn) btn.disabled = true;
 
-        var body = { user_id: currentUserId };
+        var body = { user_id: currentUserId, retry_not_found: retryNotFound };
         if (contentType) {
             body.content_type = contentType;
         }

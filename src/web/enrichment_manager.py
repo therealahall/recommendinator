@@ -31,6 +31,7 @@ class WebEnrichmentManager:
         config: dict[str, Any],
         content_type: ContentType | None = None,
         user_id: int | None = None,
+        include_not_found: bool = False,
     ) -> tuple[bool, str]:
         """Start a background enrichment job.
 
@@ -39,6 +40,7 @@ class WebEnrichmentManager:
             config: Application configuration
             content_type: Optional content type filter
             user_id: Optional user ID filter
+            include_not_found: Also retry items previously marked as not_found
 
         Returns:
             Tuple of (success, message)
@@ -57,11 +59,13 @@ class WebEnrichmentManager:
         started = self._manager.start_enrichment(
             content_type=content_type,
             user_id=user_id,
+            include_not_found=include_not_found,
         )
 
         if started:
             type_desc = content_type.value if content_type else "all types"
-            return True, f"Started enrichment for {type_desc}"
+            retry_msg = " (retrying not_found)" if include_not_found else ""
+            return True, f"Started enrichment for {type_desc}{retry_msg}"
         else:
             return False, "Enrichment job already running"
 
