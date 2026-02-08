@@ -117,10 +117,12 @@ class PluginRegistry:
 
     def _discover_private_plugins(self) -> None:
         """Discover private plugins from private/plugins/."""
-        private_path = Path("private/plugins")
+        # Find project root (parent of src/)
+        project_root = Path(__file__).parent.parent.parent
+        private_path = project_root / "private" / "plugins"
 
         if not private_path.exists():
-            logger.debug("No private plugins directory found")
+            logger.debug(f"No private plugins directory found at {private_path}")
             return
 
         # Ensure private directory has __init__.py files
@@ -138,9 +140,9 @@ class PluginRegistry:
             return
 
         # Add project root to path if needed (so 'private.plugins' can be imported)
-        project_root = str(private_path.parent.parent.absolute())
-        if project_root not in sys.path:
-            sys.path.insert(0, project_root)
+        project_root_str = str(project_root.absolute())
+        if project_root_str not in sys.path:
+            sys.path.insert(0, project_root_str)
 
         for py_file in private_path.glob("*.py"):
             if py_file.name.startswith("_"):
