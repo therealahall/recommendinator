@@ -78,3 +78,6 @@ config/*.yml
 # Outputs
 outputs/
 # Note: recommendations/ is for output files, not src/recommendations/ code
+
+# Private plugins (user-specific, not shared)
+private/

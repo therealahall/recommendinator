@@ -116,31 +116,31 @@ class PluginRegistry:
             logger.warning(f"Failed to import sources package: {error}")
 
     def _discover_private_plugins(self) -> None:
-        """Discover private plugins from plugins/private/."""
-        private_path = Path("plugins/private")
+        """Discover private plugins from private/plugins/."""
+        private_path = Path("private/plugins")
 
         if not private_path.exists():
             logger.debug("No private plugins directory found")
             return
 
-        # Ensure plugins directory has __init__.py
-        plugins_init = private_path.parent / "__init__.py"
-        private_init = private_path / "__init__.py"
-
-        if not plugins_init.exists():
-            logger.debug("plugins/__init__.py not found, skipping private plugins")
-            return
+        # Ensure private directory has __init__.py files
+        private_init = private_path.parent / "__init__.py"
+        plugins_init = private_path / "__init__.py"
 
         if not private_init.exists():
+            logger.debug("private/__init__.py not found, skipping private plugins")
+            return
+
+        if not plugins_init.exists():
             logger.debug(
-                "plugins/private/__init__.py not found, skipping private plugins"
+                "private/plugins/__init__.py not found, skipping private plugins"
             )
             return
 
-        # Add plugins directory to path if needed
-        plugins_root = str(private_path.parent.parent.absolute())
-        if plugins_root not in sys.path:
-            sys.path.insert(0, plugins_root)
+        # Add project root to path if needed (so 'private.plugins' can be imported)
+        project_root = str(private_path.parent.parent.absolute())
+        if project_root not in sys.path:
+            sys.path.insert(0, project_root)
 
         for py_file in private_path.glob("*.py"):
             if py_file.name.startswith("_"):
@@ -148,7 +148,7 @@ class PluginRegistry:
 
             module_name = py_file.stem
             try:
-                module = importlib.import_module(f"plugins.private.{module_name}")
+                module = importlib.import_module(f"private.plugins.{module_name}")
                 self._register_plugins_from_module(module, f"private:{module_name}")
             except Exception as error:
                 logger.warning(f"Failed to load private plugin {module_name}: {error}")
