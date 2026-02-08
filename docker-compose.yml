@@ -20,6 +20,10 @@ services:
       - ./config:/app/config:ro
       # Mount input files
       - ./inputs:/app/inputs:ro
+      # Mount private plugins (user-specific, gitignored)
+      - ./private:/app/private:ro
+      # Add custom mounts for private plugins here, e.g.:
+      # - /path/to/your/data:/app/external/data:ro
     environment:
       # Ollama URL - only used when ai.enabled: true in config
       # Points to sidecar when using --profile ai
