@@ -218,15 +218,41 @@ class EnrichmentManager:
             enrichment_config = self.config.get("enrichment", {})
             batch_size = enrichment_config.get("batch_size", 50)
 
+            # If retrying not_found items, collect their IDs first to avoid infinite loop
+            not_found_ids: set[int] = set()
+            if include_not_found:
+                # Collect all not_found item IDs upfront
+                not_found_items = self.storage_manager.get_items_needing_enrichment(
+                    content_type=content_type,
+                    user_id=user_id,
+                    limit=10000,  # Get all not_found items
+                    include_not_found=True,
+                )
+                # Filter to only those that are actually not_found (not new items)
+                for db_id, _item in not_found_items:
+                    status = self.storage_manager.get_enrichment_status(db_id)
+                    if status and status.get("enrichment_quality") == "not_found":
+                        not_found_ids.add(db_id)
+                logger.info(f"[ENRICHMENT] Found {len(not_found_ids)} not_found items to retry")
+
             # Process items in batches
             while not self._stop_requested:
-                # Fetch next batch of items
+                # Fetch next batch of items (normal items only, not include_not_found)
                 items = self.storage_manager.get_items_needing_enrichment(
                     content_type=content_type,
                     user_id=user_id,
                     limit=batch_size,
-                    include_not_found=include_not_found,
+                    include_not_found=False,
                 )
+
+                # Add any remaining not_found items to this batch
+                if not_found_ids and len(items) < batch_size:
+                    # Fetch some not_found items to fill the batch
+                    for db_id in list(not_found_ids)[: batch_size - len(items)]:
+                        item = self.storage_manager.get_content_item(db_id)
+                        if item:
+                            items.append((db_id, item))
+                        not_found_ids.discard(db_id)
 
                 if not items:
                     # No more items to process
