@@ -135,6 +135,9 @@ class TestOpenLibraryProviderISBNLookup:
         assert result is not None
         assert result.external_id == "openlibrary:OL5678W"
         assert "Dystopia" in result.genres
+        # Tags should also be populated for cross-content-type matching
+        assert result.tags is not None
+        assert "Dystopia" in result.tags
         assert "dystopian" in result.description.lower()
         assert result.match_quality == "high"
 

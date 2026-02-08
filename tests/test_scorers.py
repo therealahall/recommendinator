@@ -86,6 +86,23 @@ class TestExtractGenres:
         item = _make_item(metadata={})
         assert _extract_genres(item) == []
 
+    def test_tags_included_for_cross_content_matching(self) -> None:
+        """Tags should be extracted alongside genres for cross-content-type matching."""
+        item = _make_item(
+            metadata={"genres": ["Fantasy"], "tags": ["epic", "adventure"]}
+        )
+        result = _extract_genres(item)
+        assert "fantasy" in result
+        assert "epic" in result
+        assert "adventure" in result
+
+    def test_tags_list_as_string(self) -> None:
+        """Tags as comma-separated string should be extracted."""
+        item = _make_item(metadata={"tags": "sci-fi, space opera"})
+        result = _extract_genres(item)
+        assert "sci-fi" in result
+        assert "space opera" in result
+
 
 class TestExtractCreator:
     def test_author_field(self) -> None:

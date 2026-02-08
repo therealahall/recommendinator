@@ -22,15 +22,17 @@ logger = logging.getLogger(__name__)
 
 
 def _extract_genres(item: ContentItem) -> list[str]:
-    """Extract all genre strings from an item's metadata.
+    """Extract all genre and tag strings from an item's metadata.
 
-    Handles both single ``genre`` field and ``genres`` list.
+    Handles ``genre``, ``genres`` list, and ``tags`` list fields.
+    This enables cross-content-type matching (e.g., a sci-fi book
+    can match with sci-fi movies via shared genre/tag terms).
 
     Args:
-        item: Content item to extract genres from.
+        item: Content item to extract genres/tags from.
 
     Returns:
-        List of lowercased genre strings.
+        List of lowercased genre and tag strings.
     """
     genres: list[str] = []
     if not item.metadata:
@@ -43,6 +45,13 @@ def _extract_genres(item: ContentItem) -> list[str]:
             genres.extend(g.lower() for g in raw if g)
         elif isinstance(raw, str):
             genres.extend(g.strip().lower() for g in raw.split(",") if g.strip())
+    # Also include tags for cross-content-type matching
+    if "tags" in item.metadata and item.metadata["tags"]:
+        raw = item.metadata["tags"]
+        if isinstance(raw, list):
+            genres.extend(t.lower() for t in raw if t)
+        elif isinstance(raw, str):
+            genres.extend(t.strip().lower() for t in raw.split(",") if t.strip())
     return genres
 
 

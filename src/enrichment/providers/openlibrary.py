@@ -301,9 +301,13 @@ class OpenLibraryProvider(EnrichmentProvider):
             # Work ID
             work_id = work_key.split("/")[-1] if work_key else None
 
+            # Also set tags from genres for cross-content-type matching
+            # This allows book genres like "Science Fiction" to match with
+            # movie/game tags and genres
             return EnrichmentResult(
                 external_id=f"openlibrary:{work_id}" if work_id else None,
                 genres=genres if genres else None,
+                tags=genres if genres else None,
                 description=description,
                 extra_metadata=extra_metadata,
                 match_quality="high",
@@ -345,6 +349,7 @@ class OpenLibraryProvider(EnrichmentProvider):
         return EnrichmentResult(
             external_id=f"openlibrary:{edition_key}" if edition_key else None,
             genres=genres if genres else None,
+            tags=genres if genres else None,
             extra_metadata=extra_metadata,
             match_quality="medium",
             provider=self.name,
@@ -377,6 +382,7 @@ class OpenLibraryProvider(EnrichmentProvider):
         return EnrichmentResult(
             external_id=f"openlibrary:{work_key}" if work_key else None,
             genres=genres if genres else None,
+            tags=genres if genres else None,
             extra_metadata=extra_metadata,
             match_quality="medium",
             provider=self.name,
