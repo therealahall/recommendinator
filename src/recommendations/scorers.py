@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 
 from src.models.content import ContentItem, ContentType
 from src.recommendations.content_length import score_length_match
+from src.recommendations.genre_normalizer import extract_and_normalize_genres
 from src.recommendations.preferences import UserPreferences
 from src.utils.series import extract_series_info
 
@@ -22,37 +23,19 @@ logger = logging.getLogger(__name__)
 
 
 def _extract_genres(item: ContentItem) -> list[str]:
-    """Extract all genre and tag strings from an item's metadata.
+    """Extract and normalize genre/tag strings from an item's metadata.
 
-    Handles ``genre``, ``genres`` list, and ``tags`` list fields.
-    This enables cross-content-type matching (e.g., a sci-fi book
-    can match with sci-fi movies via shared genre/tag terms).
+    Uses the genre_normalizer to clean and filter terms, enabling
+    cross-content-type matching (e.g., a sci-fi book can match with
+    sci-fi movies via shared normalized genre/tag terms).
 
     Args:
         item: Content item to extract genres/tags from.
 
     Returns:
-        List of lowercased genre and tag strings.
+        List of normalized genre and tag strings.
     """
-    genres: list[str] = []
-    if not item.metadata:
-        return genres
-    if "genre" in item.metadata and item.metadata["genre"]:
-        genres.append(str(item.metadata["genre"]).lower())
-    if "genres" in item.metadata and item.metadata["genres"]:
-        raw = item.metadata["genres"]
-        if isinstance(raw, list):
-            genres.extend(g.lower() for g in raw if g)
-        elif isinstance(raw, str):
-            genres.extend(g.strip().lower() for g in raw.split(",") if g.strip())
-    # Also include tags for cross-content-type matching
-    if "tags" in item.metadata and item.metadata["tags"]:
-        raw = item.metadata["tags"]
-        if isinstance(raw, list):
-            genres.extend(t.lower() for t in raw if t)
-        elif isinstance(raw, str):
-            genres.extend(t.strip().lower() for t in raw.split(",") if t.strip())
-    return genres
+    return extract_and_normalize_genres(item.metadata)
 
 
 def _extract_creator(item: ContentItem) -> str | None:
@@ -241,7 +224,18 @@ class CreatorMatchScorer(Scorer):
 
 
 class TagOverlapScorer(Scorer):
-    """Jaccard-like overlap of candidate genres/tags against consumed genres.
+    """Score based on genre/tag overlap with consumed items.
+
+    Uses threshold-based matching: 3+ matching terms indicates similarity,
+    rather than Jaccard similarity which penalizes items with many tags.
+
+    Scoring:
+    - 5+ matches: 1.0 (very similar)
+    - 4 matches: 0.9
+    - 3 matches: 0.8
+    - 2 matches: 0.5
+    - 1 match: 0.3
+    - 0 matches: 0.0
 
     Weight default: 1.0
     """
@@ -254,11 +248,21 @@ class TagOverlapScorer(Scorer):
         if not candidate_genres or not context.consumed_genres:
             return 0.0
 
-        intersection = candidate_genres & context.consumed_genres
-        union = candidate_genres | context.consumed_genres
-        if not union:
-            return 0.0
-        return len(intersection) / len(union)
+        # Count matching terms
+        matches = len(candidate_genres & context.consumed_genres)
+
+        # Threshold-based scoring
+        if matches >= 5:
+            return 1.0
+        elif matches == 4:
+            return 0.9
+        elif matches == 3:
+            return 0.8
+        elif matches == 2:
+            return 0.5
+        elif matches == 1:
+            return 0.3
+        return 0.0
 
 
 class SeriesOrderScorer(Scorer):
