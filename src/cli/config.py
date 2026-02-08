@@ -80,15 +80,27 @@ def create_storage_manager(config: dict[str, Any]) -> StorageManager:
 
 def create_llm_components(
     config: dict[str, Any],
-) -> tuple[OllamaClient, EmbeddingGenerator, RecommendationGenerator]:
+) -> tuple[
+    OllamaClient | None, EmbeddingGenerator | None, RecommendationGenerator | None
+]:
     """Create LLM components from config.
+
+    When AI features are disabled (features.ai_enabled: false), returns
+    (None, None, None) to prevent any LLM/embedding operations.
 
     Args:
         config: Configuration dictionary
 
     Returns:
         Tuple of (OllamaClient, EmbeddingGenerator, RecommendationGenerator)
+        or (None, None, None) if AI is disabled.
     """
+    features_config = config.get("features", {})
+    ai_enabled = features_config.get("ai_enabled", False)
+
+    if not ai_enabled:
+        return None, None, None
+
     ollama_config = config.get("ollama", {})
     base_url = ollama_config.get("base_url", "http://localhost:11434")
     model = ollama_config.get("model", "mistral:7b")
@@ -145,8 +157,8 @@ def build_scorers_from_config(config: dict[str, Any]) -> list[Scorer]:
 
 def create_recommendation_engine(
     storage_manager: StorageManager,
-    embedding_generator: EmbeddingGenerator,
-    recommendation_generator: RecommendationGenerator,
+    embedding_generator: EmbeddingGenerator | None,
+    recommendation_generator: RecommendationGenerator | None,
     config: dict[str, Any],
 ) -> RecommendationEngine:
     """Create recommendation engine from components and config.
