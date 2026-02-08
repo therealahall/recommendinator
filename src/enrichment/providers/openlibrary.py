@@ -184,7 +184,9 @@ class OpenLibraryProvider(EnrichmentProvider):
         # Clean title to remove series info like "(Bobiverse, #2)"
         search_title = clean_title_for_search(item.title)
         if search_title != item.title:
-            logger.debug(f"Cleaned title for search: '{item.title}' -> '{search_title}'")
+            logger.debug(
+                f"Cleaned title for search: '{item.title}' -> '{search_title}'"
+            )
 
         params: dict[str, Any] = {
             "title": search_title,

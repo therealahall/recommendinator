@@ -5,6 +5,7 @@ and TV shows, including genres, descriptions, and more.
 """
 
 import logging
+import re
 from typing import Any
 
 import requests
@@ -21,6 +22,34 @@ logger = logging.getLogger(__name__)
 
 # TMDB API base URL
 TMDB_API_BASE = "https://api.themoviedb.org/3"
+
+# Patterns to clean from titles before searching
+# Year in parentheses: (2022), (1999)
+YEAR_PATTERN = re.compile(r"\s*\(\d{4}\)\s*$")
+# Country codes: (US), (UK), (JP), etc.
+COUNTRY_PATTERN = re.compile(r"\s*\([A-Z]{2,3}\)\s*$")
+
+
+def clean_title_for_search(title: str) -> str:
+    """Remove year and country suffixes from title for better search matching.
+
+    Examples:
+        "Monster (2022)" -> "Monster"
+        "Euphoria (US)" -> "Euphoria"
+        "The Office (US)" -> "The Office"
+
+    Args:
+        title: Original movie/TV show title
+
+    Returns:
+        Cleaned title without year/country suffixes
+    """
+    cleaned = title
+    # Remove year suffix
+    cleaned = YEAR_PATTERN.sub("", cleaned).strip()
+    # Remove country code suffix
+    cleaned = COUNTRY_PATTERN.sub("", cleaned).strip()
+    return cleaned if cleaned else title
 
 
 class TMDBProvider(EnrichmentProvider):
@@ -207,9 +236,16 @@ class TMDBProvider(EnrichmentProvider):
         Returns:
             TMDB movie ID if found, None otherwise
         """
+        # Clean title to remove year/country suffixes like "(2022)" or "(US)"
+        search_title = clean_title_for_search(item.title)
+        if search_title != item.title:
+            logger.debug(
+                f"Cleaned title for search: '{item.title}' -> '{search_title}'"
+            )
+
         params = {
             "api_key": api_key,
-            "query": item.title,
+            "query": search_title,
             "language": language,
         }
 
@@ -260,9 +296,16 @@ class TMDBProvider(EnrichmentProvider):
         Returns:
             TMDB TV show ID if found, None otherwise
         """
+        # Clean title to remove year/country suffixes like "(2022)" or "(US)"
+        search_title = clean_title_for_search(item.title)
+        if search_title != item.title:
+            logger.debug(
+                f"Cleaned title for search: '{item.title}' -> '{search_title}'"
+            )
+
         params = {
             "api_key": api_key,
-            "query": item.title,
+            "query": search_title,
             "language": language,
         }
 

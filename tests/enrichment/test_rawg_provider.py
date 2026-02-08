@@ -7,8 +7,63 @@ import pytest
 import requests
 
 from src.enrichment.provider_base import ProviderError
-from src.enrichment.providers.rawg import RAWGProvider
+from src.enrichment.providers.rawg import RAWGProvider, clean_title_for_search
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+
+
+class TestCleanTitleForSearch:
+    """Tests for title cleaning before search."""
+
+    def test_removes_goty_edition_dash(self) -> None:
+        """Test removal of GOTY Edition with dash."""
+        assert (
+            clean_title_for_search("The Witcher 3: Wild Hunt - GOTY Edition")
+            == "The Witcher 3: Wild Hunt"
+        )
+
+    def test_removes_deluxe_edition_colon(self) -> None:
+        """Test removal of Deluxe Edition with colon."""
+        assert (
+            clean_title_for_search("Horizon Zero Dawn: Complete Edition")
+            == "Horizon Zero Dawn"
+        )
+
+    def test_removes_remastered_dash(self) -> None:
+        """Test removal of Remastered suffix."""
+        assert clean_title_for_search("Dark Souls - Remastered") == "Dark Souls"
+
+    def test_removes_edition_in_parentheses(self) -> None:
+        """Test removal of edition in parentheses."""
+        assert clean_title_for_search("Mass Effect (Legendary)") == "Mass Effect"
+        assert clean_title_for_search("Skyrim (Special Edition)") == "Skyrim"
+
+    def test_removes_trademark_symbols(self) -> None:
+        """Test removal of trademark and registered symbols."""
+        assert clean_title_for_search("Cyberpunk 2077™") == "Cyberpunk 2077"
+        assert clean_title_for_search("DOOM®") == "DOOM"
+        assert clean_title_for_search("The Sims™ 4") == "The Sims 4"
+
+    def test_preserves_title_without_edition(self) -> None:
+        """Test that titles without edition info are unchanged."""
+        assert clean_title_for_search("Elden Ring") == "Elden Ring"
+        assert clean_title_for_search("Hollow Knight") == "Hollow Knight"
+
+    def test_preserves_colons_in_subtitles(self) -> None:
+        """Test that colons in game subtitles are preserved."""
+        assert (
+            clean_title_for_search("The Witcher 3: Wild Hunt")
+            == "The Witcher 3: Wild Hunt"
+        )
+        assert (
+            clean_title_for_search("Resident Evil 4: Separate Ways")
+            == "Resident Evil 4: Separate Ways"
+        )
+
+    def test_handles_combined_patterns(self) -> None:
+        """Test that multiple patterns are handled together."""
+        assert (
+            clean_title_for_search("DOOM® Eternal - Deluxe Edition") == "DOOM Eternal"
+        )
 
 
 class TestRAWGProviderProperties:

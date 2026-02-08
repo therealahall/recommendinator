@@ -6,7 +6,10 @@ import pytest
 import requests
 
 from src.enrichment.provider_base import ProviderError
-from src.enrichment.providers.openlibrary import OpenLibraryProvider, clean_title_for_search
+from src.enrichment.providers.openlibrary import (
+    OpenLibraryProvider,
+    clean_title_for_search,
+)
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 
 
@@ -15,11 +18,17 @@ class TestCleanTitleForSearch:
 
     def test_removes_series_with_comma(self) -> None:
         """Test removal of series info with comma format."""
-        assert clean_title_for_search("For We Are Many (Bobiverse, #2)") == "For We Are Many"
+        assert (
+            clean_title_for_search("For We Are Many (Bobiverse, #2)")
+            == "For We Are Many"
+        )
 
     def test_removes_series_without_comma(self) -> None:
         """Test removal of series info without comma."""
-        assert clean_title_for_search("The Name of the Wind (The Kingkiller Chronicle #1)") == "The Name of the Wind"
+        assert (
+            clean_title_for_search("The Name of the Wind (The Kingkiller Chronicle #1)")
+            == "The Name of the Wind"
+        )
 
     def test_preserves_title_without_series(self) -> None:
         """Test that titles without series info are unchanged."""
@@ -31,11 +40,17 @@ class TestCleanTitleForSearch:
 
     def test_handles_parentheses_without_series_number(self) -> None:
         """Test that parentheses without series numbers are preserved."""
-        assert clean_title_for_search("The Stand (Uncut Edition)") == "The Stand (Uncut Edition)"
+        assert (
+            clean_title_for_search("The Stand (Uncut Edition)")
+            == "The Stand (Uncut Edition)"
+        )
 
     def test_removes_series_with_different_formats(self) -> None:
         """Test removal of various series formats."""
-        assert clean_title_for_search("Ready Player One (Ready Player One #1)") == "Ready Player One"
+        assert (
+            clean_title_for_search("Ready Player One (Ready Player One #1)")
+            == "Ready Player One"
+        )
         assert clean_title_for_search("Dune (Dune Chronicles, #1)") == "Dune"
 
 

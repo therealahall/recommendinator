@@ -5,6 +5,7 @@ tags, descriptions, and more.
 """
 
 import logging
+import re
 from typing import Any
 
 import requests
@@ -21,6 +22,71 @@ logger = logging.getLogger(__name__)
 
 # RAWG API base URL
 RAWG_API_BASE = "https://api.rawg.io/api"
+
+# Patterns to clean from titles before searching
+# Edition suffixes: "Game - Deluxe Edition", "Game: GOTY Edition"
+EDITION_PATTERN = re.compile(
+    r"\s*[-:]\s*("
+    r"Deluxe Edition|"
+    r"GOTY Edition|"
+    r"Game of the Year Edition|"
+    r"Definitive Edition|"
+    r"Complete Edition|"
+    r"Enhanced Edition|"
+    r"Ultimate Edition|"
+    r"Special Edition|"
+    r"Collector's Edition|"
+    r"Anniversary Edition|"
+    r"Remastered|"
+    r"Remake"
+    r")\s*$",
+    re.IGNORECASE,
+)
+# Edition in parentheses: "(Deluxe Edition)", "(GOTY)", "(Legendary)"
+EDITION_PAREN_PATTERN = re.compile(
+    r"\s*\(("
+    r"Deluxe|"
+    r"GOTY|"
+    r"Game of the Year|"
+    r"Definitive|"
+    r"Complete|"
+    r"Enhanced|"
+    r"Ultimate|"
+    r"Special|"
+    r"Collector's|"
+    r"Anniversary|"
+    r"Legendary|"
+    r"Remastered|"
+    r"Remake"
+    r")(?:\s+Edition)?\)\s*$",
+    re.IGNORECASE,
+)
+# Trademark symbols
+TRADEMARK_PATTERN = re.compile(r"[™®©]")
+
+
+def clean_title_for_search(title: str) -> str:
+    """Remove edition info and trademark symbols from title for better search matching.
+
+    Examples:
+        "The Witcher 3: Wild Hunt - GOTY Edition" -> "The Witcher 3: Wild Hunt"
+        "Cyberpunk 2077™" -> "Cyberpunk 2077"
+        "Dark Souls (Remastered)" -> "Dark Souls"
+
+    Args:
+        title: Original game title
+
+    Returns:
+        Cleaned title without edition suffixes or trademark symbols
+    """
+    cleaned = title
+    # Remove trademark symbols
+    cleaned = TRADEMARK_PATTERN.sub("", cleaned).strip()
+    # Remove edition suffix (dash/colon format)
+    cleaned = EDITION_PATTERN.sub("", cleaned).strip()
+    # Remove edition in parentheses
+    cleaned = EDITION_PAREN_PATTERN.sub("", cleaned).strip()
+    return cleaned if cleaned else title
 
 
 class RAWGProvider(EnrichmentProvider):
@@ -126,9 +192,16 @@ class RAWGProvider(EnrichmentProvider):
         Returns:
             RAWG game ID if found, None otherwise
         """
+        # Clean title to remove edition suffixes and trademark symbols
+        search_title = clean_title_for_search(item.title)
+        if search_title != item.title:
+            logger.debug(
+                f"Cleaned title for search: '{item.title}' -> '{search_title}'"
+            )
+
         params: dict[str, str | int] = {
             "key": api_key,
-            "search": item.title,
+            "search": search_title,
             "page_size": 5,
         }
 
@@ -150,8 +223,8 @@ class RAWGProvider(EnrichmentProvider):
             release_year = metadata.get("release_year")
 
             for result in results:
-                # Exact title match (case-insensitive)
-                if result.get("name", "").lower() == item.title.lower():
+                # Exact title match (case-insensitive) - compare against cleaned title
+                if result.get("name", "").lower() == search_title.lower():
                     # If we have a year, verify it matches
                     if release_year and result.get("released"):
                         result_year = self._extract_year(result["released"])
