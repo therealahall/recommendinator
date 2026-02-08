@@ -43,6 +43,73 @@ def test_save_and_get_content_item(temp_db: SQLiteDB) -> None:
     assert retrieved.metadata == {"pages": 300}
 
 
+def test_merge_items_from_different_sources_by_title(temp_db: SQLiteDB) -> None:
+    """Test that items from different sources merge based on normalized title.
+
+    This ensures we have a single source of truth - if Steam imports "Crysis Remastered"
+    and later the personal blog imports "Crysis: Remastered", they should be the same item.
+    """
+    # First source imports a game
+    steam_item = ContentItem(
+        id="steam_12345",
+        title="Crysis Remastered",
+        content_type=ContentType.VIDEO_GAME,
+        status=ConsumptionStatus.UNREAD,
+        source="steam",
+    )
+    db_id_1 = temp_db.save_content_item(steam_item)
+
+    # Second source imports the same game with slightly different title
+    blog_item = ContentItem(
+        id="crysis",  # Different external ID
+        title="Crysis: Remastered",  # Slightly different title
+        content_type=ContentType.VIDEO_GAME,
+        status=ConsumptionStatus.COMPLETED,
+        rating=4,
+        source="personal_site_games",
+    )
+    db_id_2 = temp_db.save_content_item(blog_item)
+
+    # Should be the same database entry
+    assert db_id_1 == db_id_2
+
+    # The item should be updated with the new data
+    retrieved = temp_db.get_content_item(db_id_1)
+    assert retrieved is not None
+    assert retrieved.status == ConsumptionStatus.COMPLETED
+    assert retrieved.rating == 4
+    assert retrieved.source == "personal_site_games"  # Updated to latest source
+
+    # Should only be one item in the database
+    all_games = temp_db.get_content_items(content_type=ContentType.VIDEO_GAME)
+    assert len(all_games) == 1
+
+
+def test_different_titles_create_separate_items(temp_db: SQLiteDB) -> None:
+    """Test that genuinely different titles create separate items."""
+    item1 = ContentItem(
+        id="game_1",
+        title="Mass Effect",
+        content_type=ContentType.VIDEO_GAME,
+        status=ConsumptionStatus.COMPLETED,
+    )
+    item2 = ContentItem(
+        id="game_2",
+        title="Mass Effect 2",
+        content_type=ContentType.VIDEO_GAME,
+        status=ConsumptionStatus.UNREAD,
+    )
+
+    db_id_1 = temp_db.save_content_item(item1)
+    db_id_2 = temp_db.save_content_item(item2)
+
+    # Should be different entries
+    assert db_id_1 != db_id_2
+
+    all_games = temp_db.get_content_items(content_type=ContentType.VIDEO_GAME)
+    assert len(all_games) == 2
+
+
 def test_update_content_item(temp_db: SQLiteDB) -> None:
     """Test updating an existing content item."""
     item = ContentItem(

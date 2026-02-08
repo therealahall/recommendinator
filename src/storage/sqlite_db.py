@@ -1,6 +1,7 @@
 """SQLite database manager for content items."""
 
 import json
+import re
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -8,6 +9,63 @@ from typing import Any
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.schema import create_schema, get_default_user_id
+
+
+def normalize_title_for_matching(title: str) -> str:
+    """Normalize a title for duplicate detection.
+
+    Removes common variations to match items from different sources:
+    - Lowercases
+    - Removes articles (the, a, an)
+    - Removes edition/remaster suffixes
+    - Removes punctuation and extra whitespace
+
+    Args:
+        title: Original title
+
+    Returns:
+        Normalized title for comparison
+    """
+    if not title:
+        return ""
+
+    normalized = title.lower().strip()
+
+    # Remove common suffixes
+    suffixes_to_remove = [
+        r"\s*[:\-–]\s*remastered\s*$",
+        r"\s*remastered\s*$",
+        r"\s*[:\-–]\s*definitive edition\s*$",
+        r"\s*definitive edition\s*$",
+        r"\s*[:\-–]\s*game of the year edition\s*$",
+        r"\s*goty edition\s*$",
+        r"\s*[:\-–]\s*anniversary edition\s*$",
+        r"\s*anniversary edition\s*$",
+        r"\s*[:\-–]\s*special edition\s*$",
+        r"\s*special edition\s*$",
+        r"\s*[:\-–]\s*ultimate edition\s*$",
+        r"\s*ultimate edition\s*$",
+        r"\s*[:\-–]\s*complete edition\s*$",
+        r"\s*complete edition\s*$",
+        r"\s*[:\-–]\s*deluxe edition\s*$",
+        r"\s*deluxe edition\s*$",
+        r"\s*\(remastered\)\s*$",
+        r"\s*\(remaster\)\s*$",
+    ]
+
+    for suffix in suffixes_to_remove:
+        normalized = re.sub(suffix, "", normalized, flags=re.IGNORECASE)
+
+    # Remove leading articles
+    normalized = re.sub(r"^(the|a|an)\s+", "", normalized)
+
+    # Remove punctuation except spaces
+    normalized = re.sub(r"[^\w\s]", "", normalized)
+
+    # Collapse whitespace
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+
+    return normalized
 
 
 class SQLiteDB:
@@ -80,6 +138,24 @@ class SQLiteDB:
                 row = cursor.fetchone()
                 if row:
                     existing_id = row["id"]
+
+            # Fallback: check by normalized title to merge items from different sources
+            if existing_id is None and item.title:
+                normalized_title = normalize_title_for_matching(item.title)
+                if normalized_title:
+                    # Find items with matching normalized title
+                    cursor.execute(
+                        """SELECT id, title FROM content_items
+                           WHERE user_id = ? AND content_type = ?""",
+                        (effective_user_id, content_type_value),
+                    )
+                    for row in cursor.fetchall():
+                        if (
+                            normalize_title_for_matching(row["title"])
+                            == normalized_title
+                        ):
+                            existing_id = row["id"]
+                            break
 
             if existing_id:
                 # Update existing item in base table
