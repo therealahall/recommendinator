@@ -2,6 +2,7 @@
 
 import logging
 import os
+import sys
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -19,6 +20,54 @@ from src.conversation.engine import create_conversation_engine
 from src.web.state import app_state
 
 logger = logging.getLogger(__name__)
+
+
+def configure_logging(config: dict) -> None:
+    """Configure logging from application config.
+
+    Args:
+        config: Application configuration dictionary
+    """
+    logging_config = config.get("logging", {})
+    log_level_str = logging_config.get("level", "INFO").upper()
+    log_file = logging_config.get("file", "logs/recommendations.log")
+
+    # Map string to logging level
+    log_level = getattr(logging, log_level_str, logging.INFO)
+
+    # Create log directory if needed
+    log_path = Path(log_file)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Configure root logger with both file and console handlers
+    root_logger = logging.getLogger()
+    root_logger.setLevel(log_level)
+
+    # Remove existing handlers to avoid duplicates on reload
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
+
+    # File handler with detailed format
+    file_handler = logging.FileHandler(log_file)
+    file_handler.setLevel(log_level)
+    file_format = logging.Formatter(
+        "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    file_handler.setFormatter(file_format)
+    root_logger.addHandler(file_handler)
+
+    # Console handler with simpler format (for Docker logs)
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(log_level)
+    console_format = logging.Formatter("%(levelname)s | %(name)s | %(message)s")
+    console_handler.setFormatter(console_format)
+    root_logger.addHandler(console_handler)
+
+    # Reduce noise from third-party libraries
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 
 # Module-level app instance for uvicorn import string support
 _app: FastAPI | None = None
@@ -39,6 +88,10 @@ def create_app(config_path: Path | None = None) -> FastAPI:
     except FileNotFoundError as e:
         logger.error(f"Config file not found: {e}")
         raise
+
+    # Configure logging from config
+    configure_logging(config)
+    logger.info("Logging configured from application config")
 
     # Initialize components
     try:

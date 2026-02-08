@@ -79,9 +79,15 @@ def execute_sync(
 
     # Save each item
     for index, item in enumerate(items):
+        item_num = index + 1
+        content_type = item.content_type.value if hasattr(item.content_type, "value") else item.content_type
         try:
             if progress_callback:
                 progress_callback(index, result.total_items, item.title)
+
+            logger.debug(
+                f"[SYNC] {source_name}: Syncing {content_type} {item_num}/{result.total_items} - {item.title}"
+            )
 
             embedding = None
             if use_embeddings and embedding_generator:

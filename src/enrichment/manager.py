@@ -154,8 +154,8 @@ class EnrichmentManager:
             self._thread.start()
 
             logger.info(
-                f"Started enrichment job"
-                f"{f' for {content_type.value}' if content_type else ''}"
+                f"[ENRICHMENT] === Starting enrichment job"
+                f"{f' for {content_type.value}' if content_type else ' for all types'} ==="
             )
             return True
 
@@ -241,9 +241,10 @@ class EnrichmentManager:
                 self._status.current_item = ""
 
             logger.info(
-                f"Enrichment job {'cancelled' if self._stop_requested else 'completed'}. "
+                f"[ENRICHMENT] === Job {'cancelled' if self._stop_requested else 'completed'} === "
                 f"Processed: {self._status.items_processed}, "
                 f"Enriched: {self._status.items_enriched}, "
+                f"Not found: {self._status.items_not_found}, "
                 f"Failed: {self._status.items_failed}"
             )
 
@@ -273,12 +274,19 @@ class EnrichmentManager:
         """
         with self._lock:
             self._status.current_item = item.title
+            item_num = self._status.items_processed + 1
+            total = self._status.total_items
 
         # Get content type
         content_type = (
             item.content_type
             if isinstance(item.content_type, ContentType)
             else ContentType(item.content_type)
+        )
+        content_type_str = content_type.value if hasattr(content_type, "value") else str(content_type)
+
+        logger.debug(
+            f"[ENRICHMENT] Processing {content_type_str} {item_num}/{total} - {item.title}"
         )
 
         # Find providers for this content type
@@ -291,6 +299,9 @@ class EnrichmentManager:
 
         if not matching_providers:
             # No providers available for this content type
+            logger.debug(
+                f"[ENRICHMENT] No providers for {content_type_str}: {item.title}"
+            )
             self.storage_manager.mark_enrichment_complete(db_id, "none", "not_found")
             with self._lock:
                 self._status.items_processed += 1
@@ -307,6 +318,10 @@ class EnrichmentManager:
                 # Get provider config
                 provider_config = self._get_provider_config(provider.name)
 
+                logger.debug(
+                    f"[ENRICHMENT] Trying {provider.name} for {content_type_str}: {item.title}"
+                )
+
                 # Enrich
                 result = provider.enrich(item, provider_config)
 
@@ -316,22 +331,31 @@ class EnrichmentManager:
                     self.storage_manager.mark_enrichment_complete(
                         db_id, provider.name, result.match_quality
                     )
+                    logger.info(
+                        f"[ENRICHMENT] Enriched {content_type_str} via {provider.name} "
+                        f"(quality={result.match_quality}): {item.title}"
+                    )
                     with self._lock:
                         self._status.items_processed += 1
                         self._status.items_enriched += 1
                     return
+                else:
+                    logger.debug(
+                        f"[ENRICHMENT] {provider.name} returned not_found: {item.title}"
+                    )
 
             except ProviderError as error:
-                logger.warning(f"Provider {provider.name} failed: {error}")
+                logger.warning(f"[ENRICHMENT] Provider {provider.name} failed: {error}")
                 with self._lock:
                     self._status.errors.append(f"{provider.name}: {error.message}")
 
             except Exception as error:
-                logger.warning(f"Unexpected error from {provider.name}: {error}")
+                logger.warning(f"[ENRICHMENT] Unexpected error from {provider.name}: {error}")
                 with self._lock:
                     self._status.errors.append(f"{provider.name}: {error}")
 
         # No provider found a match
+        logger.debug(f"[ENRICHMENT] No match found for {content_type_str}: {item.title}")
         self.storage_manager.mark_enrichment_complete(db_id, "none", "not_found")
         with self._lock:
             self._status.items_processed += 1
