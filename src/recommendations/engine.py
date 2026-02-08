@@ -638,11 +638,13 @@ class RecommendationEngine:
 
         if influencing_items:
             if len(influencing_items) == 1:
-                return f"Recommended because you liked '{influencing_items[0].title}'"
+                title = self._strip_series_info(influencing_items[0].title)
+                return f"Recommended because you liked '{title}'"
             else:
                 lines = ["Recommended because you liked:"]
                 for ref in influencing_items:
-                    lines.append(f"  • {ref.title}")
+                    title = self._strip_series_info(ref.title)
+                    lines.append(f"  • {title}")
                 return "\n".join(lines)
 
         # Fallback: try to mention a matching genre or author
@@ -674,3 +676,22 @@ class RecommendationEngine:
         if isinstance(content_type, ContentType):
             return content_type.value.lower()
         return str(content_type).lower()
+
+    def _strip_series_info(self, title: str) -> str:
+        """Strip series information from a title for cleaner display.
+
+        Removes trailing parenthetical series info like "(Shannara, #2)".
+
+        Args:
+            title: Original title string.
+
+        Returns:
+            Title without series info.
+        """
+        import re
+
+        # Remove trailing parenthetical that looks like series info
+        # Matches: (Series Name, #N) or (Series Name #N) or (Series, Book N)
+        cleaned = re.sub(r"\s*\([^)]*#\d+[^)]*\)\s*$", "", title)
+        cleaned = re.sub(r"\s*\([^)]*Book\s+\d+[^)]*\)\s*$", "", cleaned, flags=re.I)
+        return cleaned.strip()
