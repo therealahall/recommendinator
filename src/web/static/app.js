@@ -1098,6 +1098,9 @@
     }
 
     function checkEnrichmentStatus() {
+        var statusDiv = document.getElementById("enrichmentStatus");
+        var btn = document.getElementById("enrichAllBtn");
+
         fetch(API_BASE + "/enrichment/status")
             .then(function (response) { return response.json(); })
             .then(function (status) {
@@ -1106,20 +1109,82 @@
                     if (!enrichmentState.polling) {
                         startEnrichmentPolling();
                     }
+                    if (btn) btn.disabled = true;
+                    if (statusDiv) {
+                        var progress = status.items_processed + "/" + status.total_items;
+                        var current = status.current_item ? " - " + status.current_item : "";
+                        statusDiv.innerHTML = '<span class="spinner"></span> Enriching ' + progress + current;
+                    }
                     loadEnrichmentStats();
                 } else if (status.completed || status.cancelled) {
                     // Enrichment finished - stop polling and refresh stats
                     stopEnrichmentPolling();
+                    if (btn) btn.disabled = false;
+                    if (statusDiv && status.items_processed > 0) {
+                        var msg = status.cancelled ? "Enrichment cancelled" : "Enrichment complete";
+                        msg += ": " + status.items_enriched + " enriched, " + status.items_not_found + " not found";
+                        statusDiv.innerHTML = '<span style="color:#388e3c">' + msg + '</span>';
+                    }
                     loadEnrichmentStats();
                 } else {
                     // Idle - stop polling
                     stopEnrichmentPolling();
+                    if (btn) btn.disabled = false;
+                    if (statusDiv) statusDiv.innerHTML = "";
                 }
             })
             .catch(function (error) {
                 console.error("Error checking enrichment status:", error);
             });
     }
+
+    // -----------------------------------------------------------------------
+    // Manual Enrichment Trigger
+    // -----------------------------------------------------------------------
+
+    window.triggerEnrichment = function() {
+        var btn = document.getElementById("enrichAllBtn");
+        var select = document.getElementById("enrichTypeSelect");
+        var statusDiv = document.getElementById("enrichmentStatus");
+        var contentType = select ? select.value : "";
+
+        if (btn) btn.disabled = true;
+
+        var body = { user_id: currentUserId };
+        if (contentType) {
+            body.content_type = contentType;
+        }
+
+        fetch(API_BASE + "/enrichment/start", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body)
+        })
+            .then(function (response) {
+                if (!response.ok) {
+                    return response.json().then(function (data) {
+                        throw new Error(data.detail || "Failed to start enrichment");
+                    });
+                }
+                return response.json();
+            })
+            .then(function (data) {
+                if (statusDiv) {
+                    statusDiv.innerHTML = '<span style="color:#388e3c">' + escapeHtml(data.message) + '</span>';
+                }
+                // Start polling for progress
+                startEnrichmentPolling();
+                checkEnrichmentStatus();
+            })
+            .catch(function (error) {
+                if (statusDiv) {
+                    statusDiv.innerHTML = '<span style="color:#c62828">' + escapeHtml(error.message) + '</span>';
+                }
+            })
+            .finally(function () {
+                if (btn) btn.disabled = false;
+            });
+    };
 
     // -----------------------------------------------------------------------
     // Ignore Item

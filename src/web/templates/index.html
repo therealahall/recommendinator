@@ -185,6 +185,17 @@
                         <span class="spinner"></span> Loading enrichment stats...
                     </div>
                 </div>
+                <div id="enrichmentActions" style="margin-top:16px; display:flex; gap:8px; flex-wrap:wrap;">
+                    <button id="enrichAllBtn" class="sync-button" onclick="triggerEnrichment()">Enrich All</button>
+                    <select id="enrichTypeSelect" style="padding:8px 12px; border-radius:4px; border:1px solid #ddd;">
+                        <option value="">All Types</option>
+                        <option value="book">Books</option>
+                        <option value="movie">Movies</option>
+                        <option value="tv_show">TV Shows</option>
+                        <option value="video_game">Video Games</option>
+                    </select>
+                </div>
+                <div id="enrichmentStatus" class="sync-status" style="margin-top:12px;"></div>
             </div>
         </div>
     </div>
