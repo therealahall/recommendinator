@@ -79,7 +79,8 @@ class TestExtractGenres:
     def test_both_genre_and_genres(self) -> None:
         item = _make_item(metadata={"genre": "Sci-Fi", "genres": ["Action"]})
         result = _extract_genres(item)
-        assert "sci-fi" in result
+        # "sci-fi" is normalized to "science fiction"
+        assert "science fiction" in result
         assert "action" in result
 
     def test_no_metadata(self) -> None:
@@ -100,7 +101,8 @@ class TestExtractGenres:
         """Tags as comma-separated string should be extracted."""
         item = _make_item(metadata={"tags": "sci-fi, space opera"})
         result = _extract_genres(item)
-        assert "sci-fi" in result
+        # "sci-fi" is normalized to "science fiction"
+        assert "science fiction" in result
         assert "space opera" in result
 
 
@@ -131,7 +133,8 @@ class TestScoringContext:
         ]
         context = _build_context(consumed=consumed)
         assert "fantasy" in context.consumed_genres
-        assert "sci-fi" in context.consumed_genres
+        # "sci-fi" is normalized to "science fiction"
+        assert "science fiction" in context.consumed_genres
         assert "action" in context.consumed_genres
 
     def test_populates_consumed_creators(self) -> None:
@@ -220,36 +223,83 @@ class TestCreatorMatchScorer:
 
 
 class TestTagOverlapScorer:
-    def test_full_overlap(self) -> None:
+    """Tests for threshold-based tag overlap scoring.
+
+    Scoring thresholds:
+    - 5+ matches: 1.0
+    - 4 matches: 0.9
+    - 3 matches: 0.8
+    - 2 matches: 0.5
+    - 1 match: 0.3
+    - 0 matches: 0.0
+    """
+
+    def test_single_match_scores_low(self) -> None:
+        """One matching genre should score 0.3."""
         consumed = [_make_item(metadata={"genre": "Fantasy"}, rating=5)]
         context = _build_context(consumed=consumed)
         candidate = _make_item(
             status=ConsumptionStatus.UNREAD, metadata={"genre": "Fantasy"}
         )
         scorer = TagOverlapScorer()
-        assert scorer.score(candidate, context) == 1.0
+        assert scorer.score(candidate, context) == 0.3
 
     def test_no_overlap(self) -> None:
+        """No matching genres should score 0.0."""
         consumed = [_make_item(metadata={"genre": "Fantasy"}, rating=5)]
         context = _build_context(consumed=consumed)
         candidate = _make_item(
-            status=ConsumptionStatus.UNREAD, metadata={"genre": "Horror"}
+            status=ConsumptionStatus.UNREAD, metadata={"genre": "Comedy"}
         )
         scorer = TagOverlapScorer()
         assert scorer.score(candidate, context) == 0.0
 
-    def test_partial_overlap(self) -> None:
+    def test_two_matches_scores_medium(self) -> None:
+        """Two matching genres should score 0.5."""
         consumed = [_make_item(metadata={"genres": ["Fantasy", "Action"]}, rating=5)]
         context = _build_context(consumed=consumed)
         candidate = _make_item(
-            status=ConsumptionStatus.UNREAD, metadata={"genres": ["Action", "Horror"]}
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genres": ["Action", "Fantasy", "Horror"]},
         )
         scorer = TagOverlapScorer()
-        score = scorer.score(candidate, context)
-        # intersection = {action}, union = {fantasy, action, horror} => 1/3
-        assert abs(score - 1 / 3) < 0.01
+        assert scorer.score(candidate, context) == 0.5
+
+    def test_three_matches_scores_high(self) -> None:
+        """Three matching genres should score 0.8."""
+        consumed = [
+            _make_item(
+                metadata={"genres": ["Fantasy", "Action", "Adventure"]}, rating=5
+            )
+        ]
+        context = _build_context(consumed=consumed)
+        candidate = _make_item(
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genres": ["Action", "Fantasy", "Adventure"]},
+        )
+        scorer = TagOverlapScorer()
+        assert scorer.score(candidate, context) == 0.8
+
+    def test_five_matches_scores_max(self) -> None:
+        """Five or more matching genres should score 1.0."""
+        consumed = [
+            _make_item(
+                metadata={
+                    "genres": ["Fantasy", "Action", "Adventure", "Drama", "Mystery"]
+                },
+                rating=5,
+            )
+        ]
+        context = _build_context(consumed=consumed)
+        candidate = _make_item(
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genres": ["Fantasy", "Action", "Adventure", "Drama", "Mystery"]},
+        )
+        scorer = TagOverlapScorer()
+        assert scorer.score(candidate, context) == 1.0
 
     def test_empty_genres_returns_zero(self) -> None:
+        """No genres at all should score 0.0."""
         context = _build_context(consumed=[])
         candidate = _make_item(status=ConsumptionStatus.UNREAD, metadata={})
         scorer = TagOverlapScorer()
