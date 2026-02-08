@@ -1189,6 +1189,92 @@
     };
 
     // -----------------------------------------------------------------------
+    // Reset and Re-enrich
+    // -----------------------------------------------------------------------
+
+    window.resetAndReenrich = function() {
+        var enrichBtn = document.getElementById("enrichAllBtn");
+        var resetBtn = document.getElementById("resetEnrichBtn");
+        var select = document.getElementById("enrichTypeSelect");
+        var statusDiv = document.getElementById("enrichmentStatus");
+        var contentType = select ? select.value : "";
+
+        // Require a content type selection for reset to avoid accidental full reset
+        if (!contentType) {
+            if (statusDiv) {
+                statusDiv.innerHTML = '<span style="color:#ff9800">Please select a content type to reset</span>';
+            }
+            return;
+        }
+
+        if (enrichBtn) enrichBtn.disabled = true;
+        if (resetBtn) resetBtn.disabled = true;
+
+        if (statusDiv) {
+            statusDiv.innerHTML = '<span class="spinner"></span> Resetting enrichment status...';
+        }
+
+        // First reset enrichment status
+        fetch(API_BASE + "/enrichment/reset", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                content_type: contentType,
+                user_id: currentUserId
+            })
+        })
+            .then(function (response) {
+                if (!response.ok) {
+                    return response.json().then(function (data) {
+                        throw new Error(data.detail || "Failed to reset enrichment");
+                    });
+                }
+                return response.json();
+            })
+            .then(function (data) {
+                if (statusDiv) {
+                    statusDiv.innerHTML = '<span style="color:#388e3c">' + escapeHtml(data.message) + '</span> Starting enrichment...';
+                }
+                // Now start enrichment
+                return fetch(API_BASE + "/enrichment/start", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        content_type: contentType,
+                        user_id: currentUserId,
+                        retry_not_found: false
+                    })
+                });
+            })
+            .then(function (response) {
+                if (!response.ok) {
+                    return response.json().then(function (data) {
+                        throw new Error(data.detail || "Failed to start enrichment");
+                    });
+                }
+                return response.json();
+            })
+            .then(function (data) {
+                if (statusDiv) {
+                    statusDiv.innerHTML = '<span style="color:#388e3c">' + escapeHtml(data.message) + '</span>';
+                }
+                // Start polling for progress
+                startEnrichmentPolling();
+                checkEnrichmentStatus();
+                loadEnrichmentStats();
+            })
+            .catch(function (error) {
+                if (statusDiv) {
+                    statusDiv.innerHTML = '<span style="color:#c62828">' + escapeHtml(error.message) + '</span>';
+                }
+            })
+            .finally(function () {
+                if (enrichBtn) enrichBtn.disabled = false;
+                if (resetBtn) resetBtn.disabled = false;
+            });
+    };
+
+    // -----------------------------------------------------------------------
     // Ignore Item
     // -----------------------------------------------------------------------
 
