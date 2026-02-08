@@ -608,8 +608,8 @@ class RecommendationEngine:
     ) -> str:
         """Generate reasoning for a recommendation.
 
-        Always surfaces 1-3 specific items that contributed to the recommendation,
-        using a simple format like "Recommended because you liked X, Y, and Z".
+        Always surfaces 1-3 specific items that contributed to the recommendation.
+        For multiple items, uses a multi-line bullet format for readability.
 
         Args:
             item: Recommended item.
@@ -637,13 +637,13 @@ class RecommendationEngine:
         influencing_items = influencing_items[:3]
 
         if influencing_items:
-            titles = [f"'{ref.title}'" for ref in influencing_items]
-            if len(titles) == 1:
-                return f"Recommended because you liked {titles[0]}"
-            elif len(titles) == 2:
-                return f"Recommended because you liked {titles[0]} and {titles[1]}"
+            if len(influencing_items) == 1:
+                return f"Recommended because you liked '{influencing_items[0].title}'"
             else:
-                return f"Recommended because you liked {', '.join(titles[:-1])}, and {titles[-1]}"
+                lines = ["Recommended because you liked:"]
+                for ref in influencing_items:
+                    lines.append(f"  • {ref.title}")
+                return "\n".join(lines)
 
         # Fallback: try to mention a matching genre or author
         if item.author and preferences.get_author_score(item.author) > 0.5:
