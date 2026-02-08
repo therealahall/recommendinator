@@ -248,11 +248,8 @@ def test_reasoning_mentions_cross_content_type(
 
     if recommendations:
         reasoning = recommendations[0].get("reasoning", "")
-        assert (
-            "all content types" in reasoning.lower()
-            or "preferences" in reasoning.lower()
-            or "(book)" in reasoning.lower()
-        )
+        # Reasoning should mention the specific item that influenced the recommendation
+        assert "dune" in reasoning.lower() or "preferences" in reasoning.lower()
 
 
 # ---------------------------------------------------------------------------

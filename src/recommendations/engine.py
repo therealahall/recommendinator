@@ -608,6 +608,9 @@ class RecommendationEngine:
     ) -> str:
         """Generate reasoning for a recommendation.
 
+        Always surfaces 1-3 specific items that contributed to the recommendation,
+        using a simple format like "Recommended because you liked X, Y, and Z".
+
         Args:
             item: Recommended item.
             preferences: User preferences (from all content types).
@@ -618,80 +621,46 @@ class RecommendationEngine:
         Returns:
             Reasoning string.
         """
-        reasons: list[str] = []
+        # Collect all items that influenced this recommendation
+        # Prioritize adaptations, then contributing items
+        influencing_items: list[ContentItem] = []
 
-        # Check for direct adaptations first (highest priority)
         if adaptations:
-            adaptation = adaptations[0]
-            adaptation_type = (
-                adaptation.content_type.lower()
-                if isinstance(adaptation.content_type, str)
-                else adaptation.content_type.value.lower()
-            )
-            if adaptation.author:
-                reasons.append(
-                    f"because you read and enjoyed '{adaptation.title}' "
-                    f"by {adaptation.author} ({adaptation_type})"
-                )
+            influencing_items.extend(adaptations)
+
+        if contributing_items:
+            for contrib in contributing_items:
+                if contrib not in influencing_items:
+                    influencing_items.append(contrib)
+
+        # Take up to 3 items
+        influencing_items = influencing_items[:3]
+
+        if influencing_items:
+            titles = [f"'{ref.title}'" for ref in influencing_items]
+            if len(titles) == 1:
+                return f"Recommended because you liked {titles[0]}"
+            elif len(titles) == 2:
+                return f"Recommended because you liked {titles[0]} and {titles[1]}"
             else:
-                reasons.append(
-                    f"because you enjoyed '{adaptation.title}' ({adaptation_type})"
-                )
+                return f"Recommended because you liked {', '.join(titles[:-1])}, and {titles[-1]}"
 
-        # Mention specific contributing items from other content types
-        elif contributing_items:
-            cross_type_items = [
-                ref
-                for ref in contributing_items
-                if ref.content_type != item.content_type
-            ]
+        # Fallback: try to mention a matching genre or author
+        if item.author and preferences.get_author_score(item.author) > 0.5:
+            return f"Recommended because you enjoy works by {item.author}"
 
-            if cross_type_items:
-                item_refs = []
-                for ref in cross_type_items[:2]:
-                    ref_type = (
-                        ref.content_type.value.lower()
-                        if hasattr(ref.content_type, "value")
-                        else str(ref.content_type).lower()
-                    )
-                    if ref.author:
-                        item_refs.append(f"'{ref.title}' by {ref.author} ({ref_type})")
-                    else:
-                        item_refs.append(f"'{ref.title}' ({ref_type})")
+        genre = None
+        if item.metadata:
+            genre = item.metadata.get("genre") or (
+                item.metadata.get("genres", [])[0]
+                if item.metadata.get("genres")
+                else None
+            )
 
-                if len(item_refs) == 1:
-                    reasons.append(f"based on your enjoyment of {item_refs[0]}")
-                else:
-                    reasons.append(
-                        f"based on your enjoyment of {', '.join(item_refs[:-1])} and {item_refs[-1]}"
-                    )
+        if genre and preferences.get_genre_score(genre) > 0.5:
+            return f"Recommended because you enjoy {genre}"
 
-        # Fall back to general similarity/preference reasoning
-        if not reasons:
-            if metadata["similarity_score"] > 0.7:
-                reasons.append(
-                    "highly similar to items you've enjoyed across all content types"
-                )
-
-            if metadata["preference_score"] > 0.5:
-                if item.author and preferences.get_author_score(item.author) > 0.5:
-                    reasons.append(f"by author {item.author}")
-
-                genre = None
-                if item.metadata:
-                    genre = item.metadata.get("genre") or (
-                        item.metadata.get("genres", [])[0]
-                        if item.metadata.get("genres")
-                        else None
-                    )
-
-                if genre and preferences.get_genre_score(genre) > 0.5:
-                    reasons.append(f"in the {genre} genre")
-
-        if not reasons:
-            reasons.append("based on your preferences across all content types")
-
-        return "Recommended " + " and ".join(reasons)
+        return "Recommended based on your preferences"
 
     def _get_content_type_str(self, content_type: ContentType | str) -> str:
         """Extract string value from a ContentType enum or string.
