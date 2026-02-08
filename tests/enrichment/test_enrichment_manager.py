@@ -150,8 +150,8 @@ class TestMergeEnrichment:
         assert merged["runtime"] == 120
         assert merged["enrichment_id"] == "tmdb:123"
 
-    def test_merge_preserves_existing_genres(self) -> None:
-        """Test that existing genres are not overwritten."""
+    def test_merge_combines_genres(self) -> None:
+        """Test that genres are merged (enrichment first, then existing)."""
         existing = {"genres": ["Comedy"]}
         result = EnrichmentResult(
             genres=["Action"],
@@ -160,10 +160,11 @@ class TestMergeEnrichment:
 
         merged = merge_enrichment(existing, result)
 
-        assert merged["genres"] == ["Comedy"]  # Preserved
+        # Enrichment genres first, then existing (no duplicates)
+        assert merged["genres"] == ["Action", "Comedy"]
 
-    def test_merge_fills_missing_fields(self) -> None:
-        """Test that only missing fields are filled."""
+    def test_merge_fills_and_combines_fields(self) -> None:
+        """Test that genres/tags are merged while other fields follow priority rules."""
         existing = {
             "genres": ["Comedy"],
             "director": "Someone",
@@ -178,10 +179,13 @@ class TestMergeEnrichment:
 
         merged = merge_enrichment(existing, result)
 
-        assert merged["genres"] == ["Comedy"]  # Preserved
+        # Genres merged (enrichment first)
+        assert merged["genres"] == ["Action", "Comedy"]
         assert merged["tags"] == ["funny"]  # Added
         assert merged["description"] == "A comedy."  # Added
-        assert merged["director"] == "Someone"  # Preserved
+        assert (
+            merged["director"] == "Someone"
+        )  # Preserved (extra_metadata doesn't overwrite)
         assert merged["runtime"] == 90  # Added
 
     def test_merge_handles_none_values(self) -> None:
@@ -433,13 +437,13 @@ class TestEnrichmentManager:
             include_not_found=False,
         )
 
-    def test_enrichment_applies_gap_filling(
+    def test_enrichment_merges_genres_and_tags(
         self,
         mock_storage: MagicMock,
         mock_registry: EnrichmentRegistry,
         config: dict[str, Any],
     ) -> None:
-        """Test that enrichment uses gap-filling merge strategy."""
+        """Test that enrichment merges genres/tags (enrichment first, then existing)."""
         # Item with existing genres
         item = ContentItem(
             id="movie1",
@@ -463,8 +467,8 @@ class TestEnrichmentManager:
         assert mock_storage.save_content_item.called
         saved_item = mock_storage.save_content_item.call_args[0][0]
 
-        # Existing genres should be preserved
-        assert saved_item.metadata["genres"] == ["Comedy"]
+        # Genres should be merged (enrichment first: Action, Drama, then existing: Comedy)
+        assert saved_item.metadata["genres"] == ["Action", "Drama", "Comedy"]
         # New fields should be added
         assert saved_item.metadata.get("tags") == ["test-tag"]
         assert saved_item.metadata.get("description") == "A test description."

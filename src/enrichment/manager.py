@@ -233,7 +233,9 @@ class EnrichmentManager:
                     status = self.storage_manager.get_enrichment_status(db_id)
                     if status and status.get("enrichment_quality") == "not_found":
                         not_found_ids.add(db_id)
-                logger.info(f"[ENRICHMENT] Found {len(not_found_ids)} not_found items to retry")
+                logger.info(
+                    f"[ENRICHMENT] Found {len(not_found_ids)} not_found items to retry"
+                )
 
             # Process items in batches
             while not self._stop_requested:
@@ -315,7 +317,9 @@ class EnrichmentManager:
             if isinstance(item.content_type, ContentType)
             else ContentType(item.content_type)
         )
-        content_type_str = content_type.value if hasattr(content_type, "value") else str(content_type)
+        content_type_str = (
+            content_type.value if hasattr(content_type, "value") else str(content_type)
+        )
 
         logger.debug(
             f"[ENRICHMENT] Processing {content_type_str} {item_num}/{total} - {item.title}"
@@ -382,12 +386,16 @@ class EnrichmentManager:
                     self._status.errors.append(f"{provider.name}: {error.message}")
 
             except Exception as error:
-                logger.warning(f"[ENRICHMENT] Unexpected error from {provider.name}: {error}")
+                logger.warning(
+                    f"[ENRICHMENT] Unexpected error from {provider.name}: {error}"
+                )
                 with self._lock:
                     self._status.errors.append(f"{provider.name}: {error}")
 
         # No provider found a match
-        logger.debug(f"[ENRICHMENT] No match found for {content_type_str}: {item.title}")
+        logger.debug(
+            f"[ENRICHMENT] No match found for {content_type_str}: {item.title}"
+        )
         self.storage_manager.mark_enrichment_complete(db_id, "none", "not_found")
         with self._lock:
             self._status.items_processed += 1
@@ -476,13 +484,37 @@ def merge_enrichment(
     """
     merged = dict(existing_metadata)
 
-    # Fill genres if missing
-    if not merged.get("genres") and result.genres:
-        merged["genres"] = result.genres
+    # Merge genres - enrichment provides better genre data
+    if result.genres:
+        existing_genres = merged.get("genres", []) or []
+        if isinstance(existing_genres, str):
+            import json
 
-    # Fill tags if missing
-    if not merged.get("tags") and result.tags:
-        merged["tags"] = result.tags
+            try:
+                existing_genres = json.loads(existing_genres)
+            except (json.JSONDecodeError, TypeError):
+                existing_genres = [existing_genres] if existing_genres else []
+        # Enrichment genres go first (they're more standardized), then existing
+        combined = list(result.genres) + [
+            g for g in existing_genres if g not in result.genres
+        ]
+        merged["genres"] = combined
+
+    # Merge tags - combine enrichment tags with existing
+    if result.tags:
+        existing_tags = merged.get("tags", []) or []
+        if isinstance(existing_tags, str):
+            import json
+
+            try:
+                existing_tags = json.loads(existing_tags)
+            except (json.JSONDecodeError, TypeError):
+                existing_tags = [existing_tags] if existing_tags else []
+        # Enrichment tags go first (thematic), then existing (may include platform tags)
+        combined = list(result.tags) + [
+            t for t in existing_tags if t not in result.tags
+        ]
+        merged["tags"] = combined
 
     # Fill description if missing
     if not merged.get("description") and result.description:
