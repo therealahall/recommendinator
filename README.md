@@ -72,6 +72,8 @@ Access the web interface at `http://localhost:18473`
 |--------|------|-------------|
 | **Goodreads** | Books | CSV export from your Goodreads library |
 | **Steam** | Games | Automatic import via Steam Web API |
+| **GOG** | Games | Import from your GOG.com library and wishlist |
+| **Epic Games** | Games | Import from your Epic Games library |
 | **Sonarr** | TV Shows | Import from your Sonarr library |
 | **Radarr** | Movies | Import from your Radarr library |
 | **CSV** | Any | Generic CSV with customizable mapping |
@@ -79,6 +81,66 @@ Access the web interface at `http://localhost:18473`
 | **Markdown** | Any | Human-readable markdown lists |
 
 See the `templates/` directory for import file examples.
+
+### GOG Setup
+
+GOG requires an OAuth refresh token for API access. To obtain one:
+
+1. **Open the GOG auth URL in your browser:**
+   ```
+   https://auth.gog.com/auth?client_id=46899977096215655&redirect_uri=https%3A%2F%2Fembed.gog.com%2Fon_login_success%3Forigin%3Dclient&response_type=code&layout=client2
+   ```
+
+2. **Log in with your GOG account** when prompted.
+
+3. **After login, you'll be redirected.** Open your browser's Developer Tools (F12) → Network tab.
+
+4. **Look for a request to `token`** in the network log. The response will contain JSON with your tokens:
+   ```json
+   {
+     "access_token": "...",
+     "refresh_token": "YOUR_REFRESH_TOKEN_HERE",
+     ...
+   }
+   ```
+
+5. **Copy the `refresh_token` value** and add it to your config:
+   ```yaml
+   inputs:
+     gog:
+       refresh_token: "your-refresh-token-here"
+       include_wishlist: true
+       enabled: true
+   ```
+
+**Note:** The refresh token is long-lived but may eventually expire. If GOG sync fails with an authentication error, repeat these steps to get a new token.
+
+### Epic Games Setup
+
+Epic Games uses the [Legendary](https://github.com/derrod/legendary) launcher's authentication:
+
+1. **Install Legendary:**
+   ```bash
+   pip install legendary-gl
+   ```
+
+2. **Authenticate via browser:**
+   ```bash
+   legendary auth
+   ```
+
+3. **Extract the refresh token** from Legendary's config:
+   ```bash
+   cat ~/.config/legendary/user.json | grep refresh_token
+   ```
+
+4. **Add to your config:**
+   ```yaml
+   inputs:
+     epic_games:
+       refresh_token: "your-refresh-token-here"
+       enabled: true
+   ```
 
 ## Configuration
 
