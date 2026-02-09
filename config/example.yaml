@@ -61,7 +61,22 @@ inputs:
     min_playtime_minutes: 0
     content_type: "video_game"  # Content type for enrichment
     enabled: false  # Set to true to enable Steam import
-  
+
+  # GOG.com integration (PC game store)
+  gog:
+    # GOG OAuth refresh token for API access.
+    # To obtain: visit the GOG auth URL in your browser, log in, and
+    # extract the refresh token from the token exchange response.
+    # See README for step-by-step instructions.
+    refresh_token: ""
+    # Import wishlisted games as unread items (default: true)
+    include_wishlist: true
+    # Fetch detailed metadata for wishlisted games from public API (default: true)
+    # Disable to speed up sync if you don't need wishlist metadata
+    enrich_wishlist: true
+    content_type: "video_game"
+    enabled: false
+
   # Generic CSV import — use templates from templates/ directory
   csv_import:
     csv_path: "inputs/my_movies.csv"  # Path to your CSV file
