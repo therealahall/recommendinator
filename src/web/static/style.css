@@ -265,6 +265,7 @@ body {
     color: #555;
     font-style: italic;
     margin-bottom: 8px;
+    white-space: pre-line;
 }
 
 /* Score Breakdown */
