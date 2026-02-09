@@ -70,6 +70,7 @@ def configure_logging(config: dict) -> None:
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
     logging.getLogger("watchfiles").setLevel(logging.WARNING)
 
+
 # Module-level app instance for uvicorn import string support
 _app: FastAPI | None = None
 
@@ -100,8 +101,18 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         llm_client, embedding_gen, rec_gen = create_llm_components(config)
         engine = create_recommendation_engine(storage, embedding_gen, rec_gen, config)
 
+        # Determine actual config path used
+        actual_config_path = config_path
+        if actual_config_path is None:
+            actual_config_path = Path("config/config.yaml")
+        if not actual_config_path.exists():
+            example_path = Path("config/example.yaml")
+            if example_path.exists():
+                actual_config_path = example_path
+
         # Store in app state
         app_state["config"] = config
+        app_state["config_path"] = str(actual_config_path.resolve())
         app_state["storage"] = storage
         app_state["embedding_gen"] = embedding_gen
         app_state["rec_gen"] = rec_gen

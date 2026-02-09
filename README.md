@@ -84,7 +84,25 @@ See the `templates/` directory for import file examples.
 
 ### GOG Setup
 
-GOG requires an OAuth refresh token for API access. To obtain one:
+GOG requires an OAuth refresh token for API access.
+
+**Option 1: Web UI (Recommended)**
+
+The easiest way to connect your GOG account:
+
+1. Enable GOG in your config.yaml:
+   ```yaml
+   inputs:
+     gog:
+       enabled: true
+   ```
+
+2. Start the web server and go to the **Sync** tab
+3. Follow the "Connect GOG Account" wizard - it handles the OAuth flow for you
+
+**Option 2: Manual Setup**
+
+If you prefer to set up manually:
 
 1. **Open the GOG auth URL in your browser:**
    ```
@@ -93,18 +111,18 @@ GOG requires an OAuth refresh token for API access. To obtain one:
 
 2. **Log in with your GOG account** when prompted.
 
-3. **After login, you'll be redirected.** Open your browser's Developer Tools (F12) → Network tab.
+3. **After login, you'll be redirected** to a URL like:
+   ```
+   https://embed.gog.com/on_login_success?origin=client&code=LONG_CODE_HERE
+   ```
+   **Copy the entire URL** (or just the code after `code=`).
 
-4. **Look for a request to `token`** in the network log. The response will contain JSON with your tokens:
-   ```json
-   {
-     "access_token": "...",
-     "refresh_token": "YOUR_REFRESH_TOKEN_HERE",
-     ...
-   }
+4. **Use the Web UI** to paste the URL/code, or manually exchange it:
+   ```
+   https://auth.gog.com/token?client_id=46899977096215655&client_secret=9d85c43b1482497dbbce61f6e4aa173a433796eeae2571571f7c3a315a91b&grant_type=authorization_code&code=YOUR_CODE&redirect_uri=https%3A%2F%2Fembed.gog.com%2Fon_login_success%3Forigin%3Dclient
    ```
 
-5. **Copy the `refresh_token` value** and add it to your config:
+5. **Copy the `refresh_token`** from the JSON response and add it to your config:
    ```yaml
    inputs:
      gog:
@@ -113,7 +131,7 @@ GOG requires an OAuth refresh token for API access. To obtain one:
        enabled: true
    ```
 
-**Note:** The refresh token is long-lived but may eventually expire. If GOG sync fails with an authentication error, repeat these steps to get a new token.
+**Note:** The refresh token is long-lived but may eventually expire. If GOG sync fails with an authentication error, reconnect via the web UI or repeat the manual steps.
 
 ### Epic Games Setup
 

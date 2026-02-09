@@ -758,31 +758,63 @@
         var grid = document.getElementById("syncSourcesGrid");
         if (!grid) return;
 
-        fetch(API_BASE + "/sync/sources")
-            .then(function (response) {
-                if (!response.ok) throw new Error("HTTP " + response.status);
-                return response.json();
+        // Reload config first to pick up any changes, then fetch sources
+        fetch(API_BASE + "/config/reload", { method: "POST" })
+            .catch(function () { /* ignore reload errors */ })
+            .then(function () {
+                // Fetch both sync sources and GOG status in parallel
+                return Promise.all([
+                    fetch(API_BASE + "/sync/sources").then(function (r) { return r.json(); }),
+                    fetch(API_BASE + "/gog/status").then(function (r) { return r.json(); }).catch(function () { return null; })
+                ]);
             })
-            .then(function (sources) {
-                renderSyncSources(grid, sources);
+            .then(function (results) {
+                var sources = results[0];
+                var gogStatus = results[1];
+                renderSyncSources(grid, sources, gogStatus);
             })
             .catch(function (error) {
                 grid.innerHTML = '<div class="empty-state" style="color:#c62828">Failed to load sync sources: ' + escapeHtml(error.message) + '</div>';
             });
     }
 
-    function renderSyncSources(container, sources) {
+    function renderSyncSources(container, sources, gogStatus) {
         if (!sources || sources.length === 0) {
             container.innerHTML = '<div class="empty-state"><p>No sync sources configured. Add sources to config.yaml with enabled: true.</p></div>';
             return;
         }
 
+        // Store GOG status for use by OAuth functions
+        if (gogStatus) {
+            gogState.authUrl = gogStatus.auth_url;
+            gogState.connected = gogStatus.connected;
+        }
+
         var html = "";
         sources.forEach(function (source) {
-            html += '<div class="sync-card">';
+            html += '<div class="sync-card" data-source-id="' + escapeHtml(source.id) + '">';
             html += '<h3>' + escapeHtml(source.display_name) + '</h3>';
             html += '<p style="font-size:0.85em; color:#666; margin-bottom:8px;">' + escapeHtml(source.description) + '</p>';
-            html += '<button class="btn btn-primary sync-btn" data-source="' + escapeHtml(source.id) + '" data-display-name="' + escapeHtml(source.display_name) + '">Sync ' + escapeHtml(source.display_name) + '</button>';
+
+            // Special handling for GOG when not connected
+            if (source.id === "gog" && gogStatus && gogStatus.enabled && !gogStatus.connected) {
+                html += '<div class="gog-connect-flow" id="gogConnectFlow">';
+                html += '<div class="gog-connect-step">';
+                html += '<button class="btn btn-primary" onclick="window.openGogAuth()">Connect GOG Account</button>';
+                html += '</div>';
+                html += '<div class="gog-connect-step gog-code-step" id="gogCodeStep" style="display:none;">';
+                html += '<p style="font-size:0.85em; color:#666; margin:8px 0;">Paste the redirect URL after logging in:</p>';
+                html += '<div class="gog-input-row">';
+                html += '<input type="text" id="gogCodeInput" placeholder="Paste URL here..." style="flex:1; padding:8px; border:1px solid #ddd; border-radius:4px; font-size:0.9em;">';
+                html += '<button class="btn btn-primary" onclick="window.submitGogCode()">Connect</button>';
+                html += '</div>';
+                html += '<div id="gogConnectStatus" style="margin-top:8px;"></div>';
+                html += '</div>';
+                html += '</div>';
+            } else {
+                html += '<button class="btn btn-primary sync-btn" data-source="' + escapeHtml(source.id) + '" data-display-name="' + escapeHtml(source.display_name) + '">Sync ' + escapeHtml(source.display_name) + '</button>';
+            }
+
             html += '</div>';
         });
 
@@ -980,6 +1012,87 @@
         if (!source) return "Unknown";
         return source.replace(/_/g, " ").replace(/\b\w/g, function (c) { return c.toUpperCase(); });
     }
+
+    // -----------------------------------------------------------------------
+    // GOG OAuth
+    // -----------------------------------------------------------------------
+
+    var gogState = {
+        authUrl: null,
+        connected: false
+    };
+
+    window.openGogAuth = function() {
+        if (gogState.authUrl) {
+            window.open(gogState.authUrl, "_blank");
+            // Show the code input step after opening auth
+            var codeStep = document.getElementById("gogCodeStep");
+            if (codeStep) {
+                codeStep.style.display = "block";
+            }
+        } else {
+            alert("GOG auth URL not available. Please refresh the page.");
+        }
+    };
+
+    window.submitGogCode = function() {
+        var input = document.getElementById("gogCodeInput");
+        var statusDiv = document.getElementById("gogConnectStatus");
+        var codeOrUrl = input.value.trim();
+
+        if (!codeOrUrl) {
+            if (statusDiv) {
+                statusDiv.innerHTML = '<span style="color:#c62828">Please paste the redirect URL.</span>';
+            }
+            return;
+        }
+
+        if (statusDiv) {
+            statusDiv.innerHTML = '<span class="spinner"></span> Connecting to GOG...';
+        }
+
+        fetch(API_BASE + "/gog/exchange", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ code_or_url: codeOrUrl })
+        })
+            .then(function (response) {
+                if (!response.ok) {
+                    return response.json().then(function (data) {
+                        throw new Error(data.detail || "Failed to connect GOG account");
+                    });
+                }
+                return response.json();
+            })
+            .then(function (data) {
+                input.value = "";
+
+                if (data.manual_setup && data.refresh_token) {
+                    // Show token for manual setup
+                    if (statusDiv) {
+                        statusDiv.innerHTML = '<div class="gog-manual-setup">' +
+                            '<p style="color:#388e3c; margin-bottom:8px;">✓ Token obtained! Add this to your config.yaml:</p>' +
+                            '<pre class="gog-token-display">inputs:\n  gog:\n    refresh_token: "' + escapeHtml(data.refresh_token) + '"</pre>' +
+                            '<button class="btn btn-small" onclick="navigator.clipboard.writeText(\'' + escapeHtml(data.refresh_token) + '\').then(function(){alert(\'Token copied!\')})">Copy Token</button>' +
+                            '<p style="font-size:0.85em; color:#666; margin-top:8px;">After updating config.yaml, restart the server to sync.</p>' +
+                            '</div>';
+                    }
+                } else {
+                    if (statusDiv) {
+                        statusDiv.innerHTML = '<span style="color:#388e3c">' + escapeHtml(data.message) + '</span>';
+                    }
+                    // Refresh sync sources to show the sync button
+                    setTimeout(function () {
+                        loadSyncSources();
+                    }, 1500);
+                }
+            })
+            .catch(function (error) {
+                if (statusDiv) {
+                    statusDiv.innerHTML = '<span style="color:#c62828">' + escapeHtml(error.message) + '</span>';
+                }
+            });
+    };
 
     // -----------------------------------------------------------------------
     // Enrichment Stats

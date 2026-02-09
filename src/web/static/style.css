@@ -1232,3 +1232,53 @@ body {
     gap: 8px;
     justify-content: flex-end;
 }
+
+/* ============================================================
+   GOG OAuth Flow (inline in sync card)
+   ============================================================ */
+
+.gog-connect-flow {
+    margin-top: 8px;
+}
+
+.gog-connect-step {
+    margin-bottom: 8px;
+}
+
+.gog-input-row {
+    display: flex;
+    gap: 8px;
+}
+
+.gog-input-row input {
+    font-size: 0.9em;
+    min-width: 0;
+}
+
+@media (max-width: 600px) {
+    .gog-input-row {
+        flex-direction: column;
+    }
+    .gog-input-row input {
+        width: 100%;
+    }
+}
+
+.gog-manual-setup {
+    background: #f5f5f5;
+    border-radius: 6px;
+    padding: 12px;
+    margin-top: 8px;
+}
+
+.gog-token-display {
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    padding: 10px;
+    font-size: 0.8em;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+    margin: 8px 0;
+}

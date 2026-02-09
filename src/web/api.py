@@ -1,6 +1,7 @@
 """REST API endpoints."""
 
 import logging
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
@@ -10,7 +11,23 @@ from src.ingestion.sync import execute_multi_source_sync
 from src.models.content import ConsumptionStatus, ContentType
 from src.models.user_preferences import UserPreferenceConfig
 from src.web.enrichment_manager import get_enrichment_manager
-from src.web.state import get_config, get_embedding_gen, get_engine, get_storage
+from src.web.gog_auth import (
+    GogAuthError,
+    exchange_code_for_tokens,
+    extract_code_from_input,
+    get_gog_auth_url,
+    has_gog_token,
+    is_gog_enabled,
+    update_config_with_token,
+)
+from src.web.state import (
+    get_config,
+    get_config_path,
+    get_embedding_gen,
+    get_engine,
+    get_storage,
+    reload_config,
+)
 from src.web.sync_manager import SyncJob, get_sync_manager
 from src.web.sync_sources import (
     get_available_sync_sources,
@@ -179,6 +196,14 @@ class EnrichmentResetRequest(BaseModel):
         None, description="Reset items of this content type"
     )
     user_id: int = Field(1, ge=1, description="User ID for filtering items")
+
+
+class GogExchangeRequest(BaseModel):
+    """Request model for GOG token exchange."""
+
+    code_or_url: str = Field(
+        ..., description="Authorization code or full redirect URL from GOG"
+    )
 
 
 class EnrichmentJobStatusResponse(BaseModel):
@@ -769,6 +794,22 @@ async def get_status() -> StatusResponse:
     )
 
 
+@router.post("/config/reload")
+async def reload_config_endpoint() -> dict[str, Any]:
+    """Reload configuration from disk.
+
+    Useful for picking up config changes without restarting the server.
+
+    Returns:
+        Success status.
+    """
+    success = reload_config()
+    if success:
+        return {"success": True, "message": "Configuration reloaded successfully"}
+    else:
+        raise HTTPException(status_code=500, detail="Failed to reload configuration")
+
+
 @router.get("/sync/sources", response_model=list[SyncSourceResponse])
 async def get_sync_sources() -> list[SyncSourceResponse]:
     """Get list of available sync sources from config.
@@ -1001,3 +1042,96 @@ async def reset_enrichment(
     )
 
     return {"message": f"Reset enrichment status for {count} item(s)", "count": count}
+
+
+# ---------------------------------------------------------------------------
+# GOG OAuth endpoints
+# ---------------------------------------------------------------------------
+
+
+@router.get("/gog/status")
+async def get_gog_status() -> dict[str, Any]:
+    """Get GOG integration status.
+
+    Returns:
+        Status of GOG integration (enabled, connected, auth_url).
+    """
+    config = get_config()
+    if not config:
+        raise HTTPException(status_code=500, detail="Config not initialized")
+
+    enabled = is_gog_enabled(config)
+    connected = has_gog_token(config)
+
+    return {
+        "enabled": enabled,
+        "connected": connected,
+        "auth_url": get_gog_auth_url() if enabled else None,
+    }
+
+
+@router.post("/gog/exchange")
+async def exchange_gog_token(request: GogExchangeRequest) -> dict[str, Any]:
+    """Exchange GOG authorization code for tokens.
+
+    Accepts either the raw authorization code or the full redirect URL.
+    Attempts to update config.yaml, or returns the token for manual setup.
+
+    Args:
+        request: Request with code or URL.
+
+    Returns:
+        Success message with optional refresh_token if config couldn't be updated.
+    """
+    config = get_config()
+    config_path = get_config_path()
+
+    if not config:
+        raise HTTPException(status_code=500, detail="Config not initialized")
+
+    if not is_gog_enabled(config):
+        raise HTTPException(
+            status_code=400,
+            detail="GOG is not enabled. Set inputs.gog.enabled: true in config.yaml first.",
+        )
+
+    try:
+        # Extract code from input (handles both URL and raw code)
+        code = extract_code_from_input(request.code_or_url)
+
+        # Exchange code for tokens
+        tokens = exchange_code_for_tokens(code)
+        refresh_token = tokens["refresh_token"]
+
+        # Try to update config file with refresh token
+        config_updated = False
+        if config_path:
+            try:
+                update_config_with_token(Path(config_path), refresh_token)
+                config_updated = True
+                logger.info("Successfully connected GOG account and updated config")
+            except GogAuthError as config_error:
+                logger.warning(f"Could not update config: {config_error}")
+
+        if config_updated:
+            return {
+                "success": True,
+                "message": "GOG account connected successfully! You can now sync your GOG library.",
+            }
+        else:
+            # Return token for manual setup
+            return {
+                "success": True,
+                "manual_setup": True,
+                "refresh_token": refresh_token,
+                "message": "Token obtained! Add it to your config.yaml manually.",
+            }
+
+    except GogAuthError as error:
+        logger.warning(f"GOG auth error: {error}")
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except Exception as error:
+        logger.error(f"Unexpected error during GOG token exchange: {error}")
+        raise HTTPException(
+            status_code=500, detail=f"Unexpected error: {error}"
+        ) from error

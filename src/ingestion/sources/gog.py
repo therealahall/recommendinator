@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 # These are NOT user secrets; they are published in GOG Galaxy's open-source SDK
 # and widely used by community integrations.
 GOG_CLIENT_ID = "46899977096215655"
-GOG_CLIENT_SECRET = "9d85c43b1482497dbbce61f6e4aa173a433796eeae2571571f7c3a315a91b"
+GOG_CLIENT_SECRET = "9d85c43b1482497dbbce61f6e4aa173a433796eeae2ca8c5f6129f2dc4de46d9"
 
 GOG_AUTH_URL = "https://auth.gog.com/token"
 GOG_EMBED_URL = "https://embed.gog.com"
