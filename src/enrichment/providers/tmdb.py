@@ -404,6 +404,18 @@ class TMDBProvider(EnrichmentProvider):
                 if studios:
                     extra_metadata["studio"] = studios[0]
 
+            # Extract collection/franchise info for series ordering
+            collection = movie.get("belongs_to_collection")
+            if collection:
+                extra_metadata["series_name"] = collection.get("name")
+                extra_metadata["tmdb_collection_id"] = collection.get("id")
+                # Fetch collection details to get movie order
+                movie_position = self._get_movie_position_in_collection(
+                    collection["id"], tmdb_id, api_key
+                )
+                if movie_position:
+                    extra_metadata["series_position"] = movie_position
+
             return EnrichmentResult(
                 external_id=f"tmdb:{tmdb_id}",
                 genres=genres if genres else None,
@@ -552,4 +564,50 @@ class TMDBProvider(EnrichmentProvider):
         except requests.RequestException:
             # Keywords are optional, don't fail the whole enrichment
             logger.warning(f"Failed to fetch keywords for TV show {tmdb_id}")
+            return None
+
+    def _get_movie_position_in_collection(
+        self, collection_id: int, movie_id: int, api_key: str
+    ) -> int | None:
+        """Get a movie's position in its collection (sorted by release date).
+
+        Args:
+            collection_id: TMDB collection ID
+            movie_id: TMDB movie ID to find position for
+            api_key: API key
+
+        Returns:
+            1-based position in collection, or None if unavailable
+        """
+        try:
+            response = requests.get(
+                f"{TMDB_API_BASE}/collection/{collection_id}",
+                params={"api_key": api_key},
+                timeout=10,
+            )
+            response.raise_for_status()
+            collection = response.json()
+
+            parts = collection.get("parts", [])
+            if not parts:
+                return None
+
+            # Sort by release date to get proper order
+            sorted_parts = sorted(
+                parts,
+                key=lambda movie: movie.get("release_date") or "9999-99-99",
+            )
+
+            # Find position of this movie
+            for index, movie in enumerate(sorted_parts):
+                if movie.get("id") == movie_id:
+                    return index + 1  # 1-based position
+
+            return None
+
+        except requests.RequestException:
+            # Collection info is optional, don't fail enrichment
+            logger.warning(
+                f"Failed to fetch collection {collection_id} for movie {movie_id}"
+            )
             return None
