@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
-from src.storage.sqlite_db import SQLiteDB
+from src.storage.sqlite_db import SQLiteDB, normalize_title_for_matching
 
 
 @pytest.fixture
@@ -365,3 +365,115 @@ def test_get_content_items_with_db_ids(temp_db: SQLiteDB) -> None:
     for item in retrieved:
         assert item.db_id is not None
         assert item.db_id > 0
+
+
+# ---------------------------------------------------------------------------
+# Title Normalization Tests
+# ---------------------------------------------------------------------------
+
+
+class TestNormalizeTitleForMatching:
+    """Tests for the normalize_title_for_matching function."""
+
+    def test_basic_normalization(self) -> None:
+        """Test basic lowercase and whitespace handling."""
+        assert normalize_title_for_matching("  The Matrix  ") == "matrix"
+        assert (
+            normalize_title_for_matching("A Tale of Two Cities") == "tale of two cities"
+        )
+
+    def test_trademark_symbols_removed(self) -> None:
+        """Regression test: Trademark symbols should be removed for matching.
+
+        Bug reported: "The Last of Us™ Part I" was not matching
+        "The Last of Us Part I" from another source.
+
+        Fix: Remove trademark (™), registered (®), and copyright (©) symbols.
+        """
+        assert (
+            normalize_title_for_matching("The Last of Us™ Part I")
+            == "last of us part 1"
+        )
+        assert normalize_title_for_matching("Windows®") == "windows"
+        assert normalize_title_for_matching("Copyright© Test") == "copyright test"
+
+    def test_hyphen_to_space_conversion(self) -> None:
+        """Regression test: Hyphens should be converted to spaces.
+
+        Bug reported: "State of Decay: Year-One" was not matching
+        "State of Decay: Year One" from another source.
+
+        Fix: Convert hyphens to spaces before removing punctuation.
+        """
+        assert normalize_title_for_matching("Year-One") == "year one"
+        # "Survival Edition" is part of the game name, not removed
+        assert normalize_title_for_matching(
+            "State of Decay: Year-One Survival Edition"
+        ) == ("state of decay year one survival edition")
+
+    def test_roman_numeral_conversion(self) -> None:
+        """Regression test: Roman numerals should convert to Arabic.
+
+        Bug reported: "The Last of Us Part I" was not matching
+        "The Last of Us Part 1" from another source.
+
+        Fix: Convert Roman numerals (I, II, III, etc.) to Arabic (1, 2, 3, etc.).
+        """
+        assert normalize_title_for_matching("Part I") == "part 1"
+        assert normalize_title_for_matching("Part II") == "part 2"
+        assert normalize_title_for_matching("Part III") == "part 3"
+        assert normalize_title_for_matching("Part IV") == "part 4"
+        assert normalize_title_for_matching("Part V") == "part 5"
+        assert normalize_title_for_matching("Part VI") == "part 6"
+        assert normalize_title_for_matching("Part VII") == "part 7"
+        assert normalize_title_for_matching("Part VIII") == "part 8"
+        assert normalize_title_for_matching("Part IX") == "part 9"
+        assert normalize_title_for_matching("Part X") == "part 10"
+
+    def test_last_of_us_variants_match(self) -> None:
+        """Test that Last of Us variants all normalize to the same value."""
+        variants = [
+            "The Last of Us™ Part I",
+            "The Last of Us Part I",
+            "The Last of Us Part 1",
+            "The Last Of Us: Part I",
+        ]
+        normalized = [normalize_title_for_matching(variant) for variant in variants]
+        # All should be the same
+        assert len(set(normalized)) == 1
+        assert normalized[0] == "last of us part 1"
+
+    def test_state_of_decay_variants_match(self) -> None:
+        """Test that State of Decay variants all normalize to the same value."""
+        # Test the core issue: hyphenated vs non-hyphenated
+        variants = [
+            "State of Decay: Year-One Survival Edition",
+            "State of Decay: Year One Survival Edition",
+        ]
+        normalized = [normalize_title_for_matching(variant) for variant in variants]
+        # Both should be the same
+        assert len(set(normalized)) == 1
+        assert normalized[0] == "state of decay year one survival edition"
+
+    def test_remaster_suffix_removal(self) -> None:
+        """Test that remaster/edition suffixes are removed."""
+        assert normalize_title_for_matching("Crysis Remastered") == "crysis"
+        assert normalize_title_for_matching("Crysis: Remastered") == "crysis"
+        assert normalize_title_for_matching("Skyrim Special Edition") == "skyrim"
+        assert normalize_title_for_matching("Skyrim: Anniversary Edition") == "skyrim"
+
+    def test_empty_and_none_handling(self) -> None:
+        """Test handling of empty strings."""
+        assert normalize_title_for_matching("") == ""
+        assert normalize_title_for_matching("   ") == ""
+
+    def test_roman_numerals_only_at_word_boundaries(self) -> None:
+        """Test that Roman numerals are only converted at word boundaries.
+
+        This prevents false conversions like "Civil" -> "C1v1l".
+        """
+        # "I" inside a word should NOT be converted
+        assert "c1v1l" not in normalize_title_for_matching("Civil War")
+        # Should contain "civil" not "c1v1l"
+        normalized = normalize_title_for_matching("Civil War")
+        assert "civil" in normalized

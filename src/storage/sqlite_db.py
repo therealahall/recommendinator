@@ -16,8 +16,10 @@ def normalize_title_for_matching(title: str) -> str:
 
     Removes common variations to match items from different sources:
     - Lowercases
+    - Removes trademark/copyright symbols (™, ®, ©)
     - Removes articles (the, a, an)
     - Removes edition/remaster suffixes
+    - Converts Roman numerals to Arabic (I->1, II->2, etc.)
     - Removes punctuation and extra whitespace
 
     Args:
@@ -30,6 +32,9 @@ def normalize_title_for_matching(title: str) -> str:
         return ""
 
     normalized = title.lower().strip()
+
+    # Remove trademark/copyright symbols early
+    normalized = re.sub(r"[™®©]", "", normalized)
 
     # Remove common suffixes
     suffixes_to_remove = [
@@ -59,8 +64,29 @@ def normalize_title_for_matching(title: str) -> str:
     # Remove leading articles
     normalized = re.sub(r"^(the|a|an)\s+", "", normalized)
 
+    # Convert hyphens to spaces before removing punctuation
+    # This handles "Year-One" vs "Year One"
+    normalized = re.sub(r"-", " ", normalized)
+
     # Remove punctuation except spaces
     normalized = re.sub(r"[^\w\s]", "", normalized)
+
+    # Convert Roman numerals to Arabic (at word boundaries)
+    # Order matters - check longer numerals first
+    roman_map = [
+        (r"\bviii\b", "8"),
+        (r"\bvii\b", "7"),
+        (r"\bvi\b", "6"),
+        (r"\biv\b", "4"),
+        (r"\bv\b", "5"),
+        (r"\biii\b", "3"),
+        (r"\bii\b", "2"),
+        (r"\bi\b", "1"),
+        (r"\bix\b", "9"),
+        (r"\bx\b", "10"),
+    ]
+    for roman, arabic in roman_map:
+        normalized = re.sub(roman, arabic, normalized)
 
     # Collapse whitespace
     normalized = re.sub(r"\s+", " ", normalized).strip()
