@@ -37,6 +37,7 @@ strict_equality = true
 [[tool.mypy.overrides]]
 module = [
     "chromadb.*",
+    "legendary.*",
     "ollama.*",
 ]
 ignore_missing_imports = true
