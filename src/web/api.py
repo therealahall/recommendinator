@@ -694,11 +694,13 @@ async def update_data(request: UpdateRequest) -> dict[str, Any]:
             items_processed: int,
             total_items: int | None,
             current_item: str | None,
+            current_source: str | None,
         ) -> None:
             sync_manager.update_progress(
                 items_processed=items_processed,
                 total_items=total_items,
                 current_item=current_item,
+                current_source=current_source,
             )
 
         results = execute_multi_source_sync(

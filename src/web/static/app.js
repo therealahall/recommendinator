@@ -937,9 +937,11 @@
             parts.push(job.items_processed + " items so far");
         }
 
-        // Add source and phase
+        // Add source - prefer current_source (specific source being synced)
+        // over source (which may be a comma-separated list for "sync all")
         parts.push("—");
-        parts.push("Syncing " + job.source);
+        var displaySource = job.current_source || job.source;
+        parts.push("Syncing " + displaySource);
 
         // Current activity (e.g. "Fetching game details" or current item name)
         if (job.current_item) {

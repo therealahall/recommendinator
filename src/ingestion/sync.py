@@ -14,8 +14,8 @@ from src.models.content import ContentItem
 
 logger = logging.getLogger(__name__)
 
-# Callback signature: (items_processed, total_items, current_item_title)
-SyncProgressCallback = Callable[[int, int | None, str | None], None]
+# Callback signature: (items_processed, total_items, current_item_title, current_source)
+SyncProgressCallback = Callable[[int, int | None, str | None, str | None], None]
 
 
 @dataclass
@@ -58,14 +58,14 @@ def execute_sync(
     result = SyncResult(source_name=source_name)
 
     if progress_callback:
-        progress_callback(0, None, f"Fetching from {source_name}...")
+        progress_callback(0, None, f"Fetching from {source_name}...", source_name)
 
     # Fetch items from plugin
     def fetch_progress(
         items_processed: int, total_items: int | None, current_item: str | None
     ) -> None:
         if progress_callback:
-            progress_callback(items_processed, total_items, current_item)
+            progress_callback(items_processed, total_items, current_item, source_name)
 
     items: list[ContentItem] = list(
         plugin.fetch(plugin_config, progress_callback=fetch_progress)
@@ -73,17 +73,21 @@ def execute_sync(
 
     result.total_items = len(items)
     if progress_callback:
-        progress_callback(0, result.total_items, None)
+        progress_callback(0, result.total_items, None, source_name)
 
     logger.info(f"[SYNC] {source_name}: Found {result.total_items} items, saving...")
 
     # Save each item
     for index, item in enumerate(items):
         item_num = index + 1
-        content_type = item.content_type.value if hasattr(item.content_type, "value") else item.content_type
+        content_type = (
+            item.content_type.value
+            if hasattr(item.content_type, "value")
+            else item.content_type
+        )
         try:
             if progress_callback:
-                progress_callback(index, result.total_items, item.title)
+                progress_callback(index, result.total_items, item.title, source_name)
 
             logger.debug(
                 f"[SYNC] {source_name}: Syncing {content_type} {item_num}/{result.total_items} - {item.title}"

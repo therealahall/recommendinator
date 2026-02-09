@@ -35,6 +35,7 @@ class SyncJob:
     items_processed: int = 0
     total_items: int | None = None
     current_item: str | None = None
+    current_source: str | None = None  # Currently syncing source (for multi-source)
     error_message: str | None = None
     errors: list[str] = field(default_factory=list)
 
@@ -50,6 +51,7 @@ class SyncJob:
             "items_processed": self.items_processed,
             "total_items": self.total_items,
             "current_item": self.current_item,
+            "current_source": self.current_source,
             "error_message": self.error_message,
             "progress_percent": (
                 int(self.items_processed * 100 / self.total_items)
@@ -180,6 +182,7 @@ class SyncManager:
         items_processed: int | None = None,
         total_items: int | None = None,
         current_item: str | None = None,
+        current_source: str | None = None,
     ) -> None:
         """Update progress of the current job.
 
@@ -189,6 +192,7 @@ class SyncManager:
             items_processed: Number of items processed so far.
             total_items: Total number of items to process.
             current_item: Name of the item currently being processed.
+            current_source: Name of the source currently being synced.
         """
         with self._lock:
             if self._current_job is None:
@@ -199,6 +203,8 @@ class SyncManager:
                 self._current_job.total_items = total_items
             if current_item is not None:
                 self._current_job.current_item = current_item
+            if current_source is not None:
+                self._current_job.current_source = current_source
 
     def add_error(self, error: str) -> None:
         """Add an error message to the current job.
