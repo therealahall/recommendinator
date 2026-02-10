@@ -256,6 +256,134 @@ class SQLiteDB:
             conn.commit()
             return db_id  # type: ignore
 
+    # Configuration for type-specific detail tables.
+    # Each entry maps content_type value to:
+    #   table: SQL table name
+    #   columns: list of (column_name, metadata_key, converter) tuples
+    #            converter is "str" (default), "int" (safe_int), "json" (to_json_array),
+    #            or "author" (special: use item.author or metadata)
+    #   alias_keys: metadata keys that are aliases (e.g. "genre" -> "genres")
+    _DETAIL_TABLE_CONFIG: dict[str, dict[str, Any]] = {
+        "book": {
+            "table": "book_details",
+            "columns": [
+                ("author", "author", "author"),
+                ("pages", "pages", "int"),
+                ("isbn", "isbn", "str"),
+                ("isbn13", "isbn13", "str"),
+                ("publisher", "publisher", "str"),
+                ("year_published", "year_published", "int"),
+                ("genres", "genres", "json_or_genre"),
+                ("tags", "tags", "json"),
+                ("description", "description", "str"),
+            ],
+            "known_keys": {
+                "author",
+                "pages",
+                "isbn",
+                "isbn13",
+                "publisher",
+                "year_published",
+                "genres",
+                "genre",
+                "tags",
+                "description",
+            },
+        },
+        "movie": {
+            "table": "movie_details",
+            "columns": [
+                ("director", "director", "str"),
+                ("runtime", "runtime", "int"),
+                ("release_year", "release_year", "int"),
+                ("genres", "genres", "json_or_genre"),
+                ("studio", "studio", "str"),
+                ("tags", "tags", "json"),
+                ("description", "description", "str"),
+            ],
+            "known_keys": {
+                "director",
+                "runtime",
+                "release_year",
+                "genres",
+                "genre",
+                "studio",
+                "tags",
+                "description",
+            },
+        },
+        "tv_show": {
+            "table": "tv_show_details",
+            "columns": [
+                ("creators", "creators", "str"),
+                ("seasons", "seasons", "int"),
+                ("episodes", "episodes", "int"),
+                ("network", "network", "str"),
+                ("release_year", "release_year", "int"),
+                ("genres", "genres", "json_or_genre"),
+                ("tags", "tags", "json"),
+                ("description", "description", "str"),
+            ],
+            "known_keys": {
+                "creators",
+                "seasons",
+                "episodes",
+                "network",
+                "release_year",
+                "genres",
+                "genre",
+                "tags",
+                "description",
+            },
+        },
+        "video_game": {
+            "table": "video_game_details",
+            "columns": [
+                ("developer", "developer", "str"),
+                ("publisher", "publisher", "str"),
+                ("platforms", "platforms", "json_or_platform"),
+                ("genres", "genres", "json_or_genre"),
+                ("release_year", "release_year", "int"),
+                ("tags", "tags", "json"),
+                ("description", "description", "str"),
+            ],
+            "known_keys": {
+                "developer",
+                "publisher",
+                "platforms",
+                "platform",
+                "genres",
+                "genre",
+                "release_year",
+                "tags",
+                "description",
+            },
+        },
+    }
+
+    @staticmethod
+    def _safe_int(val: Any) -> int | None:
+        """Safely convert a value to int."""
+        if val is None:
+            return None
+        if isinstance(val, int):
+            return val
+        try:
+            return int(val)
+        except (ValueError, TypeError):
+            return None
+
+    @staticmethod
+    def _to_json_array(val: Any) -> str | None:
+        """Convert a value to a JSON array string."""
+        if val is None:
+            return None
+        if isinstance(val, str):
+            return val
+        if isinstance(val, list):
+            return json.dumps(val)
+        return json.dumps([val])
+
     def _save_detail_table(
         self, cursor: sqlite3.Cursor, db_id: int, item: ContentItem, content_type: str
     ) -> None:
@@ -267,208 +395,50 @@ class SQLiteDB:
             item: ContentItem to save
             content_type: Content type as string
         """
+        config = self._DETAIL_TABLE_CONFIG.get(content_type)
+        if not config:
+            return
+
         metadata = item.metadata or {}
+        table = config["table"]
+        columns = config["columns"]
+        known_keys = config["known_keys"]
 
-        # Helper to safely convert to int
-        def safe_int(val: Any) -> int | None:
-            if val is None:
-                return None
-            if isinstance(val, int):
-                return val
-            try:
-                return int(val)
-            except (ValueError, TypeError):
-                return None
+        # Build column values
+        col_names = ["content_item_id"]
+        values: list[Any] = [db_id]
 
-        # Helper to convert list to JSON
-        def to_json_array(val: Any) -> str | None:
-            if val is None:
-                return None
-            if isinstance(val, str):
-                return val  # Already JSON or single value
-            if isinstance(val, list):
-                return json.dumps(val)
-            return json.dumps([val])
+        for col_name, meta_key, converter in columns:
+            if converter == "author":
+                values.append(item.author or metadata.get(meta_key))
+            elif converter == "int":
+                values.append(self._safe_int(metadata.get(meta_key)))
+            elif converter == "json":
+                values.append(self._to_json_array(metadata.get(meta_key)))
+            elif converter == "json_or_genre":
+                raw = metadata.get("genres") or metadata.get("genre")
+                values.append(self._to_json_array(raw))
+            elif converter == "json_or_platform":
+                raw = metadata.get("platforms") or metadata.get("platform")
+                values.append(self._to_json_array(raw))
+            else:
+                values.append(metadata.get(meta_key))
+            col_names.append(col_name)
 
-        if content_type == "book":
-            author = item.author or metadata.get("author")
-            genres = metadata.get("genres") or metadata.get("genre")
-            tags = metadata.get("tags")
-            description = metadata.get("description")
+        # Remaining metadata as JSON
+        remaining_metadata = {
+            key: val for key, val in metadata.items() if key not in known_keys
+        }
+        metadata_json = json.dumps(remaining_metadata) if remaining_metadata else None
+        col_names.append("metadata")
+        values.append(metadata_json)
 
-            # Store remaining metadata as JSON
-            remaining_metadata = {
-                k: v
-                for k, v in metadata.items()
-                if k
-                not in [
-                    "author",
-                    "pages",
-                    "isbn",
-                    "isbn13",
-                    "publisher",
-                    "year_published",
-                    "genres",
-                    "genre",
-                    "tags",
-                    "description",
-                ]
-            }
-            metadata_json = (
-                json.dumps(remaining_metadata) if remaining_metadata else None
-            )
-
-            cursor.execute(
-                """
-                INSERT OR REPLACE INTO book_details
-                (content_item_id, author, pages, isbn, isbn13, publisher, year_published,
-                 genres, tags, description, metadata)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    db_id,
-                    author,
-                    safe_int(metadata.get("pages")),
-                    metadata.get("isbn"),
-                    metadata.get("isbn13"),
-                    metadata.get("publisher"),
-                    safe_int(metadata.get("year_published")),
-                    to_json_array(genres),
-                    to_json_array(tags),
-                    description,
-                    metadata_json,
-                ),
-            )
-        elif content_type == "movie":
-            genres = metadata.get("genres") or metadata.get("genre")
-            tags = metadata.get("tags")
-            description = metadata.get("description")
-            remaining_metadata = {
-                k: v
-                for k, v in metadata.items()
-                if k
-                not in [
-                    "director",
-                    "runtime",
-                    "release_year",
-                    "genres",
-                    "genre",
-                    "studio",
-                    "tags",
-                    "description",
-                ]
-            }
-            metadata_json = (
-                json.dumps(remaining_metadata) if remaining_metadata else None
-            )
-
-            cursor.execute(
-                """
-                INSERT OR REPLACE INTO movie_details
-                (content_item_id, director, runtime, release_year, genres, studio,
-                 tags, description, metadata)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    db_id,
-                    metadata.get("director"),
-                    safe_int(metadata.get("runtime")),
-                    safe_int(metadata.get("release_year")),
-                    to_json_array(genres),
-                    metadata.get("studio"),
-                    to_json_array(tags),
-                    description,
-                    metadata_json,
-                ),
-            )
-        elif content_type == "tv_show":
-            genres = metadata.get("genres") or metadata.get("genre")
-            tags = metadata.get("tags")
-            description = metadata.get("description")
-            remaining_metadata = {
-                k: v
-                for k, v in metadata.items()
-                if k
-                not in [
-                    "creators",
-                    "seasons",
-                    "episodes",
-                    "network",
-                    "release_year",
-                    "genres",
-                    "genre",
-                    "tags",
-                    "description",
-                ]
-            }
-            metadata_json = (
-                json.dumps(remaining_metadata) if remaining_metadata else None
-            )
-
-            cursor.execute(
-                """
-                INSERT OR REPLACE INTO tv_show_details
-                (content_item_id, creators, seasons, episodes, network, release_year,
-                 genres, tags, description, metadata)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    db_id,
-                    metadata.get("creators"),
-                    safe_int(metadata.get("seasons")),
-                    safe_int(metadata.get("episodes")),
-                    metadata.get("network"),
-                    safe_int(metadata.get("release_year")),
-                    to_json_array(genres),
-                    to_json_array(tags),
-                    description,
-                    metadata_json,
-                ),
-            )
-        elif content_type == "video_game":
-            genres = metadata.get("genres") or metadata.get("genre")
-            tags = metadata.get("tags")
-            description = metadata.get("description")
-            platforms = metadata.get("platforms") or metadata.get("platform")
-            remaining_metadata = {
-                k: v
-                for k, v in metadata.items()
-                if k
-                not in [
-                    "developer",
-                    "publisher",
-                    "platforms",
-                    "platform",
-                    "genres",
-                    "genre",
-                    "release_year",
-                    "tags",
-                    "description",
-                ]
-            }
-            metadata_json = (
-                json.dumps(remaining_metadata) if remaining_metadata else None
-            )
-
-            cursor.execute(
-                """
-                INSERT OR REPLACE INTO video_game_details
-                (content_item_id, developer, publisher, platforms, genres, release_year,
-                 tags, description, metadata)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    db_id,
-                    metadata.get("developer"),
-                    metadata.get("publisher"),
-                    to_json_array(platforms),
-                    to_json_array(genres),
-                    safe_int(metadata.get("release_year")),
-                    to_json_array(tags),
-                    description,
-                    metadata_json,
-                ),
-            )
+        placeholders = ", ".join("?" for _ in values)
+        col_list = ", ".join(col_names)
+        cursor.execute(
+            f"INSERT OR REPLACE INTO {table} ({col_list}) VALUES ({placeholders})",
+            values,
+        )
 
     def get_content_item(
         self, db_id: int, user_id: int | None = None
@@ -679,6 +649,90 @@ class SQLiteDB:
             limit=limit,
         )
 
+    # Configuration for reading detail table columns back into metadata.
+    # Each entry: (row_column, metadata_key, parse_type)
+    # parse_type: "str", "json_array", "remaining_json"
+    _READ_DETAIL_CONFIG: dict[str, dict[str, Any]] = {
+        "book": {
+            "author_column": "book_author",
+            "fields": [
+                ("pages", "pages", "str"),
+                ("isbn", "isbn", "str"),
+                ("isbn13", "isbn13", "str"),
+                ("publisher", "publisher", "str"),
+                ("book_year", "year_published", "str"),
+                ("book_genres", "genres", "json_array"),
+                ("book_tags", "tags", "json_array"),
+                ("book_description", "description", "str"),
+                ("book_metadata", None, "remaining_json"),
+            ],
+        },
+        "movie": {
+            "author_column": None,
+            "fields": [
+                ("director", "director", "str"),
+                ("runtime", "runtime", "str"),
+                ("movie_year", "release_year", "str"),
+                ("movie_genres", "genres", "json_array"),
+                ("studio", "studio", "str"),
+                ("movie_tags", "tags", "json_array"),
+                ("movie_description", "description", "str"),
+                ("movie_metadata", None, "remaining_json"),
+            ],
+        },
+        "tv_show": {
+            "author_column": None,
+            "fields": [
+                ("creators", "creators", "str"),
+                ("seasons", "seasons", "str"),
+                ("episodes", "episodes", "str"),
+                ("network", "network", "str"),
+                ("tv_year", "release_year", "str"),
+                ("tv_genres", "genres", "json_array"),
+                ("tv_tags", "tags", "json_array"),
+                ("tv_description", "description", "str"),
+                ("tv_metadata", None, "remaining_json"),
+            ],
+        },
+        "video_game": {
+            "author_column": None,
+            "fields": [
+                ("developer", "developer", "str"),
+                ("game_publisher", "publisher", "str"),
+                ("platforms", "platforms", "json_array"),
+                ("game_genres", "genres", "json_array"),
+                ("game_year", "release_year", "str"),
+                ("game_tags", "tags", "json_array"),
+                ("game_description", "description", "str"),
+                ("game_metadata", None, "remaining_json"),
+            ],
+        },
+    }
+
+    @staticmethod
+    def _get_row_value(row: sqlite3.Row, key: str, default: Any = None) -> Any:
+        """Safely get value from sqlite3.Row."""
+        try:
+            value = row[key]
+            return value if value is not None else default
+        except (KeyError, IndexError):
+            return default
+
+    @staticmethod
+    def _parse_json_array(val: Any) -> list[str] | None:
+        """Parse a JSON array value from the database."""
+        if val is None:
+            return None
+        if isinstance(val, list):
+            return val
+        try:
+            parsed = json.loads(val)
+            if isinstance(parsed, list):
+                return parsed
+            return [parsed]
+        except (json.JSONDecodeError, TypeError):
+            return [val] if val else None
+
     def _row_to_content_item(self, row: sqlite3.Row) -> ContentItem:
         """Convert a database row to ContentItem.
 
@@ -690,140 +744,42 @@ class SQLiteDB:
         """
         content_type = ContentType(row["content_type"])
         metadata: dict[str, Any] = {}
+        author: str | None = None
 
-        # Helper to safely get row value
-        def get_row_value(key: str, default: Any = None) -> Any:
-            """Safely get value from sqlite3.Row."""
-            try:
-                value = row[key]
-                return value if value is not None else default
-            except (KeyError, IndexError):
-                return default
+        config = self._READ_DETAIL_CONFIG.get(content_type.value)
+        if config:
+            # Get author from dedicated column if configured
+            if config["author_column"]:
+                author = self._get_row_value(row, config["author_column"])
 
-        # Helper to parse JSON array
-        def parse_json_array(val: Any) -> list[str] | None:
-            if val is None:
-                return None
-            if isinstance(val, list):
-                return val
-            try:
-                parsed = json.loads(val)
-                if isinstance(parsed, list):
-                    return parsed
-                return [parsed]
-            except (json.JSONDecodeError, TypeError):
-                return [val] if val else None
-
-        # Build metadata from detail table based on content type
-        if content_type == ContentType.BOOK:
-            author = get_row_value("book_author")
-            if pages := get_row_value("pages"):
-                metadata["pages"] = pages
-            if isbn := get_row_value("isbn"):
-                metadata["isbn"] = isbn
-            if isbn13 := get_row_value("isbn13"):
-                metadata["isbn13"] = isbn13
-            if publisher := get_row_value("publisher"):
-                metadata["publisher"] = publisher
-            if book_year := get_row_value("book_year"):
-                metadata["year_published"] = book_year
-            if genres := parse_json_array(get_row_value("book_genres")):
-                metadata["genres"] = genres
-            if tags := parse_json_array(get_row_value("book_tags")):
-                metadata["tags"] = tags
-            if description := get_row_value("book_description"):
-                metadata["description"] = description
-            if book_metadata := get_row_value("book_metadata"):
-                try:
-                    remaining = json.loads(book_metadata)
-                    metadata.update(remaining)
-                except (json.JSONDecodeError, TypeError):
-                    pass
-
-        elif content_type == ContentType.MOVIE:
-            author = None
-            if director := get_row_value("director"):
-                metadata["director"] = director
-            if runtime := get_row_value("runtime"):
-                metadata["runtime"] = runtime
-            if movie_year := get_row_value("movie_year"):
-                metadata["release_year"] = movie_year
-            if genres := parse_json_array(get_row_value("movie_genres")):
-                metadata["genres"] = genres
-            if studio := get_row_value("studio"):
-                metadata["studio"] = studio
-            if tags := parse_json_array(get_row_value("movie_tags")):
-                metadata["tags"] = tags
-            if description := get_row_value("movie_description"):
-                metadata["description"] = description
-            if movie_metadata := get_row_value("movie_metadata"):
-                try:
-                    remaining = json.loads(movie_metadata)
-                    metadata.update(remaining)
-                except (json.JSONDecodeError, TypeError):
-                    pass
-
-        elif content_type == ContentType.TV_SHOW:
-            author = None
-            if creators := get_row_value("creators"):
-                metadata["creators"] = creators
-            if seasons := get_row_value("seasons"):
-                metadata["seasons"] = seasons
-            if episodes := get_row_value("episodes"):
-                metadata["episodes"] = episodes
-            if network := get_row_value("network"):
-                metadata["network"] = network
-            if tv_year := get_row_value("tv_year"):
-                metadata["release_year"] = tv_year
-            if genres := parse_json_array(get_row_value("tv_genres")):
-                metadata["genres"] = genres
-            if tags := parse_json_array(get_row_value("tv_tags")):
-                metadata["tags"] = tags
-            if description := get_row_value("tv_description"):
-                metadata["description"] = description
-            if tv_metadata := get_row_value("tv_metadata"):
-                try:
-                    remaining = json.loads(tv_metadata)
-                    metadata.update(remaining)
-                except (json.JSONDecodeError, TypeError):
-                    pass
-
-        elif content_type == ContentType.VIDEO_GAME:
-            author = None
-            if developer := get_row_value("developer"):
-                metadata["developer"] = developer
-            if game_publisher := get_row_value("game_publisher"):
-                metadata["publisher"] = game_publisher
-            if platforms := parse_json_array(get_row_value("platforms")):
-                metadata["platforms"] = platforms
-            if genres := parse_json_array(get_row_value("game_genres")):
-                metadata["genres"] = genres
-            if game_year := get_row_value("game_year"):
-                metadata["release_year"] = game_year
-            if tags := parse_json_array(get_row_value("game_tags")):
-                metadata["tags"] = tags
-            if description := get_row_value("game_description"):
-                metadata["description"] = description
-            if game_metadata := get_row_value("game_metadata"):
-                try:
-                    remaining = json.loads(game_metadata)
-                    metadata.update(remaining)
-                except (json.JSONDecodeError, TypeError):
-                    pass
-        else:  # pragma: no cover
-            author = None  # type: ignore[unreachable]
+            # Build metadata from detail table fields
+            for row_column, meta_key, parse_type in config["fields"]:
+                if parse_type == "remaining_json":
+                    raw = self._get_row_value(row, row_column)
+                    if raw:
+                        try:
+                            remaining = json.loads(raw)
+                            metadata.update(remaining)
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                elif parse_type == "json_array":
+                    parsed = self._parse_json_array(
+                        self._get_row_value(row, row_column)
+                    )
+                    if parsed:
+                        metadata[meta_key] = parsed
+                else:
+                    value = self._get_row_value(row, row_column)
+                    if value:
+                        metadata[meta_key] = value
 
         # Parse date_completed
         date_completed = None
-        if date_completed_str := get_row_value("date_completed"):
+        if date_completed_str := self._get_row_value(row, "date_completed"):
             try:
                 date_completed = datetime.fromisoformat(date_completed_str).date()
             except (ValueError, AttributeError):
                 pass
-
-        # Get author for books
-        if content_type == ContentType.BOOK:
-            author = get_row_value("book_author")
 
         return ContentItem(
             user_id=row["user_id"],
@@ -836,8 +792,8 @@ class SQLiteDB:
             review=row["review"],
             status=ConsumptionStatus(row["status"]),
             date_completed=date_completed,
-            source=get_row_value("source"),
-            ignored=bool(get_row_value("ignored")),
+            source=self._get_row_value(row, "source"),
+            ignored=bool(self._get_row_value(row, "ignored")),
             metadata=metadata,
         )
 

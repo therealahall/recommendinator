@@ -284,6 +284,30 @@ def _add_column_if_not_exists(
 # User management functions
 
 
+def _row_to_user_dict(row: tuple) -> dict:
+    """Convert a user row tuple to a user dict.
+
+    Args:
+        row: Tuple of (id, username, display_name, created_at, settings)
+
+    Returns:
+        User dict with parsed settings
+    """
+    settings = None
+    if row[4]:
+        try:
+            settings = json.loads(row[4])
+        except (json.JSONDecodeError, TypeError):
+            settings = {}
+    return {
+        "id": row[0],
+        "username": row[1],
+        "display_name": row[2],
+        "created_at": row[3],
+        "settings": settings,
+    }
+
+
 def get_user_by_id(conn: sqlite3.Connection, user_id: int) -> dict | None:
     """Get a user by ID.
 
@@ -300,21 +324,7 @@ def get_user_by_id(conn: sqlite3.Connection, user_id: int) -> dict | None:
         (user_id,),
     )
     row = cursor.fetchone()
-    if row:
-        settings = None
-        if row[4]:
-            try:
-                settings = json.loads(row[4])
-            except (json.JSONDecodeError, TypeError):
-                settings = {}
-        return {
-            "id": row[0],
-            "username": row[1],
-            "display_name": row[2],
-            "created_at": row[3],
-            "settings": settings,
-        }
-    return None
+    return _row_to_user_dict(row) if row else None
 
 
 def get_user_by_username(conn: sqlite3.Connection, username: str) -> dict | None:
@@ -333,21 +343,7 @@ def get_user_by_username(conn: sqlite3.Connection, username: str) -> dict | None
         (username,),
     )
     row = cursor.fetchone()
-    if row:
-        settings = None
-        if row[4]:
-            try:
-                settings = json.loads(row[4])
-            except (json.JSONDecodeError, TypeError):
-                settings = {}
-        return {
-            "id": row[0],
-            "username": row[1],
-            "display_name": row[2],
-            "created_at": row[3],
-            "settings": settings,
-        }
-    return None
+    return _row_to_user_dict(row) if row else None
 
 
 def create_user(
@@ -423,24 +419,7 @@ def get_all_users(conn: sqlite3.Connection) -> list[dict]:
     cursor.execute(
         "SELECT id, username, display_name, created_at, settings FROM users ORDER BY id"
     )
-    users = []
-    for row in cursor.fetchall():
-        settings = None
-        if row[4]:
-            try:
-                settings = json.loads(row[4])
-            except (json.JSONDecodeError, TypeError):
-                settings = {}
-        users.append(
-            {
-                "id": row[0],
-                "username": row[1],
-                "display_name": row[2],
-                "created_at": row[3],
-                "settings": settings,
-            }
-        )
-    return users
+    return [_row_to_user_dict(row) for row in cursor.fetchall()]
 
 
 def get_default_user_id() -> int:
@@ -693,129 +672,72 @@ def get_enrichment_stats(
     """
     cursor = conn.cursor()
 
-    # Build user filter clause
-    user_filter = ""
-    user_params: tuple[int, ...] = ()
-    if user_id:
-        user_filter = " AND ci.user_id = ?"
-        user_params = (user_id,)
+    # Build reusable query parts for optional user filtering
+    user_join = (
+        " JOIN content_items ci ON es.content_item_id = ci.id" if user_id else ""
+    )
+    user_filter = " AND ci.user_id = ?" if user_id else ""
+    user_params: tuple[int, ...] = (user_id,) if user_id else ()
 
-    # Total content items
-    if user_id:
-        cursor.execute(
-            "SELECT COUNT(*) FROM content_items ci WHERE 1=1" + user_filter,
-            user_params,
-        )
-    else:
-        cursor.execute("SELECT COUNT(*) FROM content_items")
-    total_items: int = cursor.fetchone()[0]
+    def _count_query(table_prefix: str, where_clause: str) -> int:
+        """Execute a COUNT query with optional user filtering."""
+        query = f"SELECT COUNT(*) FROM {table_prefix}{user_join} WHERE {where_clause}{user_filter}"
+        cursor.execute(query, user_params)
+        result: int = cursor.fetchone()[0]
+        return result
 
-    # Items with enrichment status
-    if user_id:
-        cursor.execute(
-            """SELECT COUNT(*) FROM enrichment_status es
-               JOIN content_items ci ON es.content_item_id = ci.id
-               WHERE 1=1"""
-            + user_filter,
-            user_params,
-        )
-    else:
-        cursor.execute("SELECT COUNT(*) FROM enrichment_status")
-    tracked_items: int = cursor.fetchone()[0]
+    # Use 'es' alias when joining, plain table name otherwise
+    es_prefix = "enrichment_status es" if user_id else "enrichment_status"
 
-    # Items needing enrichment
+    total_items: int = _count_query(
+        "content_items ci" if user_id else "content_items",
+        "ci.user_id = ?" if user_id else "1=1",
+    )
+    # Override: total_items doesn't use the enrichment join
     if user_id:
         cursor.execute(
-            """SELECT COUNT(*) FROM enrichment_status es
-               JOIN content_items ci ON es.content_item_id = ci.id
-               WHERE es.needs_enrichment = 1"""
-            + user_filter,
-            user_params,
+            "SELECT COUNT(*) FROM content_items WHERE user_id = ?", (user_id,)
         )
-    else:
-        cursor.execute(
-            "SELECT COUNT(*) FROM enrichment_status WHERE needs_enrichment = 1"
-        )
-    needs_enrichment: int = cursor.fetchone()[0]
+        total_items = cursor.fetchone()[0]
 
-    # Successfully enriched (needs_enrichment = 0, no error, and not "not_found")
-    if user_id:
-        cursor.execute(
-            """SELECT COUNT(*) FROM enrichment_status es
-               JOIN content_items ci ON es.content_item_id = ci.id
-               WHERE es.needs_enrichment = 0
-                 AND es.enrichment_error IS NULL
-                 AND es.enrichment_provider != 'none'"""
-            + user_filter,
-            user_params,
-        )
-    else:
-        cursor.execute(
-            """SELECT COUNT(*) FROM enrichment_status
-               WHERE needs_enrichment = 0
-                 AND enrichment_error IS NULL
-                 AND enrichment_provider != 'none'"""
-        )
-    enriched: int = cursor.fetchone()[0]
+    tracked_items: int = _count_query(es_prefix, "1=1")
+    needs_enrichment: int = _count_query(
+        es_prefix, "es.needs_enrichment = 1" if user_id else "needs_enrichment = 1"
+    )
+    enriched: int = _count_query(
+        es_prefix,
+        (
+            "es.needs_enrichment = 0 AND es.enrichment_error IS NULL"
+            " AND es.enrichment_provider != 'none'"
+            if user_id
+            else "needs_enrichment = 0 AND enrichment_error IS NULL"
+            " AND enrichment_provider != 'none'"
+        ),
+    )
+    failed: int = _count_query(
+        es_prefix,
+        (
+            "es.enrichment_error IS NOT NULL"
+            if user_id
+            else "enrichment_error IS NOT NULL"
+        ),
+    )
 
-    # Failed enrichment
-    if user_id:
-        cursor.execute(
-            """SELECT COUNT(*) FROM enrichment_status es
-               JOIN content_items ci ON es.content_item_id = ci.id
-               WHERE es.enrichment_error IS NOT NULL"""
-            + user_filter,
-            user_params,
-        )
-    else:
-        cursor.execute(
-            """SELECT COUNT(*) FROM enrichment_status
-               WHERE enrichment_error IS NOT NULL"""
-        )
-    failed: int = cursor.fetchone()[0]
-
-    # Items without any enrichment status (new items)
     untracked = total_items - tracked_items
 
-    # Breakdown by provider
-    if user_id:
-        cursor.execute(
-            """SELECT es.enrichment_provider, COUNT(*)
-               FROM enrichment_status es
-               JOIN content_items ci ON es.content_item_id = ci.id
-               WHERE es.enrichment_provider IS NOT NULL"""
-            + user_filter
-            + """ GROUP BY es.enrichment_provider""",
-            user_params,
+    def _group_query(select_col: str, where_clause: str) -> dict[str, int]:
+        """Execute a GROUP BY query with optional user filtering."""
+        col_prefix = f"es.{select_col}" if user_id else select_col
+        query = (
+            f"SELECT {col_prefix}, COUNT(*) FROM {es_prefix}{user_join}"
+            f" WHERE {col_prefix} IS NOT NULL{user_filter}"
+            f" GROUP BY {col_prefix}"
         )
-    else:
-        cursor.execute(
-            """SELECT enrichment_provider, COUNT(*)
-               FROM enrichment_status
-               WHERE enrichment_provider IS NOT NULL
-               GROUP BY enrichment_provider"""
-        )
-    by_provider: dict[str, int] = {row[0]: row[1] for row in cursor.fetchall()}
+        cursor.execute(query, user_params)
+        return {row[0]: row[1] for row in cursor.fetchall()}
 
-    # Breakdown by quality
-    if user_id:
-        cursor.execute(
-            """SELECT es.enrichment_quality, COUNT(*)
-               FROM enrichment_status es
-               JOIN content_items ci ON es.content_item_id = ci.id
-               WHERE es.enrichment_quality IS NOT NULL"""
-            + user_filter
-            + """ GROUP BY es.enrichment_quality""",
-            user_params,
-        )
-    else:
-        cursor.execute(
-            """SELECT enrichment_quality, COUNT(*)
-               FROM enrichment_status
-               WHERE enrichment_quality IS NOT NULL
-               GROUP BY enrichment_quality"""
-        )
-    by_quality: dict[str, int] = {row[0]: row[1] for row in cursor.fetchall()}
+    by_provider = _group_query("enrichment_provider", "")
+    by_quality = _group_query("enrichment_quality", "")
 
     return {
         "total": total_items,
