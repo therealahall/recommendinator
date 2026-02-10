@@ -63,6 +63,21 @@ for i, emb in zip(items, embeddings):
 
 Avoid: `i`, `j`, `e`, `emb`, `ct`, `cfg`, single letters. Exception: `_` for unused variables, `cls` for class methods.
 
+### Code Cleanliness
+
+These standards are enforced strictly. Write clean code the first time — don't leave cleanup for later.
+
+- **DRY**: If you write the same pattern 3+ times, extract a helper or base class. Search the codebase for existing utilities before writing new ones (`get_enum_value()`, `extract_and_normalize_genres()`, `get_feature_flags()`, etc.).
+- **No `Any` types** where a real type exists. Use `TYPE_CHECKING` imports to avoid circular dependencies while keeping proper types.
+- **Use keyword arguments** for non-obvious parameters: `save_item(item, embedding=emb)` not `save_item(item, emb)`.
+- **Use `if x is not None:`** not `if x:` when the value could be `0`, `False`, or empty string.
+- **Delete dead code** — no backward-compat wrappers, no-op blocks, or methods nothing calls.
+- **Don't add defensive `or {}`** when model fields already have defaults.
+- **Copy dicts before mutating** if the original was passed in from outside.
+- **Module-level imports only** — no inline `import` inside functions. Use `TYPE_CHECKING` blocks instead of bottom-of-file import hacks.
+- **Never expose internal errors** in HTTP responses — use generic messages and log details server-side.
+- **Data-driven patterns** over copy-paste branches when multiple code paths differ only in names/mappings.
+
 ## Testing
 
 ### Requirements

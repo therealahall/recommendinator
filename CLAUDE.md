@@ -78,6 +78,51 @@ for i, emb in zip(items, embeddings):
 ```
 
 Avoid: `i`, `j`, `e`, `emb`, `ct`, `cfg`, single letters. Use full words.
+Exception: `_` for unused variables, `cls` for class methods.
+
+### Code Cleanliness Standards
+
+**These rules are non-negotiable. Every new line of code must follow them. Do not leave cleanup for later — write it clean the first time.**
+
+#### DRY — Don't Repeat Yourself
+
+- **3-strike rule**: If you write the same pattern 3+ times, extract a helper, base class, or data-driven approach. Two is a coincidence; three is a refactor.
+- **Use existing utilities**: Before writing extraction/normalization logic, search the codebase — `get_enum_value()`, `extract_and_normalize_genres()`, `ContentType.from_string()`, `get_feature_flags()`, etc. already exist.
+- **Data-driven over copy-paste branches**: When multiple branches differ only in table names, column lists, or field mappings, use a config dict and a single code path.
+- **Base classes for shared plugin behavior**: Use Template Method pattern (e.g., `ArrPlugin` base for Radarr/Sonarr) instead of duplicating fetch/transform/validate logic.
+- **Extract static methods for repeated internal patterns**: Options building, stream chunk iteration, keyword fetching — if two methods share the same 5-line block, extract it.
+
+#### Type Safety
+
+- **No `Any` where a real type exists.** Use `TYPE_CHECKING` imports to avoid circular dependencies while keeping proper types. Every function parameter and return value should have the most specific type possible.
+- **Use `from __future__ import annotations`** in modules that need forward references or `TYPE_CHECKING` imports.
+- **Use keyword arguments** for non-obvious positional parameters. `save_content_item(item, embedding=emb)` not `save_content_item(item, emb)`.
+- **Use `if x is not None:` not `if x:`** when the value could legitimately be `0`, `False`, or empty string.
+- **Derive field lists from models**, not hardcoded sets. Use `Model.model_fields` or introspection instead of manually listing field names that will go stale.
+
+#### Dead Code & Defensive Waste
+
+- **Delete unused code immediately.** No backward-compat wrappers, no-op `pass` blocks, commented-out code, or methods that nothing calls. Git has history if you need it back.
+- **Don't add defensive `or {}` / `or []`** when the model/dataclass already defaults the field. Trust your own defaults.
+- **Don't re-raise without modification**: `except SomeError: raise` is a no-op — remove the try/except entirely.
+- **Use `enumerate()`** not `count = 0; count += 1`.
+- **Use `upsert()`** instead of get-then-add-or-update when the API supports it.
+
+#### Security Defaults
+
+- **CORS defaults to localhost**, never wildcard. Set `allow_credentials=False` when wildcard origins are used.
+- **Never expose internal error details in HTTP responses.** Use generic messages (`"Failed to generate recommendations"`); log the real error server-side with `logger.error()`.
+- **Define credentials/constants in one canonical location**, import everywhere else. No duplicate definitions.
+
+#### Mutation & Side Effects
+
+- **Copy dicts/lists before mutating** if the original is passed in from outside. `dict(metadata)` before modifying, not `metadata["key"] = value` on someone else's dict.
+- **Set configuration once in `__init__`**, not on every method call (e.g., PRAGMA settings, collection metadata).
+
+#### Imports
+
+- **Module-level imports only.** No `import re` inside a function body. No bottom-of-file import hacks to avoid circularity — use `TYPE_CHECKING` blocks instead.
+- **Use `from __future__ import annotations`** when you need `TYPE_CHECKING` imports — it makes all annotations strings and avoids runtime import overhead.
 
 ### Testing Requirements
 
@@ -236,6 +281,11 @@ This ensures users can discover and understand all configuration options.
 - [ ] Linting: `ruff check src/ tests/`
 - [ ] No hardcoded values
 - [ ] No references to config/config.yaml
+- [ ] No abbreviated variable names (`e`, `i`, `msg`, `cfg`, etc.)
+- [ ] No `Any` types where a real type exists (use `TYPE_CHECKING` if needed)
+- [ ] No duplicated logic — extracted to shared helpers/base classes
+- [ ] No dead code, backward-compat wrappers, or no-op blocks
+- [ ] No `detail=str(error)` in HTTP exceptions — use generic messages
 - [ ] Error handling appropriate
-- [ ] Type hints used
+- [ ] Keyword arguments used for non-obvious parameters
 - [ ] **Documentation is accurate** — all affected docs updated (see Documentation Maintenance above)
