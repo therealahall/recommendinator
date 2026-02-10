@@ -1,10 +1,22 @@
 """Memory management for conversation system."""
 
+import json
 from datetime import datetime
 from typing import Literal
 
 from src.models.conversation import ConversationMessage, CoreMemory, PreferenceProfile
 from src.storage.manager import StorageManager
+from src.storage.schema import (
+    clear_conversation_history,
+    delete_core_memory,
+    get_conversation_history,
+    get_core_memories,
+    get_preference_profile,
+    save_conversation_message,
+    save_core_memory,
+    save_preference_profile,
+    update_core_memory,
+)
 
 
 class MemoryManager:
@@ -41,18 +53,13 @@ class MemoryManager:
         Returns:
             List of CoreMemory objects
         """
-        from src.storage.schema import get_core_memories
-
-        conn = self.storage.sqlite_db._get_connection()
-        try:
+        with self.storage.sqlite_db.connection() as conn:
             memory_dicts = get_core_memories(
                 conn, user_id, active_only=active_only, memory_type=memory_type
             )
             return [
                 self._dict_to_core_memory(memory_dict) for memory_dict in memory_dicts
             ]
-        finally:
-            conn.close()
 
     def save_core_memory(
         self,
@@ -74,10 +81,7 @@ class MemoryManager:
         Returns:
             The saved CoreMemory with its ID
         """
-        from src.storage.schema import save_core_memory
-
-        conn = self.storage.sqlite_db._get_connection()
-        try:
+        with self.storage.sqlite_db.connection() as conn:
             memory_id = save_core_memory(
                 conn,
                 user_id=user_id,
@@ -97,8 +101,6 @@ class MemoryManager:
                 created_at=datetime.now(),
                 updated_at=datetime.now(),
             )
-        finally:
-            conn.close()
 
     def update_core_memory(
         self,
@@ -116,18 +118,13 @@ class MemoryManager:
         Returns:
             True if updated, False if not found
         """
-        from src.storage.schema import update_core_memory
-
-        conn = self.storage.sqlite_db._get_connection()
-        try:
+        with self.storage.sqlite_db.connection() as conn:
             return update_core_memory(
                 conn,
                 memory_id=memory_id,
                 memory_text=memory_text,
                 is_active=is_active,
             )
-        finally:
-            conn.close()
 
     def delete_core_memory(self, memory_id: int) -> bool:
         """Delete a core memory.
@@ -138,13 +135,8 @@ class MemoryManager:
         Returns:
             True if deleted, False if not found
         """
-        from src.storage.schema import delete_core_memory
-
-        conn = self.storage.sqlite_db._get_connection()
-        try:
+        with self.storage.sqlite_db.connection() as conn:
             return delete_core_memory(conn, memory_id)
-        finally:
-            conn.close()
 
     def deactivate_memory(self, memory_id: int) -> bool:
         """Deactivate a memory (soft delete).
@@ -184,17 +176,12 @@ class MemoryManager:
         Returns:
             List of ConversationMessage objects ordered chronologically
         """
-        from src.storage.schema import get_conversation_history
-
-        conn = self.storage.sqlite_db._get_connection()
-        try:
+        with self.storage.sqlite_db.connection() as conn:
             message_dicts = get_conversation_history(conn, user_id, limit=limit)
             return [
                 self._dict_to_conversation_message(message_dict)
                 for message_dict in message_dicts
             ]
-        finally:
-            conn.close()
 
     def save_conversation_message(
         self,
@@ -214,10 +201,7 @@ class MemoryManager:
         Returns:
             The saved ConversationMessage with its ID
         """
-        from src.storage.schema import save_conversation_message
-
-        conn = self.storage.sqlite_db._get_connection()
-        try:
+        with self.storage.sqlite_db.connection() as conn:
             message_id = save_conversation_message(
                 conn,
                 user_id=user_id,
@@ -233,8 +217,6 @@ class MemoryManager:
                 tool_calls=tool_calls,
                 created_at=datetime.now(),
             )
-        finally:
-            conn.close()
 
     def clear_conversation_history(self, user_id: int) -> int:
         """Clear conversation history for a user (the "reset" functionality).
@@ -247,13 +229,8 @@ class MemoryManager:
         Returns:
             Number of messages deleted
         """
-        from src.storage.schema import clear_conversation_history
-
-        conn = self.storage.sqlite_db._get_connection()
-        try:
+        with self.storage.sqlite_db.connection() as conn:
             return clear_conversation_history(conn, user_id)
-        finally:
-            conn.close()
 
     # Preference Profile Operations
 
@@ -266,16 +243,11 @@ class MemoryManager:
         Returns:
             PreferenceProfile or None if not found
         """
-        from src.storage.schema import get_preference_profile
-
-        conn = self.storage.sqlite_db._get_connection()
-        try:
+        with self.storage.sqlite_db.connection() as conn:
             profile_dict = get_preference_profile(conn, user_id)
             if profile_dict:
                 return self._dict_to_preference_profile(profile_dict)
             return None
-        finally:
-            conn.close()
 
     def save_preference_profile(self, profile: PreferenceProfile) -> int:
         """Save or update a preference profile.
@@ -286,12 +258,7 @@ class MemoryManager:
         Returns:
             Profile ID
         """
-        import json
-
-        from src.storage.schema import save_preference_profile
-
-        conn = self.storage.sqlite_db._get_connection()
-        try:
+        with self.storage.sqlite_db.connection() as conn:
             profile_data = {
                 "genre_affinities": profile.genre_affinities,
                 "theme_preferences": profile.theme_preferences,
@@ -303,8 +270,6 @@ class MemoryManager:
                 user_id=profile.user_id,
                 profile_json=json.dumps(profile_data),
             )
-        finally:
-            conn.close()
 
     # Helper Methods
 

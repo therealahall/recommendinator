@@ -415,11 +415,8 @@ class StorageManager:
         Returns:
             List of user dicts ordered by id.
         """
-        conn = self.sqlite_db._get_connection()
-        try:
+        with self.sqlite_db.connection() as conn:
             return get_all_users(conn)
-        finally:
-            conn.close()
 
     def get_user_preference_config(self, user_id: int) -> UserPreferenceConfig:
         """Load user preference config from DB.
@@ -432,8 +429,7 @@ class StorageManager:
         Returns:
             UserPreferenceConfig for the user.
         """
-        conn = self.sqlite_db._get_connection()
-        try:
+        with self.sqlite_db.connection() as conn:
             user = get_user_by_id(conn, user_id)
             if (
                 user
@@ -444,8 +440,6 @@ class StorageManager:
                     user["settings"]["preference_config"]
                 )
             return UserPreferenceConfig()
-        finally:
-            conn.close()
 
     def save_user_preference_config(
         self, user_id: int, preference_config: UserPreferenceConfig
@@ -459,13 +453,10 @@ class StorageManager:
             user_id: User ID.
             preference_config: Preference config to persist.
         """
-        conn = self.sqlite_db._get_connection()
-        try:
+        with self.sqlite_db.connection() as conn:
             update_user_settings(
                 conn, user_id, {"preference_config": preference_config.to_dict()}
             )
-        finally:
-            conn.close()
 
     def get_cached_preference_interpretation(self, cache_key: str) -> str | None:
         """Get a cached preference interpretation.
@@ -476,11 +467,8 @@ class StorageManager:
         Returns:
             Cached JSON string or None if not found.
         """
-        conn = self.sqlite_db._get_connection()
-        try:
+        with self.sqlite_db.connection() as conn:
             return get_cached_preference_interpretation(conn, cache_key)
-        finally:
-            conn.close()
 
     def save_cached_preference_interpretation(
         self, cache_key: str, interpretation_json: str
@@ -491,11 +479,8 @@ class StorageManager:
             cache_key: The cache key.
             interpretation_json: JSON string of the interpretation.
         """
-        conn = self.sqlite_db._get_connection()
-        try:
+        with self.sqlite_db.connection() as conn:
             save_cached_preference_interpretation(conn, cache_key, interpretation_json)
-        finally:
-            conn.close()
 
     def clear_cached_preference_interpretations(self) -> int:
         """Clear all cached preference interpretations.
@@ -503,11 +488,8 @@ class StorageManager:
         Returns:
             Number of rows deleted.
         """
-        conn = self.sqlite_db._get_connection()
-        try:
+        with self.sqlite_db.connection() as conn:
             return clear_cached_preference_interpretations(conn)
-        finally:
-            conn.close()
 
     # Enrichment status methods
 
@@ -548,11 +530,8 @@ class StorageManager:
         Returns:
             Enrichment status dict or None if not found
         """
-        conn = self.sqlite_db._get_connection()
-        try:
+        with self.sqlite_db.connection() as conn:
             return get_enrichment_status(conn, content_item_id)
-        finally:
-            conn.close()
 
     def mark_enrichment_complete(
         self,
@@ -567,11 +546,8 @@ class StorageManager:
             provider: Name of the provider that enriched the item
             quality: Match quality ("high", "medium", "not_found")
         """
-        conn = self.sqlite_db._get_connection()
-        try:
+        with self.sqlite_db.connection() as conn:
             mark_enrichment_complete(conn, content_item_id, provider, quality)
-        finally:
-            conn.close()
 
     def mark_enrichment_failed(
         self,
@@ -584,11 +560,8 @@ class StorageManager:
             content_item_id: Content item database ID
             error: Error message describing the failure
         """
-        conn = self.sqlite_db._get_connection()
-        try:
+        with self.sqlite_db.connection() as conn:
             mark_enrichment_failed(conn, content_item_id, error)
-        finally:
-            conn.close()
 
     def mark_item_needs_enrichment(self, content_item_id: int) -> None:
         """Mark an item as needing enrichment.
@@ -596,11 +569,8 @@ class StorageManager:
         Args:
             content_item_id: Content item database ID
         """
-        conn = self.sqlite_db._get_connection()
-        try:
+        with self.sqlite_db.connection() as conn:
             mark_item_needs_enrichment(conn, content_item_id)
-        finally:
-            conn.close()
 
     def reset_enrichment_status(
         self,
@@ -619,12 +589,9 @@ class StorageManager:
         Returns:
             Number of items reset
         """
-        conn = self.sqlite_db._get_connection()
-        try:
+        with self.sqlite_db.connection() as conn:
             content_type_str = content_type.value if content_type else None
             return reset_enrichment_status(conn, provider, content_type_str, user_id)
-        finally:
-            conn.close()
 
     def get_enrichment_stats(
         self, user_id: int | None = None
@@ -644,11 +611,8 @@ class StorageManager:
             - by_provider: Breakdown by provider
             - by_quality: Breakdown by match quality
         """
-        conn = self.sqlite_db._get_connection()
-        try:
+        with self.sqlite_db.connection() as conn:
             return get_enrichment_stats(conn, user_id)
-        finally:
-            conn.close()
 
     def get_content_item_db_id(
         self,
@@ -690,13 +654,10 @@ class StorageManager:
         Returns:
             List of memory dicts
         """
-        conn = self.sqlite_db._get_connection()
-        try:
+        with self.sqlite_db.connection() as conn:
             return get_core_memories(
                 conn, user_id, active_only=active_only, memory_type=memory_type
             )
-        finally:
-            conn.close()
 
     def save_core_memory(
         self,
@@ -718,8 +679,7 @@ class StorageManager:
         Returns:
             New memory ID
         """
-        conn = self.sqlite_db._get_connection()
-        try:
+        with self.sqlite_db.connection() as conn:
             return save_core_memory(
                 conn,
                 user_id=user_id,
@@ -728,8 +688,6 @@ class StorageManager:
                 source=source,
                 confidence=confidence,
             )
-        finally:
-            conn.close()
 
     def update_core_memory(
         self,
@@ -747,16 +705,13 @@ class StorageManager:
         Returns:
             True if updated, False if not found
         """
-        conn = self.sqlite_db._get_connection()
-        try:
+        with self.sqlite_db.connection() as conn:
             return update_core_memory(
                 conn,
                 memory_id=memory_id,
                 memory_text=memory_text,
                 is_active=is_active,
             )
-        finally:
-            conn.close()
 
     def delete_core_memory(self, memory_id: int) -> bool:
         """Delete a core memory.
@@ -767,11 +722,8 @@ class StorageManager:
         Returns:
             True if deleted, False if not found
         """
-        conn = self.sqlite_db._get_connection()
-        try:
+        with self.sqlite_db.connection() as conn:
             return delete_core_memory(conn, memory_id)
-        finally:
-            conn.close()
 
     # Conversation history methods
 
@@ -789,11 +741,8 @@ class StorageManager:
         Returns:
             List of message dicts ordered chronologically (oldest first)
         """
-        conn = self.sqlite_db._get_connection()
-        try:
+        with self.sqlite_db.connection() as conn:
             return get_conversation_history(conn, user_id, limit=limit)
-        finally:
-            conn.close()
 
     def save_conversation_message(
         self,
@@ -813,8 +762,7 @@ class StorageManager:
         Returns:
             New message ID
         """
-        conn = self.sqlite_db._get_connection()
-        try:
+        with self.sqlite_db.connection() as conn:
             return save_conversation_message(
                 conn,
                 user_id=user_id,
@@ -822,8 +770,6 @@ class StorageManager:
                 content=content,
                 tool_calls=tool_calls,
             )
-        finally:
-            conn.close()
 
     def clear_conversation_history(self, user_id: int) -> int:
         """Clear conversation history for a user (the "reset" functionality).
@@ -836,11 +782,8 @@ class StorageManager:
         Returns:
             Number of messages deleted
         """
-        conn = self.sqlite_db._get_connection()
-        try:
+        with self.sqlite_db.connection() as conn:
             return clear_conversation_history(conn, user_id)
-        finally:
-            conn.close()
 
     # Preference profile methods
 
@@ -853,11 +796,8 @@ class StorageManager:
         Returns:
             Profile dict or None if not found
         """
-        conn = self.sqlite_db._get_connection()
-        try:
+        with self.sqlite_db.connection() as conn:
             return get_preference_profile(conn, user_id)
-        finally:
-            conn.close()
 
     def save_preference_profile(self, user_id: int, profile_json: str) -> int:
         """Save or update a preference profile.
@@ -869,8 +809,5 @@ class StorageManager:
         Returns:
             Profile ID
         """
-        conn = self.sqlite_db._get_connection()
-        try:
+        with self.sqlite_db.connection() as conn:
             return save_preference_profile(conn, user_id, profile_json)
-        finally:
-            conn.close()

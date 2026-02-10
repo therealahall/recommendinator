@@ -3,6 +3,8 @@
 import json
 import re
 import sqlite3
+from collections.abc import Generator
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -110,6 +112,12 @@ class SQLiteDB:
         """
         self.db_path = db_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        # Set WAL mode once during initialization
+        init_conn = sqlite3.connect(self.db_path)
+        try:
+            init_conn.execute("PRAGMA journal_mode = WAL")
+        finally:
+            init_conn.close()
         self._ensure_schema()
 
     def _get_connection(self) -> sqlite3.Connection:
@@ -120,19 +128,28 @@ class SQLiteDB:
         """
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
-        # Enable foreign keys
         conn.execute("PRAGMA foreign_keys = ON")
-        # Enable WAL mode for better concurrency (allows reads during writes)
-        conn.execute("PRAGMA journal_mode = WAL")
         return conn
+
+    @contextmanager
+    def connection(self) -> Generator[sqlite3.Connection, None, None]:
+        """Context manager for database connections.
+
+        Yields a connection and ensures it is closed after use.
+
+        Yields:
+            SQLite connection
+        """
+        conn = self._get_connection()
+        try:
+            yield conn
+        finally:
+            conn.close()
 
     def _ensure_schema(self) -> None:
         """Ensure database schema is created."""
-        conn = self._get_connection()
-        try:
+        with self.connection() as conn:
             create_schema(conn)
-        finally:
-            conn.close()
 
     def save_content_item(self, item: ContentItem, user_id: int | None = None) -> int:
         """Save or update a content item.
@@ -147,8 +164,7 @@ class SQLiteDB:
         # Use provided user_id, fall back to item's user_id, then default
         effective_user_id = user_id or item.user_id or get_default_user_id()
 
-        conn = self._get_connection()
-        try:
+        with self.connection() as conn:
             cursor = conn.cursor()
 
             content_type_value = get_enum_value(item.content_type)
@@ -239,8 +255,6 @@ class SQLiteDB:
 
             conn.commit()
             return db_id  # type: ignore
-        finally:
-            conn.close()
 
     def _save_detail_table(
         self, cursor: sqlite3.Cursor, db_id: int, item: ContentItem, content_type: str
@@ -468,8 +482,7 @@ class SQLiteDB:
         Returns:
             ContentItem if found, None otherwise
         """
-        conn = self._get_connection()
-        try:
+        with self.connection() as conn:
             cursor = conn.cursor()
             query = """
                 SELECT ci.*,
@@ -508,8 +521,6 @@ class SQLiteDB:
             if row:
                 return self._row_to_content_item(row)
             return None
-        finally:
-            conn.close()
 
     def get_content_items(
         self,
@@ -539,8 +550,7 @@ class SQLiteDB:
         # Default to default user if not specified
         effective_user_id = user_id if user_id is not None else get_default_user_id()
 
-        conn = self._get_connection()
-        try:
+        with self.connection() as conn:
             cursor = conn.cursor()
             query = """
                 SELECT ci.*,
@@ -619,8 +629,6 @@ class SQLiteDB:
                     items = items[:limit]
 
             return items
-        finally:
-            conn.close()
 
     def get_unconsumed_items(
         self,
@@ -843,8 +851,7 @@ class SQLiteDB:
         Returns:
             True if item was deleted, False if not found
         """
-        conn = self._get_connection()
-        try:
+        with self.connection() as conn:
             cursor = conn.cursor()
             if user_id is not None:
                 cursor.execute(
@@ -855,8 +862,6 @@ class SQLiteDB:
                 cursor.execute("DELETE FROM content_items WHERE id = ?", (db_id,))
             conn.commit()
             return cursor.rowcount > 0
-        finally:
-            conn.close()
 
     def set_item_ignored(
         self, db_id: int, ignored: bool, user_id: int | None = None
@@ -871,8 +876,7 @@ class SQLiteDB:
         Returns:
             True if item was updated, False if not found
         """
-        conn = self._get_connection()
-        try:
+        with self.connection() as conn:
             cursor = conn.cursor()
             if user_id is not None:
                 cursor.execute(
@@ -890,8 +894,6 @@ class SQLiteDB:
                 )
             conn.commit()
             return cursor.rowcount > 0
-        finally:
-            conn.close()
 
     def count_items(
         self,
@@ -911,8 +913,7 @@ class SQLiteDB:
         """
         effective_user_id = user_id if user_id is not None else get_default_user_id()
 
-        conn = self._get_connection()
-        try:
+        with self.connection() as conn:
             cursor = conn.cursor()
             query = "SELECT COUNT(*) FROM content_items WHERE user_id = ?"
             params: list[Any] = [effective_user_id]
@@ -930,8 +931,6 @@ class SQLiteDB:
             cursor.execute(query, params)
             result = cursor.fetchone()
             return result[0] if result else 0
-        finally:
-            conn.close()
 
     def get_content_item_by_external_id(
         self,
@@ -951,14 +950,9 @@ class SQLiteDB:
         """
         effective_user_id = user_id if user_id is not None else get_default_user_id()
 
-        conn = self._get_connection()
-        try:
+        with self.connection() as conn:
             cursor = conn.cursor()
-            content_type_value = (
-                content_type.value
-                if hasattr(content_type, "value")
-                else str(content_type)
-            )
+            content_type_value = get_enum_value(content_type)
             cursor.execute(
                 """SELECT id FROM content_items
                    WHERE user_id = ? AND external_id = ? AND content_type = ?""",
@@ -968,8 +962,6 @@ class SQLiteDB:
             if row:
                 return self.get_content_item(row["id"], user_id=effective_user_id)
             return None
-        finally:
-            conn.close()
 
     def get_items_needing_enrichment(
         self,
@@ -996,8 +988,7 @@ class SQLiteDB:
         """
         effective_user_id = user_id if user_id is not None else get_default_user_id()
 
-        conn = self._get_connection()
-        try:
+        with self.connection() as conn:
             cursor = conn.cursor()
 
             # Find items without enrichment status or with needs_enrichment=TRUE
@@ -1035,8 +1026,6 @@ class SQLiteDB:
                     results.append((db_id, item))
 
             return results
-        finally:
-            conn.close()
 
     def get_content_item_db_id(
         self,
@@ -1056,14 +1045,9 @@ class SQLiteDB:
         """
         effective_user_id = user_id if user_id is not None else get_default_user_id()
 
-        conn = self._get_connection()
-        try:
+        with self.connection() as conn:
             cursor = conn.cursor()
-            content_type_value = (
-                content_type.value
-                if hasattr(content_type, "value")
-                else str(content_type)
-            )
+            content_type_value = get_enum_value(content_type)
             cursor.execute(
                 """SELECT id FROM content_items
                    WHERE user_id = ? AND external_id = ? AND content_type = ?""",
@@ -1071,5 +1055,3 @@ class SQLiteDB:
             )
             row = cursor.fetchone()
             return row["id"] if row else None
-        finally:
-            conn.close()
