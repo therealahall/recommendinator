@@ -1,5 +1,6 @@
 """ChromaDB vector database manager for embeddings."""
 
+import logging
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, cast
@@ -7,6 +8,8 @@ from typing import Any, cast
 import chromadb
 import numpy as np
 from chromadb.config import Settings
+
+logger = logging.getLogger(__name__)
 
 
 class VectorDB:
@@ -52,46 +55,15 @@ class VectorDB:
             embedding: Vector embedding
             metadata: Optional metadata dictionary
         """
-        # Prepare metadata
-        doc_metadata = metadata or {}
+        # Copy metadata to avoid mutating caller's dict
+        doc_metadata = dict(metadata) if metadata else {}
         doc_metadata["content_id"] = content_id
 
-        # Check if embedding exists and update or add accordingly
-        try:
-            existing = self.collection.get(ids=[content_id])
-            if existing["ids"] and len(existing["ids"]) > 0:
-                # Update existing embedding
-                self.collection.update(
-                    ids=[content_id],
-                    embeddings=cast(list[Sequence[float]], [embedding]),
-                    metadatas=[doc_metadata],
-                )
-            else:
-                # Add new embedding
-                self.collection.add(
-                    ids=[content_id],
-                    embeddings=cast(list[Sequence[float]], [embedding]),
-                    metadatas=[doc_metadata],
-                )
-        except Exception:
-            # If update fails, try adding (might not exist)
-            try:
-                self.collection.add(
-                    ids=[content_id],
-                    embeddings=cast(list[Sequence[float]], [embedding]),
-                    metadatas=[doc_metadata],
-                )
-            except Exception:
-                # If add fails (duplicate), delete and re-add
-                try:
-                    self.collection.delete(ids=[content_id])
-                except Exception:
-                    pass
-                self.collection.add(
-                    ids=[content_id],
-                    embeddings=cast(list[Sequence[float]], [embedding]),
-                    metadatas=[doc_metadata],
-                )
+        self.collection.upsert(
+            ids=[content_id],
+            embeddings=cast(list[Sequence[float]], [embedding]),
+            metadatas=[doc_metadata],
+        )
 
     def get_embedding(self, content_id: str) -> list[float] | None:
         """Get embedding for a content item.
@@ -117,6 +89,7 @@ class VectorDB:
                 return list(raw_embedding) if raw_embedding else None
             return None
         except Exception:
+            logger.exception("Failed to get embedding for %s", content_id)
             return None
 
     def search_similar(
@@ -156,7 +129,7 @@ class VectorDB:
             formatted_results = []
             if results["ids"] and len(results["ids"]) > 0:
                 exclude_set = set(exclude_ids) if exclude_ids else set()
-                for i, content_id in enumerate(results["ids"][0]):
+                for index, content_id in enumerate(results["ids"][0]):
                     # Skip excluded IDs
                     if content_id in exclude_set:
                         continue
@@ -167,10 +140,14 @@ class VectorDB:
                         {
                             "content_id": content_id,
                             "score": (
-                                1.0 - distances[0][i] if distances is not None else None
+                                1.0 - distances[0][index]
+                                if distances is not None
+                                else None
                             ),
                             "metadata": (
-                                metadatas[0][i] if metadatas is not None else {}
+                                metadatas[0][index]
+                                if metadatas is not None
+                                else {}
                             ),
                         }
                     )
@@ -180,10 +157,8 @@ class VectorDB:
                         break
 
             return formatted_results
-        except Exception as e:
-            import logging
-
-            logging.getLogger(__name__).error(f"Vector search failed: {e}")
+        except Exception:
+            logger.exception("Vector search failed")
             return []
 
     def delete_embedding(self, content_id: str) -> bool:
@@ -199,6 +174,7 @@ class VectorDB:
             self.collection.delete(ids=[content_id])
             return True
         except Exception:
+            logger.exception("Failed to delete embedding for %s", content_id)
             return False
 
     def has_embedding(self, content_id: str) -> bool:
@@ -214,6 +190,7 @@ class VectorDB:
             results = self.collection.get(ids=[content_id])
             return len(results["ids"]) > 0
         except Exception:
+            logger.exception("Failed to check embedding for %s", content_id)
             return False
 
     def count_embeddings(self) -> int:
@@ -225,4 +202,5 @@ class VectorDB:
         try:
             return self.collection.count()
         except Exception:
+            logger.exception("Failed to count embeddings")
             return 0
