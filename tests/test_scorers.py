@@ -12,9 +12,9 @@ from src.recommendations.scorers import (
     SemanticSimilarityScorer,
     SeriesOrderScorer,
     TagOverlapScorer,
-    _extract_creator,
-    _extract_genres,
     build_scorers_with_overrides,
+    extract_creator,
+    extract_genres,
 )
 from src.utils.series import build_series_tracking
 
@@ -70,29 +70,29 @@ def _build_context(
 class TestExtractGenres:
     def test_single_genre(self) -> None:
         item = _make_item(metadata={"genre": "Fantasy"})
-        assert _extract_genres(item) == ["fantasy"]
+        assert extract_genres(item) == ["fantasy"]
 
     def test_genres_list(self) -> None:
         item = _make_item(metadata={"genres": ["Action", "RPG"]})
-        assert _extract_genres(item) == ["action", "rpg"]
+        assert extract_genres(item) == ["action", "rpg"]
 
     def test_both_genre_and_genres(self) -> None:
         item = _make_item(metadata={"genre": "Sci-Fi", "genres": ["Action"]})
-        result = _extract_genres(item)
+        result = extract_genres(item)
         # "sci-fi" is normalized to "science fiction"
         assert "science fiction" in result
         assert "action" in result
 
     def test_no_metadata(self) -> None:
         item = _make_item(metadata={})
-        assert _extract_genres(item) == []
+        assert extract_genres(item) == []
 
     def test_tags_included_for_cross_content_matching(self) -> None:
         """Tags should be extracted alongside genres for cross-content-type matching."""
         item = _make_item(
             metadata={"genres": ["Fantasy"], "tags": ["epic", "adventure"]}
         )
-        result = _extract_genres(item)
+        result = extract_genres(item)
         assert "fantasy" in result
         assert "epic" in result
         assert "adventure" in result
@@ -100,7 +100,7 @@ class TestExtractGenres:
     def test_tags_list_as_string(self) -> None:
         """Tags as comma-separated string should be extracted."""
         item = _make_item(metadata={"tags": "sci-fi, space opera"})
-        result = _extract_genres(item)
+        result = extract_genres(item)
         # "sci-fi" is normalized to "science fiction"
         assert "science fiction" in result
         assert "space opera" in result
@@ -109,15 +109,15 @@ class TestExtractGenres:
 class TestExtractCreator:
     def test_author_field(self) -> None:
         item = _make_item(author="Brandon Sanderson")
-        assert _extract_creator(item) == "brandon sanderson"
+        assert extract_creator(item) == "brandon sanderson"
 
     def test_director_metadata(self) -> None:
         item = _make_item(metadata={"director": "Christopher Nolan"})
-        assert _extract_creator(item) == "christopher nolan"
+        assert extract_creator(item) == "christopher nolan"
 
     def test_no_creator(self) -> None:
         item = _make_item()
-        assert _extract_creator(item) is None
+        assert extract_creator(item) is None
 
 
 # ---------------------------------------------------------------------------
@@ -753,8 +753,8 @@ class TestCustomPreferenceScorer:
 class TestContentLengthScorer:
     """Tests for the ContentLengthScorer."""
 
-    def test_no_preferences_returns_1(self) -> None:
-        """No content_length_preferences in context returns 1.0."""
+    def test_no_preferences_returns_neutral(self) -> None:
+        """No content_length_preferences in context returns 0.5 (neutral)."""
         candidate = _make_item(
             content_type=ContentType.BOOK,
             metadata={"pages": 800},
@@ -762,7 +762,7 @@ class TestContentLengthScorer:
         )
         context = _build_context(consumed=[])
         scorer = ContentLengthScorer()
-        assert scorer.score(candidate, context) == 1.0
+        assert scorer.score(candidate, context) == 0.5
 
     def test_exact_match_returns_1(self) -> None:
         """Short book with short preference returns 1.0."""

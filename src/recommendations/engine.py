@@ -6,7 +6,7 @@ from typing import Any
 
 from src.llm.embeddings import EmbeddingGenerator
 from src.llm.recommendations import RecommendationGenerator
-from src.models.content import ContentItem, ContentType
+from src.models.content import ContentItem, ContentType, get_enum_value
 from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.preference_interpreter import (
     InterpretedPreference,
@@ -20,9 +20,9 @@ from src.recommendations.scorers import (
     Scorer,
     ScoringContext,
     SemanticSimilarityScorer,
-    _extract_creator,
-    _extract_genres,
     build_scorers_with_overrides,
+    extract_creator,
+    extract_genres,
 )
 from src.recommendations.scoring_pipeline import ScoredCandidate, ScoringPipeline
 from src.recommendations.similarity import SimilarityMatcher
@@ -176,7 +176,7 @@ class RecommendationEngine:
                 unconsumed_items = [
                     item
                     for item in unconsumed_items
-                    if self._get_content_type_str(item.content_type)
+                    if get_enum_value(item.content_type)
                     not in interpreted_prefs.content_type_exclusions
                 ]
                 if unconsumed_items:
@@ -547,8 +547,8 @@ class RecommendationEngine:
         Returns:
             Top 3 contributing consumed items (by overlap score).
         """
-        candidate_genres = set(_extract_genres(candidate))
-        candidate_creator = _extract_creator(candidate)
+        candidate_genres = set(extract_genres(candidate))
+        candidate_creator = extract_creator(candidate)
 
         scored: list[tuple[ContentItem, float]] = []
         for consumed in all_consumed_items:
@@ -556,7 +556,7 @@ class RecommendationEngine:
                 continue
 
             overlap = 0.0
-            consumed_genres = set(_extract_genres(consumed))
+            consumed_genres = set(extract_genres(consumed))
             if candidate_genres and consumed_genres:
                 intersection = candidate_genres & consumed_genres
                 if intersection:
@@ -564,7 +564,7 @@ class RecommendationEngine:
                         candidate_genres | consumed_genres
                     )
 
-            consumed_creator = _extract_creator(consumed)
+            consumed_creator = extract_creator(consumed)
             if (
                 candidate_creator
                 and consumed_creator
@@ -643,19 +643,6 @@ class RecommendationEngine:
             return f"Recommended because you enjoy {genre}"
 
         return "Recommended based on your preferences"
-
-    def _get_content_type_str(self, content_type: ContentType | str) -> str:
-        """Extract string value from a ContentType enum or string.
-
-        Args:
-            content_type: ContentType enum or string value.
-
-        Returns:
-            Lowercase string value.
-        """
-        if isinstance(content_type, ContentType):
-            return content_type.value.lower()
-        return str(content_type).lower()
 
     def _strip_series_info(self, title: str) -> str:
         """Strip series information from a title for cleaner display.

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from enum import Enum
 
-from src.models.content import ContentItem, ContentType
+from src.models.content import ContentItem, get_enum_value
 
 
 class LengthPreference(str, Enum):
@@ -41,21 +41,6 @@ _LENGTH_METADATA_KEYS: dict[str, list[str]] = {
 }
 
 
-def _get_content_type_value(content_type: ContentType | str) -> str:
-    """Extract string value from a ContentType enum or string.
-
-    Args:
-        content_type: ContentType enum or string value.
-
-    Returns:
-        Lowercase string value.
-    """
-    # ContentType is a str subclass, so use isinstance to properly narrow the type
-    if isinstance(content_type, ContentType):
-        return content_type.value.lower()
-    return content_type.lower()
-
-
 def get_length_value(item: ContentItem) -> int | None:
     """Extract the length value from a content item's metadata.
 
@@ -65,7 +50,7 @@ def get_length_value(item: ContentItem) -> int | None:
     Returns:
         The numeric length value, or ``None`` if no length metadata is present.
     """
-    content_type_str = _get_content_type_value(item.content_type)
+    content_type_str = get_enum_value(item.content_type)
     keys = _LENGTH_METADATA_KEYS.get(content_type_str, [])
 
     if not item.metadata:
@@ -94,7 +79,7 @@ def classify_length(
         The length classification, or ``None`` if no length metadata is
         available.
     """
-    content_type_str = _get_content_type_value(item.content_type)
+    content_type_str = get_enum_value(item.content_type)
     thresholds = _THRESHOLDS.get(content_type_str)
     if thresholds is None:
         return None
@@ -131,7 +116,7 @@ def score_length_match(
     Returns:
         A float between 0.0 and 1.0.
     """
-    content_type_str = _get_content_type_value(item.content_type)
+    content_type_str = get_enum_value(item.content_type)
     preference_str = content_length_preferences.get(content_type_str, "any")
 
     if preference_str == "any":
@@ -174,7 +159,7 @@ def passes_length_filter(
     Returns:
         ``True`` if the item should be included.
     """
-    content_type_str = _get_content_type_value(item.content_type)
+    content_type_str = get_enum_value(item.content_type)
     preference_str = content_length_preferences.get(content_type_str, "any")
 
     if preference_str == "any":

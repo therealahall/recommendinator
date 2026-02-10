@@ -22,7 +22,7 @@ from src.utils.series import extract_series_info
 logger = logging.getLogger(__name__)
 
 
-def _extract_genres(item: ContentItem) -> list[str]:
+def extract_genres(item: ContentItem) -> list[str]:
     """Extract and normalize genre/tag strings from an item's metadata.
 
     Uses the genre_normalizer to clean and filter terms, enabling
@@ -38,7 +38,7 @@ def _extract_genres(item: ContentItem) -> list[str]:
     return extract_and_normalize_genres(item.metadata)
 
 
-def _extract_creator(item: ContentItem) -> str | None:
+def extract_creator(item: ContentItem) -> str | None:
     """Return the primary creator for *item* (lowercased).
 
     Falls back to metadata keys ``director``, ``developer``, ``studio``.
@@ -101,13 +101,13 @@ class ScoringContext:
         genres: set[str] = set()
 
         for item in self.consumed_items:
-            item_genres = _extract_genres(item)
+            item_genres = extract_genres(item)
             genres.update(item_genres)
             if item.rating is not None:
                 for genre in item_genres:
                     genre_ratings[genre].append(item.rating)
 
-            creator = _extract_creator(item)
+            creator = extract_creator(item)
             if creator:
                 creators.add(creator)
 
@@ -184,7 +184,7 @@ class GenreMatchScorer(Scorer):
         super().__init__(weight)
 
     def score(self, candidate: ContentItem, context: ScoringContext) -> float:
-        candidate_genres = _extract_genres(candidate)
+        candidate_genres = extract_genres(candidate)
         if not candidate_genres:
             return 0.5  # neutral when no genre info
 
@@ -208,7 +208,7 @@ class CreatorMatchScorer(Scorer):
         super().__init__(weight)
 
     def score(self, candidate: ContentItem, context: ScoringContext) -> float:
-        creator = _extract_creator(candidate)
+        creator = extract_creator(candidate)
         if not creator:
             return 0.5  # neutral
 
@@ -244,7 +244,7 @@ class TagOverlapScorer(Scorer):
         super().__init__(weight)
 
     def score(self, candidate: ContentItem, context: ScoringContext) -> float:
-        candidate_genres = set(_extract_genres(candidate))
+        candidate_genres = set(extract_genres(candidate))
         if not candidate_genres or not context.consumed_genres:
             return 0.0
 
@@ -359,7 +359,7 @@ class RatingPatternScorer(Scorer):
         super().__init__(weight)
 
     def score(self, candidate: ContentItem, context: ScoringContext) -> float:
-        candidate_genres = _extract_genres(candidate)
+        candidate_genres = extract_genres(candidate)
         if not candidate_genres or not context.ratings_by_genre:
             return 0.5  # neutral
 
@@ -453,7 +453,7 @@ class CustomPreferenceScorer(Scorer):
         Returns:
             Score between 0.0 and 1.0.
         """
-        candidate_genres = _extract_genres(candidate)
+        candidate_genres = extract_genres(candidate)
         if not candidate_genres:
             return 0.5  # Neutral when no genre info
 
@@ -498,7 +498,7 @@ class ContentLengthScorer(Scorer):
 
     def score(self, candidate: ContentItem, context: ScoringContext) -> float:
         if not context.content_length_preferences:
-            return 1.0  # No preferences set — neutral
+            return 0.5  # No preferences set — neutral
         return score_length_match(candidate, context.content_length_preferences)
 
 

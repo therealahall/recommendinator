@@ -4,6 +4,7 @@ import logging
 from typing import Any
 
 from src.models.content import ContentItem, ContentType
+from src.recommendations.genre_normalizer import extract_and_normalize_genres
 from src.recommendations.preferences import UserPreferences
 from src.utils.series import is_first_item_in_series
 
@@ -151,27 +152,12 @@ class RecommendationRanker:
             factors += 1
 
         # Genre preference - can be negative if disliked
-        # Supports both single "genre" field and "genres" list (e.g., Steam games)
-        if item.metadata:
-            genres = []
-            if "genre" in item.metadata and item.metadata["genre"]:
-                genres.append(item.metadata["genre"])
-            if "genres" in item.metadata and item.metadata["genres"]:
-                # Handle list of genres (e.g., Steam games)
-                if isinstance(item.metadata["genres"], list):
-                    genres.extend(item.metadata["genres"])
-                elif isinstance(item.metadata["genres"], str):
-                    # Some sources might store genres as comma-separated string
-                    genres.extend(
-                        [g.strip() for g in item.metadata["genres"].split(",")]
-                    )
-
-            # Use the highest-scoring genre if multiple genres exist
-            if genres:
-                genre_scores = [preferences.get_genre_score(genre) for genre in genres]
-                max_genre_score = max(genre_scores) if genre_scores else 0.0
-                score += max_genre_score
-                factors += 1
+        genres = extract_and_normalize_genres(item.metadata) if item.metadata else []
+        if genres:
+            genre_scores = [preferences.get_genre_score(genre) for genre in genres]
+            max_genre_score = max(genre_scores) if genre_scores else 0.0
+            score += max_genre_score
+            factors += 1
 
         # Normalize by number of factors
         if factors > 0:

@@ -9,8 +9,35 @@ Supports series detection for:
 
 import re
 from collections import defaultdict
+from typing import NamedTuple
 
 from src.models.content import ContentItem, ContentType
+
+
+class _SeriesPattern(NamedTuple):
+    """Pre-compiled regex pattern for series detection."""
+
+    regex: re.Pattern[str]
+    max_number: int
+
+
+# Pre-compiled patterns tried in order. Each captures (series_name, number).
+_SERIES_PATTERNS: list[_SeriesPattern] = [
+    # (Series Name, #N) or (Series Name #N)
+    _SeriesPattern(re.compile(r"\(([^,]+?)(?:,\s*)?#\s*(\d+)\)"), 1000),
+    # (Series Name, Book N)
+    _SeriesPattern(re.compile(r"\(([^,]+?),\s*Book\s+(\d+)\)", re.IGNORECASE), 1000),
+    # (Series Name, Season N)
+    _SeriesPattern(re.compile(r"\(([^,]+?),\s*Season\s+(\d+)\)", re.IGNORECASE), 100),
+    # (Series Name, SN) — shorthand
+    _SeriesPattern(re.compile(r"\(([^,]+?),\s*S(\d+)\)", re.IGNORECASE), 100),
+    # (Series Name, Part N)
+    _SeriesPattern(re.compile(r"\(([^,]+?),\s*Part\s+(\d+)\)", re.IGNORECASE), 100),
+    # (Series Name, Episode N)
+    _SeriesPattern(re.compile(r"\(([^,]+?),\s*Episode\s+(\d+)\)", re.IGNORECASE), 100),
+    # (Series Name N) — generic fallback
+    _SeriesPattern(re.compile(r"\(([^,]+?)\s+(\d+)\)"), 100),
+]
 
 
 def extract_series_info(
@@ -44,70 +71,14 @@ def extract_series_info(
         if series_info:
             return series_info
 
-    # Pattern 1: (Series Name, #N) or (Series Name #N) - works for all types
-    pattern1 = r"\(([^,]+?)(?:,\s*)?#\s*(\d+)\)"
-    match = re.search(pattern1, title)
-    if match:
-        series_name = match.group(1).strip()
-        item_num = int(match.group(2))
-        if 1 <= item_num <= 1000:  # Reasonable range for any content type
-            return (series_name, item_num)
-
-    # Pattern 2: (Series Name, Book N) - books
-    pattern2 = r"\(([^,]+?),\s*Book\s+(\d+)\)"
-    match = re.search(pattern2, title, re.IGNORECASE)
-    if match:
-        series_name = match.group(1).strip()
-        item_num = int(match.group(2))
-        if 1 <= item_num <= 1000:
-            return (series_name, item_num)
-
-    # Pattern 3: (Series Name, Season N) or (Series Name, S N) - TV shows
-    pattern3 = r"\(([^,]+?),\s*Season\s+(\d+)\)"
-    match = re.search(pattern3, title, re.IGNORECASE)
-    if match:
-        series_name = match.group(1).strip()
-        item_num = int(match.group(2))
-        if 1 <= item_num <= 100:  # Reasonable for seasons
-            return (series_name, item_num)
-
-    # Pattern 4: (Series Name, S1), (Series Name, S2), etc. - TV shows
-    # shorthand
-    pattern4 = r"\(([^,]+?),\s*S(\d+)\)"
-    match = re.search(pattern4, title, re.IGNORECASE)
-    if match:
-        series_name = match.group(1).strip()
-        item_num = int(match.group(2))
-        if 1 <= item_num <= 100:
-            return (series_name, item_num)
-
-    # Pattern 5: (Series Name, Part N) - movies, games, or books
-    pattern5 = r"\(([^,]+?),\s*Part\s+(\d+)\)"
-    match = re.search(pattern5, title, re.IGNORECASE)
-    if match:
-        series_name = match.group(1).strip()
-        item_num = int(match.group(2))
-        if 1 <= item_num <= 100:
-            return (series_name, item_num)
-
-    # Pattern 6: (Series Name, Episode N) - movies or TV shows
-    pattern6 = r"\(([^,]+?),\s*Episode\s+(\d+)\)"
-    match = re.search(pattern6, title, re.IGNORECASE)
-    if match:
-        series_name = match.group(1).strip()
-        item_num = int(match.group(2))
-        if 1 <= item_num <= 100:
-            return (series_name, item_num)
-
-    # Pattern 7: (Series Name N) - generic fallback
-    pattern7 = r"\(([^,]+?)\s+(\d+)\)"
-    match = re.search(pattern7, title)
-    if match:
-        series_name = match.group(1).strip()
-        item_num = int(match.group(2))
-        # Only accept if it's a reasonable number (1-100)
-        if 1 <= item_num <= 100:
-            return (series_name, item_num)
+    # Try each pre-compiled pattern in order
+    for pattern in _SERIES_PATTERNS:
+        match = pattern.regex.search(title)
+        if match:
+            series_name = match.group(1).strip()
+            item_num = int(match.group(2))
+            if 1 <= item_num <= pattern.max_number:
+                return (series_name, item_num)
 
     return None
 

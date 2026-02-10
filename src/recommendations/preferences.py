@@ -1,8 +1,10 @@
 """Preference analysis from consumed content."""
 
 import logging
+from collections.abc import Sequence
 
 from src.models.content import ContentItem
+from src.recommendations.genre_normalizer import extract_and_normalize_genres
 
 logger = logging.getLogger(__name__)
 
@@ -98,96 +100,22 @@ class PreferenceAnalyzer:
         ratings = [item.rating for item in consumed_items if item.rating]
         avg_rating = sum(ratings) / len(ratings) if ratings else 0.0
 
-        # Extract authors (weighted by rating - positive for high ratings, negative for low)
-        author_scores: dict[str, float] = {}
-        disliked_authors: dict[str, float] = {}
+        # Extract author preferences
+        author_ratings = [
+            (item.author.lower(), item.rating)
+            for item in consumed_items
+            if item.author and item.rating
+        ]
+        author_scores, disliked_authors = self._score_attributes(author_ratings)
 
-        for item in consumed_items:
-            if item.author and item.rating:
-                author_lower = item.author.lower()
-                if item.rating >= self.min_rating:
-                    # Positive weight: 5-star = 1.0, 4-star = 0.5
-                    weight = (item.rating - 3) / 2.0  # Maps 4->0.5, 5->1.0
-                    author_scores[author_lower] = (
-                        author_scores.get(author_lower, 0.0) + weight
-                    )
-                else:
-                    # Negative weight: 1-star = -1.0, 2-star = -0.5, 3-star = 0.0
-                    weight = (item.rating - 3) / 2.0  # Maps 1->-1.0, 2->-0.5, 3->0.0
-                    disliked_authors[author_lower] = disliked_authors.get(
-                        author_lower, 0.0
-                    ) + abs(weight)
-
-        # Normalize author scores
-        if author_scores:
-            max_score = max(author_scores.values()) if author_scores.values() else 1.0
-            author_scores = {
-                author: score / max_score for author, score in author_scores.items()
-            }
-
-        # Normalize disliked authors
-        if disliked_authors:
-            max_score = (
-                max(disliked_authors.values()) if disliked_authors.values() else 1.0
-            )
-            if max_score > 0:
-                disliked_authors = {
-                    author: score / max_score
-                    for author, score in disliked_authors.items()
-                }
-
-        # Extract genres from metadata (positive and negative)
-        # Supports both single "genre" field and "genres" list (e.g., Steam games)
-        genre_scores: dict[str, float] = {}
-        disliked_genres: dict[str, float] = {}
-
+        # Extract genre preferences
+        genre_ratings: list[tuple[str, float]] = []
         for item in consumed_items:
             if item.metadata and item.rating:
-                # Handle both single genre and genres list
-                genres = []
-                if "genre" in item.metadata and item.metadata["genre"]:
-                    genres.append(item.metadata["genre"])
-                if "genres" in item.metadata and item.metadata["genres"]:
-                    # Handle list of genres (e.g., Steam games)
-                    if isinstance(item.metadata["genres"], list):
-                        genres.extend(item.metadata["genres"])
-                    elif isinstance(item.metadata["genres"], str):
-                        # Some sources might store genres as comma-separated string
-                        genres.extend(
-                            [g.strip() for g in item.metadata["genres"].split(",")]
-                        )
-
-                for genre in genres:
-                    if not genre:
-                        continue
-                    genre_lower = genre.lower()
-                    if item.rating >= self.min_rating:
-                        weight = (item.rating - 3) / 2.0
-                        genre_scores[genre_lower] = (
-                            genre_scores.get(genre_lower, 0.0) + weight
-                        )
-                    else:
-                        weight = (item.rating - 3) / 2.0
-                        disliked_genres[genre_lower] = disliked_genres.get(
-                            genre_lower, 0.0
-                        ) + abs(weight)
-
-        # Normalize genre scores
-        if genre_scores:
-            max_score = max(genre_scores.values()) if genre_scores.values() else 1.0
-            genre_scores = {
-                genre: score / max_score for genre, score in genre_scores.items()
-            }
-
-        # Normalize disliked genres
-        if disliked_genres:
-            max_score = (
-                max(disliked_genres.values()) if disliked_genres.values() else 1.0
-            )
-            if max_score > 0:
-                disliked_genres = {
-                    genre: score / max_score for genre, score in disliked_genres.items()
-                }
+                for genre in extract_and_normalize_genres(item.metadata):
+                    if genre:
+                        genre_ratings.append((genre.lower(), item.rating))
+        genre_scores, disliked_genres = self._score_attributes(genre_ratings)
 
         return UserPreferences(
             preferred_authors=author_scores,
@@ -197,3 +125,40 @@ class PreferenceAnalyzer:
             disliked_authors=disliked_authors,
             disliked_genres=disliked_genres,
         )
+
+    def _score_attributes(
+        self, attribute_ratings: Sequence[tuple[str, int | float]]
+    ) -> tuple[dict[str, float], dict[str, float]]:
+        """Accumulate and normalize attribute scores based on ratings.
+
+        Positive weights (rating >= min_rating): maps 4->0.5, 5->1.0
+        Negative weights (rating < min_rating): maps 1->1.0, 2->0.5, 3->0.0
+
+        Args:
+            attribute_ratings: List of (attribute_value, rating) pairs.
+
+        Returns:
+            Tuple of (preferred, disliked) normalized score dicts.
+        """
+        preferred: dict[str, float] = {}
+        disliked: dict[str, float] = {}
+
+        for value, rating in attribute_ratings:
+            weight = (rating - 3) / 2.0
+            if rating >= self.min_rating:
+                preferred[value] = preferred.get(value, 0.0) + weight
+            else:
+                disliked[value] = disliked.get(value, 0.0) + abs(weight)
+
+        # Normalize preferred scores
+        if preferred:
+            max_score = max(preferred.values())
+            preferred = {k: v / max_score for k, v in preferred.items()}
+
+        # Normalize disliked scores
+        if disliked:
+            max_score = max(disliked.values())
+            if max_score > 0:
+                disliked = {k: v / max_score for k, v in disliked.items()}
+
+        return preferred, disliked
