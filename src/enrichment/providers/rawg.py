@@ -277,14 +277,14 @@ class RAWGProvider(EnrichmentProvider):
                     extra_metadata["release_year"] = year
 
             if game.get("developers"):
-                devs = [dev["name"] for dev in game["developers"][:2]]
-                if devs:
-                    extra_metadata["developer"] = devs[0]
+                developers = [dev["name"] for dev in game["developers"][:2]]
+                if developers:
+                    extra_metadata["developer"] = developers[0]
 
             if game.get("publishers"):
-                pubs = [pub["name"] for pub in game["publishers"][:2]]
-                if pubs:
-                    extra_metadata["publisher"] = pubs[0]
+                publishers = [pub["name"] for pub in game["publishers"][:2]]
+                if publishers:
+                    extra_metadata["publisher"] = publishers[0]
 
             if game.get("platforms"):
                 platforms = [

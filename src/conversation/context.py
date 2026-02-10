@@ -251,8 +251,10 @@ class ContextAssembler:
         if not memories:
             return "No preference profile available yet."
 
-        user_stated = [m for m in memories if m.memory_type == "user_stated"]
-        inferred = [m for m in memories if m.memory_type == "inferred"]
+        user_stated = [
+            memory for memory in memories if memory.memory_type == "user_stated"
+        ]
+        inferred = [memory for memory in memories if memory.memory_type == "inferred"]
 
         parts = []
 

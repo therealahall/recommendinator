@@ -69,16 +69,18 @@ class EmbeddingGenerator:
         """
         embeddings = []
 
-        for i in range(0, len(items), batch_size):
-            batch = items[i : i + batch_size]
-            logger.info(f"Generating embeddings for batch {i // batch_size + 1}")
+        for index in range(0, len(items), batch_size):
+            batch = items[index : index + batch_size]
+            logger.info(f"Generating embeddings for batch {index // batch_size + 1}")
 
             for item in batch:
                 try:
                     embedding = self.generate_content_embedding(item)
                     embeddings.append(embedding)
-                except Exception as e:
-                    logger.error(f"Failed to generate embedding for {item.title}: {e}")
+                except Exception as error:
+                    logger.error(
+                        f"Failed to generate embedding for {item.title}: {error}"
+                    )
                     # Append empty list or re-raise based on requirements
                     raise
 

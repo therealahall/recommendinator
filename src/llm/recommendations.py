@@ -78,9 +78,9 @@ class RecommendationGenerator:
 
             return recommendations[:count]  # Ensure we don't exceed count
 
-        except Exception as e:
-            logger.error(f"Failed to generate recommendations: {e}")
-            raise RuntimeError(f"Recommendation generation failed: {e}") from e
+        except Exception as error:
+            logger.error(f"Failed to generate recommendations: {error}")
+            raise RuntimeError(f"Recommendation generation failed: {error}") from error
 
     def _parse_recommendations(
         self,
@@ -107,11 +107,11 @@ class RecommendationGenerator:
         parts = re.split(pattern, response)
 
         # Process each recommendation (skip first empty part)
-        for i in range(1, len(parts), 2):
-            if i + 1 >= len(parts):
+        for index in range(1, len(parts), 2):
+            if index + 1 >= len(parts):
                 break
 
-            match_content = parts[i + 1].strip()
+            match_content = parts[index + 1].strip()
             if not match_content:
                 continue
 

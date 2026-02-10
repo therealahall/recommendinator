@@ -54,9 +54,9 @@ class OllamaClient:
             if not embedding:
                 raise RuntimeError(f"No embedding returned from model {model}")
             return embedding
-        except Exception as e:
-            logger.error(f"Failed to generate embedding: {e}")
-            raise RuntimeError(f"Embedding generation failed: {e}") from e
+        except Exception as error:
+            logger.error(f"Failed to generate embedding: {error}")
+            raise RuntimeError(f"Embedding generation failed: {error}") from error
 
     def generate_embeddings(
         self, texts: list[str], model: str | None = None
@@ -80,8 +80,8 @@ class OllamaClient:
             try:
                 embedding = self.generate_embedding(text, model)
                 embeddings.append(embedding)
-            except Exception as e:
-                logger.error(f"Failed to generate embedding for text: {e}")
+            except Exception as error:
+                logger.error(f"Failed to generate embedding for text: {error}")
                 # Continue with other texts, but log the error
                 raise
 
@@ -145,9 +145,9 @@ class OllamaClient:
                 raise RuntimeError(f"No content returned from model {model}")
 
             return content
-        except Exception as e:
-            logger.error(f"Failed to generate text: {e}")
-            raise RuntimeError(f"Text generation failed: {e}") from e
+        except Exception as error:
+            logger.error(f"Failed to generate text: {error}")
+            raise RuntimeError(f"Text generation failed: {error}") from error
 
     def check_model_available(self, model: str) -> bool:
         """Check if a model is available in Ollama.
@@ -177,13 +177,13 @@ class OllamaClient:
             if hasattr(response, "models"):
                 models_attr = response.models
                 return [
-                    m.model
-                    for m in models_attr
-                    if hasattr(m, "model") and m.model is not None
+                    model_entry.model
+                    for model_entry in models_attr
+                    if hasattr(model_entry, "model") and model_entry.model is not None
                 ]
             return []
-        except Exception as e:
-            logger.error(f"Failed to list models: {e}")
+        except Exception as error:
+            logger.error(f"Failed to list models: {error}")
             return []
 
     def generate_text_stream(
@@ -224,9 +224,9 @@ class OllamaClient:
 
             yield from self._iter_stream_chunks(response)
 
-        except Exception as e:
-            logger.error(f"Failed to generate streaming text: {e}")
-            raise RuntimeError(f"Streaming text generation failed: {e}") from e
+        except Exception as error:
+            logger.error(f"Failed to generate streaming text: {error}")
+            raise RuntimeError(f"Streaming text generation failed: {error}") from error
 
     def chat_stream(
         self,
@@ -266,6 +266,6 @@ class OllamaClient:
 
             yield from self._iter_stream_chunks(response)
 
-        except Exception as e:
-            logger.error(f"Failed to stream chat: {e}")
-            raise RuntimeError(f"Chat streaming failed: {e}") from e
+        except Exception as error:
+            logger.error(f"Failed to stream chat: {error}")
+            raise RuntimeError(f"Chat streaming failed: {error}") from error

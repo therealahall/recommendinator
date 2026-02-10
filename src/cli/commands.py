@@ -117,9 +117,9 @@ def recommend(
             headers = ["#", "Title", "Author", "Score", "Reasoning"]
             click.echo(tabulate(table_data, headers=headers, tablefmt="grid"))
 
-    except Exception as e:
-        click.echo(f"Error generating recommendations: {e}", err=True)
-        raise click.Abort() from e
+    except Exception as error:
+        click.echo(f"Error generating recommendations: {error}", err=True)
+        raise click.Abort() from error
 
 
 @click.command()
@@ -327,9 +327,9 @@ def complete(
         db_id = storage.save_content_item(item, embedding)
 
         click.echo(f"Marked '{title}' as completed (ID: {db_id})")
-    except Exception as e:
-        click.echo(f"Error marking content as completed: {e}", err=True)
-        raise click.Abort() from e
+    except Exception as error:
+        click.echo(f"Error marking content as completed: {error}", err=True)
+        raise click.Abort() from error
 
 
 # ---------------------------------------------------------------------------

@@ -353,7 +353,12 @@ class RecommendationEngine:
         recommendations: list[dict[str, Any]] = []
         for item, score, rank_metadata in top_recommendations:
             item_meta = next(
-                (m for m in candidate_metadata if m["item"].id == item.id), None
+                (
+                    candidate
+                    for candidate in candidate_metadata
+                    if candidate["item"].id == item.id
+                ),
+                None,
             )
 
             adaptations_list: list[ContentItem] = []

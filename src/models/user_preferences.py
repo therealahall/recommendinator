@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 
@@ -37,13 +37,7 @@ class UserPreferenceConfig:
         Returns:
             Dictionary representation suitable for JSON serialization.
         """
-        return {
-            "scorer_weights": self.scorer_weights,
-            "series_in_order": self.series_in_order,
-            "variety_after_completion": self.variety_after_completion,
-            "custom_rules": self.custom_rules,
-            "content_length_preferences": self.content_length_preferences,
-        }
+        return asdict(self)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> UserPreferenceConfig:

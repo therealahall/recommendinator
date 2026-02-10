@@ -1,8 +1,17 @@
 """Application state management."""
 
+from __future__ import annotations
+
 import logging
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from src.conversation.engine import ConversationEngine
+    from src.llm.client import OllamaClient
+    from src.llm.embeddings import EmbeddingGenerator
+    from src.recommendations.engine import RecommendationEngine
+    from src.storage.manager import StorageManager
 
 logger = logging.getLogger(__name__)
 
@@ -10,32 +19,32 @@ logger = logging.getLogger(__name__)
 app_state: dict[str, Any] = {}
 
 
-def get_engine() -> Any:
+def get_engine() -> RecommendationEngine | None:
     """Get recommendation engine from app state."""
     return app_state.get("engine")
 
 
-def get_storage() -> Any:
+def get_storage() -> StorageManager | None:
     """Get storage manager from app state."""
     return app_state.get("storage")
 
 
-def get_embedding_gen() -> Any:
+def get_embedding_gen() -> EmbeddingGenerator | None:
     """Get embedding generator from app state."""
     return app_state.get("embedding_gen")
 
 
-def get_config() -> Any:
+def get_config() -> dict[str, Any] | None:
     """Get configuration from app state."""
     return app_state.get("config")
 
 
-def get_conversation_engine() -> Any:
+def get_conversation_engine() -> ConversationEngine | None:
     """Get conversation engine from app state."""
     return app_state.get("conversation_engine")
 
 
-def get_ollama_client() -> Any:
+def get_ollama_client() -> OllamaClient | None:
     """Get Ollama client from app state."""
     return app_state.get("ollama_client")
 

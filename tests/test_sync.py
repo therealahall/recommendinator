@@ -83,7 +83,7 @@ class TestExecuteSync:
 
         assert result.items_synced == 1
         embedding_gen.generate_content_embedding.assert_called_once()
-        storage.save_content_item.assert_called_once_with(items[0], [0.1, 0.2])
+        storage.save_content_item.assert_called_once_with(items[0], embedding=[0.1, 0.2])
 
     def test_sync_without_embeddings(self) -> None:
         """Embedding generator is not called when use_embeddings is False."""
@@ -105,7 +105,7 @@ class TestExecuteSync:
 
         assert result.items_synced == 1
         embedding_gen.generate_content_embedding.assert_not_called()
-        storage.save_content_item.assert_called_once_with(items[0], None)
+        storage.save_content_item.assert_called_once_with(items[0], embedding=None)
 
     def test_sync_records_save_errors(self) -> None:
         """Errors during save are recorded but don't stop the sync."""

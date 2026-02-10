@@ -2,7 +2,7 @@
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -316,9 +316,9 @@ async def get_recommendations(
 
         return response
 
-    except Exception as e:
-        logger.error(f"Error generating recommendations: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+    except Exception as error:
+        logger.error(f"Error generating recommendations: {error}")
+        raise HTTPException(status_code=500, detail=str(error)) from error
 
 
 @router.get("/users", response_model=list[UserResponse])
@@ -572,13 +572,13 @@ async def mark_complete(request: CompletionRequest) -> dict[str, Any]:
         embedding = None
         if use_embeddings and embedding_gen:
             embedding = embedding_gen.generate_content_embedding(item)
-        db_id = storage.save_content_item(item, embedding)
+        db_id = storage.save_content_item(item, embedding=embedding)
 
         return {"message": f"Marked '{request.title}' as completed", "id": db_id}
 
-    except Exception as e:
-        logger.error(f"Error marking content as completed: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+    except Exception as error:
+        logger.error(f"Error marking content as completed: {error}")
+        raise HTTPException(status_code=500, detail=str(error)) from error
 
 
 @router.post("/update")
@@ -704,15 +704,15 @@ async def update_data(request: UpdateRequest) -> dict[str, Any]:
     def on_sync_complete() -> None:
         if auto_enrich:
             enrichment_manager = get_enrichment_manager()
-            started, msg = enrichment_manager.start_enrichment(
+            started, message = enrichment_manager.start_enrichment(
                 storage_manager=storage,
                 config=config,
                 content_type=enrichment_content_type,
             )
             if started:
-                logger.info(f"[ENRICHMENT] Auto-started after sync: {msg}")
+                logger.info(f"[ENRICHMENT] Auto-started after sync: {message}")
             else:
-                logger.info(f"[ENRICHMENT] Auto-start skipped: {msg}")
+                logger.info(f"[ENRICHMENT] Auto-start skipped: {message}")
 
     # Start background sync
     source_label = source if source != "all" else ", ".join(sources_to_sync)
@@ -946,7 +946,7 @@ async def get_enrichment_stats(
     Returns:
         Enrichment statistics
     """
-    config = get_config()
+    config = get_config() or {}
     enrichment_config = config.get("enrichment", {})
     enrichment_enabled = enrichment_config.get("enabled", False)
 
@@ -959,13 +959,13 @@ async def get_enrichment_stats(
 
     return EnrichmentStatsResponse(
         enabled=enrichment_enabled,
-        total=stats.get("total", 0),
-        enriched=stats.get("enriched", 0),
-        pending=stats.get("pending", 0),
-        not_found=stats.get("not_found", 0),
-        failed=stats.get("failed", 0),
-        by_provider=stats.get("by_provider", {}),
-        by_quality=stats.get("by_quality", {}),
+        total=cast(int, stats.get("total", 0)),
+        enriched=cast(int, stats.get("enriched", 0)),
+        pending=cast(int, stats.get("pending", 0)),
+        not_found=cast(int, stats.get("not_found", 0)),
+        failed=cast(int, stats.get("failed", 0)),
+        by_provider=cast(dict[str, int], stats.get("by_provider", {})),
+        by_quality=cast(dict[str, int], stats.get("by_quality", {})),
     )
 
 

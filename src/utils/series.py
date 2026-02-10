@@ -229,7 +229,7 @@ def expand_tv_shows_to_seasons(items: list[ContentItem]) -> list[ContentItem]:
 
         total_seasons = None
         for key in ["total_seasons", "seasons", "number_of_seasons"]:
-            val = (item.metadata or {}).get(key)
+            val = item.metadata.get(key)
             if val is not None:
                 try:
                     total_seasons = int(val)
@@ -247,7 +247,7 @@ def expand_tv_shows_to_seasons(items: list[ContentItem]) -> list[ContentItem]:
         for season_num in range(1, total_seasons + 1):
             season_title = f"{show_title} (Season {season_num})"
             season_id = f"{base_id}:s{season_num}" if base_id else None
-            season_metadata = dict(item.metadata or {})
+            season_metadata = dict(item.metadata)
             season_metadata["series_name"] = show_title
             season_metadata["season"] = season_num
             season_metadata["season_number"] = season_num
@@ -373,7 +373,7 @@ def should_recommend_item(
         return True
 
     series_name, item_num = series_info
-    consumed_items = series_tracking.get(series_name, set())
+    consumed_numbers = series_tracking.get(series_name, set())
 
     # Build set of unconsumed item numbers for this series
     unconsumed_item_nums: set[int] = set()
@@ -390,7 +390,7 @@ def should_recommend_item(
                 if unconsumed_series_name == series_name:
                     unconsumed_item_nums.add(unconsumed_item_num)
 
-    if not consumed_items:
+    if not consumed_numbers:
         # User hasn't started this series
         # Only recommend if it's the first item (#1) or prequel (#0)
         if item_num == 1 or item_num == 0:
@@ -412,7 +412,7 @@ def should_recommend_item(
     else:
         # User has started this series
         # Find the highest item number they've consumed
-        max_consumed = max(consumed_items)
+        max_consumed = max(consumed_numbers)
 
         # Special case: if they've consumed #0, recommend #1
         if max_consumed == 0 and item_num == 1:
@@ -421,7 +421,7 @@ def should_recommend_item(
         # Check if user has completed all previous items
         # Need to check all items from 1 to (item_num - 1)
         for prev_num in range(1, item_num):
-            if prev_num not in consumed_items:
+            if prev_num not in consumed_numbers:
                 # Previous item not consumed - check if it exists in
                 # unconsumed data
                 if prev_num in unconsumed_item_nums:

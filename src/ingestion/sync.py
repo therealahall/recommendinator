@@ -4,13 +4,19 @@ Provides a single save-and-embed loop used by both the web API and CLI,
 eliminating duplicated sync logic across callers.
 """
 
+from __future__ import annotations
+
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from src.ingestion.plugin_base import SourcePlugin
 from src.models.content import ContentItem, get_enum_value
+
+if TYPE_CHECKING:
+    from src.llm.embeddings import EmbeddingGenerator
+    from src.storage.manager import StorageManager
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +37,8 @@ class SyncResult:
 def execute_sync(
     plugin: SourcePlugin,
     plugin_config: dict[str, Any],
-    storage_manager: Any,
-    embedding_generator: Any | None = None,
+    storage_manager: StorageManager,
+    embedding_generator: EmbeddingGenerator | None = None,
     use_embeddings: bool = False,
     progress_callback: SyncProgressCallback | None = None,
     mark_for_enrichment: bool = False,
@@ -93,7 +99,7 @@ def execute_sync(
             if use_embeddings and embedding_generator:
                 embedding = embedding_generator.generate_content_embedding(item)
 
-            db_id = storage_manager.save_content_item(item, embedding)
+            db_id = storage_manager.save_content_item(item, embedding=embedding)
             result.items_synced += 1
 
             # Mark for enrichment if enabled
@@ -120,8 +126,8 @@ def execute_sync(
 
 def execute_multi_source_sync(
     sources: list[tuple[SourcePlugin, dict[str, Any]]],
-    storage_manager: Any,
-    embedding_generator: Any | None = None,
+    storage_manager: StorageManager,
+    embedding_generator: EmbeddingGenerator | None = None,
     use_embeddings: bool = False,
     progress_callback: SyncProgressCallback | None = None,
     error_callback: Callable[[str], None] | None = None,

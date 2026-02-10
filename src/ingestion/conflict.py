@@ -107,12 +107,22 @@ def _fill_none_fields(primary: ContentItem, secondary: ContentItem) -> ContentIt
     """
     filled_data = primary.model_dump()
 
-    # Fields that can be filled from secondary
+    # Fields that can be filled from secondary (derived from model, excluding
+    # identity/structural fields and metadata which is merged separately)
+    _non_fillable = {
+        "user_id",
+        "id",
+        "db_id",
+        "title",
+        "content_type",
+        "status",
+        "source",
+        "parent_id",
+        "ignored",
+        "metadata",
+    }
     fillable_fields = [
-        "author",
-        "rating",
-        "review",
-        "date_completed",
+        name for name in ContentItem.model_fields if name not in _non_fillable
     ]
 
     for field_name in fillable_fields:

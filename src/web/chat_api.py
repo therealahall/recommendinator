@@ -4,6 +4,7 @@ import json
 import logging
 from collections.abc import AsyncIterator
 from datetime import datetime
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -126,6 +127,7 @@ async def chat(request: ChatRequest) -> StreamingResponse:
                 content_type=content_type,
                 stream=True,
             ):
+                event: dict[str, Any]
                 if chunk.chunk_type == "text":
                     event = {"type": "text", "content": chunk.content}
                 elif chunk.chunk_type == "tool_call":
@@ -159,7 +161,7 @@ async def chat(request: ChatRequest) -> StreamingResponse:
                 elif chunk.chunk_type == "done":
                     event = {"type": "done"}
                 else:
-                    continue
+                    continue  # type: ignore[unreachable]
 
                 yield f"data: {json.dumps(event)}\n\n"
 

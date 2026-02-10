@@ -29,8 +29,8 @@ def cli(ctx: click.Context, config: Path | None) -> None:
     # Load configuration
     try:
         ctx.obj["config"] = load_config(config)
-    except FileNotFoundError as e:
-        click.echo(f"Error: {e}", err=True)
+    except FileNotFoundError as error:
+        click.echo(f"Error: {error}", err=True)
         sys.exit(1)
 
     # Initialize components
@@ -45,8 +45,8 @@ def cli(ctx: click.Context, config: Path | None) -> None:
             ctx.obj["rec_gen"],
             ctx.obj["config"],
         )
-    except Exception as e:
-        click.echo(f"Error initializing components: {e}", err=True)
+    except Exception as error:
+        click.echo(f"Error initializing components: {error}", err=True)
         sys.exit(1)
 
 

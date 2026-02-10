@@ -88,8 +88,8 @@ def create_app(config_path: Path | None = None) -> FastAPI:
     # Load configuration
     try:
         config = load_config(config_path)
-    except FileNotFoundError as e:
-        logger.error(f"Config file not found: {e}")
+    except FileNotFoundError as error:
+        logger.error(f"Config file not found: {error}")
         raise
 
     # Configure logging from config
@@ -128,8 +128,8 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         else:
             app_state["conversation_engine"] = None
             logger.info("Conversation engine not available (LLM disabled)")
-    except Exception as e:
-        logger.error(f"Failed to initialize components: {e}")
+    except Exception as error:
+        logger.error(f"Failed to initialize components: {error}")
         raise
 
     # Create FastAPI app

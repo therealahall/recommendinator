@@ -1,8 +1,14 @@
 """Conversation and memory data models."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from src.models.content import ContentItem
+    from src.recommendations.scoring_pipeline import ScoredCandidate
 
 
 @dataclass
@@ -112,7 +118,7 @@ class ConversationContext:
     user_id: int
     core_memories: list[CoreMemory] = field(default_factory=list)
     recent_messages: list[ConversationMessage] = field(default_factory=list)
-    relevant_completed: list = field(default_factory=list)  # ContentItem list
-    relevant_unconsumed: list = field(default_factory=list)  # ContentItem list
+    relevant_completed: list[ContentItem] = field(default_factory=list)
+    relevant_unconsumed: list[ContentItem] = field(default_factory=list)
     preference_summary: str = ""
-    algorithmic_recommendations: list | None = None  # ScoredCandidate list
+    algorithmic_recommendations: list[ScoredCandidate] | None = None
