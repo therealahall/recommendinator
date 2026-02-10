@@ -772,21 +772,23 @@ async def get_status() -> StatusResponse:
     embedding_gen = get_embedding_gen()
     config = get_config()
 
-    components = {
-        "engine": engine is not None,
-        "storage": storage is not None,
-        "embedding_generator": embedding_gen is not None,
-    }
-
-    all_ready = all(components.values())
-
     # Read feature flags from config
     features_config = config.get("features", {}) if config else {}
+    ai_enabled = features_config.get("ai_enabled", False)
     features = FeaturesStatus(
-        ai_enabled=features_config.get("ai_enabled", False),
+        ai_enabled=ai_enabled,
         embeddings_enabled=features_config.get("embeddings_enabled", False),
         llm_reasoning_enabled=features_config.get("llm_reasoning_enabled", False),
     )
+
+    # Only require embedding_generator when AI features are enabled
+    components = {
+        "engine": engine is not None,
+        "storage": storage is not None,
+        "embedding_generator": embedding_gen is not None if ai_enabled else True,
+    }
+
+    all_ready = all(components.values())
 
     return StatusResponse(
         status="ready" if all_ready else "initializing",

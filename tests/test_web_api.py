@@ -111,6 +111,29 @@ def test_status_endpoint(client):
     assert "components" in data
 
 
+def test_status_ready_when_ai_disabled_regression(client):
+    """Regression test: Status should be 'ready' when AI is disabled.
+
+    Bug reported: "System is Initializing" banner displayed perpetually
+    when AI features are disabled.
+
+    Root cause: The status endpoint required embedding_generator to be
+    non-None for 'ready' status, but it is always None when AI is disabled.
+
+    Fix: Only require embedding_generator when ai_enabled is true.
+    """
+    # Simulate AI disabled: no embedding_gen, no features config
+    app_state["embedding_gen"] = None
+    app_state["config"] = {
+        "features": {"ai_enabled": False},
+    }
+
+    response = client.get("/api/status")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "ready"
+
+
 def test_sync_sources_endpoint(client, mock_config):
     """Test sync sources endpoint returns only enabled sources from config."""
     response = client.get("/api/sync/sources")
