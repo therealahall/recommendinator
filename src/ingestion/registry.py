@@ -1,13 +1,18 @@
 """Plugin registry for discovering and managing source plugins."""
 
+from __future__ import annotations
+
 import importlib
 import logging
 import pkgutil
 import sys
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from src.ingestion.plugin_base import SourcePlugin
+
+if TYPE_CHECKING:
+    from src.models.content import ContentType
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +42,7 @@ class PluginRegistry:
             print(f"{name}: {plugin.display_name}")
     """
 
-    _instance: "PluginRegistry | None" = None
+    _instance: PluginRegistry | None = None
 
     def __init__(self) -> None:
         """Initialize empty registry.
@@ -48,7 +53,7 @@ class PluginRegistry:
         self._discovered = False
 
     @classmethod
-    def get_instance(cls) -> "PluginRegistry":
+    def get_instance(cls) -> PluginRegistry:
         """Get singleton registry instance.
 
         Returns:
@@ -274,7 +279,7 @@ class PluginRegistry:
         return enabled_plugins
 
     def get_plugins_by_content_type(
-        self, content_type: "ContentType"
+        self, content_type: ContentType
     ) -> list[SourcePlugin]:
         """Get plugins that provide a specific content type.
 
@@ -302,10 +307,6 @@ class PluginRegistry:
         """
         self.discover_plugins()
         return sorted(self._plugins.keys())
-
-
-# Import ContentType for type hint (avoid circular import)
-from src.models.content import ContentType  # noqa: E402
 
 
 def get_registry() -> PluginRegistry:

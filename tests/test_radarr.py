@@ -127,8 +127,15 @@ class TestRadarrPluginValidation:
 class TestRadarrPluginFetch:
     """Tests for RadarrPlugin fetch functionality."""
 
+    @pytest.fixture(autouse=True)
+    def _patch_requests(self):
+        """Patch requests.get shared by arr_base and radarr modules."""
+        with patch("src.ingestion.sources.arr_base.requests.get") as mock_get:
+            self.mock_get = mock_get
+            yield
+
     def _mock_radarr_responses(
-        self, mock_get: Mock, movies: list, collections: list | None = None
+        self, movies: list, collections: list | None = None
     ) -> None:
         """Configure mock to return movies and collections for Radarr API calls."""
         if collections is None:
@@ -141,17 +148,15 @@ class TestRadarrPluginFetch:
             response.json.return_value = collections if "collection" in url else movies
             return response
 
-        mock_get.side_effect = side_effect
+        self.mock_get.side_effect = side_effect
 
-    @patch("src.ingestion.sources.radarr.requests.get")
     def test_fetch_all_movies(
         self,
-        mock_get: Mock,
         plugin: RadarrPlugin,
         sample_movies: list[dict],
     ) -> None:
         """All movies should be imported regardless of monitored state."""
-        self._mock_radarr_responses(mock_get, sample_movies)
+        self._mock_radarr_responses(sample_movies)
 
         items = list(
             plugin.fetch({"url": "http://localhost:7878", "api_key": "test_key"})
@@ -163,15 +168,13 @@ class TestRadarrPluginFetch:
         assert items[1].title == "Blade Runner 2049"
         assert items[2].title == "Old Unmonitored Movie"
 
-    @patch("src.ingestion.sources.radarr.requests.get")
     def test_fetch_all_items_are_unread(
         self,
-        mock_get: Mock,
         plugin: RadarrPlugin,
         sample_movies: list[dict],
     ) -> None:
         """All imported items should have UNREAD status."""
-        self._mock_radarr_responses(mock_get, sample_movies)
+        self._mock_radarr_responses(sample_movies)
 
         items = list(
             plugin.fetch({"url": "http://localhost:7878", "api_key": "test_key"})
@@ -180,14 +183,12 @@ class TestRadarrPluginFetch:
         for item in items:
             assert item.status == ConsumptionStatus.UNREAD.value
 
-    @patch("src.ingestion.sources.radarr.requests.get")
     def test_fetch_content_type_is_movie(
         self,
-        mock_get: Mock,
         plugin: RadarrPlugin,
         sample_movies: list[dict],
     ) -> None:
-        self._mock_radarr_responses(mock_get, sample_movies)
+        self._mock_radarr_responses(sample_movies)
 
         items = list(
             plugin.fetch({"url": "http://localhost:7878", "api_key": "test_key"})
@@ -196,15 +197,13 @@ class TestRadarrPluginFetch:
         for item in items:
             assert item.content_type == ContentType.MOVIE.value
 
-    @patch("src.ingestion.sources.radarr.requests.get")
     def test_fetch_external_id_format(
         self,
-        mock_get: Mock,
         plugin: RadarrPlugin,
         sample_movies: list[dict],
     ) -> None:
         """External ID should be tmdb:{tmdbId} for deduplication."""
-        self._mock_radarr_responses(mock_get, sample_movies)
+        self._mock_radarr_responses(sample_movies)
 
         items = list(
             plugin.fetch({"url": "http://localhost:7878", "api_key": "test_key"})
@@ -213,15 +212,13 @@ class TestRadarrPluginFetch:
         assert items[0].id == "tmdb:27205"
         assert items[1].id == "tmdb:335984"
 
-    @patch("src.ingestion.sources.radarr.requests.get")
     def test_fetch_rating_is_none(
         self,
-        mock_get: Mock,
         plugin: RadarrPlugin,
         sample_movies: list[dict],
     ) -> None:
         """Radarr does not track personal ratings; rating should always be None."""
-        self._mock_radarr_responses(mock_get, sample_movies)
+        self._mock_radarr_responses(sample_movies)
 
         items = list(
             plugin.fetch({"url": "http://localhost:7878", "api_key": "test_key"})
@@ -230,15 +227,13 @@ class TestRadarrPluginFetch:
         for item in items:
             assert item.rating is None
 
-    @patch("src.ingestion.sources.radarr.requests.get")
     def test_fetch_metadata(
         self,
-        mock_get: Mock,
         plugin: RadarrPlugin,
         sample_movies: list[dict],
     ) -> None:
         """Metadata should include genres, studio, runtime, etc."""
-        self._mock_radarr_responses(mock_get, sample_movies)
+        self._mock_radarr_responses(sample_movies)
 
         items = list(
             plugin.fetch({"url": "http://localhost:7878", "api_key": "test_key"})
@@ -253,14 +248,12 @@ class TestRadarrPluginFetch:
         assert metadata["genres"] == ["Action", "Sci-Fi", "Thriller"]
         assert metadata["has_file"] is True
 
-    @patch("src.ingestion.sources.radarr.requests.get")
     def test_fetch_source_identifier(
         self,
-        mock_get: Mock,
         plugin: RadarrPlugin,
         sample_movies: list[dict],
     ) -> None:
-        self._mock_radarr_responses(mock_get, sample_movies)
+        self._mock_radarr_responses(sample_movies)
 
         items = list(
             plugin.fetch({"url": "http://localhost:7878", "api_key": "test_key"})
@@ -269,70 +262,60 @@ class TestRadarrPluginFetch:
         for item in items:
             assert item.source == "radarr"
 
-    @patch("src.ingestion.sources.radarr.requests.get")
     def test_fetch_api_key_sent_in_header(
         self,
-        mock_get: Mock,
         plugin: RadarrPlugin,
     ) -> None:
-        self._mock_radarr_responses(mock_get, [])
+        self._mock_radarr_responses([])
 
         list(plugin.fetch({"url": "http://localhost:7878", "api_key": "my_secret_key"}))
 
-        assert mock_get.call_count >= 1
-        call_kwargs = mock_get.call_args[1]
+        assert self.mock_get.call_count >= 1
+        call_kwargs = self.mock_get.call_args[1]
         assert call_kwargs["headers"]["X-Api-Key"] == "my_secret_key"
 
-    @patch("src.ingestion.sources.radarr.requests.get")
     def test_fetch_correct_api_endpoint(
         self,
-        mock_get: Mock,
         plugin: RadarrPlugin,
     ) -> None:
-        self._mock_radarr_responses(mock_get, [])
+        self._mock_radarr_responses([])
 
         list(plugin.fetch({"url": "http://myradarr:7878", "api_key": "key"}))
 
-        calls = [call[0][0] for call in mock_get.call_args_list]
+        calls = [call[0][0] for call in self.mock_get.call_args_list]
         assert "http://myradarr:7878/api/v3/movie" in calls
 
-    @patch("src.ingestion.sources.radarr.requests.get")
     def test_fetch_trailing_slash_handled(
         self,
-        mock_get: Mock,
         plugin: RadarrPlugin,
     ) -> None:
-        self._mock_radarr_responses(mock_get, [])
+        self._mock_radarr_responses([])
 
         list(plugin.fetch({"url": "http://localhost:7878/", "api_key": "key"}))
 
-        for call in mock_get.call_args_list:
+        for call in self.mock_get.call_args_list:
             url = call[0][0]
             assert "//" not in url.replace("http://", "").replace("https://", "")
 
-    @patch("src.ingestion.sources.radarr.requests.get")
     def test_fetch_empty_library(
         self,
-        mock_get: Mock,
         plugin: RadarrPlugin,
     ) -> None:
-        self._mock_radarr_responses(mock_get, [])
+        self._mock_radarr_responses([])
 
         items = list(plugin.fetch({"url": "http://localhost:7878", "api_key": "key"}))
 
         assert len(items) == 0
 
-    @patch("src.ingestion.sources.radarr.requests.get")
     def test_fetch_skips_empty_title(
         self,
-        mock_get: Mock,
         plugin: RadarrPlugin,
     ) -> None:
         movies = [
             {"title": "", "monitored": True, "tmdbId": 123},
             {"title": "Valid Movie", "monitored": True, "tmdbId": 456},
         ]
-        self._mock_radarr_responses(mock_get, movies)
+        self._mock_radarr_responses(movies)
 
         items = list(plugin.fetch({"url": "http://localhost:7878", "api_key": "key"}))
 
@@ -343,30 +326,33 @@ class TestRadarrPluginFetch:
 class TestRadarrPluginErrors:
     """Tests for error handling."""
 
-    @patch("src.ingestion.sources.radarr.requests.get")
+    @pytest.fixture(autouse=True)
+    def _patch_requests(self):
+        """Patch requests.get shared by arr_base and radarr modules."""
+        with patch("src.ingestion.sources.arr_base.requests.get") as mock_get:
+            self.mock_get = mock_get
+            yield
+
     def test_connection_error_raises_source_error(
         self,
-        mock_get: Mock,
         plugin: RadarrPlugin,
     ) -> None:
         import requests as req
 
-        mock_get.side_effect = req.ConnectionError("Connection refused")
+        self.mock_get.side_effect = req.ConnectionError("Connection refused")
 
         with pytest.raises(SourceError, match="Failed to connect to Radarr"):
             list(plugin.fetch({"url": "http://localhost:7878", "api_key": "key"}))
 
-    @patch("src.ingestion.sources.radarr.requests.get")
     def test_http_error_raises_source_error(
         self,
-        mock_get: Mock,
         plugin: RadarrPlugin,
     ) -> None:
         import requests as req
 
         mock_response = Mock()
         mock_response.raise_for_status.side_effect = req.HTTPError("401 Unauthorized")
-        mock_get.return_value = mock_response
+        self.mock_get.return_value = mock_response
 
         with pytest.raises(SourceError, match="Failed to connect to Radarr"):
             list(plugin.fetch({"url": "http://localhost:7878", "api_key": "bad_key"}))
@@ -375,10 +361,15 @@ class TestRadarrPluginErrors:
 class TestRadarrCollections:
     """Tests for Radarr collection metadata (movie series)."""
 
-    @patch("src.ingestion.sources.radarr.requests.get")
+    @pytest.fixture(autouse=True)
+    def _patch_requests(self):
+        """Patch requests.get shared by arr_base and radarr modules."""
+        with patch("src.ingestion.sources.arr_base.requests.get") as mock_get:
+            self.mock_get = mock_get
+            yield
+
     def test_fetch_adds_collection_metadata(
         self,
-        mock_get: Mock,
         plugin: RadarrPlugin,
     ) -> None:
         """Movies in collections should get series_name and movie_number."""
@@ -406,18 +397,15 @@ class TestRadarrCollections:
                 ],
             }
         ]
-        # Need to return different responses for movie vs collection endpoints
-        call_count = [0]
 
         def side_effect(*args, **kwargs):
             response = Mock()
             response.raise_for_status = Mock()
-            call_count[0] += 1
             url = args[0] if args else ""
             response.json.return_value = collections if "collection" in url else movies
             return response
 
-        mock_get.side_effect = side_effect
+        self.mock_get.side_effect = side_effect
 
         items = list(plugin.fetch({"url": "http://localhost:7878", "api_key": "key"}))
 

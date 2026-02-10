@@ -1,23 +1,17 @@
 """Radarr movie import plugin."""
 
 import logging
-from collections.abc import Iterator
 from typing import Any
 
 import requests
 
-from src.ingestion.plugin_base import (
-    ConfigField,
-    ProgressCallback,
-    SourceError,
-    SourcePlugin,
-)
-from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.ingestion.sources.arr_base import ArrPlugin
+from src.models.content import ContentType
 
 logger = logging.getLogger(__name__)
 
 
-class RadarrPlugin(SourcePlugin):
+class RadarrPlugin(ArrPlugin):
     """Plugin for importing movies from Radarr.
 
     Radarr is a movie management tool. This plugin fetches all movies
@@ -42,150 +36,45 @@ class RadarrPlugin(SourcePlugin):
         return "Import movies from Radarr"
 
     @property
-    def content_types(self) -> list[ContentType]:
-        return [ContentType.MOVIE]
+    def default_port(self) -> int:
+        return 7878
 
     @property
-    def requires_api_key(self) -> bool:
-        return True
+    def arr_api_endpoint(self) -> str:
+        return "movie"
+
+    @property
+    def arr_content_type(self) -> ContentType:
+        return ContentType.MOVIE
 
     @classmethod
-    def transform_config(cls, raw_config: dict[str, Any]) -> dict[str, Any]:
-        """Strip and normalise Radarr YAML config."""
-        return {
-            "url": (raw_config.get("url", "http://localhost:7878") or "").rstrip("/"),
-            "api_key": (raw_config.get("api_key") or "").strip(),
-        }
+    def _get_default_url(cls) -> str:
+        return "http://localhost:7878"
 
-    def get_config_schema(self) -> list[ConfigField]:
-        return [
-            ConfigField(
-                name="url",
-                field_type=str,
-                required=True,
-                default="http://localhost:7878",
-                description="Radarr base URL",
-            ),
-            ConfigField(
-                name="api_key",
-                field_type=str,
-                required=True,
-                sensitive=True,
-                description="Radarr API key (Settings > General > Security)",
-            ),
-        ]
+    def build_external_id(self, item: dict[str, Any]) -> str | None:
+        tmdb_id = item.get("tmdbId")
+        return f"tmdb:{tmdb_id}" if tmdb_id else None
 
-    def validate_config(self, config: dict[str, Any]) -> list[str]:
-        errors = []
-        if not config.get("api_key", "").strip():
-            errors.append(
-                "'api_key' is required. "
-                "Find it in Radarr: Settings > General > Security"
-            )
-        if not config.get("url", "").strip():
-            errors.append("'url' is required")
-        return errors
+    def build_metadata(self, item: dict[str, Any]) -> dict[str, Any]:
+        return _build_radarr_metadata(item)
 
-    def fetch(
+    def post_fetch(
         self,
-        config: dict[str, Any],
-        progress_callback: ProgressCallback | None = None,
-    ) -> Iterator[ContentItem]:
-        """Fetch movies from Radarr API.
+        base_url: str,
+        api_key: str,
+        item: dict[str, Any],
+        metadata: dict[str, Any],
+    ) -> None:
+        """Add collection/series info from Radarr collections."""
+        # Lazy-load collection map on first call
+        if not hasattr(self, "_collection_map"):
+            self._collection_map = _fetch_radarr_collections(base_url, api_key)
 
-        Args:
-            config: Must contain 'url' and 'api_key'
-            progress_callback: Optional callback for progress updates
-
-        Yields:
-            ContentItem for each movie in the library
-
-        Raises:
-            SourceError: If the Radarr API returns an error
-        """
-        base_url = config.get("url", "http://localhost:7878").rstrip("/")
-        api_key = config.get("api_key", "").strip()
-
-        try:
-            movie_list = _fetch_radarr_movies(base_url, api_key)
-            collection_map = _fetch_radarr_collections(base_url, api_key)
-        except requests.RequestException as error:
-            raise SourceError(
-                self.name, f"Failed to connect to Radarr at {base_url}: {error}"
-            ) from error
-
-        source = self.get_source_identifier()
-        total = len(movie_list)
-        count = 0
-
-        for movie in movie_list:
-            title = movie.get("title", "").strip()
-            if not title:
-                continue
-
-            # Radarr tracks downloads, not watch status.
-            # All imported items are UNREAD (wishlisted).
-            status = ConsumptionStatus.UNREAD
-
-            # No personal ratings - Radarr doesn't track user ratings, only
-            # external aggregate scores (IMDb/TMDB) which would mislead recommendations
-            rating = None
-
-            # Build external ID for deduplication
-            tmdb_id = movie.get("tmdbId")
-            external_id = f"tmdb:{tmdb_id}" if tmdb_id else None
-
-            # Extract metadata
-            metadata = _build_radarr_metadata(movie)
-
-            # Add series info from Radarr collections (e.g., Back to the Future 1,2,3)
-            collection_info = collection_map.get(tmdb_id) if tmdb_id else None
-            if collection_info:
-                metadata["series_name"] = collection_info["title"]
-                metadata["movie_number"] = collection_info["order"]
-
-            if progress_callback:
-                progress_callback(count, total, title)
-
-            yield ContentItem(
-                id=external_id,
-                title=title,
-                author=None,
-                content_type=ContentType.MOVIE,
-                rating=rating,
-                status=status,
-                metadata=metadata,
-                source=source,
-            )
-            count += 1
-
-
-def _fetch_radarr_movies(base_url: str, api_key: str) -> list[dict[str, Any]]:
-    """Fetch all movies from Radarr API.
-
-    Args:
-        base_url: Radarr base URL
-        api_key: Radarr API key
-
-    Returns:
-        List of movie dictionaries
-
-    Raises:
-        requests.RequestException: On network/API errors
-    """
-    url = f"{base_url}/api/v3/movie"
-    headers = {"X-Api-Key": api_key}
-
-    response = requests.get(url, headers=headers, timeout=30)
-    response.raise_for_status()
-
-    data = response.json()
-    if not isinstance(data, list):
-        logger.warning("Unexpected Radarr API response format")
-        return []
-
-    logger.info(f"Fetched {len(data)} movies from Radarr")
-    return list(data)
+        tmdb_id = item.get("tmdbId")
+        collection_info = self._collection_map.get(tmdb_id) if tmdb_id else None
+        if collection_info:
+            metadata["series_name"] = collection_info["title"]
+            metadata["movie_number"] = collection_info["order"]
 
 
 def _fetch_radarr_collections(base_url: str, api_key: str) -> dict[int, dict[str, Any]]:

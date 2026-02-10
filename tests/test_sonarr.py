@@ -128,7 +128,7 @@ class TestSonarrPluginValidation:
 class TestSonarrPluginFetch:
     """Tests for SonarrPlugin fetch functionality."""
 
-    @patch("src.ingestion.sources.sonarr.requests.get")
+    @patch("src.ingestion.sources.arr_base.requests.get")
     def test_fetch_all_series(
         self,
         mock_get: Mock,
@@ -151,7 +151,7 @@ class TestSonarrPluginFetch:
         assert items[1].title == "The Expanse"
         assert items[2].title == "Old Unmonitored Show"
 
-    @patch("src.ingestion.sources.sonarr.requests.get")
+    @patch("src.ingestion.sources.arr_base.requests.get")
     def test_fetch_all_items_are_unread(
         self,
         mock_get: Mock,
@@ -171,7 +171,7 @@ class TestSonarrPluginFetch:
         for item in items:
             assert item.status == ConsumptionStatus.UNREAD.value
 
-    @patch("src.ingestion.sources.sonarr.requests.get")
+    @patch("src.ingestion.sources.arr_base.requests.get")
     def test_fetch_content_type_is_tv_show(
         self,
         mock_get: Mock,
@@ -190,7 +190,7 @@ class TestSonarrPluginFetch:
         for item in items:
             assert item.content_type == ContentType.TV_SHOW.value
 
-    @patch("src.ingestion.sources.sonarr.requests.get")
+    @patch("src.ingestion.sources.arr_base.requests.get")
     def test_fetch_external_id_format(
         self,
         mock_get: Mock,
@@ -210,7 +210,7 @@ class TestSonarrPluginFetch:
         assert items[0].id == "tvdb:81189"
         assert items[1].id == "tvdb:280619"
 
-    @patch("src.ingestion.sources.sonarr.requests.get")
+    @patch("src.ingestion.sources.arr_base.requests.get")
     def test_fetch_rating_is_none(
         self,
         mock_get: Mock,
@@ -230,7 +230,7 @@ class TestSonarrPluginFetch:
         for item in items:
             assert item.rating is None
 
-    @patch("src.ingestion.sources.sonarr.requests.get")
+    @patch("src.ingestion.sources.arr_base.requests.get")
     def test_fetch_metadata(
         self,
         mock_get: Mock,
@@ -257,7 +257,7 @@ class TestSonarrPluginFetch:
         assert metadata["total_episodes"] == 62
         assert metadata["downloaded_episodes"] == 62
 
-    @patch("src.ingestion.sources.sonarr.requests.get")
+    @patch("src.ingestion.sources.arr_base.requests.get")
     def test_fetch_source_identifier(
         self,
         mock_get: Mock,
@@ -276,7 +276,7 @@ class TestSonarrPluginFetch:
         for item in items:
             assert item.source == "sonarr"
 
-    @patch("src.ingestion.sources.sonarr.requests.get")
+    @patch("src.ingestion.sources.arr_base.requests.get")
     def test_fetch_api_key_sent_in_header(
         self,
         mock_get: Mock,
@@ -294,7 +294,7 @@ class TestSonarrPluginFetch:
         call_kwargs = mock_get.call_args[1]
         assert call_kwargs["headers"]["X-Api-Key"] == "my_secret_key"
 
-    @patch("src.ingestion.sources.sonarr.requests.get")
+    @patch("src.ingestion.sources.arr_base.requests.get")
     def test_fetch_correct_api_endpoint(
         self,
         mock_get: Mock,
@@ -311,7 +311,7 @@ class TestSonarrPluginFetch:
         call_args = mock_get.call_args[0]
         assert call_args[0] == "http://mysonarr:8989/api/v3/series"
 
-    @patch("src.ingestion.sources.sonarr.requests.get")
+    @patch("src.ingestion.sources.arr_base.requests.get")
     def test_fetch_trailing_slash_handled(
         self,
         mock_get: Mock,
@@ -328,7 +328,7 @@ class TestSonarrPluginFetch:
         call_args = mock_get.call_args[0]
         assert "//" not in call_args[0].replace("http://", "")
 
-    @patch("src.ingestion.sources.sonarr.requests.get")
+    @patch("src.ingestion.sources.arr_base.requests.get")
     def test_fetch_empty_library(
         self,
         mock_get: Mock,
@@ -343,7 +343,7 @@ class TestSonarrPluginFetch:
 
         assert len(items) == 0
 
-    @patch("src.ingestion.sources.sonarr.requests.get")
+    @patch("src.ingestion.sources.arr_base.requests.get")
     def test_fetch_skips_empty_title(
         self,
         mock_get: Mock,
@@ -366,7 +366,7 @@ class TestSonarrPluginFetch:
 class TestSonarrPluginErrors:
     """Tests for error handling."""
 
-    @patch("src.ingestion.sources.sonarr.requests.get")
+    @patch("src.ingestion.sources.arr_base.requests.get")
     def test_connection_error_raises_source_error(
         self,
         mock_get: Mock,
@@ -379,7 +379,7 @@ class TestSonarrPluginErrors:
         with pytest.raises(SourceError, match="Failed to connect to Sonarr"):
             list(plugin.fetch({"url": "http://localhost:8989", "api_key": "key"}))
 
-    @patch("src.ingestion.sources.sonarr.requests.get")
+    @patch("src.ingestion.sources.arr_base.requests.get")
     def test_http_error_raises_source_error(
         self,
         mock_get: Mock,
