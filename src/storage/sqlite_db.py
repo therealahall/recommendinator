@@ -7,7 +7,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.models.content import (
+    ConsumptionStatus,
+    ContentItem,
+    ContentType,
+    get_enum_value,
+)
 from src.storage.schema import create_schema, get_default_user_id
 
 
@@ -145,11 +150,6 @@ class SQLiteDB:
         conn = self._get_connection()
         try:
             cursor = conn.cursor()
-
-            # Helper to get enum/string value
-            def get_enum_value(val: Any) -> str:
-                """Get string value from enum or string."""
-                return val.value if hasattr(val, "value") else str(val)
 
             content_type_value = get_enum_value(item.content_type)
 
@@ -572,16 +572,12 @@ class SQLiteDB:
 
             if content_type:
                 query += " AND ci.content_type = ?"
-                content_type_value = (
-                    content_type.value
-                    if hasattr(content_type, "value")
-                    else str(content_type)
-                )
+                content_type_value = get_enum_value(content_type)
                 params.append(content_type_value)
 
             if status:
                 query += " AND ci.status = ?"
-                status_value = status.value if hasattr(status, "value") else str(status)
+                status_value = get_enum_value(status)
                 params.append(status_value)
 
             if min_rating:
@@ -923,16 +919,12 @@ class SQLiteDB:
 
             if content_type:
                 query += " AND content_type = ?"
-                content_type_value = (
-                    content_type.value
-                    if hasattr(content_type, "value")
-                    else str(content_type)
-                )
+                content_type_value = get_enum_value(content_type)
                 params.append(content_type_value)
 
             if status:
                 query += " AND status = ?"
-                status_value = status.value if hasattr(status, "value") else str(status)
+                status_value = get_enum_value(status)
                 params.append(status_value)
 
             cursor.execute(query, params)
@@ -1025,11 +1017,7 @@ class SQLiteDB:
 
             if content_type:
                 query += " AND ci.content_type = ?"
-                content_type_value = (
-                    content_type.value
-                    if hasattr(content_type, "value")
-                    else str(content_type)
-                )
+                content_type_value = get_enum_value(content_type)
                 params.append(content_type_value)
 
             query += " ORDER BY ci.id LIMIT ?"

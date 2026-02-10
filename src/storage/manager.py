@@ -4,7 +4,12 @@ from pathlib import Path
 from typing import Any
 
 from src.ingestion.conflict import ConflictStrategy, resolve_conflict
-from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.models.content import (
+    ConsumptionStatus,
+    ContentItem,
+    ContentType,
+    get_enum_value,
+)
 from src.models.user_preferences import UserPreferenceConfig
 from src.storage.schema import (
     clear_cached_preference_interpretations,
@@ -113,11 +118,6 @@ class StorageManager:
         if embedding and self.vector_db:
             # Use external_id if available, otherwise use db_id as string
             content_id = item.id if item.id else f"db_{db_id}"
-
-            # Handle enum-to-string conversion
-            def get_enum_value(val: Any) -> str:
-                """Get string value from enum or string."""
-                return val.value if hasattr(val, "value") else str(val)
 
             metadata = {
                 "content_type": get_enum_value(item.content_type),
@@ -261,11 +261,6 @@ class StorageManager:
                 user_id=user_id, content_type=content_type
             )
             exclude_ids = [item.id for item in consumed if item.id]
-
-        # Handle enum-to-string conversion
-        def get_enum_value(val: Any) -> str:
-            """Get string value from enum or string."""
-            return val.value if hasattr(val, "value") else str(val)
 
         content_type_str = get_enum_value(content_type) if content_type else None
 

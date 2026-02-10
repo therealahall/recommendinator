@@ -13,7 +13,7 @@ from typing import Any
 from src.enrichment.provider_base import EnrichmentResult, ProviderError
 from src.enrichment.rate_limiter import RateLimiter
 from src.enrichment.registry import EnrichmentRegistry, get_enrichment_registry
-from src.models.content import ContentItem, ContentType
+from src.models.content import ContentItem, ContentType, get_enum_value
 
 logger = logging.getLogger(__name__)
 
@@ -317,9 +317,7 @@ class EnrichmentManager:
             if isinstance(item.content_type, ContentType)
             else ContentType(item.content_type)
         )
-        content_type_str = (
-            content_type.value if hasattr(content_type, "value") else str(content_type)
-        )
+        content_type_str = get_enum_value(content_type)
 
         logger.debug(
             f"[ENRICHMENT] Processing {content_type_str} {item_num}/{total} - {item.title}"

@@ -1,6 +1,6 @@
 """Prompt templates for LLM interactions."""
 
-from src.models.content import ContentItem, ContentType
+from src.models.content import ContentItem, ContentType, get_enum_value
 
 
 def build_recommendation_prompt(
@@ -20,10 +20,7 @@ def build_recommendation_prompt(
     Returns:
         Formatted prompt string
     """
-    # Handle both enum and string (Pydantic use_enum_values converts to string)
-    content_type_str = (
-        content_type.value if hasattr(content_type, "value") else str(content_type)
-    )
+    content_type_str = get_enum_value(content_type)
     content_type_name = content_type_str.replace("_", " ").title()
 
     # Build context from consumed items
@@ -73,10 +70,7 @@ def build_recommendation_system_prompt(content_type: ContentType) -> str:
     Returns:
         System prompt string
     """
-    # Handle both enum and string (Pydantic use_enum_values converts to string)
-    content_type_str = (
-        content_type.value if hasattr(content_type, "value") else str(content_type)
-    )
+    content_type_str = get_enum_value(content_type)
     content_type_name = content_type_str.replace("_", " ").title()
 
     return f"""You are an expert recommendation assistant specializing in {content_type_name.lower()}s.
@@ -111,12 +105,7 @@ def build_content_description(item: ContentItem) -> str:
         # Add relevant metadata
         if "genre" in item.metadata:
             parts.append(f"Genre: {item.metadata['genre']}")
-        # Handle both enum and string (Pydantic use_enum_values converts to string)
-        content_type_str = (
-            item.content_type.value
-            if hasattr(item.content_type, "value")
-            else str(item.content_type)
-        )
+        content_type_str = get_enum_value(item.content_type)
         if "pages" in item.metadata and content_type_str == "book":
             parts.append(f"Pages: {item.metadata['pages']}")
 

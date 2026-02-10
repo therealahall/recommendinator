@@ -6,7 +6,12 @@ from collections.abc import Callable
 from datetime import date
 from typing import TYPE_CHECKING, Any
 
-from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.models.content import (
+    ConsumptionStatus,
+    ContentItem,
+    ContentType,
+    get_enum_value,
+)
 from src.models.conversation import ToolResult
 
 if TYPE_CHECKING:
@@ -368,14 +373,10 @@ class ToolExecutor:
         if not content_type_str:
             return ToolResult(success=False, message="content_type is required")
 
-        # Map string to ContentType
-        type_map = {
-            "book": ContentType.BOOK,
-            "movie": ContentType.MOVIE,
-            "tv_show": ContentType.TV_SHOW,
-            "video_game": ContentType.VIDEO_GAME,
-        }
-        content_type = type_map.get(content_type_str.lower())
+        try:
+            content_type = ContentType.from_string(content_type_str)
+        except ValueError:
+            content_type = None
         if not content_type:
             return ToolResult(
                 success=False,
@@ -478,13 +479,10 @@ class ToolExecutor:
         # Map content type if provided
         content_type = None
         if content_type_str:
-            type_map = {
-                "book": ContentType.BOOK,
-                "movie": ContentType.MOVIE,
-                "tv_show": ContentType.TV_SHOW,
-                "video_game": ContentType.VIDEO_GAME,
-            }
-            content_type = type_map.get(content_type_str.lower())
+            try:
+                content_type = ContentType.from_string(content_type_str)
+            except ValueError:
+                pass
 
         # Get items and filter by title
         items = self.storage.get_content_items(
@@ -502,16 +500,8 @@ class ToolExecutor:
                         "id": item.db_id,
                         "title": item.title,
                         "author": item.author,
-                        "content_type": (
-                            item.content_type.value
-                            if hasattr(item.content_type, "value")
-                            else item.content_type
-                        ),
-                        "status": (
-                            item.status.value
-                            if hasattr(item.status, "value")
-                            else item.status
-                        ),
+                        "content_type": get_enum_value(item.content_type),
+                        "status": get_enum_value(item.status),
                         "rating": item.rating,
                     }
                 )

@@ -57,14 +57,7 @@ def recommend(
     user_id: int,
 ) -> None:
     """Get personalized recommendations."""
-    # Map string to ContentType enum
-    type_map = {
-        "book": ContentType.BOOK,
-        "movie": ContentType.MOVIE,
-        "tv_show": ContentType.TV_SHOW,
-        "video_game": ContentType.VIDEO_GAME,
-    }
-    content_type = type_map[content_type_str.lower()]
+    content_type = ContentType.from_string(content_type_str)
 
     engine = ctx.obj["engine"]
     storage = ctx.obj["storage"]
@@ -233,6 +226,7 @@ def update(ctx: click.Context, source: str) -> None:
                 items_processed: int,
                 total_items: int | None,
                 current_item: str | None,
+                current_source: str | None = None,
             ) -> None:
                 if total_items and items_processed > 0 and items_processed % 10 == 0:
                     click.echo(f"    Processed {items_processed}/{total_items}...")
@@ -302,14 +296,7 @@ def complete(
     """Mark content as completed."""
     from src.models.content import ContentItem
 
-    # Map string to ContentType enum
-    type_map = {
-        "book": ContentType.BOOK,
-        "movie": ContentType.MOVIE,
-        "tv_show": ContentType.TV_SHOW,
-        "video_game": ContentType.VIDEO_GAME,
-    }
-    content_type = type_map[content_type_str.lower()]
+    content_type = ContentType.from_string(content_type_str)
 
     storage = ctx.obj["storage"]
     embedding_gen = ctx.obj["embedding_gen"]
@@ -727,15 +714,9 @@ def enrichment_start(
         raise click.Abort()
 
     # Map string to ContentType enum if provided
-    content_type = None
-    if content_type_str:
-        type_map = {
-            "book": ContentType.BOOK,
-            "movie": ContentType.MOVIE,
-            "tv_show": ContentType.TV_SHOW,
-            "video_game": ContentType.VIDEO_GAME,
-        }
-        content_type = type_map[content_type_str.lower()]
+    content_type = (
+        ContentType.from_string(content_type_str) if content_type_str else None
+    )
 
     manager = EnrichmentManager(storage, config)
 
@@ -875,15 +856,9 @@ def enrichment_reset(
     storage = ctx.obj["storage"]
 
     # Map string to ContentType enum if provided
-    content_type = None
-    if content_type_str:
-        type_map = {
-            "book": ContentType.BOOK,
-            "movie": ContentType.MOVIE,
-            "tv_show": ContentType.TV_SHOW,
-            "video_game": ContentType.VIDEO_GAME,
-        }
-        content_type = type_map[content_type_str.lower()]
+    content_type = (
+        ContentType.from_string(content_type_str) if content_type_str else None
+    )
 
     provider_filter = None if provider == "all" else provider
 

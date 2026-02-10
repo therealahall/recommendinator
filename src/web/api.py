@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from src.ingestion.sync import execute_multi_source_sync
-from src.models.content import ConsumptionStatus, ContentType
+from src.models.content import ConsumptionStatus, ContentType, get_enum_value
 from src.models.user_preferences import UserPreferenceConfig
 from src.web.enrichment_manager import get_enrichment_manager
 from src.web.gog_auth import (
@@ -272,18 +272,12 @@ async def get_recommendations(
             detail=f"Count exceeds maximum allowed ({max_count})",
         )
 
-    # Map string to ContentType enum
-    type_map = {
-        "book": ContentType.BOOK,
-        "movie": ContentType.MOVIE,
-        "tv_show": ContentType.TV_SHOW,
-        "video_game": ContentType.VIDEO_GAME,
-    }
-
-    if type.lower() not in type_map:
-        raise HTTPException(status_code=400, detail=f"Invalid content type: {type}")
-
-    content_type = type_map[type.lower()]
+    try:
+        content_type = ContentType.from_string(type)
+    except ValueError:
+        raise HTTPException(
+            status_code=400, detail=f"Invalid content type: {type}"
+        ) from None
 
     try:
         # Load user preferences if storage is available
@@ -379,30 +373,23 @@ async def list_items(
     if not storage:
         raise HTTPException(status_code=500, detail="Storage not initialized")
 
-    type_map = {
-        "book": ContentType.BOOK,
-        "movie": ContentType.MOVIE,
-        "tv_show": ContentType.TV_SHOW,
-        "video_game": ContentType.VIDEO_GAME,
-    }
-
-    status_map = {
-        "unread": ConsumptionStatus.UNREAD,
-        "currently_consuming": ConsumptionStatus.CURRENTLY_CONSUMING,
-        "completed": ConsumptionStatus.COMPLETED,
-    }
-
     content_type = None
     if type is not None:
-        if type.lower() not in type_map:
-            raise HTTPException(status_code=400, detail=f"Invalid content type: {type}")
-        content_type = type_map[type.lower()]
+        try:
+            content_type = ContentType.from_string(type)
+        except ValueError:
+            raise HTTPException(
+                status_code=400, detail=f"Invalid content type: {type}"
+            ) from None
 
     consumption_status = None
     if status is not None:
-        if status.lower() not in status_map:
-            raise HTTPException(status_code=400, detail=f"Invalid status: {status}")
-        consumption_status = status_map[status.lower()]
+        try:
+            consumption_status = ConsumptionStatus(status.lower())
+        except ValueError:
+            raise HTTPException(
+                status_code=400, detail=f"Invalid status: {status}"
+            ) from None
 
     # Validate sort_by parameter
     valid_sort_options = {"title", "updated_at", "rating", "created_at"}
@@ -427,12 +414,8 @@ async def list_items(
             db_id=item.db_id,
             title=item.title,
             author=item.author,
-            content_type=(
-                item.content_type
-                if isinstance(item.content_type, str)
-                else item.content_type.value
-            ),
-            status=item.status if isinstance(item.status, str) else item.status.value,
+            content_type=get_enum_value(item.content_type),
+            status=get_enum_value(item.status),
             rating=item.rating,
             review=item.review,
             source=item.source,
@@ -564,20 +547,12 @@ async def mark_complete(request: CompletionRequest) -> dict[str, Any]:
     embeddings_enabled = features_config.get("embeddings_enabled", False)
     use_embeddings = ai_enabled and embeddings_enabled
 
-    # Map string to ContentType enum
-    type_map = {
-        "book": ContentType.BOOK,
-        "movie": ContentType.MOVIE,
-        "tv_show": ContentType.TV_SHOW,
-        "video_game": ContentType.VIDEO_GAME,
-    }
-
-    if request.content_type.lower() not in type_map:
+    try:
+        content_type = ContentType.from_string(request.content_type)
+    except ValueError:
         raise HTTPException(
             status_code=400, detail=f"Invalid content type: {request.content_type}"
-        )
-
-    content_type = type_map[request.content_type.lower()]
+        ) from None
 
     # Validate rating
     if request.rating is not None and (request.rating < 1 or request.rating > 5):
@@ -894,18 +869,13 @@ async def start_enrichment(
     # Map content type if provided
     content_type = None
     if request.content_type:
-        type_map = {
-            "book": ContentType.BOOK,
-            "movie": ContentType.MOVIE,
-            "tv_show": ContentType.TV_SHOW,
-            "video_game": ContentType.VIDEO_GAME,
-        }
-        if request.content_type.lower() not in type_map:
+        try:
+            content_type = ContentType.from_string(request.content_type)
+        except ValueError:
             raise HTTPException(
                 status_code=400,
                 detail=f"Invalid content type: {request.content_type}",
-            )
-        content_type = type_map[request.content_type.lower()]
+            ) from None
 
     enrichment_manager = get_enrichment_manager()
     success, message = enrichment_manager.start_enrichment(
@@ -1026,18 +996,13 @@ async def reset_enrichment(
     # Map content type if provided
     content_type = None
     if request.content_type:
-        type_map = {
-            "book": ContentType.BOOK,
-            "movie": ContentType.MOVIE,
-            "tv_show": ContentType.TV_SHOW,
-            "video_game": ContentType.VIDEO_GAME,
-        }
-        if request.content_type.lower() not in type_map:
+        try:
+            content_type = ContentType.from_string(request.content_type)
+        except ValueError:
             raise HTTPException(
                 status_code=400,
                 detail=f"Invalid content type: {request.content_type}",
-            )
-        content_type = type_map[request.content_type.lower()]
+            ) from None
 
     count = storage.reset_enrichment_status(
         provider=request.provider,

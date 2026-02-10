@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from src.ingestion.plugin_base import SourcePlugin
-from src.models.content import ContentItem
+from src.models.content import ContentItem, get_enum_value
 
 logger = logging.getLogger(__name__)
 
@@ -80,11 +80,7 @@ def execute_sync(
     # Save each item
     for index, item in enumerate(items):
         item_num = index + 1
-        content_type = (
-            item.content_type.value
-            if hasattr(item.content_type, "value")
-            else item.content_type
-        )
+        content_type = get_enum_value(item.content_type)
         try:
             if progress_callback:
                 progress_callback(index, result.total_items, item.title, source_name)
