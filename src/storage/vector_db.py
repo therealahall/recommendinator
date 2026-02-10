@@ -30,10 +30,13 @@ class VectorDB:
             path=str(db_path), settings=Settings(anonymized_telemetry=False)
         )
 
-        # Get or create collection
+        # Get or create collection with cosine similarity
         self.collection = self.client.get_or_create_collection(
             name=collection_name,
-            metadata={"description": "Content item embeddings for semantic search"},
+            metadata={
+                "description": "Content item embeddings for semantic search",
+                "hnsw:space": "cosine",
+            },
         )
 
     def add_embedding(

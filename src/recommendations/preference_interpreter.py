@@ -285,7 +285,7 @@ class PatternBasedInterpreter:
         r"(?:don't|do not|dont)\s+(?:want|like|show|recommend|include)\s+(.+)",
         r"(?:i\s+)?(?:hate|dislike|can't stand|cannot stand)\s+(.+)",
         r"(?:tired of|sick of|burnt out on|burned out on|over)\s+(.+)",
-        r"(?:not?\s+)?(?:into|interested in)\s+(.+)",
+        r"not\s+(?:into|interested in)\s+(.+)",
     ]
 
     PREFER_PATTERNS = [
@@ -296,6 +296,8 @@ class PatternBasedInterpreter:
         r"(?:i\s+)?(?:love|like|enjoy|adore)\s+(.+)",
         r"(?:give me|show me|recommend|suggest)\s+(?:more\s+)?(.+)",
         r"(?:in the mood for|feeling like|craving)\s+(.+)",
+        r"(?<!not )into\s+(.+)",
+        r"(?<!not )interested in\s+(.+)",
     ]
 
     # Patterns for content type filters

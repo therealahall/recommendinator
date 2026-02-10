@@ -1,6 +1,7 @@
 """Main recommendation engine orchestrating all components."""
 
 import logging
+import re
 from typing import Any
 
 from src.llm.embeddings import EmbeddingGenerator
@@ -498,9 +499,7 @@ class RecommendationEngine:
             if not title:
                 return ""
             normalized = title.lower().strip()
-            normalized = (
-                normalized.replace("the ", "").replace("a ", "").replace("an ", "")
-            )
+            normalized = re.sub(r"^(the|a|an)\s+", "", normalized)
             return normalized
 
         item_title_norm = normalize_title(item.title)
@@ -544,9 +543,8 @@ class RecommendationEngine:
         t1_norm = title1.lower().strip()
         t2_norm = title2.lower().strip()
 
-        for word in ["the", "a", "an"]:
-            t1_norm = t1_norm.replace(f"{word} ", "")
-            t2_norm = t2_norm.replace(f"{word} ", "")
+        t1_norm = re.sub(r"^(the|a|an)\s+", "", t1_norm)
+        t2_norm = re.sub(r"^(the|a|an)\s+", "", t2_norm)
 
         return t1_norm in t2_norm or t2_norm in t1_norm
 

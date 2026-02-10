@@ -580,7 +580,7 @@ class SQLiteDB:
                 status_value = get_enum_value(status)
                 params.append(status_value)
 
-            if min_rating:
+            if min_rating is not None:
                 query += " AND ci.rating >= ?"
                 params.append(min_rating)
 

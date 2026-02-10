@@ -72,7 +72,9 @@ class RecommendationGenerator:
             )
 
             # Parse response
-            recommendations = self._parse_recommendations(response, unconsumed_items)
+            recommendations = self._parse_recommendations(
+                response, unconsumed_items, count
+            )
 
             return recommendations[:count]  # Ensure we don't exceed count
 
@@ -81,13 +83,17 @@ class RecommendationGenerator:
             raise RuntimeError(f"Recommendation generation failed: {e}") from e
 
     def _parse_recommendations(
-        self, response: str, unconsumed_items: list[ContentItem]
+        self,
+        response: str,
+        unconsumed_items: list[ContentItem],
+        count: int = 5,
     ) -> list[dict[str, Any]]:
         """Parse LLM response into structured recommendations.
 
         Args:
             response: LLM response text
             unconsumed_items: List of available items to match against
+            count: Maximum number of fallback recommendations
 
         Returns:
             List of recommendation dictionaries
@@ -158,7 +164,7 @@ class RecommendationGenerator:
                             "item": item,
                         }
                     )
-                    if len(recommendations) >= 5:
+                    if len(recommendations) >= count:
                         break
 
         return recommendations
