@@ -173,13 +173,6 @@ class RecommendationRanker:
                 score += max_genre_score
                 factors += 1
 
-        # Average rating preference (prefer items similar to user's average)
-        # This is a simplified version
-        if preferences.average_rating > 0:
-            # Could compare item's average rating if available
-            # For now, just use a small bonus
-            pass
-
         # Normalize by number of factors
         if factors > 0:
             score /= factors

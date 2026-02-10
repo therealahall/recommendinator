@@ -111,13 +111,11 @@ def get_game_details(
     # Steam Store API has a limit on batch size (typically 1-5 app IDs)
     # Using single requests to avoid 400 Bad Request errors
     details: dict[int, dict[str, Any]] = {}
-    batch_size = 1  # Steam Store API works best with single requests
     total = len(app_ids)
     current_delay = rate_limit_seconds
 
-    for index in range(0, len(app_ids), batch_size):
-        batch = app_ids[index : index + batch_size]
-        app_ids_str = ",".join(str(app_id) for app_id in batch)
+    for index, app_id in enumerate(app_ids):
+        app_ids_str = str(app_id)
         url = "https://store.steampowered.com/api/appdetails"
         params = {"appids": app_ids_str, "l": "en"}
 
@@ -161,20 +159,20 @@ def get_game_details(
             except requests.RequestException as error:
                 if attempt < max_retries:
                     logger.warning(
-                        f"Error fetching game details for app IDs {batch}: {error}. "
+                        f"Error fetching game details for app ID {app_id}: {error}. "
                         f"Retrying in {retry_delay:.1f}s (attempt {attempt + 1}/{max_retries})..."
                     )
                     time.sleep(retry_delay)
                     retry_delay *= backoff_multiplier
                 else:
                     logger.warning(
-                        f"Error fetching game details for app IDs {batch}: {error}. "
+                        f"Error fetching game details for app ID {app_id}: {error}. "
                         f"Max retries exceeded, skipping."
                     )
 
         # Rate limit: wait between requests to avoid being blocked
         # Skip delay after the last request
-        if index + batch_size < len(app_ids) and current_delay > 0:
+        if index + 1 < len(app_ids) and current_delay > 0:
             time.sleep(current_delay)
 
     return details
@@ -342,14 +340,11 @@ def _fetch_steam_games(
             )
 
     # Fetch owned games
-    try:
-        logger.info(f"Fetching owned games from Steam API for Steam ID: {steam_id}")
-        games = get_owned_games(api_key, steam_id, include_appinfo=True)
-        logger.info(f"Found {len(games)} games in Steam library")
-        if progress_callback:
-            progress_callback(len(games), len(games), "owned_games")
-    except SteamAPIError:
-        raise
+    logger.info(f"Fetching owned games from Steam API for Steam ID: {steam_id}")
+    games = get_owned_games(api_key, steam_id, include_appinfo=True)
+    logger.info(f"Found {len(games)} games in Steam library")
+    if progress_callback:
+        progress_callback(len(games), len(games), "owned_games")
 
     if not games:
         logger.warning("No games found in Steam library")
@@ -457,36 +452,3 @@ def _fetch_steam_games(
             source=source,
         )
         count += 1
-
-
-def parse_steam_games(
-    api_key: str,
-    steam_id: str | None = None,
-    vanity_url: str | None = None,
-    min_playtime_minutes: int = 0,
-    progress_callback: Callable[[int, int, str], None] | None = None,
-) -> Iterator[ContentItem]:
-    """Parse Steam game library and yield ContentItem objects.
-
-    Convenience function that wraps the SteamPlugin for backward
-    compatibility with existing CLI and web API code.
-
-    Args:
-        api_key: Steam Web API key
-        steam_id: Steam ID (64-bit)
-        vanity_url: Steam vanity URL
-        min_playtime_minutes: Minimum playtime in minutes to include a game
-        progress_callback: Optional callback(fetched_count, total, phase) for
-            progress reporting during fetch. Phase is "owned_games",
-            "game_details", or "processing".
-
-    Yields:
-        ContentItem objects for each game in the library
-    """
-    yield from _fetch_steam_games(
-        api_key=api_key,
-        steam_id=steam_id,
-        vanity_url=vanity_url,
-        min_playtime_minutes=min_playtime_minutes,
-        progress_callback=progress_callback,
-    )

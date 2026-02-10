@@ -8,10 +8,10 @@ from src.ingestion.plugin_base import SourceError, SourcePlugin
 from src.ingestion.sources.steam import (
     SteamAPIError,
     SteamPlugin,
+    _fetch_steam_games,
     get_game_details,
     get_owned_games,
     get_steam_id_from_vanity_url,
-    parse_steam_games,
 )
 from src.models.content import ConsumptionStatus, ContentType
 
@@ -193,7 +193,7 @@ class TestParseSteamGames:
 
     @patch("src.ingestion.sources.steam.get_game_details")
     @patch("src.ingestion.sources.steam.get_owned_games")
-    def test_parse_steam_games_basic(self, mock_get_games, mock_get_details):
+    def test__fetch_steam_games_basic(self, mock_get_games, mock_get_details):
         """Test basic game parsing."""
         mock_get_games.return_value = [
             {
@@ -212,7 +212,7 @@ class TestParseSteamGames:
             }
         }
 
-        items = list(parse_steam_games("test_key", steam_id="76561198000000000"))
+        items = list(_fetch_steam_games("test_key", steam_id="76561198000000000"))
 
         assert len(items) == 1
         item = items[0]
@@ -229,7 +229,7 @@ class TestParseSteamGames:
 
     @patch("src.ingestion.sources.steam.get_game_details")
     @patch("src.ingestion.sources.steam.get_owned_games")
-    def test_parse_steam_games_status_mapping(self, mock_get_games, mock_get_details):
+    def test__fetch_steam_games_status_mapping(self, mock_get_games, mock_get_details):
         """Test status mapping based on playtime.
 
         Steam doesn't provide completion data, and playtime is unreliable for
@@ -243,7 +243,7 @@ class TestParseSteamGames:
         mock_get_games.return_value = [
             {"appid": 1, "name": "Unread Game", "playtime_forever": 0}
         ]
-        items = list(parse_steam_games("test_key", steam_id="76561198000000000"))
+        items = list(_fetch_steam_games("test_key", steam_id="76561198000000000"))
         assert items[0].status == ConsumptionStatus.UNREAD
         assert items[0].rating is None
 
@@ -251,7 +251,7 @@ class TestParseSteamGames:
         mock_get_games.return_value = [
             {"appid": 2, "name": "Playing Game", "playtime_forever": 30}
         ]
-        items = list(parse_steam_games("test_key", steam_id="76561198000000000"))
+        items = list(_fetch_steam_games("test_key", steam_id="76561198000000000"))
         assert items[0].status == ConsumptionStatus.CURRENTLY_CONSUMING
         assert items[0].rating is None
 
@@ -260,12 +260,12 @@ class TestParseSteamGames:
         mock_get_games.return_value = [
             {"appid": 3, "name": "Long Game", "playtime_forever": 6000}  # 100 hours
         ]
-        items = list(parse_steam_games("test_key", steam_id="76561198000000000"))
+        items = list(_fetch_steam_games("test_key", steam_id="76561198000000000"))
         assert items[0].status == ConsumptionStatus.CURRENTLY_CONSUMING
 
     @patch("src.ingestion.sources.steam.get_game_details")
     @patch("src.ingestion.sources.steam.get_owned_games")
-    def test_parse_steam_games_rating_always_none(
+    def test__fetch_steam_games_rating_always_none(
         self, mock_get_games, mock_get_details
     ):
         """Test that ratings are always None (user-provided, not inferred from playtime)."""
@@ -279,14 +279,14 @@ class TestParseSteamGames:
                     "playtime_forever": playtime_minutes,
                 }
             ]
-            items = list(parse_steam_games("test_key", steam_id="76561198000000000"))
+            items = list(_fetch_steam_games("test_key", steam_id="76561198000000000"))
             assert (
                 items[0].rating is None
             ), f"Expected None rating for {playtime_minutes} minutes, got {items[0].rating}"
 
     @patch("src.ingestion.sources.steam.get_game_details")
     @patch("src.ingestion.sources.steam.get_owned_games")
-    def test_parse_steam_games_min_playtime_filter(
+    def test__fetch_steam_games_min_playtime_filter(
         self, mock_get_games, mock_get_details
     ):
         """Test minimum playtime filter."""
@@ -303,7 +303,7 @@ class TestParseSteamGames:
 
         # Filter games with < 50 minutes playtime
         items = list(
-            parse_steam_games(
+            _fetch_steam_games(
                 "test_key", steam_id="76561198000000000", min_playtime_minutes=50
             )
         )
@@ -313,7 +313,7 @@ class TestParseSteamGames:
 
     @patch("src.ingestion.sources.steam.get_game_details")
     @patch("src.ingestion.sources.steam.get_owned_games")
-    def test_parse_steam_games_metadata(self, mock_get_games, mock_get_details):
+    def test__fetch_steam_games_metadata(self, mock_get_games, mock_get_details):
         """Test that game metadata is properly extracted."""
         mock_get_games.return_value = [
             {
@@ -340,7 +340,7 @@ class TestParseSteamGames:
             }
         }
 
-        items = list(parse_steam_games("test_key", steam_id="76561198000000000"))
+        items = list(_fetch_steam_games("test_key", steam_id="76561198000000000"))
 
         assert len(items) == 1
         metadata = items[0].metadata
@@ -355,7 +355,7 @@ class TestParseSteamGames:
 
     @patch("src.ingestion.sources.steam.get_game_details")
     @patch("src.ingestion.sources.steam.get_owned_games")
-    def test_parse_steam_games_no_name_skipped(self, mock_get_games, mock_get_details):
+    def test__fetch_steam_games_no_name_skipped(self, mock_get_games, mock_get_details):
         """Test that games without names are skipped."""
         mock_get_games.return_value = [
             {"appid": 12345, "name": "", "playtime_forever": 120},
@@ -366,7 +366,7 @@ class TestParseSteamGames:
             67890: {"name": "Valid Game"},
         }
 
-        items = list(parse_steam_games("test_key", steam_id="76561198000000000"))
+        items = list(_fetch_steam_games("test_key", steam_id="76561198000000000"))
 
         assert len(items) == 1
         assert items[0].title == "Valid Game"
@@ -374,7 +374,7 @@ class TestParseSteamGames:
     @patch("src.ingestion.sources.steam.get_steam_id_from_vanity_url")
     @patch("src.ingestion.sources.steam.get_game_details")
     @patch("src.ingestion.sources.steam.get_owned_games")
-    def test_parse_steam_games_vanity_url(
+    def test__fetch_steam_games_vanity_url(
         self, mock_get_games, mock_get_details, mock_resolve_vanity
     ):
         """Test parsing with vanity URL instead of Steam ID."""
@@ -384,33 +384,33 @@ class TestParseSteamGames:
         ]
         mock_get_details.return_value = {12345: {"name": "Test Game"}}
 
-        items = list(parse_steam_games("test_key", vanity_url="testuser"))
+        items = list(_fetch_steam_games("test_key", vanity_url="testuser"))
 
         assert len(items) == 1
         mock_resolve_vanity.assert_called_once_with("test_key", "testuser")
 
     @patch("src.ingestion.sources.steam.get_steam_id_from_vanity_url")
-    def test_parse_steam_games_vanity_url_failure(self, mock_resolve_vanity):
+    def test__fetch_steam_games_vanity_url_failure(self, mock_resolve_vanity):
         """Test parsing when vanity URL resolution fails."""
         mock_resolve_vanity.return_value = None
 
         with pytest.raises(SteamAPIError, match="Could not resolve Steam ID"):
-            list(parse_steam_games("test_key", vanity_url="nonexistent"))
+            list(_fetch_steam_games("test_key", vanity_url="nonexistent"))
 
-    def test_parse_steam_games_no_id_or_vanity(self):
+    def test__fetch_steam_games_no_id_or_vanity(self):
         """Test parsing without Steam ID or vanity URL."""
         with pytest.raises(
             ValueError, match="Either steam_id or vanity_url must be provided"
         ):
-            list(parse_steam_games("test_key"))
+            list(_fetch_steam_games("test_key"))
 
     @patch("src.ingestion.sources.steam.get_game_details")
     @patch("src.ingestion.sources.steam.get_owned_games")
-    def test_parse_steam_games_empty_library(self, mock_get_games, mock_get_details):
+    def test__fetch_steam_games_empty_library(self, mock_get_games, mock_get_details):
         """Test parsing with empty game library."""
         mock_get_games.return_value = []
 
-        items = list(parse_steam_games("test_key", steam_id="76561198000000000"))
+        items = list(_fetch_steam_games("test_key", steam_id="76561198000000000"))
 
         assert len(items) == 0
         # Should not call get_game_details for empty library

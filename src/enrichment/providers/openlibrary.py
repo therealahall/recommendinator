@@ -481,8 +481,6 @@ class OpenLibraryProvider(EnrichmentProvider):
         Returns:
             Year as integer, or None if not found
         """
-        import re
-
         # Try to find a 4-digit year
         match = re.search(r"\b(1[0-9]{3}|20[0-2][0-9])\b", date_str)
         if match:

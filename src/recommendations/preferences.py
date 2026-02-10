@@ -1,7 +1,6 @@
 """Preference analysis from consumed content."""
 
 import logging
-from collections import Counter
 
 from src.models.content import ContentItem
 
@@ -15,7 +14,6 @@ class UserPreferences:
         self,
         preferred_authors: dict[str, float],
         preferred_genres: dict[str, float],
-        preferred_themes: dict[str, float],
         average_rating: float,
         total_items: int,
         disliked_authors: dict[str, float] | None = None,
@@ -26,7 +24,6 @@ class UserPreferences:
         Args:
             preferred_authors: Author names to preference scores (positive)
             preferred_genres: Genre names to preference scores (positive)
-            preferred_themes: Theme keywords to preference scores
             average_rating: Average rating across all consumed items
             total_items: Total number of consumed items
             disliked_authors: Author names to negative preference scores
@@ -34,7 +31,6 @@ class UserPreferences:
         """
         self.preferred_authors = preferred_authors
         self.preferred_genres = preferred_genres
-        self.preferred_themes = preferred_themes
         self.average_rating = average_rating
         self.total_items = total_items
         self.disliked_authors = disliked_authors or {}
@@ -96,14 +92,7 @@ class PreferenceAnalyzer:
             UserPreferences object
         """
         if not consumed_items:
-            return UserPreferences({}, {}, {}, 0.0, 0)
-
-        # Get high-rated items (used for theme extraction from reviews)
-        high_rated = [
-            item
-            for item in consumed_items
-            if item.rating and item.rating >= self.min_rating
-        ]
+            return UserPreferences({}, {}, 0.0, 0)
 
         # Calculate average rating
         ratings = [item.rating for item in consumed_items if item.rating]
@@ -200,32 +189,9 @@ class PreferenceAnalyzer:
                     genre: score / max_score for genre, score in disliked_genres.items()
                 }
 
-        # Extract themes from reviews (only from high-rated items for now)
-        theme_scores: dict[str, float] = {}
-        review_words: list[tuple[str, float]] = []
-        for item in high_rated:
-            if item.review and item.rating:
-                words = item.review.lower().split()
-                weight = (item.rating - 3) / 2.0
-                review_words.extend([(w, weight) for w in words if len(w) > 4])
-
-        # Count theme words
-        word_counts: Counter[str] = Counter()
-        for review_word, review_weight in review_words:
-            word_counts[review_word] += int(review_weight)
-
-        # Normalize theme scores (top 20 themes)
-        if word_counts:
-            max_count = max(word_counts.values())
-            top_themes = word_counts.most_common(20)
-            theme_scores = {
-                word: count / max_count for word, count in top_themes if count > 0
-            }
-
         return UserPreferences(
             preferred_authors=author_scores,
             preferred_genres=genre_scores,
-            preferred_themes=theme_scores,
             average_rating=avg_rating,
             total_items=len(consumed_items),
             disliked_authors=disliked_authors,

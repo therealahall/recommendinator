@@ -92,14 +92,6 @@ class ContextAssembler:
         # Get preference profile and build summary
         preference_summary = self._build_profile_summary(user_id)
 
-        # Optionally get algorithmic recommendations
-        algorithmic_recommendations = None
-        if include_algorithmic_recs and content_type:
-            algorithmic_recommendations = self._get_algorithmic_recommendations(
-                user_id=user_id,
-                content_type=content_type,
-            )
-
         return ConversationContext(
             user_id=user_id,
             core_memories=core_memories,
@@ -107,7 +99,7 @@ class ContextAssembler:
             relevant_completed=relevant_completed,
             relevant_unconsumed=relevant_unconsumed,
             preference_summary=preference_summary,
-            algorithmic_recommendations=algorithmic_recommendations,
+            algorithmic_recommendations=None,
         )
 
     def _retrieve_relevant_items(
@@ -315,27 +307,6 @@ class ContextAssembler:
             )
 
         return "\n".join(parts) if parts else "No detailed profile available."
-
-    def _get_algorithmic_recommendations(
-        self,
-        user_id: int,
-        content_type: ContentType,
-        count: int = 5,
-    ) -> list | None:
-        """Get recommendations from the algorithmic scoring pipeline.
-
-        Args:
-            user_id: User ID
-            content_type: Content type for recommendations
-            count: Number of recommendations
-
-        Returns:
-            List of ScoredCandidate or None if unavailable
-        """
-        # This would integrate with the existing recommendation engine
-        # For now, return None to indicate feature is not yet integrated
-        # TODO: Integrate with RecommendationEngine once context is wired up
-        return None
 
 
 def build_user_context_block(context: ConversationContext) -> str:

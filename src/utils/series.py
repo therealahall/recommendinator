@@ -237,10 +237,6 @@ def get_series_item_number(
     return series_info[1] if series_info else None
 
 
-# Backward compatibility alias
-get_series_book_number = get_series_item_number
-
-
 def expand_tv_shows_to_seasons(items: list[ContentItem]) -> list[ContentItem]:
     """Expand TV show items into season-level items for granular recommendations.
 
@@ -368,10 +364,6 @@ def is_first_item_in_series(
     return series_info is not None and series_info[1] == 1
 
 
-# Backward compatibility alias
-is_first_book_in_series = is_first_item_in_series
-
-
 def should_recommend_item(
     item: ContentItem,
     series_tracking: dict[str, set[int]],
@@ -471,21 +463,3 @@ def should_recommend_item(
         # User has completed all previous items (or they don't exist in
         # data). Recommend if it's the next item
         return item_num == max_consumed + 1
-
-
-# Backward compatibility alias
-def should_recommend_book(
-    item: ContentItem, series_tracking: dict[str, set[int]]
-) -> bool:
-    """Determine if a book should be recommended based on series rules.
-
-    Deprecated: Use should_recommend_item instead for all content types.
-
-    Args:
-        item: ContentItem to check
-        series_tracking: Series tracking dictionary
-
-    Returns:
-        True if book should be recommended
-    """
-    return should_recommend_item(item, series_tracking, unconsumed_items=None)

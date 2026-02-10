@@ -89,7 +89,6 @@ def test_user_preferences_get_author_score():
     preferences = UserPreferences(
         preferred_authors={"author a": 0.8, "author b": 0.5},
         preferred_genres={},
-        preferred_themes={},
         average_rating=4.5,
         total_items=10,
     )
@@ -105,7 +104,6 @@ def test_user_preferences_get_genre_score():
     preferences = UserPreferences(
         preferred_authors={},
         preferred_genres={"science fiction": 0.9, "fantasy": 0.6},
-        preferred_themes={},
         average_rating=4.5,
         total_items=10,
     )

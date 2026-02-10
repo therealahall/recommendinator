@@ -60,8 +60,8 @@ class ScoringPipeline:
     Usage::
 
         pipeline = ScoringPipeline(scorers)
-        scored = pipeline.score_candidates(candidates, context)
-        # scored is [(ContentItem, float), ...] sorted descending by score
+        scored = pipeline.score_candidates_with_breakdown(candidates, context)
+        # scored is [ScoredCandidate, ...] sorted descending by score
     """
 
     def __init__(self, scorers: list[Scorer]) -> None:
@@ -72,52 +72,6 @@ class ScoringPipeline:
         """
         self.scorers = scorers
 
-    def score_candidates(
-        self,
-        candidates: list[ContentItem],
-        context: ScoringContext,
-    ) -> list[tuple[ContentItem, float]]:
-        """Score and sort *candidates*.
-
-        Each scorer produces a ``[0, 1]`` score that is multiplied by
-        its weight. The weighted scores are summed and divided by the
-        total weight to produce a normalised aggregate in ``[0, 1]``.
-
-        Args:
-            candidates: Unconsumed items to evaluate.
-            context: Shared scoring context.
-
-        Returns:
-            List of ``(ContentItem, aggregate_score)`` tuples sorted
-            by score descending.
-        """
-        if not candidates:
-            return []
-
-        total_weight = sum(scorer.weight for scorer in self.scorers)
-        if total_weight == 0:
-            return [(candidate, 0.0) for candidate in candidates]
-
-        scored: list[tuple[ContentItem, float]] = []
-        for candidate in candidates:
-            weighted_sum = 0.0
-            for scorer in self.scorers:
-                raw_score = scorer.score(candidate, context)
-                # Clamp individual score to [0, 1]
-                clamped = max(0.0, min(1.0, raw_score))
-                weighted_sum += clamped * scorer.weight
-            aggregate = weighted_sum / total_weight
-            # Clamp final score to [0, 1]
-            aggregate = max(0.0, min(1.0, aggregate))
-            scored.append((candidate, aggregate))
-
-        # Sort descending by score, with tiebreaker for equal scores
-        # Tiebreaker prioritizes first-in-series items, then uses stable hash
-        scored.sort(
-            key=lambda pair: (-pair[1], _tiebreaker_key(pair[0])),
-        )
-        return scored
-
     def score_candidates_with_breakdown(
         self,
         candidates: list[ContentItem],
@@ -125,8 +79,10 @@ class ScoringPipeline:
     ) -> list[ScoredCandidate]:
         """Score and sort *candidates*, returning per-scorer breakdowns.
 
-        Behaves like :meth:`score_candidates` but additionally captures the
-        raw (clamped, pre-weight) score from each scorer.
+        Each scorer produces a ``[0, 1]`` score that is multiplied by its
+        weight. The weighted scores are summed and divided by the total weight
+        to produce a normalised aggregate in ``[0, 1]``. Additionally captures
+        the raw (clamped, pre-weight) score from each scorer.
 
         Args:
             candidates: Unconsumed items to evaluate.

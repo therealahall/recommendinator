@@ -349,8 +349,6 @@ class RAWGProvider(EnrichmentProvider):
         if not description:
             return None
 
-        import re
-
         # Remove HTML tags
         text = re.sub(r"<[^>]+>", "", description)
 

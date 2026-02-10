@@ -127,7 +127,7 @@ class RecommendationEngine:
                 f"No consumed items found across any content type. "
                 f"Cannot generate recommendations for {content_type.value}."
             )
-            return self._handle_cold_start(content_type, count)
+            return []
 
         # Get ALL unconsumed items of the requested type.
         # We need the full list for accurate series ordering checks - a limit
@@ -459,24 +459,6 @@ class RecommendationEngine:
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
-
-    def _handle_cold_start(
-        self, content_type: ContentType, count: int
-    ) -> list[dict[str, Any]]:
-        """Handle cold start scenario (no consumed items across any content type).
-
-        Args:
-            content_type: Content type.
-            count: Number of recommendations.
-
-        Returns:
-            List of recommendations (empty or generic).
-        """
-        logger.info(
-            f"Cold start: no consumed items across any content type. "
-            f"Cannot generate recommendations for {content_type.value}."
-        )
-        return []
 
     def _find_direct_adaptations(
         self, item: ContentItem, consumed_items: list[ContentItem]

@@ -135,23 +135,3 @@ class SimilarityMatcher:
         except Exception as e:
             logger.error(f"Similarity search failed: {e}")
             return []
-
-    def find_similar_to_item(
-        self,
-        item: ContentItem,
-        content_type: ContentType | None = None,
-        exclude_ids: list[str] | None = None,
-        limit: int = 20,
-    ) -> list[tuple[ContentItem, float]]:
-        """Find items similar to a single item.
-
-        Args:
-            item: Item to find similar content for
-            content_type: Optional filter by content type
-            exclude_ids: Optional list of IDs to exclude
-            limit: Maximum number of results
-
-        Returns:
-            List of (ContentItem, similarity_score) tuples, sorted by score
-        """
-        return self.find_similar([item], content_type, exclude_ids, limit)

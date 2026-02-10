@@ -13,7 +13,6 @@ def sample_preferences():
     return UserPreferences(
         preferred_authors={"author a": 0.8},
         preferred_genres={"science fiction": 0.9},
-        preferred_themes={},
         average_rating=4.5,
         total_items=10,
     )

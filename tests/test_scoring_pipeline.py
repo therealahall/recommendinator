@@ -68,17 +68,19 @@ class TestScoringPipeline:
         poor_match = _make_item(title="Poor", metadata={"genre": "Horror"})
 
         pipeline = ScoringPipeline(DEFAULT_SCORERS)
-        result = pipeline.score_candidates([poor_match, good_match], context)
+        result = pipeline.score_candidates_with_breakdown(
+            [poor_match, good_match], context
+        )
 
-        assert result[0][0].title == "Good"
-        assert result[1][0].title == "Poor"
-        assert result[0][1] >= result[1][1]
+        assert result[0].item.title == "Good"
+        assert result[1].item.title == "Poor"
+        assert result[0].aggregate_score >= result[1].aggregate_score
 
     def test_empty_candidates(self) -> None:
         """Empty candidate list should return empty results."""
         context = _build_context()
         pipeline = ScoringPipeline(DEFAULT_SCORERS)
-        assert pipeline.score_candidates([], context) == []
+        assert pipeline.score_candidates_with_breakdown([], context) == []
 
     def test_weight_normalization(self) -> None:
         """Aggregate score should be in [0, 1] regardless of weights."""
@@ -93,9 +95,8 @@ class TestScoringPipeline:
         candidate = _make_item(metadata={"genre": "Fantasy"})
 
         pipeline = ScoringPipeline(DEFAULT_SCORERS)
-        result = pipeline.score_candidates([candidate], context)
-        score = result[0][1]
-        assert 0.0 <= score <= 1.0
+        result = pipeline.score_candidates_with_breakdown([candidate], context)
+        assert 0.0 <= result[0].aggregate_score <= 1.0
 
     def test_score_clamped_to_unit_interval(self) -> None:
         """Even with extreme inputs, scores should remain in [0, 1]."""
@@ -113,13 +114,13 @@ class TestScoringPipeline:
 
         # All max
         pipeline = ScoringPipeline([AlwaysMaxScorer(weight=10.0)])
-        result = pipeline.score_candidates([candidate], context)
-        assert result[0][1] == 1.0
+        result = pipeline.score_candidates_with_breakdown([candidate], context)
+        assert result[0].aggregate_score == 1.0
 
         # All min
         pipeline = ScoringPipeline([AlwaysMinScorer(weight=10.0)])
-        result = pipeline.score_candidates([candidate], context)
-        assert result[0][1] == 0.0
+        result = pipeline.score_candidates_with_breakdown([candidate], context)
+        assert result[0].aggregate_score == 0.0
 
     def test_zero_total_weight(self) -> None:
         """If all scorers have weight 0, scores should be 0.0."""
@@ -128,8 +129,8 @@ class TestScoringPipeline:
         pipeline = ScoringPipeline(
             [GenreMatchScorer(weight=0.0), TagOverlapScorer(weight=0.0)]
         )
-        result = pipeline.score_candidates([candidate], context)
-        assert result[0][1] == 0.0
+        result = pipeline.score_candidates_with_breakdown([candidate], context)
+        assert result[0].aggregate_score == 0.0
 
     def test_breakdown_keys_present(self) -> None:
         """score_candidates_with_breakdown returns expected scorer keys."""

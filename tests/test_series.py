@@ -5,11 +5,9 @@ from src.utils.series import (
     build_series_tracking,
     expand_tv_shows_to_seasons,
     extract_series_info,
-    get_series_book_number,
+    get_series_item_number,
     get_series_name,
-    is_first_book_in_series,
     is_first_item_in_series,
-    should_recommend_book,
     should_recommend_item,
 )
 
@@ -139,10 +137,10 @@ def test_get_series_name():
     assert get_series_name(item=item_with_metadata) == "Breaking Bad"
 
 
-def test_get_series_book_number():
-    """Test getting book number from title."""
-    assert get_series_book_number("Book (The Witcher, #4)") == 4
-    assert get_series_book_number("Standalone Book") is None
+def test_get_series_item_number():
+    """Test getting item number from title."""
+    assert get_series_item_number("Book (The Witcher, #4)") == 4
+    assert get_series_item_number("Standalone Book") is None
 
 
 def test_build_series_tracking():
@@ -190,11 +188,11 @@ def test_build_series_tracking():
     assert "Standalone Book" not in tracking
 
 
-def test_is_first_book_in_series():
-    """Test checking if book is first in series (backward compatibility)."""
-    assert is_first_book_in_series(title="Book (Series, #1)") is True
-    assert is_first_book_in_series(title="Book (Series, #2)") is False
-    assert is_first_book_in_series(title="Standalone Book") is False
+def test_is_first_item_in_series_by_title():
+    """Test checking if item is first in series using title string."""
+    assert is_first_item_in_series(title="Book (Series, #1)") is True
+    assert is_first_item_in_series(title="Book (Series, #2)") is False
+    assert is_first_item_in_series(title="Standalone Book") is False
 
 
 def test_is_first_item_in_series():
@@ -243,7 +241,7 @@ def test_should_recommend_book_not_in_series():
         content_type=ContentType.BOOK,
         status=ConsumptionStatus.UNREAD,
     )
-    assert should_recommend_book(item, {}) is True
+    assert should_recommend_item(item, {}) is True
 
 
 def test_should_recommend_first_book_unstarted_series():
@@ -255,7 +253,7 @@ def test_should_recommend_first_book_unstarted_series():
         content_type=ContentType.BOOK,
         status=ConsumptionStatus.UNREAD,
     )
-    assert should_recommend_book(item, {}) is True
+    assert should_recommend_item(item, {}) is True
 
 
 def test_should_not_recommend_later_book_unstarted_series():
@@ -267,7 +265,7 @@ def test_should_not_recommend_later_book_unstarted_series():
         content_type=ContentType.BOOK,
         status=ConsumptionStatus.UNREAD,
     )
-    assert should_recommend_book(item, {}) is False
+    assert should_recommend_item(item, {}) is False
 
 
 def test_should_recommend_next_book_started_series():
@@ -281,7 +279,7 @@ def test_should_recommend_next_book_started_series():
     )
     # User has read books 1 and 2
     series_tracking = {"Series A": {1, 2}}
-    assert should_recommend_book(item, series_tracking) is True
+    assert should_recommend_item(item, series_tracking) is True
 
 
 def test_should_not_recommend_skipped_book_started_series():
@@ -295,7 +293,7 @@ def test_should_not_recommend_skipped_book_started_series():
     )
     # User has read books 1 and 2, but not 3 or 4
     series_tracking = {"Series A": {1, 2}}
-    assert should_recommend_book(item, series_tracking) is False
+    assert should_recommend_item(item, series_tracking) is False
 
 
 def test_should_recommend_book_zero_prequel():
@@ -309,7 +307,7 @@ def test_should_recommend_book_zero_prequel():
     )
     # User has read book #0 (prequel)
     series_tracking = {"Series A": {0}}
-    assert should_recommend_book(item, series_tracking) is True
+    assert should_recommend_item(item, series_tracking) is True
 
 
 def test_should_recommend_item_video_game_series():

@@ -145,9 +145,7 @@ class VectorDB:
                                 else None
                             ),
                             "metadata": (
-                                metadatas[0][index]
-                                if metadatas is not None
-                                else {}
+                                metadatas[0][index] if metadatas is not None else {}
                             ),
                         }
                     )
