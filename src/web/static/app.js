@@ -84,8 +84,9 @@
                     aiFeatures = data.features;
                 }
 
-                // Hide AI reasoning checkbox if LLM reasoning is disabled
+                // Hide AI-dependent UI elements when disabled
                 updateAiReasoningVisibility();
+                updateChatTabVisibility();
             })
             .catch(function () {
                 var statusBar = document.getElementById("statusBar");
@@ -105,6 +106,13 @@
             } else {
                 container.style.display = "";
             }
+        }
+    }
+
+    function updateChatTabVisibility() {
+        var chatTabBtn = document.querySelector('.tab-btn[data-tab="chat"]');
+        if (chatTabBtn) {
+            chatTabBtn.style.display = aiFeatures.ai_enabled ? "" : "none";
         }
     }
 
