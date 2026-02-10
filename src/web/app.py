@@ -139,14 +139,17 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         version="1.0.0",
     )
 
-    # Configure CORS (internal network only)
+    # Configure CORS (default to localhost only)
     web_config = config.get("web", {})
-    allowed_origins = web_config.get("allowed_origins", ["*"])
+    allowed_origins = web_config.get("allowed_origins", ["http://localhost:18473"])
+
+    # Disable credentials when wildcard origin is used (browser requirement)
+    allow_credentials = "*" not in allowed_origins
 
     app.add_middleware(
         CORSMiddleware,
         allow_origins=allowed_origins,
-        allow_credentials=True,
+        allow_credentials=allow_credentials,
         allow_methods=["*"],
         allow_headers=["*"],
     )

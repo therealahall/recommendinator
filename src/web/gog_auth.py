@@ -15,11 +15,10 @@ from urllib.parse import parse_qs, urlparse
 import requests
 import yaml
 
+from src.ingestion.sources.gog import GOG_CLIENT_ID, GOG_CLIENT_SECRET
+
 logger = logging.getLogger(__name__)
 
-# GOG Galaxy public client credentials (same as in gog.py plugin)
-GOG_CLIENT_ID = "46899977096215655"
-GOG_CLIENT_SECRET = "9d85c43b1482497dbbce61f6e4aa173a433796eeae2ca8c5f6129f2dc4de46d9"
 GOG_AUTH_URL = "https://auth.gog.com/auth"
 GOG_TOKEN_URL = "https://auth.gog.com/token"
 GOG_REDIRECT_URI = "https://embed.gog.com/on_login_success?origin=client"

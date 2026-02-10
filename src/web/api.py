@@ -318,7 +318,9 @@ async def get_recommendations(
 
     except Exception as error:
         logger.error(f"Error generating recommendations: {error}")
-        raise HTTPException(status_code=500, detail=str(error)) from error
+        raise HTTPException(
+            status_code=500, detail="Failed to generate recommendations"
+        ) from error
 
 
 @router.get("/users", response_model=list[UserResponse])
@@ -578,7 +580,9 @@ async def mark_complete(request: CompletionRequest) -> dict[str, Any]:
 
     except Exception as error:
         logger.error(f"Error marking content as completed: {error}")
-        raise HTTPException(status_code=500, detail=str(error)) from error
+        raise HTTPException(
+            status_code=500, detail="Failed to mark content as completed"
+        ) from error
 
 
 @router.post("/update")
@@ -1094,9 +1098,11 @@ async def exchange_gog_token(request: GogExchangeRequest) -> dict[str, Any]:
 
     except GogAuthError as error:
         logger.warning(f"GOG auth error: {error}")
-        raise HTTPException(status_code=400, detail=str(error)) from error
+        raise HTTPException(
+            status_code=400, detail="GOG authentication failed"
+        ) from error
     except Exception as error:
         logger.error(f"Unexpected error during GOG token exchange: {error}")
         raise HTTPException(
-            status_code=500, detail=f"Unexpected error: {error}"
+            status_code=500, detail="Unexpected error during GOG authentication"
         ) from error
