@@ -44,6 +44,7 @@ class RecommendationRanker:
         preferences: UserPreferences,
         content_type: ContentType,
         adaptations_map: dict[str, list[ContentItem]] | None = None,
+        recently_completed: list[ContentItem] | None = None,
     ) -> list[tuple[ContentItem, float, dict[str, Any]]]:
         """Rank candidate items.
 
@@ -52,6 +53,7 @@ class RecommendationRanker:
             preferences: User preferences
             content_type: Content type being ranked
             adaptations_map: Optional map of item ID to list of adaptations found
+            recently_completed: Recently completed items for diversity scoring
 
         Returns:
             List of (ContentItem, final_score, metadata) tuples, sorted by score
@@ -62,6 +64,9 @@ class RecommendationRanker:
         if adaptations_map is None:
             adaptations_map = {}
 
+        # Pre-compute recent genres for diversity scoring
+        recent_genres = self._collect_recent_genres(recently_completed)
+
         scored_items = []
 
         for item, similarity_score in candidates:
@@ -70,8 +75,8 @@ class RecommendationRanker:
                 item, preferences, content_type
             )
 
-            # Calculate diversity bonus (simplified - could be enhanced)
-            diversity_bonus = 0.0  # Placeholder for future diversity logic
+            # Calculate diversity bonus based on genre difference from recent items
+            diversity_bonus = self._calculate_diversity_score(item, recent_genres)
 
             # Series bonus: boost first items in unstarted series (all content types)
             series_bonus = 0.0
@@ -128,6 +133,63 @@ class RecommendationRanker:
         scored_items.sort(key=lambda x: x[1], reverse=True)
 
         return scored_items
+
+    @staticmethod
+    def _collect_recent_genres(
+        recently_completed: list[ContentItem] | None,
+        limit: int = 20,
+    ) -> set[str]:
+        """Collect normalized genres from recently completed items.
+
+        Args:
+            recently_completed: List of recently completed items.
+            limit: Maximum number of items to consider.
+
+        Returns:
+            Set of normalized genre strings.
+        """
+        if not recently_completed:
+            return set()
+
+        genres: set[str] = set()
+        for item in recently_completed[:limit]:
+            item_genres = (
+                extract_and_normalize_genres(item.metadata) if item.metadata else []
+            )
+            genres.update(item_genres)
+        return genres
+
+    @staticmethod
+    def _calculate_diversity_score(item: ContentItem, recent_genres: set[str]) -> float:
+        """Score how different an item's genres are from recently completed genres.
+
+        Returns a score between 0.0 (identical genres) and 1.0 (completely
+        different genres). If there are no recent genres or the item has no
+        genres, returns 0.5 (neutral).
+
+        Args:
+            item: Candidate item to score.
+            recent_genres: Set of genres from recently completed items.
+
+        Returns:
+            Diversity score in [0.0, 1.0].
+        """
+        if not recent_genres:
+            return 0.5
+
+        candidate_genres = set(
+            extract_and_normalize_genres(item.metadata) if item.metadata else []
+        )
+        if not candidate_genres:
+            return 0.5
+
+        # Jaccard distance: 1 - |intersection| / |union|
+        intersection = candidate_genres & recent_genres
+        union = candidate_genres | recent_genres
+        if not union:
+            return 0.5
+
+        return 1.0 - len(intersection) / len(union)
 
     def _calculate_preference_score(
         self, item: ContentItem, preferences: UserPreferences, content_type: ContentType

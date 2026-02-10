@@ -190,6 +190,9 @@ recommendations:
     series_order: 1.5
     tag_overlap: 1.0
     rating_pattern: 1.0
+
+# Per-user diversity bonus (set in user preferences, not global config)
+# diversity_weight: 0.2  # 0.0 = disabled, higher = more genre variety
 ```
 
 ## CLI Usage

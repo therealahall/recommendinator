@@ -75,8 +75,8 @@ RecommendationEngine
   |     |-- CustomPreferenceScorer — user natural language rules
   |     |-- [SemanticSimilarityScorer]  (when AI enabled)
   |
-  |-- UserPreferenceConfig (optional per-user weight overrides)
-  |-- Ranker (adaptation bonus, series bonus, preference adjustments)
+  |-- UserPreferenceConfig (optional per-user weight overrides, diversity_weight)
+  |-- Ranker (adaptation bonus, series bonus, diversity bonus, preference adjustments)
   |-- [LLM reasoning post-processing]  (when AI enabled)
 ```
 
@@ -91,7 +91,7 @@ RecommendationEngine
 3. Load per-user preference config (if available), apply scorer weight overrides
 4. Score all unconsumed candidates through the scoring pipeline
 5. Optionally blend vector-similarity scores when AI is enabled
-6. Apply series filtering and ranking adjustments
+6. Apply series filtering, diversity bonus (genre-hopping), and ranking adjustments
 7. Generate ranked recommendations with score breakdowns
 
 **Cross-Content-Type Recommendations:**

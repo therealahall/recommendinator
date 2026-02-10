@@ -336,13 +336,26 @@ class RecommendationEngine:
             meta["item"].id: meta["score_breakdown"] for meta in candidate_metadata
         }
 
-        ranked_items = self.ranker.rank(
+        # Apply per-user diversity weight if configured
+        ranker = self.ranker
+        if (
+            user_preference_config is not None
+            and user_preference_config.diversity_weight > 0
+        ):
+            ranker = RecommendationRanker(
+                similarity_weight=self.ranker.similarity_weight,
+                preference_weight=self.ranker.preference_weight,
+                diversity_weight=user_preference_config.diversity_weight,
+            )
+
+        ranked_items = ranker.rank(
             candidates=[
                 (meta["item"], meta["similarity_score"]) for meta in candidate_metadata
             ],
             preferences=preferences,
             content_type=content_type,
             adaptations_map=adaptations_map,
+            recently_completed=consumed_items_of_type,
         )
 
         top_recommendations = ranked_items[:count]

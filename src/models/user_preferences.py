@@ -23,6 +23,10 @@ class UserPreferenceConfig:
             Maps content type string to length preference string
             (e.g. ``{"book": "short", "movie": "any"}``).
             Valid values: ``"any"``, ``"short"``, ``"medium"``, ``"long"``.
+        diversity_weight: Weight for genre-diversity bonus (0.0-1.0).
+            When > 0, candidates whose genres differ from recently completed
+            items receive a score boost, encouraging genre-hopping.
+            Default 0.0 (disabled).
     """
 
     scorer_weights: dict[str, float] = field(default_factory=dict)
@@ -30,6 +34,7 @@ class UserPreferenceConfig:
     variety_after_completion: bool = False
     custom_rules: list[str] = field(default_factory=list)
     content_length_preferences: dict[str, str] = field(default_factory=dict)
+    diversity_weight: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a dictionary for JSON storage.
@@ -55,4 +60,5 @@ class UserPreferenceConfig:
             variety_after_completion=data.get("variety_after_completion", False),
             custom_rules=data.get("custom_rules", []),
             content_length_preferences=data.get("content_length_preferences", {}),
+            diversity_weight=data.get("diversity_weight", 0.0),
         )

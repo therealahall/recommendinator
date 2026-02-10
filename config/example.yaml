@@ -164,6 +164,13 @@ recommendations:
   #     tv_show: "medium"
   #     video_game: "long"
 
+  # Diversity bonus — encourages genre-hopping in recommendations.
+  # When > 0, candidates whose genres differ from recently completed items
+  # receive a score boost (Jaccard distance on normalized genre sets).
+  # Set per-user via the diversity_weight field in user preferences.
+  # 0.0 = disabled (default), 0.1-0.3 = subtle variety, 0.5+ = strong diversity.
+  # diversity_weight: 0.0
+
 # Conversation AI configuration
 # Enables the chat interface for natural language interactions
 conversation:

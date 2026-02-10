@@ -12,6 +12,7 @@ class TestUserPreferenceConfig:
         assert config.variety_after_completion is False
         assert config.custom_rules == []
         assert config.content_length_preferences == {}
+        assert config.diversity_weight == 0.0
 
     def test_round_trip(self) -> None:
         """to_dict -> from_dict produces an equal object."""
@@ -49,8 +50,15 @@ class TestUserPreferenceConfig:
             "variety_after_completion",
             "custom_rules",
             "content_length_preferences",
+            "diversity_weight",
         }
         assert set(data.keys()) == expected_keys
+
+    def test_diversity_weight_round_trip(self) -> None:
+        """diversity_weight survives to_dict -> from_dict."""
+        config = UserPreferenceConfig(diversity_weight=0.3)
+        restored = UserPreferenceConfig.from_dict(config.to_dict())
+        assert restored.diversity_weight == 0.3
 
     def test_from_dict_ignores_deprecated_keys(self) -> None:
         """from_dict safely ignores old deprecated keys in stored JSON."""
