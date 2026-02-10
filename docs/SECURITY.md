@@ -19,7 +19,7 @@ The following contain sensitive information:
 |------|----------|
 | `config/config.yaml` | API keys, Steam ID |
 | `data/recommendations.db` | Personal consumption history |
-| `data/chroma/` | Vector embeddings of your content |
+| `data/chroma_db/` | Vector embeddings of your content (if AI enabled) |
 
 **Never commit these files to version control.**
 
@@ -36,9 +36,10 @@ The following contain sensitive information:
 
 ```yaml
 # config/config.yaml - NEVER COMMIT THIS FILE
-steam:
-  api_key: "YOUR_ACTUAL_KEY_HERE"  # Keep secret!
-  steam_id: "YOUR_STEAM_ID"
+inputs:
+  steam:
+    api_key: "YOUR_ACTUAL_KEY_HERE"  # Keep secret!
+    steam_id: "YOUR_STEAM_ID"
 ```
 
 ## Network Security
@@ -49,9 +50,14 @@ The application may connect to:
 
 | Service | Purpose | When |
 |---------|---------|------|
-| Ollama (localhost) | LLM and embeddings | Always when AI enabled |
+| Ollama (localhost) | LLM and embeddings | When AI enabled |
 | Steam API | Game library sync | When Steam source enabled |
+| GOG API | Game library sync | When GOG source enabled |
+| Epic Games API | Game library sync | When Epic source enabled |
 | Sonarr/Radarr | Media library sync | When configured |
+| TMDB API | Movie/TV metadata enrichment | When enrichment enabled |
+| OpenLibrary API | Book metadata enrichment | When enrichment enabled |
+| RAWG API | Game metadata enrichment | When enrichment enabled |
 
 ### Localhost Binding
 
@@ -59,10 +65,10 @@ By default, the web interface binds to `localhost`:
 
 ```bash
 # Safe: Only accessible from local machine
-python -m src.web --host 127.0.0.1
+python3.11 -m src.web --host 127.0.0.1
 
 # Caution: Accessible from network
-python -m src.web --host 0.0.0.0
+python3.11 -m src.web --host 0.0.0.0
 ```
 
 ### Docker Network Isolation

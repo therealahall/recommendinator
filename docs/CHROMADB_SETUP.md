@@ -22,7 +22,7 @@ pip install chromadb
 
 1. **Check your Python version:**
    ```bash
-   python --version
+   python3.11 --version
    ```
 
 2. **If using Python 3.14**, you may need to:
@@ -34,12 +34,14 @@ pip install chromadb
    - Python 3.12 ✅ (fully supported)
    - Python 3.14 ⚠️ (may have compatibility issues)
 
+**Note:** ChromaDB is only required when AI features are enabled (`features.ai_enabled: true`). The system works fully without it.
+
 ## Verification
 
 After installation, verify ChromaDB works:
 
 ```bash
-python -c "import chromadb; print(f'ChromaDB version: {chromadb.__version__}')"
+python3.11 -c "import chromadb; print(f'ChromaDB version: {chromadb.__version__}')"
 ```
 
 ## Testing
@@ -47,8 +49,8 @@ python -c "import chromadb; print(f'ChromaDB version: {chromadb.__version__}')"
 Run the vector database tests:
 
 ```bash
-pytest tests/test_vector_db.py -v
-pytest tests/test_storage_manager.py -v
+python3.11 -m pytest tests/test_vector_db.py -v
+python3.11 -m pytest tests/test_storage_manager.py -v
 ```
 
 ## Troubleshooting

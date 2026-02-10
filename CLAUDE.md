@@ -12,10 +12,9 @@ Before starting work, read the relevant documentation:
 
 - **README.md** - Project overview, features, usage
 - **ARCHITECTURE.md** - System architecture, components, data flow
-- **CONTRIBUTING.md** - Development standards, code style, testing
-- **DEVELOPMENT.md** - Development log, decisions, implementation history
+- **CONTRIBUTING.md** - Development standards for open source contributors
 - **QUICKSTART.md** - Getting started guide
-- **docs/** - Additional technical docs (MODEL_RECOMMENDATIONS.md, CHROMADB_SETUP.md, SCHEMA_DESIGN.md, PYTHON_VERSION.md)
+- **docs/** - Additional technical docs (MODEL_RECOMMENDATIONS.md, CHROMADB_SETUP.md, PYTHON_VERSION.md, PLUGIN_DEVELOPMENT.md, CUSTOM_RULES.md, SECURITY.md, TROUBLESHOOTING.md)
 
 ## Project Structure
 
@@ -24,10 +23,12 @@ src/
 ├── cli/              # Click CLI interface
 ├── web/              # FastAPI web interface
 ├── ingestion/        # Data ingestion
-│   └── sources/      # Source parsers (goodreads.py, steam.py, sonarr.py, radarr.py, etc.)
+│   └── sources/      # Source plugins (auto-discovered)
 ├── llm/              # Ollama interaction
 ├── storage/          # SQLite + ChromaDB
 ├── recommendations/  # Recommendation engine (scorers, pipeline, ranking)
+├── enrichment/       # Background metadata enrichment
+├── conversation/     # Conversational AI chat system
 ├── models/           # Data models (ContentItem, ContentType, UserPreferenceConfig)
 └── utils/            # Utility functions
 tests/                # Mirrors src/ structure
@@ -185,12 +186,16 @@ This ensures users can discover and understand all configuration options.
 
 ## Adding New Features
 
+**Think before acting.** Do not jump straight into writing code. Ask clarifying questions if requirements are ambiguous, there are multiple valid approaches, or the scope is unclear. It is better to confirm intent upfront than to redo work.
+
 1. Read relevant documentation
-2. Write tests first (TDD recommended)
-3. Implement following existing patterns
-4. Ensure all checks pass
-5. Update documentation if needed
-6. Commit with proper message format
+2. **Search the codebase for existing patterns** — before writing anything, look at how similar features are already implemented (e.g., grep for analogous endpoints, UI components, parsers). Match the conventions you find rather than inventing new ones.
+3. Ask questions if anything is unclear or if there are trade-offs to decide
+4. Write tests first (TDD recommended)
+5. Implement following existing patterns
+6. Ensure all checks pass
+7. **Update documentation** — every change set must include documentation updates. Check ARCHITECTURE.md, README.md, QUICKSTART.md, CLAUDE.md, and relevant docs/ files. If the change adds, removes, or modifies user-facing behavior, configuration, or system components, the docs must reflect it before the work is considered done.
+8. Commit with proper message format
 
 ## Adding New Data Sources
 
@@ -199,20 +204,29 @@ This ensures users can discover and understand all configuration options.
 3. Yield `ContentItem` objects
 4. Add comprehensive tests with mocked APIs
 5. Update CLI/web to support new source
+6. **Update docs**: Add to ARCHITECTURE.md sources list, README.md data sources table, config/example.yaml, and docs/PLUGIN_DEVELOPMENT.md reference list
 
 ## Bug Fixes
 
 1. Write regression test first (fails before fix, passes after)
 2. Fix the bug
 3. Document bug in test docstring
-4. Commit with `fix` type
+4. **Update docs** if the fix changes behavior, configuration, or corrects something documented incorrectly
+5. Commit with `fix` type
 
 ## Documentation Maintenance
 
-When changing paradigms or patterns:
-1. Update relevant documentation files
-2. Update CLAUDE.md and .cursorrules to stay in sync
-3. Use `docs:` commit type
+**Documentation is not optional.** Every change set must leave the docs accurate. This is not a separate step to do later — it is part of completing the work.
+
+**What to check on every change:**
+- `README.md` — if user-facing behavior, data sources, or configuration changed
+- `ARCHITECTURE.md` — if system components, data flow, or tech stack changed
+- `QUICKSTART.md` — if setup steps or getting-started workflow changed
+- `CLAUDE.md` — if development standards, project structure, or workflows changed
+- `config/example.yaml` — if configuration options were added or modified
+- Relevant `docs/*.md` — if the change touches areas covered by specific docs
+
+**For documentation-only changes**, use the `docs:` commit type.
 
 ## Pre-commit Checklist
 
@@ -224,4 +238,4 @@ When changing paradigms or patterns:
 - [ ] No references to config/config.yaml
 - [ ] Error handling appropriate
 - [ ] Type hints used
-- [ ] Documentation updated if needed
+- [ ] **Documentation is accurate** — all affected docs updated (see Documentation Maintenance above)

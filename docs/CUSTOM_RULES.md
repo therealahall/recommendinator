@@ -8,19 +8,19 @@ Custom rules let you fine-tune recommendations using natural language preference
 
 ```bash
 # Add a rule
-python -m src.cli preferences custom-rules add "avoid horror"
+python3.11 -m src.cli preferences custom-rules add "avoid horror"
 
 # List your rules
-python -m src.cli preferences custom-rules list
+python3.11 -m src.cli preferences custom-rules list
 
 # Remove a rule by index
-python -m src.cli preferences custom-rules remove 0
+python3.11 -m src.cli preferences custom-rules remove 0
 
 # Clear all rules
-python -m src.cli preferences custom-rules clear --yes
+python3.11 -m src.cli preferences custom-rules clear --yes
 
 # Test how a rule will be interpreted
-python -m src.cli preferences custom-rules interpret "prefer sci-fi"
+python3.11 -m src.cli preferences custom-rules interpret "prefer sci-fi"
 ```
 
 ### Web UI
@@ -83,12 +83,12 @@ The system recognizes common aliases:
 
 ## How Rules Affect Scoring
 
-Rules adjust the scoring pipeline:
+Rules adjust the scoring pipeline via the `CustomPreferenceScorer`:
 
 1. **Genre boosts** increase scores for matching items (up to +0.5)
 2. **Genre penalties** decrease scores for matching items (up to -0.5)
-3. **Content type filters** exclude non-matching items entirely
-4. **Length preferences** filter items before scoring
+3. **Content type preferences** influence scoring for matching types
+4. **Length preferences** apply a soft scoring penalty (non-matching items rank lower but are not excluded)
 
 Multiple rules are merged together. Later rules take precedence for conflicts.
 
@@ -98,7 +98,7 @@ When AI features are enabled, complex rules can use LLM interpretation:
 
 ```bash
 # Use LLM for nuanced rule interpretation
-python -m src.cli preferences custom-rules interpret "I'm burnt out on grimdark fantasy but still enjoy lighter fantasy with humor" --use-llm
+python3.11 -m src.cli preferences custom-rules interpret "I'm burnt out on grimdark fantasy but still enjoy lighter fantasy with humor" --use-llm
 ```
 
 The LLM interpreter handles:
@@ -112,15 +112,15 @@ Results are cached to avoid repeated LLM calls.
 
 ```bash
 # Avoid a genre you're tired of
-python -m src.cli preferences custom-rules add "tired of superhero movies"
+python3.11 -m src.cli preferences custom-rules add "tired of superhero movies"
 
 # Focus on a specific mood
-python -m src.cli preferences custom-rules add "in the mood for cozy mysteries"
+python3.11 -m src.cli preferences custom-rules add "in the mood for cozy mysteries"
 
 # Multiple rules work together
-python -m src.cli preferences custom-rules add "prefer sci-fi"
-python -m src.cli preferences custom-rules add "avoid romance"
-python -m src.cli preferences custom-rules add "short books"
+python3.11 -m src.cli preferences custom-rules add "prefer sci-fi"
+python3.11 -m src.cli preferences custom-rules add "avoid romance"
+python3.11 -m src.cli preferences custom-rules add "short books"
 ```
 
 ## Tips
@@ -134,8 +134,8 @@ python -m src.cli preferences custom-rules add "short books"
 ## Troubleshooting
 
 **Rule not working?**
-1. Check interpretation: `python -m src.cli preferences custom-rules interpret "your rule"`
-2. Verify it was saved: `python -m src.cli preferences custom-rules list`
+1. Check interpretation: `python3.11 -m src.cli preferences custom-rules interpret "your rule"`
+2. Verify it was saved: `python3.11 -m src.cli preferences custom-rules list`
 3. Make sure you clicked "Save Preferences" in the web UI
 
 **Unexpected recommendations?**

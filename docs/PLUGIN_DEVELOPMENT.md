@@ -291,17 +291,14 @@ class MovieApiPlugin(SourcePlugin):
         return max(1, min(5, round(rating / 2)))
 ```
 
-## Registering Your Plugin
+## Plugin Registration
 
-Add your plugin to `src/ingestion/registry.py`:
+Plugins are **auto-discovered** by `PluginRegistry` from `src/ingestion/sources/`. No manual registration is needed — just create your plugin file and it will be found automatically.
 
-```python
-from src.ingestion.sources.my_plugin import MyPlugin
+To verify your plugin is discovered:
 
-PLUGINS = {
-    # ... existing plugins ...
-    "my_plugin": MyPlugin(),
-}
+```bash
+python3.11 -m src.cli update --help  # Should show your source in the list
 ```
 
 ## Testing Your Plugin
@@ -365,7 +362,10 @@ class TestMyPlugin:
 
 - `src/ingestion/sources/goodreads.py` - File-based CSV parser
 - `src/ingestion/sources/steam.py` - API-based with rate limiting
+- `src/ingestion/sources/gog.py` - OAuth-based API with token refresh
+- `src/ingestion/sources/epic_games.py` - OAuth-based API via Legendary
 - `src/ingestion/sources/radarr.py` - API-based movie library
 - `src/ingestion/sources/sonarr.py` - API-based TV library
 - `src/ingestion/sources/generic_csv.py` - Flexible CSV importer
 - `src/ingestion/sources/generic_json.py` - Flexible JSON importer
+- `src/ingestion/sources/markdown.py` - Flexible Markdown importer

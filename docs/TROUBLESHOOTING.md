@@ -8,7 +8,7 @@ Common issues and solutions for Personal Recommendations.
 
 **Error:** `Failed to build hnswlib` or similar
 
-**Solution:** ChromaDB requires Python 3.11. If you're using 3.12+, either:
+**Solution:** ChromaDB requires Python 3.11 or 3.12. If you're using 3.13+, either:
 1. Use Python 3.11: `python3.11 -m pip install -r requirements.txt`
 2. Run without AI features (ChromaDB is optional)
 
@@ -113,8 +113,8 @@ ollama list
 **Symptom:** Added rules but no change in recommendations
 
 **Solutions:**
-1. Verify rule was saved: `python -m src.cli preferences custom-rules list`
-2. Test interpretation: `python -m src.cli preferences custom-rules interpret "your rule"`
+1. Verify rule was saved: `python3.11 -m src.cli preferences custom-rules list`
+2. Test interpretation: `python3.11 -m src.cli preferences custom-rules interpret "your rule"`
 3. Click "Save Preferences" in web UI
 4. Rules influence but don't completely override scoring
 
@@ -156,7 +156,7 @@ ollama list
 **Error:** Blank page or "Failed to connect"
 
 **Solutions:**
-1. Check server is running: `python -m src.web`
+1. Check server is running: `python3.11 -m src.web`
 2. Verify port (default: 18473)
 3. Check browser console for errors
 4. Try different browser or incognito mode
@@ -179,10 +179,10 @@ ollama list
 **Solution:**
 ```bash
 # Run through module
-python -m src.cli --help
+python3.11 -m src.cli --help
 
 # Or check if it's a subcommand
-python -m src.cli preferences --help
+python3.11 -m src.cli preferences --help
 ```
 
 ### Config File Not Found
@@ -191,7 +191,7 @@ python -m src.cli preferences --help
 
 **Solution:**
 1. Copy example config: `cp config/example.yaml config/config.yaml`
-2. Specify path: `python -m src.cli --config path/to/config.yaml`
+2. Specify path: `python3.11 -m src.cli --config path/to/config.yaml`
 
 ## Docker Issues
 
@@ -254,7 +254,7 @@ If you can't resolve an issue:
 
 1. Check existing GitHub issues
 2. Include in your report:
-   - Python version: `python --version`
+   - Python version: `python3.11 --version`
    - OS and version
    - Error message (full traceback)
    - Steps to reproduce

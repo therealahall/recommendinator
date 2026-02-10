@@ -274,11 +274,12 @@ personal-recommendations/
 |----------|-------------|
 | [QUICKSTART.md](QUICKSTART.md) | Getting started guide |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | System design and components |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | Development guidelines |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Contributing guidelines |
 | [docs/CUSTOM_RULES.md](docs/CUSTOM_RULES.md) | Custom preference rules |
 | [docs/PLUGIN_DEVELOPMENT.md](docs/PLUGIN_DEVELOPMENT.md) | Adding new data sources |
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Common issues and solutions |
 | [docs/MODEL_RECOMMENDATIONS.md](docs/MODEL_RECOMMENDATIONS.md) | Ollama model selection |
+| [docs/CHROMADB_SETUP.md](docs/CHROMADB_SETUP.md) | ChromaDB setup (AI-only) |
 | [docs/SECURITY.md](docs/SECURITY.md) | Security considerations |
 
 ## Requirements

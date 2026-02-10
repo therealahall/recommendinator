@@ -31,14 +31,14 @@ ollama pull all-minilm
 
 ### For Recommendations (Text Generation)
 
-**Option 1: `mistral:7b`** (You already have this ✅)
+**Option 1: `mistral:7b`**
 - **Size**: ~4.4 GB
 - **Purpose**: Generate recommendations and reasoning
 - **Why**: Good balance of quality and performance
 - **AMD Compatible**: ✅ Yes
 - **Best for**: General recommendations
 
-**Option 2: `deepseek-r1:latest`** (You already have this ✅)
+**Option 2: `deepseek-r1:latest`**
 - **Size**: ~4.7 GB
 - **Purpose**: Advanced reasoning for recommendations
 - **Why**: Better at understanding complex preferences and reasoning
@@ -105,13 +105,7 @@ ollama:
 
 ## Testing Your Setup
 
-After installing models, test the setup:
-
-```bash
-python3.11 scripts/test_chromadb_setup.py
-```
-
-Or test the LLM client:
+After installing models, verify the LLM client can connect:
 
 ```python
 from src.llm.client import OllamaClient

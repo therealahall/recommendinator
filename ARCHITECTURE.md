@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Personal Recommendations system ingests data from multiple sources and generates personalized recommendations using a smart scoring pipeline. **AI is entirely optional** — the system works fully without it. When enabled, a local LLM (via Ollama) provides semantic similarity and natural language explanations.
+The Personal Recommendations system ingests data from multiple sources and generates personalized recommendations using a smart scoring pipeline. **AI is entirely optional** — the system works fully without it. When enabled, a local LLM (via Ollama) provides semantic similarity, natural language explanations, and a conversational chat interface.
 
 The architecture emphasizes modularity, testability, and extensibility.
 
@@ -15,37 +15,33 @@ Responsible for parsing and normalizing data from various sources.
 **Current Sources:**
 - Goodreads CSV exports (books)
 - Steam Web API (video games)
+- GOG OAuth API (video games)
+- Epic Games via Legendary (video games)
 - Sonarr API (TV shows)
 - Radarr API (movies)
 - Generic CSV, JSON, Markdown (any content type)
 
-**Responsibilities:**
-- Parse different file formats (CSV, JSON, TXT, Markdown)
-- Normalize data into common schemas
-- Extract key fields (title, rating, review, completion status)
-- Handle different content types (books, movies, games, TV)
-
 **Design:**
-- Plugin-based architecture for new sources
-- Each source has its own parser module
-- Common data models for normalized output
+- Plugin-based architecture (`SourcePlugin` ABC in `plugin_base.py`)
+- Auto-discovered from `src/ingestion/sources/` via `PluginRegistry`
+- Each plugin handles config validation, fetching, and rating normalization
+- Shared sync executor (`execute_multi_source_sync`) used by both CLI and web
+- Progress callbacks for long-running operations
 
 ### 2. Storage Layer (`src/storage/`)
 
 Manages persistent storage of processed data and embeddings.
 
-**Storage Strategy:**
-- **Vector Database**: For storing embeddings of reviews and content descriptions (enables semantic search)
-  - Recommended: ChromaDB (lightweight, local-first)
-  - Alternative: FAISS, Qdrant
-- **SQLite Database**: For structured data (ratings, metadata, completion status)
-- **File-based Cache**: For raw ingested data and processing state
+**Components:**
+- **SQLite Database**: Primary store for all structured data — content items, users, preferences, enrichment status, conversation history, core memories
+- **ChromaDB** (optional): Vector embeddings for semantic search, only initialized when AI is enabled
 
-**Data Models:**
-- Content items (books, movies, etc.)
-- Ratings and reviews
-- User consumption status
-- LLM-generated embeddings
+**Schema:**
+- `users` table with per-user settings (JSON)
+- `content_items` table scoped by `user_id`
+- Type-specific detail tables (`book_details`, `movie_details`, `tv_show_details`, `video_game_details`)
+- `enrichment_status` for tracking metadata enrichment
+- `core_memories`, `conversation_messages`, `preference_profiles` for chat system
 
 ### 3. LLM Interaction Layer (`src/llm/`) — Optional
 
@@ -55,11 +51,6 @@ Handles communication with Ollama when AI features are enabled. **This entire la
 - Semantic embeddings for content similarity (ChromaDB)
 - Natural language recommendation explanations
 - Advanced preference rule interpretation
-
-**Model Selection:**
-- Default text model: `mistral:7b`
-- Default embedding model: `nomic-embed-text`
-- Configurable via config file
 
 **Feature Flags:**
 - `features.ai_enabled` — Master toggle for all AI features
@@ -80,6 +71,8 @@ RecommendationEngine
   |     |-- TagOverlapScorer      — Jaccard genre/tag overlap
   |     |-- SeriesOrderScorer     — next-in-sequence boosting
   |     |-- RatingPatternScorer   — rating history in matching genres
+  |     |-- ContentLengthScorer   — soft penalty for length preference mismatch
+  |     |-- CustomPreferenceScorer — user natural language rules
   |     |-- [SemanticSimilarityScorer]  (when AI enabled)
   |
   |-- UserPreferenceConfig (optional per-user weight overrides)
@@ -99,126 +92,125 @@ RecommendationEngine
 4. Score all unconsumed candidates through the scoring pipeline
 5. Optionally blend vector-similarity scores when AI is enabled
 6. Apply series filtering and ranking adjustments
-7. Generate ranked recommendations with reasoning
+7. Generate ranked recommendations with score breakdowns
 
 **Cross-Content-Type Recommendations:**
 - Preferences from all content types influence recommendations
-- Example: If you've read sci-fi books, the system may recommend sci-fi TV shows (The Expanse) or games (Mass Effect)
 - Metadata-based matching (genre/creator overlap) works without AI
 - Optional vector embeddings for semantic similarity across content types
-- Genre preferences extracted from books, games, TV shows, and movies
 
-**Filtering Logic:**
-- Separate consumed vs unconsumed based on data files
-- Handle explicit completion updates
-- Consider content type, genre, length, etc.
-- Series tracking (content-type specific, e.g., book series)
+### 5. Metadata Enrichment (`src/enrichment/`)
 
-### 5. Interface Layer
+Background system that fills gaps in content metadata from external APIs.
+
+**Providers:**
+- TMDB — movies and TV shows
+- OpenLibrary — books (no API key required)
+- RAWG — video games
+
+**Design:**
+- `EnrichmentProvider` ABC with auto-discovery from `src/enrichment/providers/`
+- Gap-filling merge strategy (never overwrites existing metadata)
+- Token bucket rate limiter per provider
+- Background worker with configurable batch size
+- Optional auto-enrichment hook after sync
+
+### 6. Conversation System (`src/conversation/`) — Optional
+
+Conversational AI chat interface, requires AI to be enabled.
+
+**Components:**
+- `MemoryManager` — CRUD for core memories (preference signals)
+- `ContextAssembler` — RAG retrieval for relevant items
+- `ToolExecutor` — Tool-calling for data updates (mark completed, update rating, save memory)
+- `MemoryExtractor` — Extracts preferences from conversations
+- `ProfileGenerator` — Computes genre affinities and preference profiles
+- `ConversationEngine` — Orchestrator with streaming responses
+
+### 7. Interface Layer
 
 #### CLI (`src/cli/`)
-- Command-line interface for recommendations and updates
-- Uses Click or argparse
-- Supports batch operations
+- Click-based command structure
+- Commands: `recommend`, `update`, `complete`, `preferences`, `enrichment`
+- Supports batch operations and multiple output formats
 
 #### Web (`src/web/`)
-- Flask or FastAPI web server
-- REST API endpoints
-- Simple web UI for recommendations
+- FastAPI web server with REST API
+- Tabbed web UI: Recommendations, Chat, Library, Preferences, Sync
+- Chat tab hidden when AI is disabled
+- SSE streaming for chat responses
 - Internal network only (no external exposure)
 
 ## Data Flow
 
 ```
-Input Files (CSV/JSON/etc.)
+Data Sources (APIs, CSV, JSON, Markdown)
     ↓
-Ingestion Layer (parse & normalize)
+Ingestion Layer (SourcePlugin → parse & normalize)
     ↓
 Storage Layer (persist to SQLite; optionally ChromaDB if AI enabled)
-    ↓
-Recommendation Engine
-    ├── Scoring Pipeline (always: genre, creator, tag, series, rating scorers)
-    ├── [AI: vector similarity blending]  ← optional, when AI enabled
-    ├── Ranker (adaptation bonus, series bonus, preferences)
-    └── [AI: LLM reasoning]              ← optional, when AI enabled
-    ↓
-Interface Layer (CLI/Web) → User
+    ↓                                      ↓
+Enrichment (background)           Recommendation Engine
+  TMDB, OpenLibrary, RAWG           ├── Scoring Pipeline (always runs)
+  fills metadata gaps                ├── [AI: vector similarity]  ← optional
+                                     ├── Ranker (bonuses, preferences)
+                                     └── [AI: LLM reasoning]     ← optional
+                                                ↓
+                                    Interface Layer (CLI/Web) → User
+                                                ↓
+                                    [Conversation System]  ← optional, AI-only
+                                      Chat, memory, tools
 ```
-
-## Update Mechanisms
-
-### 1. File-based Updates
-- Monitor input files for changes
-- Re-process changed files
-- Update storage incrementally
-
-### 2. Explicit Updates
-- User marks content as completed via CLI/web
-- Store update in database
-- Trigger re-analysis if needed
-
-### 3. Batch Updates
-- Full reprocessing of all sources
-- Useful for initial setup or major changes
 
 ## Configuration
 
 Configuration files in `config/`:
-- `config.yaml`: Main configuration
-  - Ollama model selection
-  - Storage paths
-  - API endpoints
-  - Content type preferences
+- `config.yaml`: Main configuration (git-ignored, contains secrets)
+- `example.yaml`: Template with all options documented
+
+Key sections: `features`, `ollama`, `storage`, `inputs`, `web`, `recommendations`, `conversation`, `enrichment`, `logging`.
 
 ## Extension Points
 
 ### Adding New Data Sources
-1. Create parser in `src/ingestion/sources/`
-2. Implement common interface
-3. Map to content type models
+1. Create plugin in `src/ingestion/sources/` implementing `SourcePlugin` ABC
+2. Plugin is auto-discovered by `PluginRegistry`
+3. Add tests with mocked APIs
+4. See `docs/PLUGIN_DEVELOPMENT.md` for details
+
+### Adding New Enrichment Providers
+1. Create provider in `src/enrichment/providers/` implementing `EnrichmentProvider` ABC
+2. Provider is auto-discovered by `EnrichmentRegistry`
+3. Add rate limiting configuration
 4. Add tests
 
 ### Adding New Content Types
-1. Extend content type enum
-2. Add type-specific recommendation logic
-3. Update data models
-4. Add type-specific prompts
-
-### Adding New LLM Models
-1. Update Ollama client configuration
-2. Adjust prompt templates if needed
-3. Test with new model
+1. Extend `ContentType` enum
+2. Add type-specific detail table in schema
+3. Add type-specific recommendation logic
+4. Update data models
 
 ## Technology Stack
 
 - **Python**: 3.11+
-- **LLM**: Ollama (local)
-- **Vector DB**: ChromaDB (recommended)
+- **LLM**: Ollama (local, AMD-compatible)
+- **Vector DB**: ChromaDB (optional, AI-only)
 - **SQL Database**: SQLite
-- **Web Framework**: FastAPI (recommended) or Flask
+- **Web Framework**: FastAPI
 - **CLI Framework**: Click
 - **Testing**: pytest
-- **Linting**: Black, MyPy, Ruff
-
-## Performance Considerations
-
-- Initial processing may be slow (acceptable for personal use)
-- Vector database enables fast similarity searches
-- Caching of LLM responses where appropriate
-- Incremental updates preferred over full reprocessing
+- **Quality**: Black, MyPy (strict), Ruff
 
 ## Security & Privacy
 
 - All processing happens locally
-- No external API calls (except Ollama, which is local)
-- Web interface only accessible on internal network
-- No user data leaves the machine
+- External API calls limited to: data source APIs (Steam, GOG, Epic, Sonarr, Radarr), enrichment APIs (TMDB, OpenLibrary, RAWG), and Ollama (local)
+- Web interface accessible on internal network only
+- API keys stored in git-ignored `config/config.yaml`
+- See `docs/SECURITY.md` for details
 
 ## Future Enhancements
 
-- Web UI for preference management
-- Natural language preference interpreter (AI-powered)
-- Content constraint enforcement (min pages, max runtime)
 - Discovery mode (surface things you didn't know about)
 - Interactive refinement ("I'm burnt out on sci-fi")
 - Scheduled sync (cron-style)
