@@ -20,6 +20,33 @@ from src.recommendations.scorers import (
 from src.storage.manager import StorageManager
 
 
+def resolve_config_path(config_path: Path | None = None) -> Path:
+    """Resolve config file path with fallback to example.yaml.
+
+    Args:
+        config_path: Explicit config path, or None for default.
+
+    Returns:
+        Resolved config file path.
+
+    Raises:
+        FileNotFoundError: If no config file can be found.
+    """
+    if config_path is None:
+        config_path = Path("config/config.yaml")
+
+    if not config_path.exists():
+        example_path = Path("config/example.yaml")
+        if example_path.exists():
+            return example_path
+        raise FileNotFoundError(
+            f"Config file not found: {config_path}. "
+            "Copy config/example.yaml to config/config.yaml"
+        )
+
+    return config_path
+
+
 def load_config(config_path: Path | None = None) -> dict[str, Any]:
     """Load configuration from YAML file.
 
@@ -32,24 +59,35 @@ def load_config(config_path: Path | None = None) -> dict[str, Any]:
     Raises:
         FileNotFoundError: If config file doesn't exist
     """
-    if config_path is None:
-        config_path = Path("config/config.yaml")
+    resolved = resolve_config_path(config_path)
 
-    if not config_path.exists():
-        # Try example config
-        example_path = Path("config/example.yaml")
-        if example_path.exists():
-            config_path = example_path
-        else:
-            raise FileNotFoundError(
-                f"Config file not found: {config_path}. "
-                "Copy config/example.yaml to config/config.yaml"
-            )
-
-    with open(config_path) as f:
+    with open(resolved) as f:
         config: dict[str, Any] = yaml.safe_load(f)
 
     return config
+
+
+def get_feature_flags(config: dict[str, Any] | None) -> dict[str, bool]:
+    """Extract feature flags from config.
+
+    Returns a dict with pre-computed flag combinations.
+
+    Args:
+        config: Configuration dictionary (or None).
+
+    Returns:
+        Dict with keys: ai_enabled, embeddings_enabled,
+        llm_reasoning_enabled, use_embeddings.
+    """
+    features_config = config.get("features", {}) if config else {}
+    ai_enabled: bool = features_config.get("ai_enabled", False)
+    embeddings_enabled: bool = features_config.get("embeddings_enabled", False)
+    return {
+        "ai_enabled": ai_enabled,
+        "embeddings_enabled": embeddings_enabled,
+        "llm_reasoning_enabled": features_config.get("llm_reasoning_enabled", False),
+        "use_embeddings": ai_enabled and embeddings_enabled,
+    }
 
 
 def create_storage_manager(config: dict[str, Any]) -> StorageManager:
@@ -62,19 +100,14 @@ def create_storage_manager(config: dict[str, Any]) -> StorageManager:
         StorageManager instance
     """
     storage_config = config.get("storage", {})
-    features_config = config.get("features", {})
     db_path = Path(storage_config.get("database_path", "data/recommendations.db"))
     vector_db_path = Path(storage_config.get("vector_db_path", "data/chroma_db"))
-
-    # AI features must be enabled for embeddings
-    ai_enabled = features_config.get("ai_enabled", False)
-    embeddings_enabled = features_config.get("embeddings_enabled", False)
-    use_embeddings = ai_enabled and embeddings_enabled
+    flags = get_feature_flags(config)
 
     return StorageManager(
         sqlite_path=db_path,
         vector_db_path=vector_db_path,
-        ai_enabled=use_embeddings,
+        ai_enabled=flags["use_embeddings"],
     )
 
 
@@ -95,10 +128,7 @@ def create_llm_components(
         Tuple of (OllamaClient, EmbeddingGenerator, RecommendationGenerator)
         or (None, None, None) if AI is disabled.
     """
-    features_config = config.get("features", {})
-    ai_enabled = features_config.get("ai_enabled", False)
-
-    if not ai_enabled:
+    if not get_feature_flags(config)["ai_enabled"]:
         return None, None, None
 
     ollama_config = config.get("ollama", {})

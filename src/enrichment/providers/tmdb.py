@@ -228,15 +228,26 @@ class TMDBProvider(EnrichmentProvider):
 
         return None
 
-    def _search_movie(
-        self, item: ContentItem, api_key: str, language: str
+    def _search_media(
+        self,
+        item: ContentItem,
+        api_key: str,
+        language: str,
+        endpoint: str,
+        year_param: str,
     ) -> int | None:
-        """Search for a movie by title and year.
+        """Search TMDB for a movie or TV show by title and year.
+
+        Args:
+            item: Content item to search for.
+            api_key: TMDB API key.
+            language: Language code.
+            endpoint: API search endpoint (e.g. "search/movie" or "search/tv").
+            year_param: Query parameter name for year filter.
 
         Returns:
-            TMDB movie ID if found, None otherwise
+            TMDB ID if found, None otherwise.
         """
-        # Clean title to remove year/country suffixes like "(2022)" or "(US)"
         search_title = clean_title_for_search(item.title)
         if search_title != item.title:
             logger.debug(
@@ -249,37 +260,32 @@ class TMDBProvider(EnrichmentProvider):
             "language": language,
         }
 
-        # Add year if available
         metadata = item.metadata or {}
         year = metadata.get("release_year") or metadata.get("year_published")
         if year:
-            params["year"] = str(year)
+            params[year_param] = str(year)
 
         try:
             response = requests.get(
-                f"{TMDB_API_BASE}/search/movie",
+                f"{TMDB_API_BASE}/{endpoint}",
                 params=params,
                 timeout=10,
             )
             response.raise_for_status()
-            data = response.json()
-
-            results = data.get("results", [])
+            results = response.json().get("results", [])
             if results:
-                # Return the first match
                 return int(results[0]["id"])
 
-            # Try without year if no results
-            if year and "year" in params:
-                del params["year"]
+            # Retry without year if no results
+            if year and year_param in params:
+                del params[year_param]
                 response = requests.get(
-                    f"{TMDB_API_BASE}/search/movie",
+                    f"{TMDB_API_BASE}/{endpoint}",
                     params=params,
                     timeout=10,
                 )
                 response.raise_for_status()
-                data = response.json()
-                results = data.get("results", [])
+                results = response.json().get("results", [])
                 if results:
                     return int(results[0]["id"])
 
@@ -287,65 +293,20 @@ class TMDBProvider(EnrichmentProvider):
 
         except requests.RequestException as error:
             raise ProviderError(self.name, f"Failed to search TMDB: {error}") from error
+
+    def _search_movie(
+        self, item: ContentItem, api_key: str, language: str
+    ) -> int | None:
+        """Search for a movie by title and year."""
+        return self._search_media(item, api_key, language, "search/movie", "year")
 
     def _search_tv_show(
         self, item: ContentItem, api_key: str, language: str
     ) -> int | None:
-        """Search for a TV show by title and year.
-
-        Returns:
-            TMDB TV show ID if found, None otherwise
-        """
-        # Clean title to remove year/country suffixes like "(2022)" or "(US)"
-        search_title = clean_title_for_search(item.title)
-        if search_title != item.title:
-            logger.debug(
-                f"Cleaned title for search: '{item.title}' -> '{search_title}'"
-            )
-
-        params = {
-            "api_key": api_key,
-            "query": search_title,
-            "language": language,
-        }
-
-        # Add first air date year if available
-        metadata = item.metadata or {}
-        year = metadata.get("release_year") or metadata.get("year_published")
-        if year:
-            params["first_air_date_year"] = str(year)
-
-        try:
-            response = requests.get(
-                f"{TMDB_API_BASE}/search/tv",
-                params=params,
-                timeout=10,
-            )
-            response.raise_for_status()
-            data = response.json()
-
-            results = data.get("results", [])
-            if results:
-                return int(results[0]["id"])
-
-            # Try without year if no results
-            if year and "first_air_date_year" in params:
-                del params["first_air_date_year"]
-                response = requests.get(
-                    f"{TMDB_API_BASE}/search/tv",
-                    params=params,
-                    timeout=10,
-                )
-                response.raise_for_status()
-                data = response.json()
-                results = data.get("results", [])
-                if results:
-                    return int(results[0]["id"])
-
-            return None
-
-        except requests.RequestException as error:
-            raise ProviderError(self.name, f"Failed to search TMDB: {error}") from error
+        """Search for a TV show by title and year."""
+        return self._search_media(
+            item, api_key, language, "search/tv", "first_air_date_year"
+        )
 
     def _fetch_movie_details(
         self,
@@ -508,63 +469,47 @@ class TMDBProvider(EnrichmentProvider):
                 self.name, f"Failed to fetch TV show details: {error}"
             ) from error
 
-    def _fetch_movie_keywords(self, tmdb_id: int, api_key: str) -> list[str] | None:
-        """Fetch keywords for a movie.
+    def _fetch_keywords(
+        self,
+        media_type: str,
+        tmdb_id: int,
+        api_key: str,
+        result_key: str = "keywords",
+    ) -> list[str] | None:
+        """Fetch keywords for a movie or TV show.
 
         Args:
-            tmdb_id: TMDB movie ID
-            api_key: API key
+            media_type: "movie" or "tv".
+            tmdb_id: TMDB ID.
+            api_key: API key.
+            result_key: JSON key containing keywords list.
 
         Returns:
-            List of keyword strings, or None if unavailable
+            List of keyword strings, or None if unavailable.
         """
         try:
             response = requests.get(
-                f"{TMDB_API_BASE}/movie/{tmdb_id}/keywords",
+                f"{TMDB_API_BASE}/{media_type}/{tmdb_id}/keywords",
                 params={"api_key": api_key},
                 timeout=10,
             )
             response.raise_for_status()
             data = response.json()
 
-            keywords = [
-                keyword["name"] for keyword in data.get("keywords", [])[:20]  # Limit
-            ]
+            keywords = [keyword["name"] for keyword in data.get(result_key, [])[:20]]
             return keywords if keywords else None
 
         except requests.RequestException:
-            # Keywords are optional, don't fail the whole enrichment
-            logger.warning(f"Failed to fetch keywords for movie {tmdb_id}")
+            logger.warning(f"Failed to fetch keywords for {media_type} {tmdb_id}")
             return None
+
+    def _fetch_movie_keywords(self, tmdb_id: int, api_key: str) -> list[str] | None:
+        """Fetch keywords for a movie."""
+        return self._fetch_keywords("movie", tmdb_id, api_key, "keywords")
 
     def _fetch_tv_keywords(self, tmdb_id: int, api_key: str) -> list[str] | None:
-        """Fetch keywords for a TV show.
-
-        Args:
-            tmdb_id: TMDB TV show ID
-            api_key: API key
-
-        Returns:
-            List of keyword strings, or None if unavailable
-        """
-        try:
-            response = requests.get(
-                f"{TMDB_API_BASE}/tv/{tmdb_id}/keywords",
-                params={"api_key": api_key},
-                timeout=10,
-            )
-            response.raise_for_status()
-            data = response.json()
-
-            keywords = [
-                keyword["name"] for keyword in data.get("results", [])[:20]  # Limit
-            ]
-            return keywords if keywords else None
-
-        except requests.RequestException:
-            # Keywords are optional, don't fail the whole enrichment
-            logger.warning(f"Failed to fetch keywords for TV show {tmdb_id}")
-            return None
+        """Fetch keywords for a TV show."""
+        return self._fetch_keywords("tv", tmdb_id, api_key, "results")
 
     def _get_movie_position_in_collection(
         self, collection_id: int, movie_id: int, api_key: str

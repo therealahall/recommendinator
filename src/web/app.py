@@ -15,6 +15,7 @@ from src.cli.config import (
     create_recommendation_engine,
     create_storage_manager,
     load_config,
+    resolve_config_path,
 )
 from src.conversation.engine import create_conversation_engine
 from src.web.state import app_state
@@ -102,13 +103,10 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         engine = create_recommendation_engine(storage, embedding_gen, rec_gen, config)
 
         # Determine actual config path used
-        actual_config_path = config_path
-        if actual_config_path is None:
-            actual_config_path = Path("config/config.yaml")
-        if not actual_config_path.exists():
-            example_path = Path("config/example.yaml")
-            if example_path.exists():
-                actual_config_path = example_path
+        try:
+            actual_config_path = resolve_config_path(config_path)
+        except FileNotFoundError:
+            actual_config_path = config_path or Path("config/config.yaml")
 
         # Store in app state
         app_state["config"] = config

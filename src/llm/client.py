@@ -87,6 +87,25 @@ class OllamaClient:
 
         return embeddings
 
+    @staticmethod
+    def _build_options(
+        temperature: float, max_tokens: int | None = None
+    ) -> dict[str, Any]:
+        """Build Ollama options dict from common parameters."""
+        options: dict[str, Any] = {"temperature": temperature}
+        if max_tokens:
+            options["num_predict"] = max_tokens
+        return options
+
+    @staticmethod
+    def _iter_stream_chunks(response: Any) -> Iterator[str]:
+        """Yield text content from a streaming Ollama response."""
+        for chunk in response:
+            if hasattr(chunk, "message") and chunk.message:
+                content = chunk.message.content
+                if content:
+                    yield content
+
     def generate_text(
         self,
         prompt: str,
@@ -118,10 +137,7 @@ class OllamaClient:
                 messages.append({"role": "system", "content": system_prompt})
             messages.append({"role": "user", "content": prompt})
 
-            options: dict[str, Any] = {"temperature": temperature}
-            if max_tokens:
-                options["num_predict"] = max_tokens
-
+            options = self._build_options(temperature, max_tokens)
             response = self.client.chat(model=model, messages=messages, options=options)
 
             content: str = response.get("message", {}).get("content", "")
@@ -201,19 +217,12 @@ class OllamaClient:
                 messages.append({"role": "system", "content": system_prompt})
             messages.append({"role": "user", "content": prompt})
 
-            options: dict[str, Any] = {"temperature": temperature}
-            if max_tokens:
-                options["num_predict"] = max_tokens
-
+            options = self._build_options(temperature, max_tokens)
             response = self.client.chat(
                 model=model, messages=messages, options=options, stream=True
             )
 
-            for chunk in response:
-                if hasattr(chunk, "message") and chunk.message:
-                    content = chunk.message.content
-                    if content:
-                        yield content
+            yield from self._iter_stream_chunks(response)
 
         except Exception as e:
             logger.error(f"Failed to generate streaming text: {e}")
@@ -250,19 +259,12 @@ class OllamaClient:
                 full_messages.append({"role": "system", "content": system_prompt})
             full_messages.extend(messages)
 
-            options: dict[str, Any] = {"temperature": temperature}
-            if max_tokens:
-                options["num_predict"] = max_tokens
-
+            options = self._build_options(temperature, max_tokens)
             response = self.client.chat(
                 model=model, messages=full_messages, options=options, stream=True
             )
 
-            for chunk in response:
-                if hasattr(chunk, "message") and chunk.message:
-                    content = chunk.message.content
-                    if content:
-                        yield content
+            yield from self._iter_stream_chunks(response)
 
         except Exception as e:
             logger.error(f"Failed to stream chat: {e}")

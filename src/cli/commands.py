@@ -5,6 +5,7 @@ import json
 import click
 from tabulate import tabulate
 
+from src.cli.config import get_feature_flags
 from src.ingestion.plugin_base import SourceError
 from src.ingestion.registry import get_registry
 from src.ingestion.sync import execute_sync
@@ -158,10 +159,7 @@ def update(ctx: click.Context, source: str) -> None:
         return
 
     # Check if embeddings are enabled
-    features_config = config.get("features", {})
-    ai_enabled = features_config.get("ai_enabled", False)
-    embeddings_enabled = features_config.get("embeddings_enabled", False)
-    use_embeddings = ai_enabled and embeddings_enabled
+    use_embeddings = get_feature_flags(config)["use_embeddings"]
 
     # Check if auto-enrichment is enabled
     enrichment_config = config.get("enrichment", {})
@@ -303,10 +301,7 @@ def complete(
     config = ctx.obj["config"]
 
     # Check if embeddings are enabled
-    features_config = config.get("features", {})
-    ai_enabled = features_config.get("ai_enabled", False)
-    embeddings_enabled = features_config.get("embeddings_enabled", False)
-    use_embeddings = ai_enabled and embeddings_enabled
+    use_embeddings = get_feature_flags(config)["use_embeddings"]
 
     # Validate rating
     if rating is not None and (rating < 1 or rating > 5):

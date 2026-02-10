@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from src.cli.config import get_feature_flags
 from src.ingestion.sync import execute_multi_source_sync
 from src.models.content import ConsumptionStatus, ContentType, get_enum_value
 from src.models.user_preferences import UserPreferenceConfig
@@ -542,10 +543,7 @@ async def mark_complete(request: CompletionRequest) -> dict[str, Any]:
         raise HTTPException(status_code=500, detail="Storage not initialized")
 
     # Check if embeddings are enabled
-    features_config = config.get("features", {}) if config else {}
-    ai_enabled = features_config.get("ai_enabled", False)
-    embeddings_enabled = features_config.get("embeddings_enabled", False)
-    use_embeddings = ai_enabled and embeddings_enabled
+    use_embeddings = get_feature_flags(config)["use_embeddings"]
 
     try:
         content_type = ContentType.from_string(request.content_type)
@@ -643,10 +641,7 @@ async def update_data(request: UpdateRequest) -> dict[str, Any]:
 
     # Build plugin/config pairs for the sync executor
     inputs_config = config.get("inputs", {})
-    features_config = config.get("features", {})
-    ai_enabled = features_config.get("ai_enabled", False)
-    embeddings_enabled = features_config.get("embeddings_enabled", False)
-    use_embeddings = ai_enabled and embeddings_enabled
+    use_embeddings = get_feature_flags(config)["use_embeddings"]
 
     # Check if auto-enrichment is enabled
     enrichment_config = config.get("enrichment", {})
@@ -748,19 +743,20 @@ async def get_status() -> StatusResponse:
     config = get_config()
 
     # Read feature flags from config
-    features_config = config.get("features", {}) if config else {}
-    ai_enabled = features_config.get("ai_enabled", False)
+    flags = get_feature_flags(config)
     features = FeaturesStatus(
-        ai_enabled=ai_enabled,
-        embeddings_enabled=features_config.get("embeddings_enabled", False),
-        llm_reasoning_enabled=features_config.get("llm_reasoning_enabled", False),
+        ai_enabled=flags["ai_enabled"],
+        embeddings_enabled=flags["embeddings_enabled"],
+        llm_reasoning_enabled=flags["llm_reasoning_enabled"],
     )
 
     # Only require embedding_generator when AI features are enabled
     components = {
         "engine": engine is not None,
         "storage": storage is not None,
-        "embedding_generator": embedding_gen is not None if ai_enabled else True,
+        "embedding_generator": (
+            embedding_gen is not None if flags["ai_enabled"] else True
+        ),
     }
 
     all_ready = all(components.values())
