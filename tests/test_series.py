@@ -7,6 +7,7 @@ from src.utils.series import (
     extract_series_info,
     get_series_item_number,
     get_series_name,
+    inject_seasons_watched_tracking,
     is_first_item_in_series,
     should_recommend_item,
 )
@@ -505,7 +506,7 @@ def test_should_recommend_item_movie_series():
 
     # Test with metadata - Episode 4 (A New Hope) already watched
     series_tracking_sw = {"Star Wars": {4}}
-    # Episode 5 should be recommended if Episode 4 is watched
+    # Episode 5 should NOT be recommended — gap-finding sees Episode 1 as first gap
     item_ep5 = ContentItem(
         id="ep5",
         title="Empire Strikes Back",
@@ -513,4 +514,198 @@ def test_should_recommend_item_movie_series():
         status=ConsumptionStatus.UNREAD,
         metadata={"series_name": "Star Wars", "episode": 5},
     )
-    assert should_recommend_item(item_ep5, series_tracking_sw) is True
+    assert should_recommend_item(item_ep5, series_tracking_sw) is False
+
+    # Episode 1 SHOULD be recommended (first gap when only Episode 4 consumed)
+    item_ep1 = ContentItem(
+        id="ep1",
+        title="The Phantom Menace",
+        content_type=ContentType.MOVIE,
+        status=ConsumptionStatus.UNREAD,
+        metadata={"series_name": "Star Wars", "episode": 1},
+    )
+    assert should_recommend_item(item_ep1, series_tracking_sw) is True
+
+
+class TestShouldRecommendNonSequentialSeasons:
+    """Tests for gap-finding logic with non-sequential season watching."""
+
+    def test_non_sequential_seasons_5_6_recommends_season_1(self) -> None:
+        """User watched seasons 5 and 6 only -> recommend season 1 (first gap)."""
+        series_tracking = {"The Show": {5, 6}}
+        item_s1 = ContentItem(
+            id="s1",
+            title="The Show (The Show, Season 1)",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+        )
+        assert should_recommend_item(item_s1, series_tracking) is True
+
+    def test_non_sequential_seasons_5_6_does_not_recommend_season_7(self) -> None:
+        """User watched seasons 5 and 6 only -> don't recommend season 7."""
+        series_tracking = {"The Show": {5, 6}}
+        item_s7 = ContentItem(
+            id="s7",
+            title="The Show (The Show, Season 7)",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+        )
+        assert should_recommend_item(item_s7, series_tracking) is False
+
+    def test_gap_at_season_2_recommends_season_2(self) -> None:
+        """User watched seasons 1, 5, 6 -> recommend season 2 (first gap)."""
+        series_tracking = {"The Show": {1, 5, 6}}
+        item_s2 = ContentItem(
+            id="s2",
+            title="The Show (The Show, Season 2)",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+        )
+        assert should_recommend_item(item_s2, series_tracking) is True
+
+    def test_sequential_1_2_recommends_3(self) -> None:
+        """Sequential {1, 2} -> recommend 3 (backward compatible)."""
+        series_tracking = {"The Show": {1, 2}}
+        item_s3 = ContentItem(
+            id="s3",
+            title="The Show (The Show, Season 3)",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+        )
+        assert should_recommend_item(item_s3, series_tracking) is True
+
+    def test_all_watched_nothing_recommended(self) -> None:
+        """User watched all seasons 1-5 -> don't recommend any of 1-5 again."""
+        series_tracking = {"The Show": {1, 2, 3, 4, 5}}
+        for season_num in range(1, 6):
+            item = ContentItem(
+                id=f"s{season_num}",
+                title=f"The Show (The Show, Season {season_num})",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.UNREAD,
+            )
+            assert should_recommend_item(item, series_tracking) is False
+
+
+class TestExpandTvShowsSkipsWatchedSeasons:
+    """Tests for expand_tv_shows_to_seasons skipping watched seasons."""
+
+    def test_skips_watched_seasons(self) -> None:
+        """Seasons in seasons_watched metadata are not expanded."""
+        show = ContentItem(
+            id="show1",
+            title="The Show",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"total_seasons": 6, "seasons_watched": [1, 2, 5]},
+        )
+        expanded = expand_tv_shows_to_seasons([show])
+        season_titles = [item.title for item in expanded]
+        assert "The Show (Season 1)" not in season_titles
+        assert "The Show (Season 2)" not in season_titles
+        assert "The Show (Season 5)" not in season_titles
+        assert "The Show (Season 3)" in season_titles
+        assert "The Show (Season 4)" in season_titles
+        assert "The Show (Season 6)" in season_titles
+        assert len(expanded) == 3
+
+    def test_no_seasons_watched_expands_all(self) -> None:
+        """Without seasons_watched, all seasons are expanded."""
+        show = ContentItem(
+            id="show1",
+            title="The Show",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"total_seasons": 3},
+        )
+        expanded = expand_tv_shows_to_seasons([show])
+        assert len(expanded) == 3
+
+    def test_all_seasons_watched_expands_none(self) -> None:
+        """If all seasons are watched, no expansion items created."""
+        show = ContentItem(
+            id="show1",
+            title="The Show",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"total_seasons": 3, "seasons_watched": [1, 2, 3]},
+        )
+        expanded = expand_tv_shows_to_seasons([show])
+        assert len(expanded) == 0
+
+
+class TestInjectSeasonsWatchedTracking:
+    """Tests for inject_seasons_watched_tracking."""
+
+    def test_basic_injection(self) -> None:
+        """Seasons from metadata are added to tracking."""
+        items = [
+            ContentItem(
+                id="show1",
+                title="The Show",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.UNREAD,
+                metadata={"seasons_watched": [5, 6]},
+            ),
+        ]
+        result = inject_seasons_watched_tracking(items, {})
+        assert result["The Show"] == {5, 6}
+
+    def test_merges_with_existing(self) -> None:
+        """Seasons merge with existing consumed tracking."""
+        items = [
+            ContentItem(
+                id="show1",
+                title="The Show",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.UNREAD,
+                metadata={"seasons_watched": [5, 6]},
+            ),
+        ]
+        existing = {"The Show": {1, 2}}
+        result = inject_seasons_watched_tracking(items, existing)
+        assert result["The Show"] == {1, 2, 5, 6}
+
+    def test_does_not_mutate_original(self) -> None:
+        """Original dict is not mutated."""
+        items = [
+            ContentItem(
+                id="show1",
+                title="The Show",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.UNREAD,
+                metadata={"seasons_watched": [5, 6]},
+            ),
+        ]
+        original = {"The Show": {1, 2}}
+        result = inject_seasons_watched_tracking(items, original)
+        assert original["The Show"] == {1, 2}  # unchanged
+        assert result["The Show"] == {1, 2, 5, 6}
+
+    def test_ignores_non_tv_items(self) -> None:
+        """Non-TV items are ignored."""
+        items = [
+            ContentItem(
+                id="book1",
+                title="The Book",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+                metadata={"seasons_watched": [1, 2]},
+            ),
+        ]
+        result = inject_seasons_watched_tracking(items, {})
+        assert "The Book" not in result
+
+    def test_ignores_empty_seasons_watched(self) -> None:
+        """Items without seasons_watched are ignored."""
+        items = [
+            ContentItem(
+                id="show1",
+                title="The Show",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.UNREAD,
+                metadata={},
+            ),
+        ]
+        result = inject_seasons_watched_tracking(items, {})
+        assert "The Show" not in result

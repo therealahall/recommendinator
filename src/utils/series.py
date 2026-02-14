@@ -208,6 +208,46 @@ def get_series_item_number(
     return series_info[1] if series_info else None
 
 
+def inject_seasons_watched_tracking(
+    unconsumed_items: list[ContentItem],
+    series_tracking: dict[str, set[int]],
+) -> dict[str, set[int]]:
+    """Add seasons_watched metadata from unconsumed TV shows to series tracking.
+
+    When a user imports TV shows with specific seasons_watched (e.g., [5, 6]),
+    those seasons should be treated as consumed for recommendation purposes
+    even though the show-level item is still "unconsumed" in the library.
+
+    Args:
+        unconsumed_items: List of unconsumed ContentItem objects (TV shows)
+        series_tracking: Existing series tracking dictionary from consumed items
+
+    Returns:
+        New dictionary with seasons_watched merged in (does not mutate original)
+    """
+    merged = dict(series_tracking)
+
+    for item in unconsumed_items:
+        if item.content_type != ContentType.TV_SHOW:
+            continue
+
+        seasons_watched = item.metadata.get("seasons_watched")
+        if not isinstance(seasons_watched, list) or not seasons_watched:
+            continue
+
+        show_title = item.title
+        if show_title not in merged:
+            merged[show_title] = set()
+        else:
+            merged[show_title] = set(merged[show_title])
+
+        for season_num in seasons_watched:
+            if isinstance(season_num, int):
+                merged[show_title].add(season_num)
+
+    return merged
+
+
 def expand_tv_shows_to_seasons(items: list[ContentItem]) -> list[ContentItem]:
     """Expand TV show items into season-level items for granular recommendations.
 
@@ -244,7 +284,17 @@ def expand_tv_shows_to_seasons(items: list[ContentItem]) -> list[ContentItem]:
         base_id = item.id or ""
         show_title = item.title
 
+        # Determine which seasons to skip (already watched)
+        seasons_watched_raw = item.metadata.get("seasons_watched")
+        watched_set: set[int] = set()
+        if isinstance(seasons_watched_raw, list):
+            watched_set = {
+                season for season in seasons_watched_raw if isinstance(season, int)
+            }
+
         for season_num in range(1, total_seasons + 1):
+            if season_num in watched_set:
+                continue
             season_title = f"{show_title} (Season {season_num})"
             season_id = f"{base_id}:s{season_num}" if base_id else None
             season_metadata = dict(item.metadata)
@@ -432,5 +482,10 @@ def should_recommend_item(
                 # (might be a gap in the data or user can start anywhere)
 
         # User has completed all previous items (or they don't exist in
-        # data). Recommend if it's the next item
-        return item_num == max_consumed + 1
+        # data). Recommend if it fills the first gap in the sequence.
+        # For sequential {1,2}: first gap is 3 = max_consumed + 1
+        # For non-sequential {5,6}: first gap is 1 -> recommend season 1
+        for candidate_num in range(1, max_consumed + 2):
+            if candidate_num not in consumed_numbers:
+                return item_num == candidate_num
+        return False

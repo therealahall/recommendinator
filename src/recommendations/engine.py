@@ -30,6 +30,7 @@ from src.storage.manager import StorageManager
 from src.utils.series import (
     build_series_tracking,
     expand_tv_shows_to_seasons,
+    inject_seasons_watched_tracking,
     should_recommend_item,
 )
 
@@ -145,11 +146,18 @@ class RecommendationEngine:
             logger.warning(f"No unconsumed items found for {content_type.value}")
             return []
 
+        # Build series tracking (content-type specific) — before TV expansion
+        # so that inject_seasons_watched_tracking can use the show-level items
+        series_tracking = build_series_tracking(consumed_items_of_type)
+
         # -----------------------------------------------------------------
         # Expand TV shows to season-level for granular recommendations
         # (library stays show-level; expansion is for scoring only)
         # -----------------------------------------------------------------
         if content_type == ContentType.TV_SHOW:
+            series_tracking = inject_seasons_watched_tracking(
+                unconsumed_items, series_tracking
+            )
             unconsumed_items = expand_tv_shows_to_seasons(unconsumed_items)
             logger.info(
                 f"Expanded TV shows to {len(unconsumed_items)} season-level candidates"
@@ -197,9 +205,6 @@ class RecommendationEngine:
             f"Analyzed preferences from {len(all_consumed_items)} consumed items "
             f"across all content types to recommend {content_type.value}s"
         )
-
-        # Build series tracking (content-type specific)
-        series_tracking = build_series_tracking(consumed_items_of_type)
 
         # -----------------------------------------------------------------
         # Pre-compute similarity scores (AI path)
