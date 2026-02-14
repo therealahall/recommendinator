@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from src.cli.config import get_feature_flags
@@ -426,6 +427,66 @@ async def list_items(
         )
         for item in items
     ]
+
+
+@router.get("/items/export")
+async def export_items(
+    type: str = Query(
+        ..., description="Content type (book, movie, tv_show, video_game)"
+    ),
+    format: str = Query("csv", description="Export format: csv or json"),
+    user_id: int = Query(1, ge=1, description="User ID"),
+) -> Response:
+    """Export library items as CSV or JSON file download.
+
+    Args:
+        type: Content type to export
+        format: Export format (csv or json)
+        user_id: User ID for filtering items
+
+    Returns:
+        File download response
+    """
+    from src.web.export import export_items_csv, export_items_json
+
+    storage = get_storage()
+    if not storage:
+        raise HTTPException(status_code=500, detail="Storage not initialized")
+
+    try:
+        content_type = ContentType.from_string(type)
+    except ValueError:
+        raise HTTPException(
+            status_code=400, detail=f"Invalid content type: {type}"
+        ) from None
+
+    export_format = format.lower()
+    if export_format not in {"csv", "json"}:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid format: {format}. Must be csv or json",
+        )
+
+    items = storage.get_content_items(
+        user_id=user_id,
+        content_type=content_type,
+    )
+
+    content_type_value = get_enum_value(content_type)
+    filename = f"{content_type_value}s.{export_format}"
+
+    if export_format == "csv":
+        content = export_items_csv(items, content_type)
+        media_type = "text/csv"
+    else:
+        content = export_items_json(items, content_type)
+        media_type = "application/json"
+
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
 
 
 @router.patch("/items/{db_id}/ignore")

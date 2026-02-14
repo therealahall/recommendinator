@@ -278,17 +278,49 @@
     function setupLibraryFilters() {
         var typeFilter = document.getElementById("libType");
         var statusFilter = document.getElementById("libStatus");
+        var exportBtn = document.getElementById("exportBtn");
+
         typeFilter.addEventListener("change", function() {
             updateStatusFilterLabels();
+            updateExportButton();
             resetAndLoadLibrary();
         });
         statusFilter.addEventListener("change", resetAndLoadLibrary);
+
+        if (exportBtn) {
+            exportBtn.addEventListener("click", exportLibrary);
+        }
 
         // Setup infinite scroll
         window.addEventListener("scroll", handleLibraryScroll);
 
         // Initialize status labels based on default type selection
         updateStatusFilterLabels();
+        updateExportButton();
+    }
+
+    function updateExportButton() {
+        var typeFilter = document.getElementById("libType");
+        var exportBtn = document.getElementById("exportBtn");
+        if (!exportBtn) return;
+
+        var hasType = typeFilter.value !== "";
+        exportBtn.disabled = !hasType;
+        exportBtn.title = hasType ? "Export library items" : "Select a content type to export";
+    }
+
+    function exportLibrary() {
+        var typeFilter = document.getElementById("libType").value;
+        var formatSelect = document.getElementById("exportFormat").value;
+        if (!typeFilter) return;
+
+        var params = new URLSearchParams({
+            type: typeFilter,
+            format: formatSelect,
+            user_id: currentUserId.toString()
+        });
+
+        window.location.href = API_BASE + "/items/export?" + params;
     }
 
     function updateStatusFilterLabels() {
