@@ -9,6 +9,7 @@
     "notes": "",
     "platform": "PC",
     "genre": "RPG",
-    "hours_played": 120
+    "hours_played": 120,
+    "ignored": false
   }
 ]

@@ -17,6 +17,8 @@ from src.ingestion.sources.generic_csv import (
     CONTENT_TYPE_COLUMNS,
     CREATOR_FIELD,
     STATUS_MAP,
+    parse_boolean_field,
+    parse_seasons_watched,
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 
@@ -243,10 +245,19 @@ def _parse_entries(
         if creator_field:
             author = str(entry.get(creator_field, "")).strip() or None
 
+        # Parse ignored flag
+        ignored = parse_boolean_field(entry.get("ignored"))
+
         # Build metadata from type-specific fields
         metadata = _build_json_metadata(entry, content_type)
         if notes:
             metadata["notes"] = notes
+
+        # Post-process seasons_watched for TV shows
+        if content_type == ContentType.TV_SHOW and "seasons_watched" in metadata:
+            metadata["seasons_watched"] = parse_seasons_watched(
+                metadata["seasons_watched"]
+            )
 
         yield ContentItem(
             title=title,
@@ -256,6 +267,7 @@ def _parse_entries(
             review=review,
             status=status,
             date_completed=date_completed,
+            ignored=ignored,
             metadata=metadata,
             source=source,
         )

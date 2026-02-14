@@ -229,8 +229,8 @@ class SQLiteDB:
                     """
                     INSERT INTO content_items
                     (user_id, external_id, title, content_type, status, rating, review,
-                     date_completed, source)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     date_completed, source, ignored)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         effective_user_id,
@@ -246,6 +246,7 @@ class SQLiteDB:
                             else None
                         ),
                         item.source,
+                        1 if item.ignored else 0,
                     ),
                 )
                 db_id = cursor.lastrowid

@@ -9,6 +9,7 @@
     "notes": "",
     "year": 2010,
     "runtime_minutes": 148,
-    "genre": "Sci-Fi"
+    "genre": "Sci-Fi",
+    "ignored": false
   }
 ]

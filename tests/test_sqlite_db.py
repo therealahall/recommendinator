@@ -477,3 +477,65 @@ class TestNormalizeTitleForMatching:
         # Should contain "civil" not "c1v1l"
         normalized = normalize_title_for_matching("Civil War")
         assert "civil" in normalized
+
+
+# ---------------------------------------------------------------------------
+# Ignored on Insert Tests
+# ---------------------------------------------------------------------------
+
+
+def test_save_content_item_with_ignored_true(temp_db: SQLiteDB) -> None:
+    """Test that ignored=True is persisted on INSERT."""
+    item = ContentItem(
+        id="ignored_1",
+        title="Ignored Book",
+        content_type=ContentType.BOOK,
+        status=ConsumptionStatus.UNREAD,
+        ignored=True,
+    )
+
+    db_id = temp_db.save_content_item(item)
+    retrieved = temp_db.get_content_item(db_id)
+    assert retrieved is not None
+    assert retrieved.ignored is True
+
+
+def test_save_content_item_update_does_not_reset_ignored(temp_db: SQLiteDB) -> None:
+    """Test that UPDATE path does not reset a user's ignored flag.
+
+    When re-syncing from another source, the UPDATE SQL should not touch
+    the ignored column, preserving the user's manual ignore setting.
+    """
+    # First insert with ignored=True
+    item = ContentItem(
+        id="sync_1",
+        title="A Book",
+        content_type=ContentType.BOOK,
+        status=ConsumptionStatus.UNREAD,
+        ignored=True,
+    )
+    db_id = temp_db.save_content_item(item)
+
+    # Verify ignored is True
+    retrieved = temp_db.get_content_item(db_id)
+    assert retrieved is not None
+    assert retrieved.ignored is True
+
+    # Now "re-sync" the same item (same external_id) with ignored=False
+    updated_item = ContentItem(
+        id="sync_1",
+        title="A Book",
+        content_type=ContentType.BOOK,
+        status=ConsumptionStatus.COMPLETED,
+        rating=4,
+        ignored=False,  # Source doesn't know about user's ignore
+    )
+    db_id_2 = temp_db.save_content_item(updated_item)
+    assert db_id == db_id_2  # Same item
+
+    # ignored should still be True (not reset by UPDATE)
+    retrieved = temp_db.get_content_item(db_id)
+    assert retrieved is not None
+    assert retrieved.ignored is True
+    assert retrieved.status == ConsumptionStatus.COMPLETED  # Other fields updated
+    assert retrieved.rating == 4

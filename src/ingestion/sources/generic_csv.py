@@ -18,7 +18,15 @@ from src.models.content import ConsumptionStatus, ContentItem, ContentType
 logger = logging.getLogger(__name__)
 
 # Required columns shared by all content types
-COMMON_COLUMNS = {"title", "rating", "status", "date_completed", "review", "notes"}
+COMMON_COLUMNS = {
+    "title",
+    "rating",
+    "status",
+    "date_completed",
+    "review",
+    "notes",
+    "ignored",
+}
 
 # Additional columns per content type
 CONTENT_TYPE_COLUMNS: dict[str, set[str]] = {
@@ -47,6 +55,79 @@ CREATOR_FIELD: dict[str, str] = {
     "tv_show": "creator",
     "video_game": "developer",
 }
+
+
+def parse_boolean_field(value: str | bool | int | None) -> bool:
+    """Parse a boolean value from CSV or JSON input.
+
+    Handles true/false, yes/no, 1/0, bool, int. Defaults to False.
+
+    Args:
+        value: Raw value to parse
+
+    Returns:
+        Boolean result
+    """
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value != 0
+    normalized = str(value).strip().lower()
+    return normalized in {"true", "yes", "1"}
+
+
+def parse_seasons_watched(value: str | int | list[int] | None) -> list[int]:
+    """Parse a seasons_watched value into a list of season numbers.
+
+    Handles multiple formats for backward compatibility:
+    - Comma-separated string "1,2,5,6" -> [1, 2, 5, 6]
+    - Single integer 5 -> [1, 2, 3, 4, 5] (legacy: treated as count)
+    - Array [1, 2, 5, 6] -> pass through
+    - Empty/None -> []
+
+    Args:
+        value: Raw seasons_watched value
+
+    Returns:
+        Sorted list of season numbers
+    """
+    if value is None:
+        return []
+
+    if isinstance(value, list):
+        return sorted(int(season) for season in value if str(season).strip())
+
+    if isinstance(value, int):
+        if value <= 0:
+            return []
+        return list(range(1, value + 1))
+
+    text = str(value).strip()
+    if not text:
+        return []
+
+    # Check if comma-separated
+    if "," in text:
+        seasons = []
+        for part in text.split(","):
+            part = part.strip()
+            if part:
+                try:
+                    seasons.append(int(part))
+                except ValueError:
+                    continue
+        return sorted(seasons)
+
+    # Single number — treat as count for backward compatibility
+    try:
+        count = int(text)
+        if count <= 0:
+            return []
+        return list(range(1, count + 1))
+    except ValueError:
+        return []
 
 
 class CsvImportPlugin(SourcePlugin):
@@ -236,10 +317,19 @@ class CsvImportPlugin(SourcePlugin):
             if creator_field:
                 author = row.get(creator_field, "").strip() or None
 
+            # Parse ignored flag
+            ignored = parse_boolean_field(row.get("ignored", ""))
+
             # Build metadata from type-specific columns
             metadata = _build_metadata(row, content_type)
             if notes:
                 metadata["notes"] = notes
+
+            # Post-process seasons_watched for TV shows
+            if content_type == ContentType.TV_SHOW and "seasons_watched" in metadata:
+                metadata["seasons_watched"] = parse_seasons_watched(
+                    metadata["seasons_watched"]
+                )
 
             yield ContentItem(
                 title=title,
@@ -249,6 +339,7 @@ class CsvImportPlugin(SourcePlugin):
                 review=review,
                 status=status,
                 date_completed=date_completed,
+                ignored=ignored,
                 metadata=metadata,
                 source=source,
             )

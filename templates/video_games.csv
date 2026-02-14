@@ -1,2 +1,2 @@
-title,developer,rating,status,date_completed,review,notes,platform,genre,hours_played
-The Witcher 3,CD Projekt Red,5,completed,2024-05-01,Masterpiece RPG,,PC,RPG,120
+title,developer,rating,status,date_completed,review,notes,platform,genre,hours_played,ignored
+The Witcher 3,CD Projekt Red,5,completed,2024-05-01,Masterpiece RPG,,PC,RPG,120,false

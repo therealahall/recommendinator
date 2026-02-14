@@ -1,2 +1,2 @@
-title,director,rating,status,date_completed,review,notes,year,runtime_minutes,genre
-Inception,Christopher Nolan,5,completed,2024-03-10,Mind-bending sci-fi,,2010,148,Sci-Fi
+title,director,rating,status,date_completed,review,notes,year,runtime_minutes,genre,ignored
+Inception,Christopher Nolan,5,completed,2024-03-10,Mind-bending sci-fi,,2010,148,Sci-Fi,false

@@ -10,6 +10,7 @@
     "isbn": "978-0756404741",
     "pages": 662,
     "year_published": 2007,
-    "genre": "Fantasy"
+    "genre": "Fantasy",
+    "ignored": false
   }
 ]

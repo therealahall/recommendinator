@@ -6,7 +6,11 @@ from pathlib import Path
 import pytest
 
 from src.ingestion.plugin_base import SourceError, SourcePlugin
-from src.ingestion.sources.generic_csv import CsvImportPlugin
+from src.ingestion.sources.generic_csv import (
+    CsvImportPlugin,
+    parse_boolean_field,
+    parse_seasons_watched,
+)
 from src.models.content import ConsumptionStatus, ContentType
 
 
@@ -237,7 +241,7 @@ class TestCsvImportPluginFetchTvShows:
         assert item.title == "Breaking Bad"
         assert item.author == "Vince Gilligan"
         assert item.content_type == ContentType.TV_SHOW.value
-        assert item.metadata["seasons_watched"] == "5"
+        assert item.metadata["seasons_watched"] == [1, 2, 3, 4, 5]
         assert item.metadata["total_seasons"] == "5"
 
 
@@ -444,3 +448,160 @@ class TestCsvTemplates:
         )
         assert len(items) == 1
         assert items[0].title == "The Witcher 3"
+
+
+class TestCsvImportIgnored:
+    """Tests for ignored field parsing in CSV import."""
+
+    def test_ignored_true(self, plugin: CsvImportPlugin, tmp_path: Path) -> None:
+        csv_file = tmp_path / "data.csv"
+        csv_file.write_text("title,status,ignored\nTest,completed,true\n")
+        items = list(plugin.fetch({"csv_path": str(csv_file), "content_type": "book"}))
+        assert items[0].ignored is True
+
+    def test_ignored_false(self, plugin: CsvImportPlugin, tmp_path: Path) -> None:
+        csv_file = tmp_path / "data.csv"
+        csv_file.write_text("title,status,ignored\nTest,completed,false\n")
+        items = list(plugin.fetch({"csv_path": str(csv_file), "content_type": "book"}))
+        assert items[0].ignored is False
+
+    def test_ignored_yes(self, plugin: CsvImportPlugin, tmp_path: Path) -> None:
+        csv_file = tmp_path / "data.csv"
+        csv_file.write_text("title,status,ignored\nTest,completed,yes\n")
+        items = list(plugin.fetch({"csv_path": str(csv_file), "content_type": "book"}))
+        assert items[0].ignored is True
+
+    def test_ignored_one(self, plugin: CsvImportPlugin, tmp_path: Path) -> None:
+        csv_file = tmp_path / "data.csv"
+        csv_file.write_text("title,status,ignored\nTest,completed,1\n")
+        items = list(plugin.fetch({"csv_path": str(csv_file), "content_type": "book"}))
+        assert items[0].ignored is True
+
+    def test_ignored_empty_defaults_false(
+        self, plugin: CsvImportPlugin, tmp_path: Path
+    ) -> None:
+        csv_file = tmp_path / "data.csv"
+        csv_file.write_text("title,status,ignored\nTest,completed,\n")
+        items = list(plugin.fetch({"csv_path": str(csv_file), "content_type": "book"}))
+        assert items[0].ignored is False
+
+    def test_ignored_missing_defaults_false(
+        self, plugin: CsvImportPlugin, tmp_path: Path
+    ) -> None:
+        csv_file = tmp_path / "data.csv"
+        csv_file.write_text("title,status\nTest,completed\n")
+        items = list(plugin.fetch({"csv_path": str(csv_file), "content_type": "book"}))
+        assert items[0].ignored is False
+
+    def test_ignored_not_treated_as_unknown_column(
+        self, plugin: CsvImportPlugin, tmp_path: Path
+    ) -> None:
+        """Ignored column should be recognized, not warned as unknown."""
+        csv_file = tmp_path / "data.csv"
+        csv_file.write_text("title,ignored\nTest,false\n")
+        items = list(plugin.fetch({"csv_path": str(csv_file), "content_type": "book"}))
+        assert len(items) == 1
+
+
+class TestCsvImportSeasonsWatched:
+    """Tests for seasons_watched parsing in CSV import."""
+
+    def test_comma_separated_seasons(
+        self, plugin: CsvImportPlugin, tmp_path: Path
+    ) -> None:
+        csv_file = tmp_path / "data.csv"
+        csv_file.write_text(
+            "title,creator,status,seasons_watched,total_seasons\n"
+            'Show,Creator,completed,"1,2,5,6",8\n'
+        )
+        items = list(
+            plugin.fetch({"csv_path": str(csv_file), "content_type": "tv_show"})
+        )
+        assert items[0].metadata["seasons_watched"] == [1, 2, 5, 6]
+
+    def test_single_number_backward_compat(
+        self, plugin: CsvImportPlugin, tmp_path: Path
+    ) -> None:
+        csv_file = tmp_path / "data.csv"
+        csv_file.write_text(
+            "title,creator,status,seasons_watched,total_seasons\n"
+            "Show,Creator,completed,5,5\n"
+        )
+        items = list(
+            plugin.fetch({"csv_path": str(csv_file), "content_type": "tv_show"})
+        )
+        assert items[0].metadata["seasons_watched"] == [1, 2, 3, 4, 5]
+
+    def test_empty_seasons_watched(
+        self, plugin: CsvImportPlugin, tmp_path: Path
+    ) -> None:
+        csv_file = tmp_path / "data.csv"
+        csv_file.write_text(
+            "title,creator,status,seasons_watched,total_seasons\n"
+            "Show,Creator,unread,,5\n"
+        )
+        items = list(
+            plugin.fetch({"csv_path": str(csv_file), "content_type": "tv_show"})
+        )
+        # Empty seasons_watched is not stored in metadata
+        assert "seasons_watched" not in items[0].metadata
+
+
+class TestParseBooleanField:
+    """Tests for the parse_boolean_field helper."""
+
+    def test_true_values(self) -> None:
+        assert parse_boolean_field("true") is True
+        assert parse_boolean_field("True") is True
+        assert parse_boolean_field("TRUE") is True
+        assert parse_boolean_field("yes") is True
+        assert parse_boolean_field("1") is True
+        assert parse_boolean_field(True) is True
+        assert parse_boolean_field(1) is True
+
+    def test_false_values(self) -> None:
+        assert parse_boolean_field("false") is False
+        assert parse_boolean_field("no") is False
+        assert parse_boolean_field("0") is False
+        assert parse_boolean_field("") is False
+        assert parse_boolean_field(None) is False
+        assert parse_boolean_field(False) is False
+        assert parse_boolean_field(0) is False
+
+    def test_unrecognized_defaults_false(self) -> None:
+        assert parse_boolean_field("maybe") is False
+        assert parse_boolean_field("  ") is False
+
+
+class TestParseSeasonsWatched:
+    """Tests for the parse_seasons_watched helper."""
+
+    def test_comma_separated(self) -> None:
+        assert parse_seasons_watched("1,2,5,6") == [1, 2, 5, 6]
+
+    def test_comma_separated_with_spaces(self) -> None:
+        assert parse_seasons_watched("1, 2, 5, 6") == [1, 2, 5, 6]
+
+    def test_single_integer(self) -> None:
+        assert parse_seasons_watched(5) == [1, 2, 3, 4, 5]
+
+    def test_single_string_number(self) -> None:
+        assert parse_seasons_watched("3") == [1, 2, 3]
+
+    def test_array_passthrough(self) -> None:
+        assert parse_seasons_watched([1, 2, 5, 6]) == [1, 2, 5, 6]
+
+    def test_unsorted_array_gets_sorted(self) -> None:
+        assert parse_seasons_watched([6, 1, 5, 2]) == [1, 2, 5, 6]
+
+    def test_empty_string(self) -> None:
+        assert parse_seasons_watched("") == []
+
+    def test_none(self) -> None:
+        assert parse_seasons_watched(None) == []
+
+    def test_zero(self) -> None:
+        assert parse_seasons_watched(0) == []
+
+    def test_negative(self) -> None:
+        assert parse_seasons_watched(-1) == []

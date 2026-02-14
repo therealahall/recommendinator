@@ -178,7 +178,7 @@ class TestJsonImportPluginFetch:
 
         assert len(items) == 1
         assert items[0].author == "Vince Gilligan"
-        assert items[0].metadata["seasons_watched"] == 5
+        assert items[0].metadata["seasons_watched"] == [1, 2, 3, 4, 5]
 
     def test_fetch_video_game(self, plugin: JsonImportPlugin, tmp_path: Path) -> None:
         json_file = tmp_path / "games.json"
@@ -474,3 +474,122 @@ class TestJsonTemplates:
         )
         assert len(items) == 1
         assert items[0].title == "The Witcher 3"
+
+
+class TestJsonImportIgnored:
+    """Tests for ignored field parsing in JSON import."""
+
+    def test_ignored_true(self, plugin: JsonImportPlugin, tmp_path: Path) -> None:
+        json_file = tmp_path / "data.json"
+        json_file.write_text(
+            json.dumps([{"title": "Test", "status": "completed", "ignored": True}])
+        )
+        items = list(
+            plugin.fetch({"json_path": str(json_file), "content_type": "book"})
+        )
+        assert items[0].ignored is True
+
+    def test_ignored_false(self, plugin: JsonImportPlugin, tmp_path: Path) -> None:
+        json_file = tmp_path / "data.json"
+        json_file.write_text(
+            json.dumps([{"title": "Test", "status": "completed", "ignored": False}])
+        )
+        items = list(
+            plugin.fetch({"json_path": str(json_file), "content_type": "book"})
+        )
+        assert items[0].ignored is False
+
+    def test_ignored_string_true(
+        self, plugin: JsonImportPlugin, tmp_path: Path
+    ) -> None:
+        json_file = tmp_path / "data.json"
+        json_file.write_text(
+            json.dumps([{"title": "Test", "status": "completed", "ignored": "true"}])
+        )
+        items = list(
+            plugin.fetch({"json_path": str(json_file), "content_type": "book"})
+        )
+        assert items[0].ignored is True
+
+    def test_ignored_missing_defaults_false(
+        self, plugin: JsonImportPlugin, tmp_path: Path
+    ) -> None:
+        json_file = tmp_path / "data.json"
+        json_file.write_text(json.dumps([{"title": "Test", "status": "completed"}]))
+        items = list(
+            plugin.fetch({"json_path": str(json_file), "content_type": "book"})
+        )
+        assert items[0].ignored is False
+
+    def test_ignored_null_defaults_false(
+        self, plugin: JsonImportPlugin, tmp_path: Path
+    ) -> None:
+        json_file = tmp_path / "data.json"
+        json_file.write_text(
+            json.dumps([{"title": "Test", "status": "completed", "ignored": None}])
+        )
+        items = list(
+            plugin.fetch({"json_path": str(json_file), "content_type": "book"})
+        )
+        assert items[0].ignored is False
+
+
+class TestJsonImportSeasonsWatched:
+    """Tests for seasons_watched parsing in JSON import."""
+
+    def test_array_of_seasons(self, plugin: JsonImportPlugin, tmp_path: Path) -> None:
+        json_file = tmp_path / "data.json"
+        data = [
+            {
+                "title": "Show",
+                "creator": "Creator",
+                "status": "completed",
+                "seasons_watched": [1, 2, 5, 6],
+                "total_seasons": 8,
+            }
+        ]
+        json_file.write_text(json.dumps(data))
+        items = list(
+            plugin.fetch({"json_path": str(json_file), "content_type": "tv_show"})
+        )
+        assert items[0].metadata["seasons_watched"] == [1, 2, 5, 6]
+
+    def test_integer_backward_compat(
+        self, plugin: JsonImportPlugin, tmp_path: Path
+    ) -> None:
+        json_file = tmp_path / "data.json"
+        data = [
+            {
+                "title": "Show",
+                "creator": "Creator",
+                "status": "completed",
+                "seasons_watched": 5,
+                "total_seasons": 5,
+            }
+        ]
+        json_file.write_text(json.dumps(data))
+        items = list(
+            plugin.fetch({"json_path": str(json_file), "content_type": "tv_show"})
+        )
+        assert items[0].metadata["seasons_watched"] == [1, 2, 3, 4, 5]
+
+    def test_null_seasons_watched(
+        self, plugin: JsonImportPlugin, tmp_path: Path
+    ) -> None:
+        json_file = tmp_path / "data.json"
+        data = [
+            {
+                "title": "Show",
+                "creator": "Creator",
+                "status": "unread",
+                "seasons_watched": None,
+                "total_seasons": 5,
+            }
+        ]
+        json_file.write_text(json.dumps(data))
+        items = list(
+            plugin.fetch({"json_path": str(json_file), "content_type": "tv_show"})
+        )
+        # null seasons_watched becomes [], which is falsy so _build_json_metadata
+        # won't include it, but the post-processing replaces it
+        assert items[0].metadata.get("seasons_watched", []) == []

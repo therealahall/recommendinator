@@ -7,9 +7,10 @@
     "date_completed": "2024-01-20",
     "review": "One of the best shows ever",
     "notes": "",
-    "seasons_watched": 5,
+    "seasons_watched": [1, 2, 3, 4, 5],
     "total_seasons": 5,
     "year": 2008,
-    "genre": "Drama"
+    "genre": "Drama",
+    "ignored": false
   }
 ]
