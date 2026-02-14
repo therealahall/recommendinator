@@ -27,6 +27,7 @@ Responsible for parsing and normalizing data from various sources.
 - Each plugin handles config validation, fetching, and rating normalization
 - Shared sync executor (`execute_multi_source_sync`) used by both CLI and web
 - Progress callbacks for long-running operations
+- Generic CSV/JSON importers support `ignored` field and `seasons_watched` as a list of specific season numbers
 
 ### 2. Storage Layer (`src/storage/`)
 
@@ -91,8 +92,9 @@ RecommendationEngine
 3. Load per-user preference config (if available), apply scorer weight overrides
 4. Score all unconsumed candidates through the scoring pipeline
 5. Optionally blend vector-similarity scores when AI is enabled
-6. Apply series filtering, diversity bonus (genre-hopping), and ranking adjustments
-7. Generate ranked recommendations with score breakdowns
+6. Apply series filtering (gap-finding for non-sequential season watching), diversity bonus (genre-hopping), and ranking adjustments
+7. Filter out items marked as `ignored`
+8. Generate ranked recommendations with score breakdowns
 
 **Cross-Content-Type Recommendations:**
 - Preferences from all content types influence recommendations
@@ -139,6 +141,7 @@ Conversational AI chat interface, requires AI to be enabled.
 - Tabbed web UI: Recommendations, Chat, Library, Preferences, Sync
 - Chat tab hidden when AI is disabled
 - SSE streaming for chat responses
+- Library export: `GET /api/items/export?type=book&format=csv` (CSV or JSON download)
 - Internal network only (no external exposure)
 
 ## Data Flow
@@ -214,4 +217,3 @@ Key sections: `features`, `ollama`, `storage`, `inputs`, `web`, `recommendations
 - Discovery mode (surface things you didn't know about)
 - Interactive refinement ("I'm burnt out on sci-fi")
 - Scheduled sync (cron-style)
-- Export/import functionality

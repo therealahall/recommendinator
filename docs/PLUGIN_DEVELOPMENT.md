@@ -87,6 +87,7 @@ ContentItem(
     rating=4,                      # Optional: 1-5 scale
     review="My review text",       # Optional
     author="Author/Director",      # Optional
+    ignored=False,                 # Optional: exclude from recommendations
     metadata={},                   # Optional: source-specific data
     source="my_plugin",            # Set automatically
 )
@@ -357,6 +358,8 @@ class TestMyPlugin:
 9. **Support progress reporting** - Accept `progress_callback` in `fetch()` and
    call it during long operations: `progress_callback(items_processed,
    total_items, current_item)`. Use `total_items=None` when unknown.
+10. **Respect the `ignored` field** - If your source provides a way to mark items as excluded, set `ignored=True` on the `ContentItem`. Use `parse_boolean_field()` from `generic_csv` for flexible boolean parsing.
+11. **Use list format for `seasons_watched`** - For TV shows, store `seasons_watched` as a list of specific season numbers (e.g., `[1, 2, 5, 6]`) in metadata. Use `parse_seasons_watched()` from `generic_csv` if converting from string input. A single integer is treated as a count for backward compatibility (e.g., `5` → `[1, 2, 3, 4, 5]`).
 
 ## Existing Plugins to Reference
 

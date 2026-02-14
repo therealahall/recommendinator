@@ -80,7 +80,17 @@ Access the web interface at `http://localhost:18473`
 | **JSON** | Any | Generic JSON/JSONL import |
 | **Markdown** | Any | Human-readable markdown lists |
 
-See the `templates/` directory for import file examples.
+See the `templates/` directory for import file examples. Templates support the `ignored` field for excluding items from recommendations, and TV show templates use a `seasons_watched` list (e.g., `1,2,5,6` in CSV or `[1,2,5,6]` in JSON) to track specific seasons watched.
+
+### Library Export
+
+Export your library data from the web UI:
+1. Go to the **Library** tab
+2. Select a content type from the type filter
+3. Choose a format (CSV or JSON)
+4. Click **Export** to download
+
+Exported files match the import template format, so you can edit them (e.g., mark items as `ignored`, update `seasons_watched`) and re-import via CSV or JSON sync.
 
 ### GOG Setup
 
