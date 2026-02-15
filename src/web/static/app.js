@@ -834,7 +834,7 @@
         sources.forEach(function (source) {
             html += '<div class="sync-card" data-source-id="' + escapeHtml(source.id) + '">';
             html += '<h3>' + escapeHtml(source.display_name) + '</h3>';
-            html += '<p style="font-size:0.85em; color:#666; margin-bottom:8px;">' + escapeHtml(source.description) + '</p>';
+            html += '<p style="font-size:0.8em; color:#888; margin-bottom:8px;">Plugin: ' + escapeHtml(source.plugin_display_name) + '</p>';
 
             // Special handling for GOG when not connected
             if (source.id === "gog" && gogStatus && gogStatus.enabled && !gogStatus.connected) {
@@ -852,7 +852,7 @@
                 html += '</div>';
                 html += '</div>';
             } else {
-                html += '<button class="btn btn-primary sync-btn" data-source="' + escapeHtml(source.id) + '" data-display-name="' + escapeHtml(source.display_name) + '">Sync ' + escapeHtml(source.display_name) + '</button>';
+                html += '<button class="btn btn-primary sync-btn" data-source="' + escapeHtml(source.id) + '" data-display-name="' + escapeHtml(source.display_name) + '">Sync</button>';
             }
 
             html += '</div>';

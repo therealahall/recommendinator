@@ -18,13 +18,23 @@ from src.ingestion.registry import get_registry
 logger = logging.getLogger(__name__)
 
 
+def _humanize_source_id(source_id: str) -> str:
+    """Convert a snake_case source ID to a human-readable title.
+
+    Examples:
+        ``finished_tv_shows`` → ``Finished Tv Shows``
+        ``my_books`` → ``My Books``
+    """
+    return source_id.replace("_", " ").title()
+
+
 @dataclass
 class SyncSourceInfo:
     """Info about an available sync source."""
 
     id: str
     display_name: str
-    description: str
+    plugin_display_name: str
 
 
 @dataclass
@@ -120,8 +130,8 @@ def get_available_sync_sources(config: dict[str, Any]) -> list[SyncSourceInfo]:
     return [
         SyncSourceInfo(
             id=entry.source_id,
-            display_name=f"{entry.plugin.display_name} ({entry.source_id})",
-            description=entry.plugin.description,
+            display_name=_humanize_source_id(entry.source_id),
+            plugin_display_name=entry.plugin.display_name,
         )
         for entry in resolved
     ]

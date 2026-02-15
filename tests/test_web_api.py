@@ -145,8 +145,8 @@ def test_sync_sources_endpoint(client, mock_config):
     assert len(sources) >= 1
     goodreads = next((s for s in sources if s["id"] == "goodreads"), None)
     assert goodreads is not None
-    assert goodreads["display_name"] == "Goodreads (goodreads)"
-    assert "description" in goodreads
+    assert goodreads["display_name"] == "Goodreads"
+    assert goodreads["plugin_display_name"] == "Goodreads"
 
 
 def test_sync_sources_only_enabled(client):

@@ -69,7 +69,7 @@ class SyncSourceResponse(BaseModel):
 
     id: str
     display_name: str
-    description: str
+    plugin_display_name: str
 
 
 class UserResponse(BaseModel):
@@ -856,7 +856,7 @@ async def get_sync_sources() -> list[SyncSourceResponse]:
         SyncSourceResponse(
             id=source.id,
             display_name=source.display_name,
-            description=source.description,
+            plugin_display_name=source.plugin_display_name,
         )
         for source in sources
     ]

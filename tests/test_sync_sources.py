@@ -360,8 +360,8 @@ class TestGetAvailableSyncSources:
 
         assert len(sources) == 1
         assert sources[0].id == "my_books"
-        assert "Fake Books" in sources[0].display_name
-        assert "my_books" in sources[0].display_name
+        assert sources[0].display_name == "My Books"
+        assert sources[0].plugin_display_name == "Fake Books"
 
     def test_empty_config(self) -> None:
         """Test that empty config returns empty list."""
