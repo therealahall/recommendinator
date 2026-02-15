@@ -8,7 +8,12 @@ from src.llm.client import OllamaClient
 from src.llm.recommendations import RecommendationGenerator
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.recommendations.preference_interpreter import PatternBasedInterpreter
-from src.storage.schema import create_schema, get_enrichment_stats
+from src.storage.schema import (
+    create_schema,
+    get_enrichment_stats,
+    mark_enrichment_complete,
+    mark_item_needs_enrichment,
+)
 from src.storage.sqlite_db import SQLiteDB
 
 
@@ -258,4 +263,57 @@ class TestEnrichmentStatsRegression:
 
         assert stats["total"] == 1
         assert stats["enriched"] == 0
+        conn.close()
+
+    def test_mark_enrichment_preserves_existing_status_regression(self) -> None:
+        """Regression test: re-syncing items should not re-enrich already enriched items.
+
+        Bug reported: Importing finished TV shows via JSON re-enriched
+        everything, even items already enriched in a previous sync.
+
+        Root cause: mark_item_needs_enrichment used INSERT OR REPLACE,
+        which overwrote existing enrichment_status rows (with provider,
+        quality, etc.) with a fresh needs_enrichment=1 row.
+
+        Fix: Changed to INSERT OR IGNORE so existing rows are preserved.
+        """
+        conn = sqlite3.connect(":memory:")
+        create_schema(conn)
+
+        # Insert a content item
+        conn.execute(
+            "INSERT INTO content_items (id, title, content_type, status, source, user_id)"
+            " VALUES (1, 'Test Show', 'tv_show', 'completed', 'test', 1)"
+        )
+        conn.commit()
+
+        # Mark it for enrichment and then complete enrichment
+        mark_item_needs_enrichment(conn, 1)
+        mark_enrichment_complete(
+            conn,
+            content_item_id=1,
+            provider="tmdb",
+            quality="high",
+        )
+
+        # Verify it's enriched
+        cursor = conn.execute(
+            "SELECT needs_enrichment, enrichment_provider FROM enrichment_status"
+            " WHERE content_item_id = 1"
+        )
+        row = cursor.fetchone()
+        assert row[0] == 0  # needs_enrichment = False
+        assert row[1] == "tmdb"
+
+        # Re-sync marks the item again — should NOT overwrite
+        mark_item_needs_enrichment(conn, 1)
+
+        cursor = conn.execute(
+            "SELECT needs_enrichment, enrichment_provider FROM enrichment_status"
+            " WHERE content_item_id = 1"
+        )
+        row = cursor.fetchone()
+        assert row[0] == 0  # Still enriched, not reset
+        assert row[1] == "tmdb"  # Provider preserved
+
         conn.close()

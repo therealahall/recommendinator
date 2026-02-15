@@ -588,7 +588,7 @@ def mark_item_needs_enrichment(
     """
     cursor = conn.cursor()
     cursor.execute(
-        """INSERT OR REPLACE INTO enrichment_status
+        """INSERT OR IGNORE INTO enrichment_status
            (content_item_id, needs_enrichment)
            VALUES (?, 1)""",
         (content_item_id,),
