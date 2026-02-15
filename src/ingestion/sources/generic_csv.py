@@ -39,8 +39,15 @@ CONTENT_TYPE_COLUMNS: dict[str, set[str]] = {
 # Status string mapping
 STATUS_MAP: dict[str, ConsumptionStatus] = {
     "completed": ConsumptionStatus.COMPLETED,
+    "read": ConsumptionStatus.COMPLETED,
+    "watched": ConsumptionStatus.COMPLETED,
+    "played": ConsumptionStatus.COMPLETED,
+    "finished": ConsumptionStatus.COMPLETED,
     "in_progress": ConsumptionStatus.CURRENTLY_CONSUMING,
     "currently_consuming": ConsumptionStatus.CURRENTLY_CONSUMING,
+    "reading": ConsumptionStatus.CURRENTLY_CONSUMING,
+    "watching": ConsumptionStatus.CURRENTLY_CONSUMING,
+    "playing": ConsumptionStatus.CURRENTLY_CONSUMING,
     "unread": ConsumptionStatus.UNREAD,
     "to_read": ConsumptionStatus.UNREAD,
     "to_watch": ConsumptionStatus.UNREAD,
