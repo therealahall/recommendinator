@@ -171,7 +171,7 @@ class ArrPlugin(SourcePlugin):
                 f"Failed to connect to {self.display_name} at {base_url}: {error}",
             ) from error
 
-        source = self.get_source_identifier()
+        source = self.get_source_identifier(config)
         total = len(item_list)
         count = 0
 

@@ -338,7 +338,7 @@ class GogPlugin(SourcePlugin):
                 refresh_token=config.get("refresh_token", "").strip(),
                 include_wishlist=config.get("include_wishlist", True),
                 enrich_wishlist=config.get("enrich_wishlist", True),
-                source=self.get_source_identifier(),
+                source=self.get_source_identifier(config),
                 progress_callback=gog_internal_callback,
             )
         except GogAPIError as error:

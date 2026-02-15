@@ -65,7 +65,7 @@ class JsonImportPlugin(SourcePlugin):
     def get_config_schema(self) -> list[ConfigField]:
         return [
             ConfigField(
-                name="json_path",
+                name="path",
                 field_type=str,
                 required=True,
                 description="Path to JSON or JSONL file matching the template",
@@ -81,11 +81,11 @@ class JsonImportPlugin(SourcePlugin):
     def validate_config(self, config: dict[str, Any]) -> list[str]:
         errors = []
 
-        json_path = config.get("json_path")
-        if not json_path:
-            errors.append("'json_path' is required")
-        elif not Path(json_path).exists():
-            errors.append(f"JSON file not found: {json_path}")
+        path = config.get("path")
+        if not path:
+            errors.append("'path' is required")
+        elif not Path(path).exists():
+            errors.append(f"JSON file not found: {path}")
 
         content_type = config.get("content_type", "")
         valid_types = [content_type_enum.value for content_type_enum in ContentType]
@@ -116,9 +116,9 @@ class JsonImportPlugin(SourcePlugin):
         Raises:
             SourceError: If the file cannot be read or parsed
         """
-        json_path = config.get("json_path", "")
+        path = config.get("path", "")
         content_type_str = config.get("content_type", "")
-        file_path = Path(json_path)
+        file_path = Path(path)
 
         try:
             content_type = ContentType(content_type_str)
@@ -137,7 +137,7 @@ class JsonImportPlugin(SourcePlugin):
         yield from _parse_entries(
             entries,
             content_type,
-            self.get_source_identifier(),
+            self.get_source_identifier(config),
             progress_callback,
         )
 

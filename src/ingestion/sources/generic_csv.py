@@ -169,7 +169,7 @@ class CsvImportPlugin(SourcePlugin):
     def get_config_schema(self) -> list[ConfigField]:
         return [
             ConfigField(
-                name="csv_path",
+                name="path",
                 field_type=str,
                 required=True,
                 description="Path to CSV file matching the template for the content type",
@@ -185,11 +185,11 @@ class CsvImportPlugin(SourcePlugin):
     def validate_config(self, config: dict[str, Any]) -> list[str]:
         errors = []
 
-        csv_path = config.get("csv_path")
-        if not csv_path:
-            errors.append("'csv_path' is required")
-        elif not Path(csv_path).exists():
-            errors.append(f"CSV file not found: {csv_path}")
+        path = config.get("path")
+        if not path:
+            errors.append("'path' is required")
+        elif not Path(path).exists():
+            errors.append(f"CSV file not found: {path}")
 
         content_type = config.get("content_type", "")
         valid_types = [content_type_enum.value for content_type_enum in ContentType]
@@ -220,9 +220,9 @@ class CsvImportPlugin(SourcePlugin):
         Raises:
             SourceError: If the file cannot be read or parsed
         """
-        csv_path = config.get("csv_path", "")
+        path = config.get("path", "")
         content_type_str = config.get("content_type", "")
-        file_path = Path(csv_path)
+        file_path = Path(path)
 
         try:
             content_type = ContentType(content_type_str)
@@ -232,7 +232,9 @@ class CsvImportPlugin(SourcePlugin):
             ) from error
 
         try:
-            yield from self._parse_csv(file_path, content_type, progress_callback)
+            yield from self._parse_csv(
+                file_path, content_type, config, progress_callback
+            )
         except FileNotFoundError as error:
             raise SourceError(self.name, f"CSV file not found: {file_path}") from error
         except csv.Error as error:
@@ -242,6 +244,7 @@ class CsvImportPlugin(SourcePlugin):
         self,
         file_path: Path,
         content_type: ContentType,
+        config: dict[str, Any],
         progress_callback: ProgressCallback | None = None,
     ) -> Iterator[ContentItem]:
         """Parse a CSV file using the template for the given content type.
@@ -249,12 +252,13 @@ class CsvImportPlugin(SourcePlugin):
         Args:
             file_path: Path to the CSV file
             content_type: The content type to parse as
+            config: Plugin config dict (used for source identifier resolution)
             progress_callback: Optional callback for progress updates
 
         Yields:
             ContentItem objects for each row
         """
-        source = self.get_source_identifier()
+        source = self.get_source_identifier(config)
         expected_columns = COMMON_COLUMNS | CONTENT_TYPE_COLUMNS.get(
             content_type.value, set()
         )

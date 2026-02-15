@@ -95,7 +95,7 @@ class MarkdownImportPlugin(SourcePlugin):
     def get_config_schema(self) -> list[ConfigField]:
         return [
             ConfigField(
-                name="markdown_path",
+                name="path",
                 field_type=str,
                 required=True,
                 description="Path to Markdown file in the prescribed format",
@@ -111,11 +111,11 @@ class MarkdownImportPlugin(SourcePlugin):
     def validate_config(self, config: dict[str, Any]) -> list[str]:
         errors = []
 
-        markdown_path = config.get("markdown_path")
-        if not markdown_path:
-            errors.append("'markdown_path' is required")
-        elif not Path(markdown_path).exists():
-            errors.append(f"Markdown file not found: {markdown_path}")
+        path = config.get("path")
+        if not path:
+            errors.append("'path' is required")
+        elif not Path(path).exists():
+            errors.append(f"Markdown file not found: {path}")
 
         content_type = config.get("content_type", "")
         valid_types = [content_type_enum.value for content_type_enum in ContentType]
@@ -146,9 +146,9 @@ class MarkdownImportPlugin(SourcePlugin):
         Raises:
             SourceError: If the file cannot be read or parsed
         """
-        markdown_path = config.get("markdown_path", "")
+        path = config.get("path", "")
         content_type_str = config.get("content_type", "")
-        file_path = Path(markdown_path)
+        file_path = Path(path)
 
         try:
             content_type = ContentType(content_type_str)
@@ -165,7 +165,7 @@ class MarkdownImportPlugin(SourcePlugin):
             ) from error
 
         yield from _parse_markdown(
-            content, content_type, self.get_source_identifier(), progress_callback
+            content, content_type, self.get_source_identifier(config), progress_callback
         )
 
 

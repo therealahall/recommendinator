@@ -290,15 +290,23 @@ class SourcePlugin(ABC):
         """
         return dict(raw_config)
 
-    def get_source_identifier(self) -> str:
+    def get_source_identifier(self, config: dict[str, Any] | None = None) -> str:
         """Get the source identifier to store in ContentItem.source.
 
-        Default returns the plugin name. Override if you need a different
-        identifier (e.g., for instances of generic plugins).
+        When *config* contains a ``_source_id`` key (injected by
+        :func:`resolve_inputs`), that user-defined name is returned.
+        Otherwise falls back to the plugin name.
+
+        Args:
+            config: Optional plugin config dict that may contain ``_source_id``.
 
         Returns:
             Source identifier string
         """
+        if config is not None:
+            source_id = config.get("_source_id")
+            if source_id is not None:
+                return str(source_id)
         return self.name
 
     def get_info(self) -> PluginInfo:

@@ -265,7 +265,7 @@ class EpicGamesPlugin(SourcePlugin):
         try:
             yield from _fetch_epic_games(
                 refresh_token=config.get("refresh_token", "").strip(),
-                source=self.get_source_identifier(),
+                source=self.get_source_identifier(config),
                 progress_callback=progress_callback,
             )
         except EpicGamesAPIError as error:

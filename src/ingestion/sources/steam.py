@@ -297,7 +297,7 @@ class SteamPlugin(SourcePlugin):
                 steam_id=steam_id,
                 vanity_url=vanity_url,
                 min_playtime_minutes=min_playtime_minutes,
-                source=self.get_source_identifier(),
+                source=self.get_source_identifier(config),
                 progress_callback=steam_internal_callback,
             )
         except SteamAPIError as error:

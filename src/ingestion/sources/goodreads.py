@@ -48,16 +48,10 @@ class GoodreadsPlugin(SourcePlugin):
     def requires_network(self) -> bool:
         return False
 
-    @classmethod
-    def transform_config(cls, raw_config: dict[str, Any]) -> dict[str, Any]:
-        """Map YAML ``path`` key to the ``csv_path`` key expected by fetch."""
-        path = raw_config.get("path", "inputs/goodreads_library_export.csv")
-        return {"csv_path": str(path)}
-
     def get_config_schema(self) -> list[ConfigField]:
         return [
             ConfigField(
-                name="csv_path",
+                name="path",
                 field_type=str,
                 required=True,
                 description="Path to Goodreads CSV export file",
@@ -66,11 +60,11 @@ class GoodreadsPlugin(SourcePlugin):
 
     def validate_config(self, config: dict[str, Any]) -> list[str]:
         errors = []
-        csv_path = config.get("csv_path")
-        if not csv_path:
-            errors.append("'csv_path' is required")
-        elif not Path(csv_path).exists():
-            errors.append(f"CSV file not found: {csv_path}")
+        path = config.get("path")
+        if not path:
+            errors.append("'path' is required")
+        elif not Path(path).exists():
+            errors.append(f"CSV file not found: {path}")
         return errors
 
     def fetch(
@@ -90,11 +84,11 @@ class GoodreadsPlugin(SourcePlugin):
         Raises:
             SourceError: If the file cannot be read or parsed
         """
-        csv_path = config.get("csv_path", "")
-        file_path = Path(csv_path)
+        path = config.get("path", "")
+        file_path = Path(path)
 
         try:
-            yield from self._parse_csv(file_path, progress_callback)
+            yield from self._parse_csv(file_path, config, progress_callback)
         except FileNotFoundError as error:
             raise SourceError(self.name, f"CSV file not found: {file_path}") from error
         except csv.Error as error:
@@ -103,18 +97,20 @@ class GoodreadsPlugin(SourcePlugin):
     def _parse_csv(
         self,
         file_path: Path,
+        config: dict[str, Any],
         progress_callback: ProgressCallback | None = None,
     ) -> Iterator[ContentItem]:
         """Parse a Goodreads CSV export file.
 
         Args:
             file_path: Path to the Goodreads CSV export file
+            config: Plugin config dict (used for source identifier resolution)
             progress_callback: Optional callback for progress updates
 
         Yields:
             ContentItem objects for each book in the export
         """
-        source = self.get_source_identifier()
+        source = self.get_source_identifier(config)
 
         with open(file_path, encoding="utf-8") as csv_file:
             reader = csv.DictReader(csv_file)

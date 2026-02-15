@@ -1,14 +1,21 @@
 """Dynamic sync source discovery from config.
 
-Sources are discovered from PluginRegistry - any plugin whose config section
-has enabled: true is available for sync. No hardcoded source list.
+Sources are discovered from PluginRegistry - each entry in config['inputs']
+must have a ``plugin`` field identifying the plugin type. The config key is
+the user-defined source identifier, allowing multiple instances of the same
+plugin (e.g. two json_import sources for books and TV shows).
 """
 
+from __future__ import annotations
+
+import logging
 from dataclasses import dataclass
 from typing import Any
 
 from src.ingestion.plugin_base import SourcePlugin
 from src.ingestion.registry import get_registry
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -20,78 +27,158 @@ class SyncSourceInfo:
     description: str
 
 
+@dataclass
+class ResolvedInput:
+    """A resolved input entry ready for sync.
+
+    Attributes:
+        source_id: User-defined name (the YAML key under ``inputs``).
+        plugin: The plugin instance that handles this source.
+        config: Config dict ready for ``plugin.fetch()`` / ``plugin.validate_config()``,
+            with ``_source_id`` injected and ``plugin``/``enabled`` keys stripped.
+    """
+
+    source_id: str
+    plugin: SourcePlugin
+    config: dict[str, Any]
+
+
+def resolve_inputs(config: dict[str, Any]) -> list[ResolvedInput]:
+    """Resolve inputs config into (source_id, plugin, config) entries.
+
+    Each entry in ``config['inputs']`` must have a ``plugin`` field identifying
+    the plugin type.  The config key is the user-defined source identifier.
+
+    Only entries with ``enabled: true`` are returned.
+
+    Args:
+        config: Full application config (from load_config).
+
+    Returns:
+        List of ResolvedInput for each enabled, valid source.
+    """
+    registry = get_registry()
+    inputs_config = config.get("inputs", {})
+    resolved: list[ResolvedInput] = []
+
+    for source_id, entry in inputs_config.items():
+        if not isinstance(entry, dict):
+            continue
+
+        if not entry.get("enabled", False):
+            continue
+
+        plugin_name = entry.get("plugin")
+        if not plugin_name:
+            logger.warning(f"Input '{source_id}' has no 'plugin' field, skipping")
+            continue
+
+        plugin = registry.get_plugin(plugin_name)
+        if plugin is None:
+            logger.warning(
+                f"Input '{source_id}' references unknown plugin "
+                f"'{plugin_name}', skipping"
+            )
+            continue
+
+        # Build the config for the plugin: strip control keys, inject _source_id
+        plugin_config = {
+            key: value
+            for key, value in entry.items()
+            if key not in ("plugin", "enabled")
+        }
+        plugin_config["_source_id"] = source_id
+
+        # Apply plugin-specific config transformation
+        transformed = type(plugin).transform_config(plugin_config)
+
+        resolved.append(
+            ResolvedInput(
+                source_id=source_id,
+                plugin=plugin,
+                config=transformed,
+            )
+        )
+
+    return resolved
+
+
 def get_available_sync_sources(config: dict[str, Any]) -> list[SyncSourceInfo]:
     """Get list of sync sources that are enabled in config.
 
-    Only returns sources defined in config.inputs with enabled: true
+    Returns sources defined in ``config.inputs`` with ``enabled: true``
     that have a registered plugin in the PluginRegistry.
 
     Args:
         config: Full application config (from load_config)
 
     Returns:
-        List of SyncSourceInfo for each enabled source we can handle
+        List of SyncSourceInfo for each enabled source
     """
-    registry = get_registry()
-    enabled_plugins = registry.get_enabled_plugins(config)
+    resolved = resolve_inputs(config)
 
     return [
         SyncSourceInfo(
-            id=plugin.name,
-            display_name=plugin.display_name,
-            description=plugin.description,
+            id=entry.source_id,
+            display_name=f"{entry.plugin.display_name} ({entry.source_id})",
+            description=entry.plugin.description,
         )
-        for plugin in enabled_plugins
+        for entry in resolved
     ]
 
 
 def get_sync_handler(
     source_id: str,
-) -> SourcePlugin | None:
-    """Get the plugin for a source.
+    config: dict[str, Any],
+) -> ResolvedInput | None:
+    """Get the resolved input for a source by its user-defined key.
 
     Args:
-        source_id: Source identifier (e.g. "goodreads", "steam").
+        source_id: User-defined source key (e.g. "my_books", "tv_shows").
+        config: Full application config.
 
     Returns:
-        Plugin instance or None if unknown source
+        ResolvedInput or None if not found / not enabled.
     """
-    registry = get_registry()
-    return registry.get_plugin(source_id)
+    for entry in resolve_inputs(config):
+        if entry.source_id == source_id:
+            return entry
+    return None
 
 
-def transform_source_config(
-    source_id: str, source_config: dict[str, Any]
-) -> dict[str, Any]:
+def transform_source_config(source_id: str, config: dict[str, Any]) -> dict[str, Any]:
     """Transform raw YAML config for a source into plugin-ready config.
 
     Delegates to the plugin's ``transform_config`` classmethod.
 
     Args:
-        source_id: Source identifier (e.g. "goodreads", "steam").
-        source_config: Raw ``inputs.<source_id>`` dict from YAML.
+        source_id: User-defined source key (e.g. "my_books", "tv_shows").
+        config: Full application config.
 
     Returns:
         Transformed config dict.
     """
-    plugin = get_sync_handler(source_id)
-    if plugin is None:
-        return dict(source_config)
+    resolved = get_sync_handler(source_id, config)
+    if resolved is None:
+        # Fall back to returning the raw input entry
+        inputs_config = config.get("inputs", {})
+        return dict(inputs_config.get(source_id, {}))
 
-    return type(plugin).transform_config(source_config)
+    return resolved.config
 
 
-def validate_source_config(source_id: str, inputs_config: dict[str, Any]) -> list[str]:
+def validate_source_config(source_id: str, config: dict[str, Any]) -> list[str]:
     """Validate config for a sync source.
 
+    Args:
+        source_id: User-defined source key.
+        config: Full application config.
+
     Returns:
-        List of error messages (empty if valid)
+        List of error messages (empty if valid).
     """
-    plugin = get_sync_handler(source_id)
-    if plugin is None:
-        return [f"Unknown source: {source_id}"]
+    resolved = get_sync_handler(source_id, config)
+    if resolved is None:
+        return [f"Unknown or disabled source: {source_id}"]
 
-    source_config = inputs_config.get(source_id, {})
-    plugin_config = transform_source_config(source_id, source_config)
-
-    return plugin.validate_config(plugin_config)
+    return resolved.plugin.validate_config(resolved.config)

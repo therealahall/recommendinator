@@ -245,36 +245,38 @@ class PluginRegistry:
         return dict(self._plugins)
 
     def get_enabled_plugins(self, config: dict[str, Any]) -> list[SourcePlugin]:
-        """Get plugins that are enabled in config.
+        """Get the unique set of plugins referenced by enabled input entries.
 
-        A plugin is considered enabled if config has:
-        inputs.<plugin_name>.enabled = true
+        Each entry in ``config['inputs']`` must have a ``plugin`` field
+        identifying the plugin type.  Returns the deduplicated set of plugin
+        instances that have at least one enabled input entry.
 
         Args:
             config: Full application config
 
         Returns:
-            List of enabled plugin instances
+            List of enabled plugin instances (deduplicated)
         """
         self.discover_plugins()
 
         inputs_config = config.get("inputs", {})
-        enabled_plugins = []
+        seen_plugin_names: set[str] = set()
+        enabled_plugins: list[SourcePlugin] = []
 
-        for name, plugin in self._plugins.items():
-            plugin_config = inputs_config.get(name, {})
+        for _source_id, entry in inputs_config.items():
+            if not isinstance(entry, dict):
+                continue
+            if not entry.get("enabled", False):
+                continue
 
-            # Handle both dict config and list config (for generic plugins)
-            if isinstance(plugin_config, dict):
-                if plugin_config.get("enabled", False):
-                    enabled_plugins.append(plugin)
-            elif isinstance(plugin_config, list):
-                # For plugins with multiple instances (generic_csv, etc.)
-                # Check if any instance is enabled
-                for instance_config in plugin_config:
-                    if instance_config.get("enabled", False):
-                        enabled_plugins.append(plugin)
-                        break
+            plugin_name = entry.get("plugin")
+            if not plugin_name or plugin_name in seen_plugin_names:
+                continue
+
+            plugin = self._plugins.get(plugin_name)
+            if plugin is not None:
+                enabled_plugins.append(plugin)
+                seen_plugin_names.add(plugin_name)
 
         return enabled_plugins
 

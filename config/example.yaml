@@ -43,14 +43,18 @@ ingestion:
   # Only used with source_priority strategy.
   source_priority: ["goodreads", "steam"]
 
-# Input files configuration
+# Input sources configuration
+# Each entry is a user-defined name with a 'plugin' field specifying the plugin type.
+# This allows multiple instances of the same plugin (e.g., two json_import sources).
 inputs:
   goodreads:
+    plugin: goodreads
     path: "inputs/goodreads_library_export.csv"
     content_type: "book"  # Content type for enrichment (book, movie, tv_show, video_game)
     enabled: true
 
   steam:
+    plugin: steam
     # Steam Web API configuration
     # Get your API key from: https://steamcommunity.com/dev/apikey
     api_key: ""  # Your Steam Web API key
@@ -64,6 +68,7 @@ inputs:
 
   # GOG.com integration (PC game store)
   gog:
+    plugin: gog
     # GOG OAuth refresh token for API access.
     # See "GOG Setup" section in README.md for step-by-step instructions.
     refresh_token: ""
@@ -77,6 +82,7 @@ inputs:
 
   # Epic Games Store integration
   epic_games:
+    plugin: epic_games
     # Epic Games OAuth refresh token for API access.
     # See "Epic Games Setup" section in README.md for step-by-step instructions.
     refresh_token: ""
@@ -84,25 +90,29 @@ inputs:
     enabled: false
 
   # Generic CSV import — use templates from templates/ directory
-  csv_import:
-    csv_path: "inputs/my_movies.csv"  # Path to your CSV file
+  csv_movies:
+    plugin: csv_import
+    path: "inputs/my_movies.csv"  # Path to your CSV file
     content_type: "movie"  # book, movie, tv_show, or video_game
     enabled: false
 
   # Generic JSON import — use templates from templates/ directory
-  json_import:
-    json_path: "inputs/my_books.json"  # Path to your JSON or JSONL file
+  json_books:
+    plugin: json_import
+    path: "inputs/my_books.json"  # Path to your JSON or JSONL file
     content_type: "book"  # book, movie, tv_show, or video_game
     enabled: false
 
   # Generic Markdown import — use templates from templates/ directory
-  markdown_import:
-    markdown_path: "inputs/my_tv_shows.md"  # Path to your Markdown file
+  md_tv_shows:
+    plugin: markdown_import
+    path: "inputs/my_tv_shows.md"  # Path to your Markdown file
     content_type: "tv_show"  # book, movie, tv_show, or video_game
     enabled: false
 
   # Sonarr integration (TV show library manager)
   sonarr:
+    plugin: sonarr
     url: "http://localhost:8989"  # Sonarr base URL
     api_key: ""  # Sonarr API key (Settings > General > API Key)
     content_type: "tv_show"  # Content type for enrichment
@@ -110,12 +120,18 @@ inputs:
 
   # Radarr integration (Movie library manager)
   radarr:
+    plugin: radarr
     url: "http://localhost:7878"  # Radarr base URL
     api_key: ""  # Radarr API key (Settings > General > API Key)
     content_type: "movie"  # Content type for enrichment
     enabled: false
 
-  # Future sources can be added here
+  # You can add multiple instances of the same plugin. For example:
+  # tv_shows_json:
+  #   plugin: json_import
+  #   path: "inputs/tv_shows.json"
+  #   content_type: "tv_show"
+  #   enabled: true
 
 # Web interface configuration
 web:
