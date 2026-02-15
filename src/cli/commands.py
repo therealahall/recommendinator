@@ -7,12 +7,11 @@ from tabulate import tabulate
 
 from src.cli.config import get_feature_flags
 from src.ingestion.plugin_base import SourceError
-from src.ingestion.registry import get_registry
 from src.ingestion.sync import execute_sync
 from src.models.content import ConsumptionStatus, ContentType
 from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.scorers import SCORER_NAME_MAP
-from src.web.sync_sources import transform_source_config, validate_source_config
+from src.web.sync_sources import resolve_inputs, validate_source_config
 
 
 @click.command()
@@ -135,27 +134,22 @@ def update(ctx: click.Context, source: str) -> None:
     embedding_gen = ctx.obj["embedding_gen"]
     config = ctx.obj["config"]
 
-    registry = get_registry()
     inputs_config = config.get("inputs", {})
 
     # Handle 'list' to show available sources
     if source == "list":
-        enabled_plugins = registry.get_enabled_plugins(config)
-        all_plugins = registry.get_all_plugins()
-
-        if not all_plugins:
-            click.echo("No plugins discovered.")
+        if not inputs_config:
+            click.echo("No sources configured.")
             return
 
         click.echo("Available sources:")
-        for name in sorted(all_plugins):
-            plugin = all_plugins[name]
-            source_config = inputs_config.get(name, {})
-            enabled = isinstance(source_config, dict) and source_config.get(
-                "enabled", False
-            )
+        for source_id, entry in inputs_config.items():
+            if not isinstance(entry, dict):
+                continue
+            plugin_name = entry.get("plugin", "?")
+            enabled = entry.get("enabled", False)
             status = "enabled" if enabled else "disabled"
-            click.echo(f"  {name:20s} {plugin.description} [{status}]")
+            click.echo(f"  {source_id:20s} plugin={plugin_name} [{status}]")
         return
 
     # Check if embeddings are enabled
@@ -169,16 +163,16 @@ def update(ctx: click.Context, source: str) -> None:
 
     # Determine which sources to sync
     if source == "all":
-        enabled_plugins = registry.get_enabled_plugins(config)
-        if not enabled_plugins:
+        resolved = resolve_inputs(config)
+        if not resolved:
             click.echo(
                 "No sources enabled in config. Use --source list to see available sources."
             )
             return
-        sources_to_sync = [(plugin.name, plugin) for plugin in enabled_plugins]
     else:
-        found_plugin = registry.get_plugin(source)
-        if found_plugin is None:
+        # Look up a single source by its user-defined key
+        entry = inputs_config.get(source)
+        if not isinstance(entry, dict):
             click.echo(
                 f"Error: Unknown source '{source}'. "
                 "Use --source list to see available sources.",
@@ -186,39 +180,42 @@ def update(ctx: click.Context, source: str) -> None:
             )
             raise click.Abort()
 
-        source_config = inputs_config.get(source, {})
-        if not isinstance(source_config, dict) or not source_config.get(
-            "enabled", False
-        ):
+        if not entry.get("enabled", False):
             click.echo(f"{source} source is disabled in config.")
             return
 
-        validation_errors = validate_source_config(source, inputs_config)
+        validation_errors = validate_source_config(source, config)
         if validation_errors:
             for error in validation_errors:
                 click.echo(f"Error: {error}", err=True)
             raise click.Abort()
 
-        sources_to_sync = [(source, found_plugin)]
+        resolved = [
+            resolved_entry
+            for resolved_entry in resolve_inputs(config)
+            if resolved_entry.source_id == source
+        ]
 
     click.echo(
-        f"Updating data from {', '.join(name for name, _ in sources_to_sync)}..."
+        f"Updating data from {', '.join(entry.source_id for entry in resolved)}..."
     )
 
     try:
         total_count = 0
 
-        for source_id, plugin in sources_to_sync:
-            source_config = inputs_config.get(source_id, {})
-            plugin_config = transform_source_config(source_id, source_config)
-
-            validation_errors = validate_source_config(source_id, inputs_config)
+        for resolved_entry in resolved:
+            validation_errors = validate_source_config(resolved_entry.source_id, config)
             if validation_errors:
                 for error in validation_errors:
-                    click.echo(f"  {plugin.display_name}: Error: {error}", err=True)
+                    click.echo(
+                        f"  {resolved_entry.plugin.display_name}: Error: {error}",
+                        err=True,
+                    )
                 continue
 
-            click.echo(f"  Syncing {plugin.display_name}...")
+            click.echo(
+                f"  Syncing {resolved_entry.plugin.display_name} ({resolved_entry.source_id})..."
+            )
 
             def cli_progress(
                 items_processed: int,
@@ -231,8 +228,8 @@ def update(ctx: click.Context, source: str) -> None:
 
             try:
                 result = execute_sync(
-                    plugin=plugin,
-                    plugin_config=plugin_config,
+                    plugin=resolved_entry.plugin,
+                    plugin_config=resolved_entry.config,
                     storage_manager=storage,
                     embedding_generator=embedding_gen,
                     use_embeddings=use_embeddings,
@@ -241,7 +238,8 @@ def update(ctx: click.Context, source: str) -> None:
                 )
 
                 click.echo(
-                    f"  Updated {result.items_synced} items from {plugin.display_name}"
+                    f"  Updated {result.items_synced} items from "
+                    f"{resolved_entry.plugin.display_name} ({resolved_entry.source_id})"
                 )
                 if result.errors:
                     for error in result.errors:
@@ -250,9 +248,15 @@ def update(ctx: click.Context, source: str) -> None:
                 total_count += result.items_synced
 
             except SourceError as error:
-                click.echo(f"  Error syncing {plugin.display_name}: {error}", err=True)
+                click.echo(
+                    f"  Error syncing {resolved_entry.plugin.display_name}: {error}",
+                    err=True,
+                )
             except Exception as error:
-                click.echo(f"  Error syncing {plugin.display_name}: {error}", err=True)
+                click.echo(
+                    f"  Error syncing {resolved_entry.plugin.display_name}: {error}",
+                    err=True,
+                )
 
         if total_count == 0:
             click.echo(
