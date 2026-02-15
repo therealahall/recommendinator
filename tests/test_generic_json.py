@@ -45,7 +45,7 @@ class TestJsonImportPluginProperties:
         schema = plugin.get_config_schema()
         assert len(schema) == 2
         names = [field.name for field in schema]
-        assert "json_path" in names
+        assert "path" in names
         assert "content_type" in names
 
     def test_get_source_identifier(self, plugin: JsonImportPlugin) -> None:
@@ -61,17 +61,17 @@ class TestJsonImportPluginValidation:
         json_file = tmp_path / "books.json"
         json_file.write_text("[]")
         errors = plugin.validate_config(
-            {"json_path": str(json_file), "content_type": "book"}
+            {"path": str(json_file), "content_type": "book"}
         )
         assert errors == []
 
     def test_validate_missing_json_path(self, plugin: JsonImportPlugin) -> None:
         errors = plugin.validate_config({"content_type": "book"})
-        assert any("json_path" in error for error in errors)
+        assert any("path" in error for error in errors)
 
     def test_validate_nonexistent_file(self, plugin: JsonImportPlugin) -> None:
         errors = plugin.validate_config(
-            {"json_path": "/nonexistent/path.json", "content_type": "book"}
+            {"path": "/nonexistent/path.json", "content_type": "book"}
         )
         assert any("not found" in error for error in errors)
 
@@ -80,7 +80,7 @@ class TestJsonImportPluginValidation:
     ) -> None:
         json_file = tmp_path / "data.json"
         json_file.write_text("[]")
-        errors = plugin.validate_config({"json_path": str(json_file)})
+        errors = plugin.validate_config({"path": str(json_file)})
         assert any("content_type" in error for error in errors)
 
     def test_validate_invalid_content_type(
@@ -89,7 +89,7 @@ class TestJsonImportPluginValidation:
         json_file = tmp_path / "data.json"
         json_file.write_text("[]")
         errors = plugin.validate_config(
-            {"json_path": str(json_file), "content_type": "podcast"}
+            {"path": str(json_file), "content_type": "podcast"}
         )
         assert any("Invalid content_type" in error for error in errors)
 
@@ -115,9 +115,7 @@ class TestJsonImportPluginFetch:
         ]
         json_file.write_text(json.dumps(data))
 
-        items = list(
-            plugin.fetch({"json_path": str(json_file), "content_type": "book"})
-        )
+        items = list(plugin.fetch({"path": str(json_file), "content_type": "book"}))
 
         assert len(items) == 1
         item = items[0]
@@ -148,9 +146,7 @@ class TestJsonImportPluginFetch:
         ]
         json_file.write_text(json.dumps(data))
 
-        items = list(
-            plugin.fetch({"json_path": str(json_file), "content_type": "movie"})
-        )
+        items = list(plugin.fetch({"path": str(json_file), "content_type": "movie"}))
 
         assert len(items) == 1
         assert items[0].title == "Inception"
@@ -172,9 +168,7 @@ class TestJsonImportPluginFetch:
         ]
         json_file.write_text(json.dumps(data))
 
-        items = list(
-            plugin.fetch({"json_path": str(json_file), "content_type": "tv_show"})
-        )
+        items = list(plugin.fetch({"path": str(json_file), "content_type": "tv_show"}))
 
         assert len(items) == 1
         assert items[0].author == "Vince Gilligan"
@@ -196,7 +190,7 @@ class TestJsonImportPluginFetch:
         json_file.write_text(json.dumps(data))
 
         items = list(
-            plugin.fetch({"json_path": str(json_file), "content_type": "video_game"})
+            plugin.fetch({"path": str(json_file), "content_type": "video_game"})
         )
 
         assert len(items) == 1
@@ -215,9 +209,7 @@ class TestJsonImportPluginFetch:
         ]
         json_file.write_text(json.dumps(data))
 
-        items = list(
-            plugin.fetch({"json_path": str(json_file), "content_type": "book"})
-        )
+        items = list(plugin.fetch({"path": str(json_file), "content_type": "book"}))
 
         assert len(items) == 3
         assert items[0].rating == 5
@@ -234,9 +226,7 @@ class TestJsonImportPluginFetch:
         ]
         json_file.write_text(json.dumps(data))
 
-        items = list(
-            plugin.fetch({"json_path": str(json_file), "content_type": "book"})
-        )
+        items = list(plugin.fetch({"path": str(json_file), "content_type": "book"}))
 
         assert len(items) == 1
         assert items[0].title == "Valid"
@@ -245,9 +235,7 @@ class TestJsonImportPluginFetch:
         json_file = tmp_path / "data.json"
         json_file.write_text("[]")
 
-        items = list(
-            plugin.fetch({"json_path": str(json_file), "content_type": "book"})
-        )
+        items = list(plugin.fetch({"path": str(json_file), "content_type": "book"}))
 
         assert len(items) == 0
 
@@ -255,9 +243,7 @@ class TestJsonImportPluginFetch:
         json_file = tmp_path / "data.json"
         json_file.write_text("")
 
-        items = list(
-            plugin.fetch({"json_path": str(json_file), "content_type": "book"})
-        )
+        items = list(plugin.fetch({"path": str(json_file), "content_type": "book"}))
 
         assert len(items) == 0
 
@@ -268,9 +254,7 @@ class TestJsonImportPluginFetch:
         data = [{"title": "Test", "notes": "Recommended by friend"}]
         json_file.write_text(json.dumps(data))
 
-        items = list(
-            plugin.fetch({"json_path": str(json_file), "content_type": "book"})
-        )
+        items = list(plugin.fetch({"path": str(json_file), "content_type": "book"}))
 
         assert items[0].metadata["notes"] == "Recommended by friend"
 
@@ -286,9 +270,7 @@ class TestJsonlSupport:
         ]
         jsonl_file.write_text("\n".join(lines))
 
-        items = list(
-            plugin.fetch({"json_path": str(jsonl_file), "content_type": "book"})
-        )
+        items = list(plugin.fetch({"path": str(jsonl_file), "content_type": "book"}))
 
         assert len(items) == 2
         assert items[0].title == "Book One"
@@ -306,9 +288,7 @@ class TestJsonlSupport:
         )
         jsonl_file.write_text(content)
 
-        items = list(
-            plugin.fetch({"json_path": str(jsonl_file), "content_type": "book"})
-        )
+        items = list(plugin.fetch({"path": str(jsonl_file), "content_type": "book"}))
 
         assert len(items) == 2
 
@@ -319,17 +299,13 @@ class TestJsonImportPluginRating:
     def test_integer_rating(self, plugin: JsonImportPlugin, tmp_path: Path) -> None:
         json_file = tmp_path / "data.json"
         json_file.write_text(json.dumps([{"title": "Test", "rating": 4}]))
-        items = list(
-            plugin.fetch({"json_path": str(json_file), "content_type": "book"})
-        )
+        items = list(plugin.fetch({"path": str(json_file), "content_type": "book"}))
         assert items[0].rating == 4
 
     def test_null_rating(self, plugin: JsonImportPlugin, tmp_path: Path) -> None:
         json_file = tmp_path / "data.json"
         json_file.write_text(json.dumps([{"title": "Test", "rating": None}]))
-        items = list(
-            plugin.fetch({"json_path": str(json_file), "content_type": "book"})
-        )
+        items = list(plugin.fetch({"path": str(json_file), "content_type": "book"}))
         assert items[0].rating is None
 
     def test_zero_rating_is_none(
@@ -337,9 +313,7 @@ class TestJsonImportPluginRating:
     ) -> None:
         json_file = tmp_path / "data.json"
         json_file.write_text(json.dumps([{"title": "Test", "rating": 0}]))
-        items = list(
-            plugin.fetch({"json_path": str(json_file), "content_type": "book"})
-        )
+        items = list(plugin.fetch({"path": str(json_file), "content_type": "book"}))
         assert items[0].rating is None
 
     def test_missing_rating_is_none(
@@ -347,9 +321,7 @@ class TestJsonImportPluginRating:
     ) -> None:
         json_file = tmp_path / "data.json"
         json_file.write_text(json.dumps([{"title": "Test"}]))
-        items = list(
-            plugin.fetch({"json_path": str(json_file), "content_type": "book"})
-        )
+        items = list(plugin.fetch({"path": str(json_file), "content_type": "book"}))
         assert items[0].rating is None
 
     def test_out_of_range_rating_clamped(
@@ -357,9 +329,7 @@ class TestJsonImportPluginRating:
     ) -> None:
         json_file = tmp_path / "data.json"
         json_file.write_text(json.dumps([{"title": "Test", "rating": 10}]))
-        items = list(
-            plugin.fetch({"json_path": str(json_file), "content_type": "book"})
-        )
+        items = list(plugin.fetch({"path": str(json_file), "content_type": "book"}))
         assert items[0].rating == 5
 
 
@@ -369,9 +339,7 @@ class TestJsonImportPluginErrors:
     def test_file_not_found_raises_source_error(self, plugin: JsonImportPlugin) -> None:
         with pytest.raises(SourceError, match="JSON file not found"):
             list(
-                plugin.fetch(
-                    {"json_path": "/nonexistent/file.json", "content_type": "book"}
-                )
+                plugin.fetch({"path": "/nonexistent/file.json", "content_type": "book"})
             )
 
     def test_invalid_json_raises_source_error(
@@ -380,7 +348,7 @@ class TestJsonImportPluginErrors:
         json_file = tmp_path / "bad.json"
         json_file.write_text("{not valid json")
         with pytest.raises(SourceError, match="Failed to parse JSON"):
-            list(plugin.fetch({"json_path": str(json_file), "content_type": "book"}))
+            list(plugin.fetch({"path": str(json_file), "content_type": "book"}))
 
     def test_invalid_jsonl_raises_source_error(
         self, plugin: JsonImportPlugin, tmp_path: Path
@@ -388,7 +356,7 @@ class TestJsonImportPluginErrors:
         jsonl_file = tmp_path / "bad.jsonl"
         jsonl_file.write_text('{"title": "ok"}\nnot json\n')
         with pytest.raises(SourceError, match="Failed to parse JSON"):
-            list(plugin.fetch({"json_path": str(jsonl_file), "content_type": "book"}))
+            list(plugin.fetch({"path": str(jsonl_file), "content_type": "book"}))
 
     def test_invalid_content_type_raises_source_error(
         self, plugin: JsonImportPlugin, tmp_path: Path
@@ -396,7 +364,7 @@ class TestJsonImportPluginErrors:
         json_file = tmp_path / "data.json"
         json_file.write_text("[]")
         with pytest.raises(SourceError, match="Invalid content type"):
-            list(plugin.fetch({"json_path": str(json_file), "content_type": "podcast"}))
+            list(plugin.fetch({"path": str(json_file), "content_type": "podcast"}))
 
     def test_invalid_date_does_not_crash(
         self, plugin: JsonImportPlugin, tmp_path: Path
@@ -405,9 +373,7 @@ class TestJsonImportPluginErrors:
         json_file.write_text(
             json.dumps([{"title": "Test", "date_completed": "not-a-date"}])
         )
-        items = list(
-            plugin.fetch({"json_path": str(json_file), "content_type": "book"})
-        )
+        items = list(plugin.fetch({"path": str(json_file), "content_type": "book"}))
         assert len(items) == 1
         assert items[0].date_completed is None
 
@@ -425,7 +391,7 @@ class TestJsonTemplates:
         items = list(
             plugin.fetch(
                 {
-                    "json_path": str(templates_dir / "books.json"),
+                    "path": str(templates_dir / "books.json"),
                     "content_type": "book",
                 }
             )
@@ -439,7 +405,7 @@ class TestJsonTemplates:
         items = list(
             plugin.fetch(
                 {
-                    "json_path": str(templates_dir / "movies.json"),
+                    "path": str(templates_dir / "movies.json"),
                     "content_type": "movie",
                 }
             )
@@ -453,7 +419,7 @@ class TestJsonTemplates:
         items = list(
             plugin.fetch(
                 {
-                    "json_path": str(templates_dir / "tv_shows.json"),
+                    "path": str(templates_dir / "tv_shows.json"),
                     "content_type": "tv_show",
                 }
             )
@@ -467,7 +433,7 @@ class TestJsonTemplates:
         items = list(
             plugin.fetch(
                 {
-                    "json_path": str(templates_dir / "video_games.json"),
+                    "path": str(templates_dir / "video_games.json"),
                     "content_type": "video_game",
                 }
             )
@@ -484,9 +450,7 @@ class TestJsonImportIgnored:
         json_file.write_text(
             json.dumps([{"title": "Test", "status": "completed", "ignored": True}])
         )
-        items = list(
-            plugin.fetch({"json_path": str(json_file), "content_type": "book"})
-        )
+        items = list(plugin.fetch({"path": str(json_file), "content_type": "book"}))
         assert items[0].ignored is True
 
     def test_ignored_false(self, plugin: JsonImportPlugin, tmp_path: Path) -> None:
@@ -494,9 +458,7 @@ class TestJsonImportIgnored:
         json_file.write_text(
             json.dumps([{"title": "Test", "status": "completed", "ignored": False}])
         )
-        items = list(
-            plugin.fetch({"json_path": str(json_file), "content_type": "book"})
-        )
+        items = list(plugin.fetch({"path": str(json_file), "content_type": "book"}))
         assert items[0].ignored is False
 
     def test_ignored_string_true(
@@ -506,9 +468,7 @@ class TestJsonImportIgnored:
         json_file.write_text(
             json.dumps([{"title": "Test", "status": "completed", "ignored": "true"}])
         )
-        items = list(
-            plugin.fetch({"json_path": str(json_file), "content_type": "book"})
-        )
+        items = list(plugin.fetch({"path": str(json_file), "content_type": "book"}))
         assert items[0].ignored is True
 
     def test_ignored_missing_defaults_false(
@@ -516,9 +476,7 @@ class TestJsonImportIgnored:
     ) -> None:
         json_file = tmp_path / "data.json"
         json_file.write_text(json.dumps([{"title": "Test", "status": "completed"}]))
-        items = list(
-            plugin.fetch({"json_path": str(json_file), "content_type": "book"})
-        )
+        items = list(plugin.fetch({"path": str(json_file), "content_type": "book"}))
         assert items[0].ignored is False
 
     def test_ignored_null_defaults_false(
@@ -528,9 +486,7 @@ class TestJsonImportIgnored:
         json_file.write_text(
             json.dumps([{"title": "Test", "status": "completed", "ignored": None}])
         )
-        items = list(
-            plugin.fetch({"json_path": str(json_file), "content_type": "book"})
-        )
+        items = list(plugin.fetch({"path": str(json_file), "content_type": "book"}))
         assert items[0].ignored is False
 
 
@@ -549,9 +505,7 @@ class TestJsonImportSeasonsWatched:
             }
         ]
         json_file.write_text(json.dumps(data))
-        items = list(
-            plugin.fetch({"json_path": str(json_file), "content_type": "tv_show"})
-        )
+        items = list(plugin.fetch({"path": str(json_file), "content_type": "tv_show"}))
         assert items[0].metadata["seasons_watched"] == [1, 2, 5, 6]
 
     def test_integer_backward_compat(
@@ -568,9 +522,7 @@ class TestJsonImportSeasonsWatched:
             }
         ]
         json_file.write_text(json.dumps(data))
-        items = list(
-            plugin.fetch({"json_path": str(json_file), "content_type": "tv_show"})
-        )
+        items = list(plugin.fetch({"path": str(json_file), "content_type": "tv_show"}))
         assert items[0].metadata["seasons_watched"] == [1, 2, 3, 4, 5]
 
     def test_null_seasons_watched(
@@ -587,9 +539,7 @@ class TestJsonImportSeasonsWatched:
             }
         ]
         json_file.write_text(json.dumps(data))
-        items = list(
-            plugin.fetch({"json_path": str(json_file), "content_type": "tv_show"})
-        )
+        items = list(plugin.fetch({"path": str(json_file), "content_type": "tv_show"}))
         # null seasons_watched becomes [], which is falsy so _build_json_metadata
         # won't include it, but the post-processing replaces it
         assert items[0].metadata.get("seasons_watched", []) == []

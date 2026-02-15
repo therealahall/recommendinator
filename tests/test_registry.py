@@ -46,7 +46,7 @@ class FakeBookPlugin(SourcePlugin):
             title="Fake Book",
             content_type=ContentType.BOOK,
             status=ConsumptionStatus.COMPLETED,
-            source=self.get_source_identifier(),
+            source=self.get_source_identifier(config),
         )
 
 
@@ -86,7 +86,7 @@ class FakeGamePlugin(SourcePlugin):
             title="Fake Game",
             content_type=ContentType.VIDEO_GAME,
             status=ConsumptionStatus.UNREAD,
-            source=self.get_source_identifier(),
+            source=self.get_source_identifier(config),
         )
 
 
@@ -179,15 +179,23 @@ class TestPluginRegistry:
     def test_get_enabled_plugins_dict_config(
         self, clean_registry: PluginRegistry
     ) -> None:
-        """Test getting enabled plugins with dict-style config."""
+        """Test getting enabled plugins with named instance config."""
         clean_registry._discovered = True
         clean_registry.register(FakeBookPlugin())
         clean_registry.register(FakeGamePlugin())
 
         config = {
             "inputs": {
-                "fake_books": {"enabled": True, "path": "/data/books.csv"},
-                "fake_games": {"enabled": False, "api_key": "test"},
+                "my_books": {
+                    "plugin": "fake_books",
+                    "enabled": True,
+                    "path": "/data/books.csv",
+                },
+                "my_games": {
+                    "plugin": "fake_games",
+                    "enabled": False,
+                    "api_key": "test",
+                },
             }
         }
 
@@ -196,19 +204,25 @@ class TestPluginRegistry:
         assert len(enabled) == 1
         assert enabled[0].name == "fake_books"
 
-    def test_get_enabled_plugins_list_config(
+    def test_get_enabled_plugins_multiple_instances_same_plugin(
         self, clean_registry: PluginRegistry
     ) -> None:
-        """Test getting enabled plugins with list-style config (generic plugins)."""
+        """Test that multiple instances of the same plugin return it once."""
         clean_registry._discovered = True
         clean_registry.register(FakeBookPlugin())
 
         config = {
             "inputs": {
-                "fake_books": [
-                    {"name": "instance_1", "enabled": True, "path": "/data/1.csv"},
-                    {"name": "instance_2", "enabled": False, "path": "/data/2.csv"},
-                ],
+                "fiction_books": {
+                    "plugin": "fake_books",
+                    "enabled": True,
+                    "path": "/data/fiction.csv",
+                },
+                "nonfiction_books": {
+                    "plugin": "fake_books",
+                    "enabled": True,
+                    "path": "/data/nonfiction.csv",
+                },
             }
         }
 
@@ -225,6 +239,26 @@ class TestPluginRegistry:
         clean_registry.register(FakeBookPlugin())
 
         enabled = clean_registry.get_enabled_plugins({})
+
+        assert len(enabled) == 0
+
+    def test_get_enabled_plugins_missing_plugin_field(
+        self, clean_registry: PluginRegistry
+    ) -> None:
+        """Test that entries without a plugin field are skipped."""
+        clean_registry._discovered = True
+        clean_registry.register(FakeBookPlugin())
+
+        config = {
+            "inputs": {
+                "broken_entry": {
+                    "enabled": True,
+                    "path": "/data/books.csv",
+                },
+            }
+        }
+
+        enabled = clean_registry.get_enabled_plugins(config)
 
         assert len(enabled) == 0
 

@@ -48,7 +48,7 @@ class TestGoodreadsPluginProperties:
         schema = plugin.get_config_schema()
 
         assert len(schema) == 1
-        assert schema[0].name == "csv_path"
+        assert schema[0].name == "path"
         assert schema[0].field_type is str
         assert schema[0].required is True
 
@@ -77,27 +77,27 @@ class TestGoodreadsPluginValidation:
         csv_file = tmp_path / "books.csv"
         csv_file.write_text("header\n")
 
-        errors = plugin.validate_config({"csv_path": str(csv_file)})
+        errors = plugin.validate_config({"path": str(csv_file)})
 
         assert errors == []
 
-    def test_validate_missing_csv_path(self, plugin: GoodreadsPlugin) -> None:
-        """Test validation fails when csv_path is missing."""
+    def test_validate_missing_path(self, plugin: GoodreadsPlugin) -> None:
+        """Test validation fails when path is missing."""
         errors = plugin.validate_config({})
 
         assert len(errors) == 1
-        assert "'csv_path' is required" in errors[0]
+        assert "'path' is required" in errors[0]
 
-    def test_validate_empty_csv_path(self, plugin: GoodreadsPlugin) -> None:
-        """Test validation fails when csv_path is empty."""
-        errors = plugin.validate_config({"csv_path": ""})
+    def test_validate_empty_path(self, plugin: GoodreadsPlugin) -> None:
+        """Test validation fails when path is empty."""
+        errors = plugin.validate_config({"path": ""})
 
         assert len(errors) == 1
-        assert "'csv_path' is required" in errors[0]
+        assert "'path' is required" in errors[0]
 
     def test_validate_nonexistent_file(self, plugin: GoodreadsPlugin) -> None:
         """Test validation fails when CSV file does not exist."""
-        errors = plugin.validate_config({"csv_path": "/nonexistent/books.csv"})
+        errors = plugin.validate_config({"path": "/nonexistent/books.csv"})
 
         assert len(errors) == 1
         assert "CSV file not found" in errors[0]
@@ -115,7 +115,7 @@ class TestGoodreadsPluginFetch:
         csv_file = tmp_path / "books.csv"
         csv_file.write_text(csv_content)
 
-        items = list(plugin.fetch({"csv_path": str(csv_file)}))
+        items = list(plugin.fetch({"path": str(csv_file)}))
 
         assert len(items) == 2
 
@@ -147,7 +147,7 @@ class TestGoodreadsPluginFetch:
         csv_file = tmp_path / "books.csv"
         csv_file.write_text(csv_content)
 
-        items = list(plugin.fetch({"csv_path": str(csv_file)}))
+        items = list(plugin.fetch({"path": str(csv_file)}))
 
         assert len(items) == 1
         assert items[0].status == ConsumptionStatus.CURRENTLY_CONSUMING
@@ -163,7 +163,7 @@ class TestGoodreadsPluginFetch:
         csv_file = tmp_path / "books.csv"
         csv_file.write_text(csv_content)
 
-        items = list(plugin.fetch({"csv_path": str(csv_file)}))
+        items = list(plugin.fetch({"path": str(csv_file)}))
 
         assert len(items) == 1
         assert items[0].title == "Valid Book"
@@ -178,7 +178,7 @@ class TestGoodreadsPluginFetch:
         csv_file = tmp_path / "books.csv"
         csv_file.write_text(csv_content)
 
-        items = list(plugin.fetch({"csv_path": str(csv_file)}))
+        items = list(plugin.fetch({"path": str(csv_file)}))
 
         assert items[0].source == plugin.get_source_identifier()
 
@@ -187,7 +187,7 @@ class TestGoodreadsPluginFetch:
     ) -> None:
         """Test that fetching a nonexistent file raises SourceError."""
         with pytest.raises(SourceError) as exc_info:
-            list(plugin.fetch({"csv_path": "/nonexistent/books.csv"}))
+            list(plugin.fetch({"path": "/nonexistent/books.csv"}))
 
         assert exc_info.value.plugin_name == "goodreads"
         assert "CSV file not found" in exc_info.value.message
@@ -203,7 +203,7 @@ class TestGoodreadsPluginFetch:
         csv_file = tmp_path / "books.csv"
         csv_file.write_text(csv_content)
 
-        items = list(plugin.fetch({"csv_path": str(csv_file)}))
+        items = list(plugin.fetch({"path": str(csv_file)}))
 
         assert len(items) == 1
         assert items[0].metadata["book_id"] == "123"
@@ -221,7 +221,7 @@ class TestGoodreadsPluginFetch:
         csv_file = tmp_path / "books.csv"
         csv_file.write_text(csv_content)
 
-        items = list(plugin.fetch({"csv_path": str(csv_file)}))
+        items = list(plugin.fetch({"path": str(csv_file)}))
 
         assert items[0].rating is None
 
@@ -233,6 +233,6 @@ class TestGoodreadsPluginFetch:
         csv_file = tmp_path / "books.csv"
         csv_file.write_text(csv_content)
 
-        items = list(plugin.fetch({"csv_path": str(csv_file)}))
+        items = list(plugin.fetch({"path": str(csv_file)}))
 
         assert items[0].date_completed is None

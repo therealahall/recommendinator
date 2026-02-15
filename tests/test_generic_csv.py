@@ -48,7 +48,7 @@ class TestCsvImportPluginProperties:
         schema = plugin.get_config_schema()
         assert len(schema) == 2
         names = [field.name for field in schema]
-        assert "csv_path" in names
+        assert "path" in names
         assert "content_type" in names
 
     def test_get_source_identifier(self, plugin: CsvImportPlugin) -> None:
@@ -70,22 +70,20 @@ class TestCsvImportPluginValidation:
     ) -> None:
         csv_file = tmp_path / "books.csv"
         csv_file.write_text("title\n")
-        errors = plugin.validate_config(
-            {"csv_path": str(csv_file), "content_type": "book"}
-        )
+        errors = plugin.validate_config({"path": str(csv_file), "content_type": "book"})
         assert errors == []
 
     def test_validate_missing_csv_path(self, plugin: CsvImportPlugin) -> None:
         errors = plugin.validate_config({"content_type": "book"})
-        assert any("csv_path" in error for error in errors)
+        assert any("path" in error for error in errors)
 
     def test_validate_empty_csv_path(self, plugin: CsvImportPlugin) -> None:
-        errors = plugin.validate_config({"csv_path": "", "content_type": "book"})
-        assert any("csv_path" in error for error in errors)
+        errors = plugin.validate_config({"path": "", "content_type": "book"})
+        assert any("path" in error for error in errors)
 
     def test_validate_nonexistent_file(self, plugin: CsvImportPlugin) -> None:
         errors = plugin.validate_config(
-            {"csv_path": "/nonexistent/path.csv", "content_type": "book"}
+            {"path": "/nonexistent/path.csv", "content_type": "book"}
         )
         assert any("not found" in error for error in errors)
 
@@ -94,7 +92,7 @@ class TestCsvImportPluginValidation:
     ) -> None:
         csv_file = tmp_path / "books.csv"
         csv_file.write_text("title\n")
-        errors = plugin.validate_config({"csv_path": str(csv_file)})
+        errors = plugin.validate_config({"path": str(csv_file)})
         assert any("content_type" in error for error in errors)
 
     def test_validate_invalid_content_type(
@@ -103,7 +101,7 @@ class TestCsvImportPluginValidation:
         csv_file = tmp_path / "books.csv"
         csv_file.write_text("title\n")
         errors = plugin.validate_config(
-            {"csv_path": str(csv_file), "content_type": "podcast"}
+            {"path": str(csv_file), "content_type": "podcast"}
         )
         assert any("Invalid content_type" in error for error in errors)
 
@@ -114,7 +112,7 @@ class TestCsvImportPluginValidation:
         csv_file.write_text("title\n")
         for content_type in ContentType:
             errors = plugin.validate_config(
-                {"csv_path": str(csv_file), "content_type": content_type.value}
+                {"path": str(csv_file), "content_type": content_type.value}
             )
             assert errors == [], f"Failed for content_type={content_type.value}"
 
@@ -129,7 +127,7 @@ class TestCsvImportPluginFetchBooks:
             "The Name of the Wind,Patrick Rothfuss,5,completed,2024-06-15,Great book,,978-0756404741,662,2007,Fantasy\n"
         )
 
-        items = list(plugin.fetch({"csv_path": str(csv_file), "content_type": "book"}))
+        items = list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
 
         assert len(items) == 1
         item = items[0]
@@ -157,7 +155,7 @@ class TestCsvImportPluginFetchBooks:
             "Book Three,Author C,,unread\n"
         )
 
-        items = list(plugin.fetch({"csv_path": str(csv_file), "content_type": "book"}))
+        items = list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
 
         assert len(items) == 3
         assert items[0].title == "Book One"
@@ -180,7 +178,7 @@ class TestCsvImportPluginFetchBooks:
             "Valid Book,Author B,4,completed\n"
         )
 
-        items = list(plugin.fetch({"csv_path": str(csv_file), "content_type": "book"}))
+        items = list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
 
         assert len(items) == 1
         assert items[0].title == "Valid Book"
@@ -194,7 +192,7 @@ class TestCsvImportPluginFetchBooks:
             "Test Book,Author,5,completed,Recommended by friend\n"
         )
 
-        items = list(plugin.fetch({"csv_path": str(csv_file), "content_type": "book"}))
+        items = list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
 
         assert items[0].metadata["notes"] == "Recommended by friend"
 
@@ -209,7 +207,7 @@ class TestCsvImportPluginFetchMovies:
             "Inception,Christopher Nolan,5,completed,2010,148,Sci-Fi\n"
         )
 
-        items = list(plugin.fetch({"csv_path": str(csv_file), "content_type": "movie"}))
+        items = list(plugin.fetch({"path": str(csv_file), "content_type": "movie"}))
 
         assert len(items) == 1
         item = items[0]
@@ -232,9 +230,7 @@ class TestCsvImportPluginFetchTvShows:
             "Breaking Bad,Vince Gilligan,5,completed,5,5,2008,Drama\n"
         )
 
-        items = list(
-            plugin.fetch({"csv_path": str(csv_file), "content_type": "tv_show"})
-        )
+        items = list(plugin.fetch({"path": str(csv_file), "content_type": "tv_show"}))
 
         assert len(items) == 1
         item = items[0]
@@ -256,7 +252,7 @@ class TestCsvImportPluginFetchVideoGames:
         )
 
         items = list(
-            plugin.fetch({"csv_path": str(csv_file), "content_type": "video_game"})
+            plugin.fetch({"path": str(csv_file), "content_type": "video_game"})
         )
 
         assert len(items) == 1
@@ -275,19 +271,19 @@ class TestCsvImportPluginStatusMapping:
     def test_status_completed(self, plugin: CsvImportPlugin, tmp_path: Path) -> None:
         csv_file = tmp_path / "data.csv"
         csv_file.write_text("title,status\nTest,completed\n")
-        items = list(plugin.fetch({"csv_path": str(csv_file), "content_type": "book"}))
+        items = list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
         assert items[0].status == ConsumptionStatus.COMPLETED.value
 
     def test_status_in_progress(self, plugin: CsvImportPlugin, tmp_path: Path) -> None:
         csv_file = tmp_path / "data.csv"
         csv_file.write_text("title,status\nTest,in_progress\n")
-        items = list(plugin.fetch({"csv_path": str(csv_file), "content_type": "book"}))
+        items = list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
         assert items[0].status == ConsumptionStatus.CURRENTLY_CONSUMING.value
 
     def test_status_unread(self, plugin: CsvImportPlugin, tmp_path: Path) -> None:
         csv_file = tmp_path / "data.csv"
         csv_file.write_text("title,status\nTest,unread\n")
-        items = list(plugin.fetch({"csv_path": str(csv_file), "content_type": "book"}))
+        items = list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
         assert items[0].status == ConsumptionStatus.UNREAD.value
 
     def test_status_unknown_defaults_to_unread(
@@ -295,7 +291,7 @@ class TestCsvImportPluginStatusMapping:
     ) -> None:
         csv_file = tmp_path / "data.csv"
         csv_file.write_text("title,status\nTest,something_else\n")
-        items = list(plugin.fetch({"csv_path": str(csv_file), "content_type": "book"}))
+        items = list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
         assert items[0].status == ConsumptionStatus.UNREAD.value
 
     def test_status_empty_defaults_to_unread(
@@ -303,13 +299,13 @@ class TestCsvImportPluginStatusMapping:
     ) -> None:
         csv_file = tmp_path / "data.csv"
         csv_file.write_text("title,status\nTest,\n")
-        items = list(plugin.fetch({"csv_path": str(csv_file), "content_type": "book"}))
+        items = list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
         assert items[0].status == ConsumptionStatus.UNREAD.value
 
     def test_status_wishlist(self, plugin: CsvImportPlugin, tmp_path: Path) -> None:
         csv_file = tmp_path / "data.csv"
         csv_file.write_text("title,status\nTest,wishlist\n")
-        items = list(plugin.fetch({"csv_path": str(csv_file), "content_type": "book"}))
+        items = list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
         assert items[0].status == ConsumptionStatus.UNREAD.value
 
 
@@ -320,7 +316,7 @@ class TestCsvImportPluginRating:
         csv_file = tmp_path / "data.csv"
         csv_file.write_text("title,rating\n" "A,1\n" "B,2\n" "C,3\n" "D,4\n" "E,5\n")
 
-        items = list(plugin.fetch({"csv_path": str(csv_file), "content_type": "book"}))
+        items = list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
 
         assert [item.rating for item in items] == [1, 2, 3, 4, 5]
 
@@ -329,13 +325,13 @@ class TestCsvImportPluginRating:
     ) -> None:
         csv_file = tmp_path / "data.csv"
         csv_file.write_text("title,rating\nTest,\n")
-        items = list(plugin.fetch({"csv_path": str(csv_file), "content_type": "book"}))
+        items = list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
         assert items[0].rating is None
 
     def test_zero_rating_is_none(self, plugin: CsvImportPlugin, tmp_path: Path) -> None:
         csv_file = tmp_path / "data.csv"
         csv_file.write_text("title,rating\nTest,0\n")
-        items = list(plugin.fetch({"csv_path": str(csv_file), "content_type": "book"}))
+        items = list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
         assert items[0].rating is None
 
 
@@ -345,9 +341,7 @@ class TestCsvImportPluginErrors:
     def test_file_not_found_raises_source_error(self, plugin: CsvImportPlugin) -> None:
         with pytest.raises(SourceError, match="CSV file not found"):
             list(
-                plugin.fetch(
-                    {"csv_path": "/nonexistent/file.csv", "content_type": "book"}
-                )
+                plugin.fetch({"path": "/nonexistent/file.csv", "content_type": "book"})
             )
 
     def test_invalid_content_type_raises_source_error(
@@ -356,7 +350,7 @@ class TestCsvImportPluginErrors:
         csv_file = tmp_path / "data.csv"
         csv_file.write_text("title\nTest\n")
         with pytest.raises(SourceError, match="Invalid content type"):
-            list(plugin.fetch({"csv_path": str(csv_file), "content_type": "podcast"}))
+            list(plugin.fetch({"path": str(csv_file), "content_type": "podcast"}))
 
     def test_missing_title_column_raises_source_error(
         self, plugin: CsvImportPlugin, tmp_path: Path
@@ -364,7 +358,7 @@ class TestCsvImportPluginErrors:
         csv_file = tmp_path / "data.csv"
         csv_file.write_text("name,rating\nTest,5\n")
         with pytest.raises(SourceError, match="missing required column"):
-            list(plugin.fetch({"csv_path": str(csv_file), "content_type": "book"}))
+            list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
 
     def test_invalid_date_does_not_crash(
         self, plugin: CsvImportPlugin, tmp_path: Path
@@ -372,7 +366,7 @@ class TestCsvImportPluginErrors:
         """Invalid dates should warn but not crash."""
         csv_file = tmp_path / "data.csv"
         csv_file.write_text("title,date_completed\nTest,not-a-date\n")
-        items = list(plugin.fetch({"csv_path": str(csv_file), "content_type": "book"}))
+        items = list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
         assert len(items) == 1
         assert items[0].date_completed is None
 
@@ -401,7 +395,7 @@ class TestCsvTemplates:
     ) -> None:
         items = list(
             plugin.fetch(
-                {"csv_path": str(templates_dir / "books.csv"), "content_type": "book"}
+                {"path": str(templates_dir / "books.csv"), "content_type": "book"}
             )
         )
         assert len(items) == 1
@@ -413,7 +407,7 @@ class TestCsvTemplates:
         items = list(
             plugin.fetch(
                 {
-                    "csv_path": str(templates_dir / "movies.csv"),
+                    "path": str(templates_dir / "movies.csv"),
                     "content_type": "movie",
                 }
             )
@@ -427,7 +421,7 @@ class TestCsvTemplates:
         items = list(
             plugin.fetch(
                 {
-                    "csv_path": str(templates_dir / "tv_shows.csv"),
+                    "path": str(templates_dir / "tv_shows.csv"),
                     "content_type": "tv_show",
                 }
             )
@@ -441,7 +435,7 @@ class TestCsvTemplates:
         items = list(
             plugin.fetch(
                 {
-                    "csv_path": str(templates_dir / "video_games.csv"),
+                    "path": str(templates_dir / "video_games.csv"),
                     "content_type": "video_game",
                 }
             )
@@ -456,25 +450,25 @@ class TestCsvImportIgnored:
     def test_ignored_true(self, plugin: CsvImportPlugin, tmp_path: Path) -> None:
         csv_file = tmp_path / "data.csv"
         csv_file.write_text("title,status,ignored\nTest,completed,true\n")
-        items = list(plugin.fetch({"csv_path": str(csv_file), "content_type": "book"}))
+        items = list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
         assert items[0].ignored is True
 
     def test_ignored_false(self, plugin: CsvImportPlugin, tmp_path: Path) -> None:
         csv_file = tmp_path / "data.csv"
         csv_file.write_text("title,status,ignored\nTest,completed,false\n")
-        items = list(plugin.fetch({"csv_path": str(csv_file), "content_type": "book"}))
+        items = list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
         assert items[0].ignored is False
 
     def test_ignored_yes(self, plugin: CsvImportPlugin, tmp_path: Path) -> None:
         csv_file = tmp_path / "data.csv"
         csv_file.write_text("title,status,ignored\nTest,completed,yes\n")
-        items = list(plugin.fetch({"csv_path": str(csv_file), "content_type": "book"}))
+        items = list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
         assert items[0].ignored is True
 
     def test_ignored_one(self, plugin: CsvImportPlugin, tmp_path: Path) -> None:
         csv_file = tmp_path / "data.csv"
         csv_file.write_text("title,status,ignored\nTest,completed,1\n")
-        items = list(plugin.fetch({"csv_path": str(csv_file), "content_type": "book"}))
+        items = list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
         assert items[0].ignored is True
 
     def test_ignored_empty_defaults_false(
@@ -482,7 +476,7 @@ class TestCsvImportIgnored:
     ) -> None:
         csv_file = tmp_path / "data.csv"
         csv_file.write_text("title,status,ignored\nTest,completed,\n")
-        items = list(plugin.fetch({"csv_path": str(csv_file), "content_type": "book"}))
+        items = list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
         assert items[0].ignored is False
 
     def test_ignored_missing_defaults_false(
@@ -490,7 +484,7 @@ class TestCsvImportIgnored:
     ) -> None:
         csv_file = tmp_path / "data.csv"
         csv_file.write_text("title,status\nTest,completed\n")
-        items = list(plugin.fetch({"csv_path": str(csv_file), "content_type": "book"}))
+        items = list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
         assert items[0].ignored is False
 
     def test_ignored_not_treated_as_unknown_column(
@@ -499,7 +493,7 @@ class TestCsvImportIgnored:
         """Ignored column should be recognized, not warned as unknown."""
         csv_file = tmp_path / "data.csv"
         csv_file.write_text("title,ignored\nTest,false\n")
-        items = list(plugin.fetch({"csv_path": str(csv_file), "content_type": "book"}))
+        items = list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
         assert len(items) == 1
 
 
@@ -514,9 +508,7 @@ class TestCsvImportSeasonsWatched:
             "title,creator,status,seasons_watched,total_seasons\n"
             'Show,Creator,completed,"1,2,5,6",8\n'
         )
-        items = list(
-            plugin.fetch({"csv_path": str(csv_file), "content_type": "tv_show"})
-        )
+        items = list(plugin.fetch({"path": str(csv_file), "content_type": "tv_show"}))
         assert items[0].metadata["seasons_watched"] == [1, 2, 5, 6]
 
     def test_single_number_backward_compat(
@@ -527,9 +519,7 @@ class TestCsvImportSeasonsWatched:
             "title,creator,status,seasons_watched,total_seasons\n"
             "Show,Creator,completed,5,5\n"
         )
-        items = list(
-            plugin.fetch({"csv_path": str(csv_file), "content_type": "tv_show"})
-        )
+        items = list(plugin.fetch({"path": str(csv_file), "content_type": "tv_show"}))
         assert items[0].metadata["seasons_watched"] == [1, 2, 3, 4, 5]
 
     def test_empty_seasons_watched(
@@ -540,9 +530,7 @@ class TestCsvImportSeasonsWatched:
             "title,creator,status,seasons_watched,total_seasons\n"
             "Show,Creator,unread,,5\n"
         )
-        items = list(
-            plugin.fetch({"csv_path": str(csv_file), "content_type": "tv_show"})
-        )
+        items = list(plugin.fetch({"path": str(csv_file), "content_type": "tv_show"}))
         # Empty seasons_watched is not stored in metadata
         assert "seasons_watched" not in items[0].metadata
 

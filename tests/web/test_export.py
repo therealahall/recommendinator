@@ -185,7 +185,7 @@ class TestExportRoundtrip:
             temp_path = temp_file.name
 
         plugin = CsvImportPlugin()
-        reimported = list(plugin.fetch({"csv_path": temp_path, "content_type": "book"}))
+        reimported = list(plugin.fetch({"path": temp_path, "content_type": "book"}))
 
         Path(temp_path).unlink()
 
@@ -226,9 +226,7 @@ class TestExportRoundtrip:
             temp_path = temp_file.name
 
         plugin = JsonImportPlugin()
-        reimported = list(
-            plugin.fetch({"json_path": temp_path, "content_type": "tv_show"})
-        )
+        reimported = list(plugin.fetch({"path": temp_path, "content_type": "tv_show"}))
 
         Path(temp_path).unlink()
 

@@ -31,6 +31,7 @@ def mock_config():
         },
         "inputs": {
             "goodreads": {
+                "plugin": "goodreads",
                 "path": "inputs/goodreads_library_export.csv",
                 "enabled": True,
             }
@@ -144,7 +145,7 @@ def test_sync_sources_endpoint(client, mock_config):
     assert len(sources) >= 1
     goodreads = next((s for s in sources if s["id"] == "goodreads"), None)
     assert goodreads is not None
-    assert goodreads["display_name"] == "Goodreads"
+    assert goodreads["display_name"] == "Goodreads (goodreads)"
     assert "description" in goodreads
 
 
@@ -153,14 +154,25 @@ def test_sync_sources_only_enabled(client):
     # Override config: only goodreads and sonarr enabled
     app_state["config"] = {
         "inputs": {
-            "goodreads": {"path": "inputs/books.csv", "enabled": True},
-            "steam": {"api_key": "x", "steam_id": "y", "enabled": False},
+            "goodreads": {
+                "plugin": "goodreads",
+                "path": "inputs/books.csv",
+                "enabled": True,
+            },
+            "steam": {
+                "plugin": "steam",
+                "api_key": "x",
+                "steam_id": "y",
+                "enabled": False,
+            },
             "sonarr": {
+                "plugin": "sonarr",
                 "url": "http://localhost:8989",
                 "api_key": "key",
                 "enabled": True,
             },
             "radarr": {
+                "plugin": "radarr",
                 "url": "http://localhost:7878",
                 "api_key": "key",
                 "enabled": False,
@@ -296,6 +308,7 @@ def test_update_endpoint_steam(client, mock_components):
     """Test update endpoint starts background sync for Steam."""
     # Update app_state config to include Steam
     app_state["config"]["inputs"]["steam"] = {
+        "plugin": "steam",
         "api_key": "test_api_key",
         "steam_id": "76561198000000000",
         "enabled": True,
@@ -313,6 +326,7 @@ def test_update_endpoint_steam(client, mock_components):
 def test_update_endpoint_steam_disabled(client, mock_components):
     """Test update endpoint with disabled Steam source."""
     app_state["config"]["inputs"]["steam"] = {
+        "plugin": "steam",
         "api_key": "test_api_key",
         "steam_id": "76561198000000000",
         "enabled": False,
@@ -329,6 +343,7 @@ def test_update_endpoint_steam_disabled(client, mock_components):
 def test_update_endpoint_steam_missing_api_key(client, mock_components):
     """Test update endpoint with missing Steam API key."""
     app_state["config"]["inputs"]["steam"] = {
+        "plugin": "steam",
         "api_key": "",
         "steam_id": "76561198000000000",
         "enabled": True,
@@ -344,6 +359,7 @@ def test_update_endpoint_steam_missing_api_key(client, mock_components):
 def test_update_endpoint_steam_missing_id(client, mock_components):
     """Test update endpoint with missing Steam ID."""
     app_state["config"]["inputs"]["steam"] = {
+        "plugin": "steam",
         "api_key": "test_api_key",
         "steam_id": "",
         "vanity_url": "",
@@ -364,6 +380,7 @@ def test_update_endpoint_steam_api_error(client, mock_components):
     asynchronously. This test verifies the sync can be started when config is valid.
     """
     app_state["config"]["inputs"]["steam"] = {
+        "plugin": "steam",
         "api_key": "test_api_key",
         "steam_id": "76561198000000000",
         "enabled": True,
@@ -381,6 +398,7 @@ def test_update_endpoint_steam_api_error(client, mock_components):
 def test_update_endpoint_all_sources(client, mock_components):
     """Test update endpoint with 'all' source starts background sync."""
     app_state["config"]["inputs"]["steam"] = {
+        "plugin": "steam",
         "api_key": "test_api_key",
         "steam_id": "76561198000000000",
         "enabled": True,

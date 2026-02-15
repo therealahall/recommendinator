@@ -267,6 +267,7 @@ def test_update_command_steam_success(mock_components):
         },
         "inputs": {
             "steam": {
+                "plugin": "steam",
                 "api_key": "test_api_key",
                 "steam_id": "76561198000000000",
                 "enabled": True,
@@ -324,6 +325,7 @@ def test_update_command_steam_disabled(mock_components):
         },
         "inputs": {
             "steam": {
+                "plugin": "steam",
                 "api_key": "test_api_key",
                 "steam_id": "76561198000000000",
                 "enabled": False,
@@ -356,6 +358,7 @@ def test_update_command_steam_missing_api_key(mock_components):
         },
         "inputs": {
             "steam": {
+                "plugin": "steam",
                 "api_key": "",
                 "steam_id": "76561198000000000",
                 "enabled": True,
@@ -391,6 +394,7 @@ def test_update_command_steam_api_error(mock_components):
         },
         "inputs": {
             "steam": {
+                "plugin": "steam",
                 "api_key": "test_api_key",
                 "steam_id": "76561198000000000",
                 "enabled": True,
