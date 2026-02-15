@@ -36,6 +36,14 @@ from src.utils.series import (
 
 logger = logging.getLogger(__name__)
 
+# Human-readable labels for content types used in recommendation reasoning.
+_CONTENT_TYPE_LABEL: dict[str, str] = {
+    "book": "Book",
+    "movie": "Movie",
+    "tv_show": "TV Show",
+    "video_game": "Video Game",
+}
+
 
 class RecommendationEngine:
     """Main recommendation engine.
@@ -571,7 +579,7 @@ class RecommendationEngine:
             all_consumed_items: All consumed items.
 
         Returns:
-            Top 3 contributing consumed items (by overlap score).
+            Top 5 contributing consumed items (by overlap score).
         """
         candidate_genres = set(extract_genres(candidate))
         candidate_creator = extract_creator(candidate)
@@ -579,9 +587,6 @@ class RecommendationEngine:
 
         scored: list[tuple[ContentItem, float]] = []
         for consumed in all_consumed_items:
-            if not (consumed.rating and consumed.rating >= 4):
-                continue
-
             overlap = 0.0
             consumed_genres = set(extract_genres(consumed))
             if candidate_genres and consumed_genres:
@@ -604,11 +609,29 @@ class RecommendationEngine:
             if get_enum_value(consumed.content_type) == candidate_type:
                 overlap += 0.1
 
+            # Boost highly-rated items so they surface as references more
+            # often, but don't exclude lower-rated or unrated items.
+            if consumed.rating and consumed.rating >= 4:
+                overlap += 0.15
+
             if overlap > 0:
                 scored.append((consumed, overlap))
 
         scored.sort(key=lambda pair: pair[1], reverse=True)
-        return [item for item, _ in scored[:3]]
+        return [item for item, _ in scored[:5]]
+
+    @staticmethod
+    def _format_reference_label(item: ContentItem) -> str:
+        """Format a reference item with its content type label.
+
+        Args:
+            item: Reference content item.
+
+        Returns:
+            Formatted string like "TV Show: Mythic Quest".
+        """
+        type_label = _CONTENT_TYPE_LABEL.get(get_enum_value(item.content_type), "Item")
+        return f"{type_label}: {item.title}"
 
     def _generate_reasoning(
         self,
@@ -620,7 +643,8 @@ class RecommendationEngine:
     ) -> str:
         """Generate reasoning for a recommendation.
 
-        Always surfaces 1-3 specific items that contributed to the recommendation.
+        Always surfaces 1-5 specific items that contributed to the recommendation.
+        Each reference includes its content type for clarity.
         For multiple items, uses a multi-line bullet format for readability.
 
         Args:
@@ -645,18 +669,18 @@ class RecommendationEngine:
                 if contrib not in influencing_items:
                     influencing_items.append(contrib)
 
-        # Take up to 3 items
-        influencing_items = influencing_items[:3]
+        # Take up to 5 items
+        influencing_items = influencing_items[:5]
 
         if influencing_items:
             if len(influencing_items) == 1:
-                title = self._strip_series_info(influencing_items[0].title)
-                return f"Recommended because you liked '{title}'"
+                label = self._format_reference_label(influencing_items[0])
+                return f"Recommended because you liked '{label}'"
             else:
                 lines = ["Recommended because you liked:"]
                 for ref in influencing_items:
-                    title = self._strip_series_info(ref.title)
-                    lines.append(f"  • {title}")
+                    label = self._format_reference_label(ref)
+                    lines.append(f"  • {label}")
                 return "\n".join(lines)
 
         # Fallback: try to mention a matching genre or author
