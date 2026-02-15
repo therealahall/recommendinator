@@ -2,6 +2,8 @@
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.utils.series import (
+    _extract_series_from_title,
+    _roman_to_int,
     build_series_tracking,
     expand_tv_shows_to_seasons,
     extract_series_info,
@@ -709,3 +711,143 @@ class TestInjectSeasonsWatchedTracking:
         ]
         result = inject_seasons_watched_tracking(items, {})
         assert "The Show" not in result
+
+
+class TestRomanToInt:
+    """Tests for Roman numeral to integer conversion."""
+
+    def test_basic_values(self) -> None:
+        """Single Roman numeral characters convert correctly."""
+        assert _roman_to_int("I") == 1
+        assert _roman_to_int("V") == 5
+        assert _roman_to_int("X") == 10
+
+    def test_compound_values(self) -> None:
+        """Compound Roman numerals (IV, IX, XII, XIV) convert correctly."""
+        assert _roman_to_int("IV") == 4
+        assert _roman_to_int("IX") == 9
+        assert _roman_to_int("XII") == 12
+        assert _roman_to_int("XIV") == 14
+
+    def test_larger_values(self) -> None:
+        """Larger Roman numerals convert correctly."""
+        assert _roman_to_int("XX") == 20
+        assert _roman_to_int("XL") == 40
+        assert _roman_to_int("L") == 50
+        assert _roman_to_int("C") == 100
+
+    def test_invalid_input(self) -> None:
+        """Invalid input returns None."""
+        assert _roman_to_int("") is None
+        assert _roman_to_int("ABC") is None
+        assert _roman_to_int("123") is None
+
+    def test_case_insensitive(self) -> None:
+        """Conversion is case insensitive."""
+        assert _roman_to_int("xii") == 12
+        assert _roman_to_int("iv") == 4
+
+
+class TestTitleEmbeddedSeriesDetection:
+    """Regression tests for title-embedded series detection in video games.
+
+    Bug reported: "Dungeon Siege 3" and "Final Fantasy XII" were not detected
+    as series entries because game sources don't populate series metadata and
+    the titles don't use parenthetical format.
+
+    Root cause: extract_series_info only checked parenthetical patterns like
+    "(Series Name, #N)" and metadata fields.  Games with numbers in the title
+    itself were missed.
+
+    Fix: Added _extract_series_from_title() for trailing Arabic and Roman
+    numerals, gated to ContentType.VIDEO_GAME only.
+    """
+
+    def test_arabic_numeral_dungeon_siege_3_regression(self) -> None:
+        """'Dungeon Siege 3' should be detected as Dungeon Siege #3."""
+        result = extract_series_info(
+            "Dungeon Siege 3", content_type=ContentType.VIDEO_GAME
+        )
+        assert result is not None
+        assert result[0] == "Dungeon Siege"
+        assert result[1] == 3
+
+    def test_roman_numeral_final_fantasy_xii_regression(self) -> None:
+        """'Final Fantasy XII' should be detected as Final Fantasy #12."""
+        result = extract_series_info(
+            "Final Fantasy XII", content_type=ContentType.VIDEO_GAME
+        )
+        assert result is not None
+        assert result[0] == "Final Fantasy"
+        assert result[1] == 12
+
+    def test_arabic_with_subtitle(self) -> None:
+        """'Fallout 4: Game of the Year Edition' extracts series correctly."""
+        result = extract_series_info(
+            "Fallout 4: Game of the Year Edition",
+            content_type=ContentType.VIDEO_GAME,
+        )
+        assert result is not None
+        assert result[0] == "Fallout"
+        assert result[1] == 4
+
+    def test_single_word_base_fallout_4(self) -> None:
+        """'Fallout 4' with a single-word series name works."""
+        result = extract_series_info("Fallout 4", content_type=ContentType.VIDEO_GAME)
+        assert result is not None
+        assert result[0] == "Fallout"
+        assert result[1] == 4
+
+    def test_not_applied_to_books(self) -> None:
+        """Title-embedded detection is NOT applied to books."""
+        # "1984" should not be detected, and "Catch 22" should not be detected
+        result = extract_series_info("Catch 22", content_type=ContentType.BOOK)
+        assert result is None
+
+    def test_not_applied_to_movies(self) -> None:
+        """Title-embedded detection is NOT applied to movies."""
+        result = extract_series_info(
+            "2001: A Space Odyssey", content_type=ContentType.MOVIE
+        )
+        assert result is None
+
+    def test_not_applied_without_content_type(self) -> None:
+        """Title-embedded detection is NOT applied when content_type is None."""
+        result = extract_series_info("Dungeon Siege 3", content_type=None)
+        assert result is None
+
+    def test_parenthetical_takes_precedence(self) -> None:
+        """Parenthetical format takes precedence over title-embedded."""
+        result = extract_series_info(
+            "Mass Effect 3 (Mass Effect, #3)",
+            content_type=ContentType.VIDEO_GAME,
+        )
+        assert result is not None
+        assert result[0] == "Mass Effect"
+        assert result[1] == 3
+
+    def test_metadata_takes_precedence(self) -> None:
+        """Metadata series info takes precedence over title-embedded."""
+        result = extract_series_info(
+            "Final Fantasy XII",
+            metadata={"series_name": "Final Fantasy", "part_number": 12},
+            content_type=ContentType.VIDEO_GAME,
+        )
+        assert result is not None
+        assert result[0] == "Final Fantasy"
+        assert result[1] == 12
+
+    def test_number_only_title_not_matched(self) -> None:
+        """Titles starting with a number (e.g. '1942') are not matched."""
+        result = _extract_series_from_title("1942")
+        assert result is None
+
+    def test_roman_with_subtitle(self) -> None:
+        """Roman numeral with subtitle: 'Shin Megami Tensei IV: Apocalypse'."""
+        result = extract_series_info(
+            "Shin Megami Tensei IV: Apocalypse",
+            content_type=ContentType.VIDEO_GAME,
+        )
+        assert result is not None
+        assert result[0] == "Shin Megami Tensei"
+        assert result[1] == 4

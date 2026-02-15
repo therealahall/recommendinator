@@ -394,6 +394,12 @@ class RecommendationEngine:
         # Format recommendations
         # -----------------------------------------------------------------
         recommendations: list[dict[str, Any]] = []
+        # Track how many times each consumed item has been cited as a
+        # reference across all recommendations so far.  Items that have
+        # already appeared in _MAX_REFERENCE_APPEARANCES recommendations
+        # are filtered out to prevent the same few items dominating.
+        reference_usage_count: dict[str | None, int] = {}
+
         for item, score, rank_metadata in top_recommendations:
             item_meta = next(
                 (
@@ -410,6 +416,14 @@ class RecommendationEngine:
                 adaptations_list = item_meta.get("adaptations", []) or []
                 contributing_list = item_meta.get("contributing_items", []) or []
 
+            # Filter out references that have already appeared too often
+            filtered_contributing = [
+                ref
+                for ref in contributing_list
+                if reference_usage_count.get(ref.id, 0)
+                < self._MAX_REFERENCE_APPEARANCES
+            ]
+
             rec: dict[str, Any] = {
                 "item": item,
                 "score": score,
@@ -420,11 +434,15 @@ class RecommendationEngine:
                     preferences,
                     rank_metadata,
                     adaptations_list,
-                    contributing_list,
+                    filtered_contributing,
                 ),
                 "score_breakdown": breakdown_by_id.get(item.id, {}),
             }
             recommendations.append(rec)
+
+            # Update usage counts for references actually used
+            for ref in filtered_contributing:
+                reference_usage_count[ref.id] = reference_usage_count.get(ref.id, 0) + 1
 
         # -----------------------------------------------------------------
         # Optionally enhance with LLM reasoning
@@ -584,6 +602,11 @@ class RecommendationEngine:
     # cross-type lists across all recommendations.
     _CROSS_TYPE_MIN_OVERLAP = 0.25
 
+    # Maximum number of recommendations a single consumed item may appear
+    # in as a contributing reference.  Prevents the same few popular items
+    # (e.g., Fable Anniversary, Hades) from dominating every reasoning.
+    _MAX_REFERENCE_APPEARANCES = 2
+
     def _find_contributing_reference_items(
         self,
         candidate: ContentItem,
@@ -592,11 +615,15 @@ class RecommendationEngine:
         """Find consumed items that share metadata with *candidate*.
 
         Uses genre and creator overlap to identify which consumed items
-        are most related — no embeddings required.  Returns up to 5 items
+        are most related — no embeddings required.  Returns up to 3 items
         of the same content type as the candidate and up to 3 from each
         other type that exceeds a minimum overlap threshold.  Cross-type
         items that don't genuinely relate to the candidate are omitted
         rather than padded.
+
+        Items rated below 3 are excluded — they represent content the user
+        disliked and should never appear as "you liked".  Unrated items
+        (``rating is None``) are kept (benefit of the doubt).
 
         For same-type items, raw genre Jaccard is used (works well since
         the same vocabulary is shared).  For cross-type items, thematic
@@ -608,7 +635,7 @@ class RecommendationEngine:
             all_consumed_items: All consumed items.
 
         Returns:
-            Contributing consumed items grouped by type: up to 5 same-type,
+            Contributing consumed items grouped by type: up to 3 same-type,
             up to 3 per other type (only those with meaningful overlap).
         """
         candidate_genres = list(extract_genres(candidate))
@@ -618,6 +645,11 @@ class RecommendationEngine:
 
         scored: list[tuple[ContentItem, float]] = []
         for consumed in all_consumed_items:
+            # Skip items the user actively disliked — they should never
+            # appear as "recommended because you liked".  Unrated items
+            # (rating is None) are kept.
+            if consumed.rating is not None and consumed.rating < 3:
+                continue
             overlap = 0.0
             consumed_genres = list(extract_genres(consumed))
             consumed_genres_set = set(consumed_genres)
@@ -654,9 +686,9 @@ class RecommendationEngine:
 
         scored.sort(key=lambda pair: pair[1], reverse=True)
 
-        # Group by content type: up to 5 for same type (any overlap),
+        # Group by content type: up to 3 for same type (any overlap),
         # up to 3 for others (only if meaningfully related).
-        same_type_limit = 5
+        same_type_limit = 3
         other_type_limit = 3
 
         by_type: dict[str, list[ContentItem]] = {}
@@ -781,8 +813,6 @@ class RecommendationEngine:
         Returns:
             Title without series info.
         """
-        import re
-
         # Remove trailing parenthetical that looks like series info
         # Matches: (Series Name, #N) or (Series Name #N) or (Series, Book N)
         cleaned = re.sub(r"\s*\([^)]*#\d+[^)]*\)\s*$", "", title)

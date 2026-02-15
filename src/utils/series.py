@@ -40,6 +40,91 @@ _SERIES_PATTERNS: list[_SeriesPattern] = [
 ]
 
 
+def _roman_to_int(roman: str) -> int | None:
+    """Convert a Roman numeral string to an integer.
+
+    Args:
+        roman: Roman numeral string (e.g. "XII", "IV").
+
+    Returns:
+        Integer value, or ``None`` if the string is not a valid Roman numeral.
+    """
+    roman_values: dict[str, int] = {
+        "I": 1,
+        "V": 5,
+        "X": 10,
+        "L": 50,
+        "C": 100,
+        "D": 500,
+        "M": 1000,
+    }
+    upper = roman.upper().strip()
+    if not upper or not all(char in roman_values for char in upper):
+        return None
+
+    total = 0
+    previous = 0
+    for char in reversed(upper):
+        value = roman_values[char]
+        if value < previous:
+            total -= value
+        else:
+            total += value
+        previous = value
+
+    return total if total > 0 else None
+
+
+# Trailing Arabic numeral in a title (e.g., "Dungeon Siege 3",
+# "Fallout 4: New Vegas").  The series name must start with a letter
+# to avoid matching titles like "1942" or "2048".
+_TITLE_ARABIC_PATTERN: re.Pattern[str] = re.compile(
+    r"^([A-Za-z][^:—\-]*?)\s+(\d+)(?:\s*[:—\-].+)?$"
+)
+
+# Trailing Roman numeral (e.g., "Final Fantasy XII", "Shin Megami Tensei IV").
+_TITLE_ROMAN_PATTERN: re.Pattern[str] = re.compile(
+    r"^([A-Za-z][^:—\-]*?)\s+((?:M{0,3})(?:CM|CD|D?C{0,3})(?:XC|XL|L?X{0,3})(?:IX|IV|V?I{1,3}))(?:\s*[:—\-].+)?$"
+)
+
+
+def _extract_series_from_title(title: str) -> tuple[str, int] | None:
+    """Try to extract series info from trailing numbers in a title.
+
+    Matches patterns like "Dungeon Siege 3" or "Final Fantasy XII".
+    The series name must start with a letter to avoid false positives
+    on titles that are just numbers (e.g. "1942", "2048").
+
+    Args:
+        title: Content title.
+
+    Returns:
+        Tuple of (series_name, number) or ``None``.
+    """
+    # Try Arabic numerals first (more common)
+    match = _TITLE_ARABIC_PATTERN.match(title.strip())
+    if match:
+        series_name = match.group(1).strip()
+        number = int(match.group(2))
+        if 1 <= number <= 100 and len(series_name) >= 2:
+            return (series_name, number)
+
+    # Try Roman numerals
+    match = _TITLE_ROMAN_PATTERN.match(title.strip())
+    if match:
+        series_name = match.group(1).strip()
+        roman_str = match.group(2)
+        roman_number = _roman_to_int(roman_str)
+        if (
+            roman_number is not None
+            and 1 <= roman_number <= 100
+            and len(series_name) >= 2
+        ):
+            return (series_name, roman_number)
+
+    return None
+
+
 def extract_series_info(
     title: str,
     metadata: dict | None = None,
@@ -54,6 +139,7 @@ def extract_series_info(
     - TV Shows: "Title (Series Name, Season 1)", "Title (Series Name, S1)"
     - Movies: "Title (Series Name, Part 1)", "Title (Series Name, Episode 1)"
     - Games: "Title (Series Name, #1)", "Title (Series Name, Part 1)"
+    - Video Games (title-embedded): "Dungeon Siege 3", "Final Fantasy XII"
 
     Also checks metadata for series information if title parsing fails.
 
@@ -79,6 +165,13 @@ def extract_series_info(
             item_num = int(match.group(2))
             if 1 <= item_num <= pattern.max_number:
                 return (series_name, item_num)
+
+    # For video games, try title-embedded numbers (e.g., "Dungeon Siege 3",
+    # "Final Fantasy XII").  Only video games get this treatment — other
+    # types too often have non-series numbers in titles ("2001: A Space
+    # Odyssey", "1984").
+    if content_type == ContentType.VIDEO_GAME:
+        return _extract_series_from_title(title)
 
     return None
 

@@ -1338,3 +1338,216 @@ class TestReasoningFormatting:
 
         assert "Recommended because you liked the following:" in reasoning
         assert "Books:" in reasoning
+
+
+class TestContributingReferenceRatingFloorRegression:
+    """Regression tests for rating floor in contributing reference items.
+
+    Bug reported: 'The Crown' rated 1 appeared as 'you liked' in
+    recommendation reasoning.
+
+    Root cause: _find_contributing_reference_items had no rating floor,
+    so items the user actively disliked showed up in 'Recommended because
+    you liked the following:'.
+
+    Fix: Skip items with rating < 3 in the contributing items loop.
+    """
+
+    def test_low_rated_items_excluded_from_contributing_references_regression(
+        self,
+    ) -> None:
+        """Regression test: Item rated 1 with matching genres must NOT appear.
+
+        Bug reported: 'The Crown' rated 1 appeared in 'you liked' references.
+        """
+        engine = RecommendationEngine.__new__(RecommendationEngine)
+
+        candidate = ContentItem(
+            id="peaky",
+            title="Peaky Blinders",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genres": ["Drama", "Crime"]},
+        )
+
+        disliked_item = ContentItem(
+            id="the_crown",
+            title="The Crown",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.COMPLETED,
+            rating=1,
+            metadata={"genres": ["Drama", "Historical"]},
+        )
+
+        liked_item = ContentItem(
+            id="the_wire",
+            title="The Wire",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            metadata={"genres": ["Drama", "Crime"]},
+        )
+
+        result = engine._find_contributing_reference_items(
+            candidate, [disliked_item, liked_item]
+        )
+
+        result_titles = [item.title for item in result]
+        assert (
+            "The Crown" not in result_titles
+        ), "Items rated 1 should never appear as 'you liked' references"
+        assert "The Wire" in result_titles
+
+    def test_unrated_items_included_in_contributing_references(self) -> None:
+        """Unrated items (rating=None) should still be included as references."""
+        engine = RecommendationEngine.__new__(RecommendationEngine)
+
+        candidate = ContentItem(
+            id="breaking_bad",
+            title="Breaking Bad",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genres": ["Drama", "Crime"]},
+        )
+
+        unrated_item = ContentItem(
+            id="the_sopranos",
+            title="The Sopranos",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.COMPLETED,
+            rating=None,
+            metadata={"genres": ["Drama", "Crime"]},
+        )
+
+        result = engine._find_contributing_reference_items(candidate, [unrated_item])
+
+        result_titles = [item.title for item in result]
+        assert (
+            "The Sopranos" in result_titles
+        ), "Unrated items should be included (benefit of the doubt)"
+
+
+class TestSameTypeLimitRegression:
+    """Regression test for same-type reference limit.
+
+    Bug: Up to 5 same-type items were shown as references; user wants max 3.
+
+    Fix: Changed same_type_limit from 5 to 3.
+    """
+
+    def test_same_type_limit_capped_at_3(self) -> None:
+        """6 same-type consumed items should produce max 3 references."""
+        engine = RecommendationEngine.__new__(RecommendationEngine)
+
+        candidate = ContentItem(
+            id="candidate",
+            title="New Show",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genres": ["Drama", "Crime"]},
+        )
+
+        consumed_items = [
+            ContentItem(
+                id=f"show_{index}",
+                title=f"Show {index}",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+                metadata={"genres": ["Drama", "Crime"]},
+            )
+            for index in range(6)
+        ]
+
+        result = engine._find_contributing_reference_items(candidate, consumed_items)
+
+        same_type_items = [
+            item for item in result if get_enum_value(item.content_type) == "tv_show"
+        ]
+        assert (
+            len(same_type_items) <= 3
+        ), f"Expected at most 3 same-type references, got {len(same_type_items)}"
+
+
+class TestReferenceVarietyRegression:
+    """Regression test for reference variety across recommendations.
+
+    Bug reported: Fable Anniversary, Hades, Wrestlequest, and Firewatch
+    appeared as references in nearly every recommendation because each
+    candidate's contributing items are computed independently.
+
+    Root cause: No cross-recommendation tracking of reference usage.
+
+    Fix: Track reference_usage_count in the formatting loop and filter
+    out items that have already appeared in 2+ recommendations' reasoning.
+    """
+
+    def test_same_reference_does_not_appear_in_every_recommendation_regression(
+        self, non_ai_engine, mock_storage
+    ) -> None:
+        """No single consumed item should appear in more than 2 recommendations.
+
+        Full pipeline test: 4 consumed games with broadly matching genres
+        and 5 unconsumed candidates. Verifies that the same reference item
+        does not dominate all recommendation reasoning.
+        """
+        # 4 consumed games — all share Action+RPG so each candidate
+        # will match all of them
+        consumed_items = [
+            ContentItem(
+                id=f"consumed_{index}",
+                title=title,
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+                metadata={"genres": ["Action", "RPG"]},
+            )
+            for index, title in enumerate(
+                ["Fable Anniversary", "Hades", "Wrestlequest", "Firewatch"]
+            )
+        ]
+
+        # 5 unconsumed candidates — all match the same genres
+        unconsumed_items = [
+            ContentItem(
+                id=f"unconsumed_{index}",
+                title=title,
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.UNREAD,
+                metadata={"genres": ["Action", "RPG"]},
+            )
+            for index, title in enumerate(
+                [
+                    "Candidate Alpha",
+                    "Candidate Beta",
+                    "Candidate Gamma",
+                    "Candidate Delta",
+                    "Candidate Epsilon",
+                ]
+            )
+        ]
+
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: consumed_items
+        )
+        mock_storage.get_unconsumed_items = Mock(return_value=unconsumed_items)
+
+        recommendations = non_ai_engine.generate_recommendations(
+            content_type=ContentType.VIDEO_GAME, count=5
+        )
+
+        # Count how many recommendations each consumed item's title
+        # appears in (via the reasoning text)
+        consumed_titles = [item.title for item in consumed_items]
+        appearance_counts: dict[str, int] = dict.fromkeys(consumed_titles, 0)
+        for rec in recommendations:
+            reasoning = rec.get("reasoning", "")
+            for title in consumed_titles:
+                if title in reasoning:
+                    appearance_counts[title] += 1
+
+        for title, count in appearance_counts.items():
+            assert count <= 2, (
+                f"'{title}' appeared in {count} recommendations' reasoning, "
+                f"expected at most 2"
+            )
