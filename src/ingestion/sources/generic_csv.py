@@ -49,10 +49,37 @@ STATUS_MAP: dict[str, ConsumptionStatus] = {
     "watching": ConsumptionStatus.CURRENTLY_CONSUMING,
     "playing": ConsumptionStatus.CURRENTLY_CONSUMING,
     "unread": ConsumptionStatus.UNREAD,
+    "unwatched": ConsumptionStatus.UNREAD,
+    "unplayed": ConsumptionStatus.UNREAD,
     "to_read": ConsumptionStatus.UNREAD,
     "to_watch": ConsumptionStatus.UNREAD,
     "to_play": ConsumptionStatus.UNREAD,
     "wishlist": ConsumptionStatus.UNREAD,
+}
+
+# Content-type-specific status labels for templates and exports.
+# Maps (content_type, ConsumptionStatus) → display string.
+STATUS_DISPLAY: dict[str, dict[str, str]] = {
+    "book": {
+        "completed": "read",
+        "currently_consuming": "reading",
+        "unread": "unread",
+    },
+    "movie": {
+        "completed": "watched",
+        "currently_consuming": "watching",
+        "unread": "unwatched",
+    },
+    "tv_show": {
+        "completed": "watched",
+        "currently_consuming": "watching",
+        "unread": "unwatched",
+    },
+    "video_game": {
+        "completed": "played",
+        "currently_consuming": "playing",
+        "unread": "unplayed",
+    },
 }
 
 # Map content type string to creator field name
