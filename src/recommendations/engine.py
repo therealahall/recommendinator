@@ -294,25 +294,33 @@ class RecommendationEngine:
         top_candidates: list[ScoredCandidate] = pipeline_scored[: count * 3]
 
         # -----------------------------------------------------------------
-        # Filter candidates based on series rules
+        # Filter candidates based on series rules (when enabled)
         # -----------------------------------------------------------------
-        filtered_candidates: list[ScoredCandidate] = []
-        for scored_candidate in top_candidates:
-            if should_recommend_item(
-                scored_candidate.item,
-                series_tracking,
-                unconsumed_items=unconsumed_items,
-            ):
-                filtered_candidates.append(scored_candidate)
-            else:
-                logger.debug(
-                    f"Filtered out {scored_candidate.item.title} - doesn't meet series recommendation rules"
-                )
+        apply_series_rules = (
+            user_preference_config is None or user_preference_config.series_in_order
+        )
 
-        if not filtered_candidates:
-            logger.warning(
-                "Series filtering removed all candidates, using original candidates"
-            )
+        if apply_series_rules:
+            filtered_candidates: list[ScoredCandidate] = []
+            for scored_candidate in top_candidates:
+                if should_recommend_item(
+                    scored_candidate.item,
+                    series_tracking,
+                    unconsumed_items=unconsumed_items,
+                ):
+                    filtered_candidates.append(scored_candidate)
+                else:
+                    logger.debug(
+                        f"Filtered out {scored_candidate.item.title} - doesn't meet series recommendation rules"
+                    )
+
+            if not filtered_candidates:
+                logger.warning(
+                    "Series filtering removed all candidates, using original candidates"
+                )
+                filtered_candidates = top_candidates
+        else:
+            logger.info("Series ordering disabled by user preference")
             filtered_candidates = top_candidates
 
         # -----------------------------------------------------------------
