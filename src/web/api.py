@@ -33,8 +33,7 @@ from src.web.state import (
 from src.web.sync_manager import SyncJob, get_sync_manager
 from src.web.sync_sources import (
     get_available_sync_sources,
-    get_sync_handler,
-    transform_source_config,
+    resolve_inputs,
     validate_source_config,
 )
 
@@ -684,28 +683,27 @@ async def update_data(request: UpdateRequest) -> dict[str, Any]:
 
     # Resolve which sources to sync (dynamic from config)
     if source == "all":
-        available = get_available_sync_sources(config)
-        sources_to_sync = [s.id for s in available]
+        resolved = resolve_inputs(config)
     else:
         # Single source - check it exists and is enabled
-        source_config = inputs_config.get(source, {})
-        if not isinstance(source_config, dict) or not source_config.get(
-            "enabled", False
-        ):
+        source_entry = inputs_config.get(source, {})
+        if not isinstance(source_entry, dict) or not source_entry.get("enabled", False):
             return {
                 "message": f"{source} source is disabled or not configured",
                 "count": 0,
             }
-        validation_errors = validate_source_config(source, inputs_config)
+        validation_errors = validate_source_config(source, config)
         if validation_errors:
             raise HTTPException(status_code=400, detail="; ".join(validation_errors))
-        sources_to_sync = [source]
+        resolved = [
+            entry for entry in resolve_inputs(config) if entry.source_id == source
+        ]
 
-    if not sources_to_sync:
+    if not resolved:
         return {"message": "No sources enabled or configured for sync", "count": 0}
 
-    # Build plugin/config pairs for the sync executor
-    inputs_config = config.get("inputs", {})
+    sources_to_sync = [entry.source_id for entry in resolved]
+
     use_embeddings = get_feature_flags(config)["use_embeddings"]
 
     # Check if auto-enrichment is enabled
@@ -714,14 +712,7 @@ async def update_data(request: UpdateRequest) -> dict[str, Any]:
         "auto_enrich_on_sync", False
     )
 
-    source_pairs = []
-    for source_id in sources_to_sync:
-        plugin = get_sync_handler(source_id)
-        if plugin is None:
-            continue
-        source_config = inputs_config.get(source_id, {})
-        plugin_config = transform_source_config(source_id, source_config)
-        source_pairs.append((plugin, plugin_config))
+    source_pairs = [(entry.plugin, entry.config) for entry in resolved]
 
     # Create the sync function that will run in background
     def run_sync(job: SyncJob) -> int:
@@ -753,16 +744,15 @@ async def update_data(request: UpdateRequest) -> dict[str, Any]:
     # If syncing a single source with a configured content_type, use that type
     # Otherwise (multiple sources or "all"), enrich all types
     enrichment_content_type: ContentType | None = None
-    if len(sources_to_sync) == 1:
-        source_config = inputs_config.get(sources_to_sync[0], {})
-        content_type_str = source_config.get("content_type")
+    if len(resolved) == 1:
+        content_type_str = resolved[0].config.get("content_type")
         if content_type_str:
             try:
                 enrichment_content_type = ContentType(content_type_str)
             except ValueError:
                 logger.warning(
                     f"Invalid content_type '{content_type_str}' for source "
-                    f"{sources_to_sync[0]}, enriching all types"
+                    f"{resolved[0].source_id}, enriching all types"
                 )
 
     # Create completion callback for auto-enrichment
