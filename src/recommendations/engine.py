@@ -569,6 +569,12 @@ class RecommendationEngine:
 
         return t1_norm in t2_norm or t2_norm in t1_norm
 
+    # Minimum genre/creator overlap for a cross-type item to qualify as
+    # a meaningful reference.  Prevents incidental single-genre matches
+    # (e.g., "Drama" alone ≈ 0.2 Jaccard) from producing identical
+    # cross-type lists across all recommendations.
+    _CROSS_TYPE_MIN_OVERLAP = 0.25
+
     def _find_contributing_reference_items(
         self,
         candidate: ContentItem,
@@ -579,7 +585,9 @@ class RecommendationEngine:
         Uses genre and creator overlap to identify which consumed items
         are most related — no embeddings required.  Returns up to 5 items
         of the same content type as the candidate and up to 3 from each
-        other type, sorted by overlap score within each group.
+        other type that exceeds a minimum overlap threshold.  Cross-type
+        items that don't genuinely relate to the candidate are omitted
+        rather than padded.
 
         Args:
             candidate: The recommended item.
@@ -587,7 +595,7 @@ class RecommendationEngine:
 
         Returns:
             Contributing consumed items grouped by type: up to 5 same-type,
-            up to 3 per other type, ordered by overlap score.
+            up to 3 per other type (only those with meaningful overlap).
         """
         candidate_genres = set(extract_genres(candidate))
         candidate_creator = extract_creator(candidate)
@@ -622,14 +630,23 @@ class RecommendationEngine:
 
         scored.sort(key=lambda pair: pair[1], reverse=True)
 
-        # Group by content type: up to 5 for same type, up to 3 for others.
+        # Group by content type: up to 5 for same type (any overlap),
+        # up to 3 for others (only if meaningfully related).
         same_type_limit = 5
         other_type_limit = 3
 
         by_type: dict[str, list[ContentItem]] = {}
-        for item, _ in scored:
+        for item, score in scored:
             item_type = get_enum_value(item.content_type)
-            limit = same_type_limit if item_type == candidate_type else other_type_limit
+            is_same_type = item_type == candidate_type
+            limit = same_type_limit if is_same_type else other_type_limit
+
+            # Cross-type items must clear a minimum overlap threshold
+            # to avoid the same broadly-matching items appearing for
+            # every recommendation in a category.
+            if not is_same_type and score < self._CROSS_TYPE_MIN_OVERLAP:
+                continue
+
             type_list = by_type.setdefault(item_type, [])
             if len(type_list) < limit:
                 type_list.append(item)
