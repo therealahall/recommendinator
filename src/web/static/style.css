@@ -8,32 +8,33 @@
     /* Primary palette */
     --accent: #3c6e71;
     --accent-light: #7cc6c9;
-    --bg-page: #284b63;
-    --bg-card: #353535;
+    --bg-page: #1a2f3d;
+    --bg-card: #253a47;
+    --bg-sidebar: #1f3340;
     --white: #ffffff;
     --gray: #d9d9d9;
 
     /* Derived colors */
     --bg-primary: var(--bg-page);
-    --bg-elevated: #3f3f3f;
-    --bg-input: #2d2d2d;
-    --bg-hover: #444444;
+    --bg-elevated: #2c4250;
+    --bg-input: #162630;
+    --bg-hover: #314a58;
     --bg-active: rgba(60, 110, 113, 0.25);
 
     /* Text */
     --text-primary: var(--white);
     --text-secondary: var(--gray);
-    --text-muted: #a0a0a0;
+    --text-muted: #8a9baa;
     --text-inverse: #1a1a1a;
 
     /* Borders */
-    --border-default: #4a4a4a;
-    --border-subtle: #404040;
+    --border-default: #35505e;
+    --border-subtle: #2d4452;
     --border-focus: var(--accent);
 
     /* Semantic */
     --color-success: #66bb6a;
-    --color-warning: #e6a740;
+    --color-warning: #b0976a;
     --color-error: #ef5350;
     --color-info: var(--accent);
 
@@ -149,7 +150,7 @@ body {
    ============================================================ */
 
 .sidebar {
-    background: var(--bg-card);
+    background: var(--bg-sidebar);
     border-right: 1px solid var(--border-default);
     display: flex;
     flex-direction: column;
@@ -418,13 +419,13 @@ body {
 }
 
 .btn-warning {
-    background: rgba(230, 167, 64, 0.15);
+    background: rgba(176, 151, 106, 0.15);
     color: var(--color-warning);
-    border-color: rgba(230, 167, 64, 0.3);
+    border-color: rgba(176, 151, 106, 0.3);
 }
 
 .btn-warning:hover:not(:disabled) {
-    background: rgba(230, 167, 64, 0.25);
+    background: rgba(176, 151, 106, 0.25);
 }
 
 .btn-ghost {
@@ -444,13 +445,13 @@ body {
 }
 
 .btn-ignore {
-    background: rgba(230, 167, 64, 0.15);
+    background: rgba(176, 151, 106, 0.15);
     color: var(--color-warning);
-    border-color: rgba(230, 167, 64, 0.3);
+    border-color: rgba(176, 151, 106, 0.3);
 }
 
 .btn-ignore:hover:not(:disabled) {
-    background: rgba(230, 167, 64, 0.25);
+    background: rgba(176, 151, 106, 0.25);
 }
 
 .btn-unignore {
@@ -600,9 +601,9 @@ input[type="checkbox"] {
 }
 
 .badge-status.unread {
-    background: rgba(230, 167, 64, 0.1);
+    background: rgba(176, 151, 106, 0.1);
     color: var(--color-warning);
-    border-color: rgba(230, 167, 64, 0.3);
+    border-color: rgba(176, 151, 106, 0.3);
 }
 
 .badge-status.currently_consuming {
@@ -618,9 +619,9 @@ input[type="checkbox"] {
 }
 
 .badge-ignored {
-    background: rgba(230, 167, 64, 0.1);
+    background: rgba(176, 151, 106, 0.1);
     color: var(--color-warning);
-    border-color: rgba(230, 167, 64, 0.3);
+    border-color: rgba(176, 151, 106, 0.3);
 }
 
 .badge-score {
@@ -1324,8 +1325,8 @@ input[type="checkbox"] {
     align-items: center;
     gap: var(--space-2);
     padding: var(--space-2) var(--space-3);
-    background: rgba(230, 167, 64, 0.1);
-    border: 1px solid rgba(230, 167, 64, 0.2);
+    background: rgba(176, 151, 106, 0.1);
+    border: 1px solid rgba(176, 151, 106, 0.2);
     border-radius: var(--radius-md);
     font-size: var(--text-xs);
     color: var(--color-warning);
