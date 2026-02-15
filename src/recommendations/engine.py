@@ -561,7 +561,10 @@ class RecommendationEngine:
         """Find consumed items that share metadata with *candidate*.
 
         Uses genre and creator overlap to identify which consumed items
-        are most related — no embeddings required.
+        are most related — no embeddings required.  Same-content-type
+        references are preferred so that, e.g., TV show recommendations
+        cite other TV shows the user enjoyed rather than a video game
+        that happens to share genres.
 
         Args:
             candidate: The recommended item.
@@ -572,6 +575,7 @@ class RecommendationEngine:
         """
         candidate_genres = set(extract_genres(candidate))
         candidate_creator = extract_creator(candidate)
+        candidate_type = get_enum_value(candidate.content_type)
 
         scored: list[tuple[ContentItem, float]] = []
         for consumed in all_consumed_items:
@@ -594,6 +598,11 @@ class RecommendationEngine:
                 and candidate_creator == consumed_creator
             ):
                 overlap += 0.5
+
+            # Slight preference for same content type so references feel
+            # natural, but cross-type items still surface readily.
+            if get_enum_value(consumed.content_type) == candidate_type:
+                overlap += 0.1
 
             if overlap > 0:
                 scored.append((consumed, overlap))
