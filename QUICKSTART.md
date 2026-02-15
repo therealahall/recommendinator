@@ -33,6 +33,7 @@ cp config/example.yaml config/config.yaml
    ```yaml
    inputs:
      goodreads:
+       plugin: goodreads
        path: "inputs/goodreads_library_export.csv"
        enabled: true
    ```
@@ -46,6 +47,7 @@ cp config/example.yaml config/config.yaml
    ```yaml
    inputs:
      steam:
+       plugin: steam
        api_key: "your-api-key"
        steam_id: "your-steam-id"
        enabled: true

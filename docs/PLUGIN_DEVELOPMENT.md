@@ -89,7 +89,7 @@ ContentItem(
     author="Author/Director",      # Optional
     ignored=False,                 # Optional: exclude from recommendations
     metadata={},                   # Optional: source-specific data
-    source="my_plugin",            # Set automatically
+    source="my_plugin",            # Set automatically to the user-defined config key name
 )
 ```
 
@@ -150,20 +150,20 @@ class CsvBookPlugin(SourcePlugin):
     @property
     def config_schema(self) -> dict:
         return {
-            "csv_path": {"type": "string", "required": True},
+            "path": {"type": "string", "required": True},
         }
-    
+
     def validate_config(self, config: dict) -> list[str]:
         errors = []
-        csv_path = config.get("csv_path", "")
-        if not csv_path:
-            errors.append("CSV path is required")
-        elif not Path(csv_path).exists():
-            errors.append(f"File not found: {csv_path}")
+        file_path = config.get("path", "")
+        if not file_path:
+            errors.append("File path is required")
+        elif not Path(file_path).exists():
+            errors.append(f"File not found: {file_path}")
         return errors
-    
+
     def fetch(self, config: dict) -> Iterator[ContentItem]:
-        csv_path = Path(config["csv_path"])
+        csv_path = Path(config["path"])
         
         with open(csv_path, newline="", encoding="utf-8") as f:
             reader = csv.DictReader(f)
@@ -301,6 +301,31 @@ To verify your plugin is discovered:
 ```bash
 python3.11 -m src.cli update --help  # Should show your source in the list
 ```
+
+## Configuration Format
+
+Each input source in `config.yaml` uses a **named instance** model. The config key is a user-defined name, and the `plugin:` field specifies which plugin to use. This allows multiple instances of the same plugin:
+
+```yaml
+inputs:
+  # User-defined name "my_books" using the csv_import plugin
+  my_books:
+    plugin: csv_import
+    path: "inputs/books.csv"
+    content_type: "book"
+    enabled: true
+
+  # A second instance of csv_import with a different name
+  classic_movies:
+    plugin: csv_import
+    path: "inputs/classic_movies.csv"
+    content_type: "movie"
+    enabled: true
+```
+
+File-based plugins use a standardized `path` field (not `csv_path`, `json_path`, or `markdown_path`).
+
+When your plugin's `fetch()` method is called, the config dict includes a `_source_id` key containing the user-defined name. The base class method `get_source_identifier(config)` returns this value, which is stored in `ContentItem.source`. This means items are tracked by user-defined name, not plugin name.
 
 ## Testing Your Plugin
 

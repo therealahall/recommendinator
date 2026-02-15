@@ -24,6 +24,8 @@ Responsible for parsing and normalizing data from various sources.
 **Design:**
 - Plugin-based architecture (`SourcePlugin` ABC in `plugin_base.py`)
 - Auto-discovered from `src/ingestion/sources/` via `PluginRegistry`
+- **Named source instances**: Each entry under `inputs:` has a user-defined key name (e.g., `my_books`, `tv_shows`) with a `plugin:` field specifying the plugin type. Multiple instances of the same plugin are supported (e.g., two `json_import` sources with different files). The `resolve_inputs()` function in `sync_sources.py` is the central resolver that maps config entries to `(source_id, plugin, config)` tuples.
+- `ContentItem.source` reflects the user-defined key name, not the plugin name, enabling per-instance tracking
 - Each plugin handles config validation, fetching, and rating normalization
 - Shared sync executor (`execute_multi_source_sync`) used by both CLI and web
 - Progress callbacks for long-running operations
@@ -172,6 +174,22 @@ Configuration files in `config/`:
 - `example.yaml`: Template with all options documented
 
 Key sections: `features`, `ollama`, `storage`, `inputs`, `web`, `recommendations`, `conversation`, `enrichment`, `logging`.
+
+The `inputs` section uses **named source instances**: each key is a user-defined name and must include a `plugin:` field to identify the plugin type. This allows multiple instances of the same plugin (e.g., separate JSON imports for books and movies). File-based plugins use a standardized `path` field. Example:
+
+```yaml
+inputs:
+  my_books:
+    plugin: json_import
+    path: "inputs/books.json"
+    content_type: "book"
+    enabled: true
+  my_movies:
+    plugin: json_import
+    path: "inputs/movies.json"
+    content_type: "movie"
+    enabled: true
+```
 
 ## Extension Points
 

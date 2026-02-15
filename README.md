@@ -104,6 +104,7 @@ The easiest way to connect your GOG account:
    ```yaml
    inputs:
      gog:
+       plugin: gog
        enabled: true
    ```
 
@@ -136,6 +137,7 @@ If you prefer to set up manually:
    ```yaml
    inputs:
      gog:
+       plugin: gog
        refresh_token: "your-refresh-token-here"
        include_wishlist: true
        enabled: true
@@ -166,6 +168,7 @@ Epic Games uses the [Legendary](https://github.com/derrod/legendary) launcher's 
    ```yaml
    inputs:
      epic_games:
+       plugin: epic_games
        refresh_token: "your-refresh-token-here"
        enabled: true
    ```
@@ -182,12 +185,16 @@ features:
   llm_reasoning_enabled: false
 
 # Configure your data sources
+# Each entry has a user-defined name and a 'plugin' field specifying the plugin type.
+# Multiple instances of the same plugin are supported (e.g., two json_import sources).
 inputs:
   goodreads:
+    plugin: goodreads
     path: "inputs/goodreads_library_export.csv"
     enabled: true
-  
+
   steam:
+    plugin: steam
     api_key: "your-steam-api-key"
     steam_id: "your-steam-id"
     enabled: true
