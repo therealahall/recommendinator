@@ -200,29 +200,32 @@ class SQLiteDB:
                             break
 
             if existing_id:
-                # Update existing item in base table
+                # Update existing item in base table.
+                # Only update ignored when the source explicitly sets it
+                # (not None), so API plugins that have no concept of ignored
+                # don't overwrite a user's manual ignore setting.
+                set_clause = (
+                    "title = ?, status = ?, rating = ?, review = ?,"
+                    " date_completed = ?, source = ?,"
+                    " updated_at = CURRENT_TIMESTAMP"
+                )
+                params: list[str | int | None] = [
+                    item.title,
+                    get_enum_value(item.status),
+                    item.rating,
+                    item.review,
+                    (item.date_completed.isoformat() if item.date_completed else None),
+                    item.source,
+                ]
+
+                if item.ignored is not None:
+                    set_clause += ", ignored = ?"
+                    params.append(1 if item.ignored else 0)
+
+                params.append(existing_id)
                 cursor.execute(
-                    """
-                    UPDATE content_items
-                    SET title = ?, status = ?, rating = ?, review = ?,
-                        date_completed = ?, source = ?, ignored = ?,
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE id = ?
-                    """,
-                    (
-                        item.title,
-                        get_enum_value(item.status),
-                        item.rating,
-                        item.review,
-                        (
-                            item.date_completed.isoformat()
-                            if item.date_completed
-                            else None
-                        ),
-                        item.source,
-                        1 if item.ignored else 0,
-                        existing_id,
-                    ),
+                    f"UPDATE content_items SET {set_clause} WHERE id = ?",
+                    params,
                 )
                 db_id = existing_id
             else:

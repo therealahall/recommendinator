@@ -93,7 +93,7 @@ def _item_to_export_dict(
         ),
         "review": item.review or "",
         "notes": item.metadata.get("notes", ""),
-        "ignored": str(item.ignored).lower() if for_csv else item.ignored,
+        "ignored": str(bool(item.ignored)).lower() if for_csv else bool(item.ignored),
     }
 
     # Add type-specific metadata fields

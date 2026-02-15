@@ -422,7 +422,7 @@ async def list_items(
             rating=item.rating,
             review=item.review,
             source=item.source,
-            ignored=item.ignored,
+            ignored=bool(item.ignored),
         )
         for item in items
     ]

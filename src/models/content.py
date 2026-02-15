@@ -96,8 +96,10 @@ class ContentItem(BaseModel):
     # Set during recommendation expansion, not persisted.
     parent_id: str | None = None
 
-    # Whether this item is ignored (excluded from recommendations)
-    ignored: bool = False
+    # Whether this item is ignored (excluded from recommendations).
+    # None means "not specified by this source" — the existing database
+    # value is preserved on update.  True/False explicitly sets the flag.
+    ignored: bool | None = None
 
     # Flexible metadata for type-specific fields
     metadata: dict[str, Any] = Field(default_factory=dict)
