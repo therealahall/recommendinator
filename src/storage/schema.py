@@ -689,16 +689,14 @@ def get_enrichment_stats(
     # Use 'es' alias when joining, plain table name otherwise
     es_prefix = "enrichment_status es" if user_id else "enrichment_status"
 
-    total_items: int = _count_query(
-        "content_items ci" if user_id else "content_items",
-        "ci.user_id = ?" if user_id else "1=1",
-    )
-    # Override: total_items doesn't use the enrichment join
+    # total_items doesn't use the enrichment join, so query directly
     if user_id:
         cursor.execute(
             "SELECT COUNT(*) FROM content_items WHERE user_id = ?", (user_id,)
         )
-        total_items = cursor.fetchone()[0]
+        total_items: int = cursor.fetchone()[0]
+    else:
+        total_items = _count_query("content_items", "1=1")
 
     tracked_items: int = _count_query(es_prefix, "1=1")
     needs_enrichment: int = _count_query(
