@@ -364,3 +364,139 @@ class TestEdgeCases:
         )
 
         assert result.metadata == {}
+
+
+class TestGenreMergeInConflict:
+    """Tests for genre/tag merging during conflict resolution.
+
+    Bug reported: Conflict resolution used ``{**secondary, **primary}`` for
+    metadata, giving the primary item a complete win on every key.  This
+    meant re-importing from a source with fewer genres would destroy
+    enrichment-added genres.
+
+    Fix: ``genres`` and ``tags`` metadata keys are now merged additively
+    using ``merge_string_lists()``.
+    """
+
+    def test_genres_merged_across_sources(self) -> None:
+        """Primary and secondary genres should be merged, not replaced."""
+        existing = ContentItem(
+            id="tv_1",
+            title="Firefly",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.COMPLETED,
+            source="tmdb",
+            metadata={"genres": ["Drama", "Sci-Fi & Fantasy"]},
+        )
+        incoming = ContentItem(
+            id="tv_1",
+            title="Firefly",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.COMPLETED,
+            source="csv_import",
+            metadata={"genres": ["Action"]},
+        )
+
+        result = resolve_conflict(
+            existing=existing,
+            incoming=incoming,
+            strategy=ConflictStrategy.KEEP_EXISTING,
+        )
+
+        genres = result.metadata["genres"]
+        assert "Drama" in genres
+        assert "Sci-Fi & Fantasy" in genres
+        assert "Action" in genres
+
+    def test_genres_deduplicated_case_insensitive(self) -> None:
+        """Duplicate genres should be removed (case-insensitive)."""
+        existing = ContentItem(
+            id="b_1",
+            title="Dune",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            source="goodreads",
+            metadata={"genres": ["Science Fiction", "Adventure"]},
+        )
+        incoming = ContentItem(
+            id="b_1",
+            title="Dune",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            source="openlibrary",
+            metadata={"genres": ["science fiction", "War"]},
+        )
+
+        result = resolve_conflict(
+            existing=existing,
+            incoming=incoming,
+            strategy=ConflictStrategy.SOURCE_PRIORITY,
+            source_priority=["goodreads", "openlibrary"],
+        )
+
+        genres = result.metadata["genres"]
+        sci_fi_count = sum(1 for genre in genres if genre.lower() == "science fiction")
+        assert sci_fi_count == 1
+        assert "Adventure" in genres
+        assert "War" in genres
+
+    def test_tags_merged_across_sources(self) -> None:
+        """Tags should be merged additively just like genres."""
+        existing = ContentItem(
+            id="g_1",
+            title="Mass Effect",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.COMPLETED,
+            source="steam",
+            metadata={"tags": ["space", "rpg"]},
+        )
+        incoming = ContentItem(
+            id="g_1",
+            title="Mass Effect",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.COMPLETED,
+            source="rawg",
+            metadata={"tags": ["story rich", "space"]},
+        )
+
+        result = resolve_conflict(
+            existing=existing,
+            incoming=incoming,
+            strategy=ConflictStrategy.KEEP_EXISTING,
+        )
+
+        tags = result.metadata["tags"]
+        assert "space" in tags
+        assert "rpg" in tags
+        assert "story rich" in tags
+        space_count = sum(1 for tag in tags if tag.lower() == "space")
+        assert space_count == 1
+
+    def test_string_genre_coerced_to_list(self) -> None:
+        """A single string genre should be coerced to a list before merging."""
+        existing = ContentItem(
+            id="m_1",
+            title="Inception",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.COMPLETED,
+            source="tmdb",
+            metadata={"genres": "Drama"},
+        )
+        incoming = ContentItem(
+            id="m_1",
+            title="Inception",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.COMPLETED,
+            source="csv_import",
+            metadata={"genres": ["Thriller"]},
+        )
+
+        result = resolve_conflict(
+            existing=existing,
+            incoming=incoming,
+            strategy=ConflictStrategy.KEEP_EXISTING,
+        )
+
+        genres = result.metadata["genres"]
+        assert "Drama" in genres
+        assert "Thriller" in genres

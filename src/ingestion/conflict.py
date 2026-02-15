@@ -1,8 +1,10 @@
 """Conflict resolution for source-of-truth conflicts during ingestion."""
 
+import json
 from enum import Enum
 
 from src.models.content import ContentItem
+from src.utils.list_merge import merge_string_lists
 
 
 class ConflictStrategy(str, Enum):
@@ -95,6 +97,33 @@ def _keep_existing(existing: ContentItem, incoming: ContentItem) -> ContentItem:
     return _fill_none_fields(existing, incoming)
 
 
+def _metadata_to_list(value: object) -> list[str]:
+    """Coerce a metadata value to a list of strings.
+
+    Handles plain strings, JSON-encoded arrays, and Python lists.
+
+    Args:
+        value: Raw metadata value (str, list, or None).
+
+    Returns:
+        List of strings.
+    """
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    if isinstance(value, str):
+        if value.startswith("["):
+            try:
+                parsed = json.loads(value)
+                if isinstance(parsed, list):
+                    return [str(item) for item in parsed]
+            except (json.JSONDecodeError, TypeError):
+                pass
+        return [value]
+    return []
+
+
 def _fill_none_fields(primary: ContentItem, secondary: ContentItem) -> ContentItem:
     """Return a copy of primary with None fields filled from secondary.
 
@@ -131,10 +160,19 @@ def _fill_none_fields(primary: ContentItem, secondary: ContentItem) -> ContentIt
             if secondary_value is not None:
                 filled_data[field_name] = secondary_value
 
-    # Merge metadata: primary metadata takes precedence, secondary fills gaps
+    # Merge metadata: primary metadata takes precedence, secondary fills gaps.
+    # Genres and tags are merged additively rather than replaced.
     secondary_metadata = secondary.metadata or {}
     primary_metadata = filled_data.get("metadata", {}) or {}
     merged_metadata = {**secondary_metadata, **primary_metadata}
+
+    # Merge list-valued metadata keys additively
+    for key in ("genres", "tags"):
+        primary_val = _metadata_to_list(primary_metadata.get(key))
+        secondary_val = _metadata_to_list(secondary_metadata.get(key))
+        if primary_val or secondary_val:
+            merged_metadata[key] = merge_string_lists(primary_val, secondary_val)
+
     filled_data["metadata"] = merged_metadata
 
     return ContentItem(**filled_data)
