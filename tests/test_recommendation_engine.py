@@ -1055,3 +1055,115 @@ class TestContributingReferenceItemsRegression:
 
         # Same type (TV show) should come first
         assert get_enum_value(result[0].content_type) == "tv_show"
+
+
+class TestCrossTypeClusterOverlapRegression:
+    """Regression tests for cross-type reference selection using cluster overlap.
+
+    Bug reported: "1923" (a TV show with only "Drama" as its genre) appeared
+    as a cross-type reference for nearly every recommendation, because raw
+    Jaccard on ["drama"] gave ~0.2 overlap with almost anything.
+
+    Root cause: Cross-type matching used raw genre Jaccard, which is too
+    coarse for broad terms — "drama" alone would weakly match any item
+    that includes "drama" among its genres.
+
+    Fix: Cross-type matching now uses cluster_overlap() instead of raw
+    Jaccard, which groups terms by thematic clusters and produces more
+    discriminating scores.
+    """
+
+    def test_1923_different_shows_get_different_references_regression(self) -> None:
+        """A sci-fi show and a historical drama should NOT both cite
+        the same broadly-matching 'drama-only' item as a reference.
+
+        Bug: "1923" (genre: ["Drama"]) was cited for every recommendation.
+        """
+        engine = RecommendationEngine.__new__(RecommendationEngine)
+
+        # "1923" has only Drama — should not match sci-fi thematically
+        show_1923 = ContentItem(
+            id="1923",
+            title="1923",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.COMPLETED,
+            rating=4,
+            metadata={"genres": ["Drama"]},
+        )
+
+        # A sci-fi consumed item — should match sci-fi candidates
+        sci_fi_consumed = ContentItem(
+            id="expanse",
+            title="The Expanse",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            metadata={"genres": ["Science Fiction", "Drama"]},
+        )
+
+        # Candidate is a sci-fi book
+        sci_fi_candidate = ContentItem(
+            id="dune",
+            title="Dune",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genres": ["Science Fiction", "Adventure"]},
+        )
+
+        references = engine._find_contributing_reference_items(
+            sci_fi_candidate, [show_1923, sci_fi_consumed]
+        )
+
+        reference_titles = [ref.title for ref in references]
+        # The Expanse should be a reference (sci-fi cluster overlap)
+        assert "The Expanse" in reference_titles
+        # 1923 should NOT be a reference (only drama, no sci-fi cluster)
+        assert "1923" not in reference_titles
+
+    def test_cross_type_uses_thematic_matching_regression(self) -> None:
+        """A war-themed book should reference Band of Brothers (war TV),
+        not just any Drama show.
+
+        Bug: Cross-type matching used raw Jaccard, making any "Drama"
+        show a valid reference for any candidate with "Drama" in its genres.
+        """
+        engine = RecommendationEngine.__new__(RecommendationEngine)
+
+        # War-themed candidate book
+        candidate = ContentItem(
+            id="war_book",
+            title="Band of Brothers: The Book",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genres": ["War", "Historical"]},
+        )
+
+        # War-themed TV show — should be a good cross-type match
+        war_tv = ContentItem(
+            id="bob_tv",
+            title="Band of Brothers",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            metadata={"genres": ["War", "Drama"]},
+        )
+
+        # Pure drama TV show — should NOT match a war book thematically
+        drama_tv = ContentItem(
+            id="crown",
+            title="The Crown",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.COMPLETED,
+            rating=4,
+            metadata={"genres": ["Drama"]},
+        )
+
+        references = engine._find_contributing_reference_items(
+            candidate, [drama_tv, war_tv]
+        )
+
+        reference_titles = [ref.title for ref in references]
+        # Band of Brothers (war cluster) should be referenced
+        assert "Band of Brothers" in reference_titles
+        # The Crown (drama only) should not match war + historical
+        assert "The Crown" not in reference_titles

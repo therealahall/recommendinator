@@ -8,6 +8,7 @@ from src.llm.embeddings import EmbeddingGenerator
 from src.llm.recommendations import RecommendationGenerator
 from src.models.content import ContentItem, ContentType, get_enum_value
 from src.models.user_preferences import UserPreferenceConfig
+from src.recommendations.genre_clusters import cluster_overlap
 from src.recommendations.preference_interpreter import (
     InterpretedPreference,
     PatternBasedInterpreter,
@@ -589,6 +590,11 @@ class RecommendationEngine:
         items that don't genuinely relate to the candidate are omitted
         rather than padded.
 
+        For same-type items, raw genre Jaccard is used (works well since
+        the same vocabulary is shared).  For cross-type items, thematic
+        cluster overlap is used instead, which is more discriminating than
+        raw Jaccard on broad terms like "drama".
+
         Args:
             candidate: The recommended item.
             all_consumed_items: All consumed items.
@@ -597,20 +603,30 @@ class RecommendationEngine:
             Contributing consumed items grouped by type: up to 5 same-type,
             up to 3 per other type (only those with meaningful overlap).
         """
-        candidate_genres = set(extract_genres(candidate))
+        candidate_genres = list(extract_genres(candidate))
+        candidate_genres_set = set(candidate_genres)
         candidate_creator = extract_creator(candidate)
         candidate_type = get_enum_value(candidate.content_type)
 
         scored: list[tuple[ContentItem, float]] = []
         for consumed in all_consumed_items:
             overlap = 0.0
-            consumed_genres = set(extract_genres(consumed))
-            if candidate_genres and consumed_genres:
-                intersection = candidate_genres & consumed_genres
-                if intersection:
-                    overlap += len(intersection) / len(
-                        candidate_genres | consumed_genres
-                    )
+            consumed_genres = list(extract_genres(consumed))
+            consumed_genres_set = set(consumed_genres)
+            consumed_type = get_enum_value(consumed.content_type)
+            is_same_type = consumed_type == candidate_type
+
+            if candidate_genres_set and consumed_genres_set:
+                if is_same_type:
+                    # Same type: raw Jaccard (shared vocabulary)
+                    intersection = candidate_genres_set & consumed_genres_set
+                    if intersection:
+                        overlap += len(intersection) / len(
+                            candidate_genres_set | consumed_genres_set
+                        )
+                else:
+                    # Cross type: thematic cluster overlap
+                    overlap += cluster_overlap(candidate_genres, consumed_genres)
 
             consumed_creator = extract_creator(consumed)
             if (
