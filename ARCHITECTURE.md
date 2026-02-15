@@ -71,7 +71,7 @@ RecommendationEngine
   |-- ScoringPipeline (always runs)
   |     |-- GenreMatchScorer      — genre preference scoring
   |     |-- CreatorMatchScorer    — author/director/developer matching
-  |     |-- TagOverlapScorer      — Jaccard genre/tag overlap
+  |     |-- TagOverlapScorer      — threshold + cluster-based tag overlap
   |     |-- SeriesOrderScorer     — next-in-sequence boosting
   |     |-- RatingPatternScorer   — rating history in matching genres
   |     |-- ContentLengthScorer   — soft penalty for length preference mismatch
@@ -101,6 +101,9 @@ RecommendationEngine
 **Cross-Content-Type Recommendations:**
 - Preferences from all content types influence recommendations
 - Metadata-based matching (genre/creator overlap) works without AI
+- **Semantic genre clusters** (`genre_clusters.py`) group ~16 thematic clusters (e.g. science_fiction, war_military, fantasy) so items with related but different raw terms (e.g. book "space warfare" + TV "war") can connect
+- **Compound genre splitting** (`genre_normalizer.py`) expands provider terms like "Sci-Fi & Fantasy" into constituent parts before normalization
+- Cross-type reference items use cluster overlap instead of raw Jaccard to avoid broadly-matching items dominating all recommendations
 - Optional vector embeddings for semantic similarity across content types
 
 ### 5. Metadata Enrichment (`src/enrichment/`)

@@ -16,8 +16,8 @@ Most recommendation systems are black boxes that harvest your data. This one:
 ### Core Features (No AI Required)
 
 - **Multi-source ingestion** — Import from Goodreads, Steam, Sonarr, Radarr, or generic CSV/JSON/Markdown files
-- **Cross-content recommendations** — Your love of sci-fi books influences game and movie suggestions
-- **Smart scoring pipeline** — Genre matching, creator preferences, series order, tag overlap, rating patterns
+- **Cross-content recommendations** — Your love of sci-fi books influences game and movie suggestions via semantic genre clusters that bridge different vocabularies
+- **Smart scoring pipeline** — Genre matching, creator preferences, series order, cluster-aware tag overlap, rating patterns
 - **Custom rules** — Natural language preferences like "avoid horror" or "prefer short books"
 - **Content length filtering** — Prefer short books, long games, any movie length
 - **Multi-user support** — Each user gets their own preferences and history
@@ -243,7 +243,7 @@ The recommendation engine scores candidates through multiple factors:
 |--------|--------------|
 | **Genre Match** | Boosts content matching genres you've rated highly |
 | **Creator Match** | Prefers authors/directors/developers you've enjoyed |
-| **Tag Overlap** | Jaccard similarity of tags and themes |
+| **Tag Overlap** | Threshold-based tag matching with semantic cluster bridging |
 | **Series Order** | Prioritizes next items in series you're reading/watching |
 | **Rating Pattern** | Learns from your rating history within genres |
 | **Custom Rules** | Applies your explicit preferences ("avoid X", "prefer Y") |

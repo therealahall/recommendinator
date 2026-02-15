@@ -26,11 +26,11 @@ src/
 │   └── sources/      # Source plugins (auto-discovered)
 ├── llm/              # Ollama interaction
 ├── storage/          # SQLite + ChromaDB
-├── recommendations/  # Recommendation engine (scorers, pipeline, ranking)
+├── recommendations/  # Recommendation engine (scorers, pipeline, ranking, genre_clusters)
 ├── enrichment/       # Background metadata enrichment
 ├── conversation/     # Conversational AI chat system
 ├── models/           # Data models (ContentItem, ContentType, UserPreferenceConfig)
-└── utils/            # Utility functions
+└── utils/            # Utility functions (list_merge, series, sorting)
 tests/                # Mirrors src/ structure
 config/               # Configuration files (example.yaml for tests)
 ```
