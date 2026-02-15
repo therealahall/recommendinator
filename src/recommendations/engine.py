@@ -573,25 +573,28 @@ class RecommendationEngine:
         self,
         candidate: ContentItem,
         all_consumed_items: list[ContentItem],
+        max_references: int = 5,
     ) -> list[ContentItem]:
         """Find consumed items that share metadata with *candidate*.
 
         Uses genre and creator overlap to identify which consumed items
-        are most related — no embeddings required.  Same-content-type
-        references are preferred so that, e.g., TV show recommendations
-        cite other TV shows the user enjoyed rather than a video game
-        that happens to share genres.
+        are most related — no embeddings required.  Results are balanced
+        across content types: the best match from each type is selected
+        first, then remaining slots are filled by overall score.  This
+        ensures reasoning reflects cross-type influences (e.g., "because
+        you liked these books, shows, and games").
 
         Args:
             candidate: The recommended item.
             all_consumed_items: All consumed items.
+            max_references: Maximum number of reference items to return.
 
         Returns:
-            Top 5 contributing consumed items (by overlap score).
+            Up to *max_references* contributing consumed items, balanced
+            across content types.
         """
         candidate_genres = set(extract_genres(candidate))
         candidate_creator = extract_creator(candidate)
-        candidate_type = get_enum_value(candidate.content_type)
 
         scored: list[tuple[ContentItem, float]] = []
         for consumed in all_consumed_items:
@@ -612,11 +615,6 @@ class RecommendationEngine:
             ):
                 overlap += 0.5
 
-            # Slight preference for same content type so references feel
-            # natural, but cross-type items still surface readily.
-            if get_enum_value(consumed.content_type) == candidate_type:
-                overlap += 0.1
-
             # Boost highly-rated items so they surface as references more
             # often, but don't exclude lower-rated or unrated items.
             if consumed.rating and consumed.rating >= 4:
@@ -626,7 +624,31 @@ class RecommendationEngine:
                 scored.append((consumed, overlap))
 
         scored.sort(key=lambda pair: pair[1], reverse=True)
-        return [item for item, _ in scored[:5]]
+
+        # Balance across content types: pick the best from each type
+        # first, then fill remaining slots from the overall ranking.
+        selected: list[ContentItem] = []
+        seen_types: set[str] = set()
+
+        for item, _ in scored:
+            item_type = get_enum_value(item.content_type)
+            if item_type not in seen_types:
+                selected.append(item)
+                seen_types.add(item_type)
+            if len(selected) >= max_references:
+                break
+
+        # Fill remaining slots from the overall best, skipping duplicates.
+        if len(selected) < max_references:
+            selected_set = {id(item) for item in selected}
+            for item, _ in scored:
+                if id(item) not in selected_set:
+                    selected.append(item)
+                    selected_set.add(id(item))
+                if len(selected) >= max_references:
+                    break
+
+        return selected
 
     @staticmethod
     def _format_reference_label(item: ContentItem) -> str:
