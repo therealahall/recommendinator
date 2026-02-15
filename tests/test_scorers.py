@@ -305,6 +305,50 @@ class TestTagOverlapScorer:
         scorer = TagOverlapScorer()
         assert scorer.score(candidate, context) == 0.0
 
+    def test_cluster_match_provides_semantic_floor(self) -> None:
+        """Candidate with 'space warfare' should score well against consumed 'war'
+        via shared cluster even without direct term overlap."""
+        consumed = [_make_item(metadata={"genres": ["War"]}, rating=5)]
+        context = _build_context(consumed=consumed)
+        candidate = _make_item(
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genres": ["Space Warfare"]},
+        )
+        scorer = TagOverlapScorer()
+        score = scorer.score(candidate, context)
+        # No direct overlap, but cluster match should give > 0.0
+        assert score > 0.0
+
+    def test_direct_match_still_works(self) -> None:
+        """Direct term matching should still work and take precedence."""
+        consumed = [_make_item(metadata={"genres": ["Fantasy", "Action"]}, rating=5)]
+        context = _build_context(consumed=consumed)
+        candidate = _make_item(
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genres": ["Fantasy", "Action"]},
+        )
+        scorer = TagOverlapScorer()
+        assert scorer.score(candidate, context) == 0.5  # 2 direct matches
+
+
+class TestScoringContextClusters:
+    """Tests for consumed_clusters in ScoringContext."""
+
+    def test_consumed_clusters_populated(self) -> None:
+        """ScoringContext should populate consumed_clusters from genres."""
+        consumed = [
+            _make_item(rating=5, metadata={"genre": "Science Fiction"}),
+            _make_item(rating=5, metadata={"genre": "Fantasy"}),
+        ]
+        context = _build_context(consumed=consumed)
+        assert "science_fiction" in context.consumed_clusters
+        assert "fantasy" in context.consumed_clusters
+
+    def test_consumed_clusters_empty_with_no_genres(self) -> None:
+        """No genres should produce empty consumed_clusters."""
+        context = _build_context(consumed=[])
+        assert context.consumed_clusters == set()
+
 
 # ---------------------------------------------------------------------------
 # SeriesOrderScorer tests

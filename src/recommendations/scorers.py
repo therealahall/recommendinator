@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 
 from src.models.content import ContentItem, ContentType
 from src.recommendations.content_length import score_length_match
+from src.recommendations.genre_clusters import get_clusters_for_terms
 from src.recommendations.genre_normalizer import extract_and_normalize_genres
 from src.recommendations.preferences import UserPreferences
 from src.utils.series import extract_series_info
@@ -83,6 +84,7 @@ class ScoringContext:
 
     # Pre-computed lookups (populated by __post_init__)
     consumed_genres: set[str] = field(default_factory=set)
+    consumed_clusters: set[str] = field(default_factory=set)
     consumed_creators: set[str] = field(default_factory=set)
     ratings_by_genre: dict[str, list[int]] = field(default_factory=dict)
     series_ratings: dict[str, list[int]] = field(default_factory=dict)
@@ -120,6 +122,7 @@ class ScoringContext:
                 series_ratings[series_name].append(item.rating)
 
         self.consumed_genres = genres
+        self.consumed_clusters = get_clusters_for_terms(list(genres))
         self.consumed_creators = creators
         self.ratings_by_genre = dict(genre_ratings)
         self.series_ratings = dict(series_ratings)
@@ -229,7 +232,11 @@ class TagOverlapScorer(Scorer):
     Uses threshold-based matching: 3+ matching terms indicates similarity,
     rather than Jaccard similarity which penalizes items with many tags.
 
-    Scoring:
+    Also uses semantic cluster matching as a floor: if a candidate's genres
+    belong to the same thematic clusters as consumed items, it gets at least
+    the cluster-based score even when raw terms differ.
+
+    Scoring (direct matches):
     - 5+ matches: 1.0 (very similar)
     - 4 matches: 0.9
     - 3 matches: 0.8
@@ -243,26 +250,47 @@ class TagOverlapScorer(Scorer):
     def __init__(self, weight: float = 1.0) -> None:
         super().__init__(weight)
 
+    @staticmethod
+    def _threshold_score(matches: int) -> float:
+        """Map a match count to a threshold-based score.
+
+        Args:
+            matches: Number of matching terms.
+
+        Returns:
+            Score in ``[0.0, 1.0]``.
+        """
+        if matches >= 5:
+            return 1.0
+        if matches == 4:
+            return 0.9
+        if matches == 3:
+            return 0.8
+        if matches == 2:
+            return 0.5
+        if matches == 1:
+            return 0.3
+        return 0.0
+
     def score(self, candidate: ContentItem, context: ScoringContext) -> float:
         candidate_genres = set(extract_genres(candidate))
         if not candidate_genres or not context.consumed_genres:
             return 0.0
 
-        # Count matching terms
-        matches = len(candidate_genres & context.consumed_genres)
+        # Direct term matches
+        direct_matches = len(candidate_genres & context.consumed_genres)
+        direct_score = self._threshold_score(direct_matches)
 
-        # Threshold-based scoring
-        if matches >= 5:
-            return 1.0
-        elif matches == 4:
-            return 0.9
-        elif matches == 3:
-            return 0.8
-        elif matches == 2:
-            return 0.5
-        elif matches == 1:
-            return 0.3
-        return 0.0
+        # Cluster-based semantic matching
+        candidate_clusters = get_clusters_for_terms(list(candidate_genres))
+        if candidate_clusters and context.consumed_clusters:
+            cluster_matches = len(candidate_clusters & context.consumed_clusters)
+            cluster_score = self._threshold_score(cluster_matches)
+        else:
+            cluster_score = 0.0
+
+        # Return the higher of direct or cluster score
+        return max(direct_score, cluster_score)
 
 
 class SeriesOrderScorer(Scorer):
