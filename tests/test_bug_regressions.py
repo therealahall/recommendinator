@@ -389,3 +389,56 @@ class TestIgnoredFieldRegression:
         assert len(expanded) == 3
         for season in expanded:
             assert season.ignored is True
+
+    def test_resync_with_ignored_none_preserves_value_regression(
+        self, tmp_path: Path
+    ) -> None:
+        """Regression test: re-syncing from an API plugin should not reset ignored.
+
+        Bug reported: After manually ignoring Bridgerton via the UI, re-syncing
+        from Sonarr (which has no concept of ignored) reset ignored to False
+        because the UPDATE always wrote the field.
+
+        Root cause: API plugins don't set ignored, but the UPDATE branch
+        unconditionally wrote ignored=0 (the default).
+
+        Fix: Changed ContentItem.ignored to bool | None (tri-state). None
+        means "source didn't specify" and the UPDATE branch only includes
+        ignored in the SQL when it is not None.
+        """
+        from src.storage.sqlite_db import SQLiteDB
+
+        database = SQLiteDB(tmp_path / "test.db")
+
+        # Import via JSON with ignored=True (file-based source)
+        item = ContentItem(
+            id="bridgerton",
+            title="Bridgerton",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.COMPLETED,
+            source="finished_tv_shows",
+            ignored=True,
+        )
+        database.save_content_item(item)
+
+        # Verify ignored is True
+        items = database.get_content_items()
+        bridgerton = [i for i in items if i.title == "Bridgerton"]
+        assert bridgerton[0].ignored is True
+
+        # Re-sync from Sonarr (API plugin, ignored=None — not specified)
+        sonarr_item = ContentItem(
+            id="bridgerton",
+            title="Bridgerton",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.COMPLETED,
+            source="sonarr",
+            ignored=None,  # API plugin doesn't set this
+        )
+        database.save_content_item(sonarr_item)
+
+        # Verify ignored is STILL True — not overwritten
+        items = database.get_content_items()
+        bridgerton = [i for i in items if i.title == "Bridgerton"]
+        assert len(bridgerton) == 1
+        assert bridgerton[0].ignored is True
