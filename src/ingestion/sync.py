@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 from src.ingestion.plugin_base import SourcePlugin
 from src.models.content import ContentItem, get_enum_value
+from src.utils.text import humanize_source_id
 
 if TYPE_CHECKING:
     from src.llm.embeddings import EmbeddingGenerator
@@ -60,7 +61,8 @@ def execute_sync(
     Returns:
         SyncResult with counts and any errors.
     """
-    source_name = plugin.display_name
+    source_id = plugin_config.get("_source_id")
+    source_name = humanize_source_id(source_id) if source_id else plugin.display_name
     result = SyncResult(source_name=source_name)
 
     if progress_callback:
@@ -173,9 +175,13 @@ def execute_multi_source_sync(
             logger.error(f"[SYNC] {error_message}")
             if error_callback:
                 error_callback(error_message)
+            source_id = plugin_config.get("_source_id")
+            error_source_name = (
+                humanize_source_id(source_id) if source_id else plugin.display_name
+            )
             results.append(
                 SyncResult(
-                    source_name=plugin.display_name,
+                    source_name=error_source_name,
                     errors=[error_message],
                 )
             )

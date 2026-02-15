@@ -14,32 +14,9 @@ from typing import Any
 
 from src.ingestion.plugin_base import SourcePlugin
 from src.ingestion.registry import get_registry
+from src.utils.text import humanize_source_id
 
 logger = logging.getLogger(__name__)
-
-
-_UPPERCASE_WORDS: dict[str, str] = {
-    "tv": "TV",
-    "gog": "GOG",
-    "api": "API",
-    "id": "ID",
-    "csv": "CSV",
-    "json": "JSON",
-}
-
-
-def _humanize_source_id(source_id: str) -> str:
-    """Convert a snake_case source ID to a human-readable title.
-
-    Applies title-casing with special handling for known acronyms.
-
-    Examples:
-        ``finished_tv_shows`` → ``Finished TV Shows``
-        ``gog`` → ``GOG``
-        ``my_books`` → ``My Books``
-    """
-    words = source_id.split("_")
-    return " ".join(_UPPERCASE_WORDS.get(word, word.capitalize()) for word in words)
 
 
 @dataclass
@@ -144,7 +121,7 @@ def get_available_sync_sources(config: dict[str, Any]) -> list[SyncSourceInfo]:
     return [
         SyncSourceInfo(
             id=entry.source_id,
-            display_name=_humanize_source_id(entry.source_id),
+            display_name=humanize_source_id(entry.source_id),
             plugin_display_name=entry.plugin.display_name,
         )
         for entry in resolved

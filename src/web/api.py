@@ -12,6 +12,7 @@ from src.cli.config import get_feature_flags
 from src.ingestion.sync import execute_multi_source_sync
 from src.models.content import ConsumptionStatus, ContentType, get_enum_value
 from src.models.user_preferences import UserPreferenceConfig
+from src.utils.text import humanize_source_id
 from src.web.enrichment_manager import get_enrichment_manager
 from src.web.gog_auth import (
     GogAuthError,
@@ -770,7 +771,11 @@ async def update_data(request: UpdateRequest) -> dict[str, Any]:
                 logger.info(f"[ENRICHMENT] Auto-start skipped: {message}")
 
     # Start background sync
-    source_label = source if source != "all" else ", ".join(sources_to_sync)
+    source_label = (
+        humanize_source_id(source)
+        if source != "all"
+        else ", ".join(humanize_source_id(source_id) for source_id in sources_to_sync)
+    )
     success, message = sync_manager.start_sync(
         source_label, run_sync, on_complete=on_sync_complete
     )

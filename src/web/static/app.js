@@ -977,8 +977,7 @@
             parts.push(job.items_processed + " items so far");
         }
 
-        // Add source - prefer current_source (specific source being synced)
-        // over source (which may be a comma-separated list for "sync all")
+        // Show only the currently active source, not the full "sync all" list
         parts.push("—");
         var displaySource = job.current_source || job.source;
         parts.push("Syncing " + displaySource);
