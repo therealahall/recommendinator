@@ -16,6 +16,7 @@ from src.models.content import (
     get_enum_value,
 )
 from src.storage.schema import create_schema, get_default_user_id
+from src.utils.list_merge import merge_string_lists
 
 
 def normalize_title_for_matching(title: str) -> str:
@@ -402,10 +403,37 @@ class SQLiteDB:
             return json.dumps(val)
         return json.dumps([val])
 
+    @staticmethod
+    def _parse_json_list(raw: str | None) -> list[str]:
+        """Parse a JSON array string into a Python list of strings.
+
+        Args:
+            raw: JSON array string, or None.
+
+        Returns:
+            List of strings (empty if *raw* is None or unparseable).
+        """
+        if not raw:
+            return []
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                return [str(item) for item in parsed]
+        except (json.JSONDecodeError, TypeError):
+            pass
+        return []
+
+    # Columns where values should be merged additively instead of replaced.
+    _MERGEABLE_COLUMNS: set[str] = {"genres", "tags"}
+
     def _save_detail_table(
         self, cursor: sqlite3.Cursor, db_id: int, item: ContentItem, content_type: str
     ) -> None:
         """Save item to appropriate type-specific detail table.
+
+        Genres and tags are merged additively: new values are combined with
+        existing values rather than replacing them.  This preserves enrichment
+        data across re-imports.
 
         Args:
             cursor: Database cursor
@@ -422,6 +450,23 @@ class SQLiteDB:
         columns = config["columns"]
         known_keys = config["known_keys"]
 
+        # Check for an existing row so we can merge genres/tags
+        cursor.execute(
+            f"SELECT * FROM {table} WHERE content_item_id = ?",  # noqa: S608
+            (db_id,),
+        )
+        existing_row = cursor.fetchone()
+        existing_col_names = (
+            [description[0] for description in cursor.description]
+            if existing_row is not None
+            else []
+        )
+        existing_data: dict[str, Any] = (
+            dict(zip(existing_col_names, existing_row, strict=True))
+            if existing_row is not None
+            else {}
+        )
+
         # Build column values
         col_names = ["content_item_id"]
         values: list[Any] = [db_id]
@@ -432,10 +477,24 @@ class SQLiteDB:
             elif converter == "int":
                 values.append(self._safe_int(metadata.get(meta_key)))
             elif converter == "json":
-                values.append(self._to_json_array(metadata.get(meta_key)))
+                new_json = self._to_json_array(metadata.get(meta_key))
+                if col_name in self._MERGEABLE_COLUMNS and existing_data:
+                    existing_list = self._parse_json_list(existing_data.get(col_name))
+                    new_list = self._parse_json_list(new_json)
+                    merged = merge_string_lists(existing_list, new_list)
+                    values.append(json.dumps(merged) if merged else new_json)
+                else:
+                    values.append(new_json)
             elif converter == "json_or_genre":
                 raw = metadata.get("genres") or metadata.get("genre")
-                values.append(self._to_json_array(raw))
+                new_json = self._to_json_array(raw)
+                if col_name in self._MERGEABLE_COLUMNS and existing_data:
+                    existing_list = self._parse_json_list(existing_data.get(col_name))
+                    new_list = self._parse_json_list(new_json)
+                    merged = merge_string_lists(existing_list, new_list)
+                    values.append(json.dumps(merged) if merged else new_json)
+                else:
+                    values.append(new_json)
             elif converter == "json_or_platform":
                 raw = metadata.get("platforms") or metadata.get("platform")
                 values.append(self._to_json_array(raw))
@@ -453,10 +512,26 @@ class SQLiteDB:
 
         placeholders = ", ".join("?" for _ in values)
         col_list = ", ".join(col_names)
-        cursor.execute(
-            f"INSERT OR REPLACE INTO {table} ({col_list}) VALUES ({placeholders})",
-            values,
-        )
+        if existing_data:
+            # UPDATE existing row with merged data
+            set_clauses = ", ".join(
+                f"{name} = ?" for name in col_names if name != "content_item_id"
+            )
+            update_values = [
+                val
+                for name, val in zip(col_names, values, strict=True)
+                if name != "content_item_id"
+            ]
+            update_values.append(db_id)
+            cursor.execute(
+                f"UPDATE {table} SET {set_clauses} WHERE content_item_id = ?",  # noqa: S608
+                update_values,
+            )
+        else:
+            cursor.execute(
+                f"INSERT INTO {table} ({col_list}) VALUES ({placeholders})",  # noqa: S608
+                values,
+            )
 
     def get_content_item(
         self, db_id: int, user_id: int | None = None

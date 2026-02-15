@@ -579,3 +579,125 @@ class TestToJsonArrayRegression:
         """A multi-element list should serialize correctly."""
         result = SQLiteDB._to_json_array(["Drama", "Action", "Comedy"])
         assert result == '["Drama", "Action", "Comedy"]'
+
+
+class TestAdditiveGenreSaves:
+    """Tests for additive genre/tag saving in detail tables.
+
+    Bug reported: Re-importing items from a source would overwrite genres
+    and tags that had been added by enrichment, destroying richer data.
+
+    Root cause: ``INSERT OR REPLACE`` replaced the entire row, including
+    genres and tags, instead of merging new values with existing ones.
+
+    Fix: ``_save_detail_table()`` now queries for an existing row and
+    merges genres/tags using ``merge_string_lists()`` before writing.
+    """
+
+    def test_reimport_merges_genres(self, temp_db: SQLiteDB) -> None:
+        """Re-saving an item should merge genres, not replace them."""
+        item_v1 = ContentItem(
+            id="tv_1",
+            title="Firefly",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.COMPLETED,
+            metadata={"genres": ["Drama"]},
+        )
+        db_id = temp_db.save_content_item(item_v1)
+
+        # Simulate enrichment adding more genres
+        item_v2 = ContentItem(
+            id="tv_1",
+            title="Firefly",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.COMPLETED,
+            metadata={"genres": ["Comedy", "Action"]},
+        )
+        temp_db.save_content_item(item_v2)
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.metadata is not None
+        genres = retrieved.metadata.get("genres", [])
+        # All three genres should be present
+        assert "Drama" in genres
+        assert "Comedy" in genres
+        assert "Action" in genres
+
+    def test_reimport_deduplicates_genres_case_insensitive(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """Re-saving should not create duplicate genres (case-insensitive)."""
+        item_v1 = ContentItem(
+            id="tv_2",
+            title="Breaking Bad",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.COMPLETED,
+            metadata={"genres": ["Drama"]},
+        )
+        db_id = temp_db.save_content_item(item_v1)
+
+        item_v2 = ContentItem(
+            id="tv_2",
+            title="Breaking Bad",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.COMPLETED,
+            metadata={"genres": ["Drama", "Action"]},
+        )
+        temp_db.save_content_item(item_v2)
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.metadata is not None
+        genres = retrieved.metadata.get("genres", [])
+        # Drama should appear only once
+        drama_count = sum(1 for genre in genres if genre.lower() == "drama")
+        assert drama_count == 1
+        assert "Action" in genres
+
+    def test_reimport_merges_tags(self, temp_db: SQLiteDB) -> None:
+        """Re-saving should merge tags additively."""
+        item_v1 = ContentItem(
+            id="game_1",
+            title="Mass Effect",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.COMPLETED,
+            metadata={"genres": ["RPG"], "tags": ["space", "story rich"]},
+        )
+        db_id = temp_db.save_content_item(item_v1)
+
+        item_v2 = ContentItem(
+            id="game_1",
+            title="Mass Effect",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.COMPLETED,
+            metadata={"genres": ["RPG"], "tags": ["open world", "space"]},
+        )
+        temp_db.save_content_item(item_v2)
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.metadata is not None
+        tags = retrieved.metadata.get("tags", [])
+        assert "space" in tags
+        assert "story rich" in tags
+        assert "open world" in tags
+        # "space" should not be duplicated
+        space_count = sum(1 for tag in tags if tag.lower() == "space")
+        assert space_count == 1
+
+    def test_first_save_works_without_existing_row(self, temp_db: SQLiteDB) -> None:
+        """First save should work normally via INSERT."""
+        item = ContentItem(
+            id="book_1",
+            title="Dune",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            metadata={"genres": ["Science Fiction"], "tags": ["space", "politics"]},
+        )
+        db_id = temp_db.save_content_item(item)
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.metadata is not None
+        assert "Science Fiction" in retrieved.metadata.get("genres", [])
+        assert "space" in retrieved.metadata.get("tags", [])
