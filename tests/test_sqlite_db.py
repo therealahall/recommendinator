@@ -500,42 +500,41 @@ def test_save_content_item_with_ignored_true(temp_db: SQLiteDB) -> None:
     assert retrieved.ignored is True
 
 
-def test_save_content_item_update_does_not_reset_ignored(temp_db: SQLiteDB) -> None:
-    """Test that UPDATE path does not reset a user's ignored flag.
+def test_save_content_item_update_syncs_ignored(temp_db: SQLiteDB) -> None:
+    """Test that UPDATE path updates the ignored field.
 
-    When re-syncing from another source, the UPDATE SQL should not touch
-    the ignored column, preserving the user's manual ignore setting.
+    When re-syncing, the ignored field should be updated like any other
+    field so that import files with ignored: true take effect on existing items.
     """
-    # First insert with ignored=True
+    # First insert with ignored=False
     item = ContentItem(
         id="sync_1",
         title="A Book",
         content_type=ContentType.BOOK,
         status=ConsumptionStatus.UNREAD,
-        ignored=True,
+        ignored=False,
     )
     db_id = temp_db.save_content_item(item)
 
-    # Verify ignored is True
     retrieved = temp_db.get_content_item(db_id)
     assert retrieved is not None
-    assert retrieved.ignored is True
+    assert retrieved.ignored is False
 
-    # Now "re-sync" the same item (same external_id) with ignored=False
+    # Re-sync the same item with ignored=True
     updated_item = ContentItem(
         id="sync_1",
         title="A Book",
         content_type=ContentType.BOOK,
         status=ConsumptionStatus.COMPLETED,
         rating=4,
-        ignored=False,  # Source doesn't know about user's ignore
+        ignored=True,
     )
     db_id_2 = temp_db.save_content_item(updated_item)
     assert db_id == db_id_2  # Same item
 
-    # ignored should still be True (not reset by UPDATE)
+    # ignored should now be True
     retrieved = temp_db.get_content_item(db_id)
     assert retrieved is not None
     assert retrieved.ignored is True
-    assert retrieved.status == ConsumptionStatus.COMPLETED  # Other fields updated
+    assert retrieved.status == ConsumptionStatus.COMPLETED
     assert retrieved.rating == 4

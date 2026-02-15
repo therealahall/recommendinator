@@ -310,6 +310,7 @@ def expand_tv_shows_to_seasons(items: list[ContentItem]) -> list[ContentItem]:
                     content_type=ContentType.TV_SHOW,
                     rating=item.rating,
                     status=item.status,
+                    ignored=item.ignored,
                     parent_id=item.id,
                     metadata=season_metadata,
                     source=item.source,

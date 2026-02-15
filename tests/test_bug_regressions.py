@@ -317,3 +317,75 @@ class TestEnrichmentStatsRegression:
         assert row[1] == "tmdb"  # Provider preserved
 
         conn.close()
+
+
+class TestIgnoredFieldRegression:
+    """Regression tests for ignored field persistence."""
+
+    def test_upsert_preserves_ignored_field_regression(self, tmp_path: Path) -> None:
+        """Regression test: re-importing item with ignored=True should update the field.
+
+        Bug reported: Importing Bridgerton with ignored: true did not
+        set ignored in the database because the UPDATE branch of
+        save_content_item did not include the ignored column.
+
+        Root cause: The UPDATE SQL in save_content_item only set title,
+        status, rating, review, date_completed, and source — not ignored.
+
+        Fix: Added ignored to the UPDATE statement.
+        """
+        from src.storage.sqlite_db import SQLiteDB
+
+        database = SQLiteDB(tmp_path / "test.db")
+
+        # First import: item not ignored
+        item = ContentItem(
+            id="bridgerton",
+            title="Bridgerton",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            ignored=False,
+        )
+        database.save_content_item(item)
+
+        # Re-import with ignored=True
+        item_ignored = ContentItem(
+            id="bridgerton",
+            title="Bridgerton",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            ignored=True,
+        )
+        database.save_content_item(item_ignored)
+
+        # Verify ignored is now True
+        items = database.get_content_items()
+        bridgerton = [i for i in items if i.title == "Bridgerton"]
+        assert len(bridgerton) == 1
+        assert bridgerton[0].ignored is True
+
+    def test_expand_tv_seasons_propagates_ignored_regression(self) -> None:
+        """Regression test: season expansion should propagate ignored flag.
+
+        Bug reported: Even if an ignored TV show slipped through filtering,
+        its expanded seasons would not carry the ignored flag because
+        expand_tv_shows_to_seasons did not copy it.
+
+        Fix: Added ignored=item.ignored to the season ContentItem.
+        """
+        from src.utils.series import expand_tv_shows_to_seasons
+
+        show = ContentItem(
+            id="bridgerton",
+            title="Bridgerton",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            ignored=True,
+            metadata={"total_seasons": 3},
+        )
+
+        expanded = expand_tv_shows_to_seasons([show])
+
+        assert len(expanded) == 3
+        for season in expanded:
+            assert season.ignored is True

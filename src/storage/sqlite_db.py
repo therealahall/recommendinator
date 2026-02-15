@@ -205,7 +205,8 @@ class SQLiteDB:
                     """
                     UPDATE content_items
                     SET title = ?, status = ?, rating = ?, review = ?,
-                        date_completed = ?, source = ?, updated_at = CURRENT_TIMESTAMP
+                        date_completed = ?, source = ?, ignored = ?,
+                        updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
                     """,
                     (
@@ -219,6 +220,7 @@ class SQLiteDB:
                             else None
                         ),
                         item.source,
+                        1 if item.ignored else 0,
                         existing_id,
                     ),
                 )
