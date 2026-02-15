@@ -381,11 +381,23 @@ class SQLiteDB:
 
     @staticmethod
     def _to_json_array(val: Any) -> str | None:
-        """Convert a value to a JSON array string."""
+        """Convert a value to a JSON array string.
+
+        Bare strings are wrapped in a JSON array.  Strings that already
+        look like a JSON array (start with ``[``) are returned as-is.
+
+        Args:
+            val: Value to convert (str, list, or other).
+
+        Returns:
+            JSON array string, or None if *val* is None.
+        """
         if val is None:
             return None
         if isinstance(val, str):
-            return val
+            if val.startswith("["):
+                return val  # Already JSON array
+            return json.dumps([val])  # Wrap bare string
         if isinstance(val, list):
             return json.dumps(val)
         return json.dumps([val])

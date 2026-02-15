@@ -538,3 +538,44 @@ def test_save_content_item_update_syncs_ignored(temp_db: SQLiteDB) -> None:
     assert retrieved.ignored is True
     assert retrieved.status == ConsumptionStatus.COMPLETED
     assert retrieved.rating == 4
+
+
+class TestToJsonArrayRegression:
+    """Regression tests for _to_json_array() bare string handling.
+
+    Bug reported: TV show genres stored as bare strings like ``"Drama"``
+    instead of JSON arrays ``'["Drama"]'``.  Downstream code expecting
+    JSON arrays would fail to parse them, resulting in single-genre
+    items that weakly matched everything via broad Jaccard overlap.
+
+    Root cause: ``_to_json_array()`` returned bare strings unchanged
+    (``if isinstance(val, str): return val``).
+
+    Fix: Bare strings are now wrapped in a JSON array; only strings
+    that already start with ``[`` are passed through.
+    """
+
+    def test_bare_string_wrapped_in_json_array_regression(self) -> None:
+        """A bare string like 'Drama' should become '["Drama"]'."""
+        result = SQLiteDB._to_json_array("Drama")
+        assert result == '["Drama"]'
+
+    def test_existing_json_array_unchanged(self) -> None:
+        """A string that is already a JSON array should be returned as-is."""
+        result = SQLiteDB._to_json_array('["Drama", "Action"]')
+        assert result == '["Drama", "Action"]'
+
+    def test_list_converted_to_json(self) -> None:
+        """A Python list should be serialized to JSON."""
+        result = SQLiteDB._to_json_array(["Drama"])
+        assert result == '["Drama"]'
+
+    def test_none_returns_none(self) -> None:
+        """None input should return None."""
+        result = SQLiteDB._to_json_array(None)
+        assert result is None
+
+    def test_multi_element_list(self) -> None:
+        """A multi-element list should serialize correctly."""
+        result = SQLiteDB._to_json_array(["Drama", "Action", "Comedy"])
+        assert result == '["Drama", "Action", "Comedy"]'
