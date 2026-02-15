@@ -31,6 +31,7 @@
         loadUsers();
         checkStatus();
         setupTabs();
+        setupMobileSidebar();
         setupRecommendationForm();
         setupLibraryFilters();
         setupPreferencesSave();
@@ -98,33 +99,36 @@
     function updateAiReasoningVisibility() {
         var aiReasoningContainer = document.getElementById("recUseLlm");
         if (aiReasoningContainer) {
-            var container = aiReasoningContainer.parentElement;
-            if (!aiFeatures.ai_enabled || !aiFeatures.llm_reasoning_enabled) {
-                // Hide the checkbox and uncheck it
-                container.style.display = "none";
-                aiReasoningContainer.checked = false;
-            } else {
-                container.style.display = "";
+            var container = aiReasoningContainer.closest(".checkbox-label");
+            if (container) {
+                if (!aiFeatures.ai_enabled || !aiFeatures.llm_reasoning_enabled) {
+                    container.style.display = "none";
+                    aiReasoningContainer.checked = false;
+                } else {
+                    container.style.display = "";
+                }
             }
         }
     }
 
     function updateChatTabVisibility() {
-        var chatTabBtn = document.querySelector('.tab-btn[data-tab="chat"]');
-        if (chatTabBtn) {
-            chatTabBtn.style.display = aiFeatures.ai_enabled ? "" : "none";
+        var chatNavItem = document.querySelector('.nav-item[data-tab="chat"]');
+        if (chatNavItem) {
+            chatNavItem.style.display = aiFeatures.ai_enabled ? "" : "none";
         }
     }
 
     // -----------------------------------------------------------------------
-    // Tabs
+    // Tabs (Sidebar Navigation)
     // -----------------------------------------------------------------------
 
     function setupTabs() {
-        var buttons = document.querySelectorAll(".tab-btn");
+        var buttons = document.querySelectorAll(".nav-item");
         buttons.forEach(function (btn) {
             btn.addEventListener("click", function () {
                 switchTab(btn.dataset.tab);
+                // Close mobile sidebar on navigation
+                closeMobileSidebar();
             });
         });
         // Activate default tab
@@ -133,8 +137,8 @@
 
     function switchTab(name) {
         currentTab = name;
-        // Update buttons
-        document.querySelectorAll(".tab-btn").forEach(function (btn) {
+        // Update nav items
+        document.querySelectorAll(".nav-item").forEach(function (btn) {
             btn.classList.toggle("active", btn.dataset.tab === name);
         });
         // Update panels
@@ -151,9 +155,37 @@
             loadPreferences();
         } else if (name === "chat") {
             loadChatData();
-        } else if (name === "sync") {
+        } else if (name === "data") {
             loadEnrichmentStats();
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Mobile Sidebar
+    // -----------------------------------------------------------------------
+
+    function setupMobileSidebar() {
+        var toggle = document.getElementById("sidebarToggle");
+        var overlay = document.getElementById("sidebarOverlay");
+
+        if (toggle) {
+            toggle.addEventListener("click", function () {
+                var sidebar = document.getElementById("sidebar");
+                sidebar.classList.toggle("open");
+                overlay.classList.toggle("visible");
+            });
+        }
+
+        if (overlay) {
+            overlay.addEventListener("click", closeMobileSidebar);
+        }
+    }
+
+    function closeMobileSidebar() {
+        var sidebar = document.getElementById("sidebar");
+        var overlay = document.getElementById("sidebarOverlay");
+        if (sidebar) sidebar.classList.remove("open");
+        if (overlay) overlay.classList.remove("visible");
     }
 
     // -----------------------------------------------------------------------
@@ -213,13 +245,16 @@
             html += '<div class="rec-card">';
             html += '<div class="rec-header">';
             html += '<div>';
-            html += '<div class="rec-title">' + (index + 1) + '. ' + escapeHtml(rec.title) + '</div>';
+            html += '<div class="rec-title">';
+            html += '<span class="rec-rank">' + (index + 1) + '.</span> ';
+            html += escapeHtml(rec.title);
+            html += '</div>';
             if (rec.author) {
                 html += '<div class="rec-author">by ' + escapeHtml(rec.author) + '</div>';
             }
             html += '</div>';
             html += '<div class="rec-actions">';
-            html += '<span class="score-badge">Score: ' + rec.score.toFixed(2) + '</span>';
+            html += '<span class="badge badge-score">' + rec.score.toFixed(2) + '</span>';
             if (rec.db_id) {
                 html += '<button class="btn btn-small btn-ignore ignore-rec-btn" data-db-id="' + rec.db_id + '" title="Ignore this item">Ignore</button>';
             }
@@ -632,12 +667,12 @@
         html += '</div>';
         html += '<div class="add-rule-form">';
         html += '<input type="text" id="newRuleInput" placeholder="e.g., avoid horror, prefer sci-fi">';
-        html += '<button class="btn btn-small" id="addRuleBtn">Add Rule</button>';
+        html += '<button class="btn btn-small btn-primary" id="addRuleBtn">Add Rule</button>';
         html += '</div>';
         html += '</div>';
 
         html += '<button class="btn btn-primary" id="prefSaveBtn">Save Preferences</button>';
-        html += ' <span id="prefSaveStatus"></span>';
+        html += ' <span id="prefSaveStatus" class="text-muted"></span>';
 
         container.innerHTML = html;
 
@@ -750,6 +785,7 @@
 
         var statusSpan = document.getElementById("prefSaveStatus");
         statusSpan.textContent = "Saving...";
+        statusSpan.className = "text-muted";
 
         fetch(API_BASE + "/users/" + currentUserId + "/preferences", {
             method: "PUT",
@@ -762,10 +798,12 @@
             })
             .then(function () {
                 statusSpan.textContent = "Saved!";
+                statusSpan.className = "text-success";
                 setTimeout(function () { statusSpan.textContent = ""; }, 2000);
             })
             .catch(function (error) {
                 statusSpan.textContent = "Error: " + error.message;
+                statusSpan.className = "text-error";
             });
     }
 
@@ -774,7 +812,7 @@
     }
 
     // -----------------------------------------------------------------------
-    // Sync Tab
+    // Data Tab (Sync)
     // -----------------------------------------------------------------------
 
     var syncState = {
@@ -814,7 +852,7 @@
                 renderSyncSources(grid, sources, gogStatus);
             })
             .catch(function (error) {
-                grid.innerHTML = '<div class="empty-state" style="color:#c62828">Failed to load sync sources: ' + escapeHtml(error.message) + '</div>';
+                grid.innerHTML = '<div class="empty-state"><span class="text-error">Failed to load sync sources: ' + escapeHtml(error.message) + '</span></div>';
             });
     }
 
@@ -834,7 +872,7 @@
         sources.forEach(function (source) {
             html += '<div class="sync-card" data-source-id="' + escapeHtml(source.id) + '">';
             html += '<h3>' + escapeHtml(source.display_name) + '</h3>';
-            html += '<p style="font-size:0.8em; color:#888; margin-bottom:8px;">Plugin: ' + escapeHtml(source.plugin_display_name) + '</p>';
+            html += '<p class="sync-plugin-name">Plugin: ' + escapeHtml(source.plugin_display_name) + '</p>';
 
             // Special handling for GOG when not connected
             if (source.id === "gog" && gogStatus && gogStatus.enabled && !gogStatus.connected) {
@@ -843,9 +881,9 @@
                 html += '<button class="btn btn-primary" onclick="window.openGogAuth()">Connect GOG Account</button>';
                 html += '</div>';
                 html += '<div class="gog-connect-step gog-code-step" id="gogCodeStep" style="display:none;">';
-                html += '<p style="font-size:0.85em; color:#666; margin:8px 0;">Paste the redirect URL after logging in:</p>';
+                html += '<p class="help-text" style="margin:8px 0;">Paste the redirect URL after logging in:</p>';
                 html += '<div class="gog-input-row">';
-                html += '<input type="text" id="gogCodeInput" placeholder="Paste URL here..." style="flex:1; padding:8px; border:1px solid #ddd; border-radius:4px; font-size:0.9em;">';
+                html += '<input type="text" id="gogCodeInput" placeholder="Paste URL here...">';
                 html += '<button class="btn btn-primary" onclick="window.submitGogCode()">Connect</button>';
                 html += '</div>';
                 html += '<div id="gogConnectStatus" style="margin-top:8px;"></div>';
@@ -861,7 +899,7 @@
         if (sources.length > 1) {
             html += '<div class="sync-card">';
             html += '<h3>All Sources</h3>';
-            html += '<p style="font-size:0.85em; color:#666; margin-bottom:8px;">Sync all enabled sources at once</p>';
+            html += '<p class="sync-plugin-name">Sync all enabled sources at once</p>';
             html += '<button class="btn btn-secondary sync-btn" data-source="all" data-display-name="All Sources">Sync All Sources</button>';
             html += '</div>';
         }
@@ -1083,7 +1121,7 @@
 
         if (!codeOrUrl) {
             if (statusDiv) {
-                statusDiv.innerHTML = '<span style="color:#c62828">Please paste the redirect URL.</span>';
+                statusDiv.innerHTML = '<span class="text-error">Please paste the redirect URL.</span>';
             }
             return;
         }
@@ -1112,15 +1150,15 @@
                     // Show token for manual setup
                     if (statusDiv) {
                         statusDiv.innerHTML = '<div class="gog-manual-setup">' +
-                            '<p style="color:#388e3c; margin-bottom:8px;">✓ Token obtained! Add this to your config.yaml:</p>' +
+                            '<p class="text-success" style="margin-bottom:8px;">Token obtained! Add this to your config.yaml:</p>' +
                             '<pre class="gog-token-display">inputs:\n  gog:\n    refresh_token: "' + escapeHtml(data.refresh_token) + '"</pre>' +
-                            '<button class="btn btn-small" onclick="navigator.clipboard.writeText(\'' + escapeHtml(data.refresh_token) + '\').then(function(){alert(\'Token copied!\')})">Copy Token</button>' +
-                            '<p style="font-size:0.85em; color:#666; margin-top:8px;">After updating config.yaml, restart the server to sync.</p>' +
+                            '<button class="btn btn-small btn-secondary" onclick="navigator.clipboard.writeText(\'' + escapeHtml(data.refresh_token) + '\').then(function(){alert(\'Token copied!\')})">Copy Token</button>' +
+                            '<p class="text-muted" style="font-size:0.85em; margin-top:8px;">After updating config.yaml, restart the server to sync.</p>' +
                             '</div>';
                     }
                 } else {
                     if (statusDiv) {
-                        statusDiv.innerHTML = '<span style="color:#388e3c">' + escapeHtml(data.message) + '</span>';
+                        statusDiv.innerHTML = '<span class="text-success">' + escapeHtml(data.message) + '</span>';
                     }
                     // Refresh sync sources to show the sync button
                     setTimeout(function () {
@@ -1130,7 +1168,7 @@
             })
             .catch(function (error) {
                 if (statusDiv) {
-                    statusDiv.innerHTML = '<span style="color:#c62828">' + escapeHtml(error.message) + '</span>';
+                    statusDiv.innerHTML = '<span class="text-error">' + escapeHtml(error.message) + '</span>';
                 }
             });
     };
@@ -1158,7 +1196,7 @@
                 renderEnrichmentStats(container, stats);
             })
             .catch(function (error) {
-                container.innerHTML = '<div class="empty-state" style="color:#c62828">Failed to load enrichment stats: ' + escapeHtml(error.message) + '</div>';
+                container.innerHTML = '<div class="empty-state"><span class="text-error">Failed to load enrichment stats: ' + escapeHtml(error.message) + '</span></div>';
             });
     }
 
@@ -1277,7 +1315,7 @@
                     if (statusDiv && status.items_processed > 0) {
                         var msg = status.cancelled ? "Enrichment cancelled" : "Enrichment complete";
                         msg += ": " + status.items_enriched + " enriched, " + status.items_not_found + " not found";
-                        statusDiv.innerHTML = '<span style="color:#388e3c">' + msg + '</span>';
+                        statusDiv.innerHTML = '<span class="text-success">' + msg + '</span>';
                     }
                     loadEnrichmentStats();
                 } else {
@@ -1326,7 +1364,7 @@
             })
             .then(function (data) {
                 if (statusDiv) {
-                    statusDiv.innerHTML = '<span style="color:#388e3c">' + escapeHtml(data.message) + '</span>';
+                    statusDiv.innerHTML = '<span class="text-success">' + escapeHtml(data.message) + '</span>';
                 }
                 // Start polling for progress
                 startEnrichmentPolling();
@@ -1334,7 +1372,7 @@
             })
             .catch(function (error) {
                 if (statusDiv) {
-                    statusDiv.innerHTML = '<span style="color:#c62828">' + escapeHtml(error.message) + '</span>';
+                    statusDiv.innerHTML = '<span class="text-error">' + escapeHtml(error.message) + '</span>';
                 }
             })
             .finally(function () {
@@ -1356,7 +1394,7 @@
         // Require a content type selection for reset to avoid accidental full reset
         if (!contentType) {
             if (statusDiv) {
-                statusDiv.innerHTML = '<span style="color:#ff9800">Please select a content type to reset</span>';
+                statusDiv.innerHTML = '<span class="text-warning">Please select a content type to reset</span>';
             }
             return;
         }
@@ -1387,7 +1425,7 @@
             })
             .then(function (data) {
                 if (statusDiv) {
-                    statusDiv.innerHTML = '<span style="color:#388e3c">' + escapeHtml(data.message) + '</span> Starting enrichment...';
+                    statusDiv.innerHTML = '<span class="text-success">' + escapeHtml(data.message) + '</span> Starting enrichment...';
                 }
                 // Now start enrichment
                 return fetch(API_BASE + "/enrichment/start", {
@@ -1410,7 +1448,7 @@
             })
             .then(function (data) {
                 if (statusDiv) {
-                    statusDiv.innerHTML = '<span style="color:#388e3c">' + escapeHtml(data.message) + '</span>';
+                    statusDiv.innerHTML = '<span class="text-success">' + escapeHtml(data.message) + '</span>';
                 }
                 // Start polling for progress
                 startEnrichmentPolling();
@@ -1419,7 +1457,7 @@
             })
             .catch(function (error) {
                 if (statusDiv) {
-                    statusDiv.innerHTML = '<span style="color:#c62828">' + escapeHtml(error.message) + '</span>';
+                    statusDiv.innerHTML = '<span class="text-error">' + escapeHtml(error.message) + '</span>';
                 }
             })
             .finally(function () {
@@ -1707,9 +1745,8 @@
         el.className = "tool-indicator";
         el.dataset.tool = toolName;
 
-        var icon = status === "executing" ? "⚙️" : "✓";
         var text = formatToolName(toolName);
-        el.innerHTML = '<span class="tool-icon">' + icon + '</span> ' + text + '...';
+        el.innerHTML = '<span class="tool-icon">&#9881;</span> ' + text + '...';
 
         messagesEl.appendChild(el);
         scrollChatToBottom();
@@ -1720,9 +1757,9 @@
         indicators.forEach(function (el) {
             if (result && result.success) {
                 el.classList.add("success");
-                el.innerHTML = '<span class="tool-icon">✓</span> ' + result.message;
+                el.innerHTML = '<span class="tool-icon">&#10003;</span> ' + result.message;
             } else {
-                el.innerHTML = '<span class="tool-icon">✗</span> ' + (result ? result.message : "Failed");
+                el.innerHTML = '<span class="tool-icon">&#10007;</span> ' + (result ? result.message : "Failed");
             }
         });
     }
@@ -1758,7 +1795,7 @@
                 // Clear chat messages
                 var messagesEl = document.getElementById("chatMessages");
                 messagesEl.innerHTML = '<div class="chat-welcome">' +
-                    '<h3>Chat with your personal recommendation advisor</h3>' +
+                    '<h3>Chat with your recommendation advisor</h3>' +
                     '<p>Ask for recommendations, mark items as completed, or tell me about your preferences.</p>' +
                     '<div class="chat-suggestions">' +
                     '<button class="suggestion-btn" onclick="window.sendChatSuggestion(\'What game should I play next?\')">What game should I play next?</button>' +
@@ -1906,7 +1943,7 @@
         if (profile.cross_media_patterns && profile.cross_media_patterns.length > 0) {
             html += '<div class="profile-section"><h5>Patterns</h5>';
             profile.cross_media_patterns.slice(0, 2).forEach(function (p) {
-                html += '<p style="font-size:0.85em;margin:4px 0;color:#666;">' + escapeHtml(p) + '</p>';
+                html += '<p class="text-muted" style="font-size:0.85em;margin:4px 0;">' + escapeHtml(p) + '</p>';
             });
             html += '</div>';
         }

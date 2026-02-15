@@ -7,39 +7,118 @@
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-    <!-- Header with user selector -->
-    <div class="header">
-        <h1>Personal Recommendations</h1>
-        <div class="user-selector">
-            <label for="userSelect">User:</label>
-            <select id="userSelect">
-                <option value="1">Default User</option>
-            </select>
-        </div>
-    </div>
+    <!-- Mobile sidebar toggle -->
+    <button class="sidebar-toggle" id="sidebarToggle" aria-label="Toggle navigation">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="3" y1="6" x2="21" y2="6"></line>
+            <line x1="3" y1="12" x2="21" y2="12"></line>
+            <line x1="3" y1="18" x2="21" y2="18"></line>
+        </svg>
+    </button>
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
 
-    <!-- Tab Navigation -->
-    <nav class="tab-nav">
-        <button class="tab-btn active" data-tab="recommendations">Recommendations</button>
-        <button class="tab-btn" data-tab="chat">Chat</button>
-        <button class="tab-btn" data-tab="library">Library</button>
-        <button class="tab-btn" data-tab="preferences">Preferences</button>
-        <button class="tab-btn" data-tab="sync">Sync</button>
-    </nav>
+    <div class="app-layout">
+        <!-- Sidebar Navigation -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <h1>Recommendations</h1>
+            </div>
+            <nav class="sidebar-nav">
+                <button class="nav-item active" data-tab="recommendations">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+                    </svg>
+                    Recommendations
+                </button>
+                <button class="nav-item" data-tab="library">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+                        <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+                    </svg>
+                    Library
+                </button>
+                <button class="nav-item" data-tab="chat">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                    </svg>
+                    Chat
+                </button>
+                <button class="nav-item" data-tab="data">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+                    </svg>
+                    Data
+                </button>
+                <button class="nav-item" data-tab="preferences">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="3"></circle>
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                    </svg>
+                    Preferences
+                </button>
+            </nav>
+            <div class="sidebar-footer">
+                <label for="userSelect">User</label>
+                <select id="userSelect">
+                    <option value="1">Default User</option>
+                </select>
+            </div>
+        </aside>
 
-    <!-- Main Content -->
-    <div class="main-content">
-        <div id="statusBar" class="status-bar"></div>
+        <!-- Main Content -->
+        <main class="main-content">
+            <div id="statusBar" class="status-bar"></div>
 
-        <!-- Recommendations Tab -->
-        <div id="panel-recommendations" class="tab-panel active">
-            <div class="card">
-                <h2>Get Recommendations</h2>
-                <form id="recForm">
-                    <div class="form-row">
+            <!-- Recommendations Tab -->
+            <div id="panel-recommendations" class="tab-panel active">
+                <div class="page-header">
+                    <h2>Recommendations</h2>
+                    <p class="page-description">Get personalized recommendations based on your library and preferences.</p>
+                </div>
+                <div class="card">
+                    <form id="recForm">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="recType">Content Type</label>
+                                <select id="recType">
+                                    <option value="book">Book</option>
+                                    <option value="movie">Movie</option>
+                                    <option value="tv_show">TV Show</option>
+                                    <option value="video_game">Video Game</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="recCount">Count</label>
+                                <input type="number" id="recCount" min="1" max="20" value="5">
+                            </div>
+                            <div class="form-group">
+                                <label>&nbsp;</label>
+                                <label class="checkbox-label">
+                                    <input type="checkbox" id="recUseLlm" checked> Use AI reasoning
+                                </label>
+                            </div>
+                            <div class="form-group">
+                                <label>&nbsp;</label>
+                                <button type="submit" class="btn btn-primary">Get Recommendations</button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                <div id="recResults"></div>
+            </div>
+
+            <!-- Library Tab -->
+            <div id="panel-library" class="tab-panel">
+                <div class="page-header">
+                    <h2>Library</h2>
+                    <p class="page-description">Browse and manage your content collection.</p>
+                </div>
+                <div class="card">
+                    <div class="library-filters">
                         <div class="form-group">
-                            <label for="recType">Content Type</label>
-                            <select id="recType">
+                            <label for="libType">Type</label>
+                            <select id="libType">
+                                <option value="">All Types</option>
                                 <option value="book">Book</option>
                                 <option value="movie">Movie</option>
                                 <option value="tv_show">TV Show</option>
@@ -47,168 +126,145 @@
                             </select>
                         </div>
                         <div class="form-group">
-                            <label for="recCount">Count</label>
-                            <input type="number" id="recCount" min="1" max="20" value="5">
+                            <label for="libStatus">Status</label>
+                            <select id="libStatus">
+                                <option value="">All Statuses</option>
+                                <option value="unread" data-book="Unread" data-movie="Unwatched" data-tv_show="Unwatched" data-video_game="Unplayed" data-default="Not Started">Not Started</option>
+                                <option value="currently_consuming">In Progress</option>
+                                <option value="completed">Completed</option>
+                            </select>
                         </div>
-                        <div class="form-group">
-                            <label>&nbsp;</label>
-                            <label style="font-weight:normal; display:flex; align-items:center; gap:6px;">
-                                <input type="checkbox" id="recUseLlm" checked> Use AI reasoning
-                            </label>
-                        </div>
-                        <div class="form-group">
-                            <label>&nbsp;</label>
-                            <button type="submit" class="btn btn-primary">Get Recommendations</button>
+                        <div class="library-export-group">
+                            <div class="form-group">
+                                <label for="exportFormat">Format</label>
+                                <select id="exportFormat">
+                                    <option value="csv">CSV</option>
+                                    <option value="json">JSON</option>
+                                </select>
+                            </div>
+                            <button id="exportBtn" class="btn btn-secondary" disabled title="Select a content type to export">Export</button>
                         </div>
                     </div>
-                </form>
+                </div>
+                <div id="libraryResults"></div>
             </div>
-            <div id="recResults"></div>
-        </div>
 
-        <!-- Chat Tab -->
-        <div id="panel-chat" class="tab-panel">
-            <div class="chat-container">
-                <div class="chat-main">
-                    <div class="chat-messages" id="chatMessages">
-                        <div class="chat-welcome">
-                            <h3>Chat with your personal recommendation advisor</h3>
-                            <p>Ask for recommendations, mark items as completed, or tell me about your preferences.</p>
-                            <div class="chat-suggestions">
-                                <button class="suggestion-btn" onclick="window.sendChatSuggestion('What game should I play next?')">What game should I play next?</button>
-                                <button class="suggestion-btn" onclick="window.sendChatSuggestion('Recommend a book similar to my favorites')">Recommend a book similar to my favorites</button>
-                                <button class="suggestion-btn" onclick="window.sendChatSuggestion('What\'s in my backlog?')">What's in my backlog?</button>
+            <!-- Chat Tab -->
+            <div id="panel-chat" class="tab-panel">
+                <div class="chat-container">
+                    <div class="chat-main">
+                        <div class="chat-messages" id="chatMessages">
+                            <div class="chat-welcome">
+                                <h3>Chat with your recommendation advisor</h3>
+                                <p>Ask for recommendations, mark items as completed, or tell me about your preferences.</p>
+                                <div class="chat-suggestions">
+                                    <button class="suggestion-btn" onclick="window.sendChatSuggestion('What game should I play next?')">What game should I play next?</button>
+                                    <button class="suggestion-btn" onclick="window.sendChatSuggestion('Recommend a book similar to my favorites')">Recommend a book similar to my favorites</button>
+                                    <button class="suggestion-btn" onclick="window.sendChatSuggestion('What\'s in my backlog?')">What's in my backlog?</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="chat-input-container">
+                            <div class="chat-input-wrapper">
+                                <textarea id="chatInput" placeholder="Ask for recommendations, mark items as completed..." rows="1"></textarea>
+                                <button id="chatSendBtn" class="btn btn-primary chat-send-btn" title="Send message">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <line x1="22" y1="2" x2="11" y2="13"></line>
+                                        <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                                    </svg>
+                                </button>
+                            </div>
+                            <div class="chat-actions">
+                                <button id="chatResetBtn" class="btn btn-small btn-ghost" title="Reset conversation">Reset Chat</button>
                             </div>
                         </div>
                     </div>
-                    <div class="chat-input-container">
-                        <div class="chat-input-wrapper">
-                            <textarea id="chatInput" placeholder="Ask for recommendations, mark items as completed..." rows="1"></textarea>
-                            <button id="chatSendBtn" class="btn btn-primary chat-send-btn" title="Send message">
-                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
-                                </svg>
-                            </button>
+                    <div class="chat-sidebar">
+                        <div class="memory-panel">
+                            <h4>Memories</h4>
+                            <p class="memory-help">Your preferences and statements I remember.</p>
+                            <div id="memoryList" class="memory-list">
+                                <div class="empty-state">No memories yet</div>
+                            </div>
+                            <button id="addMemoryBtn" class="btn btn-small btn-secondary" style="margin-top: 8px;">Add Memory</button>
                         </div>
-                        <div class="chat-actions">
-                            <button id="chatResetBtn" class="btn btn-small btn-secondary" title="Reset conversation">Reset Chat</button>
+                        <div class="profile-panel">
+                            <h4>Your Profile</h4>
+                            <div id="profileSummary" class="profile-summary">
+                                <div class="empty-state">No profile generated</div>
+                            </div>
+                            <button id="regenerateProfileBtn" class="btn btn-small btn-secondary" style="margin-top: 8px;">Regenerate</button>
                         </div>
-                    </div>
-                </div>
-                <div class="chat-sidebar">
-                    <div class="memory-panel">
-                        <h4>Memories</h4>
-                        <p class="memory-help">Your preferences and statements I remember.</p>
-                        <div id="memoryList" class="memory-list">
-                            <div class="empty-state">No memories yet</div>
-                        </div>
-                        <button id="addMemoryBtn" class="btn btn-small btn-secondary" style="margin-top: 8px;">Add Memory</button>
-                    </div>
-                    <div class="profile-panel">
-                        <h4>Your Profile</h4>
-                        <div id="profileSummary" class="profile-summary">
-                            <div class="empty-state">No profile generated</div>
-                        </div>
-                        <button id="regenerateProfileBtn" class="btn btn-small btn-secondary" style="margin-top: 8px;">Regenerate</button>
                     </div>
                 </div>
             </div>
-        </div>
 
-        <!-- Library Tab -->
-        <div id="panel-library" class="tab-panel">
-            <div class="card">
-                <h2>Library</h2>
-                <div class="library-filters">
-                    <div class="form-group">
-                        <label for="libType">Type</label>
-                        <select id="libType">
+            <!-- Data Tab (Sync + Enrichment) -->
+            <div id="panel-data" class="tab-panel">
+                <div class="page-header">
+                    <h2>Data</h2>
+                    <p class="page-description">Sync sources and enrich metadata from external APIs.</p>
+                </div>
+                <div class="card">
+                    <h2>Sync Sources</h2>
+                    <div id="syncStatusContainer" style="display:none;">
+                        <div id="syncStatusMessage" class="sync-status-message sync-status-info"></div>
+                        <div id="syncProgressBar" class="sync-progress-bar" style="display:none;">
+                            <div class="sync-progress-fill"></div>
+                        </div>
+                    </div>
+                    <p class="help-text">
+                        Sync data from your configured sources. Only one sync can run at a time.
+                        Add sources in config.yaml and set enabled: true to see them here.
+                    </p>
+                    <div id="syncSourcesGrid" class="sync-grid">
+                        <div class="empty-state sync-loading">
+                            <span class="spinner"></span> Loading sync sources...
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card" id="enrichmentStatsCard">
+                    <h2>Metadata Enrichment</h2>
+                    <p class="help-text">
+                        Enrichment adds genres, tags, and descriptions from external APIs (TMDB, OpenLibrary, RAWG).
+                    </p>
+                    <div id="enrichmentStats" class="enrichment-stats">
+                        <div class="empty-state">
+                            <span class="spinner"></span> Loading enrichment stats...
+                        </div>
+                    </div>
+                    <div class="enrichment-actions" id="enrichmentActions">
+                        <button id="enrichAllBtn" class="btn btn-primary" onclick="triggerEnrichment()">Enrich</button>
+                        <button id="resetEnrichBtn" class="btn btn-warning" onclick="resetAndReenrich()">Reset & Re-enrich</button>
+                        <select id="enrichTypeSelect">
                             <option value="">All Types</option>
-                            <option value="book">Book</option>
-                            <option value="movie">Movie</option>
-                            <option value="tv_show">TV Show</option>
-                            <option value="video_game">Video Game</option>
+                            <option value="book">Books</option>
+                            <option value="movie">Movies</option>
+                            <option value="tv_show">TV Shows</option>
+                            <option value="video_game">Video Games</option>
                         </select>
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="retryNotFoundCheck"> Retry Not Found
+                        </label>
                     </div>
-                    <div class="form-group">
-                        <label for="libStatus">Status</label>
-                        <select id="libStatus">
-                            <option value="">All Statuses</option>
-                            <option value="unread" data-book="Unread" data-movie="Unwatched" data-tv_show="Unwatched" data-video_game="Unplayed" data-default="Not Started">Not Started</option>
-                            <option value="currently_consuming">In Progress</option>
-                            <option value="completed">Completed</option>
-                        </select>
-                    </div>
-                    <div class="form-group" style="display:flex; align-items:flex-end; gap:6px;">
-                        <select id="exportFormat" style="padding:8px 12px; border-radius:4px; border:1px solid #ddd;">
-                            <option value="csv">CSV</option>
-                            <option value="json">JSON</option>
-                        </select>
-                        <button id="exportBtn" class="btn btn-secondary" disabled title="Select a content type to export">Export</button>
-                    </div>
-                </div>
-            </div>
-            <div id="libraryResults"></div>
-        </div>
-
-        <!-- Preferences Tab -->
-        <div id="panel-preferences" class="tab-panel">
-            <div class="card">
-                <h2>Preferences</h2>
-                <div id="prefContent">
-                    <div class="empty-state"><p>Loading preferences...</p></div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Sync Tab -->
-        <div id="panel-sync" class="tab-panel">
-            <div class="card">
-                <h2>Sync Sources</h2>
-                <div id="syncStatusContainer" style="display:none;">
-                    <div id="syncStatusMessage" class="sync-status-message sync-status-info"></div>
-                    <div id="syncProgressBar" class="sync-progress-bar" style="display:none;">
-                        <div class="sync-progress-fill"></div>
-                    </div>
-                </div>
-                <p style="margin-bottom:16px; color:#666; font-size:0.9em;">
-                    Sync data from your configured sources. Only one sync can run at a time.
-                    Add sources in config.yaml and set enabled: true to see them here.
-                </p>
-                <div id="syncSourcesGrid" class="sync-grid">
-                    <div class="empty-state sync-loading">
-                        <span class="spinner"></span> Loading sync sources...
-                    </div>
+                    <div id="enrichmentStatus" class="enrichment-status"></div>
                 </div>
             </div>
 
-            <div class="card" id="enrichmentStatsCard">
-                <h2>Metadata Enrichment</h2>
-                <p style="margin-bottom:16px; color:#666; font-size:0.9em;">
-                    Enrichment adds genres, tags, and descriptions from external APIs (TMDB, OpenLibrary, RAWG).
-                </p>
-                <div id="enrichmentStats" class="enrichment-stats">
-                    <div class="empty-state">
-                        <span class="spinner"></span> Loading enrichment stats...
+            <!-- Preferences Tab -->
+            <div id="panel-preferences" class="tab-panel">
+                <div class="page-header">
+                    <h2>Preferences</h2>
+                    <p class="page-description">Customize how recommendations are generated.</p>
+                </div>
+                <div class="card">
+                    <div id="prefContent">
+                        <div class="empty-state"><p>Loading preferences...</p></div>
                     </div>
                 </div>
-                <div id="enrichmentActions" style="margin-top:16px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
-                    <button id="enrichAllBtn" class="sync-button" onclick="triggerEnrichment()">Enrich</button>
-                    <button id="resetEnrichBtn" class="sync-button" style="background:#ff9800;" onclick="resetAndReenrich()">Reset & Re-enrich</button>
-                    <select id="enrichTypeSelect" style="padding:8px 12px; border-radius:4px; border:1px solid #ddd;">
-                        <option value="">All Types</option>
-                        <option value="book">Books</option>
-                        <option value="movie">Movies</option>
-                        <option value="tv_show">TV Shows</option>
-                        <option value="video_game">Video Games</option>
-                    </select>
-                    <label style="display:flex; align-items:center; gap:4px; cursor:pointer;">
-                        <input type="checkbox" id="retryNotFoundCheck"> Retry Not Found
-                    </label>
-                </div>
-                <div id="enrichmentStatus" class="sync-status" style="margin-top:12px;"></div>
             </div>
-        </div>
+        </main>
     </div>
 
     <script src="/static/app.js"></script>
