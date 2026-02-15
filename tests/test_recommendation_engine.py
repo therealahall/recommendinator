@@ -981,3 +981,59 @@ class TestIgnoredItems:
 
         # No recommendations should be returned
         assert recommendations == []
+
+
+class TestContributingReferenceItemsRegression:
+    """Regression tests for contributing reference item selection."""
+
+    def test_same_content_type_preferred_for_references_regression(self) -> None:
+        """Regression test: reference items should prefer same content type.
+
+        Bug reported: All TV show recommendations said "Recommended because
+        you liked 'Firewatch'" (a video game) even though the user had
+        watched many TV shows with overlapping genres.
+
+        Root cause: _find_contributing_reference_items() scored items by
+        genre/creator overlap alone, without considering content type.
+        A video game with matching genres could consistently outrank
+        TV shows.
+
+        Fix: Added a same-content-type bonus (0.3) to the overlap score.
+        """
+        engine = RecommendationEngine.__new__(RecommendationEngine)
+
+        # Candidate is a TV show
+        candidate = ContentItem(
+            id="breaking_bad",
+            title="Breaking Bad",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genres": ["Drama", "Crime", "Thriller"]},
+        )
+
+        # User has consumed: a TV show with matching genres + a game with matching genres
+        consumed_tv = ContentItem(
+            id="the_wire",
+            title="The Wire",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            metadata={"genres": ["Drama", "Crime"]},
+        )
+        consumed_game = ContentItem(
+            id="firewatch",
+            title="Firewatch",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            metadata={"genres": ["Drama", "Adventure"]},
+        )
+
+        result = engine._find_contributing_reference_items(
+            candidate, [consumed_game, consumed_tv]
+        )
+
+        # The TV show (The Wire) should rank first because it's the same
+        # content type as the candidate, even though both share genres
+        assert len(result) >= 1
+        assert result[0].title == "The Wire"
