@@ -5,7 +5,11 @@ import io
 import json
 from typing import Any
 
-from src.ingestion.sources.generic_csv import CONTENT_TYPE_COLUMNS, CREATOR_FIELD
+from src.ingestion.sources.generic_csv import (
+    CONTENT_TYPE_COLUMNS,
+    CREATOR_FIELD,
+    STATUS_DISPLAY,
+)
 from src.models.content import ContentItem, ContentType, get_enum_value
 
 # Column order for CSV export, matching the templates
@@ -87,7 +91,9 @@ def _item_to_export_dict(
         "title": item.title,
         creator_field: item.author or "",
         "rating": item.rating if item.rating is not None else ("" if for_csv else None),
-        "status": get_enum_value(item.status),
+        "status": STATUS_DISPLAY.get(content_type_value, {}).get(
+            get_enum_value(item.status), get_enum_value(item.status)
+        ),
         "date_completed": (
             item.date_completed.isoformat() if item.date_completed else ""
         ),
