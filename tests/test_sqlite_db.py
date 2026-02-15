@@ -6,7 +6,11 @@ from pathlib import Path
 import pytest
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
-from src.storage.sqlite_db import SQLiteDB, normalize_title_for_matching
+from src.storage.sqlite_db import (
+    SQLiteDB,
+    _resolve_status_forward,
+    normalize_title_for_matching,
+)
 
 
 @pytest.fixture
@@ -701,3 +705,668 @@ class TestAdditiveGenreSaves:
         assert retrieved.metadata is not None
         assert "Science Fiction" in retrieved.metadata.get("genres", [])
         assert "space" in retrieved.metadata.get("tags", [])
+
+
+# ---------------------------------------------------------------------------
+# Non-destructive update tests
+# ---------------------------------------------------------------------------
+
+
+class TestResolveStatusForward:
+    """Unit tests for the forward-only status resolution helper."""
+
+    def test_none_existing_uses_incoming(self) -> None:
+        """When no existing status, any incoming status is accepted."""
+        assert _resolve_status_forward(None, "completed") == "completed"
+        assert _resolve_status_forward(None, "unread") == "unread"
+
+    def test_forward_progression_unread_to_consuming(self) -> None:
+        assert _resolve_status_forward("unread", "currently_consuming") == (
+            "currently_consuming"
+        )
+
+    def test_forward_progression_consuming_to_completed(self) -> None:
+        assert (
+            _resolve_status_forward("currently_consuming", "completed") == "completed"
+        )
+
+    def test_forward_progression_unread_to_completed(self) -> None:
+        assert _resolve_status_forward("unread", "completed") == "completed"
+
+    def test_same_status_keeps_same(self) -> None:
+        assert _resolve_status_forward("completed", "completed") == "completed"
+
+    def test_backward_blocked_completed_to_unread(self) -> None:
+        """Completed status should never regress to unread."""
+        assert _resolve_status_forward("completed", "unread") == "completed"
+
+    def test_backward_blocked_completed_to_consuming(self) -> None:
+        """Completed status should never regress to currently_consuming."""
+        assert (
+            _resolve_status_forward("completed", "currently_consuming") == "completed"
+        )
+
+    def test_backward_blocked_consuming_to_unread(self) -> None:
+        """Currently_consuming should never regress to unread."""
+        assert (
+            _resolve_status_forward("currently_consuming", "unread")
+            == "currently_consuming"
+        )
+
+
+class TestRatingSetOnce:
+    """Tests that rating is set once and never overwritten.
+
+    Bug reported: Re-syncing from a source without ratings would overwrite
+    existing ratings with None. Even syncing a different rating would
+    clobber user-curated data.
+
+    Fix: Rating is only written when the existing rating is None and the
+    incoming rating is not None.
+    """
+
+    def test_initial_save_sets_rating(self, temp_db: SQLiteDB) -> None:
+        """First save should set the rating normally."""
+        item = ContentItem(
+            id="book_1",
+            title="Dune",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+        )
+        db_id = temp_db.save_content_item(item)
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.rating == 5
+
+    def test_resync_does_not_overwrite_existing_rating(self, temp_db: SQLiteDB) -> None:
+        """Re-syncing with a different rating should not overwrite the original."""
+        item_v1 = ContentItem(
+            id="book_2",
+            title="Foundation",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+        )
+        db_id = temp_db.save_content_item(item_v1)
+
+        item_v2 = ContentItem(
+            id="book_2",
+            title="Foundation",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=3,
+        )
+        temp_db.save_content_item(item_v2)
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.rating == 5  # Original rating preserved
+
+    def test_resync_with_none_does_not_clear_rating(self, temp_db: SQLiteDB) -> None:
+        """Re-syncing with None rating should not clear existing rating."""
+        item_v1 = ContentItem(
+            id="book_3",
+            title="Neuromancer",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=4,
+        )
+        db_id = temp_db.save_content_item(item_v1)
+
+        item_v2 = ContentItem(
+            id="book_3",
+            title="Neuromancer",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=None,
+        )
+        temp_db.save_content_item(item_v2)
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.rating == 4  # Original rating preserved
+
+    def test_set_rating_when_existing_is_none(self, temp_db: SQLiteDB) -> None:
+        """Setting rating on item that initially had None should succeed."""
+        item_v1 = ContentItem(
+            id="book_4",
+            title="Snow Crash",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            rating=None,
+        )
+        db_id = temp_db.save_content_item(item_v1)
+
+        item_v2 = ContentItem(
+            id="book_4",
+            title="Snow Crash",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=4,
+        )
+        temp_db.save_content_item(item_v2)
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.rating == 4
+
+
+class TestReviewSetOnce:
+    """Tests that review is set once and never overwritten."""
+
+    def test_initial_save_sets_review(self, temp_db: SQLiteDB) -> None:
+        item = ContentItem(
+            id="book_r1",
+            title="Dune",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            review="Amazing book",
+        )
+        db_id = temp_db.save_content_item(item)
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.review == "Amazing book"
+
+    def test_resync_does_not_overwrite_existing_review(self, temp_db: SQLiteDB) -> None:
+        item_v1 = ContentItem(
+            id="book_r2",
+            title="Foundation",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            review="Classic sci-fi",
+        )
+        db_id = temp_db.save_content_item(item_v1)
+
+        item_v2 = ContentItem(
+            id="book_r2",
+            title="Foundation",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            review="Different opinion",
+        )
+        temp_db.save_content_item(item_v2)
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.review == "Classic sci-fi"
+
+    def test_resync_with_none_does_not_clear_review(self, temp_db: SQLiteDB) -> None:
+        item_v1 = ContentItem(
+            id="book_r3",
+            title="Neuromancer",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            review="Cyberpunk classic",
+        )
+        db_id = temp_db.save_content_item(item_v1)
+
+        item_v2 = ContentItem(
+            id="book_r3",
+            title="Neuromancer",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            review=None,
+        )
+        temp_db.save_content_item(item_v2)
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.review == "Cyberpunk classic"
+
+    def test_set_review_when_existing_is_none(self, temp_db: SQLiteDB) -> None:
+        item_v1 = ContentItem(
+            id="book_r4",
+            title="Snow Crash",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            review=None,
+        )
+        db_id = temp_db.save_content_item(item_v1)
+
+        item_v2 = ContentItem(
+            id="book_r4",
+            title="Snow Crash",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            review="Great read!",
+        )
+        temp_db.save_content_item(item_v2)
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.review == "Great read!"
+
+
+class TestStatusForwardOnly:
+    """Integration tests that status only advances forward in save_content_item.
+
+    Bug reported: Re-syncing from a source that reports "unread" would
+    revert a "completed" item back to "unread", losing completion history.
+
+    Fix: Status uses forward-only progression: unread → currently_consuming
+    → completed. A re-sync with an earlier status does not revert.
+    """
+
+    def test_status_advances_unread_to_completed(self, temp_db: SQLiteDB) -> None:
+        item = ContentItem(
+            id="s1",
+            title="Book A",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        )
+        db_id = temp_db.save_content_item(item)
+
+        item.status = ConsumptionStatus.COMPLETED
+        temp_db.save_content_item(item)
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.status == ConsumptionStatus.COMPLETED
+
+    def test_status_does_not_regress_completed_to_unread(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """Completed items should not be reverted to unread by re-sync."""
+        item_v1 = ContentItem(
+            id="s2",
+            title="Book B",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+        )
+        db_id = temp_db.save_content_item(item_v1)
+
+        item_v2 = ContentItem(
+            id="s2",
+            title="Book B",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        )
+        temp_db.save_content_item(item_v2)
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.status == ConsumptionStatus.COMPLETED
+
+    def test_status_does_not_regress_consuming_to_unread(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        item_v1 = ContentItem(
+            id="s3",
+            title="Book C",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.CURRENTLY_CONSUMING,
+        )
+        db_id = temp_db.save_content_item(item_v1)
+
+        item_v2 = ContentItem(
+            id="s3",
+            title="Book C",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        )
+        temp_db.save_content_item(item_v2)
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.status == ConsumptionStatus.CURRENTLY_CONSUMING
+
+    def test_multi_source_sync_order_independent(self, temp_db: SQLiteDB) -> None:
+        """Status should settle at highest value regardless of sync order.
+
+        Source A reports "unread", Source B reports "completed".
+        Result should be "completed" regardless of which syncs first.
+        """
+        # Source B syncs first (completed)
+        item_b = ContentItem(
+            id="s4",
+            title="Book D",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            source="source_b",
+        )
+        db_id = temp_db.save_content_item(item_b)
+
+        # Source A syncs second (unread)
+        item_a = ContentItem(
+            id="s4",
+            title="Book D",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            source="source_a",
+        )
+        temp_db.save_content_item(item_a)
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.status == ConsumptionStatus.COMPLETED
+
+
+class TestDateCompletedProtection:
+    """Tests that date_completed only advances forward.
+
+    Rule: date_completed is only updated when the incoming value is not None
+    AND it is later than the existing value.
+    """
+
+    def test_initial_save_sets_date(self, temp_db: SQLiteDB) -> None:
+        item = ContentItem(
+            id="d1",
+            title="Book E",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            date_completed=date(2025, 6, 15),
+        )
+        db_id = temp_db.save_content_item(item)
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.date_completed == date(2025, 6, 15)
+
+    def test_later_date_replaces_earlier(self, temp_db: SQLiteDB) -> None:
+        item_v1 = ContentItem(
+            id="d2",
+            title="Book F",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            date_completed=date(2025, 1, 1),
+        )
+        db_id = temp_db.save_content_item(item_v1)
+
+        item_v2 = ContentItem(
+            id="d2",
+            title="Book F",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            date_completed=date(2025, 6, 15),
+        )
+        temp_db.save_content_item(item_v2)
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.date_completed == date(2025, 6, 15)
+
+    def test_earlier_date_does_not_replace_later(self, temp_db: SQLiteDB) -> None:
+        item_v1 = ContentItem(
+            id="d3",
+            title="Book G",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            date_completed=date(2025, 6, 15),
+        )
+        db_id = temp_db.save_content_item(item_v1)
+
+        item_v2 = ContentItem(
+            id="d3",
+            title="Book G",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            date_completed=date(2024, 1, 1),
+        )
+        temp_db.save_content_item(item_v2)
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.date_completed == date(2025, 6, 15)
+
+    def test_none_date_does_not_clear_existing(self, temp_db: SQLiteDB) -> None:
+        item_v1 = ContentItem(
+            id="d4",
+            title="Book H",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            date_completed=date(2025, 3, 10),
+        )
+        db_id = temp_db.save_content_item(item_v1)
+
+        item_v2 = ContentItem(
+            id="d4",
+            title="Book H",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            date_completed=None,
+        )
+        temp_db.save_content_item(item_v2)
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.date_completed == date(2025, 3, 10)
+
+    def test_set_date_when_existing_is_none(self, temp_db: SQLiteDB) -> None:
+        item_v1 = ContentItem(
+            id="d5",
+            title="Book I",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            date_completed=None,
+        )
+        db_id = temp_db.save_content_item(item_v1)
+
+        item_v2 = ContentItem(
+            id="d5",
+            title="Book I",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            date_completed=date(2025, 6, 15),
+        )
+        temp_db.save_content_item(item_v2)
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.date_completed == date(2025, 6, 15)
+
+
+class TestNoneNeverOverwrites:
+    """Tests that None values never overwrite existing data (universal rule).
+
+    This is a cross-cutting concern: if an incoming sync lacks data for a
+    field that already has a value, the existing value must be preserved.
+    """
+
+    def test_none_source_does_not_overwrite(self, temp_db: SQLiteDB) -> None:
+        item_v1 = ContentItem(
+            id="n1",
+            title="Book J",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            source="goodreads",
+        )
+        db_id = temp_db.save_content_item(item_v1)
+
+        item_v2 = ContentItem(
+            id="n1",
+            title="Book J",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            source=None,
+        )
+        temp_db.save_content_item(item_v2)
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.source == "goodreads"
+
+
+class TestDetailTableFillOnly:
+    """Tests that detail table scalar fields are fill-only.
+
+    Enrichment is the source of truth for detail fields. Once a value
+    is set (by ingestion or enrichment), subsequent syncs should not
+    overwrite it. Only empty (None) fields get filled.
+    """
+
+    def test_description_not_overwritten(self, temp_db: SQLiteDB) -> None:
+        """Existing description should not be replaced by new sync."""
+        item_v1 = ContentItem(
+            id="detail_1",
+            title="Dune",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            metadata={"description": "A classic sci-fi novel about Arrakis."},
+        )
+        db_id = temp_db.save_content_item(item_v1)
+
+        item_v2 = ContentItem(
+            id="detail_1",
+            title="Dune",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            metadata={"description": "Different description from another source."},
+        )
+        temp_db.save_content_item(item_v2)
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.metadata is not None
+        assert retrieved.metadata.get("description") == (
+            "A classic sci-fi novel about Arrakis."
+        )
+
+    def test_author_not_overwritten(self, temp_db: SQLiteDB) -> None:
+        """Existing author should not be replaced by new sync."""
+        item_v1 = ContentItem(
+            id="detail_2",
+            title="Foundation",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            author="Isaac Asimov",
+        )
+        db_id = temp_db.save_content_item(item_v1)
+
+        item_v2 = ContentItem(
+            id="detail_2",
+            title="Foundation",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            author="I. Asimov",
+        )
+        temp_db.save_content_item(item_v2)
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.author == "Isaac Asimov"
+
+    def test_empty_field_gets_filled(self, temp_db: SQLiteDB) -> None:
+        """Fields that are None should be filled on subsequent sync."""
+        item_v1 = ContentItem(
+            id="detail_3",
+            title="Neuromancer",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            metadata={},
+        )
+        db_id = temp_db.save_content_item(item_v1)
+
+        item_v2 = ContentItem(
+            id="detail_3",
+            title="Neuromancer",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            metadata={
+                "description": "A cyberpunk novel.",
+                "pages": 271,
+                "publisher": "Ace Books",
+            },
+        )
+        temp_db.save_content_item(item_v2)
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.metadata is not None
+        assert retrieved.metadata.get("description") == "A cyberpunk novel."
+        assert retrieved.metadata.get("pages") == 271
+        assert retrieved.metadata.get("publisher") == "Ace Books"
+
+    def test_year_published_not_overwritten(self, temp_db: SQLiteDB) -> None:
+        """Numeric detail fields should also be fill-only."""
+        item_v1 = ContentItem(
+            id="detail_4",
+            title="Snow Crash",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            metadata={"year_published": 1992},
+        )
+        db_id = temp_db.save_content_item(item_v1)
+
+        item_v2 = ContentItem(
+            id="detail_4",
+            title="Snow Crash",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            metadata={"year_published": 2000},
+        )
+        temp_db.save_content_item(item_v2)
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.metadata is not None
+        assert retrieved.metadata.get("year_published") == 1992
+
+    def test_genres_still_merge_additively(self, temp_db: SQLiteDB) -> None:
+        """Genres should still merge (not fill-only) even with fill-only scalars."""
+        item_v1 = ContentItem(
+            id="detail_5",
+            title="Mass Effect",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.COMPLETED,
+            metadata={
+                "genres": ["RPG"],
+                "description": "Space RPG.",
+            },
+        )
+        db_id = temp_db.save_content_item(item_v1)
+
+        item_v2 = ContentItem(
+            id="detail_5",
+            title="Mass Effect",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.COMPLETED,
+            metadata={
+                "genres": ["Action"],
+                "description": "Different description.",
+            },
+        )
+        temp_db.save_content_item(item_v2)
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.metadata is not None
+        genres = retrieved.metadata.get("genres", [])
+        assert "RPG" in genres
+        assert "Action" in genres
+        # Description should be preserved (fill-only)
+        assert retrieved.metadata.get("description") == "Space RPG."
+
+    def test_remaining_metadata_json_merges_additively(self, temp_db: SQLiteDB) -> None:
+        """Remaining metadata (non-column keys) should merge with existing taking precedence."""
+        item_v1 = ContentItem(
+            id="detail_6",
+            title="Firefly",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.COMPLETED,
+            metadata={
+                "genres": ["Drama"],
+                "custom_key_1": "original_value",
+            },
+        )
+        db_id = temp_db.save_content_item(item_v1)
+
+        item_v2 = ContentItem(
+            id="detail_6",
+            title="Firefly",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.COMPLETED,
+            metadata={
+                "genres": ["Comedy"],
+                "custom_key_1": "overwrite_attempt",
+                "custom_key_2": "new_value",
+            },
+        )
+        temp_db.save_content_item(item_v2)
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.metadata is not None
+        # Existing key should be preserved
+        assert retrieved.metadata.get("custom_key_1") == "original_value"
+        # New key should be filled
+        assert retrieved.metadata.get("custom_key_2") == "new_value"

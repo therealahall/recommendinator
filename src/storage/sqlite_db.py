@@ -18,6 +18,36 @@ from src.models.content import (
 from src.storage.schema import create_schema, get_default_user_id
 from src.utils.list_merge import merge_string_lists
 
+# Status ordering for forward-only progression.
+# A status can only be overwritten by a status later in this sequence.
+_STATUS_ORDER: dict[str, int] = {
+    "unread": 0,
+    "currently_consuming": 1,
+    "completed": 2,
+}
+
+
+def _resolve_status_forward(existing_status: str | None, incoming_status: str) -> str:
+    """Return the later of two statuses (forward-only progression).
+
+    Status can only advance: unread → currently_consuming → completed.
+    A re-sync with an earlier status does not revert.
+
+    Args:
+        existing_status: Current status in the database (may be None).
+        incoming_status: Status from the incoming sync.
+
+    Returns:
+        The resolved status string.
+    """
+    if existing_status is None:
+        return incoming_status
+    existing_order = _STATUS_ORDER.get(existing_status, 0)
+    incoming_order = _STATUS_ORDER.get(incoming_status, 0)
+    if incoming_order >= existing_order:
+        return incoming_status
+    return existing_status
+
 
 def normalize_title_for_matching(title: str) -> str:
     """Normalize a title for duplicate detection.
@@ -202,27 +232,70 @@ class SQLiteDB:
 
             if existing_id:
                 # Update existing item in base table.
-                # Only update ignored when the source explicitly sets it
-                # (not None), so API plugins that have no concept of ignored
-                # don't overwrite a user's manual ignore setting.
-                set_clause = (
-                    "title = ?, status = ?, rating = ?, review = ?,"
-                    " date_completed = ?, source = ?,"
-                    " updated_at = CURRENT_TIMESTAMP"
+                # Rules:
+                #   - rating/review: set once — never overwrite existing values
+                #   - status: forward-only (unread → consuming → completed)
+                #   - date_completed: only if incoming is later than existing
+                #   - ignored: only when source explicitly sets it
+                #   - None incoming values never overwrite existing data
+                cursor.execute(
+                    "SELECT status, rating, review, date_completed"
+                    " FROM content_items WHERE id = ?",
+                    (existing_id,),
                 )
-                params: list[str | int | None] = [
-                    item.title,
-                    get_enum_value(item.status),
-                    item.rating,
-                    item.review,
-                    (item.date_completed.isoformat() if item.date_completed else None),
-                    item.source,
-                ]
+                existing_row = cursor.fetchone()
 
+                set_parts = ["updated_at = CURRENT_TIMESTAMP"]
+                params: list[str | int | None] = []
+
+                # Title: always update (identity field, always present)
+                set_parts.append("title = ?")
+                params.append(item.title)
+
+                # Source: update if incoming is not None
+                if item.source is not None:
+                    set_parts.append("source = ?")
+                    params.append(item.source)
+
+                # Status: only advance forward
+                existing_status = existing_row["status"] if existing_row else None
+                resolved_status = _resolve_status_forward(
+                    existing_status, get_enum_value(item.status)
+                )
+                set_parts.append("status = ?")
+                params.append(resolved_status)
+
+                # Rating: set once — only set if existing is None
+                existing_rating = existing_row["rating"] if existing_row else None
+                if existing_rating is None and item.rating is not None:
+                    set_parts.append("rating = ?")
+                    params.append(item.rating)
+
+                # Review: set once — only set if existing is None
+                existing_review = existing_row["review"] if existing_row else None
+                if existing_review is None and item.review is not None:
+                    set_parts.append("review = ?")
+                    params.append(item.review)
+
+                # Date completed: only if incoming is not None and later
+                if item.date_completed is not None:
+                    incoming_date_str = item.date_completed.isoformat()
+                    existing_date_str = (
+                        existing_row["date_completed"] if existing_row else None
+                    )
+                    if (
+                        existing_date_str is None
+                        or incoming_date_str > existing_date_str
+                    ):
+                        set_parts.append("date_completed = ?")
+                        params.append(incoming_date_str)
+
+                # Ignored: only when source explicitly sets it (existing behavior)
                 if item.ignored is not None:
-                    set_clause += ", ignored = ?"
+                    set_parts.append("ignored = ?")
                     params.append(1 if item.ignored else 0)
 
+                set_clause = ", ".join(set_parts)
                 params.append(existing_id)
                 cursor.execute(
                     f"UPDATE content_items SET {set_clause} WHERE id = ?",
@@ -431,9 +504,12 @@ class SQLiteDB:
     ) -> None:
         """Save item to appropriate type-specific detail table.
 
-        Genres and tags are merged additively: new values are combined with
-        existing values rather than replacing them.  This preserves enrichment
-        data across re-imports.
+        For existing rows, enrichment is the source of truth:
+        - Genres/tags: merged additively (new + existing)
+        - All other columns: fill-only (only set if existing value is None)
+        - Remaining metadata JSON: merged additively (existing keys preserved)
+
+        For new rows, all data from ingestion is used as-is.
 
         Args:
             cursor: Database cursor
@@ -450,7 +526,7 @@ class SQLiteDB:
         columns = config["columns"]
         known_keys = config["known_keys"]
 
-        # Check for an existing row so we can merge genres/tags
+        # Check for an existing row
         cursor.execute(
             f"SELECT * FROM {table} WHERE content_item_id = ?",  # noqa: S608
             (db_id,),
@@ -472,48 +548,65 @@ class SQLiteDB:
         values: list[Any] = [db_id]
 
         for col_name, meta_key, converter in columns:
+            # Compute the incoming value from metadata
+            new_value: Any
             if converter == "author":
-                values.append(item.author or metadata.get(meta_key))
+                new_value = item.author or metadata.get(meta_key)
             elif converter == "int":
-                values.append(self._safe_int(metadata.get(meta_key)))
+                new_value = self._safe_int(metadata.get(meta_key))
             elif converter == "json":
-                new_json = self._to_json_array(metadata.get(meta_key))
-                if col_name in self._MERGEABLE_COLUMNS and existing_data:
-                    existing_list = self._parse_json_list(existing_data.get(col_name))
-                    new_list = self._parse_json_list(new_json)
-                    merged = merge_string_lists(existing_list, new_list)
-                    values.append(json.dumps(merged) if merged else new_json)
-                else:
-                    values.append(new_json)
+                new_value = self._to_json_array(metadata.get(meta_key))
             elif converter == "json_or_genre":
                 raw = metadata.get("genres") or metadata.get("genre")
-                new_json = self._to_json_array(raw)
-                if col_name in self._MERGEABLE_COLUMNS and existing_data:
-                    existing_list = self._parse_json_list(existing_data.get(col_name))
-                    new_list = self._parse_json_list(new_json)
-                    merged = merge_string_lists(existing_list, new_list)
-                    values.append(json.dumps(merged) if merged else new_json)
-                else:
-                    values.append(new_json)
+                new_value = self._to_json_array(raw)
             elif converter == "json_or_platform":
                 raw = metadata.get("platforms") or metadata.get("platform")
-                values.append(self._to_json_array(raw))
+                new_value = self._to_json_array(raw)
             else:
-                values.append(metadata.get(meta_key))
+                new_value = metadata.get(meta_key)
+
+            # Decide final value based on existing data
+            if col_name in self._MERGEABLE_COLUMNS and existing_data:
+                # Genres/tags: additive merge
+                existing_list = self._parse_json_list(existing_data.get(col_name))
+                new_list = self._parse_json_list(new_value)
+                merged = merge_string_lists(existing_list, new_list)
+                values.append(json.dumps(merged) if merged else new_value)
+            elif existing_data and existing_data.get(col_name) is not None:
+                # Existing row has data — keep it (enrichment is source of truth)
+                values.append(existing_data[col_name])
+            else:
+                # No existing row, or existing value is None — use incoming
+                values.append(new_value)
+
             col_names.append(col_name)
 
-        # Remaining metadata as JSON
+        # Remaining metadata as JSON — merge additively with existing
         remaining_metadata = {
             key: val for key, val in metadata.items() if key not in known_keys
         }
-        metadata_json = json.dumps(remaining_metadata) if remaining_metadata else None
+        if existing_data and existing_data.get("metadata"):
+            existing_remaining: dict[str, Any] = {}
+            try:
+                parsed = json.loads(existing_data["metadata"])
+                if isinstance(parsed, dict):
+                    existing_remaining = parsed
+            except (json.JSONDecodeError, TypeError):
+                pass
+            # Existing keys take precedence, incoming fills gaps
+            merged_remaining = {**remaining_metadata, **existing_remaining}
+            metadata_json = json.dumps(merged_remaining) if merged_remaining else None
+        else:
+            metadata_json = (
+                json.dumps(remaining_metadata) if remaining_metadata else None
+            )
         col_names.append("metadata")
         values.append(metadata_json)
 
         placeholders = ", ".join("?" for _ in values)
         col_list = ", ".join(col_names)
         if existing_data:
-            # UPDATE existing row with merged data
+            # UPDATE existing row
             set_clauses = ", ".join(
                 f"{name} = ?" for name in col_names if name != "content_item_id"
             )
