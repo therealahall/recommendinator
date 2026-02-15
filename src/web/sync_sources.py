@@ -18,14 +18,28 @@ from src.ingestion.registry import get_registry
 logger = logging.getLogger(__name__)
 
 
+_UPPERCASE_WORDS: dict[str, str] = {
+    "tv": "TV",
+    "gog": "GOG",
+    "api": "API",
+    "id": "ID",
+    "csv": "CSV",
+    "json": "JSON",
+}
+
+
 def _humanize_source_id(source_id: str) -> str:
     """Convert a snake_case source ID to a human-readable title.
 
+    Applies title-casing with special handling for known acronyms.
+
     Examples:
-        ``finished_tv_shows`` → ``Finished Tv Shows``
+        ``finished_tv_shows`` → ``Finished TV Shows``
+        ``gog`` → ``GOG``
         ``my_books`` → ``My Books``
     """
-    return source_id.replace("_", " ").title()
+    words = source_id.split("_")
+    return " ".join(_UPPERCASE_WORDS.get(word, word.capitalize()) for word in words)
 
 
 @dataclass
