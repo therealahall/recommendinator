@@ -5,7 +5,12 @@ from unittest.mock import Mock
 import pytest
 
 from src.llm.embeddings import EmbeddingGenerator
-from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.models.content import (
+    ConsumptionStatus,
+    ContentItem,
+    ContentType,
+    get_enum_value,
+)
 from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.engine import RecommendationEngine
 from src.storage.manager import StorageManager
@@ -986,23 +991,22 @@ class TestIgnoredItems:
 class TestContributingReferenceItemsRegression:
     """Regression tests for contributing reference item selection."""
 
-    def test_same_content_type_preferred_for_references_regression(self) -> None:
-        """Regression test: reference items should prefer same content type.
+    def test_references_balanced_across_content_types_regression(self) -> None:
+        """Regression test: references should be balanced across content types.
 
         Bug reported: All TV show recommendations said "Recommended because
-        you liked 'Firewatch'" (a video game) even though the user had
-        watched many TV shows with overlapping genres.
+        you liked 'Firewatch'" (a video game) because it had the highest
+        genre overlap and dominated every reference list.
 
-        Root cause: _find_contributing_reference_items() scored items by
-        genre/creator overlap alone, without considering content type.
-        A video game with matching genres could consistently outrank
-        TV shows.
+        Root cause: _find_contributing_reference_items() returned items
+        sorted purely by overlap score, so one content type could fill
+        all slots.
 
-        Fix: Added a same-content-type bonus (0.3) to the overlap score.
+        Fix: Pick the best match from each content type first, then fill
+        remaining slots from overall ranking.
         """
         engine = RecommendationEngine.__new__(RecommendationEngine)
 
-        # Candidate is a TV show
         candidate = ContentItem(
             id="breaking_bad",
             title="Breaking Bad",
@@ -1011,7 +1015,6 @@ class TestContributingReferenceItemsRegression:
             metadata={"genres": ["Drama", "Crime", "Thriller"]},
         )
 
-        # User has consumed: a TV show with matching genres + a game with matching genres
         consumed_tv = ContentItem(
             id="the_wire",
             title="The Wire",
@@ -1028,12 +1031,21 @@ class TestContributingReferenceItemsRegression:
             rating=5,
             metadata={"genres": ["Drama", "Adventure"]},
         )
-
-        result = engine._find_contributing_reference_items(
-            candidate, [consumed_game, consumed_tv]
+        consumed_book = ContentItem(
+            id="gone_girl",
+            title="Gone Girl",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            metadata={"genres": ["Thriller", "Crime"]},
         )
 
-        # The TV show (The Wire) should rank first because it's the same
-        # content type as the candidate, even though both share genres
-        assert len(result) >= 1
-        assert result[0].title == "The Wire"
+        result = engine._find_contributing_reference_items(
+            candidate, [consumed_game, consumed_tv, consumed_book]
+        )
+
+        # All three content types should be represented
+        result_types = {get_enum_value(item.content_type) for item in result}
+        assert "tv_show" in result_types
+        assert "video_game" in result_types
+        assert "book" in result_types
