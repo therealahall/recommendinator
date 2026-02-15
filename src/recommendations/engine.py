@@ -573,28 +573,25 @@ class RecommendationEngine:
         self,
         candidate: ContentItem,
         all_consumed_items: list[ContentItem],
-        max_references: int = 5,
     ) -> list[ContentItem]:
         """Find consumed items that share metadata with *candidate*.
 
         Uses genre and creator overlap to identify which consumed items
-        are most related — no embeddings required.  Results are balanced
-        across content types: the best match from each type is selected
-        first, then remaining slots are filled by overall score.  This
-        ensures reasoning reflects cross-type influences (e.g., "because
-        you liked these books, shows, and games").
+        are most related — no embeddings required.  Returns up to 5 items
+        of the same content type as the candidate and up to 3 from each
+        other type, sorted by overlap score within each group.
 
         Args:
             candidate: The recommended item.
             all_consumed_items: All consumed items.
-            max_references: Maximum number of reference items to return.
 
         Returns:
-            Up to *max_references* contributing consumed items, balanced
-            across content types.
+            Contributing consumed items grouped by type: up to 5 same-type,
+            up to 3 per other type, ordered by overlap score.
         """
         candidate_genres = set(extract_genres(candidate))
         candidate_creator = extract_creator(candidate)
+        candidate_type = get_enum_value(candidate.content_type)
 
         scored: list[tuple[ContentItem, float]] = []
         for consumed in all_consumed_items:
@@ -625,43 +622,23 @@ class RecommendationEngine:
 
         scored.sort(key=lambda pair: pair[1], reverse=True)
 
-        # Balance across content types: pick the best from each type
-        # first, then fill remaining slots from the overall ranking.
-        selected: list[ContentItem] = []
-        seen_types: set[str] = set()
+        # Group by content type: up to 5 for same type, up to 3 for others.
+        same_type_limit = 5
+        other_type_limit = 3
 
+        by_type: dict[str, list[ContentItem]] = {}
         for item, _ in scored:
             item_type = get_enum_value(item.content_type)
-            if item_type not in seen_types:
-                selected.append(item)
-                seen_types.add(item_type)
-            if len(selected) >= max_references:
-                break
+            limit = same_type_limit if item_type == candidate_type else other_type_limit
+            type_list = by_type.setdefault(item_type, [])
+            if len(type_list) < limit:
+                type_list.append(item)
 
-        # Fill remaining slots from the overall best, skipping duplicates.
-        if len(selected) < max_references:
-            selected_set = {id(item) for item in selected}
-            for item, _ in scored:
-                if id(item) not in selected_set:
-                    selected.append(item)
-                    selected_set.add(id(item))
-                if len(selected) >= max_references:
-                    break
-
-        return selected
-
-    @staticmethod
-    def _format_reference_label(item: ContentItem) -> str:
-        """Format a reference item with its content type label.
-
-        Args:
-            item: Reference content item.
-
-        Returns:
-            Formatted string like "TV Show: Mythic Quest".
-        """
-        type_label = _CONTENT_TYPE_LABEL.get(get_enum_value(item.content_type), "Item")
-        return f"{type_label}: {item.title}"
+        # Return same type first, then others sorted by their best score.
+        result: list[ContentItem] = by_type.pop(candidate_type, [])
+        for content_type_items in by_type.values():
+            result.extend(content_type_items)
+        return result
 
     def _generate_reasoning(
         self,
@@ -673,9 +650,8 @@ class RecommendationEngine:
     ) -> str:
         """Generate reasoning for a recommendation.
 
-        Always surfaces 1-5 specific items that contributed to the recommendation.
-        Each reference includes its content type for clarity.
-        For multiple items, uses a multi-line bullet format for readability.
+        Groups references by content type.  For multiple types, each gets
+        its own bullet line with comma-separated titles.
 
         Args:
             item: Recommended item.
@@ -699,19 +675,41 @@ class RecommendationEngine:
                 if contrib not in influencing_items:
                     influencing_items.append(contrib)
 
-        # Take up to 5 items
-        influencing_items = influencing_items[:5]
-
         if influencing_items:
-            if len(influencing_items) == 1:
-                label = self._format_reference_label(influencing_items[0])
-                return f"Recommended because you liked '{label}'"
-            else:
-                lines = ["Recommended because you liked:"]
-                for ref in influencing_items:
-                    label = self._format_reference_label(ref)
-                    lines.append(f"  • {label}")
-                return "\n".join(lines)
+            # Group by content type
+            grouped: dict[str, list[str]] = {}
+            for ref in influencing_items:
+                type_label = _CONTENT_TYPE_LABEL.get(
+                    get_enum_value(ref.content_type), "Item"
+                )
+                label_key = type_label + "s"  # Pluralize for the header
+                titles = grouped.setdefault(label_key, [])
+                titles.append(self._strip_series_info(ref.title))
+
+            if len(grouped) == 1 and sum(len(v) for v in grouped.values()) == 1:
+                # Single item — inline format
+                type_label = next(iter(grouped))
+                title = next(iter(grouped.values()))[0]
+                # Use singular form (strip trailing "s")
+                return (
+                    f"Recommended because you liked {type_label.rstrip('s')}: {title}"
+                )
+
+            # Candidate's own content type always listed first
+            candidate_label = (
+                _CONTENT_TYPE_LABEL.get(get_enum_value(item.content_type), "Item") + "s"
+            )
+            ordered_keys = []
+            if candidate_label in grouped:
+                ordered_keys.append(candidate_label)
+            for key in grouped:
+                if key != candidate_label:
+                    ordered_keys.append(key)
+
+            lines = ["Recommended because you liked the following:"]
+            for type_label in ordered_keys:
+                lines.append(f"  - {type_label}: {', '.join(grouped[type_label])}")
+            return "\n".join(lines)
 
         # Fallback: try to mention a matching genre or author
         if item.author and preferences.get_author_score(item.author) > 0.5:
