@@ -991,8 +991,10 @@ class TestIgnoredItems:
 class TestContributingReferenceItemsRegression:
     """Regression tests for contributing reference item selection."""
 
-    def test_references_balanced_across_content_types_regression(self) -> None:
-        """Regression test: references should be balanced across content types.
+    def test_references_include_all_types_and_same_type_first_regression(
+        self,
+    ) -> None:
+        """Regression test: references should include all types, same type first.
 
         Bug reported: All TV show recommendations said "Recommended because
         you liked 'Firewatch'" (a video game) because it had the highest
@@ -1002,8 +1004,9 @@ class TestContributingReferenceItemsRegression:
         sorted purely by overlap score, so one content type could fill
         all slots.
 
-        Fix: Pick the best match from each content type first, then fill
-        remaining slots from overall ranking.
+        Fix: Return up to 5 same-type items first, then up to 3 per other
+        type.  Reasoning groups items by type with the candidate's type
+        listed first.
         """
         engine = RecommendationEngine.__new__(RecommendationEngine)
 
@@ -1049,3 +1052,6 @@ class TestContributingReferenceItemsRegression:
         assert "tv_show" in result_types
         assert "video_game" in result_types
         assert "book" in result_types
+
+        # Same type (TV show) should come first
+        assert get_enum_value(result[0].content_type) == "tv_show"
