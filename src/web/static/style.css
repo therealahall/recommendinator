@@ -5,37 +5,46 @@
    ============================================================ */
 
 :root {
-    /* Primary palette */
-    --accent: #3c6e71;
-    --accent-light: #7cc6c9;
-    --bg-page: #1a2f3d;
-    --bg-card: #253a47;
-    --bg-sidebar: #1f3340;
-    --white: #ffffff;
-    --gray: #d9d9d9;
+    /* Nord Polar Night — backgrounds */
+    --nord0: #2e3440;
+    --nord1: #3b4252;
+    --nord2: #434c5e;
+    --nord3: #4c566a;
 
-    /* Derived colors */
-    --bg-primary: var(--bg-page);
-    --bg-elevated: #2c4250;
-    --bg-input: #162630;
-    --bg-hover: #314a58;
-    --bg-active: rgba(60, 110, 113, 0.25);
+    /* Nord Snow Storm — text */
+    --nord4: #d8dee9;
+    --nord5: #e5e9f0;
+    --nord6: #eceff4;
+
+    /* Nord Frost — accents */
+    --accent: #81a1c1;
+    --accent-light: #88c0d0;
+    --accent-teal: #8fbcbb;
+
+    /* Layout backgrounds */
+    --bg-primary: var(--nord0);
+    --bg-card: var(--nord1);
+    --bg-sidebar: var(--nord0);
+    --bg-elevated: var(--nord2);
+    --bg-input: var(--nord0);
+    --bg-hover: var(--nord2);
+    --bg-active: rgba(129, 161, 193, 0.2);
 
     /* Text */
-    --text-primary: var(--white);
-    --text-secondary: var(--gray);
-    --text-muted: #8a9baa;
-    --text-inverse: #1a1a1a;
+    --text-primary: var(--nord6);
+    --text-secondary: var(--nord4);
+    --text-muted: #6d7a96;
+    --text-inverse: var(--nord0);
 
     /* Borders */
-    --border-default: #35505e;
-    --border-subtle: #2d4452;
+    --border-default: var(--nord3);
+    --border-subtle: var(--nord2);
     --border-focus: var(--accent);
 
-    /* Semantic */
-    --color-success: #66bb6a;
-    --color-warning: #b0976a;
-    --color-error: #ef5350;
+    /* Nord Aurora — semantic */
+    --color-success: #a3be8c;
+    --color-warning: #ebcb8b;
+    --color-error: #bf616a;
     --color-info: var(--accent);
 
     /* Spacing scale (4px rhythm) */
@@ -320,23 +329,23 @@ body {
 }
 
 .status-bar.success {
-    background: rgba(102, 187, 106, 0.1);
+    background: rgba(163, 190, 140, 0.1);
     color: var(--color-success);
-    border-color: rgba(102, 187, 106, 0.3);
+    border-color: rgba(163, 190, 140, 0.3);
     display: block;
 }
 
 .status-bar.error {
-    background: rgba(239, 83, 80, 0.1);
+    background: rgba(191, 97, 106, 0.1);
     color: var(--color-error);
-    border-color: rgba(239, 83, 80, 0.3);
+    border-color: rgba(191, 97, 106, 0.3);
     display: block;
 }
 
 .status-bar.loading {
-    background: rgba(60, 110, 113, 0.1);
+    background: rgba(129, 161, 193, 0.1);
     color: var(--accent);
-    border-color: rgba(60, 110, 113, 0.3);
+    border-color: rgba(129, 161, 193, 0.3);
     display: block;
 }
 
@@ -392,8 +401,8 @@ body {
 }
 
 .btn-primary:hover:not(:disabled) {
-    background: #4a8a8d;
-    border-color: #4a8a8d;
+    background: #8faec4;
+    border-color: #8faec4;
 }
 
 .btn-secondary {
@@ -409,23 +418,23 @@ body {
 }
 
 .btn-danger {
-    background: rgba(239, 83, 80, 0.15);
+    background: rgba(191, 97, 106, 0.15);
     color: var(--color-error);
-    border-color: rgba(239, 83, 80, 0.3);
+    border-color: rgba(191, 97, 106, 0.3);
 }
 
 .btn-danger:hover:not(:disabled) {
-    background: rgba(239, 83, 80, 0.25);
+    background: rgba(191, 97, 106, 0.25);
 }
 
 .btn-warning {
-    background: rgba(176, 151, 106, 0.15);
+    background: rgba(235, 203, 139, 0.15);
     color: var(--color-warning);
-    border-color: rgba(176, 151, 106, 0.3);
+    border-color: rgba(235, 203, 139, 0.3);
 }
 
 .btn-warning:hover:not(:disabled) {
-    background: rgba(176, 151, 106, 0.25);
+    background: rgba(235, 203, 139, 0.25);
 }
 
 .btn-ghost {
@@ -445,23 +454,23 @@ body {
 }
 
 .btn-ignore {
-    background: rgba(176, 151, 106, 0.15);
+    background: rgba(235, 203, 139, 0.15);
     color: var(--color-warning);
-    border-color: rgba(176, 151, 106, 0.3);
+    border-color: rgba(235, 203, 139, 0.3);
 }
 
 .btn-ignore:hover:not(:disabled) {
-    background: rgba(176, 151, 106, 0.25);
+    background: rgba(235, 203, 139, 0.25);
 }
 
 .btn-unignore {
-    background: rgba(102, 187, 106, 0.15);
+    background: rgba(163, 190, 140, 0.15);
     color: var(--color-success);
-    border-color: rgba(102, 187, 106, 0.3);
+    border-color: rgba(163, 190, 140, 0.3);
 }
 
 .btn-unignore:hover:not(:disabled) {
-    background: rgba(102, 187, 106, 0.25);
+    background: rgba(163, 190, 140, 0.25);
 }
 
 /* ============================================================
@@ -488,7 +497,7 @@ select:focus,
 textarea:focus {
     outline: none;
     border-color: var(--accent);
-    box-shadow: 0 0 0 2px rgba(60, 110, 113, 0.2);
+    box-shadow: 0 0 0 2px rgba(129, 161, 193, 0.2);
 }
 
 input[type="text"]::placeholder,
@@ -523,7 +532,7 @@ input[type="range"]::-webkit-slider-thumb {
 }
 
 input[type="range"]::-webkit-slider-thumb:hover {
-    background: #4a8a8d;
+    background: #8faec4;
 }
 
 input[type="range"]::-moz-range-thumb {
@@ -589,45 +598,45 @@ input[type="checkbox"] {
 }
 
 .badge-type {
-    background: rgba(60, 110, 113, 0.15);
+    background: rgba(129, 161, 193, 0.15);
     color: var(--accent-light);
-    border-color: rgba(60, 110, 113, 0.3);
+    border-color: rgba(129, 161, 193, 0.3);
 }
 
 .badge-status {
-    background: rgba(102, 187, 106, 0.1);
+    background: rgba(163, 190, 140, 0.1);
     color: var(--color-success);
-    border-color: rgba(102, 187, 106, 0.3);
+    border-color: rgba(163, 190, 140, 0.3);
 }
 
 .badge-status.unread {
-    background: rgba(176, 151, 106, 0.1);
+    background: rgba(235, 203, 139, 0.1);
     color: var(--color-warning);
-    border-color: rgba(176, 151, 106, 0.3);
+    border-color: rgba(235, 203, 139, 0.3);
 }
 
 .badge-status.currently_consuming {
-    background: rgba(60, 110, 113, 0.15);
+    background: rgba(129, 161, 193, 0.15);
     color: var(--accent);
-    border-color: rgba(60, 110, 113, 0.3);
+    border-color: rgba(129, 161, 193, 0.3);
 }
 
 .badge-rating {
-    background: rgba(124, 198, 201, 0.1);
+    background: rgba(136, 192, 208, 0.1);
     color: var(--accent-light);
-    border-color: rgba(124, 198, 201, 0.3);
+    border-color: rgba(136, 192, 208, 0.3);
 }
 
 .badge-ignored {
-    background: rgba(176, 151, 106, 0.1);
+    background: rgba(235, 203, 139, 0.1);
     color: var(--color-warning);
-    border-color: rgba(176, 151, 106, 0.3);
+    border-color: rgba(235, 203, 139, 0.3);
 }
 
 .badge-score {
-    background: rgba(60, 110, 113, 0.2);
+    background: rgba(129, 161, 193, 0.2);
     color: var(--accent-light);
-    border-color: rgba(60, 110, 113, 0.4);
+    border-color: rgba(129, 161, 193, 0.4);
     font-weight: 600;
     font-family: var(--font-mono);
     font-size: var(--text-xs);
@@ -1023,21 +1032,21 @@ input[type="checkbox"] {
 }
 
 .sync-status-info {
-    background: rgba(60, 110, 113, 0.1);
+    background: rgba(129, 161, 193, 0.1);
     color: var(--accent-light);
-    border-color: rgba(60, 110, 113, 0.3);
+    border-color: rgba(129, 161, 193, 0.3);
 }
 
 .sync-status-success {
-    background: rgba(102, 187, 106, 0.1);
+    background: rgba(163, 190, 140, 0.1);
     color: var(--color-success);
-    border-color: rgba(102, 187, 106, 0.3);
+    border-color: rgba(163, 190, 140, 0.3);
 }
 
 .sync-status-error {
-    background: rgba(239, 83, 80, 0.1);
+    background: rgba(191, 97, 106, 0.1);
     color: var(--color-error);
-    border-color: rgba(239, 83, 80, 0.3);
+    border-color: rgba(191, 97, 106, 0.3);
 }
 
 .sync-btn:disabled {
@@ -1175,10 +1184,10 @@ input[type="checkbox"] {
 .provider-badge {
     font-size: var(--text-xs);
     padding: 2px 8px;
-    background: rgba(60, 110, 113, 0.15);
+    background: rgba(129, 161, 193, 0.15);
     color: var(--accent-light);
     border-radius: var(--radius-sm);
-    border: 1px solid rgba(60, 110, 113, 0.3);
+    border: 1px solid rgba(129, 161, 193, 0.3);
 }
 
 .enrichment-actions {
@@ -1325,8 +1334,8 @@ input[type="checkbox"] {
     align-items: center;
     gap: var(--space-2);
     padding: var(--space-2) var(--space-3);
-    background: rgba(176, 151, 106, 0.1);
-    border: 1px solid rgba(176, 151, 106, 0.2);
+    background: rgba(235, 203, 139, 0.1);
+    border: 1px solid rgba(235, 203, 139, 0.2);
     border-radius: var(--radius-md);
     font-size: var(--text-xs);
     color: var(--color-warning);
@@ -1334,8 +1343,8 @@ input[type="checkbox"] {
 }
 
 .tool-indicator.success {
-    background: rgba(102, 187, 106, 0.1);
-    border-color: rgba(102, 187, 106, 0.2);
+    background: rgba(163, 190, 140, 0.1);
+    border-color: rgba(163, 190, 140, 0.2);
     color: var(--color-success);
 }
 
@@ -1470,7 +1479,7 @@ input[type="checkbox"] {
 
 .memory-item button.delete {
     color: var(--color-error);
-    border-color: rgba(239, 83, 80, 0.3);
+    border-color: rgba(191, 97, 106, 0.3);
 }
 
 .memory-item.inactive {
@@ -1503,17 +1512,17 @@ input[type="checkbox"] {
 
 .profile-tag {
     padding: 2px 8px;
-    background: rgba(60, 110, 113, 0.15);
+    background: rgba(129, 161, 193, 0.15);
     color: var(--accent-light);
     border-radius: var(--radius-sm);
     font-size: var(--text-xs);
-    border: 1px solid rgba(60, 110, 113, 0.3);
+    border: 1px solid rgba(129, 161, 193, 0.3);
 }
 
 .profile-tag.anti {
-    background: rgba(239, 83, 80, 0.1);
+    background: rgba(191, 97, 106, 0.1);
     color: var(--color-error);
-    border-color: rgba(239, 83, 80, 0.3);
+    border-color: rgba(191, 97, 106, 0.3);
 }
 
 /* Memory Modal */
