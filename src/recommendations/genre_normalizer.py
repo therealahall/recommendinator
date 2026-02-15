@@ -80,6 +80,19 @@ EXCLUDED_PATTERNS = [
     "wishlist",
 ]
 
+# Compound genre splits — expanded before individual normalization so
+# both constituent terms are preserved.
+COMPOUND_SPLITS: dict[str, list[str]] = {
+    "sci-fi & fantasy": ["science fiction", "fantasy"],
+    "sci-fi and fantasy": ["science fiction", "fantasy"],
+    "action & adventure": ["action", "adventure"],
+    "action and adventure": ["action", "adventure"],
+    "war & politics": ["war", "politics"],
+    "war and politics": ["war", "politics"],
+    "science fiction & fantasy": ["science fiction", "fantasy"],
+    "science fiction and fantasy": ["science fiction", "fantasy"],
+}
+
 # Normalization mappings (maps variations to canonical form)
 NORMALIZATIONS = {
     # Science Fiction variations
@@ -102,8 +115,6 @@ NORMALIZATIONS = {
     "suspense fiction": "thriller",
     "suspense": "thriller",
     # Action/Adventure
-    "action & adventure": "action",
-    "action and adventure": "action",
     "adventure fiction": "adventure",
     # Romance
     "romance fiction": "romance",
@@ -584,16 +595,29 @@ def normalize_term(term: str) -> str | None:
 def normalize_terms(terms: list[str]) -> list[str]:
     """Normalize a list of genre/tag terms.
 
+    Compound genres (e.g. ``"Sci-Fi & Fantasy"``) are split into their
+    constituent terms before individual normalization, so both components
+    are preserved.
+
     Args:
         terms: List of raw genre or tag strings
 
     Returns:
         List of normalized, deduplicated terms
     """
-    seen = set()
-    result = []
-
+    # Expand compound terms first
+    expanded: list[str] = []
     for term in terms:
+        lower = term.lower().strip()
+        if lower in COMPOUND_SPLITS:
+            expanded.extend(COMPOUND_SPLITS[lower])
+        else:
+            expanded.append(term)
+
+    seen: set[str] = set()
+    result: list[str] = []
+
+    for term in expanded:
         normalized = normalize_term(term)
         if normalized and normalized not in seen:
             seen.add(normalized)
