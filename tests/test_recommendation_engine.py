@@ -1167,3 +1167,174 @@ class TestCrossTypeClusterOverlapRegression:
         assert "Band of Brothers" in reference_titles
         # The Crown (drama only) should not match war + historical
         assert "The Crown" not in reference_titles
+
+
+class TestReasoningFormatting:
+    """Tests for natural language reasoning formatting.
+
+    The single-item reasoning should read "Recommended because you liked
+    the book Dune" instead of "Recommended because you liked Book: Dune".
+    """
+
+    def _make_engine(self) -> RecommendationEngine:
+        """Create an engine instance for testing reasoning generation."""
+        return RecommendationEngine.__new__(RecommendationEngine)
+
+    def _make_empty_preferences(self):
+        """Create empty user preferences for testing."""
+        from src.recommendations.preferences import PreferenceAnalyzer
+
+        return PreferenceAnalyzer(min_rating=4).analyze([])
+
+    def test_single_book_reference_natural_format(self) -> None:
+        """Single book reference should use 'the book' format."""
+        engine = self._make_engine()
+        preferences = self._make_empty_preferences()
+
+        item = ContentItem(
+            id="candidate",
+            title="Hyperion",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        )
+        reference = ContentItem(
+            id="ref",
+            title="Dune",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+        )
+
+        reasoning = engine._generate_reasoning(
+            item=item,
+            preferences=preferences,
+            metadata={},
+            adaptations=[],
+            contributing_items=[reference],
+        )
+
+        assert reasoning == "Recommended because you liked the book Dune"
+
+    def test_single_tv_show_reference_natural_format(self) -> None:
+        """Single TV show reference should use 'the TV show' format."""
+        engine = self._make_engine()
+        preferences = self._make_empty_preferences()
+
+        item = ContentItem(
+            id="candidate",
+            title="The Expanse",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+        )
+        reference = ContentItem(
+            id="ref",
+            title="Breaking Bad",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+        )
+
+        reasoning = engine._generate_reasoning(
+            item=item,
+            preferences=preferences,
+            metadata={},
+            adaptations=[],
+            contributing_items=[reference],
+        )
+
+        assert reasoning == "Recommended because you liked the TV show Breaking Bad"
+
+    def test_single_video_game_reference_natural_format(self) -> None:
+        """Single video game reference should use 'the video game' format."""
+        engine = self._make_engine()
+        preferences = self._make_empty_preferences()
+
+        item = ContentItem(
+            id="candidate",
+            title="Mass Effect 2",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+        )
+        reference = ContentItem(
+            id="ref",
+            title="Mass Effect",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+        )
+
+        reasoning = engine._generate_reasoning(
+            item=item,
+            preferences=preferences,
+            metadata={},
+            adaptations=[],
+            contributing_items=[reference],
+        )
+
+        assert reasoning == "Recommended because you liked the video game Mass Effect"
+
+    def test_single_movie_reference_natural_format(self) -> None:
+        """Single movie reference should use 'the movie' format."""
+        engine = self._make_engine()
+        preferences = self._make_empty_preferences()
+
+        item = ContentItem(
+            id="candidate",
+            title="Blade Runner 2049",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+        )
+        reference = ContentItem(
+            id="ref",
+            title="Blade Runner",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+        )
+
+        reasoning = engine._generate_reasoning(
+            item=item,
+            preferences=preferences,
+            metadata={},
+            adaptations=[],
+            contributing_items=[reference],
+        )
+
+        assert reasoning == "Recommended because you liked the movie Blade Runner"
+
+    def test_multiple_items_still_use_grouped_format(self) -> None:
+        """Multiple reference items should still use the grouped format."""
+        engine = self._make_engine()
+        preferences = self._make_empty_preferences()
+
+        item = ContentItem(
+            id="candidate",
+            title="Hyperion",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        )
+        ref_a = ContentItem(
+            id="ref_a",
+            title="Dune",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+        )
+        ref_b = ContentItem(
+            id="ref_b",
+            title="Foundation",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+        )
+
+        reasoning = engine._generate_reasoning(
+            item=item,
+            preferences=preferences,
+            metadata={},
+            adaptations=[],
+            contributing_items=[ref_a, ref_b],
+        )
+
+        assert "Recommended because you liked the following:" in reasoning
+        assert "Books:" in reasoning

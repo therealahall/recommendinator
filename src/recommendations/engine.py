@@ -45,6 +45,14 @@ _CONTENT_TYPE_LABEL: dict[str, str] = {
     "video_game": "Video Game",
 }
 
+# Natural-language labels for single-item reasoning (e.g. "the book Dune").
+_CONTENT_TYPE_NATURAL_LABEL: dict[str, str] = {
+    "book": "the book",
+    "movie": "the movie",
+    "tv_show": "the TV show",
+    "video_game": "the video game",
+}
+
 
 class RecommendationEngine:
     """Main recommendation engine.
@@ -720,13 +728,14 @@ class RecommendationEngine:
                 titles.append(self._strip_series_info(ref.title))
 
             if len(grouped) == 1 and sum(len(v) for v in grouped.values()) == 1:
-                # Single item — inline format
-                type_label = next(iter(grouped))
-                title = next(iter(grouped.values()))[0]
-                # Use singular form (strip trailing "s")
-                return (
-                    f"Recommended because you liked {type_label.rstrip('s')}: {title}"
+                # Single item — natural language format
+                ref_item = influencing_items[0]
+                ref_type_value = get_enum_value(ref_item.content_type)
+                natural_label = _CONTENT_TYPE_NATURAL_LABEL.get(
+                    ref_type_value, "the item"
                 )
+                title = next(iter(grouped.values()))[0]
+                return f"Recommended because you liked {natural_label} {title}"
 
             # Candidate's own content type always listed first
             candidate_label = (
