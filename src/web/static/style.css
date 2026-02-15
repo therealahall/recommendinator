@@ -33,7 +33,7 @@
     /* Text */
     --text-primary: var(--nord6);
     --text-secondary: var(--nord4);
-    --text-muted: #6d7a96;
+    --text-muted: #97abbe;
     --text-inverse: var(--nord0);
 
     /* Borders */
@@ -396,8 +396,9 @@ body {
 
 .btn-primary {
     background: var(--accent);
-    color: var(--text-primary);
+    color: var(--text-inverse);
     border-color: var(--accent);
+    font-weight: 600;
 }
 
 .btn-primary:hover:not(:disabled) {
@@ -510,12 +511,13 @@ select option {
     color: var(--text-primary);
 }
 
-/* Range slider */
+/* Range slider with gradient fill */
 input[type="range"] {
+    --value-percent: 50%;
     -webkit-appearance: none;
     appearance: none;
     height: 6px;
-    background: var(--border-default);
+    background: linear-gradient(90deg, var(--accent) 0%, var(--accent-light) var(--value-percent), var(--border-default) var(--value-percent));
     border-radius: 3px;
     outline: none;
 }
@@ -524,7 +526,7 @@ input[type="range"]::-webkit-slider-thumb {
     -webkit-appearance: none;
     width: 16px;
     height: 16px;
-    background: var(--accent);
+    background: var(--accent-light);
     border-radius: 50%;
     cursor: pointer;
     border: 2px solid var(--bg-card);
@@ -532,16 +534,22 @@ input[type="range"]::-webkit-slider-thumb {
 }
 
 input[type="range"]::-webkit-slider-thumb:hover {
-    background: #8faec4;
+    background: var(--nord6);
 }
 
 input[type="range"]::-moz-range-thumb {
     width: 16px;
     height: 16px;
-    background: var(--accent);
+    background: var(--accent-light);
     border-radius: 50%;
     cursor: pointer;
     border: 2px solid var(--bg-card);
+}
+
+input[type="range"]::-moz-range-progress {
+    background: linear-gradient(90deg, var(--accent), var(--accent-light));
+    height: 6px;
+    border-radius: 3px;
 }
 
 /* Checkbox */
@@ -792,6 +800,8 @@ input[type="checkbox"] {
     border-radius: var(--radius-lg);
     padding: var(--space-4);
     transition: border-color var(--transition-base);
+    display: flex;
+    flex-direction: column;
 }
 
 .library-item:hover {
@@ -811,24 +821,18 @@ input[type="checkbox"] {
     margin-bottom: var(--space-2);
 }
 
-.library-item-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: var(--space-2);
-    margin-bottom: var(--space-1);
-}
-
-.library-item-header h3 {
-    flex: 1;
-    margin-bottom: 0;
-}
-
 .library-item-badges {
     display: flex;
     flex-wrap: wrap;
     gap: var(--space-1);
     margin-top: var(--space-2);
+}
+
+.library-item-actions {
+    margin-top: auto;
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--border-subtle);
+    text-align: center;
 }
 
 .library-item.ignored {
@@ -1288,7 +1292,7 @@ input[type="checkbox"] {
 .chat-message.user {
     align-self: flex-end;
     background: var(--accent);
-    color: var(--text-primary);
+    color: var(--text-inverse);
     border-bottom-right-radius: var(--radius-sm);
 }
 

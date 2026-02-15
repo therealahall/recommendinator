@@ -472,14 +472,7 @@
         items.forEach(function (item) {
             var ignoredClass = item.ignored ? " ignored" : "";
             html += '<div class="library-item' + ignoredClass + '" data-db-id="' + (item.db_id || "") + '">';
-            html += '<div class="library-item-header">';
             html += '<h3>' + escapeHtml(item.title) + '</h3>';
-            if (item.db_id) {
-                var ignoreLabel = item.ignored ? "Unignore" : "Ignore";
-                var ignoreClass = item.ignored ? "btn-unignore" : "btn-ignore";
-                html += '<button class="btn btn-small ' + ignoreClass + ' ignore-lib-btn" data-db-id="' + item.db_id + '" data-ignored="' + (item.ignored ? "true" : "false") + '" title="' + ignoreLabel + ' this item">' + ignoreLabel + '</button>';
-            }
-            html += '</div>';
             if (item.author) {
                 html += '<div class="item-author">' + escapeHtml(item.author) + '</div>';
             }
@@ -493,6 +486,13 @@
                 html += '<span class="badge badge-ignored">Ignored</span>';
             }
             html += '</div>';
+            if (item.db_id) {
+                var ignoreLabel = item.ignored ? "Unignore" : "Ignore";
+                var ignoreClass = item.ignored ? "btn-unignore" : "btn-ignore";
+                html += '<div class="library-item-actions">';
+                html += '<button class="btn btn-small ' + ignoreClass + ' ignore-lib-btn" data-db-id="' + item.db_id + '" data-ignored="' + (item.ignored ? "true" : "false") + '" title="' + ignoreLabel + ' this item">' + ignoreLabel + '</button>';
+                html += '</div>';
+            }
             html += '</div>';
         });
         html += '</div>';
@@ -676,11 +676,13 @@
 
         container.innerHTML = html;
 
-        // Attach slider listeners
+        // Attach slider listeners with gradient fill
         container.querySelectorAll(".pref-slider").forEach(function (slider) {
+            updateSliderFill(slider);
             slider.addEventListener("input", function () {
                 var label = container.querySelector('[data-value-for="' + slider.dataset.scorer + '"]');
                 if (label) label.textContent = parseFloat(slider.value).toFixed(1);
+                updateSliderFill(slider);
             });
         });
 
@@ -1983,6 +1985,14 @@
         var div = document.createElement("div");
         div.textContent = text;
         return div.innerHTML;
+    }
+
+    function updateSliderFill(slider) {
+        var min = parseFloat(slider.min) || 0;
+        var max = parseFloat(slider.max) || 100;
+        var value = parseFloat(slider.value) || 0;
+        var percent = ((value - min) / (max - min)) * 100;
+        slider.style.setProperty("--value-percent", percent + "%");
     }
 
     // -----------------------------------------------------------------------
