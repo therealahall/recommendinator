@@ -429,9 +429,7 @@ class TestRAWGFranchiseExtraction:
         assert franchise_name == "Dragon Age"
         assert position == 3  # Third by release date
 
-    def test_fetch_game_series_empty_results(
-        self, provider: RAWGProvider
-    ) -> None:
+    def test_fetch_game_series_empty_results(self, provider: RAWGProvider) -> None:
         """Empty results return (None, None)."""
         mock_series_response = {"results": []}
 
@@ -554,7 +552,11 @@ class TestRAWGFranchiseExtraction:
 
         mock_search = {
             "results": [
-                {"id": 3328, "name": "The Witcher 3: Wild Hunt", "released": "2015-05-18"}
+                {
+                    "id": 3328,
+                    "name": "The Witcher 3: Wild Hunt",
+                    "released": "2015-05-18",
+                }
             ]
         }
         mock_game = {

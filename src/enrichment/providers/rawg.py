@@ -410,7 +410,7 @@ class RAWGProvider(EnrichmentProvider):
         try:
             response = requests.get(
                 f"{RAWG_API_BASE}/games/{game_id}/game-series",
-                params={"key": api_key, "page_size": 40},
+                params={"key": api_key, "page_size": "40"},
                 timeout=10,
             )
             response.raise_for_status()
@@ -429,9 +429,7 @@ class RAWGProvider(EnrichmentProvider):
 
             # Derive franchise name from common prefix of all titles
             all_titles = [
-                entry["name"]
-                for entry in series_results
-                if entry.get("name")
+                entry["name"] for entry in series_results if entry.get("name")
             ]
             franchise_name = _longest_common_prefix(all_titles)
             if not franchise_name:
@@ -454,9 +452,7 @@ class RAWGProvider(EnrichmentProvider):
 
         except requests.RequestException:
             # Franchise info is optional — don't fail enrichment
-            logger.warning(
-                f"Failed to fetch game-series for game {game_id}"
-            )
+            logger.warning(f"Failed to fetch game-series for game {game_id}")
             return (None, None)
 
     def _extract_year(self, date_str: str) -> int | None:
