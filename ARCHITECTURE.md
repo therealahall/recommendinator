@@ -94,7 +94,7 @@ RecommendationEngine
 3. Load per-user preference config (if available), apply scorer weight overrides
 4. Score all unconsumed candidates through the scoring pipeline
 5. Optionally blend vector-similarity scores when AI is enabled
-6. Apply series filtering (gap-finding for non-sequential season watching), diversity bonus (genre-hopping), and ranking adjustments
+6. Apply series filtering with substitution (when `series_in_order` is enabled): candidates that fail series ordering rules are replaced with the earliest recommendable entry from the same series, using the substitute's own pipeline score. Duplicate substitutions per series are prevented. Also apply diversity bonus (genre-hopping) and ranking adjustments
 7. Filter out items marked as `ignored`
 8. Generate ranked recommendations with score breakdowns
 
@@ -111,9 +111,14 @@ RecommendationEngine
 Background system that fills gaps in content metadata from external APIs.
 
 **Providers:**
-- TMDB — movies and TV shows
+- TMDB — movies and TV shows (includes collection/franchise extraction for series ordering)
 - OpenLibrary — books (no API key required)
-- RAWG — video games
+- RAWG — video games (includes franchise extraction via `game-series` endpoint)
+
+**Franchise/Series Extraction:**
+- TMDB: `belongs_to_collection` field provides franchise name and `series_position` via release-date ordering within the collection
+- RAWG: `GET /games/{id}/game-series` returns related games; franchise name is derived from the longest common prefix of all game titles (e.g., "Dragon Age: Origins" + "Dragon Age II" -> "Dragon Age"), and position is determined by release-date ordering. This handles games where title parsing fails (Dragon Age has no number, Kingdom Hearts uses decimals, Final Fantasy uses Roman numerals with slashes in HD remasters)
+- Both store `franchise` and `series_position` in `extra_metadata` for consumption by the series ordering system
 
 **Design:**
 - `EnrichmentProvider` ABC with auto-discovery from `src/enrichment/providers/`
