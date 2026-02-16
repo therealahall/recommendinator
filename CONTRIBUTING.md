@@ -161,6 +161,12 @@ templates/            # Import file templates (CSV, JSON, Markdown)
 docs/                 # Additional documentation
 ```
 
+## UI Themes
+
+The web interface supports custom themes. Each theme is a folder in `src/web/static/themes/` containing a `theme.json` metadata file and a `colors.css` file that overrides CSS color variables.
+
+See [docs/THEME_DEVELOPMENT.md](docs/THEME_DEVELOPMENT.md) for a complete guide on creating community themes.
+
 ## Questions?
 
 If you have questions about these guidelines, please open an issue.

@@ -22,6 +22,7 @@ Before starting work, read the relevant documentation:
 src/
 ├── cli/              # Click CLI interface
 ├── web/              # FastAPI web interface
+│   └── static/themes/  # UI themes (folder-per-theme, auto-discovered)
 ├── ingestion/        # Data ingestion
 │   └── sources/      # Source plugins (auto-discovered)
 ├── llm/              # Ollama interaction

@@ -147,6 +147,7 @@ Conversational AI chat interface, requires AI to be enabled.
 - Chat tab hidden when AI is disabled
 - SSE streaming for chat responses
 - Library export: `GET /api/items/export?type=book&format=csv` (CSV or JSON download)
+- **Themeable UI**: Folder-per-theme system in `src/web/static/themes/`. Each theme provides a `theme.json` metadata file and a `colors.css` override. Theme selection persisted via localStorage with server-configured default (`web.theme` in config). CSS uses `color-mix()` so themes only need to define core color variables. See `docs/THEME_DEVELOPMENT.md`.
 - Internal network only (no external exposure)
 
 ## Data Flow
