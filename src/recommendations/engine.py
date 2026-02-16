@@ -1,6 +1,7 @@
 """Main recommendation engine orchestrating all components."""
 
 import logging
+import random
 import re
 from typing import Any
 
@@ -52,6 +53,40 @@ _CONTENT_TYPE_NATURAL_LABEL: dict[str, str] = {
     "tv_show": "the TV show",
     "video_game": "the video game",
 }
+
+# Overlap scores within this tolerance are considered "close enough" to
+# shuffle, so the reference item order varies across runs.
+_SCORE_PROXIMITY_THRESHOLD = 0.05
+
+
+def _shuffle_close_scores(
+    items_with_scores: list[tuple[ContentItem, float]],
+) -> list[ContentItem]:
+    """Shuffle items that have similar overlap scores.
+
+    Items are already sorted by descending score.  Adjacent items whose
+    scores differ by at most ``_SCORE_PROXIMITY_THRESHOLD`` are grouped
+    together and shuffled, so the ordering feels dynamic across runs
+    while still respecting meaningful relevance differences.
+    """
+    if not items_with_scores:
+        return []
+
+    groups: list[list[ContentItem]] = [[items_with_scores[0][0]]]
+    group_score = items_with_scores[0][1]
+
+    for item, score in items_with_scores[1:]:
+        if group_score - score <= _SCORE_PROXIMITY_THRESHOLD:
+            groups[-1].append(item)
+        else:
+            groups.append([item])
+            group_score = score
+
+    result: list[ContentItem] = []
+    for group in groups:
+        random.shuffle(group)
+        result.extend(group)
+    return result
 
 
 class RecommendationEngine:
@@ -394,11 +429,6 @@ class RecommendationEngine:
         # Format recommendations
         # -----------------------------------------------------------------
         recommendations: list[dict[str, Any]] = []
-        # Track how many times each consumed item has been cited as a
-        # reference across all recommendations so far.  Items that have
-        # already appeared in _MAX_REFERENCE_APPEARANCES recommendations
-        # are filtered out to prevent the same few items dominating.
-        reference_usage_count: dict[str | None, int] = {}
 
         for item, score, rank_metadata in top_recommendations:
             item_meta = next(
@@ -416,14 +446,6 @@ class RecommendationEngine:
                 adaptations_list = item_meta.get("adaptations", []) or []
                 contributing_list = item_meta.get("contributing_items", []) or []
 
-            # Filter out references that have already appeared too often
-            filtered_contributing = [
-                ref
-                for ref in contributing_list
-                if reference_usage_count.get(ref.id, 0)
-                < self._MAX_REFERENCE_APPEARANCES
-            ]
-
             rec: dict[str, Any] = {
                 "item": item,
                 "score": score,
@@ -434,15 +456,11 @@ class RecommendationEngine:
                     preferences,
                     rank_metadata,
                     adaptations_list,
-                    filtered_contributing,
+                    contributing_list,
                 ),
                 "score_breakdown": breakdown_by_id.get(item.id, {}),
             }
             recommendations.append(rec)
-
-            # Update usage counts for references actually used
-            for ref in filtered_contributing:
-                reference_usage_count[ref.id] = reference_usage_count.get(ref.id, 0) + 1
 
         # -----------------------------------------------------------------
         # Optionally enhance with LLM reasoning
@@ -602,11 +620,6 @@ class RecommendationEngine:
     # cross-type lists across all recommendations.
     _CROSS_TYPE_MIN_OVERLAP = 0.25
 
-    # Maximum number of recommendations a single consumed item may appear
-    # in as a contributing reference.  Prevents the same few popular items
-    # (e.g., Fable Anniversary, Hades) from dominating every reasoning.
-    _MAX_REFERENCE_APPEARANCES = 2
-
     def _find_contributing_reference_items(
         self,
         candidate: ContentItem,
@@ -691,7 +704,7 @@ class RecommendationEngine:
         same_type_limit = 3
         other_type_limit = 3
 
-        by_type: dict[str, list[ContentItem]] = {}
+        by_type: dict[str, list[tuple[ContentItem, float]]] = {}
         for item, score in scored:
             item_type = get_enum_value(item.content_type)
             is_same_type = item_type == candidate_type
@@ -705,12 +718,16 @@ class RecommendationEngine:
 
             type_list = by_type.setdefault(item_type, [])
             if len(type_list) < limit:
-                type_list.append(item)
+                type_list.append((item, score))
 
         # Return same type first, then others sorted by their best score.
-        result: list[ContentItem] = by_type.pop(candidate_type, [])
+        # Within each group, shuffle items that have similar overlap scores
+        # so the order feels dynamic across runs.
+        result: list[ContentItem] = _shuffle_close_scores(
+            by_type.pop(candidate_type, [])
+        )
         for content_type_items in by_type.values():
-            result.extend(content_type_items)
+            result.extend(_shuffle_close_scores(content_type_items))
         return result
 
     def _generate_reasoning(
