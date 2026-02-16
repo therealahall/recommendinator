@@ -1553,3 +1553,138 @@ class TestShuffleCloseScores:
                 "close_1",
                 "close_2",
             }
+
+
+class TestVarietyAfterCompletion:
+    """Tests for the variety_after_completion toggle wiring."""
+
+    def test_variety_toggle_enables_diversity_bonus(
+        self, non_ai_engine, mock_storage
+    ) -> None:
+        """variety_after_completion=True should boost genre-diverse items.
+
+        When a user has completed Sci-Fi items and variety is enabled,
+        a Mystery candidate should be boosted relative to another Sci-Fi
+        candidate compared to when variety is disabled.
+        """
+        consumed = ContentItem(
+            id="consumed_1",
+            title="Dune",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            metadata={"genres": ["Science Fiction"]},
+        )
+
+        same_genre = ContentItem(
+            id="same_genre",
+            title="Foundation",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genres": ["Science Fiction"]},
+        )
+
+        different_genre = ContentItem(
+            id="diff_genre",
+            title="Sherlock Holmes",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genres": ["Mystery"]},
+        )
+
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: [consumed]
+        )
+        mock_storage.get_unconsumed_items = Mock(
+            return_value=[same_genre, different_genre]
+        )
+
+        # Without variety: get baseline scores
+        prefs_no_variety = UserPreferenceConfig(variety_after_completion=False)
+        recs_no_variety = non_ai_engine.generate_recommendations(
+            content_type=ContentType.BOOK,
+            count=2,
+            user_preference_config=prefs_no_variety,
+        )
+
+        # With variety: genre-diverse item should get a boost
+        prefs_with_variety = UserPreferenceConfig(variety_after_completion=True)
+        recs_with_variety = non_ai_engine.generate_recommendations(
+            content_type=ContentType.BOOK,
+            count=2,
+            user_preference_config=prefs_with_variety,
+        )
+
+        # Find the different-genre item's score in each run
+        def score_for(recs: list[dict], item_id: str) -> float:
+            for rec in recs:
+                if rec["item"].id == item_id:
+                    return rec["score"]
+            return 0.0
+
+        diff_score_without = score_for(recs_no_variety, "diff_genre")
+        diff_score_with = score_for(recs_with_variety, "diff_genre")
+
+        # The diversity bonus should increase the different-genre item's score
+        assert diff_score_with > diff_score_without, (
+            f"Expected variety toggle to boost genre-diverse item: "
+            f"without={diff_score_without:.4f}, with={diff_score_with:.4f}"
+        )
+
+    def test_variety_toggle_respects_explicit_diversity_weight(
+        self, non_ai_engine, mock_storage
+    ) -> None:
+        """When diversity_weight is explicitly set, variety toggle doesn't override it."""
+        consumed = ContentItem(
+            id="consumed_1",
+            title="Dune",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            metadata={"genres": ["Science Fiction"]},
+        )
+
+        candidate = ContentItem(
+            id="candidate_1",
+            title="Sherlock Holmes",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genres": ["Mystery"]},
+        )
+
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: [consumed]
+        )
+        mock_storage.get_unconsumed_items = Mock(return_value=[candidate])
+
+        # Explicit diversity_weight=0.5 with variety toggle on
+        prefs_explicit = UserPreferenceConfig(
+            variety_after_completion=True,
+            diversity_weight=0.5,
+        )
+        recs_explicit = non_ai_engine.generate_recommendations(
+            content_type=ContentType.BOOK,
+            count=1,
+            user_preference_config=prefs_explicit,
+        )
+
+        # Variety toggle on with default (0.0) diversity_weight → uses 0.2
+        prefs_default = UserPreferenceConfig(
+            variety_after_completion=True,
+            diversity_weight=0.0,
+        )
+        recs_default = non_ai_engine.generate_recommendations(
+            content_type=ContentType.BOOK,
+            count=1,
+            user_preference_config=prefs_default,
+        )
+
+        # The explicit 0.5 weight should produce a higher score than the
+        # default 0.2 that the toggle applies
+        score_explicit = recs_explicit[0]["score"]
+        score_default = recs_default[0]["score"]
+        assert score_explicit > score_default, (
+            f"Expected explicit diversity_weight=0.5 to produce higher score "
+            f"than default 0.2: explicit={score_explicit:.4f}, "
+            f"default={score_default:.4f}"
+        )
