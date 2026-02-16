@@ -851,3 +851,59 @@ class TestTitleEmbeddedSeriesDetection:
         assert result is not None
         assert result[0] == "Shin Megami Tensei"
         assert result[1] == 4
+
+
+class TestSeriesPositionMetadataRegression:
+    """Regression tests for series_position metadata key.
+
+    Bug reported: TMDB movies store series position as "series_position"
+    in extra_metadata, but _extract_from_metadata() didn't check that key.
+    Similarly, RAWG franchise extraction will store series_position for
+    video games whose titles can't be parsed (e.g., "Dragon Age Inquisition").
+
+    Root cause: The "series_position" key was missing from all three
+    content-type branches of _extract_from_metadata().
+
+    Fix: Added "series_position" as the first key in each branch so it
+    takes priority over other position keys.
+    """
+
+    def test_movie_with_series_position_from_tmdb_regression(self) -> None:
+        """Movie with series_position from TMDB collection is detected."""
+        metadata = {"series_name": "The Godfather Collection", "series_position": 2}
+        result = extract_series_info(
+            "The Godfather Part II", metadata, ContentType.MOVIE
+        )
+        assert result == ("The Godfather Collection", 2)
+
+    def test_game_with_series_position_and_franchise_regression(self) -> None:
+        """Game with series_position + franchise from RAWG is detected."""
+        metadata = {"franchise": "Dragon Age", "series_position": 3}
+        result = extract_series_info(
+            "Dragon Age Inquisition", metadata, ContentType.VIDEO_GAME
+        )
+        assert result == ("Dragon Age", 3)
+
+    def test_series_position_takes_priority_over_other_keys(self) -> None:
+        """series_position should take priority over part_number etc."""
+        metadata = {
+            "series_name": "Mass Effect",
+            "series_position": 2,
+            "part_number": 99,
+        }
+        result = extract_series_info("ME2", metadata, ContentType.VIDEO_GAME)
+        assert result == ("Mass Effect", 2)
+
+    def test_tv_show_series_position(self) -> None:
+        """TV show with series_position is detected correctly."""
+        metadata = {"series_name": "The Expanse", "series_position": 3}
+        result = extract_series_info(
+            "The Expanse", metadata, ContentType.TV_SHOW
+        )
+        assert result == ("The Expanse", 3)
+
+    def test_book_series_position(self) -> None:
+        """Book with series_position is detected correctly."""
+        metadata = {"series": "The Witcher", "series_position": 5}
+        result = extract_series_info("Blood of Elves", metadata, ContentType.BOOK)
+        assert result == ("The Witcher", 5)

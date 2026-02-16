@@ -207,7 +207,7 @@ def _extract_from_metadata(
 
     if content_type == ContentType.TV_SHOW:
         # For TV shows, look for season number
-        for key in ["season", "season_number", "season_num"]:
+        for key in ["series_position", "season", "season_number", "season_num"]:
             if key in metadata and metadata[key]:
                 try:
                     item_num = int(metadata[key])
@@ -217,6 +217,7 @@ def _extract_from_metadata(
     elif content_type == ContentType.MOVIE:
         # For movies, look for part/episode number
         for key in [
+            "series_position",
             "part",
             "part_number",
             "episode",
@@ -232,6 +233,7 @@ def _extract_from_metadata(
     else:
         # For books and games, look for series number
         for key in [
+            "series_position",
             "series_number",
             "series_num",
             "book_number",
