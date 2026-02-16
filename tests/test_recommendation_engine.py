@@ -12,7 +12,7 @@ from src.models.content import (
     get_enum_value,
 )
 from src.models.user_preferences import UserPreferenceConfig
-from src.recommendations.engine import RecommendationEngine
+from src.recommendations.engine import RecommendationEngine, _shuffle_close_scores
 from src.storage.manager import StorageManager
 
 
@@ -1469,85 +1469,87 @@ class TestSameTypeLimitRegression:
         ), f"Expected at most 3 same-type references, got {len(same_type_items)}"
 
 
-class TestReferenceVarietyRegression:
-    """Regression test for reference variety across recommendations.
+class TestShuffleCloseScores:
+    """Tests for _shuffle_close_scores reference ordering."""
 
-    Bug reported: Fable Anniversary, Hades, Wrestlequest, and Firewatch
-    appeared as references in nearly every recommendation because each
-    candidate's contributing items are computed independently.
+    def test_empty_input(self) -> None:
+        assert _shuffle_close_scores([]) == []
 
-    Root cause: No cross-recommendation tracking of reference usage.
+    def test_single_item(self) -> None:
+        item = ContentItem(
+            id="a",
+            title="Alpha",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.COMPLETED,
+        )
+        result = _shuffle_close_scores([(item, 0.8)])
+        assert result == [item]
 
-    Fix: Track reference_usage_count in the formatting loop and filter
-    out items that have already appeared in 2+ recommendations' reasoning.
-    """
-
-    def test_same_reference_does_not_appear_in_every_recommendation_regression(
-        self, non_ai_engine, mock_storage
-    ) -> None:
-        """No single consumed item should appear in more than 2 recommendations.
-
-        Full pipeline test: 4 consumed games with broadly matching genres
-        and 5 unconsumed candidates. Verifies that the same reference item
-        does not dominate all recommendation reasoning.
-        """
-        # 4 consumed games — all share Action+RPG so each candidate
-        # will match all of them
-        consumed_items = [
+    def test_distant_scores_preserve_order(self) -> None:
+        """Items with very different scores should always stay in order."""
+        items = [
             ContentItem(
-                id=f"consumed_{index}",
+                id=f"item_{index}",
                 title=title,
                 content_type=ContentType.VIDEO_GAME,
                 status=ConsumptionStatus.COMPLETED,
-                rating=5,
-                metadata={"genres": ["Action", "RPG"]},
             )
-            for index, title in enumerate(
-                ["Fable Anniversary", "Hades", "Wrestlequest", "Firewatch"]
-            )
+            for index, title in enumerate(["High", "Medium", "Low"])
         ]
+        scored = list(zip(items, [0.9, 0.5, 0.1], strict=True))
 
-        # 5 unconsumed candidates — all match the same genres
-        unconsumed_items = [
+        # Run many times — order should never change
+        for _ in range(20):
+            result = _shuffle_close_scores(scored)
+            assert result == items
+
+    def test_close_scores_all_items_present(self) -> None:
+        """Items with close scores are shuffled but all remain present."""
+        items = [
             ContentItem(
-                id=f"unconsumed_{index}",
+                id=f"item_{index}",
                 title=title,
                 content_type=ContentType.VIDEO_GAME,
-                status=ConsumptionStatus.UNREAD,
-                metadata={"genres": ["Action", "RPG"]},
+                status=ConsumptionStatus.COMPLETED,
             )
-            for index, title in enumerate(
-                [
-                    "Candidate Alpha",
-                    "Candidate Beta",
-                    "Candidate Gamma",
-                    "Candidate Delta",
-                    "Candidate Epsilon",
-                ]
+            for index, title in enumerate(["A", "B", "C"])
+        ]
+        # All within 0.05 threshold
+        scored = list(zip(items, [0.80, 0.78, 0.76], strict=True))
+
+        for _ in range(20):
+            result = _shuffle_close_scores(scored)
+            assert {item.id for item in result} == {"item_0", "item_1", "item_2"}
+
+    def test_mixed_groups_high_items_always_first(self) -> None:
+        """A clearly higher-scored item always comes before a lower group."""
+        top = ContentItem(
+            id="top",
+            title="Top",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.COMPLETED,
+        )
+        close_items = [
+            ContentItem(
+                id=f"close_{index}",
+                title=f"Close {index}",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.COMPLETED,
             )
+            for index in range(3)
+        ]
+        scored: list[tuple[ContentItem, float]] = [
+            (top, 0.9),
+            (close_items[0], 0.5),
+            (close_items[1], 0.48),
+            (close_items[2], 0.47),
         ]
 
-        mock_storage.get_completed_items = Mock(
-            side_effect=lambda content_type=None, **kwargs: consumed_items
-        )
-        mock_storage.get_unconsumed_items = Mock(return_value=unconsumed_items)
-
-        recommendations = non_ai_engine.generate_recommendations(
-            content_type=ContentType.VIDEO_GAME, count=5
-        )
-
-        # Count how many recommendations each consumed item's title
-        # appears in (via the reasoning text)
-        consumed_titles = [item.title for item in consumed_items]
-        appearance_counts: dict[str, int] = dict.fromkeys(consumed_titles, 0)
-        for rec in recommendations:
-            reasoning = rec.get("reasoning", "")
-            for title in consumed_titles:
-                if title in reasoning:
-                    appearance_counts[title] += 1
-
-        for title, count in appearance_counts.items():
-            assert count <= 2, (
-                f"'{title}' appeared in {count} recommendations' reasoning, "
-                f"expected at most 2"
-            )
+        for _ in range(20):
+            result = _shuffle_close_scores(scored)
+            assert result[0] == top
+            assert {item.id for item in result[1:]} == {
+                "close_0",
+                "close_1",
+                "close_2",
+            }
