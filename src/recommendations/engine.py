@@ -32,6 +32,8 @@ from src.storage.manager import StorageManager
 from src.utils.series import (
     build_series_tracking,
     expand_tv_shows_to_seasons,
+    extract_series_info,
+    find_earliest_recommendable,
     inject_seasons_watched_tracking,
     should_recommend_item,
 )
@@ -343,13 +345,25 @@ class RecommendationEngine:
         top_candidates: list[ScoredCandidate] = pipeline_scored[: count * 3]
 
         # -----------------------------------------------------------------
-        # Filter candidates based on series rules (when enabled)
+        # Filter / substitute candidates based on series rules (when enabled)
         # -----------------------------------------------------------------
         apply_series_rules = (
             user_preference_config is None or user_preference_config.series_in_order
         )
 
         if apply_series_rules:
+            # Build a lookup of all scored candidates by item ID so that a
+            # substitute's own pipeline score can be reused.
+            scored_by_id: dict[str | None, ScoredCandidate] = {
+                scored.item.id: scored for scored in pipeline_scored
+            }
+            # Track which series have already been substituted to avoid
+            # duplicate substitutions (e.g., two FF entries in top_candidates
+            # should produce only one substitution).
+            substituted_series: set[str] = set()
+            # Track item IDs already in the filtered list to avoid duplicates.
+            seen_ids: set[str | None] = set()
+
             filtered_candidates: list[ScoredCandidate] = []
             for scored_candidate in top_candidates:
                 if should_recommend_item(
@@ -357,11 +371,42 @@ class RecommendationEngine:
                     series_tracking,
                     unconsumed_items=unconsumed_items,
                 ):
-                    filtered_candidates.append(scored_candidate)
+                    if scored_candidate.item.id not in seen_ids:
+                        filtered_candidates.append(scored_candidate)
+                        seen_ids.add(scored_candidate.item.id)
                 else:
-                    logger.debug(
-                        f"Filtered out {scored_candidate.item.title} - doesn't meet series recommendation rules"
+                    # Attempt to substitute with the earliest recommendable
+                    # entry from the same series.
+                    series_info = extract_series_info(
+                        scored_candidate.item.title,
+                        scored_candidate.item.metadata,
+                        scored_candidate.item.content_type,
                     )
+                    if series_info:
+                        candidate_series_name = series_info[0]
+                        if candidate_series_name not in substituted_series:
+                            substitute = find_earliest_recommendable(
+                                candidate_series_name,
+                                series_tracking,
+                                unconsumed_items,
+                            )
+                            if substitute is not None and substitute.id not in seen_ids:
+                                # Use the substitute's own pipeline score
+                                substitute_scored = scored_by_id.get(substitute.id)
+                                if substitute_scored is not None:
+                                    filtered_candidates.append(substitute_scored)
+                                    seen_ids.add(substitute.id)
+                                    logger.debug(
+                                        f"Substituted {scored_candidate.item.title} "
+                                        f"with {substitute.title} (earliest in "
+                                        f"{candidate_series_name})"
+                                    )
+                            substituted_series.add(candidate_series_name)
+                    else:
+                        logger.debug(
+                            f"Filtered out {scored_candidate.item.title} - "
+                            f"doesn't meet series recommendation rules"
+                        )
 
             if not filtered_candidates:
                 logger.warning(

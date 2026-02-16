@@ -1688,3 +1688,195 @@ class TestVarietyAfterCompletion:
             f"than default 0.2: explicit={score_explicit:.4f}, "
             f"default={score_default:.4f}"
         )
+
+
+class TestEngineSeriesSubstitutionRegression:
+    """Regression tests for series substitution in the recommendation engine.
+
+    Bug reported: Final Fantasy XII (#12) was recommended as #1 but FFX (#10)
+    was #4; Kingdom Hearts III is #5 but KH 2.8 is #7; Dragon Age Inquisition
+    recommended without playing Dragon Age 2.
+
+    Root cause: The engine filtered out later series entries entirely, rather
+    than substituting them with the earliest playable entry.
+
+    Fix: When a candidate fails should_recommend_item(), the engine now finds
+    the earliest recommendable entry in the same series and substitutes it,
+    using the substitute's own pipeline score.
+    """
+
+    def test_later_entry_substituted_with_earliest_regression(
+        self, non_ai_engine, mock_storage
+    ) -> None:
+        """FF XII should be substituted with earliest unplayed FF entry.
+
+        Bug: FF XII appeared as recommendation #1, FF X was #4.
+        Fix: FF XII is substituted with the earliest recommendable FF entry.
+        """
+        consumed = ContentItem(
+            id="consumed",
+            title="Chrono Trigger",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            metadata={"genres": ["RPG"]},
+        )
+
+        ff10 = ContentItem(
+            id="ff10",
+            title="Final Fantasy X",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+            metadata={
+                "franchise": "Final Fantasy",
+                "series_position": 10,
+                "genres": ["RPG"],
+            },
+        )
+        ff12 = ContentItem(
+            id="ff12",
+            title="Final Fantasy XII",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+            metadata={
+                "franchise": "Final Fantasy",
+                "series_position": 12,
+                "genres": ["RPG"],
+            },
+        )
+        other_game = ContentItem(
+            id="other",
+            title="Standalone RPG",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genres": ["RPG"]},
+        )
+
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: [consumed]
+        )
+        mock_storage.get_unconsumed_items = Mock(return_value=[ff12, ff10, other_game])
+
+        recommendations = non_ai_engine.generate_recommendations(
+            content_type=ContentType.VIDEO_GAME,
+            count=5,
+        )
+
+        recommended_ids = [rec["item"].id for rec in recommendations]
+        # FF X should appear (earliest recommendable FF entry)
+        assert (
+            "ff10" in recommended_ids
+        ), f"FF X should be substituted in; got {recommended_ids}"
+        # FF XII should NOT appear (it fails series rules)
+        assert (
+            "ff12" not in recommended_ids
+        ), f"FF XII should be filtered out; got {recommended_ids}"
+
+    def test_series_in_order_false_skips_filtering(
+        self, non_ai_engine, mock_storage
+    ) -> None:
+        """series_in_order=False should skip all series filtering/substitution."""
+        consumed = ContentItem(
+            id="consumed",
+            title="Chrono Trigger",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            metadata={"genres": ["RPG"]},
+        )
+
+        ff12 = ContentItem(
+            id="ff12",
+            title="Final Fantasy XII",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+            metadata={
+                "franchise": "Final Fantasy",
+                "series_position": 12,
+                "genres": ["RPG"],
+            },
+        )
+
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: [consumed]
+        )
+        mock_storage.get_unconsumed_items = Mock(return_value=[ff12])
+
+        user_config = UserPreferenceConfig(series_in_order=False)
+        recommendations = non_ai_engine.generate_recommendations(
+            content_type=ContentType.VIDEO_GAME,
+            count=5,
+            user_preference_config=user_config,
+        )
+
+        recommended_ids = [rec["item"].id for rec in recommendations]
+        # FF XII should appear (no filtering)
+        assert "ff12" in recommended_ids
+
+    def test_duplicate_substitutions_prevented_regression(
+        self, non_ai_engine, mock_storage
+    ) -> None:
+        """Two FF entries in top candidates produce only one substitution.
+
+        Bug: Both FF XII and FF XV failing series rules could cause FF X
+        to appear twice in recommendations.
+        Fix: substituted_series set prevents duplicate substitutions.
+        """
+        consumed = ContentItem(
+            id="consumed",
+            title="Chrono Trigger",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            metadata={"genres": ["RPG"]},
+        )
+
+        ff10 = ContentItem(
+            id="ff10",
+            title="Final Fantasy X",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+            metadata={
+                "franchise": "Final Fantasy",
+                "series_position": 10,
+                "genres": ["RPG"],
+            },
+        )
+        ff12 = ContentItem(
+            id="ff12",
+            title="Final Fantasy XII",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+            metadata={
+                "franchise": "Final Fantasy",
+                "series_position": 12,
+                "genres": ["RPG"],
+            },
+        )
+        ff15 = ContentItem(
+            id="ff15",
+            title="Final Fantasy XV",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+            metadata={
+                "franchise": "Final Fantasy",
+                "series_position": 15,
+                "genres": ["RPG"],
+            },
+        )
+
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: [consumed]
+        )
+        mock_storage.get_unconsumed_items = Mock(return_value=[ff15, ff12, ff10])
+
+        recommendations = non_ai_engine.generate_recommendations(
+            content_type=ContentType.VIDEO_GAME,
+            count=5,
+        )
+
+        recommended_ids = [rec["item"].id for rec in recommendations]
+        # FF X should appear exactly once
+        assert (
+            recommended_ids.count("ff10") == 1
+        ), f"FF X should appear exactly once; got {recommended_ids}"

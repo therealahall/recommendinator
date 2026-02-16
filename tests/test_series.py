@@ -7,6 +7,7 @@ from src.utils.series import (
     build_series_tracking,
     expand_tv_shows_to_seasons,
     extract_series_info,
+    find_earliest_recommendable,
     get_series_item_number,
     get_series_name,
     inject_seasons_watched_tracking,
@@ -897,9 +898,7 @@ class TestSeriesPositionMetadataRegression:
     def test_tv_show_series_position(self) -> None:
         """TV show with series_position is detected correctly."""
         metadata = {"series_name": "The Expanse", "series_position": 3}
-        result = extract_series_info(
-            "The Expanse", metadata, ContentType.TV_SHOW
-        )
+        result = extract_series_info("The Expanse", metadata, ContentType.TV_SHOW)
         assert result == ("The Expanse", 3)
 
     def test_book_series_position(self) -> None:
@@ -907,3 +906,100 @@ class TestSeriesPositionMetadataRegression:
         metadata = {"series": "The Witcher", "series_position": 5}
         result = extract_series_info("Blood of Elves", metadata, ContentType.BOOK)
         assert result == ("The Witcher", 5)
+
+
+class TestFindEarliestRecommendable:
+    """Tests for find_earliest_recommendable series substitution."""
+
+    def test_finds_earliest_item_by_series_number(self) -> None:
+        """Returns the earliest unconsumed item that passes series rules."""
+        unconsumed = [
+            ContentItem(
+                id="ff12",
+                title="Final Fantasy XII",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.UNREAD,
+                metadata={"franchise": "Final Fantasy", "series_position": 12},
+            ),
+            ContentItem(
+                id="ff10",
+                title="Final Fantasy X",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.UNREAD,
+                metadata={"franchise": "Final Fantasy", "series_position": 10},
+            ),
+            ContentItem(
+                id="ff7",
+                title="Final Fantasy VII",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.UNREAD,
+                metadata={"franchise": "Final Fantasy", "series_position": 7},
+            ),
+        ]
+        # User hasn't played any FF games
+        series_tracking: dict[str, set[int]] = {}
+
+        result = find_earliest_recommendable(
+            "Final Fantasy", series_tracking, unconsumed
+        )
+        assert result is not None
+        assert result.id == "ff7"
+
+    def test_returns_next_item_after_consumed(self) -> None:
+        """Returns the next item in sequence when previous ones are consumed."""
+        unconsumed = [
+            ContentItem(
+                id="me3",
+                title="Mass Effect 3 (Mass Effect, #3)",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.UNREAD,
+            ),
+            ContentItem(
+                id="me2",
+                title="Mass Effect 2 (Mass Effect, #2)",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.UNREAD,
+            ),
+        ]
+        # User completed ME1
+        series_tracking = {"Mass Effect": {1}}
+
+        result = find_earliest_recommendable("Mass Effect", series_tracking, unconsumed)
+        # ME2 should be returned (next after completed ME1)
+        assert result is not None
+        assert result.id == "me2"
+
+    def test_returns_none_for_unknown_series(self) -> None:
+        """Returns None when no unconsumed items belong to the series."""
+        unconsumed = [
+            ContentItem(
+                id="other",
+                title="Unrelated Game",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.UNREAD,
+            ),
+        ]
+        result = find_earliest_recommendable("Final Fantasy", {}, unconsumed)
+        assert result is None
+
+    def test_returns_first_item_when_series_not_started(self) -> None:
+        """Returns item #1 when user hasn't started the series."""
+        unconsumed = [
+            ContentItem(
+                id="da3",
+                title="Dragon Age: Inquisition",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.UNREAD,
+                metadata={"franchise": "Dragon Age", "series_position": 3},
+            ),
+            ContentItem(
+                id="da1",
+                title="Dragon Age: Origins",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.UNREAD,
+                metadata={"franchise": "Dragon Age", "series_position": 1},
+            ),
+        ]
+        result = find_earliest_recommendable("Dragon Age", {}, unconsumed)
+        assert result is not None
+        assert result.id == "da1"

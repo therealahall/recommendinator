@@ -585,3 +585,45 @@ def should_recommend_item(
             if candidate_num not in consumed_numbers:
                 return item_num == candidate_num
         return False
+
+
+def find_earliest_recommendable(
+    series_name: str,
+    series_tracking: dict[str, set[int]],
+    unconsumed_items: list[ContentItem],
+) -> ContentItem | None:
+    """Find the earliest unconsumed item in a series that passes series rules.
+
+    Used by the engine to substitute a later series entry (e.g., FF XII) with
+    the earliest playable entry (e.g., FF X) when ``series_in_order`` is
+    enabled.
+
+    Args:
+        series_name: Name of the series to search.
+        series_tracking: Series tracking dictionary (consumed items).
+        unconsumed_items: All unconsumed items to search through.
+
+    Returns:
+        The earliest unconsumed item in the series that passes
+        :func:`should_recommend_item`, or ``None`` if none qualifies.
+    """
+    # Collect unconsumed items belonging to this series, paired with their number
+    series_candidates: list[tuple[int, ContentItem]] = []
+    for item in unconsumed_items:
+        series_info = extract_series_info(item.title, item.metadata, item.content_type)
+        if series_info and series_info[0] == series_name:
+            series_candidates.append((series_info[1], item))
+
+    if not series_candidates:
+        return None
+
+    # Sort by item number (ascending) so earliest comes first
+    series_candidates.sort(key=lambda pair: pair[0])
+
+    for _item_number, candidate in series_candidates:
+        if should_recommend_item(
+            candidate, series_tracking, unconsumed_items=unconsumed_items
+        ):
+            return candidate
+
+    return None
