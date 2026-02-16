@@ -65,6 +65,54 @@ EDITION_PAREN_PATTERN = re.compile(
 TRADEMARK_PATTERN = re.compile(r"[™®©]")
 
 
+def _longest_common_prefix(titles: list[str]) -> str:
+    """Compute the longest common prefix of a list of titles, trimmed to word boundary.
+
+    Used to derive a franchise name from a list of related game titles.
+    For example: ["Dragon Age: Origins", "Dragon Age II", "Dragon Age: Inquisition"]
+    -> "Dragon Age".
+
+    Args:
+        titles: List of game titles.
+
+    Returns:
+        Common prefix trimmed to word boundary, or empty string if no
+        meaningful prefix (< 3 characters) exists.
+    """
+    if not titles:
+        return ""
+    if len(titles) == 1:
+        return titles[0]
+
+    # Character-level common prefix
+    prefix = titles[0]
+    for title in titles[1:]:
+        min_length = min(len(prefix), len(title))
+        end = 0
+        for index in range(min_length):
+            if prefix[index].lower() != title[index].lower():
+                break
+            end = index + 1
+        prefix = prefix[:end]
+
+    # Trim to word boundary only if prefix ends mid-word in any title
+    needs_trim = False
+    for title in titles:
+        if len(title) > len(prefix) and title[len(prefix)].isalnum():
+            needs_trim = True
+            break
+
+    if needs_trim:
+        last_space = prefix.rfind(" ")
+        if last_space > 0:
+            prefix = prefix[:last_space]
+
+    # Strip trailing delimiters and whitespace
+    prefix = prefix.rstrip(":- \t")
+
+    return prefix if len(prefix) >= 3 else ""
+
+
 def clean_title_for_search(title: str) -> str:
     """Remove edition info and trademark symbols from title for better search matching.
 
@@ -308,6 +356,18 @@ class RAWGProvider(EnrichmentProvider):
             if game.get("esrb_rating"):
                 extra_metadata["esrb_rating"] = game["esrb_rating"]["name"]
 
+            # Extract franchise/series info (mirrors TMDB collection extraction)
+            franchise_name, franchise_position = self._fetch_game_series(
+                game_id=game_id,
+                game_name=game.get("name", ""),
+                game_released=game.get("released"),
+                api_key=api_key,
+            )
+            if franchise_name:
+                extra_metadata["franchise"] = franchise_name
+            if franchise_position is not None:
+                extra_metadata["series_position"] = franchise_position
+
             return EnrichmentResult(
                 external_id=f"rawg:{game_id}",
                 genres=genres if genres else None,
@@ -322,6 +382,82 @@ class RAWGProvider(EnrichmentProvider):
             raise ProviderError(
                 self.name, f"Failed to fetch game details: {error}"
             ) from error
+
+    def _fetch_game_series(
+        self,
+        game_id: int,
+        game_name: str,
+        game_released: str | None,
+        api_key: str,
+    ) -> tuple[str | None, int | None]:
+        """Fetch franchise info from the RAWG game-series endpoint.
+
+        Calls ``GET /games/{game_id}/game-series`` to find related games in
+        the same franchise.  Computes the franchise name from the longest
+        common prefix of all game titles and the current game's 1-based
+        position by release date ordering.
+
+        Args:
+            game_id: RAWG game ID.
+            game_name: Name of the current game.
+            game_released: Release date of the current game (YYYY-MM-DD).
+            api_key: RAWG API key.
+
+        Returns:
+            Tuple of (franchise_name, position) or (None, None) on failure
+            or when the game has no related entries.
+        """
+        try:
+            response = requests.get(
+                f"{RAWG_API_BASE}/games/{game_id}/game-series",
+                params={"key": api_key, "page_size": 40},
+                timeout=10,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            series_results: list[dict[str, Any]] = data.get("results", [])
+            if not series_results:
+                return (None, None)
+
+            # The current game may not be included in its own series results;
+            # insert it so the prefix and position calculations are correct.
+            if not any(entry.get("id") == game_id for entry in series_results):
+                series_results.append(
+                    {"id": game_id, "name": game_name, "released": game_released}
+                )
+
+            # Derive franchise name from common prefix of all titles
+            all_titles = [
+                entry["name"]
+                for entry in series_results
+                if entry.get("name")
+            ]
+            franchise_name = _longest_common_prefix(all_titles)
+            if not franchise_name:
+                return (None, None)
+
+            # Sort by release date to determine position
+            def release_sort_key(entry: dict[str, Any]) -> str:
+                return entry.get("released") or "9999-12-31"
+
+            sorted_entries = sorted(series_results, key=release_sort_key)
+
+            # Find current game's 1-based position
+            position: int | None = None
+            for index, entry in enumerate(sorted_entries):
+                if entry.get("id") == game_id:
+                    position = index + 1
+                    break
+
+            return (franchise_name, position)
+
+        except requests.RequestException:
+            # Franchise info is optional — don't fail enrichment
+            logger.warning(
+                f"Failed to fetch game-series for game {game_id}"
+            )
+            return (None, None)
 
     def _extract_year(self, date_str: str) -> int | None:
         """Extract year from date string (YYYY-MM-DD format).

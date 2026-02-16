@@ -7,7 +7,11 @@ import pytest
 import requests
 
 from src.enrichment.provider_base import ProviderError
-from src.enrichment.providers.rawg import RAWGProvider, clean_title_for_search
+from src.enrichment.providers.rawg import (
+    RAWGProvider,
+    _longest_common_prefix,
+    clean_title_for_search,
+)
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 
 
@@ -176,10 +180,13 @@ class TestRAWGProviderEnrichment:
             "esrb_rating": {"name": "Mature"},
         }
 
+        mock_series = {"results": []}
+
         with patch("requests.get") as mock_get:
             mock_get.side_effect = [
                 MagicMock(status_code=200, json=lambda: mock_search),
                 MagicMock(status_code=200, json=lambda: mock_game),
+                MagicMock(status_code=200, json=lambda: mock_series),
             ]
 
             result = provider.enrich(game_item, config)
@@ -260,10 +267,13 @@ class TestRAWGProviderEnrichment:
             "tags": [],
         }
 
+        mock_series = {"results": []}
+
         with patch("requests.get") as mock_get:
             mock_get.side_effect = [
                 MagicMock(status_code=200, json=lambda: mock_search),
                 MagicMock(status_code=200, json=lambda: mock_game),
+                MagicMock(status_code=200, json=lambda: mock_series),
             ]
 
             result = provider.enrich(item, config)
@@ -329,3 +339,244 @@ class TestRAWGProviderUnsupportedTypes:
 
         result = provider.enrich(item, {"api_key": "test"})
         assert result is None
+
+
+class TestLongestCommonPrefix:
+    """Tests for _longest_common_prefix franchise name derivation."""
+
+    def test_dragon_age_series(self) -> None:
+        """Dragon Age titles share 'Dragon Age' prefix."""
+        titles = [
+            "Dragon Age: Origins",
+            "Dragon Age II",
+            "Dragon Age: Inquisition",
+        ]
+        assert _longest_common_prefix(titles) == "Dragon Age"
+
+    def test_final_fantasy_series(self) -> None:
+        """Final Fantasy titles share 'Final Fantasy' prefix."""
+        titles = [
+            "Final Fantasy X",
+            "Final Fantasy X-2",
+            "Final Fantasy XII",
+        ]
+        assert _longest_common_prefix(titles) == "Final Fantasy"
+
+    def test_kingdom_hearts_series(self) -> None:
+        """Kingdom Hearts titles share 'Kingdom Hearts' prefix."""
+        titles = [
+            "Kingdom Hearts",
+            "Kingdom Hearts II",
+            "Kingdom Hearts HD 2.8 Final Chapter Prologue",
+        ]
+        assert _longest_common_prefix(titles) == "Kingdom Hearts"
+
+    def test_single_title(self) -> None:
+        """Single title returns the full title."""
+        assert _longest_common_prefix(["Dragon Age: Origins"]) == "Dragon Age: Origins"
+
+    def test_empty_list(self) -> None:
+        """Empty list returns empty string."""
+        assert _longest_common_prefix([]) == ""
+
+    def test_no_common_prefix(self) -> None:
+        """Unrelated titles return empty string."""
+        titles = ["Halo", "Zelda", "Mario"]
+        assert _longest_common_prefix(titles) == ""
+
+    def test_trailing_colon_stripped(self) -> None:
+        """Trailing colon after trimming to word boundary is stripped."""
+        titles = ["Mass Effect: Andromeda", "Mass Effect: Legendary Edition"]
+        assert _longest_common_prefix(titles) == "Mass Effect"
+
+    def test_trailing_dash_stripped(self) -> None:
+        """Trailing dash is stripped from the prefix."""
+        titles = ["The Witcher - Enhanced", "The Witcher - Wild Hunt"]
+        assert _longest_common_prefix(titles) == "The Witcher"
+
+
+class TestRAWGFranchiseExtraction:
+    """Tests for RAWG franchise/game-series extraction."""
+
+    @pytest.fixture
+    def provider(self) -> RAWGProvider:
+        """Create provider instance."""
+        return RAWGProvider()
+
+    def test_fetch_game_series_success_with_position(
+        self, provider: RAWGProvider
+    ) -> None:
+        """Franchise name and position are extracted from game-series API."""
+        mock_series_response = {
+            "results": [
+                {"id": 100, "name": "Dragon Age: Origins", "released": "2009-11-03"},
+                {"id": 101, "name": "Dragon Age II", "released": "2011-03-08"},
+            ]
+        }
+
+        with patch("requests.get") as mock_get:
+            mock_get.return_value = MagicMock(
+                status_code=200, json=lambda: mock_series_response
+            )
+
+            franchise_name, position = provider._fetch_game_series(
+                game_id=102,
+                game_name="Dragon Age: Inquisition",
+                game_released="2014-11-18",
+                api_key="test-key",
+            )
+
+        assert franchise_name == "Dragon Age"
+        assert position == 3  # Third by release date
+
+    def test_fetch_game_series_empty_results(
+        self, provider: RAWGProvider
+    ) -> None:
+        """Empty results return (None, None)."""
+        mock_series_response = {"results": []}
+
+        with patch("requests.get") as mock_get:
+            mock_get.return_value = MagicMock(
+                status_code=200, json=lambda: mock_series_response
+            )
+
+            franchise_name, position = provider._fetch_game_series(
+                game_id=999,
+                game_name="Standalone Game",
+                game_released="2020-01-01",
+                api_key="test-key",
+            )
+
+        assert franchise_name is None
+        assert position is None
+
+    def test_fetch_game_series_api_error_graceful_fallback(
+        self, provider: RAWGProvider
+    ) -> None:
+        """API error returns (None, None) without raising."""
+        with patch("requests.get") as mock_get:
+            mock_get.side_effect = requests.RequestException("Connection failed")
+
+            franchise_name, position = provider._fetch_game_series(
+                game_id=100,
+                game_name="Dragon Age: Origins",
+                game_released="2009-11-03",
+                api_key="test-key",
+            )
+
+        assert franchise_name is None
+        assert position is None
+
+    def test_fetch_game_series_game_already_in_results(
+        self, provider: RAWGProvider
+    ) -> None:
+        """When current game is already in results, it is not duplicated."""
+        mock_series_response = {
+            "results": [
+                {"id": 100, "name": "Dragon Age: Origins", "released": "2009-11-03"},
+                {"id": 101, "name": "Dragon Age II", "released": "2011-03-08"},
+                {
+                    "id": 102,
+                    "name": "Dragon Age: Inquisition",
+                    "released": "2014-11-18",
+                },
+            ]
+        }
+
+        with patch("requests.get") as mock_get:
+            mock_get.return_value = MagicMock(
+                status_code=200, json=lambda: mock_series_response
+            )
+
+            franchise_name, position = provider._fetch_game_series(
+                game_id=102,
+                game_name="Dragon Age: Inquisition",
+                game_released="2014-11-18",
+                api_key="test-key",
+            )
+
+        assert franchise_name == "Dragon Age"
+        assert position == 3
+
+    def test_full_enrich_flow_populates_franchise_data(
+        self, provider: RAWGProvider
+    ) -> None:
+        """End-to-end: enrich() stores franchise and series_position in metadata."""
+        item = ContentItem(
+            id="game1",
+            title="Dragon Age: Inquisition",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+        )
+
+        mock_search = {
+            "results": [
+                {"id": 102, "name": "Dragon Age: Inquisition", "released": "2014-11-18"}
+            ]
+        }
+        mock_game = {
+            "id": 102,
+            "name": "Dragon Age: Inquisition",
+            "released": "2014-11-18",
+            "genres": [{"name": "RPG"}],
+            "tags": [],
+        }
+        mock_series = {
+            "results": [
+                {"id": 100, "name": "Dragon Age: Origins", "released": "2009-11-03"},
+                {"id": 101, "name": "Dragon Age II", "released": "2011-03-08"},
+            ]
+        }
+
+        with patch("requests.get") as mock_get:
+            mock_get.side_effect = [
+                MagicMock(status_code=200, json=lambda: mock_search),
+                MagicMock(status_code=200, json=lambda: mock_game),
+                MagicMock(status_code=200, json=lambda: mock_series),
+            ]
+
+            result = provider.enrich(item, {"api_key": "test-key"})
+
+        assert result is not None
+        assert result.extra_metadata.get("franchise") == "Dragon Age"
+        assert result.extra_metadata.get("series_position") == 3
+
+    def test_enrich_game_series_api_failure_still_returns_result(
+        self, provider: RAWGProvider
+    ) -> None:
+        """When game-series API fails, enrich still returns genres/tags/description."""
+        item = ContentItem(
+            id="game1",
+            title="The Witcher 3: Wild Hunt",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+        )
+
+        mock_search = {
+            "results": [
+                {"id": 3328, "name": "The Witcher 3: Wild Hunt", "released": "2015-05-18"}
+            ]
+        }
+        mock_game = {
+            "id": 3328,
+            "name": "The Witcher 3: Wild Hunt",
+            "released": "2015-05-18",
+            "genres": [{"name": "RPG"}, {"name": "Action"}],
+            "tags": [{"name": "Open World"}],
+            "description": "An epic RPG.",
+        }
+
+        with patch("requests.get") as mock_get:
+            # Search succeeds, game details succeed, game-series fails
+            mock_get.side_effect = [
+                MagicMock(status_code=200, json=lambda: mock_search),
+                MagicMock(status_code=200, json=lambda: mock_game),
+                requests.RequestException("Series endpoint failed"),
+            ]
+
+            result = provider.enrich(item, {"api_key": "test-key"})
+
+        assert result is not None
+        assert result.genres == ["RPG", "Action"]
+        assert "franchise" not in result.extra_metadata
+        assert "series_position" not in result.extra_metadata
