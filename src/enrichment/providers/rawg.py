@@ -6,6 +6,7 @@ tags, descriptions, and more.
 
 import logging
 import re
+from collections import Counter
 from typing import Any
 
 import requests
@@ -72,6 +73,13 @@ def _longest_common_prefix(titles: list[str]) -> str:
     For example: ["Dragon Age: Origins", "Dragon Age II", "Dragon Age: Inquisition"]
     -> "Dragon Age".
 
+    Before computing the prefix, outlier titles are filtered out using
+    majority-based first-word voting.  This handles cases like the FF XIII
+    series where RAWG returns ``["Final Fantasy XIII", "Final Fantasy XIII-2",
+    "Lightning Returns: Final Fantasy XIII"]`` — "Lightning" is the minority
+    first word (1 of 3) so that title is excluded, and the prefix is computed
+    from the two "Final Fantasy" titles.
+
     Args:
         titles: List of game titles.
 
@@ -84,9 +92,12 @@ def _longest_common_prefix(titles: list[str]) -> str:
     if len(titles) == 1:
         return titles[0]
 
+    # Filter outlier titles by majority first-word vote
+    filtered_titles = _filter_outlier_titles(titles)
+
     # Character-level common prefix
-    prefix = titles[0]
-    for title in titles[1:]:
+    prefix = filtered_titles[0]
+    for title in filtered_titles[1:]:
         min_length = min(len(prefix), len(title))
         end = 0
         for index in range(min_length):
@@ -97,7 +108,7 @@ def _longest_common_prefix(titles: list[str]) -> str:
 
     # Trim to word boundary only if prefix ends mid-word in any title
     needs_trim = False
-    for title in titles:
+    for title in filtered_titles:
         if len(title) > len(prefix) and title[len(prefix)].isalnum():
             needs_trim = True
             break
@@ -111,6 +122,35 @@ def _longest_common_prefix(titles: list[str]) -> str:
     prefix = prefix.rstrip(":- \t")
 
     return prefix if len(prefix) >= 3 else ""
+
+
+def _filter_outlier_titles(titles: list[str]) -> list[str]:
+    """Filter out outlier titles using majority-based first-word voting.
+
+    Counts the first word (lowercased) of each title and keeps only titles
+    whose first word matches the most common first word.  If fewer than 2
+    titles remain after filtering, the original list is returned unchanged.
+
+    Args:
+        titles: List of game titles (must have at least 2 elements).
+
+    Returns:
+        Filtered list with outlier titles removed, or the original list
+        if filtering would leave fewer than 2 titles.
+    """
+    first_word_counts: Counter[str] = Counter()
+    for title in titles:
+        first_word = title.split()[0].lower() if title.strip() else ""
+        first_word_counts[first_word] += 1
+
+    majority_word = first_word_counts.most_common(1)[0][0]
+    filtered = [
+        title
+        for title in titles
+        if (title.split()[0].lower() if title.strip() else "") == majority_word
+    ]
+
+    return filtered if len(filtered) >= 2 else titles
 
 
 def clean_title_for_search(title: str) -> str:

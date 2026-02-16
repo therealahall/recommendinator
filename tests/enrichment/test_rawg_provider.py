@@ -9,6 +9,7 @@ import requests
 from src.enrichment.provider_base import ProviderError
 from src.enrichment.providers.rawg import (
     RAWGProvider,
+    _filter_outlier_titles,
     _longest_common_prefix,
     clean_title_for_search,
 )
@@ -393,6 +394,83 @@ class TestLongestCommonPrefix:
         """Trailing dash is stripped from the prefix."""
         titles = ["The Witcher - Enhanced", "The Witcher - Wild Hunt"]
         assert _longest_common_prefix(titles) == "The Witcher"
+
+
+class TestLongestCommonPrefixOutlierFiltering:
+    """Regression tests for outlier title filtering in _longest_common_prefix.
+
+    Bug reported: All Final Fantasy games missing franchise data after RAWG
+    enrichment.
+
+    Root cause: _longest_common_prefix computes a character-level prefix of
+    ALL titles.  RAWG returns titles like ["Final Fantasy XIII",
+    "Final Fantasy XIII-2", "Lightning Returns: Final Fantasy XIII"] for the
+    FF XIII series.  "F" != "L" at index 0 collapses the prefix to "" and
+    no franchise data is produced.
+
+    Fix: Before computing the prefix, filter out outlier titles by
+    majority-based first-word voting.  "Lightning" is the minority first
+    word (1 of 3), "Final" is the majority (2 of 3), so the outlier is
+    excluded and the prefix is computed from the two "Final Fantasy" titles.
+    """
+
+    def test_ff_xiii_with_lightning_returns_outlier_regression(self) -> None:
+        """FF XIII series with 'Lightning Returns' outlier -> 'Final Fantasy XIII'.
+
+        After filtering, the two remaining titles are "Final Fantasy XIII" and
+        "Final Fantasy XIII-2".  Their LCP is "Final Fantasy XIII" (the '-2'
+        suffix starts with a non-alphanumeric delimiter so no word-boundary
+        trim is needed).  This is the correct sub-series franchise name.
+        """
+        titles = [
+            "Final Fantasy XIII",
+            "Final Fantasy XIII-2",
+            "Lightning Returns: Final Fantasy XIII",
+        ]
+        assert _longest_common_prefix(titles) == "Final Fantasy XIII"
+
+    def test_all_titles_share_first_word_no_filtering(self) -> None:
+        """When all titles share the same first word, no filtering occurs."""
+        titles = [
+            "Dragon Age: Origins",
+            "Dragon Age II",
+            "Dragon Age: Inquisition",
+        ]
+        assert _longest_common_prefix(titles) == "Dragon Age"
+
+    def test_all_different_first_words_returns_empty(self) -> None:
+        """All titles have different first words -> returns empty string."""
+        titles = ["Alpha Game", "Beta Game", "Gamma Game"]
+        assert _longest_common_prefix(titles) == ""
+
+    def test_two_equal_groups_picks_first_most_common(self) -> None:
+        """Two groups of equal size -> picks whichever Counter returns first."""
+        titles = [
+            "Final Fantasy X",
+            "Final Fantasy XII",
+            "Kingdom Hearts",
+            "Kingdom Hearts II",
+        ]
+        result = _longest_common_prefix(titles)
+        # Either "Final Fantasy" or "Kingdom Hearts" is valid
+        assert result in ("Final Fantasy", "Kingdom Hearts")
+
+    def test_filter_outlier_titles_basic(self) -> None:
+        """_filter_outlier_titles keeps majority first-word titles."""
+        titles = [
+            "Final Fantasy XIII",
+            "Final Fantasy XIII-2",
+            "Lightning Returns: Final Fantasy XIII",
+        ]
+        filtered = _filter_outlier_titles(titles)
+        assert len(filtered) == 2
+        assert "Lightning Returns: Final Fantasy XIII" not in filtered
+
+    def test_filter_outlier_titles_returns_original_if_fewer_than_2(self) -> None:
+        """If filtering leaves < 2 titles, original list is returned."""
+        titles = ["Alpha Game", "Beta Game", "Gamma Game"]
+        filtered = _filter_outlier_titles(titles)
+        assert filtered == titles
 
 
 class TestRAWGFranchiseExtraction:
