@@ -1,5 +1,6 @@
 """REST API endpoints."""
 
+import json
 import logging
 from pathlib import Path
 from typing import Any, cast
@@ -237,6 +238,61 @@ class EnrichmentStatsResponse(BaseModel):
     failed: int = 0
     by_provider: dict[str, int] = Field(default_factory=dict)
     by_quality: dict[str, int] = Field(default_factory=dict)
+
+
+class ThemeResponse(BaseModel):
+    """Response model for a theme."""
+
+    id: str
+    name: str
+    description: str
+    author: str
+    version: str
+    theme_type: str
+
+
+def discover_themes(themes_dir: Path) -> list[ThemeResponse]:
+    """Scan the themes directory for valid themes.
+
+    Each theme must be a subdirectory containing a theme.json file
+    with name, description, author, version, and type fields.
+
+    Args:
+        themes_dir: Path to the themes directory.
+
+    Returns:
+        List of theme metadata, sorted alphabetically by directory name.
+    """
+    themes: list[ThemeResponse] = []
+
+    if not themes_dir.is_dir():
+        return themes
+
+    for entry in sorted(themes_dir.iterdir()):
+        if not entry.is_dir():
+            continue
+
+        theme_file = entry / "theme.json"
+        if not theme_file.is_file():
+            continue
+
+        try:
+            raw = json.loads(theme_file.read_text(encoding="utf-8"))
+            themes.append(
+                ThemeResponse(
+                    id=entry.name,
+                    name=raw["name"],
+                    description=raw["description"],
+                    author=raw["author"],
+                    version=raw["version"],
+                    theme_type=raw["type"],
+                )
+            )
+        except (json.JSONDecodeError, KeyError, OSError):
+            logger.warning(f"Skipping invalid theme directory: {entry.name}")
+            continue
+
+    return themes
 
 
 @router.get("/recommendations", response_model=list[RecommendationResponse])
@@ -1067,6 +1123,42 @@ async def reset_enrichment(
     )
 
     return {"message": f"Reset enrichment status for {count} item(s)", "count": count}
+
+
+# ---------------------------------------------------------------------------
+# Theme endpoints
+# ---------------------------------------------------------------------------
+
+THEMES_DIR = Path("src/web/static/themes")
+
+
+@router.get("/themes", response_model=list[ThemeResponse])
+async def list_themes() -> list[ThemeResponse]:
+    """List all available UI themes.
+
+    Scans the themes directory for subdirectories containing theme.json.
+
+    Returns:
+        List of theme metadata sorted alphabetically.
+    """
+    return discover_themes(THEMES_DIR)
+
+
+@router.get("/themes/default")
+async def get_default_theme() -> dict[str, str]:
+    """Get the server-configured default theme.
+
+    Reads the web.theme setting from config. Falls back to "nord"
+    if not configured. The frontend uses this when no localStorage
+    preference is set.
+
+    Returns:
+        Dictionary with the default theme ID.
+    """
+    config = get_config()
+    web_config = config.get("web", {}) if config else {}
+    default_theme = web_config.get("theme", "nord")
+    return {"theme": default_theme}
 
 
 # ---------------------------------------------------------------------------

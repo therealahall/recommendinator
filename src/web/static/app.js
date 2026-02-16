@@ -28,6 +28,7 @@
     // -----------------------------------------------------------------------
 
     function initialize() {
+        applyStoredTheme();
         loadUsers();
         checkStatus();
         setupTabs();
@@ -37,6 +38,72 @@
         setupPreferencesSave();
         setupSyncButtons();
         setupChat();
+        loadThemes();
+    }
+
+    // -----------------------------------------------------------------------
+    // Themes
+    // -----------------------------------------------------------------------
+
+    function applyStoredTheme() {
+        var themeId = localStorage.getItem("theme");
+        if (themeId) {
+            applyTheme(themeId);
+        }
+    }
+
+    function applyTheme(themeId) {
+        var link = document.getElementById("theme-stylesheet");
+        if (!link) return;
+        if (themeId === "nord") {
+            // Nord is the default in :root, clear the override
+            link.href = "/static/themes/nord/colors.css";
+        } else {
+            link.href = "/static/themes/" + themeId + "/colors.css";
+        }
+        localStorage.setItem("theme", themeId);
+    }
+
+    function loadThemes() {
+        var select = document.getElementById("themeSelect");
+        if (!select) return;
+
+        // Fetch themes and default in parallel
+        Promise.all([
+            fetch(API_BASE + "/themes").then(function (response) { return response.json(); }),
+            fetch(API_BASE + "/themes/default").then(function (response) { return response.json(); })
+        ])
+            .then(function (results) {
+                var themes = results[0];
+                var defaultData = results[1];
+
+                if (!themes || themes.length === 0) return;
+
+                select.innerHTML = "";
+                themes.forEach(function (theme) {
+                    var option = document.createElement("option");
+                    option.value = theme.id;
+                    option.textContent = theme.name;
+                    select.appendChild(option);
+                });
+
+                // Use localStorage preference if set, otherwise config default
+                var storedTheme = localStorage.getItem("theme");
+                var activeTheme = storedTheme || defaultData.theme || "nord";
+                select.value = activeTheme;
+
+                // Apply theme if not already applied from localStorage
+                if (!storedTheme && defaultData.theme) {
+                    applyTheme(defaultData.theme);
+                }
+
+                select.addEventListener("change", function () {
+                    applyTheme(select.value);
+                });
+            })
+            .catch(function () {
+                // Silently ignore if themes endpoint not available
+            });
     }
 
     // -----------------------------------------------------------------------
