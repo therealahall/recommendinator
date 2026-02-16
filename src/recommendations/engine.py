@@ -58,6 +58,11 @@ _CONTENT_TYPE_NATURAL_LABEL: dict[str, str] = {
 # shuffle, so the reference item order varies across runs.
 _SCORE_PROXIMITY_THRESHOLD = 0.05
 
+# Default diversity weight applied when variety_after_completion is enabled
+# but the user hasn't set an explicit diversity_weight.  0.2 gives a subtle
+# genre-hopping nudge without overwhelming relevance scores.
+_DEFAULT_VARIETY_DIVERSITY_WEIGHT = 0.2
+
 
 def _shuffle_close_scores(
     items_with_scores: list[tuple[ContentItem, float]],
@@ -401,17 +406,23 @@ class RecommendationEngine:
             meta["item"].id: meta["score_breakdown"] for meta in candidate_metadata
         }
 
-        # Apply per-user diversity weight if configured
+        # Apply per-user diversity weight if configured, or use a sensible
+        # default when the variety_after_completion toggle is enabled.
         ranker = self.ranker
-        if (
-            user_preference_config is not None
-            and user_preference_config.diversity_weight > 0
-        ):
-            ranker = RecommendationRanker(
-                similarity_weight=self.ranker.similarity_weight,
-                preference_weight=self.ranker.preference_weight,
-                diversity_weight=user_preference_config.diversity_weight,
-            )
+        if user_preference_config is not None:
+            effective_diversity_weight = user_preference_config.diversity_weight
+            if (
+                user_preference_config.variety_after_completion
+                and effective_diversity_weight == 0
+            ):
+                effective_diversity_weight = _DEFAULT_VARIETY_DIVERSITY_WEIGHT
+
+            if effective_diversity_weight > 0:
+                ranker = RecommendationRanker(
+                    similarity_weight=self.ranker.similarity_weight,
+                    preference_weight=self.ranker.preference_weight,
+                    diversity_weight=effective_diversity_weight,
+                )
 
         ranked_items = ranker.rank(
             candidates=[
