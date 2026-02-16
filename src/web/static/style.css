@@ -28,7 +28,7 @@
     --bg-elevated: var(--nord2);
     --bg-input: var(--nord0);
     --bg-hover: var(--nord2);
-    --bg-active: rgba(129, 161, 193, 0.2);
+    --bg-active: color-mix(in srgb, var(--accent) 20%, transparent);
 
     /* Text */
     --text-primary: var(--nord6);
@@ -242,6 +242,10 @@ body {
     font-weight: 500;
 }
 
+.sidebar-footer select + label {
+    margin-top: var(--space-3);
+}
+
 .sidebar-footer select {
     width: 100%;
     padding: var(--space-2) var(--space-2);
@@ -329,23 +333,23 @@ body {
 }
 
 .status-bar.success {
-    background: rgba(163, 190, 140, 0.1);
+    background: color-mix(in srgb, var(--color-success) 10%, transparent);
     color: var(--color-success);
-    border-color: rgba(163, 190, 140, 0.3);
+    border-color: color-mix(in srgb, var(--color-success) 30%, transparent);
     display: block;
 }
 
 .status-bar.error {
-    background: rgba(191, 97, 106, 0.1);
+    background: color-mix(in srgb, var(--color-error) 10%, transparent);
     color: var(--color-error);
-    border-color: rgba(191, 97, 106, 0.3);
+    border-color: color-mix(in srgb, var(--color-error) 30%, transparent);
     display: block;
 }
 
 .status-bar.loading {
-    background: rgba(129, 161, 193, 0.1);
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
     color: var(--accent);
-    border-color: rgba(129, 161, 193, 0.3);
+    border-color: color-mix(in srgb, var(--accent) 30%, transparent);
     display: block;
 }
 
@@ -402,8 +406,8 @@ body {
 }
 
 .btn-primary:hover:not(:disabled) {
-    background: #8faec4;
-    border-color: #8faec4;
+    background: color-mix(in srgb, var(--accent) 80%, white);
+    border-color: color-mix(in srgb, var(--accent) 80%, white);
 }
 
 .btn-secondary {
@@ -419,23 +423,23 @@ body {
 }
 
 .btn-danger {
-    background: rgba(191, 97, 106, 0.15);
+    background: color-mix(in srgb, var(--color-error) 15%, transparent);
     color: var(--color-error);
-    border-color: rgba(191, 97, 106, 0.3);
+    border-color: color-mix(in srgb, var(--color-error) 30%, transparent);
 }
 
 .btn-danger:hover:not(:disabled) {
-    background: rgba(191, 97, 106, 0.25);
+    background: color-mix(in srgb, var(--color-error) 25%, transparent);
 }
 
 .btn-warning {
-    background: rgba(235, 203, 139, 0.15);
+    background: color-mix(in srgb, var(--color-warning) 15%, transparent);
     color: var(--color-warning);
-    border-color: rgba(235, 203, 139, 0.3);
+    border-color: color-mix(in srgb, var(--color-warning) 30%, transparent);
 }
 
 .btn-warning:hover:not(:disabled) {
-    background: rgba(235, 203, 139, 0.25);
+    background: color-mix(in srgb, var(--color-warning) 25%, transparent);
 }
 
 .btn-ghost {
@@ -455,23 +459,23 @@ body {
 }
 
 .btn-ignore {
-    background: rgba(235, 203, 139, 0.15);
-    color: var(--color-warning);
-    border-color: rgba(235, 203, 139, 0.3);
+    background: color-mix(in srgb, var(--text-muted) 15%, transparent);
+    color: var(--text-muted);
+    border-color: color-mix(in srgb, var(--text-muted) 30%, transparent);
 }
 
 .btn-ignore:hover:not(:disabled) {
-    background: rgba(235, 203, 139, 0.25);
+    background: color-mix(in srgb, var(--text-muted) 25%, transparent);
 }
 
 .btn-unignore {
-    background: rgba(163, 190, 140, 0.15);
+    background: color-mix(in srgb, var(--color-success) 15%, transparent);
     color: var(--color-success);
-    border-color: rgba(163, 190, 140, 0.3);
+    border-color: color-mix(in srgb, var(--color-success) 30%, transparent);
 }
 
 .btn-unignore:hover:not(:disabled) {
-    background: rgba(163, 190, 140, 0.25);
+    background: color-mix(in srgb, var(--color-success) 25%, transparent);
 }
 
 /* ============================================================
@@ -498,7 +502,7 @@ select:focus,
 textarea:focus {
     outline: none;
     border-color: var(--accent);
-    box-shadow: 0 0 0 2px rgba(129, 161, 193, 0.2);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent);
 }
 
 input[type="text"]::placeholder,
@@ -606,45 +610,45 @@ input[type="checkbox"] {
 }
 
 .badge-type {
-    background: rgba(129, 161, 193, 0.15);
+    background: color-mix(in srgb, var(--accent) 15%, transparent);
     color: var(--accent-light);
-    border-color: rgba(129, 161, 193, 0.3);
+    border-color: color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 .badge-status {
-    background: rgba(163, 190, 140, 0.1);
+    background: color-mix(in srgb, var(--color-success) 10%, transparent);
     color: var(--color-success);
-    border-color: rgba(163, 190, 140, 0.3);
+    border-color: color-mix(in srgb, var(--color-success) 30%, transparent);
 }
 
 .badge-status.unread {
-    background: rgba(235, 203, 139, 0.1);
+    background: color-mix(in srgb, var(--color-warning) 10%, transparent);
     color: var(--color-warning);
-    border-color: rgba(235, 203, 139, 0.3);
+    border-color: color-mix(in srgb, var(--color-warning) 30%, transparent);
 }
 
 .badge-status.currently_consuming {
-    background: rgba(129, 161, 193, 0.15);
+    background: color-mix(in srgb, var(--accent) 15%, transparent);
     color: var(--accent);
-    border-color: rgba(129, 161, 193, 0.3);
+    border-color: color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 .badge-rating {
-    background: rgba(136, 192, 208, 0.1);
+    background: color-mix(in srgb, var(--accent-light) 10%, transparent);
     color: var(--accent-light);
-    border-color: rgba(136, 192, 208, 0.3);
+    border-color: color-mix(in srgb, var(--accent-light) 30%, transparent);
 }
 
 .badge-ignored {
-    background: rgba(235, 203, 139, 0.1);
+    background: color-mix(in srgb, var(--color-warning) 10%, transparent);
     color: var(--color-warning);
-    border-color: rgba(235, 203, 139, 0.3);
+    border-color: color-mix(in srgb, var(--color-warning) 30%, transparent);
 }
 
 .badge-score {
-    background: rgba(129, 161, 193, 0.2);
+    background: color-mix(in srgb, var(--accent) 20%, transparent);
     color: var(--accent-light);
-    border-color: rgba(129, 161, 193, 0.4);
+    border-color: color-mix(in srgb, var(--accent) 40%, transparent);
     font-weight: 600;
     font-family: var(--font-mono);
     font-size: var(--text-xs);
@@ -826,13 +830,18 @@ input[type="checkbox"] {
     flex-wrap: wrap;
     gap: var(--space-1);
     margin-top: var(--space-2);
+    margin-bottom: var(--space-3);
 }
 
 .library-item-actions {
     margin-top: auto;
     padding-top: var(--space-3);
-    border-top: 1px solid var(--border-subtle);
+    border-top: 1px solid var(--border-default);
     text-align: center;
+}
+
+.library-item-actions .btn {
+    width: 100%;
 }
 
 .library-item.ignored {
@@ -1036,21 +1045,21 @@ input[type="checkbox"] {
 }
 
 .sync-status-info {
-    background: rgba(129, 161, 193, 0.1);
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
     color: var(--accent-light);
-    border-color: rgba(129, 161, 193, 0.3);
+    border-color: color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 .sync-status-success {
-    background: rgba(163, 190, 140, 0.1);
+    background: color-mix(in srgb, var(--color-success) 10%, transparent);
     color: var(--color-success);
-    border-color: rgba(163, 190, 140, 0.3);
+    border-color: color-mix(in srgb, var(--color-success) 30%, transparent);
 }
 
 .sync-status-error {
-    background: rgba(191, 97, 106, 0.1);
+    background: color-mix(in srgb, var(--color-error) 10%, transparent);
     color: var(--color-error);
-    border-color: rgba(191, 97, 106, 0.3);
+    border-color: color-mix(in srgb, var(--color-error) 30%, transparent);
 }
 
 .sync-btn:disabled {
@@ -1188,10 +1197,10 @@ input[type="checkbox"] {
 .provider-badge {
     font-size: var(--text-xs);
     padding: 2px 8px;
-    background: rgba(129, 161, 193, 0.15);
+    background: color-mix(in srgb, var(--accent) 15%, transparent);
     color: var(--accent-light);
     border-radius: var(--radius-sm);
-    border: 1px solid rgba(129, 161, 193, 0.3);
+    border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 .enrichment-actions {
@@ -1338,8 +1347,8 @@ input[type="checkbox"] {
     align-items: center;
     gap: var(--space-2);
     padding: var(--space-2) var(--space-3);
-    background: rgba(235, 203, 139, 0.1);
-    border: 1px solid rgba(235, 203, 139, 0.2);
+    background: color-mix(in srgb, var(--color-warning) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-warning) 20%, transparent);
     border-radius: var(--radius-md);
     font-size: var(--text-xs);
     color: var(--color-warning);
@@ -1347,8 +1356,8 @@ input[type="checkbox"] {
 }
 
 .tool-indicator.success {
-    background: rgba(163, 190, 140, 0.1);
-    border-color: rgba(163, 190, 140, 0.2);
+    background: color-mix(in srgb, var(--color-success) 10%, transparent);
+    border-color: color-mix(in srgb, var(--color-success) 20%, transparent);
     color: var(--color-success);
 }
 
@@ -1483,7 +1492,7 @@ input[type="checkbox"] {
 
 .memory-item button.delete {
     color: var(--color-error);
-    border-color: rgba(191, 97, 106, 0.3);
+    border-color: color-mix(in srgb, var(--color-error) 30%, transparent);
 }
 
 .memory-item.inactive {
@@ -1516,17 +1525,17 @@ input[type="checkbox"] {
 
 .profile-tag {
     padding: 2px 8px;
-    background: rgba(129, 161, 193, 0.15);
+    background: color-mix(in srgb, var(--accent) 15%, transparent);
     color: var(--accent-light);
     border-radius: var(--radius-sm);
     font-size: var(--text-xs);
-    border: 1px solid rgba(129, 161, 193, 0.3);
+    border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 .profile-tag.anti {
-    background: rgba(191, 97, 106, 0.1);
+    background: color-mix(in srgb, var(--color-error) 10%, transparent);
     color: var(--color-error);
-    border-color: rgba(191, 97, 106, 0.3);
+    border-color: color-mix(in srgb, var(--color-error) 30%, transparent);
 }
 
 /* Memory Modal */
