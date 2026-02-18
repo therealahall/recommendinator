@@ -1,5 +1,6 @@
 """Tests for the shared sync executor."""
 
+import logging
 from unittest.mock import MagicMock
 
 import pytest
@@ -454,3 +455,120 @@ class TestAutoEnrichmentHook:
 
         assert result.items_synced == 1
         storage.mark_item_needs_enrichment.assert_not_called()
+
+
+class TestSyncEmbeddingLogging:
+    """Tests for embedding progress logging during sync."""
+
+    def test_logs_generating_embedding(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Generating an embedding logs an INFO message with item title."""
+        items = [_make_item("The Name of the Wind", external_id="ext_1")]
+        plugin = MagicMock()
+        plugin.display_name = "TestPlugin"
+        plugin.fetch.return_value = iter(items)
+
+        storage = MagicMock()
+        storage.has_embedding.return_value = False
+        embedding_gen = MagicMock()
+        embedding_gen.generate_content_embedding.return_value = [0.1, 0.2]
+
+        with caplog.at_level(logging.INFO, logger="src.ingestion.sync"):
+            execute_sync(
+                plugin=plugin,
+                plugin_config={},
+                storage_manager=storage,
+                embedding_generator=embedding_gen,
+                use_embeddings=True,
+            )
+
+        assert any(
+            "Generating embedding" in message
+            and "The Name of the Wind" in message
+            and "1/1" in message
+            for message in caplog.messages
+        )
+
+    def test_logs_skipping_existing_embedding(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Skipping an existing embedding logs a DEBUG message."""
+        items = [_make_item("Dune", external_id="ext_1")]
+        plugin = MagicMock()
+        plugin.display_name = "TestPlugin"
+        plugin.fetch.return_value = iter(items)
+
+        storage = MagicMock()
+        storage.has_embedding.return_value = True
+        embedding_gen = MagicMock()
+
+        with caplog.at_level(logging.DEBUG, logger="src.ingestion.sync"):
+            execute_sync(
+                plugin=plugin,
+                plugin_config={},
+                storage_manager=storage,
+                embedding_generator=embedding_gen,
+                use_embeddings=True,
+            )
+
+        assert any(
+            "Embedding exists, skipping" in message and "Dune" in message
+            for message in caplog.messages
+        )
+
+    def test_completion_log_includes_embedding_summary(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Completion log includes counts of generated and skipped embeddings."""
+        items = [
+            _make_item("New Book", external_id="new_1"),
+            _make_item("Old Book", external_id="old_1"),
+            _make_item("Another New", external_id="new_2"),
+        ]
+        plugin = MagicMock()
+        plugin.display_name = "TestPlugin"
+        plugin.fetch.return_value = iter(items)
+
+        storage = MagicMock()
+        storage.has_embedding.side_effect = [False, True, False]
+        embedding_gen = MagicMock()
+        embedding_gen.generate_content_embedding.return_value = [0.1, 0.2]
+
+        with caplog.at_level(logging.INFO, logger="src.ingestion.sync"):
+            execute_sync(
+                plugin=plugin,
+                plugin_config={},
+                storage_manager=storage,
+                embedding_generator=embedding_gen,
+                use_embeddings=True,
+            )
+
+        assert any(
+            "Completed" in message
+            and "2 generated" in message
+            and "1 skipped" in message
+            for message in caplog.messages
+        )
+
+    def test_completion_log_excludes_embedding_summary_when_disabled(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Completion log has no embedding summary when embeddings are disabled."""
+        items = [_make_item("Book 1")]
+        plugin = MagicMock()
+        plugin.display_name = "TestPlugin"
+        plugin.fetch.return_value = iter(items)
+
+        storage = MagicMock()
+
+        with caplog.at_level(logging.INFO, logger="src.ingestion.sync"):
+            execute_sync(
+                plugin=plugin,
+                plugin_config={},
+                storage_manager=storage,
+            )
+
+        completed_messages = [
+            message for message in caplog.messages if "Completed" in message
+        ]
+        assert len(completed_messages) == 1
+        assert "Embeddings" not in completed_messages[0]

@@ -86,6 +86,8 @@ def execute_sync(
     logger.info(f"[SYNC] {source_name}: Found {result.total_items} items, saving...")
 
     # Save each item
+    embeddings_generated = 0
+    embeddings_skipped = 0
     for index, item in enumerate(items):
         item_num = index + 1
         content_type = get_enum_value(item.content_type)
@@ -101,7 +103,18 @@ def execute_sync(
             if use_embeddings and embedding_generator:
                 # Skip if embedding already exists (only checkable with external ID)
                 if not item.id or not storage_manager.has_embedding(item.id):
+                    logger.info(
+                        f"[SYNC] {source_name}: Generating embedding "
+                        f"{item_num}/{result.total_items} - {item.title}"
+                    )
                     embedding = embedding_generator.generate_content_embedding(item)
+                    embeddings_generated += 1
+                else:
+                    logger.debug(
+                        f"[SYNC] {source_name}: Embedding exists, skipping "
+                        f"{item_num}/{result.total_items} - {item.title}"
+                    )
+                    embeddings_skipped += 1
 
             db_id = storage_manager.save_content_item(item, embedding=embedding)
             result.items_synced += 1
@@ -121,9 +134,15 @@ def execute_sync(
             logger.warning(f"[SYNC] {source_name}: {error_message}")
             result.errors.append(error_message)
 
+    embedding_summary = ""
+    if use_embeddings and embedding_generator:
+        embedding_summary = (
+            f" Embeddings: {embeddings_generated} generated, "
+            f"{embeddings_skipped} skipped."
+        )
     logger.info(
         f"[SYNC] {source_name}: Completed. "
-        f"{result.items_synced}/{result.total_items} items saved."
+        f"{result.items_synced}/{result.total_items} items saved.{embedding_summary}"
     )
     return result
 
