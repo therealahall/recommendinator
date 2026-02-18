@@ -62,6 +62,8 @@ EDITION_PAREN_PATTERN = re.compile(
     r")(?:\s+Edition)?\)\s*$",
     re.IGNORECASE,
 )
+# DLC suffixes: "Game + DLC Name (DLC)"
+DLC_SUFFIX_PATTERN = re.compile(r"\s*\+\s*.+?\s*\(DLC\)\s*$", re.IGNORECASE)
 # Trademark symbols
 TRADEMARK_PATTERN = re.compile(r"[™®©]")
 
@@ -154,10 +156,11 @@ def _filter_outlier_titles(titles: list[str]) -> list[str]:
 
 
 def clean_title_for_search(title: str) -> str:
-    """Remove edition info and trademark symbols from title for better search matching.
+    """Remove DLC suffixes, edition info, and trademark symbols for better search matching.
 
     Examples:
         "The Witcher 3: Wild Hunt - GOTY Edition" -> "The Witcher 3: Wild Hunt"
+        "KINGDOM HEARTS III + Re Mind (DLC)" -> "KINGDOM HEARTS III"
         "Cyberpunk 2077™" -> "Cyberpunk 2077"
         "Dark Souls (Remastered)" -> "Dark Souls"
 
@@ -165,11 +168,13 @@ def clean_title_for_search(title: str) -> str:
         title: Original game title
 
     Returns:
-        Cleaned title without edition suffixes or trademark symbols
+        Cleaned title without DLC suffixes, edition suffixes, or trademark symbols
     """
     cleaned = title
     # Remove trademark symbols
     cleaned = TRADEMARK_PATTERN.sub("", cleaned).strip()
+    # Remove DLC suffix (must run before edition patterns to avoid partial matches)
+    cleaned = DLC_SUFFIX_PATTERN.sub("", cleaned).strip()
     # Remove edition suffix (dash/colon format)
     cleaned = EDITION_PATTERN.sub("", cleaned).strip()
     # Remove edition in parentheses

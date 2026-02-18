@@ -70,6 +70,26 @@ class TestCleanTitleForSearch:
             clean_title_for_search("DOOM® Eternal - Deluxe Edition") == "DOOM Eternal"
         )
 
+    def test_removes_dlc_suffix(self) -> None:
+        """Test removal of DLC suffix like '+ Re Mind (DLC)'."""
+        assert (
+            clean_title_for_search("KINGDOM HEARTS III + Re Mind (DLC)")
+            == "KINGDOM HEARTS III"
+        )
+
+    def test_removes_generic_dlc_suffix(self) -> None:
+        """Test removal of generic DLC suffix."""
+        assert clean_title_for_search("Game + DLC Pack (DLC)") == "Game"
+
+    def test_dlc_suffix_case_insensitive(self) -> None:
+        """Test that DLC suffix removal is case insensitive."""
+        assert clean_title_for_search("Game + Expansion (dlc)") == "Game"
+
+    def test_title_without_dlc_unchanged(self) -> None:
+        """Test that titles without DLC suffix are unchanged."""
+        assert clean_title_for_search("Elden Ring") == "Elden Ring"
+        assert clean_title_for_search("Final Fantasy X") == "Final Fantasy X"
+
 
 class TestRAWGProviderProperties:
     """Tests for RAWG provider properties."""
