@@ -117,7 +117,7 @@ Background system that fills gaps in content metadata from external APIs.
 
 **Franchise/Series Extraction:**
 - TMDB: `belongs_to_collection` field provides franchise name and `series_position` via release-date ordering within the collection
-- RAWG: `GET /games/{id}/game-series` returns related games; franchise name is derived from the longest common prefix of all game titles (e.g., "Dragon Age: Origins" + "Dragon Age II" -> "Dragon Age"), and position is determined by release-date ordering. This handles games where title parsing fails (Dragon Age has no number, Kingdom Hearts uses decimals, Final Fantasy uses Roman numerals with slashes in HD remasters)
+- RAWG: `GET /games/{id}/game-series` returns related games; franchise name is derived from the longest common prefix of all game titles (e.g., "Dragon Age: Origins" + "Dragon Age II" -> "Dragon Age"), and position is determined by release-date ordering. Before computing the prefix, outlier titles are filtered out via majority-based first-word voting (e.g., "Lightning Returns: Final Fantasy XIII" is excluded when the other two titles start with "Final"). DLC suffixes like "+ Re Mind (DLC)" are stripped from titles before RAWG search to improve base-game matching. This handles games where title parsing fails (Dragon Age has no number, Kingdom Hearts uses decimals, Final Fantasy uses Roman numerals with slashes in HD remasters)
 - Both store `franchise` and `series_position` in `extra_metadata` for consumption by the series ordering system
 
 **Design:**
