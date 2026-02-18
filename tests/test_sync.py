@@ -9,10 +9,10 @@ from src.ingestion.sync import SyncResult, execute_multi_source_sync, execute_sy
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 
 
-def _make_item(title: str) -> ContentItem:
+def _make_item(title: str, external_id: str | None = None) -> ContentItem:
     """Create a minimal ContentItem for testing."""
     return ContentItem(
-        id=None,
+        id=external_id,
         title=title,
         author=None,
         content_type=ContentType.BOOK,
@@ -64,7 +64,60 @@ class TestExecuteSync:
 
     def test_sync_with_embeddings(self) -> None:
         """Embeddings are generated when enabled."""
-        items = [_make_item("Book 1")]
+        items = [_make_item("Book 1", external_id="ext_1")]
+        plugin = MagicMock()
+        plugin.display_name = "TestPlugin"
+        plugin.fetch.return_value = iter(items)
+
+        storage = MagicMock()
+        storage.has_embedding.return_value = False
+        embedding_gen = MagicMock()
+        embedding_gen.generate_content_embedding.return_value = [0.1, 0.2]
+
+        result = execute_sync(
+            plugin=plugin,
+            plugin_config={},
+            storage_manager=storage,
+            embedding_generator=embedding_gen,
+            use_embeddings=True,
+        )
+
+        assert result.items_synced == 1
+        storage.has_embedding.assert_called_once_with("ext_1")
+        embedding_gen.generate_content_embedding.assert_called_once()
+        storage.save_content_item.assert_called_once_with(
+            items[0], embedding=[0.1, 0.2]
+        )
+
+    def test_sync_skips_existing_embeddings(self) -> None:
+        """Embeddings are not regenerated for items that already have one."""
+        items = [_make_item("Book 1", external_id="ext_1")]
+        plugin = MagicMock()
+        plugin.display_name = "TestPlugin"
+        plugin.fetch.return_value = iter(items)
+
+        storage = MagicMock()
+        storage.has_embedding.return_value = True
+        embedding_gen = MagicMock()
+
+        result = execute_sync(
+            plugin=plugin,
+            plugin_config={},
+            storage_manager=storage,
+            embedding_generator=embedding_gen,
+            use_embeddings=True,
+        )
+
+        assert result.items_synced == 1
+        storage.has_embedding.assert_called_once_with("ext_1")
+        embedding_gen.generate_content_embedding.assert_not_called()
+        storage.save_content_item.assert_called_once_with(
+            items[0], embedding=None
+        )
+
+    def test_sync_generates_embedding_for_items_without_external_id(self) -> None:
+        """Items without external IDs always get embeddings (can't check existence)."""
+        items = [_make_item("Book 1")]  # id=None
         plugin = MagicMock()
         plugin.display_name = "TestPlugin"
         plugin.fetch.return_value = iter(items)
@@ -82,6 +135,7 @@ class TestExecuteSync:
         )
 
         assert result.items_synced == 1
+        storage.has_embedding.assert_not_called()
         embedding_gen.generate_content_embedding.assert_called_once()
         storage.save_content_item.assert_called_once_with(
             items[0], embedding=[0.1, 0.2]

@@ -99,7 +99,9 @@ def execute_sync(
 
             embedding = None
             if use_embeddings and embedding_generator:
-                embedding = embedding_generator.generate_content_embedding(item)
+                # Skip if embedding already exists (only checkable with external ID)
+                if not item.id or not storage_manager.has_embedding(item.id):
+                    embedding = embedding_generator.generate_content_embedding(item)
 
             db_id = storage_manager.save_content_item(item, embedding=embedding)
             result.items_synced += 1
