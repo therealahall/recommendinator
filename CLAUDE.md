@@ -16,6 +16,16 @@ Before starting work, read the relevant documentation:
 - **QUICKSTART.md** - Getting started guide
 - **docs/** - Additional technical docs (MODEL_RECOMMENDATIONS.md, CHROMADB_SETUP.md, PYTHON_VERSION.md, PLUGIN_DEVELOPMENT.md, CUSTOM_RULES.md, SECURITY.md, TROUBLESHOOTING.md)
 
+## After Conversation Compaction
+
+**CRITICAL: When the conversation is compacted (context compressed), you MUST immediately:**
+
+1. **Re-read this file**: `CLAUDE.md` — compaction loses significant context, and these instructions must be fully reloaded.
+2. **State what you were working on**: Summarize the current task, what has been completed so far, and what remains.
+3. **Ask clarifying questions**: Confirm with the user that your understanding is correct before continuing. Ask about any details you are uncertain about — it is better to re-confirm than to proceed with stale or incorrect assumptions.
+
+Do not silently continue working after compaction. Always pause, re-orient, and verify before resuming.
+
 ## Project Structure
 
 ```
