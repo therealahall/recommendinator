@@ -828,9 +828,7 @@ async def update_data(request: UpdateRequest) -> dict[str, Any]:
 
     # Start background sync
     source_label = (
-        humanize_source_id(source)
-        if source != "all"
-        else ", ".join(humanize_source_id(source_id) for source_id in sources_to_sync)
+        humanize_source_id(source) if source != "all" else "All Sources"
     )
     success, message = sync_manager.start_sync(
         source_label, run_sync, on_complete=on_sync_complete
