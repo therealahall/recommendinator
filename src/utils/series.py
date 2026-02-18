@@ -76,15 +76,23 @@ def _roman_to_int(roman: str) -> int | None:
 
 
 # Trailing Arabic numeral in a title (e.g., "Dungeon Siege 3",
-# "Fallout 4: New Vegas").  The series name must start with a letter
-# to avoid matching titles like "1942" or "2048".
+# "Fallout 4: New Vegas", "FINAL FANTASY XII THE ZODIAC AGE").
+# The series name must start with a letter to avoid matching titles like
+# "1942" or "2048".  The series-name capture uses ``.*?`` (lazy) so it
+# can include colons/dashes (e.g., "Batman: Arkham Knight 2").  The
+# suffix pattern allows space, colon, dash, em-dash, plus, or slash as
+# delimiters so subtitles like "THE ZODIAC AGE" (space) and
+# "+ Re Mind (DLC)" (plus) are matched.
 _TITLE_ARABIC_PATTERN: re.Pattern[str] = re.compile(
-    r"^([A-Za-z][^:—\-]*?)\s+(\d+)(?:\s*[:—\-].+)?$"
+    r"^([A-Za-z].*?)\s+(\d+)(?:[\s:—\-+/].+)?$"
 )
 
-# Trailing Roman numeral (e.g., "Final Fantasy XII", "Shin Megami Tensei IV").
+# Trailing Roman numeral (e.g., "Final Fantasy XII", "Grand Theft Auto V").
+# Uses ``[IVXLCDM]+`` instead of a strict structural regex so that
+# standalone V (5), X (10), L (50), C (100) are accepted.  Validation
+# happens downstream via ``_roman_to_int()`` + range check (1-100).
 _TITLE_ROMAN_PATTERN: re.Pattern[str] = re.compile(
-    r"^([A-Za-z][^:—\-]*?)\s+((?:M{0,3})(?:CM|CD|D?C{0,3})(?:XC|XL|L?X{0,3})(?:IX|IV|V?I{1,3}))(?:\s*[:—\-].+)?$"
+    r"^([A-Za-z].*?)\s+([IVXLCDM]+)(?:[\s:—\-+/].+)?$"
 )
 
 

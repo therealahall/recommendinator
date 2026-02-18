@@ -1003,3 +1003,102 @@ class TestFindEarliestRecommendable:
         result = find_earliest_recommendable("Dragon Age", {}, unconsumed)
         assert result is not None
         assert result.id == "da1"
+
+
+class TestTitleRegexPatternsRegression:
+    """Regression tests for title-embedded series detection patterns.
+
+    Bug reported: Several games missing franchise/series data:
+    - "FINAL FANTASY XII THE ZODIAC AGE" — no franchise
+    - "FINAL FANTASY X/X-2 HD Remaster" — no franchise
+    - "KINGDOM HEARTS III + Re Mind (DLC)" — no franchise
+    - "LIGHTNING RETURNS: FINAL FANTASY XIII" — no franchise
+
+    Root causes:
+    1. Suffix pattern required colon/dash/em-dash after numeral; space-separated
+       subtitles like "THE ZODIAC AGE" and plus-separated DLC like "+ Re Mind"
+       were not matched.
+    2. Series name capture ``[^:—\\-]*?`` stopped at colons/dashes, so
+       "LIGHTNING RETURNS: FINAL FANTASY XIII" couldn't reach "XIII".
+    3. Roman numeral regex rejected standalone V, X, L, C (required at least
+       one I), so "FINAL FANTASY X" and "GRAND THEFT AUTO V" failed.
+
+    Fix: Widened suffix delimiters to ``[\\s:—\\-+/]``, changed series-name
+    capture to ``.*?`` (lazy), simplified Roman numeral group to
+    ``[IVXLCDM]+`` with downstream validation.
+    """
+
+    def test_ff_xii_zodiac_age_regression(self) -> None:
+        """'FINAL FANTASY XII THE ZODIAC AGE' -> ('FINAL FANTASY', 12)."""
+        result = extract_series_info(
+            "FINAL FANTASY XII THE ZODIAC AGE",
+            content_type=ContentType.VIDEO_GAME,
+        )
+        assert result is not None
+        assert result[0] == "FINAL FANTASY"
+        assert result[1] == 12
+
+    def test_kingdom_hearts_iii_dlc_regression(self) -> None:
+        """'KINGDOM HEARTS III + Re Mind (DLC)' -> ('KINGDOM HEARTS', 3)."""
+        result = extract_series_info(
+            "KINGDOM HEARTS III + Re Mind (DLC)",
+            content_type=ContentType.VIDEO_GAME,
+        )
+        assert result is not None
+        assert result[0] == "KINGDOM HEARTS"
+        assert result[1] == 3
+
+    def test_ff_x_standalone_roman_numeral_regression(self) -> None:
+        """'FINAL FANTASY X' -> ('FINAL FANTASY', 10)."""
+        result = extract_series_info(
+            "FINAL FANTASY X", content_type=ContentType.VIDEO_GAME
+        )
+        assert result is not None
+        assert result[0] == "FINAL FANTASY"
+        assert result[1] == 10
+
+    def test_gta_v_standalone_roman_numeral_regression(self) -> None:
+        """'GRAND THEFT AUTO V' -> ('GRAND THEFT AUTO', 5)."""
+        result = extract_series_info(
+            "GRAND THEFT AUTO V", content_type=ContentType.VIDEO_GAME
+        )
+        assert result is not None
+        assert result[0] == "GRAND THEFT AUTO"
+        assert result[1] == 5
+
+    def test_witcher_3_wild_hunt_existing_behavior_preserved(self) -> None:
+        """'The Witcher 3: Wild Hunt' -> ('The Witcher', 3) — unchanged."""
+        result = extract_series_info(
+            "The Witcher 3: Wild Hunt", content_type=ContentType.VIDEO_GAME
+        )
+        assert result is not None
+        assert result[0] == "The Witcher"
+        assert result[1] == 3
+
+    def test_lightning_returns_title_fallback_regression(self) -> None:
+        """'LIGHTNING RETURNS: FINAL FANTASY XIII' -> series name includes colon.
+
+        Title-level parsing captures the series name as
+        'LIGHTNING RETURNS: FINAL FANTASY' with position 13.
+        In practice RAWG franchise metadata is preferred for this title.
+        """
+        result = extract_series_info(
+            "LIGHTNING RETURNS: FINAL FANTASY XIII",
+            content_type=ContentType.VIDEO_GAME,
+        )
+        assert result is not None
+        assert result[0] == "LIGHTNING RETURNS: FINAL FANTASY"
+        assert result[1] == 13
+
+    def test_ff_x_x2_hd_remaster_slash_delimiter(self) -> None:
+        """'FINAL FANTASY X/X-2 HD Remaster' -> ('FINAL FANTASY', 10).
+
+        The slash after X acts as a subtitle delimiter.
+        """
+        result = extract_series_info(
+            "FINAL FANTASY X/X-2 HD Remaster",
+            content_type=ContentType.VIDEO_GAME,
+        )
+        assert result is not None
+        assert result[0] == "FINAL FANTASY"
+        assert result[1] == 10
