@@ -28,23 +28,34 @@ services:
       # Points to sidecar when using --profile ai
       - OLLAMA_BASE_URL=http://ollama:11434
     restart: unless-stopped
+    depends_on:
+      ollama:
+        condition: service_healthy
+        required: false  # Only applies when --profile ai is active
     networks:
       - recommendations-net
 
   # Ollama LLM sidecar (only starts with --profile ai)
+  # Models are auto-pulled on first start from config/config.yaml (ollama.model
+  # and ollama.embedding_model). Falls back to mistral:7b and nomic-embed-text.
   ollama:
     image: ollama/ollama:latest
     container_name: personal-recommendations-ollama
     profiles: ["ai"]
+    entrypoint: ["/entrypoint.sh"]
     volumes:
       # Persist downloaded models
       - ollama-data:/root/.ollama
+      # Config for reading model names
+      - ./config:/config:ro
+      # Custom entrypoint that pulls models on first start
+      - ./docker/ollama-entrypoint.sh:/entrypoint.sh:ro
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:11434/"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 10s
+      test: ["CMD-SHELL", "ollama list > /dev/null 2>&1 && test -f /tmp/models-ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 300s
     restart: unless-stopped
     networks:
       - recommendations-net
