@@ -293,6 +293,7 @@ class CsvImportPlugin(SourcePlugin):
             ContentItem objects for each row
         """
         source = self.get_source_identifier(config)
+        logger.info(f"Parsing CSV file: {file_path}")
         expected_columns = COMMON_COLUMNS | CONTENT_TYPE_COLUMNS.get(
             content_type.value, set()
         )
@@ -318,6 +319,7 @@ class CsvImportPlugin(SourcePlugin):
                 )
 
         total = len(rows)
+        logger.info(f"Found {total} entries in CSV file")
         count = 0
         for row in rows:
             title = row.get("title", "").strip()
@@ -382,6 +384,8 @@ class CsvImportPlugin(SourcePlugin):
                 source=source,
             )
             count += 1
+
+        logger.info(f"Imported {count} items from CSV file")
 
 
 def _build_metadata(row: dict[str, str], content_type: ContentType) -> dict[str, Any]:

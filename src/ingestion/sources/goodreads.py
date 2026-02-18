@@ -1,6 +1,7 @@
 """Goodreads CSV export plugin."""
 
 import csv
+import logging
 from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
@@ -13,6 +14,8 @@ from src.ingestion.plugin_base import (
     SourcePlugin,
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+
+logger = logging.getLogger(__name__)
 
 
 class GoodreadsPlugin(SourcePlugin):
@@ -111,12 +114,14 @@ class GoodreadsPlugin(SourcePlugin):
             ContentItem objects for each book in the export
         """
         source = self.get_source_identifier(config)
+        logger.info(f"Parsing Goodreads CSV file: {file_path}")
 
         with open(file_path, encoding="utf-8") as csv_file:
             reader = csv.DictReader(csv_file)
             rows = list(reader)
 
         total = len(rows)
+        logger.info(f"Found {total} entries in Goodreads CSV file")
         count = 0
         for row in rows:
             title = row.get("Title", "").strip()
@@ -179,3 +184,5 @@ class GoodreadsPlugin(SourcePlugin):
                 source=source,
             )
             count += 1
+
+        logger.info(f"Imported {count} items from Goodreads CSV file")

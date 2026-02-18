@@ -24,6 +24,7 @@ from src.ingestion.plugin_base import (
     SourcePlugin,
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.utils.progress import log_progress
 
 logger = logging.getLogger(__name__)
 
@@ -350,6 +351,8 @@ def _fetch_epic_games(
 
         # Build metadata
         metadata = extract_metadata_fields(game_metadata, record)
+
+        log_progress(logger, "Epic Games library", index + 1, len(library_records))
 
         if progress_callback:
             progress_callback(index + 1, len(library_records), title)

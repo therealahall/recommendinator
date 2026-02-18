@@ -127,12 +127,17 @@ class JsonImportPlugin(SourcePlugin):
                 self.name, f"Invalid content type: {content_type_str}"
             ) from error
 
+        file_format = "JSONL" if file_path.suffix == ".jsonl" else "JSON"
+        logger.info(f"Parsing {file_format} file: {file_path}")
+
         try:
             entries = _load_json_or_jsonl(file_path)
         except FileNotFoundError as error:
             raise SourceError(self.name, f"JSON file not found: {file_path}") from error
         except (json.JSONDecodeError, ValueError) as error:
             raise SourceError(self.name, f"Failed to parse JSON: {error}") from error
+
+        logger.info(f"Found {len(entries)} entries in {file_format} file")
 
         yield from _parse_entries(
             entries,
@@ -272,6 +277,8 @@ def _parse_entries(
             source=source,
         )
         count += 1
+
+    logger.info(f"Imported {count} items from JSON file")
 
 
 def _normalize_json_rating(raw_rating: Any) -> int | None:

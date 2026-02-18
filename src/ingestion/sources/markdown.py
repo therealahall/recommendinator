@@ -157,6 +157,8 @@ class MarkdownImportPlugin(SourcePlugin):
                 self.name, f"Invalid content type: {content_type_str}"
             ) from error
 
+        logger.info(f"Parsing Markdown file: {file_path}")
+
         try:
             content = file_path.read_text(encoding="utf-8")
         except FileNotFoundError as error:
@@ -186,6 +188,10 @@ def _parse_markdown(
     Yields:
         ContentItem objects
     """
+    # Pre-scan to count items so we can report a real total
+    total = sum(1 for line in content.splitlines() if _ITEM_PATTERN.match(line.strip()))
+    logger.info(f"Found {total} entries in Markdown file")
+
     current_status = ConsumptionStatus.UNREAD
     count = 0
 
@@ -246,7 +252,7 @@ def _parse_markdown(
                 )
 
         if progress_callback:
-            progress_callback(count, None, title)
+            progress_callback(count, total, title)
 
         yield ContentItem(
             title=title,
@@ -259,6 +265,8 @@ def _parse_markdown(
             source=source,
         )
         count += 1
+
+    logger.info(f"Imported {count} items from Markdown file")
 
 
 def _match_section_status(heading_text: str) -> ConsumptionStatus | None:

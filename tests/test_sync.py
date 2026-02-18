@@ -112,9 +112,7 @@ class TestExecuteSync:
         assert result.items_synced == 1
         storage.has_embedding.assert_called_once_with("ext_1")
         embedding_gen.generate_content_embedding.assert_not_called()
-        storage.save_content_item.assert_called_once_with(
-            items[0], embedding=None
-        )
+        storage.save_content_item.assert_called_once_with(items[0], embedding=None)
 
     def test_sync_generates_embedding_for_items_without_external_id(self) -> None:
         """Items without external IDs always get embeddings (can't check existence)."""

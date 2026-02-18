@@ -16,6 +16,7 @@ from src.ingestion.plugin_base import (
     SourcePlugin,
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.utils.progress import log_progress
 
 logger = logging.getLogger(__name__)
 
@@ -163,6 +164,7 @@ class ArrPlugin(SourcePlugin):
         base_url = config.get("url", self._default_url).rstrip("/")
         api_key = config.get("api_key", "").strip()
 
+        logger.info(f"Fetching items from {self.display_name}...")
         try:
             item_list = self._fetch_items(base_url, api_key)
         except requests.RequestException as error:
@@ -184,6 +186,9 @@ class ArrPlugin(SourcePlugin):
             metadata = self.build_metadata(item)
             self.post_fetch(base_url, api_key, item, metadata)
 
+            count += 1
+            log_progress(logger, f"{self.display_name} items", count, total)
+
             if progress_callback:
                 progress_callback(count, total, title)
 
@@ -197,7 +202,8 @@ class ArrPlugin(SourcePlugin):
                 metadata=metadata,
                 source=source,
             )
-            count += 1
+
+        logger.info(f"Imported {count} items from {self.display_name}")
 
     def _fetch_items(self, base_url: str, api_key: str) -> list[dict[str, Any]]:
         """Fetch all items from the *arr API.

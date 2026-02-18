@@ -827,9 +827,7 @@ async def update_data(request: UpdateRequest) -> dict[str, Any]:
                 logger.info(f"[ENRICHMENT] Auto-start skipped: {message}")
 
     # Start background sync
-    source_label = (
-        humanize_source_id(source) if source != "all" else "All Sources"
-    )
+    source_label = humanize_source_id(source) if source != "all" else "All Sources"
     success, message = sync_manager.start_sync(
         source_label, run_sync, on_complete=on_sync_complete
     )
