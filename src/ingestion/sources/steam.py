@@ -14,6 +14,7 @@ from src.ingestion.plugin_base import (
     SourcePlugin,
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.utils.progress import log_progress
 
 logger = logging.getLogger(__name__)
 
@@ -119,13 +120,8 @@ def get_game_details(
         url = "https://store.steampowered.com/api/appdetails"
         params = {"appids": app_ids_str, "l": "en"}
 
-        # Log progress every 10 games or for the first few
         current = index + 1
-        if current <= 5 or current % 10 == 0 or current == total:
-            logger.info(
-                f"Fetching game details: {current}/{total} "
-                f"({current * 100 // total}%)"
-            )
+        log_progress(logger, "game details", current, total)
 
         # Retry loop with exponential backoff
         retry_delay = current_delay

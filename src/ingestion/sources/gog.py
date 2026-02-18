@@ -14,6 +14,7 @@ from src.ingestion.plugin_base import (
     SourcePlugin,
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.utils.progress import log_progress
 
 logger = logging.getLogger(__name__)
 
@@ -199,11 +200,7 @@ def get_multiple_product_details(
     for index, product_id in enumerate(product_ids):
         current = index + 1
 
-        if current <= 5 or current % 10 == 0 or current == total:
-            logger.info(
-                f"Fetching GOG product details: {current}/{total} "
-                f"({current * 100 // total}%)"
-            )
+        log_progress(logger, "GOG product details", current, total)
 
         retry_delay = rate_limit_seconds
         for attempt in range(max_retries + 1):
