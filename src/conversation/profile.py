@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 from src.models.content import ContentItem, ContentType
 from src.models.conversation import PreferenceProfile
+from src.recommendations.genre_normalizer import ALLOWED_TERMS
 from src.recommendations.scorers import extract_genres
 
 if TYPE_CHECKING:
@@ -46,6 +47,23 @@ THEME_KEYWORDS = {
 
 # Minimum number of rated items per genre to include in profile
 MIN_ITEMS_PER_GENRE = 2
+
+
+def _extract_profile_genres(item: ContentItem) -> list[str]:
+    """Extract genres from an item, filtered to curated genre terms only.
+
+    Uses the shared normalizer for extraction and normalization, then
+    filters to ALLOWED_TERMS to exclude arbitrary tags (e.g. "rock band",
+    "skeleton") that are useful for item-to-item matching but not for
+    user-facing profile summaries.
+
+    Args:
+        item: Content item to extract genres from
+
+    Returns:
+        List of normalized genre strings from the curated set
+    """
+    return [genre for genre in extract_genres(item) if genre in ALLOWED_TERMS]
 
 
 class ProfileGenerator:
@@ -116,7 +134,7 @@ class ProfileGenerator:
             if item.rating is None:
                 continue
 
-            genres = extract_genres(item)
+            genres = _extract_profile_genres(item)
 
             for genre in genres:
                 genre_ratings[genre].append(item.rating)
@@ -182,7 +200,7 @@ class ProfileGenerator:
         for item in completed_items:
             if item.rating is None:
                 continue
-            genres = extract_genres(item)
+            genres = _extract_profile_genres(item)
             for genre in genres:
                 genre_ratings[genre].append(item.rating)
 
