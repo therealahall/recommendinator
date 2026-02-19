@@ -2002,7 +2002,7 @@
         // Anti-preferences
         if (profile.anti_preferences && profile.anti_preferences.length > 0) {
             html += '<div class="profile-section"><h5>Not Your Style</h5><div class="profile-tags">';
-            profile.anti_preferences.slice(0, 4).forEach(function (p) {
+            profile.anti_preferences.slice(0, 6).forEach(function (p) {
                 html += '<span class="profile-tag anti">' + escapeHtml(p) + '</span>';
             });
             html += '</div></div>';
@@ -2011,7 +2011,7 @@
         // Patterns
         if (profile.cross_media_patterns && profile.cross_media_patterns.length > 0) {
             html += '<div class="profile-section"><h5>Patterns</h5>';
-            profile.cross_media_patterns.slice(0, 2).forEach(function (p) {
+            profile.cross_media_patterns.slice(0, 3).forEach(function (p) {
                 html += '<p class="text-muted" style="font-size:0.85em;margin:4px 0;">' + escapeHtml(p) + '</p>';
             });
             html += '</div>';

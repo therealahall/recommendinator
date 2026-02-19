@@ -55,13 +55,21 @@ def sample_items(storage_manager: StorageManager) -> list[int]:
             rating=4,
             metadata={"genres": ["sci-fi"]},
         ),
-        # Low-rated horror book
+        # Low-rated horror books (need 2 for anti-pref minimum)
         ContentItem(
             id="book4",
             title="Some Horror Book",
             content_type=ContentType.BOOK,
             status=ConsumptionStatus.COMPLETED,
             rating=2,
+            metadata={"genres": ["horror"]},
+        ),
+        ContentItem(
+            id="book4b",
+            title="Another Horror Book",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=1,
             metadata={"genres": ["horror"]},
         ),
         # High-rated fantasy games
@@ -147,13 +155,13 @@ class TestGenreAffinities:
         """Test that genre affinities are calculated from ratings."""
         profile = profile_generator.generate_profile(user_id=1)
 
-        # Sci-fi should have high affinity (multiple 5-star ratings)
-        assert "sci-fi" in profile.genre_affinities
-        assert profile.genre_affinities["sci-fi"] > 0.6
+        # "sci-fi" normalizes to "science fiction" via extract_genres
+        assert "science fiction" in profile.genre_affinities
+        assert profile.genre_affinities["science fiction"] >= 4.0
 
         # Fantasy should also have high affinity
         assert "fantasy" in profile.genre_affinities
-        assert profile.genre_affinities["fantasy"] > 0.6
+        assert profile.genre_affinities["fantasy"] >= 4.0
 
     def test_genre_affinities_weighted_by_rating(
         self,
@@ -185,11 +193,9 @@ class TestGenreAffinities:
         generator = ProfileGenerator(storage_manager)
         profile = generator.generate_profile(user_id=1)
 
-        # Mystery should have moderate affinity (average of 5 and 1)
+        # Mystery avg is (5 + 1) / 2 = 3.0
         assert "mystery" in profile.genre_affinities
-        # Weight for 5 = 1.0, weight for 1 = -0.6, avg = 0.2
-        # Normalized: (0.2 + 0.6) / 1.6 = 0.5
-        assert 0.4 <= profile.genre_affinities["mystery"] <= 0.6
+        assert 2.5 <= profile.genre_affinities["mystery"] <= 3.5
 
     def test_genre_affinities_sorted_by_score(
         self,
@@ -200,8 +206,8 @@ class TestGenreAffinities:
         profile = profile_generator.generate_profile(user_id=1)
 
         affinities = list(profile.genre_affinities.items())
-        for i in range(len(affinities) - 1):
-            assert affinities[i][1] >= affinities[i + 1][1]
+        for index in range(len(affinities) - 1):
+            assert affinities[index][1] >= affinities[index + 1][1]
 
 
 class TestThemePreferences:
@@ -272,10 +278,10 @@ class TestAntiPreferences:
         profile_generator: ProfileGenerator,
         sample_items: list[int],
     ) -> None:
-        """Test that anti-preferences come from low-rated items."""
+        """Test that anti-preferences come from consistently low-rated genres."""
         profile = profile_generator.generate_profile(user_id=1)
 
-        # Horror was rated 2 stars
+        # Horror has 2 low-rated items (rating 2 and 1), avg 1.5 <= 2.5
         assert "horror" in profile.anti_preferences
 
     def test_anti_preferences_requires_multiple_low_ratings(
@@ -300,7 +306,7 @@ class TestAntiPreferences:
                 rating=2,
                 metadata={"genres": ["horror"]},
             ),
-            # Add some other items to meet the threshold
+            # Add some other items
             ContentItem(
                 id="test3",
                 title="Good Book 1",
@@ -332,7 +338,7 @@ class TestAntiPreferences:
         generator = ProfileGenerator(storage_manager)
         profile = generator.generate_profile(user_id=1)
 
-        # Horror appears in 2 low-rated items
+        # Horror appears in 2 low-rated items, avg 1.5 <= 2.5
         assert "horror" in profile.anti_preferences
 
 
@@ -402,90 +408,10 @@ class TestCrossMediaPatterns:
 
         # Should detect that books are rated higher than games
         pattern_found = any(
-            "books" in p.lower() and "games" in p.lower()
-            for p in profile.cross_media_patterns
+            "books" in pattern.lower() and "games" in pattern.lower()
+            for pattern in profile.cross_media_patterns
         )
         assert pattern_found
-
-
-class TestGenreExtraction:
-    """Tests for genre extraction from items."""
-
-    def test_extract_genres_from_list(
-        self,
-        profile_generator: ProfileGenerator,
-    ) -> None:
-        """Test extracting genres from a list in metadata."""
-        item = ContentItem(
-            id="test",
-            title="Test",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-            metadata={"genres": ["sci-fi", "fantasy"]},
-        )
-
-        genres = profile_generator._extract_genres(item)
-
-        assert "sci-fi" in genres
-        assert "fantasy" in genres
-
-    def test_extract_genres_from_string(
-        self,
-        profile_generator: ProfileGenerator,
-    ) -> None:
-        """Test extracting genres from a delimited string."""
-        item = ContentItem(
-            id="test",
-            title="Test",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-            metadata={"genres": "sci-fi, fantasy, adventure"},
-        )
-
-        genres = profile_generator._extract_genres(item)
-
-        assert "sci-fi" in genres
-        assert "fantasy" in genres
-        assert "adventure" in genres
-
-    def test_extract_genres_from_title(
-        self,
-        profile_generator: ProfileGenerator,
-    ) -> None:
-        """Test extracting genres from title keywords."""
-        item = ContentItem(
-            id="test",
-            title="A Great Sci-Fi Adventure",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-            metadata={},
-        )
-
-        genres = profile_generator._extract_genres(item)
-
-        assert "sci-fi" in genres
-
-    def test_extract_genres_filters_unknown(
-        self,
-        profile_generator: ProfileGenerator,
-    ) -> None:
-        """Test that unknown genres are filtered out."""
-        item = ContentItem(
-            id="test",
-            title="Test",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-            metadata={"genres": ["sci-fi", "unknown_genre_xyz"]},
-        )
-
-        genres = profile_generator._extract_genres(item)
-
-        assert "sci-fi" in genres
-        assert "unknown_genre_xyz" not in genres
 
 
 class TestThemeExtraction:
@@ -510,21 +436,6 @@ class TestThemeExtraction:
 
         assert "exploration" in themes
         assert "atmosphere" in themes
-
-
-class TestRatingToWeight:
-    """Tests for rating to weight conversion."""
-
-    def test_rating_weights(
-        self,
-        profile_generator: ProfileGenerator,
-    ) -> None:
-        """Test that ratings convert to correct weights."""
-        assert profile_generator._rating_to_weight(5) == 1.0
-        assert profile_generator._rating_to_weight(4) == 0.6
-        assert profile_generator._rating_to_weight(3) == 0.2
-        assert profile_generator._rating_to_weight(2) == -0.3
-        assert profile_generator._rating_to_weight(1) == -0.6
 
 
 class TestRegenerateAndSave:
@@ -560,3 +471,151 @@ class TestFormatContentType:
         assert profile_generator._format_content_type("tv_show") == "TV shows"
         assert profile_generator._format_content_type("video_game") == "games"
         assert profile_generator._format_content_type(ContentType.BOOK) == "books"
+
+
+class TestProfileRegression:
+    """Regression tests for profile generation bugs."""
+
+    def test_loved_genre_not_in_anti_preferences_regression(
+        self,
+        storage_manager: StorageManager,
+    ) -> None:
+        """Regression test: Loved genre must not appear as anti-preference.
+
+        Bug reported: Genre with 50 five-star ratings + 2 one-star ratings
+        appeared in "Not Your Style" because old algorithm counted low-rated
+        occurrences without checking overall sentiment.
+
+        Root cause: Anti-preference detection only looked at low-rated items
+        without considering the genre's overall rating distribution.
+
+        Fix: Anti-preferences now require average rating <= 2.5 AND at most
+        20% positive (3+ star) items, preventing well-loved genres from
+        appearing as anti-preferences.
+        """
+        items = []
+        # 50 five-star sci-fi items
+        for index in range(50):
+            items.append(
+                ContentItem(
+                    id=f"scifi_good_{index}",
+                    title=f"Great Sci-Fi Book {index}",
+                    content_type=ContentType.BOOK,
+                    status=ConsumptionStatus.COMPLETED,
+                    rating=5,
+                    metadata={"genres": ["sci-fi"]},
+                )
+            )
+        # 2 one-star sci-fi items
+        for index in range(2):
+            items.append(
+                ContentItem(
+                    id=f"scifi_bad_{index}",
+                    title=f"Bad Sci-Fi Book {index}",
+                    content_type=ContentType.BOOK,
+                    status=ConsumptionStatus.COMPLETED,
+                    rating=1,
+                    metadata={"genres": ["sci-fi"]},
+                )
+            )
+
+        for item in items:
+            storage_manager.save_content_item(item, user_id=1)
+
+        generator = ProfileGenerator(storage_manager)
+        profile = generator.generate_profile(user_id=1)
+
+        # sci-fi normalizes to "science fiction"
+        assert "science fiction" not in profile.anti_preferences
+        # And it should be in genre affinities with a high score
+        assert "science fiction" in profile.genre_affinities
+        assert profile.genre_affinities["science fiction"] >= 4.5
+
+    def test_minimum_items_required_for_genre(
+        self,
+        storage_manager: StorageManager,
+    ) -> None:
+        """Test that genres with only 1 rated item appear in neither loved nor anti.
+
+        A single data point is not enough to establish a preference or
+        anti-preference. Require at least MIN_ITEMS_PER_GENRE (2) items.
+        """
+        items = [
+            ContentItem(
+                id="solo_genre",
+                title="One Mystery Book",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+                metadata={"genres": ["mystery"]},
+            ),
+            # Need at least one other genre with 2+ items for a non-empty profile
+            ContentItem(
+                id="scifi1",
+                title="Sci-Fi 1",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+                metadata={"genres": ["sci-fi"]},
+            ),
+            ContentItem(
+                id="scifi2",
+                title="Sci-Fi 2",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                rating=4,
+                metadata={"genres": ["sci-fi"]},
+            ),
+        ]
+        for item in items:
+            storage_manager.save_content_item(item, user_id=1)
+
+        generator = ProfileGenerator(storage_manager)
+        profile = generator.generate_profile(user_id=1)
+
+        # Mystery has only 1 item — should not appear in affinities
+        assert "mystery" not in profile.genre_affinities
+        assert "mystery" not in profile.anti_preferences
+
+    def test_normalized_genres_used_in_profile(
+        self,
+        storage_manager: StorageManager,
+    ) -> None:
+        """Regression test: Profile should use normalized genre names.
+
+        Bug reported: Profile showed "sci-fi" while recommendation engine
+        used "science fiction", causing mismatches.
+
+        Root cause: Profile had its own primitive genre extraction
+        (GENRE_KEYWORDS set) instead of using the shared normalizer.
+
+        Fix: Profile now uses extract_genres() from scorers, which
+        delegates to extract_and_normalize_genres().
+        """
+        items = [
+            ContentItem(
+                id="test1",
+                title="Test 1",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+                metadata={"genres": ["sci-fi"]},
+            ),
+            ContentItem(
+                id="test2",
+                title="Test 2",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+                metadata={"genres": ["sci-fi"]},
+            ),
+        ]
+        for item in items:
+            storage_manager.save_content_item(item, user_id=1)
+
+        generator = ProfileGenerator(storage_manager)
+        profile = generator.generate_profile(user_id=1)
+
+        # "sci-fi" in metadata should produce "science fiction" in affinities
+        assert "science fiction" in profile.genre_affinities
+        assert "sci-fi" not in profile.genre_affinities

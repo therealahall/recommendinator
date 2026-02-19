@@ -437,8 +437,8 @@ class TestProfileEndpoints:
         assert response.status_code == 200
         data = response.json()
         assert data["user_id"] == 1
-        assert "sci-fi" in data["genre_affinities"]
-        assert data["genre_affinities"]["sci-fi"] > 0.5
+        assert "science fiction" in data["genre_affinities"]
+        assert data["genre_affinities"]["science fiction"] >= 4.0
 
     def test_get_profile_after_regenerate(
         self,
@@ -446,11 +446,22 @@ class TestProfileEndpoints:
         storage_manager: StorageManager,
     ) -> None:
         """Test that profile persists after regeneration."""
-        # Add an item and regenerate
+        # Add items and regenerate (need 2+ per genre for affinity)
         storage_manager.save_content_item(
             ContentItem(
                 id="test1",
-                title="Fantasy Book",
+                title="Fantasy Book 1",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+                metadata={"genres": ["fantasy"]},
+            ),
+            user_id=1,
+        )
+        storage_manager.save_content_item(
+            ContentItem(
+                id="test2",
+                title="Fantasy Book 2",
                 content_type=ContentType.BOOK,
                 status=ConsumptionStatus.COMPLETED,
                 rating=5,

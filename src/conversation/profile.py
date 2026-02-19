@@ -9,62 +9,13 @@ from typing import TYPE_CHECKING
 
 from src.models.content import ContentItem, ContentType
 from src.models.conversation import PreferenceProfile
+from src.recommendations.scorers import extract_genres
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
 
 logger = logging.getLogger(__name__)
 
-
-# Genre/theme keywords to extract from metadata
-GENRE_KEYWORDS = {
-    "sci-fi",
-    "science fiction",
-    "fantasy",
-    "horror",
-    "mystery",
-    "thriller",
-    "romance",
-    "comedy",
-    "drama",
-    "action",
-    "adventure",
-    "rpg",
-    "strategy",
-    "simulation",
-    "puzzle",
-    "platformer",
-    "roguelike",
-    "metroidvania",
-    "souls-like",
-    "open world",
-    "sandbox",
-    "survival",
-    "stealth",
-    "racing",
-    "sports",
-    "fighting",
-    "shooter",
-    "fps",
-    "mmo",
-    "mmorpg",
-    "indie",
-    "narrative",
-    "story-driven",
-    "exploration",
-    "cozy",
-    "relaxing",
-    "historical",
-    "literary fiction",
-    "non-fiction",
-    "biography",
-    "memoir",
-    "self-help",
-    "true crime",
-    "documentary",
-    "animated",
-    "anime",
-}
 
 # Theme keywords that indicate preference signals
 THEME_KEYWORDS = {
@@ -93,6 +44,9 @@ THEME_KEYWORDS = {
     "open-ended",
 }
 
+# Minimum number of rated items per genre to include in profile
+MIN_ITEMS_PER_GENRE = 2
+
 
 class ProfileGenerator:
     """Generates distilled preference profiles from user data."""
@@ -100,27 +54,21 @@ class ProfileGenerator:
     def __init__(
         self,
         storage_manager: "StorageManager",
-        min_rating_for_preference: int = 4,
-        max_rating_for_anti_preference: int = 2,
     ) -> None:
         """Initialize the profile generator.
 
         Args:
             storage_manager: Storage manager for database operations
-            min_rating_for_preference: Minimum rating to consider as positive signal
-            max_rating_for_anti_preference: Maximum rating to consider as negative signal
         """
         self.storage = storage_manager
-        self.min_rating_for_preference = min_rating_for_preference
-        self.max_rating_for_anti_preference = max_rating_for_anti_preference
 
     def generate_profile(self, user_id: int) -> PreferenceProfile:
         """Generate a preference profile from all user data.
 
         Analyzes:
-        - Genre affinities from ratings (weighted by rating value)
+        - Genre affinities from average ratings (1-5 scale)
         - Theme preferences from high-rated content metadata
-        - Anti-preferences from abandoned/low-rated content
+        - Anti-preferences using consistency checks (avg + positive ratio)
         - Cross-media patterns (e.g., "loves sci-fi books, prefers fantasy games")
 
         Args:
@@ -129,24 +77,14 @@ class ProfileGenerator:
         Returns:
             PreferenceProfile with computed preferences
         """
-        # Get all completed items with ratings
         completed_items = self.storage.get_completed_items(user_id=user_id, limit=1000)
 
-        # Get unconsumed items for anti-preference detection
-        unconsumed_items = self.storage.get_unconsumed_items(user_id=user_id, limit=500)
-
-        # Calculate genre affinities
         genre_affinities = self._calculate_genre_affinities(completed_items)
 
-        # Identify theme preferences from high-rated items
         theme_preferences = self._identify_theme_preferences(completed_items)
 
-        # Identify anti-preferences from low-rated or abandoned items
-        anti_preferences = self._identify_anti_preferences(
-            completed_items, unconsumed_items
-        )
+        anti_preferences = self._identify_anti_preferences(completed_items)
 
-        # Find cross-media patterns
         cross_media_patterns = self._identify_cross_media_patterns(
             completed_items, genre_affinities
         )
@@ -163,45 +101,31 @@ class ProfileGenerator:
     def _calculate_genre_affinities(self, items: list[ContentItem]) -> dict[str, float]:
         """Calculate genre preference scores from rated items.
 
-        Uses weighted scoring where rating affects the affinity score:
-        - 5 stars = +1.0
-        - 4 stars = +0.6
-        - 3 stars = +0.2
-        - 2 stars = -0.3
-        - 1 star = -0.6
+        Uses average rating per genre on a 1.0-5.0 scale. Requires at least
+        MIN_ITEMS_PER_GENRE rated items per genre to avoid small-sample bias.
 
         Args:
             items: List of completed content items
 
         Returns:
-            Dictionary mapping genre to affinity score (0.0 to 1.0)
+            Dictionary mapping genre to average rating (1.0 to 5.0), sorted descending
         """
-        genre_scores: dict[str, list[float]] = defaultdict(list)
+        genre_ratings: dict[str, list[int]] = defaultdict(list)
 
         for item in items:
             if item.rating is None:
                 continue
 
-            # Extract genres from item
-            genres = self._extract_genres(item)
-
-            # Calculate weight based on rating
-            weight = self._rating_to_weight(item.rating)
+            genres = extract_genres(item)
 
             for genre in genres:
-                genre_scores[genre].append(weight)
+                genre_ratings[genre].append(item.rating)
 
-        # Convert to averaged affinities
         affinities: dict[str, float] = {}
-        for genre, scores in genre_scores.items():
-            if scores:
-                # Average the scores and normalize to 0-1 range
-                avg_score = sum(scores) / len(scores)
-                # Convert from -0.6 to 1.0 range to 0.0 to 1.0 range
-                normalized = (avg_score + 0.6) / 1.6
-                affinities[genre] = round(max(0.0, min(1.0, normalized)), 2)
+        for genre, ratings in genre_ratings.items():
+            if len(ratings) >= MIN_ITEMS_PER_GENRE:
+                affinities[genre] = round(sum(ratings) / len(ratings), 2)
 
-        # Sort by affinity score descending
         return dict(sorted(affinities.items(), key=lambda x: x[1], reverse=True))
 
     def _identify_theme_preferences(self, items: list[ContentItem]) -> list[str]:
@@ -216,9 +140,7 @@ class ProfileGenerator:
         theme_counts: dict[str, int] = defaultdict(int)
 
         high_rated_items = [
-            item
-            for item in items
-            if item.rating is not None and item.rating >= self.min_rating_for_preference
+            item for item in items if item.rating is not None and item.rating >= 4
         ]
 
         for item in high_rated_items:
@@ -240,46 +162,48 @@ class ProfileGenerator:
     def _identify_anti_preferences(
         self,
         completed_items: list[ContentItem],
-        unconsumed_items: list[ContentItem],
     ) -> list[str]:
-        """Identify anti-preferences from low-rated or abandoned content.
+        """Identify anti-preferences using consistency-based checks.
+
+        A genre is an anti-preference only if:
+        1. It has at least MIN_ITEMS_PER_GENRE rated items
+        2. Its average rating is <= 2.5
+        3. At most 1 item OR at most 20% of items rated 3+ stars
+           (prevents genres the user mostly loves from appearing here)
 
         Args:
             completed_items: List of completed content items
-            unconsumed_items: List of unconsumed (potentially abandoned) items
 
         Returns:
             List of identified anti-preferences
         """
-        anti_counts: dict[str, int] = defaultdict(int)
+        genre_ratings: dict[str, list[int]] = defaultdict(list)
 
-        # Low-rated completed items
-        low_rated = [
-            item
-            for item in completed_items
-            if item.rating is not None
-            and item.rating <= self.max_rating_for_anti_preference
-        ]
-
-        for item in low_rated:
-            genres = self._extract_genres(item)
-            themes = self._extract_themes(item)
+        for item in completed_items:
+            if item.rating is None:
+                continue
+            genres = extract_genres(item)
             for genre in genres:
-                anti_counts[genre] += 1
-            for theme in themes:
-                anti_counts[theme] += 1
+                genre_ratings[genre].append(item.rating)
 
-        # Items that have been in backlog for a long time could indicate
-        # genres the user is avoiding, but we don't track add dates
-        # So we'll just use low ratings for now
+        anti_prefs: dict[str, float] = {}
+        for genre, ratings in genre_ratings.items():
+            if len(ratings) < MIN_ITEMS_PER_GENRE:
+                continue
 
-        # Return anti-preferences that appear in at least 2 low-rated items
-        min_count = 2 if len(low_rated) >= 5 else 1
-        anti_prefs = [pref for pref, count in anti_counts.items() if count >= min_count]
+            average_rating = sum(ratings) / len(ratings)
+            if average_rating > 2.5:
+                continue
 
-        # Sort by count descending, take top 10
-        anti_prefs.sort(key=lambda x: anti_counts[x], reverse=True)
-        return anti_prefs[:10]
+            positive_count = sum(1 for rating in ratings if rating >= 3)
+            positive_ratio = positive_count / len(ratings)
+
+            if positive_count <= 1 or positive_ratio <= 0.2:
+                anti_prefs[genre] = average_rating
+
+        # Sort by average rating ascending (worst first), take top 10
+        sorted_anti = sorted(anti_prefs.items(), key=lambda x: x[1])
+        return [genre for genre, _average in sorted_anti[:10]]
 
     def _identify_cross_media_patterns(
         self,
@@ -319,49 +243,6 @@ class ProfileGenerator:
         patterns.extend(self._find_type_preference_patterns(type_ratings))
 
         return patterns[:5]  # Limit to top 5 patterns
-
-    def _extract_genres(self, item: ContentItem) -> list[str]:
-        """Extract genre keywords from item metadata.
-
-        Args:
-            item: Content item to extract genres from
-
-        Returns:
-            List of genre keywords found
-        """
-        genres: list[str] = []
-
-        # Check metadata for genre field
-        metadata = item.metadata or {}
-
-        # Common genre field names
-        genre_fields = ["genre", "genres", "category", "categories", "tags"]
-
-        for field in genre_fields:
-            if field in metadata:
-                value = metadata[field]
-                if isinstance(value, list):
-                    genres.extend(str(v).lower() for v in value)
-                elif isinstance(value, str):
-                    # Split on common delimiters
-                    for delimiter in [",", ";", "/", "|"]:
-                        if delimiter in value:
-                            genres.extend(
-                                g.strip().lower() for g in value.split(delimiter)
-                            )
-                            break
-                    else:
-                        genres.append(value.lower())
-
-        # Also check title for obvious genre indicators
-        title_lower = item.title.lower()
-        for keyword in GENRE_KEYWORDS:
-            if keyword in title_lower:
-                genres.append(keyword)
-
-        # Filter to known keywords and deduplicate
-        known_genres = [g for g in genres if g in GENRE_KEYWORDS]
-        return list(set(known_genres))
 
     def _extract_themes(self, item: ContentItem) -> list[str]:
         """Extract theme keywords from item metadata.
@@ -405,24 +286,6 @@ class ProfileGenerator:
         known_themes = [t for t in themes if t in THEME_KEYWORDS]
         return list(set(known_themes))
 
-    def _rating_to_weight(self, rating: int) -> float:
-        """Convert a 1-5 rating to a preference weight.
-
-        Args:
-            rating: Rating from 1 to 5
-
-        Returns:
-            Weight from -0.6 to 1.0
-        """
-        weights = {
-            5: 1.0,
-            4: 0.6,
-            3: 0.2,
-            2: -0.3,
-            1: -0.6,
-        }
-        return weights.get(rating, 0.0)
-
     def _find_genre_divergence_patterns(
         self, type_genre_affinities: dict[str, dict[str, float]]
     ) -> list[str]:
@@ -449,13 +312,13 @@ class ProfileGenerator:
                     score2 = affinities2.get(genre, 0.0)
 
                     # Significant divergence (0.4+ difference)
-                    if score1 >= 0.7 and score2 <= 0.3:
+                    if score1 >= 4.0 and score2 <= 2.5:
                         type1_name = self._format_content_type(type1)
                         type2_name = self._format_content_type(type2)
                         patterns.append(
                             f"Loves {genre} {type1_name} but not {type2_name}"
                         )
-                    elif score2 >= 0.7 and score1 <= 0.3:
+                    elif score2 >= 4.0 and score1 <= 2.5:
                         type1_name = self._format_content_type(type1)
                         type2_name = self._format_content_type(type2)
                         patterns.append(

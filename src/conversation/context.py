@@ -291,7 +291,7 @@ class ContextAssembler:
                 profile.genre_affinities.items(), key=lambda x: x[1], reverse=True
             )
             top_genres = [
-                f"{genre} ({score:.0%})" for genre, score in sorted_genres[:5]
+                f"{genre} ({score:.1f}\u2605)" for genre, score in sorted_genres[:5]
             ]
             parts.append(f"Top genres: {', '.join(top_genres)}")
 
