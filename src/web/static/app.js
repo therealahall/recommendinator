@@ -5,6 +5,11 @@
 
     var API_BASE = "/api";
 
+    // Configure marked for chat markdown rendering
+    if (typeof marked !== "undefined") {
+        marked.setOptions({ breaks: true, gfm: true });
+    }
+
     // State
     var currentUserId = 1;
     var currentTab = "recommendations";
@@ -1619,8 +1624,34 @@
 
     var chatState = {
         isStreaming: false,
-        currentMessageEl: null
+        currentMessageEl: null,
+        pendingContentType: null
     };
+
+    // Debounce markdown rendering to prevent visual jank during streaming.
+    // Raw text is accumulated immediately; marked.parse() runs after a short
+    // delay so the DOM isn't rebuilt on every tiny chunk.
+    var pendingRenderEl = null;
+    var renderDebounceTimer = null;
+
+    function scheduleMarkdownRender(contentEl) {
+        pendingRenderEl = contentEl;
+        if (renderDebounceTimer) {
+            clearTimeout(renderDebounceTimer);
+        }
+        renderDebounceTimer = setTimeout(flushMarkdownRender, 50);
+    }
+
+    function flushMarkdownRender() {
+        if (pendingRenderEl && pendingRenderEl.dataset.rawText) {
+            pendingRenderEl.innerHTML = renderMarkdown(pendingRenderEl.dataset.rawText);
+        }
+        pendingRenderEl = null;
+        if (renderDebounceTimer) {
+            clearTimeout(renderDebounceTimer);
+            renderDebounceTimer = null;
+        }
+    }
 
     function setupChat() {
         var input = document.getElementById("chatInput");
@@ -1651,8 +1682,9 @@
         regenerateBtn.addEventListener("click", regenerateProfile);
 
         // Expose for suggestion buttons
-        window.sendChatSuggestion = function (text) {
+        window.sendChatSuggestion = function (text, contentType) {
             input.value = text;
+            chatState.pendingContentType = contentType || null;
             sendChatMessage();
         };
     }
@@ -1687,13 +1719,19 @@
         var assistantEl = null;
         var responseText = "";
 
+        var requestBody = {
+            user_id: currentUserId,
+            message: message
+        };
+        if (chatState.pendingContentType) {
+            requestBody.content_type = chatState.pendingContentType;
+        }
+        chatState.pendingContentType = null;
+
         fetch(API_BASE + "/chat", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                user_id: currentUserId,
-                message: message
-            })
+            body: JSON.stringify(requestBody)
         })
             .then(function (response) {
                 if (!response.ok) {
@@ -1745,22 +1783,34 @@
             });
     }
 
+    function renderMarkdown(text) {
+        if (typeof marked !== "undefined") {
+            return marked.parse(text);
+        }
+        return escapeHtml(text).replace(/\n/g, "<br>");
+    }
+
     function handleChatEvent(data, typingEl, setAssistantEl, appendText) {
         if (data.type === "text" && data.content) {
             typingEl.style.display = "none";
 
             var messagesEl = document.getElementById("chatMessages");
-            var existingAssistant = messagesEl.querySelector(".chat-message.assistant:last-child");
+            var existingAssistant = messagesEl.querySelector(".chat-message.assistant:not(.typing):last-child");
+            var contentEl;
 
             if (existingAssistant && !existingAssistant.classList.contains("tool-indicator")) {
-                // Append to existing message
-                existingAssistant.querySelector(".message-content").textContent += data.content;
+                // Append to existing message — accumulate raw text
+                contentEl = existingAssistant.querySelector(".message-content");
+                contentEl.dataset.rawText = (contentEl.dataset.rawText || "") + data.content;
             } else {
                 // Create new assistant message
                 var el = addChatMessage("", "assistant");
-                el.querySelector(".message-content").textContent = data.content;
+                contentEl = el.querySelector(".message-content");
+                contentEl.dataset.rawText = data.content;
                 setAssistantEl(el);
             }
+            // Debounce rendering to prevent heading/formatting jank
+            scheduleMarkdownRender(contentEl);
             appendText(data.content);
             scrollChatToBottom();
         } else if (data.type === "tool_call") {
@@ -1772,10 +1822,12 @@
                 loadMemories();
             }
         } else if (data.type === "done") {
+            flushMarkdownRender();
             typingEl.remove();
             chatState.isStreaming = false;
             updateSendButton();
         } else if (data.type === "error") {
+            flushMarkdownRender();
             typingEl.remove();
             chatState.isStreaming = false;
             updateSendButton();
@@ -1790,7 +1842,12 @@
 
         var contentEl = document.createElement("div");
         contentEl.className = "message-content";
-        contentEl.textContent = text;
+        if (role === "assistant" && text) {
+            contentEl.dataset.rawText = text;
+            contentEl.innerHTML = renderMarkdown(text);
+        } else {
+            contentEl.textContent = text;
+        }
         msgEl.appendChild(contentEl);
 
         messagesEl.appendChild(msgEl);
@@ -1867,9 +1924,10 @@
                     '<h3>Chat with your recommendation advisor</h3>' +
                     '<p>Ask for recommendations, mark items as completed, or tell me about your preferences.</p>' +
                     '<div class="chat-suggestions">' +
-                    '<button class="suggestion-btn" onclick="window.sendChatSuggestion(\'What game should I play next?\')">What game should I play next?</button>' +
-                    '<button class="suggestion-btn" onclick="window.sendChatSuggestion(\'Recommend a book similar to my favorites\')">Recommend a book similar to my favorites</button>' +
-                    '<button class="suggestion-btn" onclick="window.sendChatSuggestion(\\\'What\\\'s in my backlog?\\\')">What\'s in my backlog?</button>' +
+                    '<button class="suggestion-btn" onclick="window.sendChatSuggestion(\'What game do you think will be my next obsession?\', \'video_game\')">What game will be my next obsession?</button>' +
+                    '<button class="suggestion-btn" onclick="window.sendChatSuggestion(\'What book do you think I\\\'ll get lost in next?\', \'book\')">What book will I get lost in next?</button>' +
+                    '<button class="suggestion-btn" onclick="window.sendChatSuggestion(\'What movie should I watch this weekend?\', \'movie\')">What movie should I watch this weekend?</button>' +
+                    '<button class="suggestion-btn" onclick="window.sendChatSuggestion(\'What TV show should I binge next?\', \'tv_show\')">What TV show should I binge next?</button>' +
                     '</div></div>';
             })
             .catch(function (error) {

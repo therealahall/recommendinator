@@ -98,6 +98,66 @@ class TestChatEndpoint:
         assert len(text_events) >= 1
         assert len(done_events) == 1
 
+    def test_chat_streams_individual_text_events_regression(
+        self,
+        test_client: TestClient,
+        mock_conversation_engine: MagicMock,
+    ) -> None:
+        """Regression test: each text chunk must be a separate parseable SSE event.
+
+        Bug reported: Chat streaming showed nothing on the frontend for 2+ minutes,
+        then displayed raw SSE data. Text events were silently dropped.
+
+        Root cause (frontend): The typing indicator element (class 'chat-message
+        assistant typing') matched the CSS selector '.chat-message.assistant:last-child',
+        causing handleChatEvent to try appending to it. Since the typing indicator
+        has no '.message-content' child, querySelector returned null, throwing a
+        TypeError silently caught by the SSE parsing try/catch.
+
+        Root cause (backend): generate_sse() was an async generator wrapping a
+        synchronous engine.process_message() call, blocking the event loop and
+        preventing incremental response flushing.
+
+        Fix (frontend): Changed selector to '.chat-message.assistant:not(.typing):last-child'
+        to exclude the typing indicator.
+
+        Fix (backend): Changed generate_sse() from async to sync generator so
+        Starlette runs it in a thread pool via iterate_in_threadpool.
+        """
+
+        # Simulate word-by-word streaming like Ollama does
+        def mock_word_stream(*args, **kwargs) -> Iterator[ConversationChunk]:
+            words = ["Hello", " ", "world", "!"]
+            for word in words:
+                yield ConversationChunk(chunk_type="text", content=word)
+            yield ConversationChunk(chunk_type="done")
+
+        mock_conversation_engine.process_message.side_effect = mock_word_stream
+
+        response = test_client.post(
+            "/api/chat",
+            json={"user_id": 1, "message": "Hi"},
+        )
+
+        assert response.status_code == 200
+
+        # Parse all SSE events
+        events = []
+        for line in response.text.split("\n"):
+            if line.startswith("data: "):
+                events.append(json.loads(line[6:]))
+
+        text_events = [e for e in events if e["type"] == "text"]
+        done_events = [e for e in events if e["type"] == "done"]
+
+        # Each word should be a separate text event
+        assert len(text_events) == 4
+        assert text_events[0]["content"] == "Hello"
+        assert text_events[1]["content"] == " "
+        assert text_events[2]["content"] == "world"
+        assert text_events[3]["content"] == "!"
+        assert len(done_events) == 1
+
     def test_chat_with_content_type(
         self,
         test_client: TestClient,

@@ -163,9 +163,10 @@
                                 <h3>Chat with your recommendation advisor</h3>
                                 <p>Ask for recommendations, mark items as completed, or tell me about your preferences.</p>
                                 <div class="chat-suggestions">
-                                    <button class="suggestion-btn" onclick="window.sendChatSuggestion('What game should I play next?')">What game should I play next?</button>
-                                    <button class="suggestion-btn" onclick="window.sendChatSuggestion('Recommend a book similar to my favorites')">Recommend a book similar to my favorites</button>
-                                    <button class="suggestion-btn" onclick="window.sendChatSuggestion('What\'s in my backlog?')">What's in my backlog?</button>
+                                    <button class="suggestion-btn" onclick="window.sendChatSuggestion('What game do you think will be my next obsession?', 'video_game')">What game will be my next obsession?</button>
+                                    <button class="suggestion-btn" onclick="window.sendChatSuggestion('What book do you think I\'ll get lost in next?', 'book')">What book will I get lost in next?</button>
+                                    <button class="suggestion-btn" onclick="window.sendChatSuggestion('What movie should I watch this weekend?', 'movie')">What movie should I watch this weekend?</button>
+                                    <button class="suggestion-btn" onclick="window.sendChatSuggestion('What TV show should I binge next?', 'tv_show')">What TV show should I binge next?</button>
                                 </div>
                             </div>
                         </div>
@@ -272,6 +273,7 @@
         </main>
     </div>
 
+    <script src="https://cdn.jsdelivr.net/npm/marked@15.0.7/marked.min.js"></script>
     <script src="/static/app.js"></script>
 </body>
 </html>

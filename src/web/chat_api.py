@@ -2,7 +2,7 @@
 
 import json
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import Iterator
 from datetime import datetime
 from typing import Any
 
@@ -118,7 +118,7 @@ async def chat(request: ChatRequest) -> StreamingResponse:
                 detail=f"Invalid content type: {request.content_type}",
             ) from None
 
-    async def generate_sse() -> AsyncIterator[str]:
+    def generate_sse() -> Iterator[str]:
         """Generate SSE events from conversation chunks."""
         try:
             for chunk in engine.process_message(
