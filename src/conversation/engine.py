@@ -87,7 +87,7 @@ Here's why this is EXACTLY what you need right now.
 - **[Alternative 2]**: Good choice, but THIS one wins because...
 
 💎 **MY PREDICTION:**
-You'll rate this [pick ONE specific number, e.g. "4/5" or "3.5/5"]. Be precise — pick a single number, not a range.
+You'll rate this **4/5**.
 - ✅ [What will land]
 - ✅ [What will land]
 - ⚠️ [What friction keeps it from being higher/lower]
