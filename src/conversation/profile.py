@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING
 
 from src.models.content import ContentItem, ContentType
 from src.models.conversation import PreferenceProfile
-from src.recommendations.genre_normalizer import ALLOWED_TERMS
 from src.recommendations.scorers import extract_genres
 
 if TYPE_CHECKING:
@@ -45,25 +44,155 @@ THEME_KEYWORDS = {
     "open-ended",
 }
 
+# Broad genre/subgenre categories for user-facing profile display.
+# Excludes themes, moods, settings, character archetypes, and game mechanics
+# that are useful for item-to-item matching but too granular for a profile.
+PROFILE_GENRES = {
+    # Core genres
+    "action",
+    "adventure",
+    "animation",
+    "biography",
+    "comedy",
+    "crime",
+    "documentary",
+    "drama",
+    "family",
+    "fantasy",
+    "history",
+    "horror",
+    "music",
+    "musical",
+    "mystery",
+    "romance",
+    "science fiction",
+    "sport",
+    "sports",
+    "thriller",
+    "war",
+    "western",
+    # Sci-fi subgenres
+    "hard science fiction",
+    "military science fiction",
+    "space opera",
+    "cyberpunk",
+    "steampunk",
+    "biopunk",
+    "dieselpunk",
+    "solarpunk",
+    "post-cyberpunk",
+    "climate fiction",
+    "science fantasy",
+    "alternate history",
+    # Fantasy subgenres
+    "high fantasy",
+    "epic fantasy",
+    "low fantasy",
+    "dark fantasy",
+    "urban fantasy",
+    "historical fantasy",
+    "grimdark",
+    "sword and sorcery",
+    "portal fantasy",
+    "magical realism",
+    "cozy fantasy",
+    "romantasy",
+    "progression fantasy",
+    "litrpg",
+    # Horror subgenres
+    "cosmic horror",
+    "body horror",
+    "folk horror",
+    "psychological horror",
+    "supernatural horror",
+    "southern gothic",
+    # Mystery / thriller subgenres
+    "cozy mystery",
+    "police procedural",
+    "whodunit",
+    "psychological thriller",
+    "espionage",
+    "noir",
+    # Romance subgenres
+    "contemporary romance",
+    "historical romance",
+    "paranormal romance",
+    "romantic suspense",
+    "romantic comedy",
+    "dark romance",
+    # Drama / literary
+    "literary fiction",
+    "family saga",
+    "satire",
+    "social drama",
+    # Western subgenres
+    "neo-western",
+    "weird western",
+    # Nonfiction
+    "memoir",
+    "autobiography",
+    "true crime",
+    "narrative nonfiction",
+    "popular science",
+    # Apocalyptic / dystopian
+    "apocalyptic",
+    "post-apocalyptic",
+    "dystopia",
+    "dystopian",
+    # Game genres
+    "rpg",
+    "action rpg",
+    "jrpg",
+    "crpg",
+    "mmorpg",
+    "tactical rpg",
+    "strategy",
+    "grand strategy",
+    "4x",
+    "puzzle",
+    "platformer",
+    "shooter",
+    "first person shooter",
+    "stealth",
+    "roguelike",
+    "roguelite",
+    "metroidvania",
+    "souls-like",
+    "sandbox",
+    "open world",
+    "visual novel",
+    "immersive sim",
+    "city builder",
+    "farming sim",
+    "survival crafting",
+    # Media formats
+    "anime",
+    "manga",
+    "slice of life",
+    # Audience
+    "young adult",
+    "indie",
+}
+
 # Minimum number of rated items per genre to include in profile
 MIN_ITEMS_PER_GENRE = 2
 
 
 def _extract_profile_genres(item: ContentItem) -> list[str]:
-    """Extract genres from an item, filtered to curated genre terms only.
+    """Extract genres from an item, filtered to broad genre categories.
 
     Uses the shared normalizer for extraction and normalization, then
-    filters to ALLOWED_TERMS to exclude arbitrary tags (e.g. "rock band",
-    "skeleton") that are useful for item-to-item matching but not for
-    user-facing profile summaries.
+    filters to PROFILE_GENRES to show only meaningful genre/subgenre
+    categories in user-facing profile summaries. Excludes themes, moods,
+    settings, character archetypes, and game mechanics.
 
     Args:
         item: Content item to extract genres from
 
     Returns:
-        List of normalized genre strings from the curated set
+        List of normalized genre strings from the profile genre set
     """
-    return [genre for genre in extract_genres(item) if genre in ALLOWED_TERMS]
+    return [genre for genre in extract_genres(item) if genre in PROFILE_GENRES]
 
 
 class ProfileGenerator:
@@ -324,12 +453,14 @@ class ProfileGenerator:
                 affinities1 = type_genre_affinities[type1]
                 affinities2 = type_genre_affinities[type2]
 
-                # Find genres that are strong in one type but not the other
-                for genre in set(affinities1.keys()) | set(affinities2.keys()):
-                    score1 = affinities1.get(genre, 0.0)
-                    score2 = affinities2.get(genre, 0.0)
+                # Only compare genres with data in both types (intersection).
+                # Using the union with a 0.0 default produces false patterns
+                # when a genre simply has no data in one content type.
+                for genre in set(affinities1.keys()) & set(affinities2.keys()):
+                    score1 = affinities1[genre]
+                    score2 = affinities2[genre]
 
-                    # Significant divergence (0.4+ difference)
+                    # Significant divergence
                     if score1 >= 4.0 and score2 <= 2.5:
                         type1_name = self._format_content_type(type1)
                         type2_name = self._format_content_type(type2)

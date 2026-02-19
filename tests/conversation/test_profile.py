@@ -619,3 +619,129 @@ class TestProfileRegression:
         # "sci-fi" in metadata should produce "science fiction" in affinities
         assert "science fiction" in profile.genre_affinities
         assert "sci-fi" not in profile.genre_affinities
+
+    def test_niche_tags_excluded_from_profile_regression(
+        self,
+        storage_manager: StorageManager,
+    ) -> None:
+        """Regression test: Niche metadata tags must not appear as profile genres.
+
+        Bug reported: Profile showed "rock band", "demonology", "skeleton",
+        "grand", "hacker", "computer" as top genres.
+
+        Root cause: extract_genres() uses a permissive normalizer that passes
+        through any short alphabetic string for item-to-item matching. Profile
+        needs only broad genre categories.
+
+        Fix: Profile filters to PROFILE_GENRES (curated genre/subgenre set)
+        instead of the permissive ALLOWED_TERMS.
+        """
+        items = [
+            ContentItem(
+                id="test1",
+                title="Book 1",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+                metadata={"genres": ["sci-fi"], "tags": ["hacker", "computer"]},
+            ),
+            ContentItem(
+                id="test2",
+                title="Book 2",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+                metadata={"genres": ["sci-fi"], "tags": ["hacker", "grand"]},
+            ),
+            ContentItem(
+                id="test3",
+                title="Book 3",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+                metadata={"genres": ["fantasy"], "tags": ["wizards", "grand"]},
+            ),
+            ContentItem(
+                id="test4",
+                title="Book 4",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+                metadata={"genres": ["fantasy"], "tags": ["wizards"]},
+            ),
+        ]
+        for item in items:
+            storage_manager.save_content_item(item, user_id=1)
+
+        generator = ProfileGenerator(storage_manager)
+        profile = generator.generate_profile(user_id=1)
+
+        # Broad genres should appear
+        assert "science fiction" in profile.genre_affinities
+        assert "fantasy" in profile.genre_affinities
+
+        # Niche tags should NOT appear
+        for niche_tag in ("hacker", "computer", "wizards", "grand"):
+            assert niche_tag not in profile.genre_affinities
+
+    def test_divergence_requires_data_in_both_types_regression(
+        self,
+        storage_manager: StorageManager,
+    ) -> None:
+        """Regression test: Divergence patterns need genre data in both types.
+
+        Bug reported: "Loves fantasy books but not TV shows" shown when user
+        actually likes fantasy in both, but TV shows simply had no fantasy
+        items with ratings.
+
+        Root cause: Absent genres defaulted to 0.0, which is <= 2.5,
+        triggering false divergence when the other type scored >= 4.0.
+
+        Fix: Only compare genres present in both content types (intersection).
+        """
+        items = [
+            # Fantasy books (high-rated)
+            ContentItem(
+                id="book1",
+                title="Fantasy Book 1",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+                metadata={"genres": ["fantasy"]},
+            ),
+            ContentItem(
+                id="book2",
+                title="Fantasy Book 2",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+                metadata={"genres": ["fantasy"]},
+            ),
+            # TV shows with NO fantasy genre data (only drama)
+            ContentItem(
+                id="tv1",
+                title="Drama Show 1",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.COMPLETED,
+                rating=4,
+                metadata={"genres": ["drama"]},
+            ),
+            ContentItem(
+                id="tv2",
+                title="Drama Show 2",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.COMPLETED,
+                rating=4,
+                metadata={"genres": ["drama"]},
+            ),
+        ]
+        for item in items:
+            storage_manager.save_content_item(item, user_id=1)
+
+        generator = ProfileGenerator(storage_manager)
+        profile = generator.generate_profile(user_id=1)
+
+        # Should NOT produce "Loves fantasy books but not TV shows"
+        # because TV shows have no fantasy data at all
+        for pattern in profile.cross_media_patterns:
+            assert "fantasy" not in pattern.lower() or "but not" not in pattern.lower()
