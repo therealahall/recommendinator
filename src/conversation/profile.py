@@ -137,7 +137,6 @@ PROFILE_GENRES = {
     # Apocalyptic / dystopian
     "apocalyptic",
     "post-apocalyptic",
-    "dystopia",
     "dystopian",
     # Game genres
     "rpg",
@@ -314,9 +313,9 @@ class ProfileGenerator:
 
         A genre is an anti-preference only if:
         1. It has at least MIN_ITEMS_PER_GENRE rated items
-        2. Its average rating is <= 2.5
-        3. At most 1 item OR at most 20% of items rated 3+ stars
-           (prevents genres the user mostly loves from appearing here)
+        2. Its average rating is <= 3.0 (mediocre or worse)
+        3. At most 1 item OR at most 20% of items rated 4+ stars
+           (prevents genres the user sometimes loves from appearing here)
 
         Args:
             completed_items: List of completed content items
@@ -339,13 +338,13 @@ class ProfileGenerator:
                 continue
 
             average_rating = sum(ratings) / len(ratings)
-            if average_rating > 2.5:
+            if average_rating > 3.0:
                 continue
 
-            positive_count = sum(1 for rating in ratings if rating >= 3)
-            positive_ratio = positive_count / len(ratings)
+            high_count = sum(1 for rating in ratings if rating >= 4)
+            high_ratio = high_count / len(ratings)
 
-            if positive_count <= 1 or positive_ratio <= 0.2:
+            if high_count <= 1 or high_ratio <= 0.2:
                 anti_prefs[genre] = average_rating
 
         # Sort by average rating ascending (worst first), take top 10

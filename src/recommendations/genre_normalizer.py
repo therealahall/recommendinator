@@ -172,6 +172,7 @@ NORMALIZATIONS = {
     "post apocalyptic": "post-apocalyptic",
     "post apocalypse": "post-apocalyptic",
     "postapocalyptic": "post-apocalyptic",
+    "dystopia": "dystopian",
     "post cyberpunk": "post-cyberpunk",
     "self discovery": "self-discovery",
     # Anime normalizations
@@ -482,7 +483,6 @@ ALLOWED_TERMS = {
     # -----------------------------------------------------------------------
     "apocalyptic",
     "post-apocalyptic",
-    "dystopia",
     "dystopian",
     "utopia",
     "pandemic",
