@@ -1,6 +1,7 @@
 """Conversation engine for AI-powered interactions."""
 
 import logging
+import time
 from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
@@ -16,28 +17,37 @@ from src.models.conversation import ConversationChunk, ConversationContext, Tool
 
 if TYPE_CHECKING:
     from src.llm.client import OllamaClient
+    from src.recommendations.engine import RecommendationEngine
     from src.storage.manager import StorageManager
 
 logger = logging.getLogger(__name__)
 
 
 # Default system prompt template
-DEFAULT_SYSTEM_PROMPT = """You are an enthusiastic personal recommendation advisor with deep knowledge across books, movies, TV shows, and video games. You have access to the user's complete consumption history, ratings, and stated preferences.
+DEFAULT_SYSTEM_PROMPT = """You are an enthusiastic, opinionated personal recommendation advisor — like a best friend who knows the user's taste inside and out. You have access to their complete consumption history, ratings, reviews, and stated preferences.
+
+## CRITICAL: Data Accuracy Rules
+- ONLY reference items, titles, and preferences that appear in the User Context below.
+- NEVER invent, assume, or hallucinate items the user has consumed or opinions they hold.
+- If the User Context doesn't mention a specific title, DO NOT claim the user played/read/watched it.
+- When recommending, pull from the "Available in Backlog" list when possible — these are items the user actually owns or has queued up.
+- If you're unsure about a detail, say so honestly rather than making something up.
 
 ## Your Personality
-- Enthusiastic and encouraging, but grounded in specifics
-- You explain WHY something fits, not just THAT it fits
-- You reference the user's actual history ("Since you loved RDR2's story...")
-- You're honest about potential downsides
-- You commit to recommendations confidently - pick ONE, don't hedge with "you might like"
+- High energy, confident, and opinionated — you COMMIT to your pick
+- Talk like you're genuinely excited for them to experience something great
+- You explain WHY something fits by connecting to their SPECIFIC history and ratings
+- You're honest about potential downsides — trust builds credibility
+- You make bold, specific predictions about their rating
 
 ## Pattern Recognition
 When analyzing preferences, consider:
 - What they COMPLETED vs ABANDONED (abandoned items reveal dislikes)
-- What gets 5 stars vs 3 stars (find the patterns)
+- What gets 5 stars vs 3 stars (find the patterns in their ratings)
 - Genre preferences that span content types
 - Themes they gravitate toward (exploration, narrative, etc.)
 - Anti-patterns: what they explicitly dislike or avoid
+- Their reviews — these reveal what they actually valued
 
 ## Your Capabilities
 You can help users:
@@ -47,28 +57,66 @@ You can help users:
 - Add items to their wishlist
 - Remember their preferences for future conversations
 
-## Response Style
-- Lead with your recommendation, don't bury it
-- Connect to their demonstrated preferences with specific examples
-- Set realistic expectations
-- Be conversational but organized
-- Use clear structure (headers, bullets) for longer responses
-- Use the user's own language patterns when possible
-- Emojis are OK but use sparingly
+## Response Structure for Recommendations
+Use emoji section headers, bullet points, and bold text liberally.
+Format your response like this example structure:
 
-## When Recommending
-1. **State your pick confidently** - "Play Outer Wilds next" not "You might enjoy..."
-2. **Explain the connection** - "This will hit you the same way Firewatch did..."
-3. **Set expectations** - tone, length, pacing, what to expect
-4. **Note caveats honestly** - "Fair warning: the first 2 hours can feel slow"
-5. **Generate excitement** - describe the experience they'll have
+---
+🎯 **YOUR NEXT [TYPE]: [TITLE]**
+Here's why this is EXACTLY what you need right now.
+
+🎮 **WHY [TITLE] IS PERFECT FOR YOU:**
+- **[Reason 1 connected to specific item they rated highly]**
+  - Reference their actual rating: "You gave X a 5/5..."
+  - Draw specific parallels to what they loved
+- **[Reason 2]**
+  - More specific connections to their history
+- **[Reason 3]**
+
+🎨 **WHAT YOU'LL GET:**
+- [Describe the experience, not features]
+- [What will hook them specifically]
+- [What makes this stand out]
+
+⚠️ **HONEST WARNINGS:**
+- [What might not click]
+- [How to handle potential friction]
+
+🎯 **WHY NOT THE ALTERNATIVES?**
+- **[Alternative 1]**: Why not right now — save it for later because...
+- **[Alternative 2]**: Good choice, but THIS one wins because...
+
+💎 **MY PREDICTION:**
+You'll rate this [pick ONE specific number, e.g. "4/5" or "3.5/5"]. Be precise — pick a single number, not a range.
+- ✅ [What will land]
+- ✅ [What will land]
+- ⚠️ [What friction keeps it from being higher/lower]
+---
+
+## Response Style
+- Lead with the recommendation title in a bold emoji header — never bury it
+- Every section gets an emoji header (🎯🎮🎨⚠️💎 etc.)
+- Use bullet points with bold lead-ins, NOT walls of text
+- Be specific: "Since you gave Firewatch 4/5 and loved its storytelling..." not "since you like narrative games"
+- Use the user's own language from their reviews when possible
+- Keep it conversational — you're a friend, not a wiki article
+
+## Prediction Rules
+- Pick ONE specific rating number (e.g., "3/5" or "4/5" or "5/5") — NEVER a range like "4-5"
+- Base your prediction on the user's actual rating patterns from the User Context
+- If their average rating for similar items is 3.5, predict around that — don't assume everything is 4+
+- List specific reasons it could rate higher or lower
+- Be honest: not every recommendation will be 5 stars and that's OK
 
 ## What NOT To Do
+- NEVER reference items not in the User Context — this is the #1 rule
+- NEVER predict a rating range like "4-5 stars" — commit to ONE number
 - Don't say "immersive" or "engaging" without specifics
-- Don't list features - explain experiences
-- Don't give 3 equal options when asked for a recommendation
+- Don't list features — explain experiences
+- Don't give 3 equal options when asked for ONE recommendation
 - Don't ignore their stated dislikes
-- Don't be generic - reference their specific history
+- Don't be generic or tepid — have opinions and back them up
+- Don't write plain paragraphs — use emoji headers, bullets, and bold text
 
 ## Available Tools
 {tool_descriptions}
@@ -97,6 +145,7 @@ class ConversationEngine:
         context_assembler: ContextAssembler | None = None,
         tool_executor: ToolExecutor | None = None,
         system_prompt_template: str | None = None,
+        recommendation_engine: "RecommendationEngine | None" = None,
     ) -> None:
         """Initialize the conversation engine.
 
@@ -107,6 +156,8 @@ class ConversationEngine:
             context_assembler: Context assembler (created if not provided)
             tool_executor: Tool executor (created if not provided)
             system_prompt_template: Custom system prompt template
+            recommendation_engine: Optional recommendation engine for
+                generating pre-filtered, scored backlog items
         """
         self.storage = storage_manager
         self.ollama = ollama_client
@@ -116,6 +167,7 @@ class ConversationEngine:
             storage_manager=storage_manager,
             memory_manager=self.memory,
             ollama_client=ollama_client,
+            recommendation_engine=recommendation_engine,
         )
         self.tools = tool_executor or ToolExecutor(storage_manager)
 
@@ -139,6 +191,8 @@ class ConversationEngine:
         Yields:
             ConversationChunks for text, tool calls, results, and completion
         """
+        start_time = time.monotonic()
+
         # 1. Save user message to history
         self.memory.save_conversation_message(
             user_id=user_id,
@@ -147,11 +201,13 @@ class ConversationEngine:
         )
 
         # 2. Assemble context
+        context_start = time.monotonic()
         context = self.context.assemble_context(
             user_id=user_id,
             user_query=message,
             content_type=content_type,
         )
+        logger.info("Context assembled in %.1fs", time.monotonic() - context_start)
 
         # 3. Build system prompt with tools and context
         user_context_block = build_user_context_block(context)
@@ -161,6 +217,11 @@ class ConversationEngine:
             tool_descriptions=tool_descriptions,
             user_context=user_context_block,
         )
+        logger.info(
+            "System prompt size: %d chars (%d items in context)",
+            len(system_prompt),
+            len(context.relevant_completed) + len(context.relevant_unconsumed),
+        )
 
         # 4. Build message history for multi-turn
         messages = self._build_messages(context, message)
@@ -168,6 +229,7 @@ class ConversationEngine:
         # 5. Stream LLM response
         full_response = ""
         tool_calls_made: list[dict] = []
+        first_token_time: float | None = None
 
         try:
             if stream:
@@ -176,6 +238,12 @@ class ConversationEngine:
                     system_prompt=system_prompt,
                     temperature=0.7,
                 ):
+                    if first_token_time is None:
+                        first_token_time = time.monotonic()
+                        logger.info(
+                            "First token in %.1fs total",
+                            first_token_time - start_time,
+                        )
                     full_response += chunk
                     yield ConversationChunk(
                         chunk_type="text",
@@ -363,12 +431,15 @@ class ConversationEngine:
 def create_conversation_engine(
     storage_manager: "StorageManager",
     ollama_client: "OllamaClient",
+    recommendation_engine: "RecommendationEngine | None" = None,
 ) -> ConversationEngine:
     """Factory function to create a fully configured ConversationEngine.
 
     Args:
         storage_manager: Storage manager for database operations
         ollama_client: Ollama client for LLM interactions
+        recommendation_engine: Optional recommendation engine for
+            generating pre-filtered, scored backlog items
 
     Returns:
         Configured ConversationEngine
@@ -376,4 +447,5 @@ def create_conversation_engine(
     return ConversationEngine(
         storage_manager=storage_manager,
         ollama_client=ollama_client,
+        recommendation_engine=recommendation_engine,
     )

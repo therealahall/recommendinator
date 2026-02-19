@@ -1,14 +1,18 @@
 """Context assembly for LLM conversations."""
 
+from __future__ import annotations
+
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.conversation import ConversationContext, PreferenceProfile
+from src.utils.series import build_series_tracking, should_recommend_item
 
 if TYPE_CHECKING:
     from src.conversation.memory import MemoryManager
     from src.llm.client import OllamaClient
+    from src.recommendations.engine import RecommendationEngine
     from src.storage.manager import StorageManager
 
 logger = logging.getLogger(__name__)
@@ -23,9 +27,10 @@ class ContextAssembler:
 
     def __init__(
         self,
-        storage_manager: "StorageManager",
-        memory_manager: "MemoryManager",
-        ollama_client: "OllamaClient | None" = None,
+        storage_manager: StorageManager,
+        memory_manager: MemoryManager,
+        ollama_client: OllamaClient | None = None,
+        recommendation_engine: RecommendationEngine | None = None,
     ) -> None:
         """Initialize the context assembler.
 
@@ -33,10 +38,15 @@ class ContextAssembler:
             storage_manager: Storage manager for content data
             memory_manager: Memory manager for preferences and history
             ollama_client: Optional Ollama client for embeddings
+            recommendation_engine: Optional recommendation engine for
+                pre-filtered, scored backlog items. When provided and a
+                content_type is specified, the pipeline's series-filtered
+                and scored output replaces the raw unconsumed-items query.
         """
         self.storage = storage_manager
         self.memory = memory_manager
         self.ollama = ollama_client
+        self.recommendation_engine = recommendation_engine
 
     def assemble_context(
         self,
@@ -203,6 +213,11 @@ class ContextAssembler:
     ) -> list[ContentItem]:
         """Get unconsumed items from the user's backlog.
 
+        When a recommendation engine is available and a content_type is
+        specified, delegates to the scoring pipeline which handles series
+        filtering, scoring, and ranking.  Otherwise falls back to a simple
+        storage query.
+
         Args:
             user_id: User ID
             content_type: Optional content type filter
@@ -211,14 +226,117 @@ class ContextAssembler:
         Returns:
             List of unconsumed ContentItem objects
         """
-        items = self.storage.get_unconsumed_items(
+        # Use the recommendation pipeline when available — it already handles
+        # series ordering, scoring, genre matching, etc. correctly.
+        if self.recommendation_engine is not None and content_type is not None:
+            return self._get_items_from_pipeline(
+                user_id=user_id,
+                content_type=content_type,
+                limit=limit,
+            )
+
+        # Fallback: raw storage query with basic filtering
+        return self._get_unconsumed_items_fallback(
             user_id=user_id,
             content_type=content_type,
             limit=limit,
         )
 
+    def _get_items_from_pipeline(
+        self,
+        user_id: int,
+        content_type: ContentType,
+        limit: int = 20,
+    ) -> list[ContentItem]:
+        """Get backlog items via the recommendation pipeline.
+
+        Uses the full scoring pipeline which handles series ordering,
+        genre matching, rating patterns, and all other scoring logic.
+
+        Args:
+            user_id: User ID
+            content_type: Content type to recommend
+            limit: Maximum items to return
+
+        Returns:
+            List of scored and filtered ContentItem objects
+        """
+        assert self.recommendation_engine is not None
+
+        try:
+            user_preference_config = self.storage.get_user_preference_config(user_id)
+            recommendations: list[dict[str, Any]] = (
+                self.recommendation_engine.generate_recommendations(
+                    content_type=content_type,
+                    count=limit,
+                    use_llm=False,
+                    user_preference_config=user_preference_config,
+                )
+            )
+            items = [rec["item"] for rec in recommendations]
+            logger.info(
+                "Pipeline returned %d items for %s backlog",
+                len(items),
+                content_type.value,
+            )
+            return items
+
+        except Exception as error:
+            logger.warning(
+                "Recommendation pipeline failed, falling back to storage: %s",
+                error,
+            )
+            return self._get_unconsumed_items_fallback(
+                user_id=user_id,
+                content_type=content_type,
+                limit=limit,
+            )
+
+    def _get_unconsumed_items_fallback(
+        self,
+        user_id: int,
+        content_type: ContentType | None = None,
+        limit: int = 20,
+    ) -> list[ContentItem]:
+        """Fallback: get unconsumed items from storage with basic filtering.
+
+        Used when no recommendation engine is available or when content_type
+        is not specified.
+
+        Args:
+            user_id: User ID
+            content_type: Optional content type filter
+            limit: Maximum items to return
+
+        Returns:
+            List of unconsumed ContentItem objects
+        """
+        # Fetch all unconsumed items for accurate series filtering
+        items = self.storage.get_unconsumed_items(
+            user_id=user_id,
+            content_type=content_type,
+        )
+
         # Filter out ignored items
-        return [item for item in items if not item.ignored]
+        non_ignored = [item for item in items if not item.ignored]
+
+        # Build series tracking from completed items to enforce series order
+        completed_items = self.storage.get_completed_items(
+            user_id=user_id,
+            content_type=content_type,
+        )
+        series_tracking = build_series_tracking(completed_items)
+
+        # Filter by series ordering rules
+        recommendable = [
+            item
+            for item in non_ignored
+            if should_recommend_item(
+                item, series_tracking, unconsumed_items=non_ignored
+            )
+        ]
+
+        return recommendable[:limit]
 
     def _build_profile_summary(self, user_id: int) -> str:
         """Build a text summary of the user's preference profile.
@@ -311,6 +429,37 @@ class ContextAssembler:
         return "\n".join(parts) if parts else "No detailed profile available."
 
 
+def _format_item_detail(item: ContentItem) -> str:
+    """Format a content item with rich detail for LLM context.
+
+    Includes type, title, author, rating, genres, and review snippet
+    so the LLM can reference specific details about the user's experience.
+
+    Args:
+        item: ContentItem to format
+
+    Returns:
+        Formatted detail string
+    """
+    content_type_str = str(item.content_type).replace("_", " ").title()
+    author_str = f" by {item.author}" if item.author else ""
+    rating_str = f" — {item.rating}/5" if item.rating else ""
+
+    genres = item.metadata.get("genres", [])
+    genre_str = f" [{', '.join(genres[:4])}]" if genres else ""
+
+    line = f"- [{content_type_str}] {item.title}{author_str}{rating_str}{genre_str}"
+
+    # Include review snippet if available (truncated)
+    if item.review:
+        review_snippet = item.review[:150]
+        if len(item.review) > 150:
+            review_snippet += "..."
+        line += f'\n  Review: "{review_snippet}"'
+
+    return line
+
+
 def build_user_context_block(context: ConversationContext) -> str:
     """Build a formatted context block for injection into LLM prompts.
 
@@ -341,19 +490,15 @@ def build_user_context_block(context: ConversationContext) -> str:
     # Relevant completed items (what they loved)
     if context.relevant_completed:
         parts.append("## Recently Completed (High-Rated)")
-        for item in context.relevant_completed[:5]:
-            rating_str = f" ({item.rating}/5)" if item.rating else ""
-            author_str = f" by {item.author}" if item.author else ""
-            parts.append(f"- {item.title}{author_str}{rating_str}")
+        for item in context.relevant_completed[:10]:
+            parts.append(_format_item_detail(item))
         parts.append("")
 
     # Unconsumed items (backlog)
     if context.relevant_unconsumed:
-        parts.append("## Available in Backlog")
+        parts.append("## Available in Backlog (Recommend FROM This List)")
         for item in context.relevant_unconsumed[:15]:
-            author_str = f" by {item.author}" if item.author else ""
-            content_type_str = str(item.content_type).replace("_", " ").title()
-            parts.append(f"- [{content_type_str}] {item.title}{author_str}")
+            parts.append(_format_item_detail(item))
         parts.append("")
 
     # Recent conversation for continuity

@@ -7,7 +7,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.conversation.context import ContextAssembler, build_user_context_block
+from src.conversation.context import (
+    ContextAssembler,
+    _format_item_detail,
+    build_user_context_block,
+)
 from src.conversation.memory import MemoryManager
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.conversation import (
@@ -346,7 +350,7 @@ class TestBuildUserContextBlock:
 
         assert "The Martian" in block
         assert "Andy Weir" in block
-        assert "(5/5)" in block
+        assert "5/5" in block
         assert "Outer Wilds" in block
         assert "Backlog" in block
 
@@ -448,3 +452,371 @@ class TestRAGRetrieval:
 
         # Without vector_db, will use fallback
         assert isinstance(relevant, list)
+
+
+class TestSeriesOrderingInContext:
+    """Tests for series ordering filtering in context assembly."""
+
+    def test_excludes_later_series_entry_when_earlier_unread(
+        self,
+        storage_manager: StorageManager,
+        memory_manager: MemoryManager,
+    ) -> None:
+        """Book 3 should not appear in backlog when user has only read book 1.
+
+        This prevents the LLM from recommending e.g. Abaddon's Gate (#3)
+        when the user has only completed Leviathan Wakes (#1).
+        """
+        assembler = ContextAssembler(
+            storage_manager=storage_manager,
+            memory_manager=memory_manager,
+        )
+
+        # User completed book 1
+        storage_manager.save_content_item(
+            ContentItem(
+                id="expanse1",
+                title="Leviathan Wakes (The Expanse, #1)",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                rating=4,
+            ),
+            user_id=1,
+        )
+
+        # Books 2 and 3 are in the backlog
+        storage_manager.save_content_item(
+            ContentItem(
+                id="expanse2",
+                title="Caliban's War (The Expanse, #2)",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            ),
+            user_id=1,
+        )
+        storage_manager.save_content_item(
+            ContentItem(
+                id="expanse3",
+                title="Abaddon's Gate (The Expanse, #3)",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            ),
+            user_id=1,
+        )
+
+        context = assembler.assemble_context(
+            user_id=1,
+            user_query="What book should I read next?",
+            content_type=ContentType.BOOK,
+        )
+
+        backlog_titles = [item.title for item in context.relevant_unconsumed]
+
+        # Book 2 should be in backlog (next in sequence)
+        assert any("Caliban" in title for title in backlog_titles)
+        # Book 3 should NOT be in backlog (book 2 not read yet)
+        assert not any("Abaddon" in title for title in backlog_titles)
+
+    def test_includes_next_series_entry_after_completing_previous(
+        self,
+        storage_manager: StorageManager,
+        memory_manager: MemoryManager,
+    ) -> None:
+        """Book 2 should appear when user has completed book 1."""
+        assembler = ContextAssembler(
+            storage_manager=storage_manager,
+            memory_manager=memory_manager,
+        )
+
+        # User completed book 1
+        storage_manager.save_content_item(
+            ContentItem(
+                id="series1",
+                title="Fantasy Epic (The Saga, #1)",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+            ),
+            user_id=1,
+        )
+
+        # Book 2 in backlog
+        storage_manager.save_content_item(
+            ContentItem(
+                id="series2",
+                title="Fantasy Epic Returns (The Saga, #2)",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            ),
+            user_id=1,
+        )
+
+        context = assembler.assemble_context(
+            user_id=1,
+            user_query="What next?",
+            content_type=ContentType.BOOK,
+        )
+
+        backlog_titles = [item.title for item in context.relevant_unconsumed]
+        assert any("Saga, #2" in title for title in backlog_titles)
+
+    def test_non_series_items_unaffected_by_series_filtering(
+        self,
+        storage_manager: StorageManager,
+        memory_manager: MemoryManager,
+    ) -> None:
+        """Standalone items should always appear in backlog."""
+        assembler = ContextAssembler(
+            storage_manager=storage_manager,
+            memory_manager=memory_manager,
+        )
+
+        storage_manager.save_content_item(
+            ContentItem(
+                id="standalone",
+                title="A Standalone Novel",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            ),
+            user_id=1,
+        )
+
+        context = assembler.assemble_context(
+            user_id=1,
+            user_query="Recommend a book",
+            content_type=ContentType.BOOK,
+        )
+
+        backlog_titles = [item.title for item in context.relevant_unconsumed]
+        assert "A Standalone Novel" in backlog_titles
+
+
+class TestFormatItemDetail:
+    """Tests for the _format_item_detail helper."""
+
+    def test_includes_content_type_and_title(self) -> None:
+        """Basic formatting includes content type label and title."""
+        item = ContentItem(
+            title="Outer Wilds",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+        )
+        result = _format_item_detail(item)
+
+        assert "[Video Game]" in result
+        assert "Outer Wilds" in result
+
+    def test_includes_author_and_rating(self) -> None:
+        """Shows author and rating when available."""
+        item = ContentItem(
+            title="Dune",
+            author="Frank Herbert",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+        )
+        result = _format_item_detail(item)
+
+        assert "Frank Herbert" in result
+        assert "5/5" in result
+
+    def test_includes_genres_from_metadata(self) -> None:
+        """Genres from metadata appear in brackets."""
+        item = ContentItem(
+            title="Hades",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            metadata={"genres": ["roguelike", "action", "indie"]},
+        )
+        result = _format_item_detail(item)
+
+        assert "[roguelike, action, indie]" in result
+
+    def test_truncates_long_genres_list(self) -> None:
+        """Only first 4 genres are shown."""
+        item = ContentItem(
+            title="Test",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genres": ["a", "b", "c", "d", "e", "f"]},
+        )
+        result = _format_item_detail(item)
+
+        assert "[a, b, c, d]" in result
+        assert "e, f" not in result
+
+    def test_includes_review_snippet(self) -> None:
+        """Review text is included when available."""
+        item = ContentItem(
+            title="Firewatch",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.COMPLETED,
+            rating=4,
+            review="Beautiful storytelling in a gorgeous setting.",
+        )
+        result = _format_item_detail(item)
+
+        assert 'Review: "Beautiful storytelling' in result
+
+    def test_truncates_long_review(self) -> None:
+        """Long reviews are truncated with ellipsis."""
+        long_review = "A" * 200
+        item = ContentItem(
+            title="Test",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            review=long_review,
+        )
+        result = _format_item_detail(item)
+
+        assert "..." in result
+        assert "A" * 200 not in result
+
+    def test_omits_missing_optional_fields(self) -> None:
+        """No author, rating, genres, or review when not set."""
+        item = ContentItem(
+            title="Mystery Item",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+        )
+        result = _format_item_detail(item)
+
+        assert result == "- [Movie] Mystery Item"
+
+
+class TestPipelineBacklogIntegration:
+    """Tests for using the recommendation pipeline to populate the backlog."""
+
+    def test_uses_pipeline_when_engine_and_content_type_provided(
+        self,
+        storage_manager: StorageManager,
+        memory_manager: MemoryManager,
+    ) -> None:
+        """Backlog comes from the recommendation engine when available."""
+        pipeline_item = ContentItem(
+            title="Pipeline Pick",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+        )
+
+        mock_engine = MagicMock()
+        mock_engine.generate_recommendations.return_value = [
+            {"item": pipeline_item, "score": 0.9, "reasoning": "great match"},
+        ]
+
+        assembler = ContextAssembler(
+            storage_manager=storage_manager,
+            memory_manager=memory_manager,
+            recommendation_engine=mock_engine,
+        )
+
+        context = assembler.assemble_context(
+            user_id=1,
+            user_query="What game?",
+            content_type=ContentType.VIDEO_GAME,
+        )
+
+        backlog_titles = [item.title for item in context.relevant_unconsumed]
+        assert "Pipeline Pick" in backlog_titles
+        mock_engine.generate_recommendations.assert_called_once()
+
+    def test_falls_back_to_storage_when_no_engine(
+        self,
+        storage_manager: StorageManager,
+        memory_manager: MemoryManager,
+    ) -> None:
+        """Without a recommendation engine, raw storage query is used."""
+        storage_manager.save_content_item(
+            ContentItem(
+                id="fallback1",
+                title="Storage Item",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            ),
+            user_id=1,
+        )
+
+        assembler = ContextAssembler(
+            storage_manager=storage_manager,
+            memory_manager=memory_manager,
+            # No recommendation_engine
+        )
+
+        context = assembler.assemble_context(
+            user_id=1,
+            user_query="What book?",
+            content_type=ContentType.BOOK,
+        )
+
+        backlog_titles = [item.title for item in context.relevant_unconsumed]
+        assert "Storage Item" in backlog_titles
+
+    def test_falls_back_to_storage_when_no_content_type(
+        self,
+        storage_manager: StorageManager,
+        memory_manager: MemoryManager,
+    ) -> None:
+        """Pipeline requires a content_type; falls back without one."""
+        storage_manager.save_content_item(
+            ContentItem(
+                id="any1",
+                title="Any Type Item",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.UNREAD,
+            ),
+            user_id=1,
+        )
+
+        mock_engine = MagicMock()
+        assembler = ContextAssembler(
+            storage_manager=storage_manager,
+            memory_manager=memory_manager,
+            recommendation_engine=mock_engine,
+        )
+
+        context = assembler.assemble_context(
+            user_id=1,
+            user_query="Recommend anything",
+            content_type=None,  # No content type
+        )
+
+        backlog_titles = [item.title for item in context.relevant_unconsumed]
+        assert "Any Type Item" in backlog_titles
+        # Pipeline should NOT have been called
+        mock_engine.generate_recommendations.assert_not_called()
+
+    def test_falls_back_to_storage_when_pipeline_errors(
+        self,
+        storage_manager: StorageManager,
+        memory_manager: MemoryManager,
+    ) -> None:
+        """If the pipeline raises, falls back gracefully to storage."""
+        storage_manager.save_content_item(
+            ContentItem(
+                id="safe1",
+                title="Fallback Game",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.UNREAD,
+            ),
+            user_id=1,
+        )
+
+        mock_engine = MagicMock()
+        mock_engine.generate_recommendations.side_effect = RuntimeError("boom")
+
+        assembler = ContextAssembler(
+            storage_manager=storage_manager,
+            memory_manager=memory_manager,
+            recommendation_engine=mock_engine,
+        )
+
+        context = assembler.assemble_context(
+            user_id=1,
+            user_query="What game?",
+            content_type=ContentType.VIDEO_GAME,
+        )
+
+        # Should still return items via fallback
+        backlog_titles = [item.title for item in context.relevant_unconsumed]
+        assert "Fallback Game" in backlog_titles
