@@ -1880,3 +1880,44 @@ class TestEngineSeriesSubstitutionRegression:
         assert (
             recommended_ids.count("ff10") == 1
         ), f"FF X should appear exactly once; got {recommended_ids}"
+
+
+class TestPipelineOutputKeys:
+    """Tests for pipeline output dict containing all expected keys."""
+
+    def test_output_includes_contributing_items_and_adaptations(
+        self, non_ai_engine, mock_storage
+    ):
+        """Pipeline output dicts include contributing_items and adaptations keys."""
+        consumed = ContentItem(
+            id="c1",
+            title="Dune",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            metadata={"genres": ["Science Fiction"]},
+        )
+        unconsumed = ContentItem(
+            id="u1",
+            title="Foundation",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genres": ["Science Fiction"]},
+        )
+
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: [consumed]
+        )
+        mock_storage.get_unconsumed_items = Mock(return_value=[unconsumed])
+
+        recommendations = non_ai_engine.generate_recommendations(
+            content_type=ContentType.BOOK,
+            count=5,
+        )
+
+        assert len(recommendations) >= 1
+        for recommendation in recommendations:
+            assert "contributing_items" in recommendation
+            assert "adaptations" in recommendation
+            assert isinstance(recommendation["contributing_items"], list)
+            assert isinstance(recommendation["adaptations"], list)

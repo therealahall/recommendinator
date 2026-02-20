@@ -6,7 +6,11 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
-from src.models.conversation import ConversationContext, PreferenceProfile
+from src.models.conversation import (
+    ConversationContext,
+    PreferenceProfile,
+    RecommendationBrief,
+)
 from src.utils.series import build_series_tracking, should_recommend_item
 
 if TYPE_CHECKING:
@@ -57,9 +61,13 @@ class ContextAssembler:
         max_history_messages: int = 10,
         max_relevant_items: int = 10,
         max_unconsumed_items: int = 20,
-        include_algorithmic_recs: bool = False,
     ) -> ConversationContext:
         """Assemble context for an LLM conversation turn.
+
+        When the recommendation pipeline is available and a content_type is
+        specified, the pipeline produces RecommendationBriefs which carry
+        pre-computed reasoning, scores, and contributing items. The
+        contributing items replace the RAG embedding lookup, saving 1-3s.
 
         Args:
             user_id: User ID
@@ -69,7 +77,6 @@ class ContextAssembler:
             max_history_messages: Maximum recent messages to include
             max_relevant_items: Maximum relevant completed items via RAG
             max_unconsumed_items: Maximum unconsumed items to include
-            include_algorithmic_recs: Whether to include algorithmic recommendations
 
         Returns:
             ConversationContext with all assembled data
@@ -84,20 +91,32 @@ class ContextAssembler:
             user_id=user_id, limit=max_history_messages
         )
 
-        # Get relevant completed items (high-rated items similar to query)
-        relevant_completed = self._retrieve_relevant_items(
-            query=user_query,
-            user_id=user_id,
-            content_type=content_type,
-            limit=max_relevant_items,
-        )
-
-        # Get unconsumed items that might match
-        relevant_unconsumed = self._get_unconsumed_items(
+        # Try pipeline → RecommendationBriefs (includes contributing items)
+        briefs = self._get_recommendation_briefs_from_pipeline(
             user_id=user_id,
             content_type=content_type,
             limit=max_unconsumed_items,
         )
+
+        if briefs is not None:
+            # Pipeline provided briefs — extract unconsumed + contributing items
+            relevant_unconsumed = [brief.item for brief in briefs]
+            relevant_completed = _extract_contributing_items(
+                briefs, limit=max_relevant_items
+            )
+        else:
+            # No pipeline — fall back to storage + RAG
+            relevant_unconsumed = self._get_unconsumed_items_fallback(
+                user_id=user_id,
+                content_type=content_type,
+                limit=max_unconsumed_items,
+            )
+            relevant_completed = self._retrieve_relevant_items(
+                query=user_query,
+                user_id=user_id,
+                content_type=content_type,
+                limit=max_relevant_items,
+            )
 
         # Get preference profile and build summary
         preference_summary = self._build_profile_summary(user_id)
@@ -109,7 +128,7 @@ class ContextAssembler:
             relevant_completed=relevant_completed,
             relevant_unconsumed=relevant_unconsumed,
             preference_summary=preference_summary,
-            algorithmic_recommendations=None,
+            recommendation_briefs=briefs,
         )
 
     def _retrieve_relevant_items(
@@ -205,63 +224,30 @@ class ContextAssembler:
             limit=limit,
         )
 
-    def _get_unconsumed_items(
+    def _get_recommendation_briefs_from_pipeline(
         self,
         user_id: int,
-        content_type: ContentType | None = None,
+        content_type: ContentType | None,
         limit: int = 20,
-    ) -> list[ContentItem]:
-        """Get unconsumed items from the user's backlog.
+    ) -> list[RecommendationBrief] | None:
+        """Get pre-scored recommendation briefs from the pipeline.
 
-        When a recommendation engine is available and a content_type is
-        specified, delegates to the scoring pipeline which handles series
-        filtering, scoring, and ranking.  Otherwise falls back to a simple
-        storage query.
+        When the recommendation engine is available and a content_type is
+        specified, runs the full scoring pipeline and converts each output
+        dict into a RecommendationBrief carrying scores, reasoning,
+        contributing items, and cross-media adaptations.
 
         Args:
             user_id: User ID
-            content_type: Optional content type filter
-            limit: Maximum items to return
+            content_type: Content type to recommend (required for pipeline)
+            limit: Maximum briefs to return
 
         Returns:
-            List of unconsumed ContentItem objects
+            List of RecommendationBrief objects, or None if the pipeline
+            is unavailable or fails.
         """
-        # Use the recommendation pipeline when available — it already handles
-        # series ordering, scoring, genre matching, etc. correctly.
-        if self.recommendation_engine is not None and content_type is not None:
-            return self._get_items_from_pipeline(
-                user_id=user_id,
-                content_type=content_type,
-                limit=limit,
-            )
-
-        # Fallback: raw storage query with basic filtering
-        return self._get_unconsumed_items_fallback(
-            user_id=user_id,
-            content_type=content_type,
-            limit=limit,
-        )
-
-    def _get_items_from_pipeline(
-        self,
-        user_id: int,
-        content_type: ContentType,
-        limit: int = 20,
-    ) -> list[ContentItem]:
-        """Get backlog items via the recommendation pipeline.
-
-        Uses the full scoring pipeline which handles series ordering,
-        genre matching, rating patterns, and all other scoring logic.
-
-        Args:
-            user_id: User ID
-            content_type: Content type to recommend
-            limit: Maximum items to return
-
-        Returns:
-            List of scored and filtered ContentItem objects
-        """
-        assert self.recommendation_engine is not None
+        if self.recommendation_engine is None or content_type is None:
+            return None
 
         try:
             user_preference_config = self.storage.get_user_preference_config(user_id)
@@ -273,24 +259,33 @@ class ContextAssembler:
                     user_preference_config=user_preference_config,
                 )
             )
-            items = [rec["item"] for rec in recommendations]
+
+            briefs = [
+                RecommendationBrief(
+                    item=rec["item"],
+                    score=rec.get("score", 0.0),
+                    reasoning=rec.get("reasoning", ""),
+                    score_breakdown=rec.get("score_breakdown", {}),
+                    contributing_items=rec.get("contributing_items", []),
+                    adaptations=rec.get("adaptations", []),
+                    similarity_score=rec.get("similarity_score", 0.0),
+                    preference_score=rec.get("preference_score", 0.0),
+                )
+                for rec in recommendations
+            ]
             logger.info(
-                "Pipeline returned %d items for %s backlog",
-                len(items),
+                "Pipeline returned %d briefs for %s backlog",
+                len(briefs),
                 content_type.value,
             )
-            return items
+            return briefs
 
         except Exception as error:
             logger.warning(
                 "Recommendation pipeline failed, falling back to storage: %s",
                 error,
             )
-            return self._get_unconsumed_items_fallback(
-                user_id=user_id,
-                content_type=content_type,
-                limit=limit,
-            )
+            return None
 
     def _get_unconsumed_items_fallback(
         self,
@@ -429,6 +424,35 @@ class ContextAssembler:
         return "\n".join(parts) if parts else "No detailed profile available."
 
 
+def _extract_contributing_items(
+    briefs: list[RecommendationBrief],
+    limit: int = 10,
+) -> list[ContentItem]:
+    """Deduplicate contributing items from across all briefs.
+
+    Collects the consumed items that influenced each recommendation,
+    deduplicates by item ID, and returns up to ``limit`` items. This
+    replaces the RAG embedding lookup when pipeline briefs are available.
+
+    Args:
+        briefs: Recommendation briefs from the pipeline
+        limit: Maximum contributing items to return
+
+    Returns:
+        Deduplicated list of ContentItem objects
+    """
+    seen_ids: set[str | int | None] = set()
+    contributing: list[ContentItem] = []
+
+    for brief in briefs:
+        for item in brief.contributing_items:
+            if item.id not in seen_ids:
+                seen_ids.add(item.id)
+                contributing.append(item)
+
+    return contributing[:limit]
+
+
 def _format_item_detail(item: ContentItem) -> str:
     """Format a content item with rich detail for LLM context.
 
@@ -458,6 +482,55 @@ def _format_item_detail(item: ContentItem) -> str:
         line += f'\n  Review: "{review_snippet}"'
 
     return line
+
+
+def _format_recommendation_brief(brief: RecommendationBrief) -> str:
+    """Format a recommendation brief with match score, reasoning, and connections.
+
+    Produces an enriched block so the LLM can present and explain the
+    recommendation rather than independently re-analyzing it.
+
+    Args:
+        brief: Pre-scored recommendation brief from the pipeline
+
+    Returns:
+        Formatted multi-line string for LLM context
+    """
+    item = brief.item
+    content_type_str = str(item.content_type).replace("_", " ").title()
+    author_str = f" by {item.author}" if item.author else ""
+
+    genres = item.metadata.get("genres", [])
+    genre_str = f" [{', '.join(genres[:4])}]" if genres else ""
+
+    match_percent = round(brief.score * 100)
+    lines = [
+        f"- [{content_type_str}] {item.title}{author_str}{genre_str}",
+        f"  Match: {match_percent}%",
+    ]
+
+    if brief.reasoning:
+        lines.append(f"  Why: {brief.reasoning}")
+
+    # Top scoring dimensions
+    if brief.score_breakdown:
+        top_dimensions = sorted(
+            brief.score_breakdown.items(), key=lambda entry: entry[1], reverse=True
+        )[:3]
+        strengths = ", ".join(
+            f"{name}: {round(value * 100)}%" for name, value in top_dimensions
+        )
+        lines.append(f"  Strengths: {strengths}")
+
+    # Cross-media connections
+    if brief.adaptations:
+        adaptation_titles = [
+            f"{adaptation.title} ({str(adaptation.content_type).replace('_', ' ').title()})"
+            for adaptation in brief.adaptations[:2]
+        ]
+        lines.append(f"  Cross-media: {', '.join(adaptation_titles)}")
+
+    return "\n".join(lines)
 
 
 def build_user_context_block(context: ConversationContext) -> str:
@@ -494,8 +567,17 @@ def build_user_context_block(context: ConversationContext) -> str:
             parts.append(_format_item_detail(item))
         parts.append("")
 
-    # Unconsumed items (backlog)
-    if context.relevant_unconsumed:
+    # Unconsumed items (backlog) — enriched when briefs available
+    if context.recommendation_briefs:
+        parts.append(
+            "## Recommended From Backlog (Pre-Scored)\n"
+            "Items are ranked by match quality. "
+            "Use the reasoning and scores to explain your picks."
+        )
+        for brief in context.recommendation_briefs[:10]:
+            parts.append(_format_recommendation_brief(brief))
+        parts.append("")
+    elif context.relevant_unconsumed:
         parts.append("## Available in Backlog (Recommend FROM This List)")
         for item in context.relevant_unconsumed[:15]:
             parts.append(_format_item_detail(item))

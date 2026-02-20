@@ -515,6 +515,8 @@ class RecommendationEngine:
                     contributing_list,
                 ),
                 "score_breakdown": breakdown_by_id.get(item.id, {}),
+                "contributing_items": contributing_list,
+                "adaptations": adaptations_list,
             }
             recommendations.append(rec)
 

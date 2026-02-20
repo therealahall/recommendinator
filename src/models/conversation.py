@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from src.models.content import ContentItem
-    from src.recommendations.scoring_pipeline import ScoredCandidate
 
 
 @dataclass
@@ -108,6 +107,26 @@ class ConversationChunk:
 
 
 @dataclass
+class RecommendationBrief:
+    """Pre-scored recommendation with pipeline-computed reasoning.
+
+    Carries all the data the pipeline already computed — score, reasoning,
+    per-scorer breakdown, contributing reference items, and cross-media
+    adaptations — so the LLM can present and explain rather than
+    independently re-analyze.
+    """
+
+    item: ContentItem
+    score: float  # [0, 1] final ranked score
+    reasoning: str  # "Recommended because you liked..."
+    score_breakdown: dict[str, float]  # {genre_match: 0.85, ...}
+    contributing_items: list[ContentItem]  # consumed items that influenced this
+    adaptations: list[ContentItem]  # cross-media connections
+    similarity_score: float = 0.0
+    preference_score: float = 0.0
+
+
+@dataclass
 class ConversationContext:
     """Assembled context for an LLM conversation turn.
 
@@ -121,4 +140,4 @@ class ConversationContext:
     relevant_completed: list[ContentItem] = field(default_factory=list)
     relevant_unconsumed: list[ContentItem] = field(default_factory=list)
     preference_summary: str = ""
-    algorithmic_recommendations: list[ScoredCandidate] | None = None
+    recommendation_briefs: list[RecommendationBrief] | None = None

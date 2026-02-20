@@ -9,7 +9,9 @@ import pytest
 
 from src.conversation.context import (
     ContextAssembler,
+    _extract_contributing_items,
     _format_item_detail,
+    _format_recommendation_brief,
     build_user_context_block,
 )
 from src.conversation.memory import MemoryManager
@@ -19,6 +21,7 @@ from src.models.conversation import (
     ConversationMessage,
     CoreMemory,
     PreferenceProfile,
+    RecommendationBrief,
 )
 from src.storage.manager import StorageManager
 
@@ -699,10 +702,25 @@ class TestPipelineBacklogIntegration:
             content_type=ContentType.VIDEO_GAME,
             status=ConsumptionStatus.UNREAD,
         )
+        contributing_item = ContentItem(
+            title="Firewatch",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+        )
 
         mock_engine = MagicMock()
         mock_engine.generate_recommendations.return_value = [
-            {"item": pipeline_item, "score": 0.9, "reasoning": "great match"},
+            {
+                "item": pipeline_item,
+                "score": 0.9,
+                "reasoning": "great match",
+                "score_breakdown": {"genre_match": 0.85},
+                "contributing_items": [contributing_item],
+                "adaptations": [],
+                "similarity_score": 0.8,
+                "preference_score": 0.7,
+            },
         ]
 
         assembler = ContextAssembler(
@@ -720,6 +738,16 @@ class TestPipelineBacklogIntegration:
         backlog_titles = [item.title for item in context.relevant_unconsumed]
         assert "Pipeline Pick" in backlog_titles
         mock_engine.generate_recommendations.assert_called_once()
+
+        # Briefs should be populated
+        assert context.recommendation_briefs is not None
+        assert len(context.recommendation_briefs) == 1
+        assert context.recommendation_briefs[0].score == 0.9
+        assert context.recommendation_briefs[0].reasoning == "great match"
+
+        # Contributing items should populate relevant_completed (skipping RAG)
+        completed_titles = [item.title for item in context.relevant_completed]
+        assert "Firewatch" in completed_titles
 
     def test_falls_back_to_storage_when_no_engine(
         self,
@@ -820,3 +848,311 @@ class TestPipelineBacklogIntegration:
         # Should still return items via fallback
         backlog_titles = [item.title for item in context.relevant_unconsumed]
         assert "Fallback Game" in backlog_titles
+        # Briefs should be None on pipeline failure
+        assert context.recommendation_briefs is None
+
+
+class TestRecommendationBriefFormatting:
+    """Tests for _format_recommendation_brief and enriched context blocks."""
+
+    @pytest.fixture
+    def sample_brief(self) -> RecommendationBrief:
+        """Create a sample recommendation brief for testing."""
+        return RecommendationBrief(
+            item=ContentItem(
+                title="Outer Wilds",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.UNREAD,
+                metadata={"genres": ["exploration", "puzzle", "space"]},
+            ),
+            score=0.87,
+            reasoning="Recommended because you liked Firewatch, Subnautica",
+            score_breakdown={
+                "genre_match": 0.92,
+                "tag_overlap": 0.85,
+                "rating_pattern": 0.7,
+            },
+            contributing_items=[
+                ContentItem(
+                    title="Firewatch",
+                    content_type=ContentType.VIDEO_GAME,
+                    status=ConsumptionStatus.COMPLETED,
+                    rating=4,
+                ),
+            ],
+            adaptations=[
+                ContentItem(
+                    title="The Martian",
+                    content_type=ContentType.BOOK,
+                    status=ConsumptionStatus.COMPLETED,
+                    rating=5,
+                ),
+            ],
+            similarity_score=0.8,
+            preference_score=0.75,
+        )
+
+    def test_format_brief_includes_match_percent(
+        self, sample_brief: RecommendationBrief
+    ) -> None:
+        """Match percentage is rendered from score."""
+        result = _format_recommendation_brief(sample_brief)
+        assert "Match: 87%" in result
+
+    def test_format_brief_includes_title_and_type(
+        self, sample_brief: RecommendationBrief
+    ) -> None:
+        """Title and content type appear in the output."""
+        result = _format_recommendation_brief(sample_brief)
+        assert "[Video Game]" in result
+        assert "Outer Wilds" in result
+
+    def test_format_brief_includes_reasoning(
+        self, sample_brief: RecommendationBrief
+    ) -> None:
+        """Pipeline reasoning is rendered."""
+        result = _format_recommendation_brief(sample_brief)
+        assert "Why: Recommended because you liked Firewatch, Subnautica" in result
+
+    def test_format_brief_includes_top_strengths(
+        self, sample_brief: RecommendationBrief
+    ) -> None:
+        """Top scoring dimensions are shown."""
+        result = _format_recommendation_brief(sample_brief)
+        assert "Strengths:" in result
+        assert "genre_match: 92%" in result
+
+    def test_format_brief_includes_cross_media(
+        self, sample_brief: RecommendationBrief
+    ) -> None:
+        """Cross-media adaptations are shown."""
+        result = _format_recommendation_brief(sample_brief)
+        assert "Cross-media:" in result
+        assert "The Martian" in result
+
+    def test_format_brief_includes_genres(
+        self, sample_brief: RecommendationBrief
+    ) -> None:
+        """Genres from item metadata appear in the output."""
+        result = _format_recommendation_brief(sample_brief)
+        assert "[exploration, puzzle, space]" in result
+
+    def test_format_brief_minimal(self) -> None:
+        """Brief with minimal data still formats cleanly."""
+        brief = RecommendationBrief(
+            item=ContentItem(
+                title="Minimal Game",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.UNREAD,
+            ),
+            score=0.5,
+            reasoning="",
+            score_breakdown={},
+            contributing_items=[],
+            adaptations=[],
+        )
+        result = _format_recommendation_brief(brief)
+        assert "Minimal Game" in result
+        assert "Match: 50%" in result
+        # No reasoning, strengths, or cross-media sections
+        assert "Why:" not in result
+        assert "Strengths:" not in result
+        assert "Cross-media:" not in result
+
+    def test_context_block_renders_enriched_section_with_briefs(
+        self, sample_brief: RecommendationBrief
+    ) -> None:
+        """build_user_context_block uses enriched format when briefs present."""
+        context = ConversationContext(
+            user_id=1,
+            recommendation_briefs=[sample_brief],
+            relevant_unconsumed=[sample_brief.item],
+        )
+        block = build_user_context_block(context)
+        assert "Recommended From Backlog (Pre-Scored)" in block
+        assert "Match: 87%" in block
+        # Should NOT show the plain backlog header
+        assert "Available in Backlog" not in block
+
+    def test_context_block_falls_back_to_plain_without_briefs(self) -> None:
+        """build_user_context_block uses plain format when no briefs."""
+        context = ConversationContext(
+            user_id=1,
+            relevant_unconsumed=[
+                ContentItem(
+                    title="Plain Item",
+                    content_type=ContentType.BOOK,
+                    status=ConsumptionStatus.UNREAD,
+                ),
+            ],
+        )
+        block = build_user_context_block(context)
+        assert "Available in Backlog" in block
+        assert "Recommended From Backlog" not in block
+
+
+class TestExtractContributingItems:
+    """Tests for _extract_contributing_items helper."""
+
+    def test_deduplicates_across_briefs(self) -> None:
+        """Contributing items shared across briefs are deduplicated."""
+        shared_item = ContentItem(
+            id="shared1",
+            title="Shared Item",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+        )
+        unique_item = ContentItem(
+            id="unique1",
+            title="Unique Item",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=4,
+        )
+
+        briefs = [
+            RecommendationBrief(
+                item=ContentItem(
+                    title="Rec A",
+                    content_type=ContentType.BOOK,
+                    status=ConsumptionStatus.UNREAD,
+                ),
+                score=0.9,
+                reasoning="",
+                score_breakdown={},
+                contributing_items=[shared_item, unique_item],
+                adaptations=[],
+            ),
+            RecommendationBrief(
+                item=ContentItem(
+                    title="Rec B",
+                    content_type=ContentType.BOOK,
+                    status=ConsumptionStatus.UNREAD,
+                ),
+                score=0.8,
+                reasoning="",
+                score_breakdown={},
+                contributing_items=[shared_item],  # Duplicate
+                adaptations=[],
+            ),
+        ]
+
+        result = _extract_contributing_items(briefs)
+        assert len(result) == 2
+        titles = [item.title for item in result]
+        assert "Shared Item" in titles
+        assert "Unique Item" in titles
+
+    def test_respects_limit(self) -> None:
+        """Returned list is capped at the limit."""
+        items = [
+            ContentItem(
+                id=f"item{index}",
+                title=f"Item {index}",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+            )
+            for index in range(20)
+        ]
+        brief = RecommendationBrief(
+            item=ContentItem(
+                title="Rec",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            ),
+            score=0.9,
+            reasoning="",
+            score_breakdown={},
+            contributing_items=items,
+            adaptations=[],
+        )
+        result = _extract_contributing_items([brief], limit=5)
+        assert len(result) == 5
+
+    def test_empty_briefs(self) -> None:
+        """Empty brief list returns empty list."""
+        result = _extract_contributing_items([])
+        assert result == []
+
+
+class TestRAGBypassWithPipeline:
+    """Tests verifying that RAG embedding call is skipped when pipeline is active."""
+
+    def test_no_embedding_call_when_pipeline_provides_briefs(
+        self,
+        storage_manager: StorageManager,
+        memory_manager: MemoryManager,
+    ) -> None:
+        """generate_embedding should NOT be called when pipeline succeeds.
+
+        The pipeline's contributing_items replace the RAG lookup, saving
+        the 1-3s embedding generation.
+        """
+        pipeline_item = ContentItem(
+            title="Pipeline Game",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+        )
+
+        mock_engine = MagicMock()
+        mock_engine.generate_recommendations.return_value = [
+            {
+                "item": pipeline_item,
+                "score": 0.85,
+                "reasoning": "matches your taste",
+                "score_breakdown": {},
+                "contributing_items": [],
+                "adaptations": [],
+                "similarity_score": 0.7,
+                "preference_score": 0.6,
+            },
+        ]
+
+        mock_ollama = MagicMock()
+
+        assembler = ContextAssembler(
+            storage_manager=storage_manager,
+            memory_manager=memory_manager,
+            ollama_client=mock_ollama,
+            recommendation_engine=mock_engine,
+        )
+
+        assembler.assemble_context(
+            user_id=1,
+            user_query="What game should I play?",
+            content_type=ContentType.VIDEO_GAME,
+        )
+
+        # The key assertion: generate_embedding must NOT have been called
+        mock_ollama.generate_embedding.assert_not_called()
+
+    def test_embedding_call_used_when_no_pipeline(
+        self,
+        storage_manager: StorageManager,
+        memory_manager: MemoryManager,
+    ) -> None:
+        """generate_embedding IS called when there is no pipeline."""
+        mock_ollama = MagicMock()
+        mock_ollama.generate_embedding.return_value = [0.1] * 384
+
+        assembler = ContextAssembler(
+            storage_manager=storage_manager,
+            memory_manager=memory_manager,
+            ollama_client=mock_ollama,
+            # No recommendation_engine
+        )
+
+        # Need vector_db to trigger the embedding path
+        storage_manager.vector_db = MagicMock()
+        storage_manager.vector_db.search_similar = MagicMock(return_value=[])
+        storage_manager.search_similar = MagicMock(return_value=[])
+
+        assembler.assemble_context(
+            user_id=1,
+            user_query="What should I read?",
+            content_type=ContentType.BOOK,
+        )
+
+        mock_ollama.generate_embedding.assert_called_once()
