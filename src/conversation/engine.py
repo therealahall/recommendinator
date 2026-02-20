@@ -90,10 +90,10 @@ Here's why this is EXACTLY what you need right now.
 - **[Alternative 2]**: Same energy — hype this one up too, explain what unique flavor it brings to the table
 
 💎 **MY PREDICTION:**
-You'll rate this **4/5**.
-- ✅ [What will land]
-- ✅ [What will land]
-- ⚠️ [What friction keeps it from being higher/lower]
+You'll rate this **[N]/5** — derive the number from their rating patterns for similar items.
+- ✅ [What will land for them specifically]
+- ✅ [Another reason it clicks]
+- ⚠️ [What could keep the rating from going higher — or lower]
 ---
 
 ## Response Style
