@@ -35,8 +35,10 @@ def build_recommendation_prompt(
             rating_text = f"{item.rating}/5" if item.rating else "Unrated"
             review_text = f' — Review: "{item.review}"' if item.review else ""
             author_text = f" by {item.author}" if item.author else ""
+            type_label = get_enum_value(item.content_type).replace("_", " ")
             context_text += (
-                f"- **{item.title}**{author_text} ({rating_text}){review_text}\n"
+                f"- [{type_label}] **{item.title}**{author_text}"
+                f" ({rating_text}){review_text}\n"
             )
 
     # Build list of unconsumed items
