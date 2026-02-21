@@ -221,7 +221,7 @@ class ToolExecutor:
             logger.error(f"Tool {tool_name} failed: {error}")
             return ToolResult(
                 success=False,
-                message=f"Tool execution failed: {str(error)}",
+                message=f"Failed to execute {tool_name}. Please try again.",
             )
 
     def _get_handler(
