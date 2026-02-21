@@ -241,7 +241,7 @@ def _detect_wishlist(message: str) -> IntentResult:
                 return IntentResult(
                     intent_type="tool_action",
                     tool_name="add_to_wishlist",
-                    tool_params={"title": title, "content_type": "video_game"},
+                    tool_params={"title": title},
                     confidence=0.85,
                 )
 
