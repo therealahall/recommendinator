@@ -333,6 +333,10 @@ class SQLiteDB:
             # Save to type-specific detail table
             self._save_detail_table(cursor, db_id, item, content_type_value)
 
+            # For TV shows, check if new seasons should regress status
+            if content_type_value == "tv_show":
+                self._handle_tv_season_change(cursor, db_id)
+
             conn.commit()
             return db_id  # type: ignore
 
@@ -499,6 +503,10 @@ class SQLiteDB:
     # Columns where values should be merged additively instead of replaced.
     _MERGEABLE_COLUMNS: set[str] = {"genres", "tags"}
 
+    # Columns that can increase but never decrease during sync.
+    # E.g. a TV show gaining new seasons — the count should go up.
+    _MONOTONIC_COLUMNS: set[str] = {"seasons", "episodes"}
+
     def _save_detail_table(
         self, cursor: sqlite3.Cursor, db_id: int, item: ContentItem, content_type: str
     ) -> None:
@@ -572,6 +580,16 @@ class SQLiteDB:
                 new_list = self._parse_json_list(new_value)
                 merged = merge_string_lists(existing_list, new_list)
                 values.append(json.dumps(merged) if merged else new_value)
+            elif col_name in self._MONOTONIC_COLUMNS and existing_data:
+                # Seasons/episodes: take the higher value
+                existing_val = self._safe_int(existing_data.get(col_name))
+                incoming_val = self._safe_int(new_value)
+                if existing_val is not None and incoming_val is not None:
+                    values.append(max(existing_val, incoming_val))
+                elif incoming_val is not None:
+                    values.append(incoming_val)
+                else:
+                    values.append(existing_val)
             elif existing_data and existing_data.get(col_name) is not None:
                 # Existing row has data — keep it (enrichment is source of truth)
                 values.append(existing_data[col_name])
@@ -625,6 +643,72 @@ class SQLiteDB:
                 f"INSERT INTO {table} ({col_list}) VALUES ({placeholders})",  # noqa: S608
                 values,
             )
+
+    def _handle_tv_season_change(self, cursor: sqlite3.Cursor, db_id: int) -> None:
+        """Regress TV show status when new seasons arrive during sync.
+
+        When a sync updates the total season count for a TV show and the
+        user had previously watched all seasons (completed via the UI
+        season checklist), the status should regress to currently_consuming
+        — unless the item is ignored.
+
+        If ignored, the season count still updates (handled by the monotonic
+        column logic in _save_detail_table) but status stays as-is.
+
+        This only fires when ``seasons_watched`` metadata exists (i.e. the
+        user has used the edit modal's season checklist at least once).
+
+        Args:
+            cursor: Database cursor (within an active transaction).
+            db_id: Content item database ID.
+        """
+        cursor.execute(
+            "SELECT ci.status, ci.ignored, td.seasons, td.metadata"
+            " FROM content_items ci"
+            " JOIN tv_show_details td ON ci.id = td.content_item_id"
+            " WHERE ci.id = ?",
+            (db_id,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            return
+
+        status = row["status"]
+        ignored = bool(row["ignored"])
+        total_seasons = row["seasons"]
+
+        # Only applies when currently completed
+        if status != "completed":
+            return
+
+        # Parse seasons_watched from metadata
+        metadata_raw = row["metadata"]
+        if not metadata_raw:
+            return
+        try:
+            metadata = json.loads(metadata_raw)
+        except (json.JSONDecodeError, TypeError):
+            return
+
+        seasons_watched = metadata.get("seasons_watched")
+        if not isinstance(seasons_watched, list):
+            return
+
+        # If all seasons are still watched, no regression needed
+        if total_seasons is None or len(seasons_watched) >= total_seasons:
+            return
+
+        # New seasons available that user hasn't watched.
+        # If ignored, leave status alone.
+        if ignored:
+            return
+
+        # Regress to currently_consuming
+        cursor.execute(
+            "UPDATE content_items SET status = 'currently_consuming',"
+            " updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (db_id,),
+        )
 
     def get_content_item(
         self, db_id: int, user_id: int | None = None
@@ -982,6 +1066,106 @@ class SQLiteDB:
             ignored=bool(self._get_row_value(row, "ignored")),
             metadata=metadata,
         )
+
+    def update_item_from_ui(
+        self,
+        db_id: int,
+        status: str,
+        rating: int | None = None,
+        review: str | None = None,
+        seasons_watched: list[int] | None = None,
+        user_id: int | None = None,
+    ) -> bool:
+        """Update a content item from the web UI (unrestricted editing).
+
+        Unlike save_content_item which enforces forward-only status and
+        set-once rating/review for sync safety, this method allows full
+        editing: status can go backward, rating/review can be changed
+        or cleared.
+
+        For TV shows with seasons_watched provided, status is auto-derived:
+        0 watched = unread, all watched = completed, partial = currently_consuming.
+        The auto-derived status overrides the status parameter.
+
+        Args:
+            db_id: Database ID of the item to update.
+            status: New status value (unread, currently_consuming, completed).
+            rating: New rating (1-5) or None to clear.
+            review: New review text or None to clear.
+            seasons_watched: List of watched season numbers (TV shows only).
+            user_id: Optional user ID filter for authorization.
+
+        Returns:
+            True if item was updated, False if not found.
+        """
+        with self.connection() as conn:
+            cursor = conn.cursor()
+
+            # Verify item exists (and belongs to user_id if provided)
+            if user_id is not None:
+                cursor.execute(
+                    "SELECT id, content_type FROM content_items"
+                    " WHERE id = ? AND user_id = ?",
+                    (db_id, user_id),
+                )
+            else:
+                cursor.execute(
+                    "SELECT id, content_type FROM content_items WHERE id = ?",
+                    (db_id,),
+                )
+            row = cursor.fetchone()
+            if not row:
+                return False
+
+            content_type = row["content_type"]
+            resolved_status = status
+
+            # For TV shows with seasons_watched, auto-derive status
+            if content_type == "tv_show" and seasons_watched is not None:
+                cursor.execute(
+                    "SELECT seasons, metadata FROM tv_show_details"
+                    " WHERE content_item_id = ?",
+                    (db_id,),
+                )
+                tv_row = cursor.fetchone()
+                if tv_row:
+                    total_seasons = tv_row["seasons"] or 0
+
+                    # Auto-derive status from seasons watched
+                    watched_count = len(seasons_watched)
+                    if watched_count == 0:
+                        resolved_status = "unread"
+                    elif total_seasons > 0 and watched_count >= total_seasons:
+                        resolved_status = "completed"
+                    else:
+                        resolved_status = "currently_consuming"
+
+                    # Merge seasons_watched into tv_show_details metadata
+                    existing_metadata: dict[str, Any] = {}
+                    if tv_row["metadata"]:
+                        try:
+                            parsed = json.loads(tv_row["metadata"])
+                            if isinstance(parsed, dict):
+                                existing_metadata = parsed
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                    existing_metadata["seasons_watched"] = seasons_watched
+                    cursor.execute(
+                        "UPDATE tv_show_details SET metadata = ?"
+                        " WHERE content_item_id = ?",
+                        (json.dumps(existing_metadata), db_id),
+                    )
+
+            # Update the content_items row directly
+            cursor.execute(
+                "UPDATE content_items"
+                " SET status = ?, rating = ?, review = ?,"
+                " updated_at = CURRENT_TIMESTAMP"
+                " WHERE id = ?",
+                (resolved_status, rating, review, db_id),
+            )
+            conn.commit()
+            return True
 
     def delete_content_item(self, db_id: int, user_id: int | None = None) -> bool:
         """Delete a content item by database ID.

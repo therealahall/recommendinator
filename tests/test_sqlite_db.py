@@ -1370,3 +1370,372 @@ class TestDetailTableFillOnly:
         assert retrieved.metadata.get("custom_key_1") == "original_value"
         # New key should be filled
         assert retrieved.metadata.get("custom_key_2") == "new_value"
+
+
+class TestUpdateItemFromUi:
+    """Tests for update_item_from_ui (unrestricted UI editing)."""
+
+    def test_update_status_backward(self, temp_db: SQLiteDB) -> None:
+        """Status can go backward (completed -> unread) via UI edit."""
+        item = ContentItem(
+            id="ui_1",
+            title="Completed Book",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=4,
+        )
+        db_id = temp_db.save_content_item(item)
+
+        result = temp_db.update_item_from_ui(db_id=db_id, status="unread")
+        assert result is True
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.status == ConsumptionStatus.UNREAD
+
+    def test_update_rating_overwrite(self, temp_db: SQLiteDB) -> None:
+        """Existing rating can be overwritten via UI edit."""
+        item = ContentItem(
+            id="ui_2",
+            title="Rated Book",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=3,
+        )
+        db_id = temp_db.save_content_item(item)
+
+        temp_db.update_item_from_ui(db_id=db_id, status="completed", rating=5)
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.rating == 5
+
+    def test_update_rating_clear(self, temp_db: SQLiteDB) -> None:
+        """Setting rating to None clears it via UI edit."""
+        item = ContentItem(
+            id="ui_3",
+            title="Rated Movie",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.COMPLETED,
+            rating=4,
+        )
+        db_id = temp_db.save_content_item(item)
+
+        temp_db.update_item_from_ui(db_id=db_id, status="completed", rating=None)
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.rating is None
+
+    def test_update_review_overwrite(self, temp_db: SQLiteDB) -> None:
+        """Existing review can be overwritten via UI edit."""
+        item = ContentItem(
+            id="ui_4",
+            title="Reviewed Game",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.COMPLETED,
+            review="Old review",
+        )
+        db_id = temp_db.save_content_item(item)
+
+        temp_db.update_item_from_ui(
+            db_id=db_id, status="completed", review="New review"
+        )
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.review == "New review"
+
+    def test_update_seasons_watched(self, temp_db: SQLiteDB) -> None:
+        """Seasons watched is persisted in tv_show_details metadata."""
+        item = ContentItem(
+            id="ui_5",
+            title="Test Show",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"seasons": 5},
+        )
+        db_id = temp_db.save_content_item(item)
+
+        temp_db.update_item_from_ui(
+            db_id=db_id, status="currently_consuming", seasons_watched=[1, 2, 3]
+        )
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.metadata is not None
+        assert retrieved.metadata.get("seasons_watched") == [1, 2, 3]
+
+    def test_update_auto_derive_status_all_watched(self, temp_db: SQLiteDB) -> None:
+        """All seasons watched auto-derives status to completed."""
+        item = ContentItem(
+            id="ui_6",
+            title="Short Show",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"seasons": 3},
+        )
+        db_id = temp_db.save_content_item(item)
+
+        temp_db.update_item_from_ui(
+            db_id=db_id, status="unread", seasons_watched=[1, 2, 3]
+        )
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.status == ConsumptionStatus.COMPLETED
+
+    def test_update_auto_derive_status_some_watched(self, temp_db: SQLiteDB) -> None:
+        """Partial seasons watched auto-derives status to currently_consuming."""
+        item = ContentItem(
+            id="ui_7",
+            title="Long Show",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"seasons": 10},
+        )
+        db_id = temp_db.save_content_item(item)
+
+        temp_db.update_item_from_ui(
+            db_id=db_id, status="unread", seasons_watched=[1, 2]
+        )
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.status == ConsumptionStatus.CURRENTLY_CONSUMING
+
+    def test_update_auto_derive_status_none_watched(self, temp_db: SQLiteDB) -> None:
+        """Empty seasons watched auto-derives status to unread."""
+        item = ContentItem(
+            id="ui_8",
+            title="Unwatched Show",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.COMPLETED,
+            metadata={"seasons": 5},
+        )
+        db_id = temp_db.save_content_item(item)
+
+        temp_db.update_item_from_ui(db_id=db_id, status="completed", seasons_watched=[])
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.status == ConsumptionStatus.UNREAD
+
+    def test_update_nonexistent_item(self, temp_db: SQLiteDB) -> None:
+        """Updating a nonexistent item returns False."""
+        result = temp_db.update_item_from_ui(db_id=99999, status="unread")
+        assert result is False
+
+    def test_update_wrong_user(self, temp_db: SQLiteDB) -> None:
+        """Updating with wrong user_id returns False."""
+        item = ContentItem(
+            id="ui_9",
+            title="User 1 Book",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        )
+        db_id = temp_db.save_content_item(item, user_id=1)
+
+        result = temp_db.update_item_from_ui(
+            db_id=db_id, status="completed", user_id=999
+        )
+        assert result is False
+
+        # Verify item unchanged
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.status == ConsumptionStatus.UNREAD
+
+    def test_sync_still_forward_only_after_ui_update(self, temp_db: SQLiteDB) -> None:
+        """save_content_item still enforces forward-only after UI edit.
+
+        UI sets status backward to unread, then sync tries to set completed.
+        Sync should advance forward. Separately, sync should not overwrite
+        the rating that was set via UI and then cleared by another UI edit.
+        """
+        item = ContentItem(
+            id="ui_10",
+            title="Sync Test Book",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=4,
+        )
+        db_id = temp_db.save_content_item(item)
+
+        # UI edit: go backward to unread, clear rating
+        temp_db.update_item_from_ui(db_id=db_id, status="unread", rating=None)
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.status == ConsumptionStatus.UNREAD
+        assert retrieved.rating is None
+
+        # Re-sync with completed status — should advance forward
+        resync_item = ContentItem(
+            id="ui_10",
+            title="Sync Test Book",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+        )
+        temp_db.save_content_item(resync_item)
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.status == ConsumptionStatus.COMPLETED
+
+
+class TestTvSeasonSyncRegression:
+    """Tests for TV show status regression when new seasons arrive via sync."""
+
+    def test_sync_new_season_regresses_completed_to_consuming(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """Completed TV show regresses to consuming when new season synced.
+
+        Bug scenario: User watches all 50 seasons of Survivor, marks
+        completed. Sonarr syncs season 51. Status should go back to
+        currently_consuming since there's unwatched content.
+        """
+        item = ContentItem(
+            id="tv_sync_1",
+            title="Survivor",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.COMPLETED,
+            metadata={"seasons": 50},
+        )
+        db_id = temp_db.save_content_item(item)
+
+        # User marks all 50 seasons watched via UI
+        temp_db.update_item_from_ui(
+            db_id=db_id,
+            status="completed",
+            seasons_watched=list(range(1, 51)),
+        )
+
+        # Verify completed
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.status == ConsumptionStatus.COMPLETED
+
+        # Sonarr syncs with season 51
+        resync_item = ContentItem(
+            id="tv_sync_1",
+            title="Survivor",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.CURRENTLY_CONSUMING,
+            metadata={"seasons": 51},
+        )
+        temp_db.save_content_item(resync_item)
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.status == ConsumptionStatus.CURRENTLY_CONSUMING
+        # Total seasons should have increased
+        assert retrieved.metadata is not None
+        assert str(retrieved.metadata.get("seasons")) == "51"
+
+    def test_sync_new_season_does_not_regress_when_ignored(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """Ignored TV show stays completed when new season arrives.
+
+        User completed and ignored the show — new season shouldn't
+        change status.
+        """
+        item = ContentItem(
+            id="tv_sync_2",
+            title="Ignored Show",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.COMPLETED,
+            metadata={"seasons": 5},
+        )
+        db_id = temp_db.save_content_item(item)
+
+        # User marks all seasons watched and ignores
+        temp_db.update_item_from_ui(
+            db_id=db_id,
+            status="completed",
+            seasons_watched=[1, 2, 3, 4, 5],
+        )
+        temp_db.set_item_ignored(db_id, ignored=True)
+
+        # Sync with new season
+        resync_item = ContentItem(
+            id="tv_sync_2",
+            title="Ignored Show",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.CURRENTLY_CONSUMING,
+            metadata={"seasons": 6},
+        )
+        temp_db.save_content_item(resync_item)
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        # Status stays completed because item is ignored
+        assert retrieved.status == ConsumptionStatus.COMPLETED
+        # Season count still updated
+        assert retrieved.metadata is not None
+        assert str(retrieved.metadata.get("seasons")) == "6"
+
+    def test_sync_no_seasons_watched_no_regression(self, temp_db: SQLiteDB) -> None:
+        """No regression when user never used the season checklist.
+
+        If there's no seasons_watched metadata, the sync should not
+        change behavior — forward-only still applies.
+        """
+        item = ContentItem(
+            id="tv_sync_3",
+            title="No Checklist Show",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.COMPLETED,
+            metadata={"seasons": 3},
+        )
+        db_id = temp_db.save_content_item(item)
+
+        # Sync with new season (no seasons_watched in metadata)
+        resync_item = ContentItem(
+            id="tv_sync_3",
+            title="No Checklist Show",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.CURRENTLY_CONSUMING,
+            metadata={"seasons": 4},
+        )
+        temp_db.save_content_item(resync_item)
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        # Status stays completed — forward-only and no checklist data
+        assert retrieved.status == ConsumptionStatus.COMPLETED
+
+    def test_sync_same_season_count_no_regression(self, temp_db: SQLiteDB) -> None:
+        """No regression when season count hasn't changed."""
+        item = ContentItem(
+            id="tv_sync_4",
+            title="Stable Show",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.COMPLETED,
+            metadata={"seasons": 5},
+        )
+        db_id = temp_db.save_content_item(item)
+
+        # User marks all seasons watched
+        temp_db.update_item_from_ui(
+            db_id=db_id,
+            status="completed",
+            seasons_watched=[1, 2, 3, 4, 5],
+        )
+
+        # Re-sync with same season count
+        resync_item = ContentItem(
+            id="tv_sync_4",
+            title="Stable Show",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.COMPLETED,
+            metadata={"seasons": 5},
+        )
+        temp_db.save_content_item(resync_item)
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        # Still completed — no new seasons
+        assert retrieved.status == ConsumptionStatus.COMPLETED

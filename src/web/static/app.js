@@ -562,6 +562,7 @@
                 var ignoreLabel = item.ignored ? "Unignore" : "Ignore";
                 var ignoreClass = item.ignored ? "btn-unignore" : "btn-ignore";
                 html += '<div class="library-item-actions">';
+                html += '<button class="btn btn-small btn-secondary edit-lib-btn" data-db-id="' + item.db_id + '" title="Edit this item">Edit</button>';
                 html += '<button class="btn btn-small ' + ignoreClass + ' ignore-lib-btn" data-db-id="' + item.db_id + '" data-ignored="' + (item.ignored ? "true" : "false") + '" title="' + ignoreLabel + ' this item">' + ignoreLabel + '</button>';
                 html += '</div>';
             }
@@ -577,6 +578,13 @@
         }
 
         container.innerHTML = html;
+
+        // Attach edit button listeners
+        container.querySelectorAll(".edit-lib-btn").forEach(function (btn) {
+            btn.addEventListener("click", function () {
+                openEditModal(parseInt(btn.dataset.dbId));
+            });
+        });
 
         // Attach ignore button listeners
         container.querySelectorAll(".ignore-lib-btn").forEach(function (btn) {
@@ -1539,6 +1547,327 @@
                 if (resetBtn) resetBtn.disabled = false;
             });
     };
+
+    // -----------------------------------------------------------------------
+    // Edit Item Modal
+    // -----------------------------------------------------------------------
+
+    function openEditModal(dbId) {
+        fetch(API_BASE + "/items/" + dbId + "?user_id=" + currentUserId)
+            .then(function (response) {
+                if (!response.ok) {
+                    throw new Error("HTTP " + response.status);
+                }
+                return response.json();
+            })
+            .then(function (item) {
+                renderEditModal(item);
+            })
+            .catch(function (error) {
+                alert("Failed to load item: " + error.message);
+            });
+    }
+
+    function renderEditModal(item) {
+        // Remove any existing modal
+        var existing = document.querySelector(".edit-modal");
+        if (existing) existing.remove();
+
+        var modal = document.createElement("div");
+        modal.className = "edit-modal";
+
+        var html = '<div class="edit-modal-content">';
+        html += '<h3>' + escapeHtml(item.title) + '</h3>';
+        html += '<div class="edit-modal-subtitle">';
+        if (item.author) {
+            html += escapeHtml(item.author) + ' ';
+        }
+        html += '<span class="badge badge-type">' + formatContentType(item.content_type) + '</span>';
+        html += '</div>';
+
+        // Status dropdown
+        html += '<div class="edit-field">';
+        html += '<label>Status</label>';
+        html += '<select id="editStatus">';
+        var statusOptions = [
+            { value: "unread", label: formatStatus("unread", item.content_type) },
+            { value: "currently_consuming", label: "In Progress" },
+            { value: "completed", label: "Completed" }
+        ];
+        statusOptions.forEach(function (opt) {
+            var selected = opt.value === item.status ? " selected" : "";
+            html += '<option value="' + opt.value + '"' + selected + '>' + escapeHtml(opt.label) + '</option>';
+        });
+        html += '</select>';
+        html += '</div>';
+
+        // Star rating picker
+        html += '<div class="edit-field">';
+        html += '<label>Rating</label>';
+        html += '<div class="star-rating">';
+        html += '<div class="star-rating-stars">';
+        for (var star = 1; star <= 5; star++) {
+            var activeClass = item.rating && star <= item.rating ? " active" : "";
+            html += '<span class="star-rating-star' + activeClass + '" data-value="' + star + '">\u2605</span>';
+        }
+        html += '</div>';
+        html += '<button class="btn btn-small btn-clear-rating" type="button">Clear</button>';
+        html += '<input type="hidden" id="editRating" value="' + (item.rating || "") + '">';
+        html += '</div>';
+        html += '</div>';
+
+        // Review textarea
+        html += '<div class="edit-field">';
+        html += '<label>Review</label>';
+        html += '<textarea id="editReview" placeholder="Write a review...">' + escapeHtml(item.review || "") + '</textarea>';
+        html += '</div>';
+
+        // Season checklist for TV shows
+        if (item.content_type === "tv_show" && item.total_seasons) {
+            html += '<div class="edit-field">';
+            html += '<label>Seasons Watched</label>';
+            html += renderSeasonChecklist(item.seasons_watched || [], item.total_seasons);
+            html += '</div>';
+        }
+
+        // Actions
+        html += '<div class="edit-modal-actions">';
+        html += '<button class="btn btn-secondary" id="editCancel">Cancel</button>';
+        html += '<button class="btn btn-primary" id="editSave">Save</button>';
+        html += '</div>';
+        html += '</div>';
+
+        modal.innerHTML = html;
+        document.body.appendChild(modal);
+        setupEditModalListeners(item);
+    }
+
+    function renderSeasonChecklist(seasonsWatched, totalSeasons) {
+        var watchedSet = {};
+        seasonsWatched.forEach(function (season) { watchedSet[season] = true; });
+        var watchedCount = seasonsWatched.length;
+
+        var html = '<div class="season-controls">';
+        html += '<button class="btn btn-small btn-secondary" id="seasonSelectAll" type="button">Select All</button>';
+        html += '<button class="btn btn-small btn-secondary" id="seasonDeselectAll" type="button">Deselect All</button>';
+        html += '<span class="season-counter" id="seasonCounter">' + watchedCount + ' / ' + totalSeasons + '</span>';
+        html += '</div>';
+        html += '<div class="season-grid">';
+        for (var season = 1; season <= totalSeasons; season++) {
+            var checked = watchedSet[season] ? true : false;
+            var checkedClass = checked ? " checked" : "";
+            html += '<label class="season-checkbox' + checkedClass + '">';
+            html += '<input type="checkbox" name="season" value="' + season + '"' + (checked ? " checked" : "") + '>';
+            html += season;
+            html += '</label>';
+        }
+        html += '</div>';
+        return html;
+    }
+
+    function setupEditModalListeners(item) {
+        var modal = document.querySelector(".edit-modal");
+        if (!modal) return;
+
+        var totalSeasons = item.total_seasons || 0;
+
+        // Star rating clicks
+        modal.querySelectorAll(".star-rating-star").forEach(function (star) {
+            star.addEventListener("click", function () {
+                var value = parseInt(star.dataset.value);
+                var ratingInput = document.getElementById("editRating");
+                ratingInput.value = value;
+                modal.querySelectorAll(".star-rating-star").forEach(function (other) {
+                    if (parseInt(other.dataset.value) <= value) {
+                        other.classList.add("active");
+                    } else {
+                        other.classList.remove("active");
+                    }
+                });
+            });
+        });
+
+        // Clear rating
+        var clearBtn = modal.querySelector(".btn-clear-rating");
+        if (clearBtn) {
+            clearBtn.addEventListener("click", function () {
+                document.getElementById("editRating").value = "";
+                modal.querySelectorAll(".star-rating-star").forEach(function (star) {
+                    star.classList.remove("active");
+                });
+            });
+        }
+
+        // Season checkbox clicks
+        modal.querySelectorAll(".season-checkbox input").forEach(function (checkbox) {
+            checkbox.addEventListener("change", function () {
+                var label = checkbox.parentElement;
+                if (checkbox.checked) {
+                    label.classList.add("checked");
+                } else {
+                    label.classList.remove("checked");
+                }
+                updateSeasonCounter(modal, totalSeasons);
+                autoDeriveTvStatus(modal, totalSeasons);
+            });
+        });
+
+        // Select All / Deselect All
+        var selectAllBtn = document.getElementById("seasonSelectAll");
+        if (selectAllBtn) {
+            selectAllBtn.addEventListener("click", function () {
+                modal.querySelectorAll(".season-checkbox input").forEach(function (checkbox) {
+                    checkbox.checked = true;
+                    checkbox.parentElement.classList.add("checked");
+                });
+                updateSeasonCounter(modal, totalSeasons);
+                autoDeriveTvStatus(modal, totalSeasons);
+            });
+        }
+
+        var deselectAllBtn = document.getElementById("seasonDeselectAll");
+        if (deselectAllBtn) {
+            deselectAllBtn.addEventListener("click", function () {
+                modal.querySelectorAll(".season-checkbox input").forEach(function (checkbox) {
+                    checkbox.checked = false;
+                    checkbox.parentElement.classList.remove("checked");
+                });
+                updateSeasonCounter(modal, totalSeasons);
+                autoDeriveTvStatus(modal, totalSeasons);
+            });
+        }
+
+        // Cancel button
+        document.getElementById("editCancel").addEventListener("click", function () {
+            modal.remove();
+        });
+
+        // Backdrop click
+        modal.addEventListener("click", function (event) {
+            if (event.target === modal) {
+                modal.remove();
+            }
+        });
+
+        // Escape key
+        function onEscape(event) {
+            if (event.key === "Escape") {
+                modal.remove();
+                document.removeEventListener("keydown", onEscape);
+            }
+        }
+        document.addEventListener("keydown", onEscape);
+
+        // Save button
+        document.getElementById("editSave").addEventListener("click", function () {
+            saveItemEdit(item.db_id);
+        });
+    }
+
+    function updateSeasonCounter(modal, totalSeasons) {
+        var counter = document.getElementById("seasonCounter");
+        if (!counter) return;
+        var checked = modal.querySelectorAll(".season-checkbox input:checked").length;
+        counter.textContent = checked + " / " + totalSeasons;
+    }
+
+    function autoDeriveTvStatus(modal, totalSeasons) {
+        var checked = modal.querySelectorAll(".season-checkbox input:checked").length;
+        var statusSelect = document.getElementById("editStatus");
+        if (!statusSelect) return;
+
+        if (checked === 0) {
+            statusSelect.value = "unread";
+        } else if (checked >= totalSeasons) {
+            statusSelect.value = "completed";
+        } else {
+            statusSelect.value = "currently_consuming";
+        }
+    }
+
+    function saveItemEdit(dbId) {
+        var status = document.getElementById("editStatus").value;
+        var ratingValue = document.getElementById("editRating").value;
+        var review = document.getElementById("editReview").value;
+
+        var body = {
+            status: status,
+            rating: ratingValue ? parseInt(ratingValue) : null,
+            review: review || null
+        };
+
+        // Collect seasons watched if checklist exists
+        var seasonCheckboxes = document.querySelectorAll(".season-checkbox input");
+        if (seasonCheckboxes.length > 0) {
+            var seasonsWatched = [];
+            seasonCheckboxes.forEach(function (checkbox) {
+                if (checkbox.checked) {
+                    seasonsWatched.push(parseInt(checkbox.value));
+                }
+            });
+            body.seasons_watched = seasonsWatched;
+        }
+
+        var saveBtn = document.getElementById("editSave");
+        saveBtn.disabled = true;
+        saveBtn.textContent = "Saving...";
+
+        fetch(API_BASE + "/items/" + dbId + "?user_id=" + currentUserId, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body)
+        })
+            .then(function (response) {
+                if (!response.ok) {
+                    return response.json().then(function (data) {
+                        throw new Error(data.detail || "HTTP " + response.status);
+                    });
+                }
+                return response.json();
+            })
+            .then(function (updatedItem) {
+                updateLibraryCard(dbId, updatedItem);
+                var modal = document.querySelector(".edit-modal");
+                if (modal) modal.remove();
+            })
+            .catch(function (error) {
+                alert("Failed to save: " + error.message);
+                saveBtn.disabled = false;
+                saveBtn.textContent = "Save";
+            });
+    }
+
+    function updateLibraryCard(dbId, updatedItem) {
+        var card = document.querySelector('.library-item[data-db-id="' + dbId + '"]');
+        if (!card) return;
+
+        // Update badges
+        var badges = card.querySelector(".library-item-badges");
+        if (badges) {
+            var badgeHtml = '<span class="badge badge-type">' + formatContentType(updatedItem.content_type) + '</span>';
+            badgeHtml += '<span class="badge badge-status ' + updatedItem.status + '">' + formatStatus(updatedItem.status, updatedItem.content_type) + '</span>';
+            if (updatedItem.rating) {
+                badgeHtml += '<span class="badge badge-rating">' + renderStars(updatedItem.rating) + '</span>';
+            }
+            if (updatedItem.ignored) {
+                badgeHtml += '<span class="badge badge-ignored">Ignored</span>';
+            }
+            badges.innerHTML = badgeHtml;
+        }
+
+        // Update in-memory state
+        for (var index = 0; index < libraryState.items.length; index++) {
+            if (libraryState.items[index].db_id === dbId) {
+                libraryState.items[index].status = updatedItem.status;
+                libraryState.items[index].rating = updatedItem.rating;
+                libraryState.items[index].review = updatedItem.review;
+                if (updatedItem.seasons_watched !== undefined) {
+                    libraryState.items[index].seasons_watched = updatedItem.seasons_watched;
+                }
+                break;
+            }
+        }
+    }
 
     // -----------------------------------------------------------------------
     // Ignore Item

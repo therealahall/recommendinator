@@ -778,3 +778,192 @@ def test_recommendations_include_db_id(client, mock_components):
     assert len(data) == 1
     assert data[0]["db_id"] == 42
     assert data[0]["title"] == "Test Book"
+
+
+# ---------------------------------------------------------------------------
+# GET /api/items/{db_id} — Single item retrieval
+# ---------------------------------------------------------------------------
+
+
+def test_get_single_item(client, mock_components):
+    """GET /api/items/{db_id} returns a single content item."""
+    mock_item = ContentItem(
+        id="ext_1",
+        db_id=42,
+        title="Test Book",
+        author="Author",
+        content_type=ContentType.BOOK,
+        status=ConsumptionStatus.COMPLETED,
+        rating=4,
+        review="Great",
+    )
+    mock_components["storage"].get_content_item = Mock(return_value=mock_item)
+
+    response = client.get("/api/items/42?user_id=1")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["db_id"] == 42
+    assert data["title"] == "Test Book"
+    assert data["rating"] == 4
+    assert data["review"] == "Great"
+    assert data["status"] == "completed"
+
+    mock_components["storage"].get_content_item.assert_called_once_with(42, user_id=1)
+
+
+def test_get_single_item_not_found(client, mock_components):
+    """GET /api/items/{db_id} returns 404 if item not found."""
+    mock_components["storage"].get_content_item = Mock(return_value=None)
+
+    response = client.get("/api/items/999?user_id=1")
+    assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# PATCH /api/items/{db_id} — Item edit
+# ---------------------------------------------------------------------------
+
+
+def test_edit_item_status(client, mock_components):
+    """PATCH /api/items/{db_id} updates item status."""
+    updated_item = ContentItem(
+        id="ext_1",
+        db_id=42,
+        title="Test Book",
+        content_type=ContentType.BOOK,
+        status=ConsumptionStatus.UNREAD,
+    )
+    mock_components["storage"].update_item_from_ui = Mock(return_value=True)
+    mock_components["storage"].get_content_item = Mock(return_value=updated_item)
+
+    response = client.patch(
+        "/api/items/42?user_id=1",
+        json={"status": "unread"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "unread"
+
+    mock_components["storage"].update_item_from_ui.assert_called_once_with(
+        db_id=42,
+        status="unread",
+        rating=None,
+        review=None,
+        seasons_watched=None,
+        user_id=1,
+    )
+
+
+def test_edit_item_rating(client, mock_components):
+    """PATCH /api/items/{db_id} updates item rating."""
+    updated_item = ContentItem(
+        id="ext_1",
+        db_id=42,
+        title="Test Movie",
+        content_type=ContentType.MOVIE,
+        status=ConsumptionStatus.COMPLETED,
+        rating=5,
+    )
+    mock_components["storage"].update_item_from_ui = Mock(return_value=True)
+    mock_components["storage"].get_content_item = Mock(return_value=updated_item)
+
+    response = client.patch(
+        "/api/items/42?user_id=1",
+        json={"status": "completed", "rating": 5},
+    )
+    assert response.status_code == 200
+    assert response.json()["rating"] == 5
+
+
+def test_edit_item_review(client, mock_components):
+    """PATCH /api/items/{db_id} updates item review."""
+    updated_item = ContentItem(
+        id="ext_1",
+        db_id=42,
+        title="Test Game",
+        content_type=ContentType.VIDEO_GAME,
+        status=ConsumptionStatus.COMPLETED,
+        review="Amazing game",
+    )
+    mock_components["storage"].update_item_from_ui = Mock(return_value=True)
+    mock_components["storage"].get_content_item = Mock(return_value=updated_item)
+
+    response = client.patch(
+        "/api/items/42?user_id=1",
+        json={"status": "completed", "review": "Amazing game"},
+    )
+    assert response.status_code == 200
+    assert response.json()["review"] == "Amazing game"
+
+
+def test_edit_tv_show_seasons(client, mock_components):
+    """PATCH /api/items/{db_id} passes seasons_watched for TV shows."""
+    updated_item = ContentItem(
+        id="ext_1",
+        db_id=42,
+        title="Test Show",
+        content_type=ContentType.TV_SHOW,
+        status=ConsumptionStatus.CURRENTLY_CONSUMING,
+        metadata={"seasons": 10, "seasons_watched": [1, 2, 3]},
+    )
+    mock_components["storage"].update_item_from_ui = Mock(return_value=True)
+    mock_components["storage"].get_content_item = Mock(return_value=updated_item)
+
+    response = client.patch(
+        "/api/items/42?user_id=1",
+        json={"status": "currently_consuming", "seasons_watched": [1, 2, 3]},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["seasons_watched"] == [1, 2, 3]
+    assert data["total_seasons"] == 10
+
+    mock_components["storage"].update_item_from_ui.assert_called_once_with(
+        db_id=42,
+        status="currently_consuming",
+        rating=None,
+        review=None,
+        seasons_watched=[1, 2, 3],
+        user_id=1,
+    )
+
+
+def test_edit_item_not_found(client, mock_components):
+    """PATCH /api/items/{db_id} returns 404 if item not found."""
+    mock_components["storage"].update_item_from_ui = Mock(return_value=False)
+
+    response = client.patch(
+        "/api/items/999?user_id=1",
+        json={"status": "unread"},
+    )
+    assert response.status_code == 404
+
+
+def test_edit_invalid_status(client, mock_components):
+    """PATCH /api/items/{db_id} returns 400 for invalid status."""
+    response = client.patch(
+        "/api/items/42?user_id=1",
+        json={"status": "invalid_status"},
+    )
+    assert response.status_code == 400
+    assert "Invalid status" in response.json()["detail"]
+
+
+def test_edit_response_includes_tv_metadata(client, mock_components):
+    """GET /api/items response includes seasons_watched and total_seasons for TV."""
+    mock_item = ContentItem(
+        id="tv_1",
+        db_id=10,
+        title="Survivor",
+        content_type=ContentType.TV_SHOW,
+        status=ConsumptionStatus.CURRENTLY_CONSUMING,
+        metadata={"seasons": 50, "seasons_watched": [1, 2, 3, 4, 5]},
+    )
+    mock_components["storage"].get_content_items = Mock(return_value=[mock_item])
+
+    response = client.get("/api/items?user_id=1")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["seasons_watched"] == [1, 2, 3, 4, 5]
+    assert data[0]["total_seasons"] == 50

@@ -314,6 +314,40 @@ class StorageManager:
         """
         return self.sqlite_db.set_item_ignored(db_id, ignored, user_id=user_id)
 
+    def update_item_from_ui(
+        self,
+        db_id: int,
+        status: str,
+        rating: int | None = None,
+        review: str | None = None,
+        seasons_watched: list[int] | None = None,
+        user_id: int | None = None,
+    ) -> bool:
+        """Update a content item from the web UI (unrestricted editing).
+
+        Delegates to SQLiteDB.update_item_from_ui which allows full editing
+        without the forward-only/set-once constraints of save_content_item.
+
+        Args:
+            db_id: Database ID of the item to update.
+            status: New status value.
+            rating: New rating (1-5) or None to clear.
+            review: New review text or None to clear.
+            seasons_watched: List of watched season numbers (TV shows only).
+            user_id: Optional user ID filter for authorization.
+
+        Returns:
+            True if item was updated, False if not found.
+        """
+        return self.sqlite_db.update_item_from_ui(
+            db_id=db_id,
+            status=status,
+            rating=rating,
+            review=review,
+            seasons_watched=seasons_watched,
+            user_id=user_id,
+        )
+
     def count_items(
         self,
         user_id: int | None = None,

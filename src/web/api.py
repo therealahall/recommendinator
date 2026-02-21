@@ -11,7 +11,12 @@ from pydantic import BaseModel, Field
 
 from src.cli.config import get_feature_flags
 from src.ingestion.sync import execute_multi_source_sync
-from src.models.content import ConsumptionStatus, ContentType, get_enum_value
+from src.models.content import (
+    ConsumptionStatus,
+    ContentItem,
+    ContentType,
+    get_enum_value,
+)
 from src.models.user_preferences import UserPreferenceConfig
 from src.utils.text import humanize_source_id
 from src.web.enrichment_manager import get_enrichment_manager
@@ -95,6 +100,8 @@ class ContentItemResponse(BaseModel):
     review: str | None
     source: str | None
     ignored: bool = False
+    seasons_watched: list[int] | None = None
+    total_seasons: int | None = None
 
 
 class RecommendationResponse(BaseModel):
@@ -174,6 +181,15 @@ class IgnoreItemRequest(BaseModel):
     """Request model for setting item ignored status."""
 
     ignored: bool = Field(..., description="Whether to ignore the item")
+
+
+class ItemEditRequest(BaseModel):
+    """Request model for editing a content item from the UI."""
+
+    status: str = Field(..., description="Status value")
+    rating: int | None = Field(None, ge=1, le=5)
+    review: str | None = Field(None)
+    seasons_watched: list[int] | None = Field(None)
 
 
 class EnrichmentStartRequest(BaseModel):
@@ -402,6 +418,46 @@ async def list_users() -> list[UserResponse]:
     ]
 
 
+def _item_to_response(item: "ContentItem") -> ContentItemResponse:
+    """Convert a ContentItem to a ContentItemResponse.
+
+    Extracts seasons_watched and total_seasons from TV show metadata.
+
+    Args:
+        item: ContentItem to convert.
+
+    Returns:
+        ContentItemResponse with all fields populated.
+    """
+    seasons_watched: list[int] | None = None
+    total_seasons: int | None = None
+    metadata = item.metadata or {}
+
+    if get_enum_value(item.content_type) == "tv_show":
+        seasons_watched = metadata.get("seasons_watched")
+        seasons_raw = metadata.get("seasons")
+        if seasons_raw is not None:
+            try:
+                total_seasons = int(seasons_raw)
+            except (ValueError, TypeError):
+                pass
+
+    return ContentItemResponse(
+        id=item.id,
+        db_id=item.db_id,
+        title=item.title,
+        author=item.author,
+        content_type=get_enum_value(item.content_type),
+        status=get_enum_value(item.status),
+        rating=item.rating,
+        review=item.review,
+        source=item.source,
+        ignored=bool(item.ignored),
+        seasons_watched=seasons_watched,
+        total_seasons=total_seasons,
+    )
+
+
 @router.get("/items", response_model=list[ContentItemResponse])
 async def list_items(
     type: str | None = Query(None, description="Content type filter"),
@@ -468,21 +524,7 @@ async def list_items(
         sort_by=sort_by.lower(),
     )
 
-    return [
-        ContentItemResponse(
-            id=item.id,
-            db_id=item.db_id,
-            title=item.title,
-            author=item.author,
-            content_type=get_enum_value(item.content_type),
-            status=get_enum_value(item.status),
-            rating=item.rating,
-            review=item.review,
-            source=item.source,
-            ignored=bool(item.ignored),
-        )
-        for item in items
-    ]
+    return [_item_to_response(item) for item in items]
 
 
 @router.get("/items/export")
@@ -584,6 +626,83 @@ async def set_item_ignored(
     }
 
 
+@router.get("/items/{db_id}", response_model=ContentItemResponse)
+async def get_single_item(
+    db_id: int,
+    user_id: int = Query(1, ge=1, description="User ID for authorization"),
+) -> ContentItemResponse:
+    """Get a single content item by database ID.
+
+    Args:
+        db_id: Database ID of the item.
+        user_id: User ID for authorization.
+
+    Returns:
+        Content item details.
+    """
+    storage = get_storage()
+    if not storage:
+        raise HTTPException(status_code=500, detail="Storage not initialized")
+
+    item = storage.get_content_item(db_id, user_id=user_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    return _item_to_response(item)
+
+
+@router.patch("/items/{db_id}", response_model=ContentItemResponse)
+async def edit_item(
+    db_id: int,
+    request: ItemEditRequest,
+    user_id: int = Query(1, ge=1, description="User ID for authorization"),
+) -> ContentItemResponse:
+    """Edit a content item from the UI.
+
+    Allows unrestricted editing of status, rating, review, and
+    seasons_watched (TV shows). Unlike sync, status can go backward
+    and rating/review can be changed or cleared.
+
+    Args:
+        db_id: Database ID of the item.
+        request: Edit request with new values.
+        user_id: User ID for authorization.
+
+    Returns:
+        Updated content item.
+    """
+    storage = get_storage()
+    if not storage:
+        raise HTTPException(status_code=500, detail="Storage not initialized")
+
+    # Validate status
+    valid_statuses = {"unread", "currently_consuming", "completed"}
+    if request.status not in valid_statuses:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid status: {request.status}. "
+            f"Valid options: {', '.join(sorted(valid_statuses))}",
+        )
+
+    success = storage.update_item_from_ui(
+        db_id=db_id,
+        status=request.status,
+        rating=request.rating,
+        review=request.review,
+        seasons_watched=request.seasons_watched,
+        user_id=user_id,
+    )
+    if not success:
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    # Fetch and return the updated item
+    updated_item = storage.get_content_item(db_id, user_id=user_id)
+    if not updated_item:
+        raise HTTPException(status_code=404, detail="Item not found after update")
+
+    return _item_to_response(updated_item)
+
+
 @router.get("/users/{user_id}/preferences", response_model=UserPreferenceResponse)
 async def get_user_preferences(user_id: int) -> UserPreferenceResponse:
     """Get user preference configuration.
@@ -652,8 +771,6 @@ async def mark_complete(request: CompletionRequest) -> dict[str, Any]:
     Returns:
         Success message
     """
-    from src.models.content import ContentItem
-
     storage = get_storage()
     embedding_gen = get_embedding_gen()
     config = get_config()

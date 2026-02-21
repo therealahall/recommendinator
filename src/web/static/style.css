@@ -837,11 +837,12 @@ input[type="checkbox"] {
     margin-top: auto;
     padding-top: var(--space-3);
     border-top: 1px solid var(--border-default);
-    text-align: center;
+    display: flex;
+    gap: var(--space-2);
 }
 
 .library-item-actions .btn {
-    width: 100%;
+    flex: 1;
 }
 
 .library-item.ignored {
@@ -1618,6 +1619,165 @@ input[type="checkbox"] {
     display: flex;
     gap: var(--space-2);
     justify-content: flex-end;
+}
+
+/* ============================================================
+   Edit Item Modal
+   ============================================================ */
+
+.edit-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    backdrop-filter: blur(4px);
+}
+
+.edit-modal-content {
+    background: var(--bg-card);
+    border: 1px solid var(--border-default);
+    padding: var(--space-6);
+    border-radius: var(--radius-lg);
+    width: 90%;
+    max-width: 500px;
+    max-height: 85vh;
+    overflow-y: auto;
+}
+
+.edit-modal-content h3 {
+    margin: 0 0 var(--space-1) 0;
+    color: var(--text-primary);
+    font-size: var(--text-lg);
+}
+
+.edit-modal-subtitle {
+    color: var(--text-secondary);
+    font-size: var(--text-sm);
+    margin-bottom: var(--space-4);
+}
+
+.edit-modal-subtitle .badge {
+    margin-left: var(--space-2);
+}
+
+.edit-field {
+    margin-bottom: var(--space-4);
+}
+
+.edit-field label {
+    display: block;
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: var(--space-1);
+}
+
+.edit-field select,
+.edit-field textarea {
+    width: 100%;
+}
+
+.edit-field textarea {
+    min-height: 60px;
+    resize: vertical;
+}
+
+/* Star rating picker */
+.star-rating {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+}
+
+.star-rating-stars {
+    display: flex;
+    gap: 2px;
+}
+
+.star-rating-star {
+    font-size: 1.5rem;
+    cursor: pointer;
+    color: var(--text-muted);
+    transition: color 0.15s;
+    user-select: none;
+    line-height: 1;
+}
+
+.star-rating-star.active {
+    color: var(--color-warning);
+}
+
+.star-rating-star:hover {
+    color: var(--color-warning);
+}
+
+.star-rating .btn-clear-rating {
+    font-size: var(--text-xs);
+    padding: 2px var(--space-2);
+    margin-left: var(--space-2);
+}
+
+/* Season checklist grid */
+.season-controls {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin-bottom: var(--space-2);
+}
+
+.season-controls .season-counter {
+    margin-left: auto;
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+}
+
+.season-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(44px, 1fr));
+    gap: var(--space-1);
+}
+
+.season-checkbox {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 36px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-default);
+    background: var(--bg-input);
+    color: var(--text-secondary);
+    font-size: var(--text-sm);
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.season-checkbox input {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.season-checkbox.checked {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--text-inverse);
+    font-weight: 600;
+}
+
+.edit-modal-actions {
+    display: flex;
+    gap: var(--space-2);
+    justify-content: flex-end;
+    margin-top: var(--space-5);
 }
 
 /* ============================================================
