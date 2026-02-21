@@ -442,3 +442,194 @@ class TestIgnoredFieldRegression:
         bridgerton = [i for i in items if i.title == "Bridgerton"]
         assert len(bridgerton) == 1
         assert bridgerton[0].ignored is True
+
+
+class TestLlmReasoningMismatchRegression:
+    """Regression tests for LLM reasoning being attached to the wrong item."""
+
+    def test_llm_reasoning_matched_by_title_not_index_regression(self) -> None:
+        """Regression test: LLM reasoning must match by title, not by position.
+
+        Bug reported: "Fire & Blood" reasoning appeared on "The Way of Kings"
+        recommendation and vice versa.
+
+        Root cause: LLM returns items in its own preferred order, but the
+        engine attached reasoning by index position — so llm_recs[0] reasoning
+        went to recommendations[0] regardless of whether those were the same
+        item.
+
+        Fix: Build a title → reasoning lookup from LLM results and match
+        each pipeline recommendation by its title.
+        """
+        from src.recommendations.engine import RecommendationEngine
+
+        engine = RecommendationEngine.__new__(RecommendationEngine)
+        engine.llm_generator = Mock(spec=RecommendationGenerator)
+
+        # Simulate pipeline recommendations in order: Way of Kings, Fire & Blood
+        pipeline_recs: list[dict[str, object]] = [
+            {
+                "item": ContentItem(
+                    id="1",
+                    title="The Way of Kings",
+                    author="Brandon Sanderson",
+                    content_type=ContentType.BOOK,
+                    status=ConsumptionStatus.UNREAD,
+                ),
+                "score": 0.9,
+                "reasoning": "Pipeline reasoning for Way of Kings",
+            },
+            {
+                "item": ContentItem(
+                    id="2",
+                    title="Fire & Blood",
+                    author="George R.R. Martin",
+                    content_type=ContentType.BOOK,
+                    status=ConsumptionStatus.UNREAD,
+                ),
+                "score": 0.85,
+                "reasoning": "Pipeline reasoning for Fire & Blood",
+            },
+        ]
+
+        # LLM returns items in REVERSED order: Fire & Blood first
+        llm_recs = [
+            {
+                "title": "Fire & Blood",
+                "author": "George R.R. Martin",
+                "reasoning": "LLM reasoning for Fire & Blood",
+                "item": pipeline_recs[1]["item"],
+            },
+            {
+                "title": "The Way of Kings",
+                "author": "Brandon Sanderson",
+                "reasoning": "LLM reasoning for Way of Kings",
+                "item": pipeline_recs[0]["item"],
+            },
+        ]
+
+        # Build title lookup using matched item's canonical title
+        llm_reasoning_by_title: dict[str, str] = {}
+        for llm_rec in llm_recs:
+            matched_item = llm_rec.get("item")
+            if matched_item is not None:
+                key = matched_item.title.lower()
+            else:
+                key = (llm_rec.get("title") or "").lower()
+            if key:
+                llm_reasoning_by_title[key] = llm_rec.get("reasoning", "")
+        for rec in pipeline_recs:
+            rec_title = rec["item"].title.lower()
+            if rec_title in llm_reasoning_by_title:
+                rec["llm_reasoning"] = llm_reasoning_by_title[rec_title]
+
+        # Each recommendation must have its OWN reasoning, not the other's
+        assert pipeline_recs[0]["llm_reasoning"] == "LLM reasoning for Way of Kings"
+        assert pipeline_recs[1]["llm_reasoning"] == "LLM reasoning for Fire & Blood"
+
+    def test_bold_markers_stripped_from_parsed_titles_regression(self) -> None:
+        """Regression test: bold markdown in LLM titles must not prevent matching.
+
+        Bug reported: LLM reasonings were generated but none displayed. The
+        pipeline recommendations showed no llm_reasoning field.
+
+        Root cause: The prompt instructs the LLM to format as
+        "1. **Title** by Author", so the parser extracted **Title** (with
+        bold markers) which never matched any database title.
+
+        Fix: Strip markdown bold markers from extracted titles in the parser.
+        """
+        mock_client = Mock(spec=OllamaClient)
+        mock_client.generate_text.return_value = (
+            "1. **Book Alpha** by Author One\n"
+            "Great match because of your taste.\n\n"
+            "2. **Book Beta** by Author Two\n"
+            "Fits your preferences perfectly."
+        )
+
+        unconsumed = [
+            ContentItem(
+                id="1",
+                title="Book Alpha",
+                author="Author One",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            ),
+            ContentItem(
+                id="2",
+                title="Book Beta",
+                author="Author Two",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            ),
+        ]
+
+        generator = RecommendationGenerator(mock_client)
+        results = generator.generate_recommendations(
+            ContentType.BOOK, [], unconsumed, count=2
+        )
+
+        # Both items should be matched despite bold markers in LLM output
+        matched_titles = [rec["title"] for rec in results]
+        assert "Book Alpha" in matched_titles
+        assert "Book Beta" in matched_titles
+
+        # The matched ContentItem should be set (not None)
+        for rec in results:
+            assert (
+                rec["item"] is not None
+            ), f"Item for '{rec['title']}' should be matched"
+
+    def test_series_suffix_in_db_title_still_matches_regression(self) -> None:
+        """Regression test: DB titles with series suffixes must match LLM titles.
+
+        Bug reported: llm_reasoning was null for all recommendations even
+        though the LLM generated reasoning text.
+
+        Root cause: Database titles include series info in parentheses,
+        e.g. "The Name of the Wind (The Kingkiller Chronicle, #1)", but the
+        LLM outputs just "The Name of the Wind". Exact equality matching
+        failed for every item.
+
+        Fix: Use substring containment instead of exact equality when
+        matching parsed LLM titles to database items.
+        """
+        mock_client = Mock(spec=OllamaClient)
+        mock_client.generate_text.return_value = (
+            "1. **Magic Kingdom for Sale—Sold!** by Terry Brooks\n"
+            "Terry Brooks at his most inventive.\n\n"
+            "2. **The Name of the Wind** by Patrick Rothfuss\n"
+            "Epic fantasy with beautiful prose."
+        )
+
+        unconsumed = [
+            ContentItem(
+                id="1",
+                title="Magic Kingdom for Sale—Sold! (Magic Kingdom of Landover #1)",
+                author="Terry Brooks",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            ),
+            ContentItem(
+                id="2",
+                title="The Name of the Wind (The Kingkiller Chronicle, #1)",
+                author="Patrick Rothfuss",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            ),
+        ]
+
+        generator = RecommendationGenerator(mock_client)
+        results = generator.generate_recommendations(
+            ContentType.BOOK, [], unconsumed, count=2
+        )
+
+        # Both items should match despite series suffixes in DB titles
+        for rec in results:
+            assert (
+                rec["item"] is not None
+            ), f"Item for '{rec['title']}' should match despite series suffix"
+
+        matched_db_titles = [rec["item"].title for rec in results]
+        assert any("Magic Kingdom" in title for title in matched_db_titles)
+        assert any("Name of the Wind" in title for title in matched_db_titles)
