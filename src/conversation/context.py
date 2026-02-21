@@ -453,6 +453,14 @@ def _extract_contributing_items(
     return contributing[:limit]
 
 
+def _format_content_type(content_type: ContentType) -> str:
+    """Format a ContentType enum as a human-readable title string.
+
+    Example: ContentType.VIDEO_GAME -> "Video Game"
+    """
+    return str(content_type).replace("_", " ").title()
+
+
 def _format_item_detail(item: ContentItem) -> str:
     """Format a content item with rich detail for LLM context.
 
@@ -465,7 +473,7 @@ def _format_item_detail(item: ContentItem) -> str:
     Returns:
         Formatted detail string
     """
-    content_type_str = str(item.content_type).replace("_", " ").title()
+    content_type_str = _format_content_type(item.content_type)
     author_str = f" by {item.author}" if item.author else ""
     rating_str = f" — {item.rating}/5" if item.rating else ""
 
@@ -497,7 +505,7 @@ def _format_recommendation_brief(brief: RecommendationBrief) -> str:
         Formatted multi-line string for LLM context
     """
     item = brief.item
-    content_type_str = str(item.content_type).replace("_", " ").title()
+    content_type_str = _format_content_type(item.content_type)
     author_str = f" by {item.author}" if item.author else ""
 
     genres = item.metadata.get("genres", [])
@@ -525,7 +533,7 @@ def _format_recommendation_brief(brief: RecommendationBrief) -> str:
     # Cross-media connections
     if brief.adaptations:
         adaptation_titles = [
-            f"{adaptation.title} ({str(adaptation.content_type).replace('_', ' ').title()})"
+            f"{adaptation.title} ({_format_content_type(adaptation.content_type)})"
             for adaptation in brief.adaptations[:2]
         ]
         lines.append(f"  Cross-media: {', '.join(adaptation_titles)}")
@@ -545,7 +553,7 @@ def _format_item_compact(item: ContentItem) -> str:
     Returns:
         Single-line compact string
     """
-    content_type_str = str(item.content_type).replace("_", " ").title()
+    content_type_str = _format_content_type(item.content_type)
     author_str = f" by {item.author}" if item.author else ""
     rating_str = f" — {item.rating}/5" if item.rating else ""
     return f"- [{content_type_str}] {item.title}{author_str}{rating_str}"
@@ -564,7 +572,7 @@ def _format_recommendation_brief_compact(brief: RecommendationBrief) -> str:
         Compact formatted string (1-2 lines)
     """
     item = brief.item
-    content_type_str = str(item.content_type).replace("_", " ").title()
+    content_type_str = _format_content_type(item.content_type)
     author_str = f" by {item.author}" if item.author else ""
     match_percent = round(brief.score * 100)
 
