@@ -91,6 +91,79 @@ def build_recommendation_system_prompt(content_type: ContentType) -> str:
 - Only recommend items from the provided candidate list"""
 
 
+def build_blurb_system_prompt(content_type: ContentType) -> str:
+    """Build a slim system prompt for writing blurbs about pre-selected items.
+
+    Uses only the advisor identity — no personality traits or style rules —
+    since the blurb prompt itself provides the formatting instructions.
+    This saves ~500 tokens compared to ``build_recommendation_system_prompt``.
+
+    Args:
+        content_type: Type of content being recommended
+
+    Returns:
+        System prompt string
+    """
+    content_type_str = get_enum_value(content_type)
+    content_type_name = content_type_str.replace("_", " ").title()
+    identity = ADVISOR_IDENTITY.format(domain=content_type_name.lower())
+
+    return (
+        f"You are {identity}. Write enthusiastic, specific blurbs"
+        " connecting each pick to the user's taste. Be concise."
+    )
+
+
+def build_blurb_prompt(
+    content_type: ContentType,
+    selected_items: list[ContentItem],
+    consumed_items: list[ContentItem],
+) -> str:
+    """Build a prompt for writing blurbs about pre-selected recommendation items.
+
+    Unlike ``build_recommendation_prompt`` which asks the LLM to pick N from
+    50 candidates, this prompt presents only the pre-selected items and asks
+    for 2-3 sentence blurbs. This saves ~1,000-2,000 tokens.
+
+    Args:
+        content_type: Type of content being recommended
+        selected_items: Pre-selected items to write blurbs for
+        consumed_items: User's favorites for taste reference
+
+    Returns:
+        Formatted prompt string
+    """
+    content_type_str = get_enum_value(content_type)
+    content_type_name = content_type_str.replace("_", " ").title()
+
+    # Build taste context from top consumed items
+    favorites = [item for item in consumed_items if item.rating and item.rating >= 4]
+    context_text = ""
+    if favorites:
+        context_text = "Their favorites:\n"
+        for item in favorites[:5]:
+            rating_text = f"{item.rating}/5" if item.rating else "Unrated"
+            author_text = f" by {item.author}" if item.author else ""
+            context_text += f"- **{item.title}**{author_text} ({rating_text})\n"
+        context_text += "\n"
+
+    # Build selected items list
+    items_text = ""
+    for item_index, item in enumerate(selected_items, 1):
+        author_text = f" by {item.author}" if item.author else ""
+        items_text += f"{item_index}. {item.title}{author_text}\n"
+
+    return f"""Write a 2-3 sentence blurb for each of these {content_type_name.lower()} picks explaining WHY it fits this person's taste.
+
+{context_text}Picks:
+{items_text}
+Rules:
+- Numbered list: "1. **Title** by Author" then reasoning on the next lines
+- Connect to specific favorites above — mention titles and ratings
+- Address them as "you"
+- Be enthusiastic and specific, not generic"""
+
+
 def build_content_description(item: ContentItem) -> str:
     """Build a text description of a content item for embedding.
 

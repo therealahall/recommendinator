@@ -6,6 +6,8 @@ from typing import Any
 
 from src.llm.client import OllamaClient
 from src.llm.prompts import (
+    build_blurb_prompt,
+    build_blurb_system_prompt,
     build_recommendation_prompt,
     build_recommendation_system_prompt,
 )
@@ -81,6 +83,58 @@ class RecommendationGenerator:
         except Exception as error:
             logger.error(f"Failed to generate recommendations: {error}")
             raise RuntimeError(f"Recommendation generation failed: {error}") from error
+
+    def generate_blurbs(
+        self,
+        content_type: ContentType,
+        selected_items: list[ContentItem],
+        consumed_items: list[ContentItem],
+        model: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Generate blurbs for pre-selected recommendation items.
+
+        Unlike ``generate_recommendations`` which asks the LLM to pick from
+        a large candidate list, this method accepts pre-selected items and
+        asks only for enthusiastic blurbs. Uses a slimmer prompt that saves
+        ~1,000-2,000 tokens.
+
+        Args:
+            content_type: Type of content being recommended
+            selected_items: Pre-selected items to write blurbs for
+            consumed_items: User's consumed items for taste reference
+            model: Optional model override
+
+        Returns:
+            List of recommendation dicts with title, reasoning, and item
+
+        Raises:
+            RuntimeError: If blurb generation fails
+        """
+        if not selected_items:
+            return []
+
+        system_prompt = build_blurb_system_prompt(content_type)
+        user_prompt = build_blurb_prompt(
+            content_type=content_type,
+            selected_items=selected_items,
+            consumed_items=consumed_items,
+        )
+
+        try:
+            response = self.client.generate_text(
+                prompt=user_prompt,
+                system_prompt=system_prompt,
+                model=model,
+                temperature=0.7,
+            )
+
+            return self._parse_recommendations(
+                response, selected_items, count=len(selected_items)
+            )
+
+        except Exception as error:
+            logger.error(f"Failed to generate blurbs: {error}")
+            raise RuntimeError(f"Blurb generation failed: {error}") from error
 
     def _parse_recommendations(
         self,
