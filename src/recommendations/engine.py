@@ -532,11 +532,34 @@ class RecommendationEngine:
                         unconsumed_items=[rec["item"] for rec in recommendations],
                         count=count,
                     )
-                    for index, llm_rec in enumerate(llm_recs[:count]):
-                        if index < len(recommendations):
-                            recommendations[index]["llm_reasoning"] = llm_rec.get(
-                                "reasoning", ""
-                            )
+                    # Build a lookup of title → reasoning from LLM results.
+                    # The LLM returns items in its own preferred order, which
+                    # differs from the pipeline ranking — match by title, not
+                    # by index, so each recommendation gets its own reasoning.
+                    # Prefer the matched item's canonical title (set by the
+                    # parser when it finds the item in the unconsumed list)
+                    # over the raw LLM title which may have formatting artefacts.
+                    llm_reasoning_by_title: dict[str, str] = {}
+                    for llm_rec in llm_recs:
+                        matched_item: ContentItem | None = llm_rec.get("item")
+                        if matched_item is not None:
+                            key = matched_item.title.lower()
+                        else:
+                            key = (llm_rec.get("title") or "").lower()
+                        if key:
+                            llm_reasoning_by_title[key] = llm_rec.get("reasoning", "")
+                    for rec in recommendations:
+                        rec_title = rec["item"].title.lower()
+                        # Try exact match first, then substring containment
+                        # (database titles may include series suffixes the
+                        # LLM omits, e.g. "Title (Series #1)" vs "Title").
+                        if rec_title in llm_reasoning_by_title:
+                            rec["llm_reasoning"] = llm_reasoning_by_title[rec_title]
+                        else:
+                            for llm_title, reasoning in llm_reasoning_by_title.items():
+                                if llm_title in rec_title or rec_title in llm_title:
+                                    rec["llm_reasoning"] = reasoning
+                                    break
                 else:
                     logger.info("Using LLM-only recommendations")
                     llm_recs = self.llm_generator.generate_recommendations(

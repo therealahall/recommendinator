@@ -129,13 +129,24 @@ class RecommendationGenerator:
                 title = parts_split[0].strip()
                 author = parts_split[1].strip()
 
+            # Strip markdown bold markers — the prompt asks for "**Title**"
+            # format, but we need the plain title for matching against items.
+            title = title.strip("*")
+            if author:
+                author = author.strip("*")
+
             # Extract reasoning (remaining lines)
             reasoning = "\n".join(lines[1:]).strip() if len(lines) > 1 else ""
 
-            # Try to find matching item
+            # Try to find matching item.  Database titles often include a
+            # series suffix like "(The Kingkiller Chronicle, #1)" that the
+            # LLM omits, so use substring containment rather than exact
+            # equality.
+            title_lower = title.lower()
             matching_item = None
             for item in unconsumed_items:
-                if item.title.lower() == title.lower():
+                item_title_lower = item.title.lower()
+                if title_lower in item_title_lower or item_title_lower in title_lower:
                     if author is None or (
                         item.author and item.author.lower() == author.lower()
                     ):
