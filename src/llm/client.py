@@ -98,7 +98,7 @@ class OllamaClient:
     ) -> dict[str, Any]:
         """Build Ollama options dict from common parameters."""
         options: dict[str, Any] = {"temperature": temperature}
-        if max_tokens:
+        if max_tokens is not None:
             options["num_predict"] = max_tokens
         if context_window_size is not None:
             options["num_ctx"] = context_window_size

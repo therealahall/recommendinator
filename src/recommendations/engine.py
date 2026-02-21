@@ -276,10 +276,14 @@ class RecommendationEngine:
             rated_items.sort(key=lambda x: x.rating or 0, reverse=True)
 
             high_rated_refs = [
-                item for item in rated_items if item.rating and item.rating >= 4
+                item
+                for item in rated_items
+                if item.rating is not None and item.rating >= 4
             ][:5]
             low_rated_refs = [
-                item for item in rated_items if item.rating and item.rating < 3
+                item
+                for item in rated_items
+                if item.rating is not None and item.rating < 3
             ][:3]
 
             reference_items = high_rated_refs + low_rated_refs

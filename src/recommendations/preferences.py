@@ -97,21 +97,21 @@ class PreferenceAnalyzer:
             return UserPreferences({}, {}, 0.0, 0)
 
         # Calculate average rating
-        ratings = [item.rating for item in consumed_items if item.rating]
+        ratings = [item.rating for item in consumed_items if item.rating is not None]
         avg_rating = sum(ratings) / len(ratings) if ratings else 0.0
 
         # Extract author preferences
         author_ratings = [
             (item.author.lower(), item.rating)
             for item in consumed_items
-            if item.author and item.rating
+            if item.author and item.rating is not None
         ]
         author_scores, disliked_authors = self._score_attributes(author_ratings)
 
         # Extract genre preferences
         genre_ratings: list[tuple[str, float]] = []
         for item in consumed_items:
-            if item.metadata and item.rating:
+            if item.metadata and item.rating is not None:
                 for genre in extract_and_normalize_genres(item.metadata):
                     if genre:
                         genre_ratings.append((genre.lower(), item.rating))

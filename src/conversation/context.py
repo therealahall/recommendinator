@@ -475,7 +475,7 @@ def _format_item_detail(item: ContentItem) -> str:
     """
     content_type_str = _format_content_type(item.content_type)
     author_str = f" by {item.author}" if item.author else ""
-    rating_str = f" — {item.rating}/5" if item.rating else ""
+    rating_str = f" — {item.rating}/5" if item.rating is not None else ""
 
     genres = item.metadata.get("genres", [])
     genre_str = f" [{', '.join(genres[:4])}]" if genres else ""
@@ -555,7 +555,7 @@ def _format_item_compact(item: ContentItem) -> str:
     """
     content_type_str = _format_content_type(item.content_type)
     author_str = f" by {item.author}" if item.author else ""
-    rating_str = f" — {item.rating}/5" if item.rating else ""
+    rating_str = f" — {item.rating}/5" if item.rating is not None else ""
     return f"- [{content_type_str}] {item.title}{author_str}{rating_str}"
 
 

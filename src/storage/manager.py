@@ -115,7 +115,7 @@ class StorageManager:
         db_id = self.sqlite_db.save_content_item(resolved_item, user_id=user_id)
 
         # Save embedding if provided and vector DB is enabled
-        if embedding and self.vector_db:
+        if embedding is not None and self.vector_db:
             # Use external_id if available, otherwise use db_id as string
             content_id = item.id if item.id else f"db_{db_id}"
 
