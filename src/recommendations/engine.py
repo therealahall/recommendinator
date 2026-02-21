@@ -37,6 +37,7 @@ from src.utils.series import (
     inject_seasons_watched_tracking,
     should_recommend_item,
 )
+from src.utils.sorting import get_sort_title
 
 logger = logging.getLogger(__name__)
 
@@ -675,13 +676,10 @@ class RecommendationEngine:
     def _normalize_title_for_comparison(title: str) -> str:
         """Normalize a title for cross-content-type comparison.
 
-        Strips leading articles (the, a, an), lowercases, and trims whitespace.
+        Delegates to get_sort_title which strips leading articles
+        (including non-English), lowercases, and trims whitespace.
         """
-        if not title:
-            return ""
-        normalized = title.lower().strip()
-        normalized = re.sub(r"^(the|a|an)\s+", "", normalized)
-        return normalized
+        return get_sort_title(title)
 
     def _titles_similar(self, title1: str, title2: str) -> bool:
         """Check if two titles are similar (fuzzy matching).

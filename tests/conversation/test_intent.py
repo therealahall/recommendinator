@@ -206,48 +206,23 @@ class TestDetectRatingIntent:
 class TestDetectWishlistIntent:
     """Tests for detecting 'add to wishlist' intents."""
 
-    def test_detects_add_to_list(
+    def test_wishlist_falls_through_to_llm(
         self,
         tool_executor: ToolExecutor,
         sample_items: list[int],
     ) -> None:
-        """'add Hades to my list' should detect add_to_wishlist."""
-        result = detect_intent(
-            "add Hades to my list", user_id=1, tool_executor=tool_executor
-        )
+        """Wishlist patterns fall through to conversation for LLM handling.
 
-        assert result.intent_type == "tool_action"
-        assert result.tool_name == "add_to_wishlist"
-        assert result.tool_params is not None
-        assert result.tool_params["title"] == "Hades"
-
-    def test_detects_add_to_backlog(
-        self,
-        tool_executor: ToolExecutor,
-        sample_items: list[int],
-    ) -> None:
-        """'put Disco Elysium on my backlog' should detect add_to_wishlist."""
-        result = detect_intent(
-            "put Disco Elysium on my backlog", user_id=1, tool_executor=tool_executor
-        )
-
-        assert result.intent_type == "tool_action"
-        assert result.tool_name == "add_to_wishlist"
-        assert result.tool_params is not None
-        assert result.tool_params["title"] == "Disco Elysium"
-
-    def test_detects_want_to_try(
-        self,
-        tool_executor: ToolExecutor,
-        sample_items: list[int],
-    ) -> None:
-        """'I want to try Hades' should detect add_to_wishlist."""
-        result = detect_intent(
-            "I want to try Hades", user_id=1, tool_executor=tool_executor
-        )
-
-        assert result.intent_type == "tool_action"
-        assert result.tool_name == "add_to_wishlist"
+        The LLM has access to add_to_wishlist tool and can infer content_type
+        from context, which pre-LLM detection cannot determine.
+        """
+        for message in [
+            "add Hades to my list",
+            "put Disco Elysium on my backlog",
+            "I want to try Hades",
+        ]:
+            result = detect_intent(message, user_id=1, tool_executor=tool_executor)
+            assert result.intent_type == "conversation"
 
 
 class TestDetectPreferenceIntent:

@@ -263,20 +263,20 @@ def _extract_from_metadata(
 
 
 def get_series_name(
-    item: ContentItem | None = None, title: str | None = None
+    item: ContentItem | None = None, *, title: str | None = None
 ) -> str | None:
     """Get series name from ContentItem or title (checks title and metadata).
 
     Args:
         item: Optional ContentItem to extract series name from
-        title: Optional title string (for backward compatibility)
+        title: Optional title string (keyword-only)
 
     Returns:
         Series name if found, None otherwise
     """
-    if item:
+    if item is not None:
         series_info = extract_series_info(item.title, item.metadata, item.content_type)
-    elif title:
+    elif title is not None:
         series_info = extract_series_info(title)
     else:
         return None

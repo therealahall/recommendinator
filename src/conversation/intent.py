@@ -72,18 +72,6 @@ _COMPLETED_WITH_RATING_PATTERN: re.Pattern[str] = re.compile(
     re.IGNORECASE,
 )
 
-# Pattern for wishlist: "add X to my list/backlog/wishlist"
-_WISHLIST_PATTERNS: list[re.Pattern[str]] = [
-    re.compile(
-        r"(?:add|put)\s+(.+?)\s+(?:to|on)\s+(?:my\s+)?(?:list|backlog|wishlist|queue)",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"(?:i\s+)?want\s+to\s+(?:try|play|read|watch)\s+(.+?)(?:\s*[,.]|$)",
-        re.IGNORECASE,
-    ),
-]
-
 # Pattern for preferences: "I prefer X", "I don't like X", "I love X", "I hate X"
 _PREFERENCE_PATTERNS: list[re.Pattern[str]] = [
     re.compile(
@@ -232,19 +220,12 @@ def _detect_rating(
 
 
 def _detect_wishlist(message: str) -> IntentResult:
-    """Detect "add X to my list" pattern."""
-    for pattern in _WISHLIST_PATTERNS:
-        match = pattern.search(message)
-        if match:
-            title = match.group(1).strip()
-            if title:
-                return IntentResult(
-                    intent_type="tool_action",
-                    tool_name="add_to_wishlist",
-                    tool_params={"title": title},
-                    confidence=0.85,
-                )
+    """Detect "add X to my list" pattern.
 
+    Returns a conversation intent so the LLM handles the full tool call.
+    The LLM has access to the add_to_wishlist tool and can infer the
+    content_type from conversation context, which pre-LLM detection cannot.
+    """
     return IntentResult(intent_type="conversation")
 
 

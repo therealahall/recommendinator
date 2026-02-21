@@ -5,7 +5,12 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.models.content import (
+    ConsumptionStatus,
+    ContentItem,
+    ContentType,
+    get_enum_value,
+)
 from src.models.conversation import (
     ConversationContext,
     PreferenceProfile,
@@ -457,8 +462,11 @@ def _format_content_type(content_type: ContentType) -> str:
     """Format a ContentType enum as a human-readable title string.
 
     Example: ContentType.VIDEO_GAME -> "Video Game"
+
+    Handles both enum members and plain strings (e.g. from Pydantic's
+    use_enum_values) via get_enum_value.
     """
-    return str(content_type).replace("_", " ").title()
+    return get_enum_value(content_type).replace("_", " ").title()
 
 
 def _format_item_detail(item: ContentItem) -> str:
