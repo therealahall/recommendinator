@@ -1418,7 +1418,7 @@ input[type="checkbox"] {
 .chat-input-wrapper textarea {
     flex: 1;
     resize: none;
-    min-height: 40px;
+    min-height: 52px;
     max-height: 120px;
     line-height: 1.4;
 }

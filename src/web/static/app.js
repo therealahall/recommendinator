@@ -1738,6 +1738,21 @@
                     throw new Error("Chat request failed");
                 }
 
+                // Some mobile browsers don't support ReadableStream from fetch.
+                // Fall back to reading the full response as text.
+                if (!response.body || !response.body.getReader) {
+                    return response.text().then(function (text) {
+                        processSSELines(text, typingEl, function (el) {
+                            assistantEl = el;
+                        }, function (t) {
+                            responseText += t;
+                        });
+                        typingEl.remove();
+                        chatState.isStreaming = false;
+                        updateSendButton();
+                    });
+                }
+
                 var reader = response.body.getReader();
                 var decoder = new TextDecoder();
 
@@ -1751,21 +1766,10 @@
                         }
 
                         var text = decoder.decode(result.value, { stream: true });
-                        var lines = text.split("\n");
-
-                        lines.forEach(function (line) {
-                            if (!line.startsWith("data: ")) return;
-
-                            try {
-                                var data = JSON.parse(line.substring(6));
-                                handleChatEvent(data, typingEl, function (el) {
-                                    assistantEl = el;
-                                }, function (t) {
-                                    responseText += t;
-                                });
-                            } catch (e) {
-                                // Ignore parse errors (partial data)
-                            }
+                        processSSELines(text, typingEl, function (el) {
+                            assistantEl = el;
+                        }, function (t) {
+                            responseText += t;
                         });
 
                         return read();
@@ -1781,6 +1785,26 @@
                 addChatMessage("Sorry, I encountered an error. Please try again.", "assistant");
                 console.error("Chat error:", error);
             });
+    }
+
+    function processSSELines(text, typingEl, setAssistantEl, appendText) {
+        var lines = text.split("\n");
+        lines.forEach(function (line) {
+            if (!line.startsWith("data: ")) return;
+
+            var data;
+            try {
+                data = JSON.parse(line.substring(6));
+            } catch (parseError) {
+                // Ignore JSON parse errors from partial SSE chunks
+                return;
+            }
+
+            if (data.type === "error") {
+                throw new Error(data.message || "Server error");
+            }
+            handleChatEvent(data, typingEl, setAssistantEl, appendText);
+        });
     }
 
     function renderMarkdown(text) {
