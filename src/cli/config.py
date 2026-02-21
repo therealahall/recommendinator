@@ -135,11 +135,13 @@ def create_llm_components(
     base_url = ollama_config.get("base_url", "http://localhost:11434")
     model = ollama_config.get("model", "mistral:7b")
     embedding_model = ollama_config.get("embedding_model", "nomic-embed-text")
+    conversation_model = ollama_config.get("conversation_model", "")
 
     client = OllamaClient(
         base_url=base_url,
         default_model=model,
         embedding_model=embedding_model,
+        conversation_model=conversation_model,
     )
 
     embedding_gen = EmbeddingGenerator(client)

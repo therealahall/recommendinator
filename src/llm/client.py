@@ -18,6 +18,7 @@ class OllamaClient:
         default_model: str = "mistral:7b",
         embedding_model: str = "nomic-embed-text",
         timeout: float = 300.0,
+        conversation_model: str = "",
     ) -> None:
         """Initialize Ollama client.
 
@@ -26,11 +27,14 @@ class OllamaClient:
             default_model: Default model for text generation
             embedding_model: Model for generating embeddings
             timeout: Request timeout in seconds
+            conversation_model: Model for conversation chat (defaults to
+                default_model when empty)
         """
         self.base_url = base_url
         self.default_model = default_model
         self.embedding_model = embedding_model
         self.timeout = timeout
+        self.conversation_model = conversation_model or default_model
         self.client = Client(host=base_url, timeout=timeout)
 
     def generate_embedding(self, text: str, model: str | None = None) -> list[float]:
@@ -89,12 +93,16 @@ class OllamaClient:
 
     @staticmethod
     def _build_options(
-        temperature: float, max_tokens: int | None = None
+        temperature: float,
+        max_tokens: int | None = None,
+        context_window_size: int | None = None,
     ) -> dict[str, Any]:
         """Build Ollama options dict from common parameters."""
         options: dict[str, Any] = {"temperature": temperature}
         if max_tokens:
             options["num_predict"] = max_tokens
+        if context_window_size is not None:
+            options["num_ctx"] = context_window_size
         return options
 
     @staticmethod
@@ -113,6 +121,7 @@ class OllamaClient:
         model: str | None = None,
         temperature: float = 0.7,
         max_tokens: int | None = None,
+        context_window_size: int | None = None,
     ) -> str:
         """Generate text using the LLM.
 
@@ -122,6 +131,7 @@ class OllamaClient:
             model: Model to use (defaults to default_model)
             temperature: Sampling temperature (0.0-1.0)
             max_tokens: Maximum tokens to generate
+            context_window_size: Override Ollama's default context window
 
         Returns:
             Generated text
@@ -137,7 +147,9 @@ class OllamaClient:
                 messages.append({"role": "system", "content": system_prompt})
             messages.append({"role": "user", "content": prompt})
 
-            options = self._build_options(temperature, max_tokens)
+            options = self._build_options(
+                temperature, max_tokens, context_window_size=context_window_size
+            )
             response = self.client.chat(model=model, messages=messages, options=options)
 
             content: str = response.get("message", {}).get("content", "")
@@ -193,6 +205,7 @@ class OllamaClient:
         model: str | None = None,
         temperature: float = 0.7,
         max_tokens: int | None = None,
+        context_window_size: int | None = None,
     ) -> Iterator[str]:
         """Generate text using the LLM with streaming response.
 
@@ -202,6 +215,7 @@ class OllamaClient:
             model: Model to use (defaults to default_model)
             temperature: Sampling temperature (0.0-1.0)
             max_tokens: Maximum tokens to generate
+            context_window_size: Override Ollama's default context window
 
         Yields:
             Text chunks as they are generated
@@ -217,7 +231,9 @@ class OllamaClient:
                 messages.append({"role": "system", "content": system_prompt})
             messages.append({"role": "user", "content": prompt})
 
-            options = self._build_options(temperature, max_tokens)
+            options = self._build_options(
+                temperature, max_tokens, context_window_size=context_window_size
+            )
             response = self.client.chat(
                 model=model, messages=messages, options=options, stream=True
             )
@@ -235,6 +251,7 @@ class OllamaClient:
         model: str | None = None,
         temperature: float = 0.7,
         max_tokens: int | None = None,
+        context_window_size: int | None = None,
     ) -> Iterator[str]:
         """Multi-turn chat with streaming response.
 
@@ -244,6 +261,7 @@ class OllamaClient:
             model: Model to use (defaults to default_model)
             temperature: Sampling temperature (0.0-1.0)
             max_tokens: Maximum tokens to generate
+            context_window_size: Override Ollama's default context window
 
         Yields:
             Text chunks as they are generated
@@ -259,7 +277,9 @@ class OllamaClient:
                 full_messages.append({"role": "system", "content": system_prompt})
             full_messages.extend(messages)
 
-            options = self._build_options(temperature, max_tokens)
+            options = self._build_options(
+                temperature, max_tokens, context_window_size=context_window_size
+            )
             response = self.client.chat(
                 model=model, messages=full_messages, options=options, stream=True
             )
