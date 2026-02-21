@@ -78,7 +78,7 @@ class GoodreadsPlugin(SourcePlugin):
         """Fetch content items from a Goodreads CSV export.
 
         Args:
-            config: Must contain 'csv_path' pointing to the CSV file
+            config: Must contain 'path' pointing to the CSV file
             progress_callback: Optional callback for progress updates
 
         Yields:
