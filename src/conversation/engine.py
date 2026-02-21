@@ -150,10 +150,6 @@ When the user states a preference explicitly, use save_memory to remember it.
 {{user_context}}
 """
 
-# Backward-compatible alias
-DEFAULT_SYSTEM_PROMPT = FULL_SYSTEM_PROMPT
-
-
 # Compact system prompt for small (3B) models. Teaches by example instead of
 # rule lists — a 3B model can hold a single concrete example in working memory
 # far better than 30+ bullet points. No {{tool_descriptions}} placeholder;

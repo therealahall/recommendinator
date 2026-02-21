@@ -1,6 +1,6 @@
 """Tests for shared AI tone constants."""
 
-from src.conversation.engine import DEFAULT_SYSTEM_PROMPT
+from src.conversation.engine import FULL_SYSTEM_PROMPT
 from src.llm.prompts import build_recommendation_system_prompt
 from src.llm.tone import ADVISOR_IDENTITY, PERSONALITY_TRAITS, STYLE_RULES
 from src.models.content import ContentType
@@ -77,23 +77,23 @@ class TestToneInRecommendationPrompt:
 
 
 class TestToneInConversationPrompt:
-    """Tests that DEFAULT_SYSTEM_PROMPT includes shared tone."""
+    """Tests that FULL_SYSTEM_PROMPT includes shared tone."""
 
     def test_includes_personality_traits(self) -> None:
-        assert "HYPE MACHINE" in DEFAULT_SYSTEM_PROMPT
+        assert "HYPE MACHINE" in FULL_SYSTEM_PROMPT
 
     def test_includes_style_rules(self) -> None:
-        assert "Mirror their language" in DEFAULT_SYSTEM_PROMPT
+        assert "Mirror their language" in FULL_SYSTEM_PROMPT
 
     def test_includes_identity(self) -> None:
-        assert "personal recommendation advisor" in DEFAULT_SYSTEM_PROMPT.lower()
+        assert "personal recommendation advisor" in FULL_SYSTEM_PROMPT.lower()
 
     def test_retains_format_placeholders(self) -> None:
-        assert "{tool_descriptions}" in DEFAULT_SYSTEM_PROMPT
-        assert "{user_context}" in DEFAULT_SYSTEM_PROMPT
+        assert "{tool_descriptions}" in FULL_SYSTEM_PROMPT
+        assert "{user_context}" in FULL_SYSTEM_PROMPT
 
     def test_format_placeholders_work(self) -> None:
-        formatted = DEFAULT_SYSTEM_PROMPT.format(
+        formatted = FULL_SYSTEM_PROMPT.format(
             tool_descriptions="test tools here",
             user_context="test context here",
         )
@@ -103,7 +103,7 @@ class TestToneInConversationPrompt:
         assert "{user_context}" not in formatted
 
     def test_keeps_conversation_specific_sections(self) -> None:
-        assert "Data Accuracy Rules" in DEFAULT_SYSTEM_PROMPT
-        assert "Prediction Rules" in DEFAULT_SYSTEM_PROMPT
-        assert "What NOT To Do" in DEFAULT_SYSTEM_PROMPT
-        assert "Pre-Scored Recommendations" in DEFAULT_SYSTEM_PROMPT
+        assert "Data Accuracy Rules" in FULL_SYSTEM_PROMPT
+        assert "Prediction Rules" in FULL_SYSTEM_PROMPT
+        assert "What NOT To Do" in FULL_SYSTEM_PROMPT
+        assert "Pre-Scored Recommendations" in FULL_SYSTEM_PROMPT
