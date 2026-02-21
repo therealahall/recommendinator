@@ -747,6 +747,30 @@ def test_list_items_includes_ignored(client, mock_components):
     assert data[1]["db_id"] == 2
 
 
+def test_list_items_hides_ignored_by_default(client, mock_components):
+    """GET /api/items defaults to include_ignored=False, hiding ignored items."""
+    mock_components["storage"].get_content_items = Mock(return_value=[])
+
+    response = client.get("/api/items?user_id=1")
+    assert response.status_code == 200
+
+    mock_components["storage"].get_content_items.assert_called_once()
+    call_kwargs = mock_components["storage"].get_content_items.call_args[1]
+    assert call_kwargs["include_ignored"] is False
+
+
+def test_list_items_include_ignored_true(client, mock_components):
+    """GET /api/items?include_ignored=true passes include_ignored=True to storage."""
+    mock_components["storage"].get_content_items = Mock(return_value=[])
+
+    response = client.get("/api/items?user_id=1&include_ignored=true")
+    assert response.status_code == 200
+
+    mock_components["storage"].get_content_items.assert_called_once()
+    call_kwargs = mock_components["storage"].get_content_items.call_args[1]
+    assert call_kwargs["include_ignored"] is True
+
+
 def test_recommendations_include_db_id(client, mock_components):
     """GET /api/recommendations includes db_id in response."""
     mock_item = ContentItem(

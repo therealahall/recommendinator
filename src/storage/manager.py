@@ -153,6 +153,7 @@ class StorageManager:
         limit: int | None = None,
         offset: int = 0,
         sort_by: str = "title",
+        include_ignored: bool = True,
     ) -> list[ContentItem]:
         """Get content items with optional filters.
 
@@ -165,6 +166,8 @@ class StorageManager:
             offset: Number of results to skip (for pagination)
             sort_by: Sort order - "title" (default, ignores articles),
                 "updated_at", "rating", or "created_at"
+            include_ignored: Whether to include ignored items (default True
+                for backward compatibility)
 
         Returns:
             List of ContentItem objects
@@ -177,6 +180,7 @@ class StorageManager:
             limit=limit,
             offset=offset,
             sort_by=sort_by,
+            include_ignored=include_ignored,
         )
 
     def get_unconsumed_items(

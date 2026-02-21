@@ -544,6 +544,60 @@ def test_save_content_item_update_syncs_ignored(temp_db: SQLiteDB) -> None:
     assert retrieved.rating == 4
 
 
+def test_get_content_items_include_ignored_true(temp_db: SQLiteDB) -> None:
+    """Test that get_content_items returns ignored items when include_ignored=True."""
+    items = [
+        ContentItem(
+            id="normal_1",
+            title="Normal Book",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+        ),
+        ContentItem(
+            id="ignored_1",
+            title="Ignored Book",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            ignored=True,
+        ),
+    ]
+    for item in items:
+        temp_db.save_content_item(item)
+
+    # Default (include_ignored=True) returns all items
+    all_items = temp_db.get_content_items(include_ignored=True)
+    assert len(all_items) == 2
+
+    titles = {item.title for item in all_items}
+    assert "Normal Book" in titles
+    assert "Ignored Book" in titles
+
+
+def test_get_content_items_include_ignored_false(temp_db: SQLiteDB) -> None:
+    """Test that get_content_items excludes ignored items when include_ignored=False."""
+    items = [
+        ContentItem(
+            id="normal_1",
+            title="Normal Book",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+        ),
+        ContentItem(
+            id="ignored_1",
+            title="Ignored Book",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            ignored=True,
+        ),
+    ]
+    for item in items:
+        temp_db.save_content_item(item)
+
+    filtered_items = temp_db.get_content_items(include_ignored=False)
+    assert len(filtered_items) == 1
+    assert filtered_items[0].title == "Normal Book"
+
+
 class TestToJsonArrayRegression:
     """Regression tests for _to_json_array() bare string handling.
 

@@ -395,6 +395,7 @@
     function setupLibraryFilters() {
         var typeFilter = document.getElementById("libType");
         var statusFilter = document.getElementById("libStatus");
+        var showIgnoredCheckbox = document.getElementById("libShowIgnored");
         var exportBtn = document.getElementById("exportBtn");
 
         typeFilter.addEventListener("change", function() {
@@ -403,6 +404,7 @@
             resetAndLoadLibrary();
         });
         statusFilter.addEventListener("change", resetAndLoadLibrary);
+        showIgnoredCheckbox.addEventListener("change", resetAndLoadLibrary);
 
         if (exportBtn) {
             exportBtn.addEventListener("click", exportLibrary);
@@ -501,6 +503,8 @@
             container.innerHTML = '<div class="empty-state"><span class="spinner"></span> Loading library...</div>';
         }
 
+        var showIgnored = document.getElementById("libShowIgnored").checked;
+
         var params = new URLSearchParams({
             user_id: currentUserId.toString(),
             limit: libraryState.limit.toString(),
@@ -508,6 +512,7 @@
         });
         if (typeFilter) params.set("type", typeFilter);
         if (statusFilter) params.set("status", statusFilter);
+        if (showIgnored) params.set("include_ignored", "true");
 
         fetch(API_BASE + "/items?" + params)
             .then(function (response) {

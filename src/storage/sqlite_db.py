@@ -771,6 +771,7 @@ class SQLiteDB:
         limit: int | None = None,
         offset: int = 0,
         sort_by: str = "title",
+        include_ignored: bool = True,
     ) -> list[ContentItem]:
         """Get content items with optional filters.
 
@@ -783,6 +784,8 @@ class SQLiteDB:
             offset: Number of results to skip (for pagination)
             sort_by: Sort order - "title" (default, ignores articles),
                 "updated_at", "rating", or "created_at"
+            include_ignored: Whether to include ignored items (default True
+                for backward compatibility)
 
         Returns:
             List of ContentItem objects
@@ -833,6 +836,9 @@ class SQLiteDB:
             if min_rating is not None:
                 query += " AND ci.rating >= ?"
                 params.append(min_rating)
+
+            if not include_ignored:
+                query += " AND (ci.ignored = 0 OR ci.ignored IS NULL)"
 
             # Apply SQL-level sorting for non-title sorts
             # Title sorting is done in Python to handle article stripping

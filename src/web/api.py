@@ -471,6 +471,10 @@ async def list_items(
         "title",
         description="Sort order: title (ignores articles), updated_at, rating, created_at",
     ),
+    include_ignored: bool = Query(
+        False,
+        description="Whether to include ignored items (default: hide ignored)",
+    ),
 ) -> list[ContentItemResponse]:
     """List content items with optional filters.
 
@@ -481,6 +485,7 @@ async def list_items(
         limit: Maximum number of results per page.
         offset: Number of items to skip (for pagination).
         sort_by: Sort order (default: title, which ignores leading articles).
+        include_ignored: Whether to include ignored items (default: False).
 
     Returns:
         List of content items.
@@ -522,6 +527,7 @@ async def list_items(
         limit=limit,
         offset=offset,
         sort_by=sort_by.lower(),
+        include_ignored=include_ignored,
     )
 
     return [_item_to_response(item) for item in items]
