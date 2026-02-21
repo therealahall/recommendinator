@@ -143,8 +143,8 @@ def test_get_series_name():
 
 def test_get_series_item_number():
     """Test getting item number from title."""
-    assert get_series_item_number("Book (The Witcher, #4)") == 4
-    assert get_series_item_number("Standalone Book") is None
+    assert get_series_item_number(title="Book (The Witcher, #4)") == 4
+    assert get_series_item_number(title="Standalone Book") is None
 
 
 def test_build_series_tracking():

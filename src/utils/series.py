@@ -285,25 +285,20 @@ def get_series_name(
 
 
 def get_series_item_number(
-    item: ContentItem | str | None = None, title: str | None = None
+    item: ContentItem | None = None, *, title: str | None = None
 ) -> int | None:
     """Get item number in series from ContentItem or title.
 
     Args:
-        item: Optional ContentItem or string (for backward compatibility)
-        title: Optional title string (for backward compatibility)
+        item: Optional ContentItem
+        title: Optional title string (keyword-only)
 
     Returns:
         Item number if found, None otherwise
     """
-    # Handle backward compatibility: if first arg is a string, treat as title
-    if isinstance(item, str):
-        title = item
-        item = None
-
-    if item:
+    if item is not None:
         series_info = extract_series_info(item.title, item.metadata, item.content_type)
-    elif title:
+    elif title is not None:
         series_info = extract_series_info(title)
     else:
         return None
@@ -461,27 +456,22 @@ def is_series_started(series_name: str, series_tracking: dict[str, set[int]]) ->
 
 
 def is_first_item_in_series(
-    item: ContentItem | str | None = None, title: str | None = None
+    item: ContentItem | None = None, *, title: str | None = None
 ) -> bool:
     """Check if this is the first item in a series.
 
     Works for all content types (Book 1, Season 1, Part 1, etc.).
 
     Args:
-        item: Optional ContentItem or string (for backward compatibility)
-        title: Optional title string (for backward compatibility)
+        item: Optional ContentItem
+        title: Optional title string (keyword-only)
 
     Returns:
         True if this is item #1 in a series
     """
-    # Handle backward compatibility: if first arg is a string, treat as title
-    if isinstance(item, str):
-        title = item
-        item = None
-
-    if item:
+    if item is not None:
         series_info = extract_series_info(item.title, item.metadata, item.content_type)
-    elif title:
+    elif title is not None:
         series_info = extract_series_info(title)
     else:
         return False
