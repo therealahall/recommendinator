@@ -86,7 +86,6 @@ class OllamaClient:
                 embeddings.append(embedding)
             except Exception as error:
                 logger.error(f"Failed to generate embedding for text: {error}")
-                # Continue with other texts, but log the error
                 raise
 
         return embeddings
