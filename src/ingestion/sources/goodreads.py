@@ -122,14 +122,14 @@ class GoodreadsPlugin(SourcePlugin):
 
         total = len(rows)
         logger.info(f"Found {total} entries in Goodreads CSV file")
-        count = 0
+        processed_count = 0
         for row in rows:
             title = row.get("Title", "").strip()
             if not title:
                 continue
 
             if progress_callback:
-                progress_callback(count, total, title)
+                progress_callback(processed_count, total, title)
 
             author = row.get("Author", "").strip() or None
 
@@ -183,6 +183,6 @@ class GoodreadsPlugin(SourcePlugin):
                 metadata=metadata,
                 source=source,
             )
-            count += 1
+            processed_count += 1
 
-        logger.info(f"Imported {count} items from Goodreads CSV file")
+        logger.info(f"Imported {processed_count} items from Goodreads CSV file")

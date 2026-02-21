@@ -175,7 +175,7 @@ class ArrPlugin(SourcePlugin):
 
         source = self.get_source_identifier(config)
         total = len(item_list)
-        count = 0
+        processed_count = 0
 
         for item in item_list:
             title = item.get("title", "").strip()
@@ -186,11 +186,11 @@ class ArrPlugin(SourcePlugin):
             metadata = self.build_metadata(item)
             self.post_fetch(base_url, api_key, item, metadata)
 
-            count += 1
-            log_progress(logger, f"{self.display_name} items", count, total)
+            processed_count += 1
+            log_progress(logger, f"{self.display_name} items", processed_count, total)
 
             if progress_callback:
-                progress_callback(count, total, title)
+                progress_callback(processed_count, total, title)
 
             yield ContentItem(
                 id=external_id,
@@ -203,7 +203,7 @@ class ArrPlugin(SourcePlugin):
                 source=source,
             )
 
-        logger.info(f"Imported {count} items from {self.display_name}")
+        logger.info(f"Imported {processed_count} items from {self.display_name}")
 
     def _fetch_items(self, base_url: str, api_key: str) -> list[dict[str, Any]]:
         """Fetch all items from the *arr API.
