@@ -333,32 +333,42 @@
             html += '</div>';
             html += '</div>';
 
-            // LLM reasoning (main position when available)
+            // LLM reasoning (rendered as markdown when available)
             if (hasLlmReasoning) {
-                html += '<div class="rec-llm-reasoning">' + escapeHtml(rec.llm_reasoning) + '</div>';
+                html += '<div class="rec-llm-reasoning">' + renderMarkdown(rec.llm_reasoning) + '</div>';
             }
 
-            // Regular reasoning
-            if (rec.reasoning) {
+            // When LLM reasoning is active, fold pipeline reasoning into score details.
+            // When LLM reasoning is absent, show pipeline reasoning in its normal position.
+            if (!hasLlmReasoning && rec.reasoning) {
                 html += '<div class="rec-reasoning">' + escapeHtml(rec.reasoning) + '</div>';
             }
 
-            // Score breakdown
-            if (hasBreakdown) {
+            // Score breakdown (includes pipeline reasoning when LLM reasoning is active)
+            if (hasBreakdown || (hasLlmReasoning && rec.reasoning)) {
                 html += '<details class="score-details"' + (defaultOpen ? ' open' : '') + '>';
                 html += '<summary>Score Details</summary>';
-                html += '<div class="score-breakdown">';
-                var keys = Object.keys(rec.score_breakdown).sort();
-                keys.forEach(function (key) {
-                    var value = rec.score_breakdown[key];
-                    var percent = Math.round(value * 100);
-                    html += '<div class="score-row">';
-                    html += '<span class="score-label">' + formatScorerName(key) + '</span>';
-                    html += '<div class="score-bar-bg"><div class="score-bar-fill" style="width:' + percent + '%"></div></div>';
-                    html += '<span class="score-value">' + value.toFixed(2) + '</span>';
+
+                // Pipeline reasoning folded in when LLM reasoning is shown above
+                if (hasLlmReasoning && rec.reasoning) {
+                    html += '<div class="rec-reasoning rec-reasoning-folded">' + escapeHtml(rec.reasoning) + '</div>';
+                }
+
+                if (hasBreakdown) {
+                    html += '<div class="score-breakdown">';
+                    var keys = Object.keys(rec.score_breakdown).sort();
+                    keys.forEach(function (key) {
+                        var value = rec.score_breakdown[key];
+                        var percent = Math.round(value * 100);
+                        html += '<div class="score-row">';
+                        html += '<span class="score-label">' + formatScorerName(key) + '</span>';
+                        html += '<div class="score-bar-bg"><div class="score-bar-fill" style="width:' + percent + '%"></div></div>';
+                        html += '<span class="score-value">' + value.toFixed(2) + '</span>';
+                        html += '</div>';
+                    });
                     html += '</div>';
-                });
-                html += '</div></details>';
+                }
+                html += '</details>';
             }
 
             html += '</div>';

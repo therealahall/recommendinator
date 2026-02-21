@@ -716,12 +716,30 @@ input[type="checkbox"] {
     border-left: 3px solid var(--accent);
 }
 
+.rec-llm-reasoning p {
+    margin: 0 0 var(--space-2) 0;
+}
+
+.rec-llm-reasoning p:last-child {
+    margin-bottom: 0;
+}
+
+.rec-llm-reasoning strong {
+    color: var(--accent-light);
+}
+
 .rec-reasoning {
     font-size: var(--text-sm);
     color: var(--text-secondary);
     font-style: italic;
     margin-bottom: var(--space-2);
     white-space: pre-line;
+}
+
+.rec-reasoning-folded {
+    margin-bottom: var(--space-3);
+    padding-bottom: var(--space-3);
+    border-bottom: 1px solid var(--border);
 }
 
 /* Score Breakdown */
