@@ -540,8 +540,10 @@ class ConversationEngine:
         Yields:
             ConversationChunks for tool call, result, text, and done
         """
-        assert intent.tool_name is not None
-        assert intent.tool_params is not None
+        if intent.tool_name is None or intent.tool_params is None:
+            raise ValueError(
+                f"Intent detected as tool_action but tool_name or tool_params is None: {intent}"
+            )
 
         yield ConversationChunk(
             chunk_type="tool_call",
