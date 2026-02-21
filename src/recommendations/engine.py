@@ -489,22 +489,18 @@ class RecommendationEngine:
         # Format recommendations
         # -----------------------------------------------------------------
         recommendations: list[dict[str, Any]] = []
+        candidate_metadata_by_id = {
+            meta["item"].id: meta for meta in candidate_metadata
+        }
 
         for item, score, rank_metadata in top_recommendations:
-            item_meta = next(
-                (
-                    candidate
-                    for candidate in candidate_metadata
-                    if candidate["item"].id == item.id
-                ),
-                None,
-            )
+            item_meta = candidate_metadata_by_id.get(item.id)
 
             adaptations_list: list[ContentItem] = []
             contributing_list: list[ContentItem] = []
             if item_meta:
-                adaptations_list = item_meta.get("adaptations", []) or []
-                contributing_list = item_meta.get("contributing_items", []) or []
+                adaptations_list = item_meta.get("adaptations", [])
+                contributing_list = item_meta.get("contributing_items", [])
 
             rec: dict[str, Any] = {
                 "item": item,
@@ -646,23 +642,20 @@ class RecommendationEngine:
         """
         adaptations = []
 
-        def normalize_title(title: str) -> str:
-            if not title:
-                return ""
-            normalized = title.lower().strip()
-            normalized = re.sub(r"^(the|a|an)\s+", "", normalized)
-            return normalized
-
-        item_title_norm = normalize_title(item.title)
-        item_author_norm = normalize_title(item.author) if item.author else None
+        item_title_norm = self._normalize_title_for_comparison(item.title)
+        item_author_norm = (
+            self._normalize_title_for_comparison(item.author) if item.author else None
+        )
 
         for consumed in consumed_items:
             if consumed.content_type == item.content_type:
                 continue
 
-            consumed_title_norm = normalize_title(consumed.title)
+            consumed_title_norm = self._normalize_title_for_comparison(consumed.title)
             consumed_author_norm = (
-                normalize_title(consumed.author) if consumed.author else None
+                self._normalize_title_for_comparison(consumed.author)
+                if consumed.author
+                else None
             )
 
             title_match = item_title_norm == consumed_title_norm
@@ -673,10 +666,22 @@ class RecommendationEngine:
             if title_match or (
                 author_match and self._titles_similar(item.title, consumed.title)
             ):
-                if consumed.rating and consumed.rating >= 4:
+                if consumed.rating is not None and consumed.rating >= 4:
                     adaptations.append(consumed)
 
         return adaptations
+
+    @staticmethod
+    def _normalize_title_for_comparison(title: str) -> str:
+        """Normalize a title for cross-content-type comparison.
+
+        Strips leading articles (the, a, an), lowercases, and trims whitespace.
+        """
+        if not title:
+            return ""
+        normalized = title.lower().strip()
+        normalized = re.sub(r"^(the|a|an)\s+", "", normalized)
+        return normalized
 
     def _titles_similar(self, title1: str, title2: str) -> bool:
         """Check if two titles are similar (fuzzy matching).
