@@ -584,6 +584,5 @@ def build_scorers_with_overrides(
         if config_key and config_key in scorer_weight_overrides:
             overridden.append(scorer.clone(weight=scorer_weight_overrides[config_key]))
         else:
-            # Clone with same weight (new instance, doesn't mutate original)
-            overridden.append(scorer.clone(weight=scorer.weight))
+            overridden.append(scorer)
     return overridden
