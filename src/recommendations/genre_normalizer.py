@@ -4,6 +4,7 @@ Normalizes genres and tags from different providers (TMDB, OpenLibrary, RAWG)
 to a common vocabulary, filtering out noise and platform-specific terms.
 """
 
+import json
 import re
 
 # Patterns to strip from the beginning of terms
@@ -1197,8 +1198,6 @@ def extract_and_normalize_genres(metadata: dict | None) -> list[str]:
         if isinstance(genres, str):
             # Could be comma-separated or JSON
             if genres.startswith("["):
-                import json
-
                 try:
                     terms.extend(json.loads(genres))
                 except json.JSONDecodeError:
@@ -1213,8 +1212,6 @@ def extract_and_normalize_genres(metadata: dict | None) -> list[str]:
         tags = metadata["tags"]
         if isinstance(tags, str):
             if tags.startswith("["):
-                import json
-
                 try:
                     terms.extend(json.loads(tags))
                 except json.JSONDecodeError:

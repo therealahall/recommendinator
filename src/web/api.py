@@ -20,6 +20,7 @@ from src.models.content import (
 from src.models.user_preferences import UserPreferenceConfig
 from src.utils.text import humanize_source_id
 from src.web.enrichment_manager import get_enrichment_manager
+from src.web.export import export_items_csv, export_items_json
 from src.web.gog_auth import (
     GogAuthError,
     exchange_code_for_tokens,
@@ -551,8 +552,6 @@ async def export_items(
     Returns:
         File download response
     """
-    from src.web.export import export_items_csv, export_items_json
-
     storage = get_storage()
     if not storage:
         raise HTTPException(status_code=500, detail="Storage not initialized")

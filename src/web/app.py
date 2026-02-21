@@ -18,6 +18,8 @@ from src.cli.config import (
     resolve_config_path,
 )
 from src.conversation.engine import create_conversation_engine
+from src.web.api import router as api_router
+from src.web.chat_api import router as chat_router
 from src.web.state import app_state
 
 logger = logging.getLogger(__name__)
@@ -156,11 +158,8 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         allow_headers=["*"],
     )
 
-    # Include API routers (import here to avoid circular import)
-    from src.web.api import router
-    from src.web.chat_api import router as chat_router
-
-    app.include_router(router)
+    # Include API routers
+    app.include_router(api_router)
     app.include_router(chat_router)
 
     # Serve static files (for web UI)
