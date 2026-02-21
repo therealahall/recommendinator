@@ -3,16 +3,30 @@
 import logging
 import time
 from collections.abc import Iterator
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from src.conversation.context import ContextAssembler, build_user_context_block
+from src.conversation.context import (
+    ContextAssembler,
+    build_user_context_block,
+    build_user_context_block_compact,
+)
+from src.conversation.intent import (
+    IntentResult,
+    build_confirmation_message,
+    detect_intent,
+)
 from src.conversation.memory import MemoryManager
 from src.conversation.tools import (
     ToolExecutor,
     get_tool_descriptions,
     parse_tool_call_from_text,
 )
-from src.llm.tone import ADVISOR_IDENTITY, PERSONALITY_TRAITS, STYLE_RULES
+from src.llm.tone import (
+    ADVISOR_IDENTITY,
+    PERSONALITY_COMPACT,
+    PERSONALITY_TRAITS,
+    STYLE_RULES,
+)
 from src.models.content import ContentType
 from src.models.conversation import ConversationChunk, ConversationContext, ToolResult
 
@@ -24,10 +38,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# Default system prompt template — composed from shared tone constants
+# Full system prompt template — composed from shared tone constants
 # plus conversation-specific sections. Uses {{...}} for placeholders that
 # are filled later by .format() in process_message().
-DEFAULT_SYSTEM_PROMPT = f"""You are {ADVISOR_IDENTITY.format(domain="personal")}. You have access to their complete consumption history, ratings, reviews, and stated preferences.
+FULL_SYSTEM_PROMPT = f"""You are {ADVISOR_IDENTITY.format(domain="personal")}. You have access to their complete consumption history, ratings, reviews, and stated preferences.
 
 ## CRITICAL: Data Accuracy Rules
 - ONLY reference items, titles, and preferences that appear in the User Context below.
@@ -136,6 +150,43 @@ When the user states a preference explicitly, use save_memory to remember it.
 {{user_context}}
 """
 
+# Backward-compatible alias
+DEFAULT_SYSTEM_PROMPT = FULL_SYSTEM_PROMPT
+
+
+# Compact system prompt for small (3B) models. Teaches by example instead of
+# rule lists — a 3B model can hold a single concrete example in working memory
+# far better than 30+ bullet points. No {{tool_descriptions}} placeholder;
+# tool actions are handled pre-LLM via intent detection in compact mode.
+COMPACT_SYSTEM_PROMPT = f"""You are {ADVISOR_IDENTITY.format(domain="personal")}. {PERSONALITY_COMPACT}
+
+## Rules
+- ONLY reference items from User Context below. NEVER invent titles or opinions.
+- Match content type verbs: books are "read", games are "played", movies/shows are "watched".
+- Format: emoji section headers (##), **bold** connections, bullet points, ONE specific rating prediction (never a range).
+- Be honest about downsides — that's what makes the hype credible.
+
+## Example Response
+## 🎯 YOUR NEXT GAME: Outer Wilds
+Here's why this is EXACTLY right for you.
+
+### 🎮 WHY IT FITS
+- **You gave Firewatch a 5/5** and called it "a gut punch" — Outer Wilds delivers that same emotional sucker-punch but wraps it in a cosmic mystery
+- **Subnautica vibes**: open-world exploration where curiosity IS the gameplay loop
+
+### ⚠️ FAIR WARNING
+- The time-loop mechanic can feel disorienting at first — stick with it
+
+### 🗺️ ALTERNATIVES
+- **Return of the Obra Dinn**: Different flavor — deduction puzzles instead of exploration, but the same "piece it together yourself" satisfaction
+
+### 💎 MY PREDICTION
+You'll rate this **5/5** — the ending hits harder than Firewatch's.
+
+## User Context
+{{user_context}}
+"""
+
 
 class ConversationEngine:
     """Main orchestrator for conversational AI.
@@ -153,6 +204,7 @@ class ConversationEngine:
         tool_executor: ToolExecutor | None = None,
         system_prompt_template: str | None = None,
         recommendation_engine: "RecommendationEngine | None" = None,
+        conversation_config: dict[str, Any] | None = None,
     ) -> None:
         """Initialize the conversation engine.
 
@@ -165,12 +217,15 @@ class ConversationEngine:
             system_prompt_template: Custom system prompt template
             recommendation_engine: Optional recommendation engine for
                 generating pre-filtered, scored backlog items
+            conversation_config: Optional conversation section from config,
+                with keys like ``llm.temperature``, ``llm.max_tokens``,
+                ``llm.context_window_size``, and ``context.compact_mode``
         """
         self.storage = storage_manager
         self.ollama = ollama_client
 
         self.memory = memory_manager or MemoryManager(storage_manager)
-        self.context = context_assembler or ContextAssembler(
+        self.context_assembler = context_assembler or ContextAssembler(
             storage_manager=storage_manager,
             memory_manager=self.memory,
             ollama_client=ollama_client,
@@ -178,7 +233,24 @@ class ConversationEngine:
         )
         self.tools = tool_executor or ToolExecutor(storage_manager)
 
-        self.system_prompt_template = system_prompt_template or DEFAULT_SYSTEM_PROMPT
+        # Read conversation config
+        conversation_config = conversation_config or {}
+        llm_config = conversation_config.get("llm", {})
+        context_config = conversation_config.get("context", {})
+
+        self.temperature: float = llm_config.get("temperature", 0.7)
+        self.max_tokens: int | None = llm_config.get("max_tokens") or None
+        self.context_window_size: int | None = (
+            llm_config.get("context_window_size") or None
+        )
+        self.compact_mode: bool = context_config.get("compact_mode", False)
+
+        if system_prompt_template:
+            self.system_prompt_template = system_prompt_template
+        elif self.compact_mode:
+            self.system_prompt_template = COMPACT_SYSTEM_PROMPT
+        else:
+            self.system_prompt_template = FULL_SYSTEM_PROMPT
 
     def process_message(
         self,
@@ -207,23 +279,55 @@ class ConversationEngine:
             content=message,
         )
 
-        # 2. Assemble context
+        # 1b. Pre-LLM intent detection (compact mode only)
+        if self.compact_mode:
+            intent = detect_intent(
+                message=message,
+                user_id=user_id,
+                tool_executor=self.tools,
+            )
+            if intent.intent_type == "tool_action" and intent.tool_name:
+                yield from self._handle_intent_action(
+                    intent=intent,
+                    user_id=user_id,
+                )
+                return
+
+        # 2. Assemble context (reduced limits in compact mode)
         context_start = time.monotonic()
-        context = self.context.assemble_context(
-            user_id=user_id,
-            user_query=message,
-            content_type=content_type,
-        )
+        if self.compact_mode:
+            context = self.context_assembler.assemble_context(
+                user_id=user_id,
+                user_query=message,
+                content_type=content_type,
+                max_memories=5,
+                max_relevant_items=5,
+                max_unconsumed_items=5,
+            )
+        else:
+            context = self.context_assembler.assemble_context(
+                user_id=user_id,
+                user_query=message,
+                content_type=content_type,
+            )
         logger.info("Context assembled in %.1fs", time.monotonic() - context_start)
 
-        # 3. Build system prompt with tools and context
-        user_context_block = build_user_context_block(context)
-        tool_descriptions = get_tool_descriptions()
+        # 3. Build system prompt with context (and tools for full mode)
+        if self.compact_mode:
+            user_context_block = build_user_context_block_compact(context)
+        else:
+            user_context_block = build_user_context_block(context)
 
-        system_prompt = self.system_prompt_template.format(
-            tool_descriptions=tool_descriptions,
-            user_context=user_context_block,
-        )
+        if self.compact_mode:
+            system_prompt = self.system_prompt_template.format(
+                user_context=user_context_block,
+            )
+        else:
+            tool_descriptions = get_tool_descriptions()
+            system_prompt = self.system_prompt_template.format(
+                tool_descriptions=tool_descriptions,
+                user_context=user_context_block,
+            )
         logger.info(
             "System prompt size: %d chars (%d items in context)",
             len(system_prompt),
@@ -243,7 +347,10 @@ class ConversationEngine:
                 for chunk in self.ollama.chat_stream(
                     messages=messages,
                     system_prompt=system_prompt,
-                    temperature=0.7,
+                    model=self.ollama.conversation_model,
+                    temperature=self.temperature,
+                    max_tokens=self.max_tokens,
+                    context_window_size=self.context_window_size,
                 ):
                     if first_token_time is None:
                         first_token_time = time.monotonic()
@@ -261,7 +368,10 @@ class ConversationEngine:
                 full_response = self.ollama.generate_text(
                     prompt=message,
                     system_prompt=system_prompt,
-                    temperature=0.7,
+                    model=self.ollama.conversation_model,
+                    temperature=self.temperature,
+                    max_tokens=self.max_tokens,
+                    context_window_size=self.context_window_size,
                 )
                 yield ConversationChunk(
                     chunk_type="text",
@@ -280,8 +390,12 @@ class ConversationEngine:
             )
             full_response = error_message
 
-        # 6. Check for tool calls in response
-        tool_name, tool_params = parse_tool_call_from_text(full_response)
+        # 6. Check for tool calls in response (skip in compact mode —
+        #    tools are handled pre-LLM via intent detection)
+        tool_name: str | None = None
+        tool_params: dict[str, Any] | None = None
+        if not self.compact_mode:
+            tool_name, tool_params = parse_tool_call_from_text(full_response)
         if tool_name and tool_params:
             yield ConversationChunk(
                 chunk_type="tool_call",
@@ -409,6 +523,71 @@ class ConversationEngine:
 
         return messages
 
+    def _handle_intent_action(
+        self,
+        intent: IntentResult,
+        user_id: int,
+    ) -> Iterator[ConversationChunk]:
+        """Execute a pre-LLM detected tool intent and yield response chunks.
+
+        Skips the LLM entirely — executes the tool, yields tool_call and
+        tool_result chunks, then yields a canned confirmation message.
+
+        Args:
+            intent: Detected intent with tool_name and tool_params
+            user_id: User ID
+
+        Yields:
+            ConversationChunks for tool call, result, text, and done
+        """
+        assert intent.tool_name is not None
+        assert intent.tool_params is not None
+
+        yield ConversationChunk(
+            chunk_type="tool_call",
+            tool_name=intent.tool_name,
+            tool_params=intent.tool_params,
+        )
+
+        result = self.tools.execute(intent.tool_name, intent.tool_params, user_id)
+
+        yield ConversationChunk(
+            chunk_type="tool_result",
+            tool_name=intent.tool_name,
+            tool_result=result,
+        )
+
+        # Build confirmation text
+        if result.success:
+            confirmation = build_confirmation_message(
+                tool_name=intent.tool_name,
+                tool_params=intent.tool_params,
+                matched_item=intent.matched_item,
+            )
+        else:
+            confirmation = result.message
+
+        yield ConversationChunk(chunk_type="text", content=confirmation)
+
+        # Save assistant message
+        self.memory.save_conversation_message(
+            user_id=user_id,
+            role="assistant",
+            content=confirmation,
+            tool_calls=[
+                {
+                    "name": intent.tool_name,
+                    "params": intent.tool_params,
+                    "result": {
+                        "success": result.success,
+                        "message": result.message,
+                    },
+                }
+            ],
+        )
+
+        yield ConversationChunk(chunk_type="done")
+
     def _format_clarification(self, result: ToolResult) -> str:
         """Format a clarification request for the user.
 
@@ -439,6 +618,7 @@ def create_conversation_engine(
     storage_manager: "StorageManager",
     ollama_client: "OllamaClient",
     recommendation_engine: "RecommendationEngine | None" = None,
+    conversation_config: dict[str, Any] | None = None,
 ) -> ConversationEngine:
     """Factory function to create a fully configured ConversationEngine.
 
@@ -447,6 +627,7 @@ def create_conversation_engine(
         ollama_client: Ollama client for LLM interactions
         recommendation_engine: Optional recommendation engine for
             generating pre-filtered, scored backlog items
+        conversation_config: Optional conversation section from config
 
     Returns:
         Configured ConversationEngine
@@ -455,4 +636,5 @@ def create_conversation_engine(
         storage_manager=storage_manager,
         ollama_client=ollama_client,
         recommendation_engine=recommendation_engine,
+        conversation_config=conversation_config,
     )

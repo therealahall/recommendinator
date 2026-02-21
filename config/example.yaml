@@ -20,6 +20,10 @@ ollama:
   base_url: "http://localhost:11434"
   model: "mistral:7b"  # Model for recommendations (text generation)
   embedding_model: "nomic-embed-text"  # Model for generating embeddings
+  # Separate model for conversation chat (defaults to main model when empty).
+  # Use a smaller model (e.g., "qwen2.5:3b") for faster chat responses on
+  # constrained hardware while keeping the larger model for recommendations.
+  conversation_model: ""
   # Note: Install embedding model with: ollama pull nomic-embed-text
   # See docs/MODEL_RECOMMENDATIONS.md for model selection guide
 
@@ -212,6 +216,10 @@ conversation:
     temperature: 0.7
     # Maximum tokens in response
     max_tokens: 2000
+    # Context window size override for Ollama (num_ctx).
+    # Set this when using a small model (3B) to avoid excessive memory use.
+    # Recommended: 4096 for 3B models, 8192 for 7B models. Leave unset for default.
+    # context_window_size: 4096
 
   # Context assembly settings
   context:
@@ -221,6 +229,10 @@ conversation:
     max_unconsumed_items: 20
     # Include algorithmic recommendations in context
     include_algorithmic_recs: true
+    # Compact mode reduces prompt size by ~60-70% for use with small (3B) models.
+    # Uses a condensed system prompt, fewer context items, and pre-LLM intent
+    # detection. Enable when using conversation_model with a 3B parameter model.
+    compact_mode: false
 
 # Metadata enrichment configuration
 # Enriches content items with additional metadata (genres, tags, descriptions)

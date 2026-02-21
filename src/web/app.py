@@ -123,6 +123,7 @@ def create_app(config_path: Path | None = None) -> FastAPI:
                 storage_manager=storage,
                 ollama_client=llm_client,
                 recommendation_engine=engine,
+                conversation_config=config.get("conversation"),
             )
             app_state["conversation_engine"] = conversation_engine
             logger.info("Conversation engine initialized")

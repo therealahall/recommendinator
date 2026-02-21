@@ -533,6 +533,111 @@ def _format_recommendation_brief(brief: RecommendationBrief) -> str:
     return "\n".join(lines)
 
 
+def _format_item_compact(item: ContentItem) -> str:
+    """Format a content item in compact form for small-model context.
+
+    Includes only type tag, title, author, and rating — no genres or review
+    snippets, saving ~50% per item compared to ``_format_item_detail``.
+
+    Args:
+        item: ContentItem to format
+
+    Returns:
+        Single-line compact string
+    """
+    content_type_str = str(item.content_type).replace("_", " ").title()
+    author_str = f" by {item.author}" if item.author else ""
+    rating_str = f" — {item.rating}/5" if item.rating else ""
+    return f"- [{content_type_str}] {item.title}{author_str}{rating_str}"
+
+
+def _format_recommendation_brief_compact(brief: RecommendationBrief) -> str:
+    """Format a recommendation brief in compact form for small-model context.
+
+    Includes title, author, match percentage, and one-line reasoning.
+    Omits score breakdowns and cross-media connections.
+
+    Args:
+        brief: Pre-scored recommendation brief from the pipeline
+
+    Returns:
+        Compact formatted string (1-2 lines)
+    """
+    item = brief.item
+    content_type_str = str(item.content_type).replace("_", " ").title()
+    author_str = f" by {item.author}" if item.author else ""
+    match_percent = round(brief.score * 100)
+
+    line = f"- [{content_type_str}] {item.title}{author_str} — {match_percent}% match"
+    if brief.reasoning:
+        # Truncate reasoning to first sentence or 100 chars
+        short_reason = brief.reasoning[:100]
+        if len(brief.reasoning) > 100:
+            short_reason = short_reason.rsplit(" ", 1)[0] + "..."
+        line += f"\n  {short_reason}"
+    return line
+
+
+def build_user_context_block_compact(context: ConversationContext) -> str:
+    """Build a compact context block optimized for small (3B) models.
+
+    Uses fewer items and shorter formatting than
+    :func:`build_user_context_block` to reduce token count by ~50%.
+
+    Args:
+        context: Assembled conversation context
+
+    Returns:
+        Compact formatted context string
+    """
+    parts = []
+
+    # Preference summary (kept as-is — already compact)
+    if context.preference_summary:
+        parts.append("## Profile")
+        parts.append(context.preference_summary)
+        parts.append("")
+
+    # Core memories (max 5)
+    if context.core_memories:
+        parts.append("## Preferences")
+        for memory in context.core_memories[:5]:
+            parts.append(f"- {memory.memory_text}")
+        parts.append("")
+
+    # Completed items (max 5, compact format)
+    if context.relevant_completed:
+        parts.append("## Completed")
+        for item in context.relevant_completed[:5]:
+            parts.append(_format_item_compact(item))
+        parts.append("")
+
+    # Backlog — enriched when briefs available (max 5)
+    if context.recommendation_briefs:
+        parts.append("## Recommended (Pre-Scored)")
+        for brief in context.recommendation_briefs[:5]:
+            parts.append(_format_recommendation_brief_compact(brief))
+        parts.append("")
+    elif context.relevant_unconsumed:
+        parts.append("## Backlog")
+        for item in context.relevant_unconsumed[:5]:
+            parts.append(_format_item_compact(item))
+        parts.append("")
+
+    # Recent conversation (last 3, truncated to 100 chars)
+    if context.recent_messages:
+        parts.append("## Recent Chat")
+        for message in context.recent_messages[-3:]:
+            role_label = "User" if message.role == "user" else "You"
+            content = message.content[:100]
+            if len(message.content) > 100:
+                content += "..."
+            parts.append(f"{role_label}: {content}")
+        parts.append("")
+
+    return "\n".join(parts)
+
+
 def build_user_context_block(context: ConversationContext) -> str:
     """Build a formatted context block for injection into LLM prompts.
 
