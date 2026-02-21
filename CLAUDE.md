@@ -224,9 +224,9 @@ The project uses Claude Code plugins and custom agents to maintain code quality 
 ### Custom Agents
 
 - **security-review** (`.claude/agents/security-review.md`) — Pre-commit security audit agent. Automatically invoked before commits to check for credential exposure, injection vulnerabilities, CORS misconfigurations, and project-specific security rules. Uses Pyright LSP diagnostics to catch type safety issues with security implications. See `docs/SECURITY.md` for what it checks.
-- **ruthless-code-reviewer** (`.claude/agents/ruthless-code-reviewer.md`) — Pre-commit code quality agent. Performs line-by-line review of all changes for dead code, code smells, DRY violations, naming issues, type safety, over/under-engineering, and adherence to project standards. Complements the security-review agent: security-review handles vulnerabilities, ruthless-code-reviewer handles quality and design.
+- **code-review** (`.claude/agents/code-review.md`) — Pre-commit code quality agent. Performs line-by-line review of all changes for dead code, code smells, DRY violations, naming issues, type safety, over/under-engineering, and adherence to project standards. Complements the security-review agent: security-review handles vulnerabilities, code-review handles quality and design.
 
-**Both agents must approve changes before marking tasks as complete.** Run security-review and ruthless-code-reviewer before `make check`.
+**Both agents must approve changes before marking tasks as complete.** Run security-review and code-review before `make check`.
 
 ## Architecture Principles
 
@@ -303,7 +303,7 @@ This ensures users can discover and understand all configuration options.
 ## Pre-commit Checklist
 
 - [ ] **security-review agent** approves (no critical/high findings)
-- [ ] **ruthless-code-reviewer agent** approves (no critical/major issues)
+- [ ] **code-review agent** approves (no critical/major issues)
 - [ ] All tests pass: `pytest`
 - [ ] Formatting: `black --check src/ tests/`
 - [ ] Type checking: `mypy src/`

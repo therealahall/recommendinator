@@ -169,7 +169,7 @@ The project includes a Claude Code security-review agent (`.claude/agents/securi
 
 ### For Contributors
 
-The agent definition is at `.claude/agents/security-review.md`. When using Claude Code, it runs automatically before commits alongside the **ruthless-code-reviewer** agent (`.claude/agents/ruthless-code-reviewer.md`), which handles code quality and design. Both agents must approve changes before they are committed. Each security finding includes severity, CWE classification, evidence, impact, and remediation steps.
+The agent definition is at `.claude/agents/security-review.md`. When using Claude Code, it runs automatically before commits alongside the **code-review** agent (`.claude/agents/code-review.md`), which handles code quality and design. Both agents must approve changes before they are committed. Each security finding includes severity, CWE classification, evidence, impact, and remediation steps.
 
 ## Reporting Security Issues
 

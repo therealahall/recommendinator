@@ -2,5 +2,12 @@
   "enabledPlugins": {
     "pyright-lsp@claude-plugins-official": true,
     "frontend-design@claude-plugins-official": true
-  }
+  },
+  "allowedTools": [
+    "Bash(git status)",
+    "Bash(git status *)",
+    "Bash(git diff*)",
+    "Bash(git log *)",
+    "mcp__ide__getDiagnostics"
+  ]
 }
