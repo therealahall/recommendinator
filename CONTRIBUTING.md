@@ -23,6 +23,12 @@ Thank you for your interest in contributing to Personal Recommendations! This do
 3. Ensure all checks pass (see [Quality Checks](#quality-checks))
 4. Submit a pull request
 
+**Automated code review:** When using Claude Code, two review agents run automatically before commits:
+- **security-review** — Audits for vulnerabilities, credential leaks, and unsafe patterns. See [docs/SECURITY.md](docs/SECURITY.md) for details.
+- **ruthless-code-reviewer** — Reviews code quality, design, naming, DRY compliance, and adherence to project standards.
+
+Both agents must approve changes before they are committed. Contributors can expect feedback on PRs touching security-sensitive areas (authentication, configuration, network requests) as well as general code quality concerns.
+
 ## Quality Checks
 
 **All four checks must pass before submitting a PR:**

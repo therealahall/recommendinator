@@ -212,6 +212,22 @@ config = load_config(Path("config/config.yaml"))
 - **Testing**: pytest
 - **Quality**: Black, MyPy (strict), Ruff
 
+## Claude Code Tooling
+
+The project uses Claude Code plugins and custom agents to maintain code quality and security. Configuration lives in `.claude/settings.json` (plugins) and `.claude/agents/` (agent definitions).
+
+### Enabled Plugins
+
+- **Pyright LSP** (`pyright-lsp@claude-plugins-official`) — Provides real-time type checking and diagnostics via the Language Server Protocol. Catches type errors, missing imports, and incompatible types as you work.
+- **Frontend Design** (`frontend-design@claude-plugins-official`) — Generates production-grade UI components for the FastAPI web interface. Activated when building or modifying web frontend code.
+
+### Custom Agents
+
+- **security-review** (`.claude/agents/security-review.md`) — Pre-commit security audit agent. Automatically invoked before commits to check for credential exposure, injection vulnerabilities, CORS misconfigurations, and project-specific security rules. Uses Pyright LSP diagnostics to catch type safety issues with security implications. See `docs/SECURITY.md` for what it checks.
+- **ruthless-code-reviewer** (`.claude/agents/ruthless-code-reviewer.md`) — Pre-commit code quality agent. Performs line-by-line review of all changes for dead code, code smells, DRY violations, naming issues, type safety, over/under-engineering, and adherence to project standards. Complements the security-review agent: security-review handles vulnerabilities, ruthless-code-reviewer handles quality and design.
+
+**Both agents must approve changes before marking tasks as complete.** Run security-review and ruthless-code-reviewer before `make check`.
+
 ## Architecture Principles
 
 1. **Separation of Concerns**: Keep ingestion, LLM, storage separate
@@ -286,6 +302,8 @@ This ensures users can discover and understand all configuration options.
 
 ## Pre-commit Checklist
 
+- [ ] **security-review agent** approves (no critical/high findings)
+- [ ] **ruthless-code-reviewer agent** approves (no critical/major issues)
 - [ ] All tests pass: `pytest`
 - [ ] Formatting: `black --check src/ tests/`
 - [ ] Type checking: `mypy src/`

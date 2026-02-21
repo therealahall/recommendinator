@@ -135,9 +135,13 @@ Conversational AI chat interface, requires AI to be enabled.
 - `MemoryManager` — CRUD for core memories (preference signals)
 - `ContextAssembler` — RAG retrieval for relevant items
 - `ToolExecutor` — Tool-calling for data updates (mark completed, update rating, save memory)
+- `IntentDetector` (`intent.py`) — Pre-LLM regex-based intent detection for tool actions (mark completed, rate, wishlist, preferences). When a high-confidence match is found, the tool action executes instantly without invoking the LLM
 - `MemoryExtractor` — Extracts preferences from conversations
 - `ProfileGenerator` — Computes genre affinities and preference profiles
 - `ConversationEngine` — Orchestrator with streaming responses
+
+**Compact Mode** (`conversation.context.compact_mode`):
+When enabled (recommended for 3B models), the engine uses a condensed system prompt (~800 tokens), reduced context limits, compact item formatting, and pre-LLM intent detection. A separate `conversation_model` can be configured in `ollama` config to use a smaller model for chat while keeping the larger model for recommendations. See `docs/MODEL_RECOMMENDATIONS.md` for setup details.
 
 ### 7. Interface Layer
 
@@ -230,6 +234,15 @@ inputs:
 - **CLI Framework**: Click
 - **Testing**: pytest
 - **Quality**: Black, MyPy (strict), Ruff
+
+### Development Tooling (Claude Code)
+
+- **Pyright LSP Plugin** — Real-time static type analysis via Language Server Protocol, catches type errors and missing annotations
+- **Frontend Design Plugin** — Generates production-grade UI components for the web interface
+- **Security-Review Agent** — Pre-commit security audit agent that checks for credential exposure, injection vulnerabilities, CORS misconfigurations, and project-specific security rules. See `docs/SECURITY.md` for details.
+- **Ruthless Code Reviewer Agent** — Pre-commit code quality agent that performs line-by-line review for dead code, code smells, DRY violations, naming, type safety, over/under-engineering, and project standards compliance. Complements the security-review agent.
+
+Plugin configuration: `.claude/settings.json` | Agent definitions: `.claude/agents/`
 
 ## Security & Privacy
 

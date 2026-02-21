@@ -143,6 +143,34 @@ pip install -U -r requirements.txt
 - [ ] Docker containers run as non-root user
 - [ ] Ollama only accessible internally
 
+## Automated Security Review
+
+The project includes a Claude Code security-review agent (`.claude/agents/security-review.md`) that performs automated security audits before commits.
+
+### What It Checks
+
+- **Credential exposure** — Hardcoded secrets, `config/config.yaml` references, secrets in logs or error messages
+- **Injection vulnerabilities** — SQL injection, command injection (`shell=True`), path traversal, template injection
+- **Network & API security** — CORS misconfigurations, missing TLS validation, SSRF, exposed internal errors
+- **Python-specific pitfalls** — `assert` for validation (stripped in `-O` mode), direct shell execution via `os` module, mutable default arguments
+- **Data handling** — Unsafe deserialization, race conditions, shared state mutation
+- **Dependency risks** — Known vulnerabilities, unpinned versions, unnecessary dependencies
+- **Type safety** — Uses Pyright LSP diagnostics to catch `Any` types hiding unsafe casts and missing return types on endpoints
+
+### Project-Specific Rules Enforced
+
+- `config/config.yaml` must never be referenced in code or tests
+- CORS defaults to localhost, never wildcard
+- `allow_credentials=False` when wildcard origins are used
+- Internal error details never exposed in HTTP responses (`detail=str(error)` is forbidden)
+- Module-level imports only (inline imports obscure dependency auditing)
+- Dicts/lists must be copied before mutating externally-passed data
+- `is not None` checks required instead of truthy checks for security-relevant values
+
+### For Contributors
+
+The agent definition is at `.claude/agents/security-review.md`. When using Claude Code, it runs automatically before commits alongside the **ruthless-code-reviewer** agent (`.claude/agents/ruthless-code-reviewer.md`), which handles code quality and design. Both agents must approve changes before they are committed. Each security finding includes severity, CWE classification, evidence, impact, and remediation steps.
+
 ## Reporting Security Issues
 
 If you discover a security vulnerability:

@@ -91,6 +91,49 @@ ollama:
 | deepseek-r1:latest | 4.7 GB | Recommendations | ⭐⭐⭐⭐⭐ | Medium | ✅ |
 | llama3.2:3b | 2.0 GB | Recommendations | ⭐⭐⭐ | Fast | ✅ |
 
+## Small Hardware / Dual-Model Setup
+
+If your GPU VRAM is limited (e.g., 2 GB AMD mobile GPU), a 7B+ model will fall back to CPU, causing ~200s time-to-first-token in chat. The solution: use a **small model for conversation** and keep the larger model for recommendations.
+
+### Configuration
+
+```yaml
+ollama:
+  model: "qwen2.5:14b"           # Larger model for recommendation reasoning
+  conversation_model: "qwen2.5:3b"  # Smaller model for fast chat
+
+conversation:
+  llm:
+    context_window_size: 4096     # Limit context for 3B model memory
+  context:
+    compact_mode: true            # Reduces prompt by ~60-70%
+```
+
+### What `compact_mode` Does
+
+When enabled, compact mode:
+- Uses a **condensed system prompt** (~800 tokens vs ~3,000) with a single few-shot example instead of 30+ rule bullets
+- Reduces **context items** (5 items instead of 10-20) using compact formatting (no genres, reviews, or score breakdowns)
+- Enables **pre-LLM intent detection** — common actions like "I finished X" or "rate X 4/5" are handled instantly without calling the LLM
+- Skips tool descriptions in the prompt (tools are handled pre-LLM)
+
+### Expected Performance
+
+| Setup | TTFT (Chat) | Token Count |
+|-------|-------------|-------------|
+| 14B on CPU (default) | ~200s | ~6,000-8,000 |
+| 3B + compact mode | ~10-20s | ~2,000-3,000 |
+
+### Recommended 3B Models
+
+| Model | Size | Chat Quality | Speed |
+|-------|------|-------------|-------|
+| qwen2.5:3b | ~2.0 GB | Good | Fast |
+| llama3.2:3b | ~2.0 GB | Good | Fast |
+| phi-3.5-mini | ~2.2 GB | Good | Fast |
+
+Install with: `ollama pull qwen2.5:3b`
+
 ## Why Two Models?
 
 1. **Embedding models** are optimized for creating vector representations
