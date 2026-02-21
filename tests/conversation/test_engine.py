@@ -7,7 +7,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.conversation.engine import ConversationEngine, create_conversation_engine
+from src.conversation.engine import (
+    COMPACT_SYSTEM_PROMPT,
+    FULL_SYSTEM_PROMPT,
+    ConversationEngine,
+    create_conversation_engine,
+)
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.manager import StorageManager
 
@@ -450,3 +455,230 @@ class TestStreamingBehavior:
         # Should match expected mock response
         assert "Based on your taste" in text_content
         assert "Outer Wilds" in text_content
+
+
+class TestCompactMode:
+    """Tests for compact mode behavior."""
+
+    def test_compact_mode_uses_compact_prompt(
+        self,
+        storage_manager: StorageManager,
+        mock_ollama: MagicMock,
+    ) -> None:
+        """Compact mode should use the compact system prompt template."""
+        engine = ConversationEngine(
+            storage_manager=storage_manager,
+            ollama_client=mock_ollama,
+            conversation_config={"context": {"compact_mode": True}},
+        )
+
+        assert engine.compact_mode is True
+        assert engine.system_prompt_template is COMPACT_SYSTEM_PROMPT
+
+    def test_default_mode_uses_full_prompt(
+        self,
+        storage_manager: StorageManager,
+        mock_ollama: MagicMock,
+    ) -> None:
+        """Default mode should use the full system prompt template."""
+        engine = ConversationEngine(
+            storage_manager=storage_manager,
+            ollama_client=mock_ollama,
+        )
+
+        assert engine.compact_mode is False
+        assert engine.system_prompt_template is FULL_SYSTEM_PROMPT
+
+    def test_compact_mode_skips_tool_descriptions(
+        self,
+        storage_manager: StorageManager,
+        mock_ollama: MagicMock,
+    ) -> None:
+        """Compact mode system prompt should not contain tool descriptions."""
+        engine = ConversationEngine(
+            storage_manager=storage_manager,
+            ollama_client=mock_ollama,
+            conversation_config={"context": {"compact_mode": True}},
+        )
+
+        list(
+            engine.process_message(
+                user_id=1,
+                message="What should I play?",
+                stream=True,
+            )
+        )
+
+        call_kwargs = mock_ollama.chat_stream.call_args.kwargs
+        system_prompt = call_kwargs.get("system_prompt", "")
+        # Should NOT contain tool descriptions
+        assert "mark_completed" not in system_prompt
+        assert "update_rating" not in system_prompt
+
+    def test_compact_mode_skips_post_hoc_tool_parsing(
+        self,
+        storage_manager: StorageManager,
+    ) -> None:
+        """Compact mode should not parse tool calls from LLM response."""
+        mock_ollama = MagicMock()
+
+        # Mock LLM to return what looks like a tool call
+        def mock_stream(*args, **kwargs):
+            yield '{"tool": "mark_completed", "params": {"item_id": 1}}'
+
+        mock_ollama.chat_stream.side_effect = mock_stream
+        mock_ollama.conversation_model = "test-model"
+
+        engine = ConversationEngine(
+            storage_manager=storage_manager,
+            ollama_client=mock_ollama,
+            conversation_config={"context": {"compact_mode": True}},
+        )
+
+        chunks = list(
+            engine.process_message(
+                user_id=1,
+                message="What should I play?",
+                stream=True,
+            )
+        )
+
+        # Should NOT have a tool_call chunk (parsing skipped in compact mode)
+        tool_calls = [c for c in chunks if c.chunk_type == "tool_call"]
+        assert len(tool_calls) == 0
+
+    def test_compact_mode_intent_detection_marks_completed(
+        self,
+        storage_manager: StorageManager,
+        sample_items: list[int],
+    ) -> None:
+        """Compact mode intent detection should handle 'I finished X'."""
+        mock_ollama = MagicMock()
+        mock_ollama.conversation_model = "test-model"
+
+        engine = ConversationEngine(
+            storage_manager=storage_manager,
+            ollama_client=mock_ollama,
+            conversation_config={"context": {"compact_mode": True}},
+        )
+
+        chunks = list(
+            engine.process_message(
+                user_id=1,
+                message="I finished Outer Wilds",
+                stream=True,
+            )
+        )
+
+        # Should have a tool_call and tool_result (from intent detection)
+        tool_calls = [c for c in chunks if c.chunk_type == "tool_call"]
+        tool_results = [c for c in chunks if c.chunk_type == "tool_result"]
+        assert len(tool_calls) == 1
+        assert tool_calls[0].tool_name == "mark_completed"
+        assert len(tool_results) == 1
+        assert tool_results[0].tool_result is not None
+        assert tool_results[0].tool_result.success
+
+        # LLM should NOT have been called
+        mock_ollama.chat_stream.assert_not_called()
+        mock_ollama.generate_text.assert_not_called()
+
+        # Item should be marked completed
+        item = storage_manager.get_content_item(sample_items[1], user_id=1)
+        assert item is not None
+        assert item.status == ConsumptionStatus.COMPLETED
+
+
+class TestConversationConfig:
+    """Tests for conversation config parameters."""
+
+    def test_config_sets_temperature(
+        self,
+        storage_manager: StorageManager,
+        mock_ollama: MagicMock,
+    ) -> None:
+        """Temperature from config is used in LLM calls."""
+        engine = ConversationEngine(
+            storage_manager=storage_manager,
+            ollama_client=mock_ollama,
+            conversation_config={"llm": {"temperature": 0.3}},
+        )
+
+        assert engine.temperature == 0.3
+
+        list(engine.process_message(user_id=1, message="test"))
+
+        call_kwargs = mock_ollama.chat_stream.call_args.kwargs
+        assert call_kwargs["temperature"] == 0.3
+
+    def test_config_sets_context_window_size(
+        self,
+        storage_manager: StorageManager,
+        mock_ollama: MagicMock,
+    ) -> None:
+        """Context window size from config is passed to LLM."""
+        engine = ConversationEngine(
+            storage_manager=storage_manager,
+            ollama_client=mock_ollama,
+            conversation_config={"llm": {"context_window_size": 4096}},
+        )
+
+        assert engine.context_window_size == 4096
+
+        list(engine.process_message(user_id=1, message="test"))
+
+        call_kwargs = mock_ollama.chat_stream.call_args.kwargs
+        assert call_kwargs["context_window_size"] == 4096
+
+    def test_config_uses_conversation_model(
+        self,
+        storage_manager: StorageManager,
+    ) -> None:
+        """Conversation model from OllamaClient is passed to chat calls."""
+        mock_ollama = MagicMock()
+        mock_ollama.conversation_model = "qwen2.5:3b"
+
+        def mock_stream(*args, **kwargs):
+            yield "response"
+
+        mock_ollama.chat_stream.side_effect = mock_stream
+
+        engine = ConversationEngine(
+            storage_manager=storage_manager,
+            ollama_client=mock_ollama,
+        )
+
+        list(engine.process_message(user_id=1, message="test"))
+
+        call_kwargs = mock_ollama.chat_stream.call_args.kwargs
+        assert call_kwargs["model"] == "qwen2.5:3b"
+
+    def test_config_defaults(
+        self,
+        storage_manager: StorageManager,
+        mock_ollama: MagicMock,
+    ) -> None:
+        """Missing config values use sensible defaults."""
+        engine = ConversationEngine(
+            storage_manager=storage_manager,
+            ollama_client=mock_ollama,
+        )
+
+        assert engine.temperature == 0.7
+        assert engine.max_tokens is None
+        assert engine.context_window_size is None
+        assert engine.compact_mode is False
+
+    def test_factory_passes_conversation_config(
+        self,
+        storage_manager: StorageManager,
+        mock_ollama: MagicMock,
+    ) -> None:
+        """create_conversation_engine passes config to engine."""
+        engine = create_conversation_engine(
+            storage_manager=storage_manager,
+            ollama_client=mock_ollama,
+            conversation_config={"context": {"compact_mode": True}},
+        )
+
+        assert engine.compact_mode is True

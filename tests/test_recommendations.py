@@ -96,3 +96,64 @@ def test_generate_recommendations_fewer_than_requested(mock_ollama_client):
 
     # Should only return 1 (available items)
     assert len(recommendations) <= 1
+
+
+def test_generate_blurbs(mock_ollama_client):
+    """Test blurb generation for pre-selected items."""
+    mock_response = """1. **Book A** by Author A
+You gave Favorite Book a 5/5 — Book A has the same space exploration vibe.
+
+2. **Book B** by Author B
+Like your favorite, this one goes deep on character development."""
+    mock_ollama_client.generate_text.return_value = mock_response
+
+    consumed = [
+        ContentItem(
+            id="1",
+            title="Favorite Book",
+            author="Author",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+        )
+    ]
+
+    selected = [
+        ContentItem(
+            id="2",
+            title="Book A",
+            author="Author A",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        ),
+        ContentItem(
+            id="3",
+            title="Book B",
+            author="Author B",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        ),
+    ]
+
+    generator = RecommendationGenerator(mock_ollama_client)
+    blurbs = generator.generate_blurbs(
+        content_type=ContentType.BOOK,
+        selected_items=selected,
+        consumed_items=consumed,
+    )
+
+    assert len(blurbs) >= 1
+    assert any(blurb["title"] == "Book A" for blurb in blurbs)
+
+
+def test_generate_blurbs_empty_selection(mock_ollama_client):
+    """Test blurb generation with no selected items returns empty list."""
+    generator = RecommendationGenerator(mock_ollama_client)
+    blurbs = generator.generate_blurbs(
+        content_type=ContentType.BOOK,
+        selected_items=[],
+        consumed_items=[],
+    )
+
+    assert blurbs == []
+    mock_ollama_client.generate_text.assert_not_called()

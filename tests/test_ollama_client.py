@@ -135,3 +135,69 @@ def test_list_available_models(mock_ollama_client):
 
     assert "model1" in models
     assert "model2" in models
+
+
+def test_conversation_model_defaults_to_default(mock_ollama_client):
+    """Conversation model defaults to default_model when empty."""
+    client = OllamaClient(default_model="mistral:7b")
+    assert client.conversation_model == "mistral:7b"
+
+
+def test_conversation_model_custom(mock_ollama_client):
+    """Conversation model can be set independently."""
+    client = OllamaClient(
+        default_model="mistral:7b",
+        conversation_model="qwen2.5:3b",
+    )
+    assert client.default_model == "mistral:7b"
+    assert client.conversation_model == "qwen2.5:3b"
+
+
+def test_conversation_model_empty_string_uses_default(mock_ollama_client):
+    """Empty conversation_model falls back to default_model."""
+    client = OllamaClient(
+        default_model="mistral:7b",
+        conversation_model="",
+    )
+    assert client.conversation_model == "mistral:7b"
+
+
+def test_build_options_with_context_window(mock_ollama_client):
+    """Context window size is passed as num_ctx in options."""
+    options = OllamaClient._build_options(temperature=0.7, context_window_size=4096)
+    assert options["num_ctx"] == 4096
+    assert options["temperature"] == 0.7
+
+
+def test_build_options_without_context_window(mock_ollama_client):
+    """Options without context_window_size omit num_ctx."""
+    options = OllamaClient._build_options(temperature=0.7)
+    assert "num_ctx" not in options
+
+
+def test_generate_text_with_context_window(mock_ollama_client):
+    """generate_text passes context_window_size to options."""
+    mock_ollama_client.chat.return_value = {"message": {"content": "Response"}}
+
+    client = OllamaClient()
+    client.generate_text("prompt", context_window_size=4096)
+
+    call_args = mock_ollama_client.chat.call_args
+    assert call_args.kwargs["options"]["num_ctx"] == 4096
+
+
+def test_chat_stream_with_context_window(mock_ollama_client):
+    """chat_stream passes context_window_size to options."""
+    mock_response = iter([])
+    mock_ollama_client.chat.return_value = mock_response
+
+    client = OllamaClient()
+    list(
+        client.chat_stream(
+            messages=[{"role": "user", "content": "test"}],
+            context_window_size=8192,
+        )
+    )
+
+    call_args = mock_ollama_client.chat.call_args
+    assert call_args.kwargs["options"]["num_ctx"] == 8192

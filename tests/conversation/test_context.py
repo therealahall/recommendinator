@@ -10,9 +10,12 @@ import pytest
 from src.conversation.context import (
     ContextAssembler,
     _extract_contributing_items,
+    _format_item_compact,
     _format_item_detail,
     _format_recommendation_brief,
+    _format_recommendation_brief_compact,
     build_user_context_block,
+    build_user_context_block_compact,
 )
 from src.conversation.memory import MemoryManager
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
@@ -1127,6 +1130,217 @@ class TestRAGBypassWithPipeline:
 
         # The key assertion: generate_embedding must NOT have been called
         mock_ollama.generate_embedding.assert_not_called()
+
+
+class TestCompactFormatting:
+    """Tests for compact formatting functions."""
+
+    def test_format_item_compact_basic(self) -> None:
+        """Compact item format includes type, title, author, rating."""
+        item = ContentItem(
+            title="The Martian",
+            author="Andy Weir",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+        )
+        result = _format_item_compact(item)
+
+        assert "[Book]" in result
+        assert "The Martian" in result
+        assert "Andy Weir" in result
+        assert "5/5" in result
+
+    def test_format_item_compact_no_genres_or_review(self) -> None:
+        """Compact format omits genres and review even when present."""
+        item = ContentItem(
+            title="Hades",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            review="Amazing roguelike",
+            metadata={"genres": ["roguelike", "action"]},
+        )
+        result = _format_item_compact(item)
+
+        assert "roguelike" not in result
+        assert "Amazing" not in result
+        assert "Hades" in result
+        assert "5/5" in result
+
+    def test_format_item_compact_minimal(self) -> None:
+        """Compact format with no author or rating."""
+        item = ContentItem(
+            title="Outer Wilds",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+        )
+        result = _format_item_compact(item)
+
+        assert result == "- [Video Game] Outer Wilds"
+
+    def test_format_recommendation_brief_compact(self) -> None:
+        """Compact brief includes title, match%, and short reasoning."""
+        brief = RecommendationBrief(
+            item=ContentItem(
+                title="Outer Wilds",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.UNREAD,
+            ),
+            score=0.87,
+            reasoning="Recommended because you liked Firewatch and Subnautica",
+            score_breakdown={"genre_match": 0.92},
+            contributing_items=[],
+            adaptations=[],
+        )
+        result = _format_recommendation_brief_compact(brief)
+
+        assert "Outer Wilds" in result
+        assert "87% match" in result
+        assert "Firewatch" in result
+        # Should NOT contain score breakdown
+        assert "genre_match" not in result
+        assert "92%" not in result
+
+    def test_format_recommendation_brief_compact_no_reasoning(self) -> None:
+        """Compact brief without reasoning is single line."""
+        brief = RecommendationBrief(
+            item=ContentItem(
+                title="Minimal",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            ),
+            score=0.5,
+            reasoning="",
+            score_breakdown={},
+            contributing_items=[],
+            adaptations=[],
+        )
+        result = _format_recommendation_brief_compact(brief)
+
+        assert "Minimal" in result
+        assert "50% match" in result
+        assert "\n" not in result
+
+
+class TestBuildUserContextBlockCompact:
+    """Tests for the compact user context block builder."""
+
+    def test_compact_block_limits_memories(self) -> None:
+        """Compact block caps memories at 5."""
+        memories = [
+            CoreMemory(
+                user_id=1,
+                memory_text=f"Memory {index}",
+                memory_type="user_stated",
+                source="conversation",
+            )
+            for index in range(10)
+        ]
+        context = ConversationContext(user_id=1, core_memories=memories)
+        block = build_user_context_block_compact(context)
+
+        # Should have exactly 5 memory lines
+        memory_lines = [
+            line for line in block.split("\n") if line.startswith("- Memory")
+        ]
+        assert len(memory_lines) == 5
+
+    def test_compact_block_limits_completed_items(self) -> None:
+        """Compact block caps completed items at 5."""
+        items = [
+            ContentItem(
+                title=f"Item {index}",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+            )
+            for index in range(10)
+        ]
+        context = ConversationContext(user_id=1, relevant_completed=items)
+        block = build_user_context_block_compact(context)
+
+        item_lines = [line for line in block.split("\n") if line.startswith("- [Book]")]
+        assert len(item_lines) == 5
+
+    def test_compact_block_limits_conversation_history(self) -> None:
+        """Compact block shows last 3 messages, truncated to 100 chars."""
+        messages = [
+            ConversationMessage(
+                user_id=1,
+                role="user" if index % 2 == 0 else "assistant",
+                content=f"Message {index} " + "A" * 200,
+            )
+            for index in range(6)
+        ]
+        context = ConversationContext(user_id=1, recent_messages=messages)
+        block = build_user_context_block_compact(context)
+
+        # Should have exactly 3 message lines
+        message_lines = [
+            line
+            for line in block.split("\n")
+            if line.startswith("User:") or line.startswith("You:")
+        ]
+        assert len(message_lines) == 3
+
+        # Messages should be truncated
+        assert "..." in block
+
+    def test_compact_block_uses_compact_section_headers(self) -> None:
+        """Compact block uses shorter section headers."""
+        context = ConversationContext(
+            user_id=1,
+            core_memories=[
+                CoreMemory(
+                    user_id=1,
+                    memory_text="Test",
+                    memory_type="user_stated",
+                    source="conversation",
+                )
+            ],
+            relevant_completed=[
+                ContentItem(
+                    title="Test Book",
+                    content_type=ContentType.BOOK,
+                    status=ConsumptionStatus.COMPLETED,
+                    rating=5,
+                )
+            ],
+        )
+        block = build_user_context_block_compact(context)
+
+        assert "## Preferences" in block
+        assert "## Completed" in block
+        # Should NOT use full-mode headers
+        assert "Key Preferences & Memories" not in block
+        assert "Recently Completed (High-Rated)" not in block
+
+    def test_compact_block_with_briefs_uses_compact_format(self) -> None:
+        """Compact block uses compact brief format."""
+        brief = RecommendationBrief(
+            item=ContentItem(
+                title="Test Game",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.UNREAD,
+            ),
+            score=0.85,
+            reasoning="great match",
+            score_breakdown={"genre_match": 0.9},
+            contributing_items=[],
+            adaptations=[],
+        )
+        context = ConversationContext(
+            user_id=1,
+            recommendation_briefs=[brief],
+            relevant_unconsumed=[brief.item],
+        )
+        block = build_user_context_block_compact(context)
+
+        assert "## Recommended (Pre-Scored)" in block
+        assert "85% match" in block
+        # Should NOT contain full-mode section header
+        assert "Recommended From Backlog" not in block
 
     def test_embedding_call_used_when_no_pipeline(
         self,
