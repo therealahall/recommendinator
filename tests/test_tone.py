@@ -10,7 +10,7 @@ class TestToneConstants:
     """Tests for the shared tone constants in src/llm/tone.py."""
 
     def test_advisor_identity_is_nonempty(self) -> None:
-        assert len(ADVISOR_IDENTITY) > 0
+        assert ADVISOR_IDENTITY
 
     def test_advisor_identity_has_domain_placeholder(self) -> None:
         assert "{domain}" in ADVISOR_IDENTITY
@@ -25,7 +25,7 @@ class TestToneConstants:
         assert "personal" in result
 
     def test_personality_traits_is_nonempty(self) -> None:
-        assert len(PERSONALITY_TRAITS) > 0
+        assert PERSONALITY_TRAITS
 
     def test_personality_traits_contains_hype_machine(self) -> None:
         assert "HYPE MACHINE" in PERSONALITY_TRAITS
@@ -37,7 +37,7 @@ class TestToneConstants:
         assert "tastemaker" in PERSONALITY_TRAITS
 
     def test_style_rules_is_nonempty(self) -> None:
-        assert len(STYLE_RULES) > 0
+        assert STYLE_RULES
 
     def test_style_rules_contains_bold_emphasis(self) -> None:
         assert "bold" in STYLE_RULES

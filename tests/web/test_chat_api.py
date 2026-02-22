@@ -7,11 +7,14 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from src.conversation.memory import MemoryManager
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.conversation import ConversationChunk
 from src.storage.manager import StorageManager
+from src.web.chat_api import router
 from src.web.state import app_state
 
 
@@ -51,11 +54,6 @@ def test_client(
     app_state["storage"] = storage_manager
     app_state["conversation_engine"] = mock_conversation_engine
     app_state["config"] = {"web": {"allowed_origins": ["*"]}}
-
-    # Import and create app after setting state
-    from fastapi import FastAPI
-
-    from src.web.chat_api import router
 
     app = FastAPI()
     app.include_router(router)
@@ -255,8 +253,6 @@ class TestChatHistoryEndpoint:
     ) -> None:
         """Test getting chat history."""
         # Add some messages
-        from src.conversation.memory import MemoryManager
-
         memory = MemoryManager(storage_manager)
         memory.save_conversation_message(user_id=1, role="user", content="Hello")
         memory.save_conversation_message(
@@ -277,8 +273,6 @@ class TestChatHistoryEndpoint:
         storage_manager: StorageManager,
     ) -> None:
         """Test chat history with limit parameter."""
-        from src.conversation.memory import MemoryManager
-
         memory = MemoryManager(storage_manager)
         for i in range(10):
             memory.save_conversation_message(
