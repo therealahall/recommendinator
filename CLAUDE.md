@@ -65,6 +65,10 @@ config/               # Configuration files (example.yaml for tests)
 
 **The codebase must always be in a clean state.** All four quality tools must pass at all times — not just before commits, but after every change. If pre-existing code has issues, fix them immediately. Never leave the codebase in a failing state.
 
+**Tests are NEVER skipped.** Do not use `--ignore`, `pytest.mark.skip`, `@pytest.skip`, or any other mechanism to skip or exclude tests. Every test in the suite must run and pass. If a test is slow, hanging, or broken, **fix the test** — do not work around it by skipping it.
+
+**Run `make check` after every material change.** Each source code change must leave all four quality checks passing before moving on to the next change. Documentation-only changes (README, CLAUDE.md, docs/) do not require re-running tests.
+
 ```bash
 python3.11 -m pytest          # All tests pass
 python3.11 -m black --check src/ tests/     # Formatting
