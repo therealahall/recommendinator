@@ -142,8 +142,9 @@ Like your favorite, this one goes deep on character development."""
         consumed_items=consumed,
     )
 
-    assert len(blurbs) >= 1
-    assert any(blurb["title"] == "Book A" for blurb in blurbs)
+    assert len(blurbs) == 2
+    assert blurbs[0]["title"] == "Book A"
+    assert blurbs[1]["title"] == "Book B"
 
 
 def test_generate_blurbs_empty_selection(mock_ollama_client):
@@ -157,3 +158,64 @@ def test_generate_blurbs_empty_selection(mock_ollama_client):
 
     assert blurbs == []
     mock_ollama_client.generate_text.assert_not_called()
+
+
+def test_generate_blurbs_unmatched_titles(mock_ollama_client):
+    """Test blurb generation when LLM returns titles that don't match selected items.
+
+    When the LLM hallucinates or returns titles that don't correspond to any
+    of the selected items, the parser still returns entries but with
+    ``item: None`` since no match can be found in the selected items list.
+    """
+    mock_response = """1. **Unknown Book** by Mystery Author
+This is a fascinating read you'll love.
+
+2. **Mystery Title** by Another Author
+Great themes that match your taste."""
+    mock_ollama_client.generate_text.return_value = mock_response
+
+    consumed = [
+        ContentItem(
+            id="1",
+            title="Favorite Book",
+            author="Author",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+        )
+    ]
+
+    selected = [
+        ContentItem(
+            id="2",
+            title="Book A",
+            author="Author A",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        ),
+        ContentItem(
+            id="3",
+            title="Book B",
+            author="Author B",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        ),
+    ]
+
+    generator = RecommendationGenerator(mock_ollama_client)
+    blurbs = generator.generate_blurbs(
+        content_type=ContentType.BOOK,
+        selected_items=selected,
+        consumed_items=consumed,
+    )
+
+    # The parser returns entries for each numbered item the LLM produced,
+    # but none match the selected items, so every entry has item=None.
+    assert len(blurbs) == 2
+    assert blurbs[0]["title"] == "Unknown Book"
+    assert blurbs[0]["item"] is None
+    assert blurbs[1]["title"] == "Mystery Title"
+    assert blurbs[1]["item"] is None
+
+    # Verify the LLM was still called with the prompt
+    mock_ollama_client.generate_text.assert_called_once()

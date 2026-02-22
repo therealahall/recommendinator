@@ -398,6 +398,58 @@ class TestBuildConfirmationMessage:
         assert "roguelikes" in message
 
 
+class TestRatingBoundaryEdgeCases:
+    """Tests for rating boundary values and degenerate input."""
+
+    def test_rating_zero_rejected(
+        self,
+        tool_executor: ToolExecutor,
+        sample_items: list[int],
+    ) -> None:
+        """Rating 0 should not be accepted — falls back to conversation.
+
+        The regex captures the digit 0, but validation rejects it because
+        the valid range is 1 <= rating <= 5.
+        """
+        result = detect_intent("rate Dune 0/5", user_id=1, tool_executor=tool_executor)
+
+        assert result.intent_type == "conversation"
+
+    def test_rating_six_rejected(
+        self,
+        tool_executor: ToolExecutor,
+        sample_items: list[int],
+    ) -> None:
+        """Rating 6 should not be accepted — falls back to conversation.
+
+        The regex captures the digit 6, but validation rejects it because
+        the valid range is 1 <= rating <= 5.
+        """
+        result = detect_intent("rate Dune 6/5", user_id=1, tool_executor=tool_executor)
+
+        assert result.intent_type == "conversation"
+
+    def test_empty_string_message(
+        self,
+        tool_executor: ToolExecutor,
+        sample_items: list[int],
+    ) -> None:
+        """Empty string message should fall back to conversation."""
+        result = detect_intent("", user_id=1, tool_executor=tool_executor)
+
+        assert result.intent_type == "conversation"
+
+    def test_whitespace_only_message(
+        self,
+        tool_executor: ToolExecutor,
+        sample_items: list[int],
+    ) -> None:
+        """Whitespace-only message should fall back to conversation."""
+        result = detect_intent("   \t\n  ", user_id=1, tool_executor=tool_executor)
+
+        assert result.intent_type == "conversation"
+
+
 class TestIntentResult:
     """Tests for IntentResult dataclass."""
 

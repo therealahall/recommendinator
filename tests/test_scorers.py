@@ -462,6 +462,42 @@ class TestSeriesOrderScorer:
         scorer = SeriesOrderScorer()
         assert scorer.score(candidate, context) == 0.3
 
+    def test_candidate_at_max_consumed_scores_low(self) -> None:
+        """Candidate at the same position as max consumed should score 0.2.
+
+        When the user has consumed item #3, a candidate that is also #3
+        is already consumed (or a duplicate) and should be deprioritized.
+        """
+        consumed = [
+            _make_item(title="Mistborn (Mistborn, #1)", rating=5),
+            _make_item(title="Mistborn (Mistborn, #2)", rating=4),
+            _make_item(title="Mistborn (Mistborn, #3)", rating=4),
+        ]
+        context = _build_context(consumed=consumed)
+        candidate = _make_item(
+            title="Mistborn (Mistborn, #3)", status=ConsumptionStatus.UNREAD
+        )
+        scorer = SeriesOrderScorer()
+        assert scorer.score(candidate, context) == 0.2
+
+    def test_candidate_below_max_consumed_scores_low(self) -> None:
+        """Candidate earlier than max consumed should score 0.2.
+
+        When the user has consumed items {1, 3}, a candidate at #2
+        is earlier than the max consumed and should be deprioritized
+        (the user has already moved past it in the series).
+        """
+        consumed = [
+            _make_item(title="Mistborn (Mistborn, #1)", rating=5),
+            _make_item(title="Mistborn (Mistborn, #3)", rating=4),
+        ]
+        context = _build_context(consumed=consumed)
+        candidate = _make_item(
+            title="Mistborn (Mistborn, #2)", status=ConsumptionStatus.UNREAD
+        )
+        scorer = SeriesOrderScorer()
+        assert scorer.score(candidate, context) == 0.2
+
     def test_non_series_neutral(self) -> None:
         context = _build_context(consumed=[])
         candidate = _make_item(
