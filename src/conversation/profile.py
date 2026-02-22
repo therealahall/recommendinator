@@ -272,7 +272,7 @@ class ProfileGenerator:
             if len(ratings) >= MIN_ITEMS_PER_GENRE:
                 affinities[genre] = round(sum(ratings) / len(ratings), 2)
 
-        return dict(sorted(affinities.items(), key=lambda x: x[1], reverse=True))
+        return dict(sorted(affinities.items(), key=lambda pair: pair[1], reverse=True))
 
     def _identify_theme_preferences(self, items: list[ContentItem]) -> list[str]:
         """Identify theme preferences from high-rated content.
@@ -302,7 +302,7 @@ class ProfileGenerator:
         ]
 
         # Sort by count descending, take top 10
-        preferences.sort(key=lambda x: theme_counts[x], reverse=True)
+        preferences.sort(key=lambda theme: theme_counts[theme], reverse=True)
         return preferences[:10]
 
     def _identify_anti_preferences(
@@ -348,7 +348,7 @@ class ProfileGenerator:
                 anti_prefs[genre] = average_rating
 
         # Sort by average rating ascending (worst first), take top 10
-        sorted_anti = sorted(anti_prefs.items(), key=lambda x: x[1])
+        sorted_anti = sorted(anti_prefs.items(), key=lambda pair: pair[1])
         return [genre for genre, _average in sorted_anti[:10]]
 
     def _identify_cross_media_patterns(
@@ -516,7 +516,9 @@ class ProfileGenerator:
             return patterns
 
         # Find the highest and lowest rated types
-        sorted_types = sorted(type_ratings.items(), key=lambda x: x[1], reverse=True)
+        sorted_types = sorted(
+            type_ratings.items(), key=lambda pair: pair[1], reverse=True
+        )
 
         highest_type, highest_rating = sorted_types[0]
         lowest_type, lowest_rating = sorted_types[-1]

@@ -140,7 +140,7 @@ class RecommendationRanker:
             scored_items.append((item, final_score, metadata))
 
         # Sort by final score (descending)
-        scored_items.sort(key=lambda x: x[1], reverse=True)
+        scored_items.sort(key=lambda entry: entry[1], reverse=True)
 
         return scored_items
 
