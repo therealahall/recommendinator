@@ -72,7 +72,7 @@ class TestEnrichmentStart:
                     mock_llm.return_value = (None, MagicMock(), MagicMock())
                     with patch("src.cli.main.create_recommendation_engine"):
                         with patch(
-                            "src.enrichment.manager.EnrichmentManager"
+                            "src.cli.commands.EnrichmentManager"
                         ) as mock_manager_cls:
                             mock_manager = MagicMock()
                             mock_manager.start_enrichment.return_value = True
@@ -108,7 +108,7 @@ class TestEnrichmentStart:
                     mock_llm.return_value = (None, MagicMock(), MagicMock())
                     with patch("src.cli.main.create_recommendation_engine"):
                         with patch(
-                            "src.enrichment.manager.EnrichmentManager"
+                            "src.cli.commands.EnrichmentManager"
                         ) as mock_manager_cls:
                             mock_manager = MagicMock()
                             mock_manager.start_enrichment.return_value = True
@@ -133,7 +133,7 @@ class TestEnrichmentStart:
                     mock_llm.return_value = (None, MagicMock(), MagicMock())
                     with patch("src.cli.main.create_recommendation_engine"):
                         with patch(
-                            "src.enrichment.manager.EnrichmentManager"
+                            "src.cli.commands.EnrichmentManager"
                         ) as mock_manager_cls:
                             mock_manager = MagicMock()
                             mock_manager.start_enrichment.return_value = False

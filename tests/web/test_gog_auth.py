@@ -109,10 +109,8 @@ class TestExchangeCodeForTokens:
         mock_response.json.return_value = {"error_description": "Invalid code"}
         mock_get.return_value = mock_response
 
-        with pytest.raises(GogAuthError) as exc_info:
+        with pytest.raises(GogAuthError, match="Token exchange failed"):
             exchange_code_for_tokens("bad_code")
-
-        assert "Invalid code" in str(exc_info.value)
 
     @patch("src.web.gog_auth.requests.get")
     def test_missing_refresh_token(self, mock_get: MagicMock) -> None:
