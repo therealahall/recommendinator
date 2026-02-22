@@ -139,9 +139,12 @@ inputs:
 
 # Web interface configuration
 web:
-  host: "0.0.0.0"  # Listen on all interfaces (for internal network access)
+  # SECURITY: "127.0.0.1" binds to localhost only (recommended).
+  # Change to "0.0.0.0" to allow LAN access — but note there is NO authentication,
+  # so anyone on your network can view/modify your data.
+  host: "127.0.0.1"
   port: 18473  # Non-standard port to avoid collisions with other services
-  debug: true  # Enable auto-reload on file changes (set to false for production)
+  debug: false  # Set to true for development (enables auto-reload on file changes)
   # UI theme — set the default theme for the web interface.
   # Available themes are in src/web/static/themes/ (e.g., "nord", "snowstorm").
   # Users can override this per-browser via the theme switcher in the sidebar.

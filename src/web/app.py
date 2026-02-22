@@ -18,6 +18,7 @@ from src.cli.config import (
     resolve_config_path,
 )
 from src.conversation.engine import create_conversation_engine
+from src.web.api import APP_VERSION
 from src.web.api import router as api_router
 from src.web.chat_api import router as chat_router
 from src.web.state import app_state
@@ -108,7 +109,7 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         try:
             actual_config_path = resolve_config_path(config_path)
         except FileNotFoundError:
-            actual_config_path = config_path or Path("config/config.yaml")
+            actual_config_path = config_path or Path("config/example.yaml")
 
         # Store in app state
         app_state["config"] = config
@@ -140,7 +141,7 @@ def create_app(config_path: Path | None = None) -> FastAPI:
     app = FastAPI(
         title="Personal Recommendations API",
         description="API for personalized content recommendations",
-        version="1.0.0",
+        version=APP_VERSION,
     )
 
     # Configure CORS (default to localhost only)

@@ -47,6 +47,8 @@ from src.web.sync_sources import (
 
 logger = logging.getLogger(__name__)
 
+APP_VERSION = "1.0.0"
+
 router = APIRouter(prefix="/api", tags=["api"])
 
 
@@ -57,10 +59,10 @@ class CompletionRequest(BaseModel):
     content_type: str = Field(
         ..., description="Content type (book, movie, tv_show, video_game)"
     )
-    title: str = Field(..., description="Title of the content")
-    author: str | None = Field(None, description="Author (for books)")
+    title: str = Field(..., max_length=500, description="Title of the content")
+    author: str | None = Field(None, max_length=500, description="Author (for books)")
     rating: int | None = Field(None, ge=1, le=5, description="Rating (1-5)")
-    review: str | None = Field(None, description="Review text")
+    review: str | None = Field(None, max_length=10000, description="Review text")
 
 
 class UpdateRequest(BaseModel):
@@ -189,7 +191,7 @@ class ItemEditRequest(BaseModel):
 
     status: str = Field(..., description="Status value")
     rating: int | None = Field(None, ge=1, le=5)
-    review: str | None = Field(None)
+    review: str | None = Field(None, max_length=10000)
     seasons_watched: list[int] | None = Field(None)
 
 
@@ -222,7 +224,9 @@ class GogExchangeRequest(BaseModel):
     """Request model for GOG token exchange."""
 
     code_or_url: str = Field(
-        ..., description="Authorization code or full redirect URL from GOG"
+        ...,
+        max_length=2000,
+        description="Authorization code or full redirect URL from GOG",
     )
 
 
@@ -588,7 +592,7 @@ async def export_items(
     return Response(
         content=content,
         media_type=media_type,
-        headers={"Content-Disposition": f"attachment; filename={filename}"},
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
@@ -793,10 +797,6 @@ async def mark_complete(request: CompletionRequest) -> dict[str, Any]:
             status_code=400, detail=f"Invalid content type: {request.content_type}"
         ) from None
 
-    # Validate rating
-    if request.rating is not None and (request.rating < 1 or request.rating > 5):
-        raise HTTPException(status_code=400, detail="Rating must be between 1 and 5")
-
     # Create content item
     item = ContentItem(
         id=None,
@@ -997,7 +997,7 @@ async def get_status() -> StatusResponse:
 
     return StatusResponse(
         status="ready" if all_ready else "initializing",
-        version="1.0.0",
+        version=APP_VERSION,
         components=components,
         features=features,
     )
@@ -1247,7 +1247,7 @@ async def reset_enrichment(
 # Theme endpoints
 # ---------------------------------------------------------------------------
 
-THEMES_DIR = Path("src/web/static/themes")
+THEMES_DIR = Path(__file__).resolve().parent / "static" / "themes"
 
 
 @router.get("/themes", response_model=list[ThemeResponse])
