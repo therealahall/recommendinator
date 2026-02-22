@@ -31,6 +31,12 @@ When you enable AI with a local Ollama instance:
 - **LLM reasoning** — Natural language explanations for recommendations
 - **Smart rule interpretation** — LLM understands complex preference rules
 
+## Security Notice
+
+This is a **personal, single-user tool** designed to run on your own machine. It has **no authentication or authorization** on any endpoint. By default it binds to `127.0.0.1` (localhost only).
+
+If you change the host to `0.0.0.0` to allow LAN access, **anyone on your network can view and modify your data**. Do not expose this application to the public internet.
+
 ## Quick Start
 
 ### Option 1: Local Installation
