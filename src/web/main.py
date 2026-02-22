@@ -2,11 +2,13 @@
 
 import argparse
 import logging
+import os
 import socket
 from pathlib import Path
 
 import uvicorn
 
+from src.cli.config import load_config
 from src.web.app import create_app
 
 logger = logging.getLogger(__name__)
@@ -76,8 +78,6 @@ def main() -> None:
     config_path = args.config
 
     # Load config first to get web settings
-    from src.cli.config import load_config
-
     try:
         config = load_config(config_path)
     except FileNotFoundError:
@@ -111,8 +111,6 @@ def main() -> None:
     # When reload is enabled, uvicorn requires an import string instead of app object
     if debug_mode:
         # Set config path in environment for the imported app to use
-        import os
-
         if config_path:
             os.environ["CONFIG_PATH"] = str(config_path.resolve())
         # Use import string format for reload support

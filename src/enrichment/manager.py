@@ -4,16 +4,22 @@ The EnrichmentManager coordinates the enrichment process, running providers
 in a background thread to fill gaps in content metadata.
 """
 
+from __future__ import annotations
+
+import json
 import logging
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from src.enrichment.provider_base import EnrichmentResult, ProviderError
 from src.enrichment.rate_limiter import RateLimiter
 from src.enrichment.registry import EnrichmentRegistry, get_enrichment_registry
 from src.models.content import ContentItem, ContentType, get_enum_value
+
+if TYPE_CHECKING:
+    from src.storage.manager import StorageManager
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +101,7 @@ class EnrichmentManager:
 
     def __init__(
         self,
-        storage_manager: Any,
+        storage_manager: StorageManager,
         config: dict[str, Any],
         registry: EnrichmentRegistry | None = None,
     ) -> None:
@@ -486,8 +492,6 @@ def merge_enrichment(
     if result.genres:
         existing_genres = merged.get("genres", []) or []
         if isinstance(existing_genres, str):
-            import json
-
             try:
                 existing_genres = json.loads(existing_genres)
             except (json.JSONDecodeError, TypeError):
@@ -502,8 +506,6 @@ def merge_enrichment(
     if result.tags:
         existing_tags = merged.get("tags", []) or []
         if isinstance(existing_tags, str):
-            import json
-
             try:
                 existing_tags = json.loads(existing_tags)
             except (json.JSONDecodeError, TypeError):

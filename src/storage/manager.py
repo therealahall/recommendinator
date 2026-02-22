@@ -1,7 +1,9 @@
 """Unified storage manager for SQLite and optionally ChromaDB."""
 
+from __future__ import annotations
+
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from src.ingestion.conflict import ConflictStrategy, resolve_conflict
 from src.models.content import (
@@ -36,6 +38,9 @@ from src.storage.schema import (
 )
 from src.storage.sqlite_db import SQLiteDB
 
+if TYPE_CHECKING:
+    from src.storage.vector_db import VectorDB
+
 
 class StorageManager:
     """Unified storage manager for SQLite and optionally ChromaDB.
@@ -64,12 +69,14 @@ class StorageManager:
             source_priority: Ordered list of source names (highest priority first)
         """
         self.sqlite_db = SQLiteDB(sqlite_path)
-        self.vector_db = None
+        self.vector_db: VectorDB | None = None
         self.ai_enabled = ai_enabled
         self.conflict_strategy = conflict_strategy
         self.source_priority = source_priority or []
 
-        # Only initialize vector DB if AI is enabled and path provided
+        # Only initialize vector DB if AI is enabled and path provided.
+        # Deferred import: chromadb is heavy (~500MB+) and should not load
+        # when AI features are disabled.
         if ai_enabled and vector_db_path:
             from src.storage.vector_db import VectorDB
 

@@ -21,6 +21,11 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING
 
+from src.llm.preference_prompts import (
+    PREFERENCE_INTERPRETATION_SYSTEM_PROMPT,
+    build_batch_interpretation_prompt,
+)
+
 if TYPE_CHECKING:
     from src.llm.client import OllamaClient
     from src.storage.manager import StorageManager
@@ -725,11 +730,6 @@ class LLMPreferenceInterpreter:
 
         # Try LLM interpretation
         try:
-            from src.llm.preference_prompts import (
-                PREFERENCE_INTERPRETATION_SYSTEM_PROMPT,
-                build_batch_interpretation_prompt,
-            )
-
             prompt = build_batch_interpretation_prompt(rules)
             response = self.client.generate_text(
                 prompt=prompt,

@@ -1,15 +1,20 @@
 """CLI commands."""
 
 import json
+import time
 
 import click
 from tabulate import tabulate
 
 from src.cli.config import get_feature_flags
-from src.ingestion.plugin_base import SourceError
+from src.enrichment.manager import EnrichmentManager
 from src.ingestion.sync import execute_sync
-from src.models.content import ConsumptionStatus, ContentType
+from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.user_preferences import UserPreferenceConfig
+from src.recommendations.preference_interpreter import (
+    LLMPreferenceInterpreter,
+    PatternBasedInterpreter,
+)
 from src.recommendations.scorers import SCORER_NAME_MAP
 from src.web.sync_sources import resolve_inputs, validate_source_config
 
@@ -247,11 +252,6 @@ def update(ctx: click.Context, source: str) -> None:
 
                 total_count += result.items_synced
 
-            except SourceError as error:
-                click.echo(
-                    f"  Error syncing {resolved_entry.plugin.display_name}: {error}",
-                    err=True,
-                )
             except Exception as error:
                 click.echo(
                     f"  Error syncing {resolved_entry.plugin.display_name}: {error}",
@@ -296,8 +296,6 @@ def complete(
     review: str | None,
 ) -> None:
     """Mark content as completed."""
-    from src.models.content import ContentItem
-
     content_type = ContentType.from_string(content_type_str)
 
     storage = ctx.obj["storage"]
@@ -603,8 +601,6 @@ def custom_rules_interpret(ctx: click.Context, rule_text: str, use_llm: bool) ->
 
     This command shows how the system would interpret a rule without saving it.
     """
-    from src.recommendations.preference_interpreter import PatternBasedInterpreter
-
     if use_llm:
         # Check if LLM is available
         llm_client = ctx.obj.get("llm_client")
@@ -616,8 +612,6 @@ def custom_rules_interpret(ctx: click.Context, rule_text: str, use_llm: bool) ->
             use_llm = False
 
     if use_llm:
-        from src.recommendations.preference_interpreter import LLMPreferenceInterpreter
-
         llm_client = ctx.obj["llm_client"]
         storage = ctx.obj["storage"]
         llm_interpreter = LLMPreferenceInterpreter(
@@ -697,8 +691,6 @@ def enrichment_start(
     Enriches content items with genres, tags, and descriptions from
     external APIs (TMDB, OpenLibrary, RAWG).
     """
-    from src.enrichment.manager import EnrichmentManager
-
     storage = ctx.obj["storage"]
     config = ctx.obj["config"]
 
@@ -727,8 +719,6 @@ def enrichment_start(
     click.echo(f"Started enrichment for {type_desc}...")
 
     # Poll for completion
-    import time
-
     try:
         while True:
             status = manager.get_status()

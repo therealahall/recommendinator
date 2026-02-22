@@ -17,6 +17,7 @@ from src.models.content import (
 )
 from src.storage.schema import create_schema, get_default_user_id
 from src.utils.list_merge import merge_string_lists
+from src.utils.sorting import get_sort_title
 
 # Status ordering for forward-only progression.
 # A status can only be overwritten by a status later in this sequence.
@@ -25,6 +26,34 @@ _STATUS_ORDER: dict[str, int] = {
     "currently_consuming": 1,
     "completed": 2,
 }
+
+# Shared SELECT query for content items with all detail joins.
+# Used by get_content_item_by_id and get_content_items.
+_CONTENT_ITEM_SELECT = """
+    SELECT ci.*,
+           bd.author as book_author, bd.pages, bd.isbn, bd.isbn13,
+           bd.publisher, bd.year_published as book_year,
+           bd.genres as book_genres, bd.tags as book_tags,
+           bd.description as book_description, bd.metadata as book_metadata,
+           md.director, md.runtime, md.release_year as movie_year,
+           md.genres as movie_genres, md.studio,
+           md.tags as movie_tags, md.description as movie_description,
+           md.metadata as movie_metadata,
+           td.creators, td.seasons, td.episodes, td.network,
+           td.release_year as tv_year, td.genres as tv_genres,
+           td.tags as tv_tags, td.description as tv_description,
+           td.metadata as tv_metadata,
+           vgd.developer, vgd.publisher as game_publisher,
+           vgd.platforms, vgd.genres as game_genres,
+           vgd.release_year as game_year,
+           vgd.tags as game_tags, vgd.description as game_description,
+           vgd.metadata as game_metadata
+    FROM content_items ci
+    LEFT JOIN book_details bd ON ci.id = bd.content_item_id
+    LEFT JOIN movie_details md ON ci.id = md.content_item_id
+    LEFT JOIN tv_show_details td ON ci.id = td.content_item_id
+    LEFT JOIN video_game_details vgd ON ci.id = vgd.content_item_id
+"""
 
 
 def _resolve_status_forward(existing_status: str | None, incoming_status: str) -> str:
@@ -724,32 +753,7 @@ class SQLiteDB:
         """
         with self.connection() as conn:
             cursor = conn.cursor()
-            query = """
-                SELECT ci.*,
-                       bd.author as book_author, bd.pages, bd.isbn, bd.isbn13,
-                       bd.publisher, bd.year_published as book_year,
-                       bd.genres as book_genres, bd.tags as book_tags,
-                       bd.description as book_description, bd.metadata as book_metadata,
-                       md.director, md.runtime, md.release_year as movie_year,
-                       md.genres as movie_genres, md.studio,
-                       md.tags as movie_tags, md.description as movie_description,
-                       md.metadata as movie_metadata,
-                       td.creators, td.seasons, td.episodes, td.network,
-                       td.release_year as tv_year, td.genres as tv_genres,
-                       td.tags as tv_tags, td.description as tv_description,
-                       td.metadata as tv_metadata,
-                       vgd.developer, vgd.publisher as game_publisher,
-                       vgd.platforms, vgd.genres as game_genres,
-                       vgd.release_year as game_year,
-                       vgd.tags as game_tags, vgd.description as game_description,
-                       vgd.metadata as game_metadata
-                FROM content_items ci
-                LEFT JOIN book_details bd ON ci.id = bd.content_item_id
-                LEFT JOIN movie_details md ON ci.id = md.content_item_id
-                LEFT JOIN tv_show_details td ON ci.id = td.content_item_id
-                LEFT JOIN video_game_details vgd ON ci.id = vgd.content_item_id
-                WHERE ci.id = ?
-            """
+            query = _CONTENT_ITEM_SELECT + " WHERE ci.id = ?"
             params: list[Any] = [db_id]
 
             if user_id is not None:
@@ -795,32 +799,7 @@ class SQLiteDB:
 
         with self.connection() as conn:
             cursor = conn.cursor()
-            query = """
-                SELECT ci.*,
-                       bd.author as book_author, bd.pages, bd.isbn, bd.isbn13,
-                       bd.publisher, bd.year_published as book_year,
-                       bd.genres as book_genres, bd.tags as book_tags,
-                       bd.description as book_description, bd.metadata as book_metadata,
-                       md.director, md.runtime, md.release_year as movie_year,
-                       md.genres as movie_genres, md.studio,
-                       md.tags as movie_tags, md.description as movie_description,
-                       md.metadata as movie_metadata,
-                       td.creators, td.seasons, td.episodes, td.network,
-                       td.release_year as tv_year, td.genres as tv_genres,
-                       td.tags as tv_tags, td.description as tv_description,
-                       td.metadata as tv_metadata,
-                       vgd.developer, vgd.publisher as game_publisher,
-                       vgd.platforms, vgd.genres as game_genres,
-                       vgd.release_year as game_year,
-                       vgd.tags as game_tags, vgd.description as game_description,
-                       vgd.metadata as game_metadata
-                FROM content_items ci
-                LEFT JOIN book_details bd ON ci.id = bd.content_item_id
-                LEFT JOIN movie_details md ON ci.id = md.content_item_id
-                LEFT JOIN tv_show_details td ON ci.id = td.content_item_id
-                LEFT JOIN video_game_details vgd ON ci.id = vgd.content_item_id
-                WHERE ci.user_id = ?
-            """
+            query = _CONTENT_ITEM_SELECT + " WHERE ci.user_id = ?"
             params: list[Any] = [effective_user_id]
 
             if content_type:
@@ -865,8 +844,6 @@ class SQLiteDB:
 
             # Apply title sorting in Python (ignoring articles)
             if sort_by == "title":
-                from src.utils.sorting import get_sort_title
-
                 items.sort(key=lambda item: get_sort_title(item.title))
                 # Apply offset and limit after sorting
                 if offset > 0:

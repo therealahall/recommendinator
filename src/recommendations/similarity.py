@@ -2,6 +2,8 @@
 
 import logging
 
+import numpy as np
+
 from src.llm.embeddings import EmbeddingGenerator
 from src.models.content import ContentItem, ContentType
 from src.storage.manager import StorageManager
@@ -30,6 +32,7 @@ class SimilarityMatcher:
         content_type: ContentType | None = None,
         exclude_ids: list[str] | None = None,
         limit: int = 20,
+        user_id: int | None = None,
     ) -> list[tuple[ContentItem, float]]:
         """Find items similar to reference items.
 
@@ -38,6 +41,7 @@ class SimilarityMatcher:
             content_type: Optional filter by content type
             exclude_ids: Optional list of IDs to exclude
             limit: Maximum number of results
+            user_id: User ID to scope item lookup (defaults to default user)
 
         Returns:
             List of (ContentItem, similarity_score) tuples, sorted by score
@@ -77,8 +81,6 @@ class SimilarityMatcher:
             return []
 
         # Use average of reference embeddings as query
-        import numpy as np
-
         embeddings_array = np.array(reference_embeddings)
         query_embedding = np.mean(embeddings_array, axis=0).tolist()
 
@@ -113,7 +115,9 @@ class SimilarityMatcher:
 
             # Build a lookup dictionary for efficient item retrieval
             # Get all items of this content type and index by external_id
-            all_items = self.storage.get_content_items(content_type=content_type)
+            all_items = self.storage.get_content_items(
+                user_id=user_id, content_type=content_type
+            )
             items_by_id = {item.id: item for item in all_items if item.id}
 
             for result in similar_results:

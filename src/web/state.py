@@ -6,6 +6,8 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from src.cli.config import load_config
+
 if TYPE_CHECKING:
     from src.conversation.engine import ConversationEngine
     from src.llm.client import OllamaClient
@@ -63,8 +65,6 @@ def reload_config() -> bool:
     Returns:
         True if config was reloaded successfully, False otherwise.
     """
-    from src.cli.config import load_config
-
     config_path = app_state.get("config_path")
     if not config_path:
         logger.warning("Cannot reload config: no config path stored")
