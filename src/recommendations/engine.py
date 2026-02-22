@@ -211,10 +211,8 @@ class RecommendationEngine:
         # so that inject_seasons_watched_tracking can use the show-level items
         series_tracking = build_series_tracking(consumed_items_of_type)
 
-        # -----------------------------------------------------------------
         # Expand TV shows to season-level for granular recommendations
         # (library stays show-level; expansion is for scoring only)
-        # -----------------------------------------------------------------
         if content_type == ContentType.TV_SHOW:
             series_tracking = inject_seasons_watched_tracking(
                 unconsumed_items, series_tracking
@@ -225,9 +223,7 @@ class RecommendationEngine:
                 len(unconsumed_items),
             )
 
-        # -----------------------------------------------------------------
         # Interpret custom rules (if present)
-        # -----------------------------------------------------------------
         interpreted_prefs: InterpretedPreference | None = None
         if user_preference_config is not None and user_preference_config.custom_rules:
             interpreter = PatternBasedInterpreter()
@@ -271,48 +267,12 @@ class RecommendationEngine:
             content_type.value,
         )
 
-        # -----------------------------------------------------------------
         # Pre-compute similarity scores (AI path)
-        # -----------------------------------------------------------------
-        similarity_scores: dict[str | None, float] = {}
-        if self.similarity_matcher is not None:
-            rated_items = [
-                item for item in all_consumed_items if item.rating is not None
-            ]
-            rated_items.sort(key=lambda item: item.rating or 0, reverse=True)
+        similarity_scores = self._compute_similarity_scores(
+            all_consumed_items, content_type, count
+        )
 
-            high_rated_refs = [
-                item
-                for item in rated_items
-                if item.rating is not None and item.rating >= 4
-            ][:5]
-            low_rated_refs = [
-                item
-                for item in rated_items
-                if item.rating is not None and item.rating < 3
-            ][:3]
-
-            reference_items = high_rated_refs + low_rated_refs
-            if not reference_items:
-                reference_items = all_consumed_items[:5]
-
-            exclude_ids = [item.id for item in all_consumed_items if item.id]
-
-            similar_candidates = self.similarity_matcher.find_similar(
-                reference_items=reference_items,
-                content_type=content_type,
-                exclude_ids=exclude_ids,
-                limit=count * 3,
-            )
-
-            if similar_candidates:
-                similarity_scores = {
-                    item.id: sim_score for item, sim_score in similar_candidates
-                }
-
-        # -----------------------------------------------------------------
         # Score all unconsumed candidates via the pipeline (always runs)
-        # -----------------------------------------------------------------
         content_length_preferences: dict[str, str] = {}
         if user_preference_config is not None:
             content_length_preferences = (
@@ -354,83 +314,212 @@ class RecommendationEngine:
         # Take top count*3 from pipeline for further processing
         top_candidates: list[ScoredCandidate] = pipeline_scored[: count * 3]
 
-        # -----------------------------------------------------------------
         # Filter / substitute candidates based on series rules (when enabled)
-        # -----------------------------------------------------------------
         apply_series_rules = (
             user_preference_config is None or user_preference_config.series_in_order
         )
 
         if apply_series_rules:
-            # Build a lookup of all scored candidates by item ID so that a
-            # substitute's own pipeline score can be reused.
-            scored_by_id: dict[str | None, ScoredCandidate] = {
-                scored.item.id: scored for scored in pipeline_scored
-            }
-            # Track which series have already been substituted to avoid
-            # duplicate substitutions (e.g., two FF entries in top_candidates
-            # should produce only one substitution).
-            substituted_series: set[str] = set()
-            # Track item IDs already in the filtered list to avoid duplicates.
-            seen_ids: set[str | None] = set()
-
-            filtered_candidates: list[ScoredCandidate] = []
-            for scored_candidate in top_candidates:
-                if should_recommend_item(
-                    scored_candidate.item,
-                    series_tracking,
-                    unconsumed_items=unconsumed_items,
-                ):
-                    if scored_candidate.item.id not in seen_ids:
-                        filtered_candidates.append(scored_candidate)
-                        seen_ids.add(scored_candidate.item.id)
-                else:
-                    # Attempt to substitute with the earliest recommendable
-                    # entry from the same series.
-                    series_info = extract_series_info(
-                        scored_candidate.item.title,
-                        scored_candidate.item.metadata,
-                        scored_candidate.item.content_type,
-                    )
-                    if series_info:
-                        candidate_series_name = series_info[0]
-                        if candidate_series_name not in substituted_series:
-                            substitute = find_earliest_recommendable(
-                                candidate_series_name,
-                                series_tracking,
-                                unconsumed_items,
-                            )
-                            if substitute is not None and substitute.id not in seen_ids:
-                                # Use the substitute's own pipeline score
-                                substitute_scored = scored_by_id.get(substitute.id)
-                                if substitute_scored is not None:
-                                    filtered_candidates.append(substitute_scored)
-                                    seen_ids.add(substitute.id)
-                                    logger.debug(
-                                        "Substituted %s with %s (earliest in %s)",
-                                        scored_candidate.item.title,
-                                        substitute.title,
-                                        candidate_series_name,
-                                    )
-                            substituted_series.add(candidate_series_name)
-                    else:
-                        logger.debug(
-                            "Filtered out %s - doesn't meet series recommendation rules",
-                            scored_candidate.item.title,
-                        )
-
-            if not filtered_candidates:
-                logger.warning(
-                    "Series filtering removed all candidates, using original candidates"
-                )
-                filtered_candidates = top_candidates
+            filtered_candidates = self._apply_series_filtering(
+                top_candidates, pipeline_scored, series_tracking, unconsumed_items
+            )
         else:
             logger.info("Series ordering disabled by user preference")
             filtered_candidates = top_candidates
 
-        # -----------------------------------------------------------------
         # Detect adaptations & find contributing reference items
-        # -----------------------------------------------------------------
+        candidate_metadata, adaptations_map = self._build_candidate_metadata(
+            filtered_candidates, all_consumed_items
+        )
+
+        # Rank (adaptation bonus, series bonus, preference adjustments)
+        breakdown_by_id: dict[str | None, dict[str, float]] = {
+            meta["item"].id: meta["score_breakdown"] for meta in candidate_metadata
+        }
+
+        ranker = self._configure_ranker(user_preference_config)
+        ranked_items = ranker.rank(
+            candidates=[
+                (meta["item"], meta["similarity_score"]) for meta in candidate_metadata
+            ],
+            preferences=preferences,
+            content_type=content_type,
+            adaptations_map=adaptations_map,
+            recently_completed=consumed_items_of_type,
+        )
+
+        top_recommendations = ranked_items[:count]
+
+        # Format recommendations
+        recommendations = self._format_recommendations(
+            top_recommendations, candidate_metadata, breakdown_by_id, preferences
+        )
+
+        # Optionally enhance with LLM reasoning
+        if use_llm:
+            self._enhance_with_llm(
+                recommendations,
+                content_type,
+                all_consumed_items,
+                unconsumed_items,
+                count,
+                series_tracking,
+            )
+
+        # Final fallback
+        if not recommendations and unconsumed_items:
+            logger.info("Using fallback: returning unconsumed items as recommendations")
+            recommendations = self._build_fallback_recommendations(
+                unconsumed_items, series_tracking, count
+            )
+
+        return recommendations
+
+    # ------------------------------------------------------------------
+    # Extracted steps from generate_recommendations
+    # ------------------------------------------------------------------
+
+    def _compute_similarity_scores(
+        self,
+        all_consumed_items: list[ContentItem],
+        content_type: ContentType,
+        count: int,
+    ) -> dict[str | None, float]:
+        """Pre-compute vector-similarity scores for candidate items.
+
+        Selects reference items from highly-rated and low-rated consumed
+        content, then searches for similar unconsumed items via embeddings.
+
+        Args:
+            all_consumed_items: All consumed items across content types.
+            content_type: Target content type for recommendations.
+            count: Requested recommendation count (influences search breadth).
+
+        Returns:
+            Mapping of item ID to similarity score. Empty when AI is disabled.
+        """
+        if self.similarity_matcher is None:
+            return {}
+
+        rated_items = [item for item in all_consumed_items if item.rating is not None]
+        rated_items.sort(key=lambda item: item.rating or 0, reverse=True)
+
+        high_rated_refs = [
+            item for item in rated_items if item.rating is not None and item.rating >= 4
+        ][:5]
+        low_rated_refs = [
+            item for item in rated_items if item.rating is not None and item.rating < 3
+        ][:3]
+
+        reference_items = high_rated_refs + low_rated_refs
+        if not reference_items:
+            reference_items = all_consumed_items[:5]
+
+        exclude_ids = [item.id for item in all_consumed_items if item.id]
+
+        similar_candidates = self.similarity_matcher.find_similar(
+            reference_items=reference_items,
+            content_type=content_type,
+            exclude_ids=exclude_ids,
+            limit=count * 3,
+        )
+
+        if similar_candidates:
+            return {item.id: sim_score for item, sim_score in similar_candidates}
+        return {}
+
+    def _apply_series_filtering(
+        self,
+        top_candidates: list[ScoredCandidate],
+        all_scored: list[ScoredCandidate],
+        series_tracking: dict[str, set[int]],
+        unconsumed_items: list[ContentItem],
+    ) -> list[ScoredCandidate]:
+        """Filter and substitute candidates based on series ordering rules.
+
+        For each candidate that isn't the earliest recommendable entry in its
+        series, attempts to substitute the earliest entry.  This ensures users
+        are recommended Book #1 before Book #3, etc.
+
+        Args:
+            top_candidates: Top pipeline-scored candidates to filter.
+            all_scored: All pipeline-scored candidates (for substitute lookup).
+            series_tracking: Series name to consumed item numbers.
+            unconsumed_items: All unconsumed items for substitute search.
+
+        Returns:
+            Filtered and substituted candidate list.
+        """
+        scored_by_id: dict[str | None, ScoredCandidate] = {
+            scored.item.id: scored for scored in all_scored
+        }
+        substituted_series: set[str] = set()
+        seen_ids: set[str | None] = set()
+
+        filtered_candidates: list[ScoredCandidate] = []
+        for scored_candidate in top_candidates:
+            if should_recommend_item(
+                scored_candidate.item,
+                series_tracking,
+                unconsumed_items=unconsumed_items,
+            ):
+                if scored_candidate.item.id not in seen_ids:
+                    filtered_candidates.append(scored_candidate)
+                    seen_ids.add(scored_candidate.item.id)
+            else:
+                series_info = extract_series_info(
+                    scored_candidate.item.title,
+                    scored_candidate.item.metadata,
+                    scored_candidate.item.content_type,
+                )
+                if series_info:
+                    candidate_series_name = series_info[0]
+                    if candidate_series_name not in substituted_series:
+                        substitute = find_earliest_recommendable(
+                            candidate_series_name,
+                            series_tracking,
+                            unconsumed_items,
+                        )
+                        if substitute is not None and substitute.id not in seen_ids:
+                            substitute_scored = scored_by_id.get(substitute.id)
+                            if substitute_scored is not None:
+                                filtered_candidates.append(substitute_scored)
+                                seen_ids.add(substitute.id)
+                                logger.debug(
+                                    "Substituted %s with %s (earliest in %s)",
+                                    scored_candidate.item.title,
+                                    substitute.title,
+                                    candidate_series_name,
+                                )
+                        substituted_series.add(candidate_series_name)
+                else:
+                    logger.debug(
+                        "Filtered out %s - doesn't meet series recommendation rules",
+                        scored_candidate.item.title,
+                    )
+
+        if not filtered_candidates:
+            logger.warning(
+                "Series filtering removed all candidates, using original candidates"
+            )
+            return top_candidates
+
+        return filtered_candidates
+
+    def _build_candidate_metadata(
+        self,
+        filtered_candidates: list[ScoredCandidate],
+        all_consumed_items: list[ContentItem],
+    ) -> tuple[list[dict[str, Any]], dict[str, list[ContentItem]]]:
+        """Build metadata for each candidate including adaptations and references.
+
+        Args:
+            filtered_candidates: Scored candidates after series filtering.
+            all_consumed_items: All consumed items for adaptation detection.
+
+        Returns:
+            Tuple of (candidate_metadata list, adaptations_map by item ID).
+        """
         candidate_metadata: list[dict[str, Any]] = []
         adaptations_map: dict[str, list[ContentItem]] = {}
 
@@ -454,53 +543,66 @@ class RecommendationEngine:
             if item.id and adaptations:
                 adaptations_map[item.id] = adaptations
 
-        # -----------------------------------------------------------------
-        # Rank (adaptation bonus, series bonus, preference adjustments)
-        # -----------------------------------------------------------------
-        # Build breakdown lookup for post-ranking output
-        breakdown_by_id: dict[str | None, dict[str, float]] = {
-            meta["item"].id: meta["score_breakdown"] for meta in candidate_metadata
-        }
+        return candidate_metadata, adaptations_map
 
-        # Apply per-user diversity weight if configured, or use a sensible
-        # default when the variety_after_completion toggle is enabled.
-        ranker = self.ranker
-        if user_preference_config is not None:
-            effective_diversity_weight = user_preference_config.diversity_weight
-            if (
-                user_preference_config.variety_after_completion
-                and effective_diversity_weight == 0
-            ):
-                effective_diversity_weight = _DEFAULT_VARIETY_DIVERSITY_WEIGHT
+    def _configure_ranker(
+        self,
+        user_preference_config: UserPreferenceConfig | None,
+    ) -> RecommendationRanker:
+        """Configure a ranker with per-user diversity weight if applicable.
 
-            if effective_diversity_weight > 0:
-                ranker = RecommendationRanker(
-                    similarity_weight=self.ranker.similarity_weight,
-                    preference_weight=self.ranker.preference_weight,
-                    diversity_weight=effective_diversity_weight,
-                )
+        Uses the user's explicit diversity_weight, or applies a sensible
+        default when variety_after_completion is enabled.
 
-        ranked_items = ranker.rank(
-            candidates=[
-                (meta["item"], meta["similarity_score"]) for meta in candidate_metadata
-            ],
-            preferences=preferences,
-            content_type=content_type,
-            adaptations_map=adaptations_map,
-            recently_completed=consumed_items_of_type,
-        )
+        Args:
+            user_preference_config: Optional per-user preference config.
 
-        top_recommendations = ranked_items[:count]
+        Returns:
+            A RecommendationRanker instance (possibly with custom weights).
+        """
+        if user_preference_config is None:
+            return self.ranker
 
-        # -----------------------------------------------------------------
-        # Format recommendations
-        # -----------------------------------------------------------------
-        recommendations: list[dict[str, Any]] = []
+        effective_diversity_weight = user_preference_config.diversity_weight
+        if (
+            user_preference_config.variety_after_completion
+            and effective_diversity_weight == 0
+        ):
+            effective_diversity_weight = _DEFAULT_VARIETY_DIVERSITY_WEIGHT
+
+        if effective_diversity_weight > 0:
+            return RecommendationRanker(
+                similarity_weight=self.ranker.similarity_weight,
+                preference_weight=self.ranker.preference_weight,
+                diversity_weight=effective_diversity_weight,
+            )
+
+        return self.ranker
+
+    def _format_recommendations(
+        self,
+        ranked_items: list[tuple[ContentItem, float, dict[str, Any]]],
+        candidate_metadata: list[dict[str, Any]],
+        breakdown_by_id: dict[str | None, dict[str, float]],
+        preferences: UserPreferences,
+    ) -> list[dict[str, Any]]:
+        """Format ranked items into recommendation dictionaries.
+
+        Args:
+            ranked_items: Ranked (item, score, rank_metadata) tuples.
+            candidate_metadata: Per-candidate metadata from build step.
+            breakdown_by_id: Score breakdown keyed by item ID.
+            preferences: User preferences for reasoning generation.
+
+        Returns:
+            List of recommendation dictionaries.
+        """
         candidate_metadata_by_id = {
             meta["item"].id: meta for meta in candidate_metadata
         }
 
-        for item, score, rank_metadata in top_recommendations:
+        recommendations: list[dict[str, Any]] = []
+        for item, score, rank_metadata in ranked_items:
             item_meta = candidate_metadata_by_id.get(item.id)
 
             adaptations_list: list[ContentItem] = []
@@ -527,105 +629,138 @@ class RecommendationEngine:
             }
             recommendations.append(rec)
 
-        # -----------------------------------------------------------------
-        # Optionally enhance with LLM reasoning
-        # -----------------------------------------------------------------
-        if use_llm and self.llm_generator:
-            try:
-                if recommendations:
-                    llm_recs = self.llm_generator.generate_recommendations(
-                        content_type=content_type,
-                        consumed_items=all_consumed_items,
-                        unconsumed_items=[rec["item"] for rec in recommendations],
-                        count=count,
-                    )
-                    # Build a lookup of title → reasoning from LLM results.
-                    # The LLM returns items in its own preferred order, which
-                    # differs from the pipeline ranking — match by title, not
-                    # by index, so each recommendation gets its own reasoning.
-                    # Prefer the matched item's canonical title (set by the
-                    # parser when it finds the item in the unconsumed list)
-                    # over the raw LLM title which may have formatting artefacts.
-                    llm_reasoning_by_title: dict[str, str] = {}
-                    for llm_rec in llm_recs:
-                        matched_item: ContentItem | None = llm_rec.get("item")
-                        if matched_item is not None:
-                            key = matched_item.title.lower()
-                        else:
-                            key = (llm_rec.get("title") or "").lower()
-                        if key:
-                            llm_reasoning_by_title[key] = llm_rec.get("reasoning", "")
-                    for rec in recommendations:
-                        rec_title = rec["item"].title.lower()
-                        # Try exact match first, then substring containment
-                        # (database titles may include series suffixes the
-                        # LLM omits, e.g. "Title (Series #1)" vs "Title").
-                        if rec_title in llm_reasoning_by_title:
-                            rec["llm_reasoning"] = llm_reasoning_by_title[rec_title]
-                        else:
-                            for llm_title, reasoning in llm_reasoning_by_title.items():
-                                if llm_title in rec_title or rec_title in llm_title:
-                                    rec["llm_reasoning"] = reasoning
-                                    break
-                else:
-                    logger.info("Using LLM-only recommendations")
-                    llm_recs = self.llm_generator.generate_recommendations(
-                        content_type=content_type,
-                        consumed_items=all_consumed_items,
-                        unconsumed_items=unconsumed_items,
-                        count=count,
-                    )
-                    for llm_rec in llm_recs:
-                        matching_item = None
-                        for item in unconsumed_items:
-                            if item.title == llm_rec.get("title") and (
-                                not llm_rec.get("author")
-                                or item.author == llm_rec.get("author")
-                            ):
-                                matching_item = item
+        return recommendations
+
+    def _enhance_with_llm(
+        self,
+        recommendations: list[dict[str, Any]],
+        content_type: ContentType,
+        all_consumed_items: list[ContentItem],
+        unconsumed_items: list[ContentItem],
+        count: int,
+        series_tracking: dict[str, set[int]],
+    ) -> None:
+        """Enhance recommendations with LLM-generated reasoning.
+
+        When the pipeline has produced recommendations, the LLM adds natural
+        language reasoning to each.  When the pipeline is empty, the LLM
+        generates its own recommendations with series order enforcement.
+
+        Modifies ``recommendations`` in place.
+
+        Args:
+            recommendations: Current recommendations to enhance (may be empty).
+            content_type: Target content type.
+            all_consumed_items: All consumed items for LLM context.
+            unconsumed_items: Unconsumed items for LLM-only fallback.
+            count: Requested recommendation count.
+            series_tracking: Series name to consumed item numbers.
+        """
+        if not self.llm_generator:
+            return
+
+        try:
+            if recommendations:
+                llm_recs = self.llm_generator.generate_recommendations(
+                    content_type=content_type,
+                    consumed_items=all_consumed_items,
+                    unconsumed_items=[rec["item"] for rec in recommendations],
+                    count=count,
+                )
+                # Build a lookup of title -> reasoning from LLM results.
+                # The LLM returns items in its own preferred order, which
+                # differs from the pipeline ranking — match by title, not
+                # by index, so each recommendation gets its own reasoning.
+                llm_reasoning_by_title: dict[str, str] = {}
+                for llm_rec in llm_recs:
+                    matched_item: ContentItem | None = llm_rec.get("item")
+                    if matched_item is not None:
+                        key = matched_item.title.lower()
+                    else:
+                        key = (llm_rec.get("title") or "").lower()
+                    if key:
+                        llm_reasoning_by_title[key] = llm_rec.get("reasoning", "")
+                for rec in recommendations:
+                    rec_title = rec["item"].title.lower()
+                    if rec_title in llm_reasoning_by_title:
+                        rec["llm_reasoning"] = llm_reasoning_by_title[rec_title]
+                    else:
+                        for llm_title, reasoning in llm_reasoning_by_title.items():
+                            if llm_title in rec_title or rec_title in llm_title:
+                                rec["llm_reasoning"] = reasoning
                                 break
-
-                        if matching_item and should_recommend_item(
-                            matching_item,
-                            series_tracking,
-                            unconsumed_items=unconsumed_items,
+            else:
+                logger.info("Using LLM-only recommendations")
+                llm_recs = self.llm_generator.generate_recommendations(
+                    content_type=content_type,
+                    consumed_items=all_consumed_items,
+                    unconsumed_items=unconsumed_items,
+                    count=count,
+                )
+                for llm_rec in llm_recs:
+                    matching_item = None
+                    for item in unconsumed_items:
+                        if item.title == llm_rec.get("title") and (
+                            not llm_rec.get("author")
+                            or item.author == llm_rec.get("author")
                         ):
-                            recommendations.append(
-                                {
-                                    "item": matching_item,
-                                    "score": 0.8,
-                                    "similarity_score": 0.0,
-                                    "preference_score": 0.5,
-                                    "reasoning": llm_rec.get("reasoning", ""),
-                                    "llm_reasoning": llm_rec.get("reasoning", ""),
-                                    "score_breakdown": {},
-                                }
-                            )
-            except Exception as error:
-                logger.warning("LLM recommendation generation failed: %s", error)
+                            matching_item = item
+                            break
 
-        # -----------------------------------------------------------------
-        # Final fallback
-        # -----------------------------------------------------------------
-        if not recommendations and unconsumed_items:
-            logger.info("Using fallback: returning unconsumed items as recommendations")
-            for item in unconsumed_items:
-                if should_recommend_item(
-                    item, series_tracking, unconsumed_items=unconsumed_items
-                ):
-                    recommendations.append(
-                        {
-                            "item": item,
-                            "score": 0.5,
-                            "similarity_score": 0.0,
-                            "preference_score": 0.0,
-                            "reasoning": "Available in your library",
-                            "score_breakdown": {},
-                        }
-                    )
-                    if len(recommendations) >= count:
-                        break
+                    if matching_item and should_recommend_item(
+                        matching_item,
+                        series_tracking,
+                        unconsumed_items=unconsumed_items,
+                    ):
+                        recommendations.append(
+                            {
+                                "item": matching_item,
+                                "score": 0.8,
+                                "similarity_score": 0.0,
+                                "preference_score": 0.5,
+                                "reasoning": llm_rec.get("reasoning", ""),
+                                "llm_reasoning": llm_rec.get("reasoning", ""),
+                                "score_breakdown": {},
+                            }
+                        )
+        except Exception as error:
+            logger.warning("LLM recommendation generation failed: %s", error)
 
+    def _build_fallback_recommendations(
+        self,
+        unconsumed_items: list[ContentItem],
+        series_tracking: dict[str, set[int]],
+        count: int,
+    ) -> list[dict[str, Any]]:
+        """Build fallback recommendations when no scored recommendations exist.
+
+        Returns unconsumed items that pass series ordering checks.
+
+        Args:
+            unconsumed_items: Available unconsumed items.
+            series_tracking: Series name to consumed item numbers.
+            count: Maximum number to return.
+
+        Returns:
+            List of fallback recommendation dictionaries.
+        """
+        recommendations: list[dict[str, Any]] = []
+        for item in unconsumed_items:
+            if should_recommend_item(
+                item, series_tracking, unconsumed_items=unconsumed_items
+            ):
+                recommendations.append(
+                    {
+                        "item": item,
+                        "score": 0.5,
+                        "similarity_score": 0.0,
+                        "preference_score": 0.0,
+                        "reasoning": "Available in your library",
+                        "score_breakdown": {},
+                    }
+                )
+                if len(recommendations) >= count:
+                    break
         return recommendations
 
     # ------------------------------------------------------------------
