@@ -258,7 +258,7 @@ class ToolExecutor:
             ToolResult
         """
         item_id = params.get("item_id")
-        if not item_id:
+        if item_id is None:
             return ToolResult(success=False, message="item_id is required")
 
         # Get the item

@@ -3,7 +3,7 @@
 import json
 import logging
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from src.models.conversation import ConversationMessage, CoreMemory
 
@@ -158,7 +158,7 @@ class MemoryExtractor:
 
         return "\n".join(lines)
 
-    def _parse_extraction_response(self, response: str) -> list[dict]:
+    def _parse_extraction_response(self, response: str) -> list[dict[str, Any]]:
         """Parse the LLM response into memory dictionaries.
 
         Args:
@@ -193,7 +193,7 @@ class MemoryExtractor:
         logger.warning(f"Could not parse extraction response: {response[:200]}")
         return []
 
-    def _validate_memories(self, items: list) -> list[dict]:
+    def _validate_memories(self, items: list[Any]) -> list[dict[str, Any]]:
         """Validate and clean extracted memory items.
 
         Args:

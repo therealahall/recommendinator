@@ -2,7 +2,7 @@
 
 import json
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from src.models.conversation import ConversationMessage, CoreMemory, PreferenceProfile
 from src.storage.manager import StorageManager
@@ -273,7 +273,7 @@ class MemoryManager:
 
     # Helper Methods
 
-    def _dict_to_core_memory(self, memory_dict: dict) -> CoreMemory:
+    def _dict_to_core_memory(self, memory_dict: dict[str, Any]) -> CoreMemory:
         """Convert a dictionary to a CoreMemory object.
 
         Args:
@@ -303,7 +303,9 @@ class MemoryManager:
             updated_at=updated_at,
         )
 
-    def _dict_to_conversation_message(self, message_dict: dict) -> ConversationMessage:
+    def _dict_to_conversation_message(
+        self, message_dict: dict[str, Any]
+    ) -> ConversationMessage:
         """Convert a dictionary to a ConversationMessage object.
 
         Args:
@@ -327,7 +329,9 @@ class MemoryManager:
             created_at=created_at,
         )
 
-    def _dict_to_preference_profile(self, profile_dict: dict) -> PreferenceProfile:
+    def _dict_to_preference_profile(
+        self, profile_dict: dict[str, Any]
+    ) -> PreferenceProfile:
         """Convert a dictionary to a PreferenceProfile object.
 
         Args:

@@ -3,12 +3,17 @@
 Wraps the core EnrichmentManager to provide web-accessible status and control.
 """
 
+from __future__ import annotations
+
 import logging
 import threading
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from src.enrichment.manager import EnrichmentJobStatus, EnrichmentManager
 from src.models.content import ContentType
+
+if TYPE_CHECKING:
+    from src.storage.manager import StorageManager
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +32,7 @@ class WebEnrichmentManager:
 
     def start_enrichment(
         self,
-        storage_manager: Any,
+        storage_manager: StorageManager,
         config: dict[str, Any],
         content_type: ContentType | None = None,
         user_id: int | None = None,

@@ -300,8 +300,8 @@ def _parse_metadata_tail(tail: str) -> dict[str, str]:
         return result
 
     parts = tail.split("|")
-    for part in parts:
-        part = part.strip()
+    for raw_part in parts:
+        part = raw_part.strip()
         match = _METADATA_PAIR_PATTERN.match(part)
         if match:
             key = match.group(1).strip().lower()

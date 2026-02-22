@@ -125,11 +125,6 @@ def detect_intent(
     if result.confidence >= _CONFIDENCE_THRESHOLD:
         return result
 
-    # Try wishlist
-    result = _detect_wishlist(message_stripped)
-    if result.confidence >= _CONFIDENCE_THRESHOLD:
-        return result
-
     # Try preference
     result = _detect_preference(message_stripped)
     if result.confidence >= _CONFIDENCE_THRESHOLD:
@@ -216,16 +211,6 @@ def _detect_rating(
                     matched_item=matched_item,
                 )
 
-    return IntentResult(intent_type="conversation")
-
-
-def _detect_wishlist(message: str) -> IntentResult:
-    """Detect "add X to my list" pattern.
-
-    Returns a conversation intent so the LLM handles the full tool call.
-    The LLM has access to the add_to_wishlist tool and can infer the
-    content_type from conversation context, which pre-LLM detection cannot.
-    """
     return IntentResult(intent_type="conversation")
 
 
