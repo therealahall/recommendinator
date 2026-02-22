@@ -26,12 +26,45 @@ def build_recommendation_prompt(
 
     # Build context from consumed items — include ratings and reviews
     high_rated = [item for item in consumed_items if item.rating and item.rating >= 4]
-    context_items = high_rated[:10]  # Limit context size
+
+    # Split into same-type and cross-type to reduce confusion for small models
+    same_type_items = [
+        item
+        for item in high_rated
+        if get_enum_value(item.content_type) == content_type_str
+    ]
+    cross_type_items = [
+        item
+        for item in high_rated
+        if get_enum_value(item.content_type) != content_type_str
+    ]
+
+    # When >= 5 same-type items exist, use only same-type (no cross-type noise).
+    # When < 5 same-type items, fill remaining slots with cross-type items.
+    if len(same_type_items) >= 5:
+        context_same = same_type_items[:10]
+        context_cross: list[ContentItem] = []
+    else:
+        context_same = same_type_items
+        remaining_slots = 10 - len(context_same)
+        context_cross = cross_type_items[:remaining_slots]
 
     context_text = ""
-    if context_items:
-        context_text = "Here's what they love:\n\n"
-        for item in context_items:
+    if context_same:
+        context_text = f"Here are {content_type_name.lower()}s they love:\n\n"
+        for item in context_same:
+            rating_text = f"{item.rating}/5" if item.rating else "Unrated"
+            review_text = f' — Review: "{item.review}"' if item.review else ""
+            author_text = f" by {item.author}" if item.author else ""
+            # No type label for same-type items — redundant and confuses 3B models
+            context_text += (
+                f"- **{item.title}**{author_text} ({rating_text}){review_text}\n"
+            )
+
+    if context_cross:
+        separator = "\n" if context_same else ""
+        context_text += f"{separator}From other types they've enjoyed:\n\n"
+        for item in context_cross:
             rating_text = f"{item.rating}/5" if item.rating else "Unrated"
             review_text = f' — Review: "{item.review}"' if item.review else ""
             author_text = f" by {item.author}" if item.author else ""
@@ -55,14 +88,15 @@ Candidates (NOT yet consumed):
 
 {items_text}
 
-For each pick, write 2-3 sentences explaining WHY it's a great fit. Connect it to specific items they rated highly — mention titles, ratings, and what they loved. Be enthusiastic and specific, not generic.
+For each pick, write 2-3 sentences explaining WHY it's a great fit. Connect it to specific items they rated highly — mention titles and ratings. Be enthusiastic and specific, not generic.
 
 IMPORTANT formatting rules:
 - Use a numbered list: "1. **Title** by Author" on the first line, reasoning on the next lines
 - Do NOT start the reasoning with "Reasoning:" or any label — just dive straight into WHY
 - Use **bold** for emphasis on key connections
 - Address them as "you" — never say "the user"
-- Only pick from the candidates list above"""
+- Only pick from the candidates list above
+- ONLY quote reviews that appear above. If no review is shown for an item, do NOT invent one."""
 
     return prompt
 
@@ -88,7 +122,12 @@ def build_recommendation_system_prompt(content_type: ContentType) -> str:
 ## Style
 {STYLE_RULES}
 - Keep it concise — 2-3 punchy sentences per recommendation, not essays
-- Only recommend items from the provided candidate list"""
+- Only recommend items from the provided candidate list
+
+## Data Accuracy
+- ONLY reference reviews or quotes that appear in the user's item list
+- If an item has no review, reference only its rating — NEVER invent quotes
+- A book is NOT a show, a movie is NOT a game — use the correct content type"""
 
 
 def build_blurb_system_prompt(content_type: ContentType) -> str:
@@ -111,6 +150,7 @@ def build_blurb_system_prompt(content_type: ContentType) -> str:
     return (
         f"You are {identity}. Write enthusiastic, specific blurbs"
         " connecting each pick to the user's taste. Be concise."
+        " NEVER invent quotes or reviews the user did not write."
     )
 
 
@@ -144,7 +184,10 @@ def build_blurb_prompt(
         for item in favorites[:5]:
             rating_text = f"{item.rating}/5" if item.rating else "Unrated"
             author_text = f" by {item.author}" if item.author else ""
-            context_text += f"- **{item.title}**{author_text} ({rating_text})\n"
+            type_label = get_enum_value(item.content_type).replace("_", " ")
+            context_text += (
+                f"- [{type_label}] **{item.title}**{author_text} ({rating_text})\n"
+            )
         context_text += "\n"
 
     # Build selected items list
@@ -161,7 +204,8 @@ Rules:
 - Numbered list: "1. **Title** by Author" then reasoning on the next lines
 - Connect to specific favorites above — mention titles and ratings
 - Address them as "you"
-- Be enthusiastic and specific, not generic"""
+- Be enthusiastic and specific, not generic
+- Do NOT invent quotes or opinions — only reference what's shown above"""
 
 
 def build_content_description(item: ContentItem) -> str:
