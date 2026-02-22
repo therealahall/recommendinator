@@ -4,23 +4,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
+from src.models.config_field import ConfigField
 from src.models.content import ContentItem, ContentType
-
-
-@dataclass
-class ConfigField:
-    """Configuration field definition for an enrichment provider.
-
-    Describes a configuration option that a provider requires or accepts.
-    Used for validation, documentation, and UI generation.
-    """
-
-    name: str
-    field_type: type
-    required: bool = True
-    default: Any = None
-    description: str = ""
-    sensitive: bool = False  # For API keys - don't log/display
 
 
 @dataclass

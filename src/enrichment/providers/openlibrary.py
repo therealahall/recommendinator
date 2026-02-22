@@ -26,6 +26,11 @@ OPENLIBRARY_API_BASE = "https://openlibrary.org"
 # Pattern to match series info in titles like "(Series Name, #1)" or "(Series Name #1)"
 SERIES_PATTERN = re.compile(r"\s*\([^)]*#\d+[^)]*\)\s*$")
 
+# Maximum character length for a subject string to be accepted as a genre
+# without requiring a keyword match. Keeps broad categories ("mystery")
+# while filtering verbose library subject headings.
+_MAX_SHORT_SUBJECT_LENGTH = 25
+
 
 def clean_title_for_search(title: str) -> str:
     """Remove series info from title for better search matching.
@@ -463,7 +468,7 @@ class OpenLibraryProvider(EnrichmentProvider):
             # Keep if it matches a genre keyword or is short enough
             if any(kw in normalized for kw in genre_keywords):
                 filtered.append(subject)
-            elif len(normalized) < 25 and " -- " not in subject:
+            elif len(normalized) < _MAX_SHORT_SUBJECT_LENGTH and " -- " not in subject:
                 # Short subjects without subdivisions
                 filtered.append(subject)
 

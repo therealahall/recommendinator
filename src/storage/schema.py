@@ -657,6 +657,41 @@ def reset_enrichment_status(
     return updated
 
 
+def _enrichment_count_query(
+    cursor: sqlite3.Cursor,
+    table_prefix: str,
+    where_clause: str,
+    user_join: str,
+    user_filter: str,
+    user_params: tuple[int, ...],
+) -> int:
+    """Execute a COUNT query with optional user filtering."""
+    query = f"SELECT COUNT(*) FROM {table_prefix}{user_join} WHERE {where_clause}{user_filter}"  # noqa: S608
+    cursor.execute(query, user_params)
+    result: int = cursor.fetchone()[0]
+    return result
+
+
+def _enrichment_group_query(
+    cursor: sqlite3.Cursor,
+    select_col: str,
+    es_prefix: str,
+    user_join: str,
+    user_filter: str,
+    user_params: tuple[int, ...],
+    user_id: int | None,
+) -> dict[str, int]:
+    """Execute a GROUP BY query with optional user filtering."""
+    col_prefix = f"es.{select_col}" if user_id else select_col
+    query = (
+        f"SELECT {col_prefix}, COUNT(*) FROM {es_prefix}{user_join}"  # noqa: S608
+        f" WHERE {col_prefix} IS NOT NULL{user_filter}"
+        f" GROUP BY {col_prefix}"
+    )
+    cursor.execute(query, user_params)
+    return {row[0]: row[1] for row in cursor.fetchall()}
+
+
 def get_enrichment_stats(
     conn: sqlite3.Connection,
     user_id: int | None = None,
@@ -679,15 +714,10 @@ def get_enrichment_stats(
     user_filter = " AND ci.user_id = ?" if user_id else ""
     user_params: tuple[int, ...] = (user_id,) if user_id else ()
 
-    def _count_query(table_prefix: str, where_clause: str) -> int:
-        """Execute a COUNT query with optional user filtering."""
-        query = f"SELECT COUNT(*) FROM {table_prefix}{user_join} WHERE {where_clause}{user_filter}"
-        cursor.execute(query, user_params)
-        result: int = cursor.fetchone()[0]
-        return result
-
     # Use 'es' alias when joining, plain table name otherwise
     es_prefix = "enrichment_status es" if user_id else "enrichment_status"
+
+    count_args = (cursor, es_prefix, "1=1", user_join, user_filter, user_params)
 
     # total_items doesn't use the enrichment join, so query directly
     if user_id:
@@ -696,13 +726,21 @@ def get_enrichment_stats(
         )
         total_items: int = cursor.fetchone()[0]
     else:
-        total_items = _count_query("content_items", "1=1")
+        total_items = _enrichment_count_query(
+            cursor, "content_items", "1=1", user_join, user_filter, user_params
+        )
 
-    tracked_items: int = _count_query(es_prefix, "1=1")
-    needs_enrichment: int = _count_query(
-        es_prefix, "es.needs_enrichment = 1" if user_id else "needs_enrichment = 1"
+    tracked_items: int = _enrichment_count_query(*count_args)
+    needs_enrichment: int = _enrichment_count_query(
+        cursor,
+        es_prefix,
+        "es.needs_enrichment = 1" if user_id else "needs_enrichment = 1",
+        user_join,
+        user_filter,
+        user_params,
     )
-    enriched: int = _count_query(
+    enriched: int = _enrichment_count_query(
+        cursor,
         es_prefix,
         (
             "es.needs_enrichment = 0 AND es.enrichment_error IS NULL"
@@ -711,31 +749,43 @@ def get_enrichment_stats(
             else "needs_enrichment = 0 AND enrichment_error IS NULL"
             " AND enrichment_provider != 'none'"
         ),
+        user_join,
+        user_filter,
+        user_params,
     )
-    failed: int = _count_query(
+    failed: int = _enrichment_count_query(
+        cursor,
         es_prefix,
         (
             "es.enrichment_error IS NOT NULL"
             if user_id
             else "enrichment_error IS NOT NULL"
         ),
+        user_join,
+        user_filter,
+        user_params,
     )
 
     untracked = total_items - tracked_items
 
-    def _group_query(select_col: str, where_clause: str) -> dict[str, int]:
-        """Execute a GROUP BY query with optional user filtering."""
-        col_prefix = f"es.{select_col}" if user_id else select_col
-        query = (
-            f"SELECT {col_prefix}, COUNT(*) FROM {es_prefix}{user_join}"
-            f" WHERE {col_prefix} IS NOT NULL{user_filter}"
-            f" GROUP BY {col_prefix}"
-        )
-        cursor.execute(query, user_params)
-        return {row[0]: row[1] for row in cursor.fetchall()}
-
-    by_provider = _group_query("enrichment_provider", "")
-    by_quality = _group_query("enrichment_quality", "")
+    by_provider = _enrichment_group_query(
+        cursor,
+        "enrichment_provider",
+        es_prefix,
+        user_join,
+        user_filter,
+        user_params,
+        user_id,
+    )
+    by_quality = _enrichment_group_query(
+        cursor,
+        "enrichment_quality",
+        es_prefix,
+        user_join,
+        user_filter,
+        user_params,
+        user_id,
+    )
 
     return {
         "total": total_items,

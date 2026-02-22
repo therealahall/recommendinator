@@ -5,6 +5,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
+from src.models.config_field import ConfigField
 from src.models.content import ContentItem, ContentType
 
 # Progress callback: (items_processed, total_items, current_item) -> None
@@ -12,22 +13,6 @@ from src.models.content import ContentItem, ContentType
 # - total_items: Total expected (None if unknown)
 # - current_item: Title of current item or phase description (e.g. "Fetching...")
 ProgressCallback = Callable[[int, int | None, str | None], None]
-
-
-@dataclass
-class ConfigField:
-    """Configuration field definition for a plugin.
-
-    Describes a configuration option that a plugin requires or accepts.
-    Used for validation, documentation, and UI generation.
-    """
-
-    name: str
-    field_type: type
-    required: bool = True
-    default: Any = None
-    description: str = ""
-    sensitive: bool = False  # For API keys, passwords - don't log/display
 
 
 @dataclass

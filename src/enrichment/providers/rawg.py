@@ -155,6 +155,14 @@ def _filter_outlier_titles(titles: list[str]) -> list[str]:
     return filtered if len(filtered) >= 2 else titles
 
 
+def _release_sort_key(entry: dict[str, Any]) -> str:
+    """Sort key for game series entries by release date.
+
+    Games without a release date sort to the end.
+    """
+    return entry.get("released") or "9999-12-31"
+
+
 def clean_title_for_search(title: str) -> str:
     """Remove DLC suffixes, edition info, and trademark symbols for better search matching.
 
@@ -481,10 +489,7 @@ class RAWGProvider(EnrichmentProvider):
                 return (None, None)
 
             # Sort by release date to determine position
-            def release_sort_key(entry: dict[str, Any]) -> str:
-                return entry.get("released") or "9999-12-31"
-
-            sorted_entries = sorted(series_results, key=release_sort_key)
+            sorted_entries = sorted(series_results, key=_release_sort_key)
 
             # Find current game's 1-based position
             position: int | None = None

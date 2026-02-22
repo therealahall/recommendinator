@@ -11,6 +11,16 @@ from src.utils.series import is_first_item_in_series
 logger = logging.getLogger(__name__)
 
 
+# Bonus applied when an item is the first entry in an unstarted series.
+_SERIES_FIRST_ITEM_BONUS = 0.1
+
+# Adaptation bonus range: base + (rating - 4) * per_star.
+# For a 5-star rated adaptation: 0.15 + 1*0.05 = 0.20
+# For a 3-star rated adaptation: 0.15 + (-1)*0.05 = 0.10
+_ADAPTATION_BONUS_BASE = 0.15
+_ADAPTATION_BONUS_PER_STAR = 0.05
+
+
 class RecommendationRanker:
     """Rank recommendations using multiple factors."""
 
@@ -81,7 +91,7 @@ class RecommendationRanker:
             # Series bonus: boost first items in unstarted series (all content types)
             series_bonus = 0.0
             if is_first_item_in_series(item=item):
-                series_bonus = 0.1  # Small boost for first items
+                series_bonus = _SERIES_FIRST_ITEM_BONUS
 
             # Adaptation bonus: boost direct adaptations of consumed content
             # (e.g., LOTR books -> LOTR movies)
@@ -89,13 +99,13 @@ class RecommendationRanker:
             if item.id and item.id in adaptations_map:
                 adaptations = adaptations_map[item.id]
                 if adaptations:
-                    # Boost based on rating of the adaptation
-                    # Higher-rated adaptations get bigger boost
                     max_rating = max(
                         (a.rating for a in adaptations if a.rating), default=4
                     )
-                    # Boost ranges from 0.15 to 0.25 based on rating
-                    adaptation_bonus = 0.15 + (max_rating - 4) * 0.05
+                    adaptation_bonus = (
+                        _ADAPTATION_BONUS_BASE
+                        + (max_rating - 4) * _ADAPTATION_BONUS_PER_STAR
+                    )
 
             # Combine scores
             # Note: preference_score can be negative (for disliked authors/genres)

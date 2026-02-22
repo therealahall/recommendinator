@@ -684,6 +684,9 @@ class RecommendationEngine:
     def _titles_similar(self, title1: str, title2: str) -> bool:
         """Check if two titles are similar (fuzzy matching).
 
+        Uses get_sort_title to strip leading articles (including non-English)
+        and normalize case, then checks substring containment.
+
         Args:
             title1: First title.
             title2: Second title.
@@ -694,11 +697,8 @@ class RecommendationEngine:
         if not title1 or not title2:
             return False
 
-        t1_norm = title1.lower().strip()
-        t2_norm = title2.lower().strip()
-
-        t1_norm = re.sub(r"^(the|a|an)\s+", "", t1_norm)
-        t2_norm = re.sub(r"^(the|a|an)\s+", "", t2_norm)
+        t1_norm = get_sort_title(title1)
+        t2_norm = get_sort_title(title2)
 
         return t1_norm in t2_norm or t2_norm in t1_norm
 
