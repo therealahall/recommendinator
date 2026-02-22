@@ -3,9 +3,11 @@
 import json
 import sqlite3
 
-# Whitelist of table names/prefixes allowed in dynamic SQL queries.
-_ALLOWED_SQL_TABLES: frozenset[str] = frozenset(
-    {"content_items", "enrichment_status", "enrichment_status es"}
+# Whitelist of table names allowed in dynamic SQL queries.
+# Defense-in-depth: these names come from hardcoded strings in
+# get_enrichment_stats, but validating prevents accidental injection.
+_ALLOWED_ENRICHMENT_TABLES: frozenset[str] = frozenset(
+    {"content_items", "enrichment_status"}
 )
 
 
@@ -671,8 +673,9 @@ def _enrichment_count_query(
     user_params: tuple[int, ...],
 ) -> int:
     """Execute a COUNT query with optional user filtering."""
-    if table_prefix not in _ALLOWED_SQL_TABLES:
-        raise ValueError(f"Unknown SQL table prefix: {table_prefix!r}")
+    table_name = table_prefix.split()[0]
+    if table_name not in _ALLOWED_ENRICHMENT_TABLES:
+        raise ValueError(f"Unknown SQL table: {table_name!r}")
     query = f"SELECT COUNT(*) FROM {table_prefix}{user_join} WHERE {where_clause}{user_filter}"
     cursor.execute(query, user_params)
     result: int = cursor.fetchone()[0]
@@ -689,8 +692,9 @@ def _enrichment_group_query(
     user_id: int | None,
 ) -> dict[str, int]:
     """Execute a GROUP BY query with optional user filtering."""
-    if es_prefix not in _ALLOWED_SQL_TABLES:
-        raise ValueError(f"Unknown SQL table prefix: {es_prefix!r}")
+    table_name = es_prefix.split()[0]
+    if table_name not in _ALLOWED_ENRICHMENT_TABLES:
+        raise ValueError(f"Unknown SQL table: {table_name!r}")
     col_prefix = f"es.{select_col}" if user_id else select_col
     query = (
         f"SELECT {col_prefix}, COUNT(*) FROM {es_prefix}{user_join}"

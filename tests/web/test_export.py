@@ -3,6 +3,8 @@
 import csv
 import io
 import json
+import tempfile
+from pathlib import Path
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.web.export import export_items_csv, export_items_json
@@ -452,9 +454,6 @@ class TestExportRoundtrip:
         csv_content = export_items_csv([original], ContentType.BOOK)
 
         # Write to temp file and re-import
-        import tempfile
-        from pathlib import Path
-
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".csv", delete=False
         ) as temp_file:
@@ -492,9 +491,6 @@ class TestExportRoundtrip:
         )
 
         json_content = export_items_json([original], ContentType.TV_SHOW)
-
-        import tempfile
-        from pathlib import Path
 
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".json", delete=False

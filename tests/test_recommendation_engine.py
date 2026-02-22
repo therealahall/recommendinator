@@ -13,6 +13,7 @@ from src.models.content import (
 )
 from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.engine import RecommendationEngine, _shuffle_close_scores
+from src.recommendations.preferences import PreferenceAnalyzer, UserPreferences
 from src.storage.manager import StorageManager
 
 
@@ -1185,10 +1186,8 @@ class TestReasoningFormatting:
         """Create an engine instance for testing reasoning generation."""
         return RecommendationEngine.__new__(RecommendationEngine)
 
-    def _make_empty_preferences(self):
+    def _make_empty_preferences(self) -> UserPreferences:
         """Create empty user preferences for testing."""
-        from src.recommendations.preferences import PreferenceAnalyzer
-
         return PreferenceAnalyzer(min_rating=4).analyze([])
 
     def test_single_book_reference_natural_format(self) -> None:
