@@ -50,6 +50,7 @@ def test_preference_analyzer_basic():
     assert preferences.total_items == 3
     assert preferences.average_rating == 4.0
     assert "author a" in preferences.preferred_authors
+    # Sole high-rated author: normalization divides by max score, yielding 1.0
     assert preferences.preferred_authors["author a"] == 1.0
 
 
@@ -81,6 +82,7 @@ def test_preference_analyzer_with_genre():
     preferences = analyzer.analyze(items)
 
     assert "science fiction" in preferences.preferred_genres
+    # Only genre present: normalization divides by max score, yielding 1.0
     assert preferences.preferred_genres["science fiction"] == 1.0
 
 
@@ -143,6 +145,7 @@ def test_preference_analyzer_steam_genres():
     assert "science fiction" in preferences.preferred_genres
     assert "action" in preferences.preferred_genres
     assert "rpg" in preferences.preferred_genres
+    # Highest-weighted genre: normalization divides by max score, yielding 1.0
     assert preferences.preferred_genres["science fiction"] == 1.0
 
 
@@ -187,5 +190,5 @@ def test_preference_analyzer_cross_content_type():
     assert preferences.total_items == 3
     assert "science fiction" in preferences.preferred_genres
     assert "frank herbert" in preferences.preferred_authors
-    # Sci-fi should have high score from multiple sources
+    # Sci-fi has highest accumulated weight: normalization yields 1.0
     assert preferences.preferred_genres["science fiction"] == 1.0

@@ -2,6 +2,7 @@
 
 from datetime import date
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -1793,3 +1794,38 @@ class TestTvSeasonSyncRegression:
         assert retrieved is not None
         # Still completed — no new seasons
         assert retrieved.status == ConsumptionStatus.COMPLETED
+
+
+class TestDetailTableWhitelist:
+    """Tests for detail table whitelist validation in _save_detail_table."""
+
+    def test_rejects_unknown_table_name(self, temp_db: SQLiteDB) -> None:
+        """_save_detail_table raises ValueError for table not in whitelist.
+
+        Validates the SQL injection defense-in-depth guard on _ALLOWED_DETAIL_TABLES.
+        """
+        malicious_config = {
+            "injected": {
+                "table": "malicious_table; DROP TABLE users; --",
+                "columns": ["title"],
+                "known_keys": {"title"},
+            }
+        }
+        item = ContentItem(
+            id="test_1",
+            title="Test",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"title": "Test"},
+        )
+        # Save the item first so we have a db_id
+        db_id = temp_db.save_content_item(item)
+
+        conn = temp_db._get_connection()
+        cursor = conn.cursor()
+
+        with (
+            patch.dict(SQLiteDB._DETAIL_TABLE_CONFIG, malicious_config),
+            pytest.raises(ValueError, match="Unknown detail table"),
+        ):
+            temp_db._save_detail_table(cursor, db_id, item, "injected")
