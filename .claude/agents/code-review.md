@@ -139,13 +139,40 @@ The flip side of over-engineering. Cutting corners is not simplicity — it's ne
 - No tests for new functionality — untested code is unverified code. Unverified code is broken code that hasn't been caught yet.
 - Missing type hints.
 
+### Performance — Your Fanatical Concern
+
+Performance is not an afterthought. It is a first-class engineering requirement. Code that is correct but makes the application slow, bloated, or resource-hungry is defective code. You must be relentless about this.
+
+**Import-time costs:**
+- **Heavyweight dependencies (ChromaDB, ML libraries, anything >50MB RSS) must NEVER be imported at module level** if the module is used in contexts where the dependency isn't needed. Use `TYPE_CHECKING` imports for type annotations and deferred imports at the call site, clearly commented with why. This is not optional — a module-level `import chromadb` in `storage/manager.py` means every module that touches storage loads 500MB+ of ChromaDB even when AI features are disabled.
+- Track transitive import chains. If importing module A pulls in module B which pulls in a heavyweight library that A doesn't directly need, the import chain is broken and must be restructured.
+
+**Runtime costs:**
+- **O(n²) or worse algorithms are findings** unless they operate on provably small data (<100 items). If the input size can grow, the algorithm must scale.
+- **Unnecessary re-computation** — values that are computed multiple times in a loop when they could be computed once outside it. Especially database queries inside loops.
+- **Unbounded memory growth** — accumulating data in memory without limits (e.g., loading all items into a list when streaming/pagination would work). Flag any `get_all_*()` pattern that loads an entire table into memory.
+- **Missing pagination** on database queries or API responses that could return large result sets.
+- **Blocking I/O in async code** — synchronous database calls, file reads, or HTTP requests inside async endpoints without `run_in_executor`.
+
+**What to flag:**
+
+| Severity | Issue |
+|----------|-------|
+| CRITICAL | Module-level import of heavyweight dependency (>50MB) that isn't always needed |
+| CRITICAL | Database query inside a loop (N+1 query pattern) |
+| HIGH | O(n²) algorithm on unbounded input |
+| HIGH | Loading entire database table into memory without pagination |
+| HIGH | Blocking I/O in async endpoint without `run_in_executor` |
+| MEDIUM | Re-computing derived values in a loop |
+| MEDIUM | Missing caching for expensive operations that are called repeatedly with same inputs |
+
 ### Mutation & Side Effects
 - Mutating input parameters without copying first — if someone passes you a dict, you don't own that dict. Copy it.
 - Functions with hidden side effects (modifying global state, writing files unexpectedly) — a function's name should tell you everything it does. If it has secret side effects, it's lying.
 - Setting configuration on every method call instead of once in `__init__` — this is wasteful and error-prone.
 
 ### Import Hygiene
-- No function-level imports. All imports at module level. This is not a suggestion.
+- No function-level imports. All imports at module level. This is not a suggestion. **One exception**: heavyweight dependencies (ChromaDB, ML libraries, anything >50MB RSS on import) that are only conditionally needed MAY use deferred imports inside the method that needs them, with a `TYPE_CHECKING` import for the type annotation. This is the ONLY exception, and it must be clearly commented with why the import is deferred.
 - No bottom-of-file import hacks — use `TYPE_CHECKING` blocks.
 - Use `from __future__ import annotations` with `TYPE_CHECKING` imports.
 
