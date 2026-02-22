@@ -458,7 +458,7 @@ class TestLlmReasoningMismatchRegression:
         went to recommendations[0] regardless of whether those were the same
         item.
 
-        Fix: Build a title → reasoning lookup from LLM results and match
+        Fix: Build a title -> reasoning lookup from LLM results and match
         each pipeline recommendation by its title.
         """
         from src.recommendations.engine import RecommendationEngine
@@ -466,66 +466,64 @@ class TestLlmReasoningMismatchRegression:
         engine = RecommendationEngine.__new__(RecommendationEngine)
         engine.llm_generator = Mock(spec=RecommendationGenerator)
 
+        way_of_kings = ContentItem(
+            id="1",
+            title="The Way of Kings",
+            author="Brandon Sanderson",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        )
+        fire_and_blood = ContentItem(
+            id="2",
+            title="Fire & Blood",
+            author="George R.R. Martin",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        )
+
         # Simulate pipeline recommendations in order: Way of Kings, Fire & Blood
-        pipeline_recs: list[dict[str, object]] = [
+        recommendations: list[dict[str, object]] = [
             {
-                "item": ContentItem(
-                    id="1",
-                    title="The Way of Kings",
-                    author="Brandon Sanderson",
-                    content_type=ContentType.BOOK,
-                    status=ConsumptionStatus.UNREAD,
-                ),
+                "item": way_of_kings,
                 "score": 0.9,
                 "reasoning": "Pipeline reasoning for Way of Kings",
             },
             {
-                "item": ContentItem(
-                    id="2",
-                    title="Fire & Blood",
-                    author="George R.R. Martin",
-                    content_type=ContentType.BOOK,
-                    status=ConsumptionStatus.UNREAD,
-                ),
+                "item": fire_and_blood,
                 "score": 0.85,
                 "reasoning": "Pipeline reasoning for Fire & Blood",
             },
         ]
 
         # LLM returns items in REVERSED order: Fire & Blood first
-        llm_recs = [
+        engine.llm_generator.generate_recommendations.return_value = [
             {
                 "title": "Fire & Blood",
                 "author": "George R.R. Martin",
                 "reasoning": "LLM reasoning for Fire & Blood",
-                "item": pipeline_recs[1]["item"],
+                "item": fire_and_blood,
             },
             {
                 "title": "The Way of Kings",
                 "author": "Brandon Sanderson",
                 "reasoning": "LLM reasoning for Way of Kings",
-                "item": pipeline_recs[0]["item"],
+                "item": way_of_kings,
             },
         ]
 
-        # Build title lookup using matched item's canonical title
-        llm_reasoning_by_title: dict[str, str] = {}
-        for llm_rec in llm_recs:
-            matched_item = llm_rec.get("item")
-            if matched_item is not None:
-                key = matched_item.title.lower()
-            else:
-                key = (llm_rec.get("title") or "").lower()
-            if key:
-                llm_reasoning_by_title[key] = llm_rec.get("reasoning", "")
-        for rec in pipeline_recs:
-            rec_title = rec["item"].title.lower()
-            if rec_title in llm_reasoning_by_title:
-                rec["llm_reasoning"] = llm_reasoning_by_title[rec_title]
+        # Call the actual production code
+        engine._enhance_with_llm(
+            recommendations=recommendations,
+            content_type=ContentType.BOOK,
+            all_consumed_items=[],
+            unconsumed_items=[],
+            count=2,
+            series_tracking={},
+        )
 
         # Each recommendation must have its OWN reasoning, not the other's
-        assert pipeline_recs[0]["llm_reasoning"] == "LLM reasoning for Way of Kings"
-        assert pipeline_recs[1]["llm_reasoning"] == "LLM reasoning for Fire & Blood"
+        assert recommendations[0]["llm_reasoning"] == "LLM reasoning for Way of Kings"
+        assert recommendations[1]["llm_reasoning"] == "LLM reasoning for Fire & Blood"
 
     def test_bold_markers_stripped_from_parsed_titles_regression(self) -> None:
         """Regression test: bold markdown in LLM titles must not prevent matching.

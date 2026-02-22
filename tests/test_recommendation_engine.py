@@ -251,10 +251,10 @@ def test_reasoning_mentions_cross_content_type(
         content_type=ContentType.VIDEO_GAME, count=1
     )
 
-    if recommendations:
-        reasoning = recommendations[0].get("reasoning", "")
-        # Reasoning should mention the specific item that influenced the recommendation
-        assert "dune" in reasoning.lower() or "preferences" in reasoning.lower()
+    assert len(recommendations) == 1
+    reasoning = recommendations[0].get("reasoning", "")
+    # Reasoning should mention the specific item that influenced the recommendation
+    assert "dune" in reasoning.lower() or "preferences" in reasoning.lower()
 
 
 # ---------------------------------------------------------------------------

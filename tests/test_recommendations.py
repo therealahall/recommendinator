@@ -61,9 +61,9 @@ Similar themes to your favorite books."""
         ContentType.BOOK, consumed, unconsumed, count=2
     )
 
-    assert len(recommendations) >= 1
-    # Check that we got recommendations
-    assert any(rec["title"] == "Book A" for rec in recommendations)
+    assert len(recommendations) == 2
+    assert recommendations[0]["title"] == "Book A"
+    assert recommendations[1]["title"] == "Book B"
 
 
 def test_generate_recommendations_no_unconsumed(mock_ollama_client):
@@ -94,8 +94,8 @@ def test_generate_recommendations_fewer_than_requested(mock_ollama_client):
         ContentType.BOOK, [], unconsumed, count=5
     )
 
-    # Should only return 1 (available items)
-    assert len(recommendations) <= 1
+    # Should return exactly 1 (only available item)
+    assert len(recommendations) == 1
 
 
 def test_generate_blurbs(mock_ollama_client):
