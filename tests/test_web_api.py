@@ -1088,6 +1088,50 @@ class TestExchangeGogTokenEndpoint:
         assert body["detail"] == "GOG authentication failed"
         assert "Internal details" not in str(body)
 
+    def test_unexpected_exception_returns_generic_500(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """Unexpected exceptions return a generic 500 without leaking error details."""
+        app_state["config"]["inputs"]["gog"] = {"enabled": True}
+
+        with patch(
+            "src.web.api.extract_code_from_input",
+            side_effect=RuntimeError("Internal database state is corrupt"),
+        ):
+            response = client.post("/api/gog/exchange", json={"code_or_url": "any"})
+
+        assert response.status_code == 500
+        body = response.json()
+        assert body["detail"] == "Unexpected error during GOG authentication"
+        assert "Internal database state" not in str(body)
+
+    def test_manual_setup_when_config_path_is_none(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """Manual setup response when config_path is None must not include token."""
+        app_state["config"]["inputs"]["gog"] = {"enabled": True}
+
+        with (
+            patch("src.web.api.get_config_path", return_value=None),
+            patch("src.web.api.extract_code_from_input", return_value="valid_code"),
+            patch(
+                "src.web.api.exchange_code_for_tokens",
+                return_value={
+                    "access_token": "access123",
+                    "refresh_token": "super_secret_token",
+                },
+            ),
+        ):
+            response = client.post(
+                "/api/gog/exchange", json={"code_or_url": "valid_code"}
+            )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["manual_setup"] is True
+        assert "refresh_token" not in body
+        assert "super_secret_token" not in str(body)
+
     def test_gog_not_enabled_returns_400(
         self, client: TestClient, mock_components: dict
     ) -> None:

@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from src.storage.schema import (
+    _enrichment_count_query,
     _enrichment_group_query,
     clear_cached_preference_interpretations,
     create_schema,
@@ -284,8 +285,8 @@ def test_clear_cached_interpretations(temp_db: sqlite3.Connection) -> None:
     assert get_cached_preference_interpretation(temp_db, "key2") is None
 
 
-class TestEnrichmentColumnWhitelist:
-    """Tests for column whitelist validation in _enrichment_group_query."""
+class TestEnrichmentSQLWhitelist:
+    """Tests for table and column whitelist validation in enrichment queries."""
 
     def test_valid_columns_accepted_via_get_enrichment_stats(
         self, temp_db: sqlite3.Connection
@@ -329,6 +330,41 @@ class TestEnrichmentColumnWhitelist:
                 cursor=cursor,
                 select_col="",
                 es_prefix="enrichment_status",
+                user_join="",
+                user_filter="",
+                user_params=(),
+                user_id=None,
+            )
+
+    def test_count_query_rejects_unknown_table(
+        self, temp_db: sqlite3.Connection
+    ) -> None:
+        """_enrichment_count_query raises ValueError for unknown table prefix."""
+        create_schema(temp_db)
+        cursor = temp_db.cursor()
+
+        with pytest.raises(ValueError, match="Unknown SQL table"):
+            _enrichment_count_query(
+                cursor=cursor,
+                table_prefix="malicious_table; DROP TABLE users; --",
+                where_clause="1=1",
+                user_join="",
+                user_filter="",
+                user_params=(),
+            )
+
+    def test_group_query_rejects_unknown_table(
+        self, temp_db: sqlite3.Connection
+    ) -> None:
+        """_enrichment_group_query raises ValueError for unknown es_prefix."""
+        create_schema(temp_db)
+        cursor = temp_db.cursor()
+
+        with pytest.raises(ValueError, match="Unknown SQL table"):
+            _enrichment_group_query(
+                cursor=cursor,
+                select_col="enrichment_provider",
+                es_prefix="injected_table",
                 user_join="",
                 user_filter="",
                 user_params=(),
