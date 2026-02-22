@@ -6,12 +6,14 @@ from pathlib import Path
 import pytest
 
 from src.storage.schema import (
+    _enrichment_group_query,
     clear_cached_preference_interpretations,
     create_schema,
     create_user,
     get_all_users,
     get_cached_preference_interpretation,
     get_default_user_id,
+    get_enrichment_stats,
     get_user_by_id,
     get_user_by_username,
     save_cached_preference_interpretation,
@@ -280,3 +282,55 @@ def test_clear_cached_interpretations(temp_db: sqlite3.Connection) -> None:
     # Verify empty
     assert get_cached_preference_interpretation(temp_db, "key1") is None
     assert get_cached_preference_interpretation(temp_db, "key2") is None
+
+
+class TestEnrichmentColumnWhitelist:
+    """Tests for column whitelist validation in _enrichment_group_query."""
+
+    def test_valid_columns_accepted_via_get_enrichment_stats(
+        self, temp_db: sqlite3.Connection
+    ) -> None:
+        """get_enrichment_stats passes valid columns without raising."""
+        create_schema(temp_db)
+        stats = get_enrichment_stats(temp_db)
+        assert "by_provider" in stats
+        assert "by_quality" in stats
+
+    def test_invalid_column_raises_value_error(
+        self, temp_db: sqlite3.Connection
+    ) -> None:
+        """_enrichment_group_query raises ValueError for unlisted column names.
+
+        Validates the SQL injection defense-in-depth guard.
+        """
+        create_schema(temp_db)
+        cursor = temp_db.cursor()
+
+        with pytest.raises(ValueError, match="Unknown enrichment column"):
+            _enrichment_group_query(
+                cursor=cursor,
+                select_col="malicious_col; DROP TABLE content_items; --",
+                es_prefix="enrichment_status",
+                user_join="",
+                user_filter="",
+                user_params=(),
+                user_id=None,
+            )
+
+    def test_empty_string_column_raises_value_error(
+        self, temp_db: sqlite3.Connection
+    ) -> None:
+        """_enrichment_group_query rejects empty string column name."""
+        create_schema(temp_db)
+        cursor = temp_db.cursor()
+
+        with pytest.raises(ValueError, match="Unknown enrichment column"):
+            _enrichment_group_query(
+                cursor=cursor,
+                select_col="",
+                es_prefix="enrichment_status",
+                user_join="",
+                user_filter="",
+                user_params=(),
+                user_id=None,
+            )

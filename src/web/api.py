@@ -1325,7 +1325,9 @@ async def exchange_gog_token(request: GogExchangeRequest) -> dict[str, Any]:
         request: Request with code or URL.
 
     Returns:
-        Success message with optional refresh_token if config couldn't be updated.
+        Success message. If config could not be updated automatically, instructs
+        the user to add the token manually. The token is never included in the
+        HTTP response.
     """
     config = get_config()
     config_path = get_config_path()
@@ -1363,12 +1365,9 @@ async def exchange_gog_token(request: GogExchangeRequest) -> dict[str, Any]:
                 "message": "GOG account connected successfully! You can now sync your GOG library.",
             }
         else:
-            # Log token server-side only; never send credentials in HTTP responses
             logger.warning(
-                "GOG token obtained but config could not be updated. "
-                "Add the refresh_token to config.yaml manually. "
-                "Token: %s",
-                refresh_token,
+                "GOG token obtained but config could not be updated automatically. "
+                "Manual setup required: add the refresh_token to config.yaml."
             )
             return {
                 "success": True,

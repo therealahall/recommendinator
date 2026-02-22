@@ -11,6 +11,9 @@ _ALLOWED_ENRICHMENT_TABLES: frozenset[str] = frozenset(
 )
 
 # Whitelist of column names allowed in dynamic enrichment GROUP BY queries.
+# Defense-in-depth: values come from hardcoded call sites in get_enrichment_stats,
+# but validating here prevents SQL injection if a new call site passes untrusted
+# input. When adding enrichment columns, update this set.
 _ALLOWED_ENRICHMENT_COLUMNS: frozenset[str] = frozenset(
     {"enrichment_provider", "enrichment_quality"}
 )

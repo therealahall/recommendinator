@@ -155,7 +155,39 @@ class TestUpdateConfigWithToken:
         with pytest.raises(GogAuthError) as exc_info:
             update_config_with_token(Path("/nonexistent/config.yaml"), "token")
 
-        assert "not found" in str(exc_info.value)
+        error_message = str(exc_info.value)
+        assert "not found" in error_message
+        # Security: filesystem path must not leak in error message
+        assert "/nonexistent" not in error_message
+        assert "config.yaml" not in error_message
+
+    def test_gog_auth_error_passes_through_unwrapped(self) -> None:
+        """Test that GogAuthError is not caught by the broad except clause.
+
+        The except GogAuthError: raise pass-through ensures that a GogAuthError
+        raised inside the try block propagates with its original message, rather
+        than being caught by except Exception and re-wrapped as a different
+        GogAuthError('Failed to update config file').
+        """
+        with pytest.raises(GogAuthError, match="Config file not found"):
+            update_config_with_token(Path("/nonexistent/config.yaml"), "token")
+
+    def test_non_gog_error_is_wrapped(self) -> None:
+        """Test that non-GogAuthError exceptions are wrapped with generic message."""
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".yaml", delete=False
+        ) as temp_file:
+            temp_file.write("inputs:\n  gog:\n    refresh_token: old\n")
+            temp_path = Path(temp_file.name)
+
+        try:
+            with patch.object(
+                Path, "read_text", side_effect=PermissionError("Permission denied")
+            ):
+                with pytest.raises(GogAuthError, match="Failed to update config file"):
+                    update_config_with_token(temp_path, "new_token")
+        finally:
+            temp_path.unlink()
 
 
 class TestIsGogEnabled:

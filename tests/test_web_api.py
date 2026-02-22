@@ -353,7 +353,10 @@ def test_update_endpoint_steam_missing_api_key(client, mock_components):
 
     assert response.status_code == 400
     data = response.json()
+    # Generic message: validation details are logged server-side, not exposed to callers
     assert "not properly configured" in data["detail"]
+    assert "API key" not in data["detail"]
+    assert "required" not in data["detail"]
 
 
 def test_update_endpoint_steam_missing_id(client, mock_components):
@@ -370,7 +373,10 @@ def test_update_endpoint_steam_missing_id(client, mock_components):
 
     assert response.status_code == 400
     data = response.json()
+    # Generic message: validation details are logged server-side, not exposed to callers
     assert "not properly configured" in data["detail"]
+    assert "steam_id" not in data["detail"]
+    assert "vanity_url" not in data["detail"]
 
 
 def test_update_endpoint_steam_api_error(client, mock_components):
@@ -991,3 +997,107 @@ def test_edit_response_includes_tv_metadata(client, mock_components):
     assert len(data) == 1
     assert data[0]["seasons_watched"] == [1, 2, 3, 4, 5]
     assert data[0]["total_seasons"] == 50
+
+
+# ---------------------------------------------------------------------------
+# GOG Exchange Endpoint Tests
+# ---------------------------------------------------------------------------
+
+
+class TestExchangeGogTokenEndpoint:
+    """Tests for POST /api/gog/exchange endpoint security behavior."""
+
+    def test_successful_exchange_with_config_update(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """Response contains no token when config is updated successfully."""
+        app_state["config"]["inputs"]["gog"] = {"enabled": True}
+
+        with (
+            patch("src.web.api.get_config_path", return_value="/tmp/fake.yaml"),
+            patch("src.web.api.extract_code_from_input", return_value="valid_code"),
+            patch(
+                "src.web.api.exchange_code_for_tokens",
+                return_value={
+                    "access_token": "access123",
+                    "refresh_token": "super_secret_token",
+                },
+            ),
+            patch("src.web.api.update_config_with_token"),
+        ):
+            response = client.post(
+                "/api/gog/exchange", json={"code_or_url": "valid_code"}
+            )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["success"] is True
+        assert "refresh_token" not in body
+        assert "super_secret_token" not in str(body)
+
+    def test_manual_setup_branch_returns_no_token(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """Manual setup path must not include refresh_token in HTTP response.
+
+        Security regression test: before ff5e7f7, the token appeared in the
+        HTTP response body in the manual_setup fallback branch.
+        """
+        from src.web.gog_auth import GogAuthError
+
+        app_state["config"]["inputs"]["gog"] = {"enabled": True}
+
+        with (
+            patch("src.web.api.get_config_path", return_value="/tmp/fake.yaml"),
+            patch("src.web.api.extract_code_from_input", return_value="valid_code"),
+            patch(
+                "src.web.api.exchange_code_for_tokens",
+                return_value={
+                    "access_token": "access123",
+                    "refresh_token": "super_secret_token",
+                },
+            ),
+            patch(
+                "src.web.api.update_config_with_token",
+                side_effect=GogAuthError("Config file not found"),
+            ),
+        ):
+            response = client.post(
+                "/api/gog/exchange", json={"code_or_url": "valid_code"}
+            )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["manual_setup"] is True
+        assert "refresh_token" not in body
+        assert "super_secret_token" not in str(body)
+
+    def test_auth_error_returns_generic_400(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """Auth failure returns generic 400 without leaking error details."""
+        from src.web.gog_auth import GogAuthError
+
+        app_state["config"]["inputs"]["gog"] = {"enabled": True}
+
+        with patch(
+            "src.web.api.extract_code_from_input",
+            side_effect=GogAuthError("Internal details that must not leak"),
+        ):
+            response = client.post("/api/gog/exchange", json={"code_or_url": "bad"})
+
+        assert response.status_code == 400
+        body = response.json()
+        assert body["detail"] == "GOG authentication failed"
+        assert "Internal details" not in str(body)
+
+    def test_gog_not_enabled_returns_400(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """Endpoint rejects requests when GOG is not enabled."""
+        app_state["config"]["inputs"]["gog"] = {"enabled": False}
+
+        response = client.post("/api/gog/exchange", json={"code_or_url": "some_code"})
+
+        assert response.status_code == 400
+        assert "not enabled" in response.json()["detail"]
