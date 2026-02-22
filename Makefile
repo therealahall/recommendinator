@@ -1,9 +1,10 @@
-.PHONY: help install install-dev test lint format type-check clean run
+.PHONY: help install install-ai install-dev test lint format type-check clean run
 
 help:
 	@echo "Available commands:"
-	@echo "  make install       - Install production dependencies"
-	@echo "  make install-dev   - Install development dependencies"
+	@echo "  make install       - Install base dependencies (no AI)"
+	@echo "  make install-ai    - Install base + AI dependencies (ollama, chromadb)"
+	@echo "  make install-dev   - Install all dependencies in editable mode (AI + dev tools)"
 	@echo "  make test          - Run tests"
 	@echo "  make lint          - Run linters"
 	@echo "  make format        - Format code with black"
@@ -13,10 +14,13 @@ help:
 	@echo "  make run           - Run the application"
 
 install:
-	pip install -r requirements.txt
+	python3.11 -m pip install .
+
+install-ai:
+	python3.11 -m pip install ".[ai]"
 
 install-dev:
-	pip install -r requirements-dev.txt
+	python3.11 -m pip install -e ".[ai,dev]"
 
 test:
 	pytest

@@ -45,7 +45,7 @@ If you change the host to `0.0.0.0` to allow LAN access, **anyone on your networ
 # Clone and install
 git clone https://github.com/ahall/personal-recommendations.git
 cd personal-recommendations
-pip install -r requirements.txt
+python3.11 -m pip install ".[ai]"
 
 # Set up config
 cp config/example.yaml config/config.yaml

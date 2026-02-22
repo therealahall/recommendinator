@@ -9,7 +9,7 @@ Common issues and solutions for Personal Recommendations.
 **Error:** `Failed to build hnswlib` or similar
 
 **Solution:** ChromaDB requires Python 3.11 or 3.12. If you're using 3.13+, either:
-1. Use Python 3.11: `python3.11 -m pip install -r requirements.txt`
+1. Use Python 3.11: `python3.11 -m pip install ".[ai]"`
 2. Run without AI features (ChromaDB is optional)
 
 ### Missing Dependencies
@@ -18,9 +18,9 @@ Common issues and solutions for Personal Recommendations.
 
 **Solution:**
 ```bash
-pip install -r requirements.txt
+python3.11 -m pip install ".[ai]"
 # or for development:
-pip install -r requirements-dev.txt
+python3.11 -m pip install -e ".[ai,dev]"
 ```
 
 ## Ollama Issues

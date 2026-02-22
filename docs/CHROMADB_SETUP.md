@@ -4,16 +4,16 @@ This guide explains how to set up ChromaDB locally for the Personal Recommendati
 
 ## Installation
 
-ChromaDB is included in `requirements.txt`. To install it:
+ChromaDB is included in the `ai` optional dependency group. To install it:
 
 ```bash
-pip install -r requirements.txt
+python3.11 -m pip install ".[ai]"
 ```
 
 Or install ChromaDB directly:
 
 ```bash
-pip install chromadb
+python3.11 -m pip install chromadb
 ```
 
 ## Python Version Compatibility
@@ -79,7 +79,7 @@ If installation fails with Python 3.14, you have two options:
    # Create a virtual environment with Python 3.11
    python3.11 -m venv venv
    source venv/bin/activate  # On Linux/Mac
-   pip install -r requirements.txt
+   pip install ".[ai]"
    ```
 
 2. **Wait for ChromaDB Python 3.14 support** or use a workaround

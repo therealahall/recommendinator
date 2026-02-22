@@ -16,8 +16,11 @@ That's it. No AI, no external services required.
 git clone https://github.com/ahall/personal-recommendations.git
 cd personal-recommendations
 
-# Install dependencies
-pip install -r requirements.txt
+# Install dependencies (base only, no AI)
+python3.11 -m pip install .
+
+# Or install with AI features (ollama, chromadb)
+python3.11 -m pip install ".[ai]"
 
 # Set up configuration
 cp config/example.yaml config/config.yaml

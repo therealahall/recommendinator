@@ -8,8 +8,7 @@ Thank you for your interest in contributing to Personal Recommendations! This do
 2. **Install Python 3.11** (required for ChromaDB compatibility)
 3. **Install dependencies:**
    ```bash
-   python3.11 -m pip install -r requirements.txt
-   python3.11 -m pip install -r requirements-dev.txt
+   python3.11 -m pip install -e ".[ai,dev]"
    ```
 4. **Run the test suite** to verify your setup:
    ```bash

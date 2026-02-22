@@ -10,9 +10,8 @@
 # Verify Python 3.11 is available
 python3.11 --version
 
-# Install all requirements
-python3.11 -m pip install -r requirements.txt
-python3.11 -m pip install -r requirements-dev.txt
+# Install all dependencies (AI + dev tools, editable mode)
+python3.11 -m pip install -e ".[ai,dev]"
 
 # Run tests
 python3.11 -m pytest tests/ -v
@@ -50,6 +49,5 @@ If you want to isolate dependencies:
 ```bash
 python3.11 -m venv venv
 source venv/bin/activate  # On Linux/Mac
-pip install -r requirements.txt
-pip install -r requirements-dev.txt
+pip install -e ".[ai,dev]"
 ```

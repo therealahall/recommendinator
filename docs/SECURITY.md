@@ -131,7 +131,7 @@ gpg -c data/recommendations.db.backup
 pip list --outdated
 
 # Update dependencies
-pip install -U -r requirements.txt
+python3.11 -m pip install -U ".[ai]"
 ```
 
 ## Deployment Checklist
