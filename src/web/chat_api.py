@@ -29,7 +29,7 @@ class ChatRequest(BaseModel):
     """Request model for chat message."""
 
     user_id: int = Field(default=1, description="User ID")
-    message: str = Field(..., description="User's message")
+    message: str = Field(..., max_length=5000, description="User's message")
     content_type: str | None = Field(
         None,
         description="Optional content type filter (book, movie, tv_show, video_game)",
@@ -42,7 +42,7 @@ class MessageResponse(BaseModel):
     id: int
     role: str
     content: str
-    tool_calls: list[dict] | None = None
+    tool_calls: list[dict[str, Any]] | None = None
     created_at: datetime
 
 
@@ -62,13 +62,17 @@ class MemoryCreateRequest(BaseModel):
     """Request model for creating a memory."""
 
     user_id: int = Field(default=1, description="User ID")
-    memory_text: str = Field(..., description="The memory/preference text")
+    memory_text: str = Field(
+        ..., max_length=2000, description="The memory/preference text"
+    )
 
 
 class MemoryUpdateRequest(BaseModel):
     """Request model for updating a memory."""
 
-    memory_text: str | None = Field(None, description="New memory text")
+    memory_text: str | None = Field(
+        None, max_length=2000, description="New memory text"
+    )
     is_active: bool | None = Field(None, description="Whether memory is active")
 
 
@@ -165,9 +169,9 @@ async def chat(request: ChatRequest) -> StreamingResponse:
 
                 yield f"data: {json.dumps(event)}\n\n"
 
-        except Exception as error:
-            logger.error(f"Chat error: {error}")
-            error_event = {"type": "error", "message": str(error)}
+        except Exception:
+            logger.error("Chat streaming error", exc_info=True)
+            error_event = {"type": "error", "message": "An internal error occurred"}
             yield f"data: {json.dumps(error_event)}\n\n"
 
     return StreamingResponse(

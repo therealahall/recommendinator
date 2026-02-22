@@ -170,12 +170,12 @@ class SyncManager:
                     on_complete()
                 except Exception as callback_error:
                     logger.error(f"Sync on_complete callback failed: {callback_error}")
-        except Exception as error:
+        except Exception:
             with self._lock:
                 job.status = SyncStatus.FAILED
                 job.completed_at = datetime.now()
-                job.error_message = str(error)
-            logger.error(f"Sync failed for {job.source}: {error}")
+                job.error_message = "Sync failed due to an internal error"
+            logger.error("Sync failed for %s", job.source, exc_info=True)
 
     def update_progress(
         self,

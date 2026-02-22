@@ -108,14 +108,12 @@ def exchange_code_for_tokens(code: str) -> dict[str, Any]:
         response = requests.get(GOG_TOKEN_URL, params=params, timeout=30)
 
         if not response.ok:
-            error_data = response.json() if response.text else {}
-            error_msg = error_data.get(
-                "error_description", response.text or "Unknown error"
-            )
             logger.error(
-                f"GOG token exchange failed: {response.status_code} - {error_msg}"
+                "GOG token exchange failed with status %d", response.status_code
             )
-            raise GogAuthError(f"Token exchange failed: {error_msg}")
+            raise GogAuthError(
+                "Token exchange failed. Please try again or check your authorization code."
+            )
 
         data: dict[str, Any] = response.json()
 
@@ -125,8 +123,8 @@ def exchange_code_for_tokens(code: str) -> dict[str, Any]:
         return data
 
     except requests.RequestException as error:
-        logger.error(f"GOG token exchange request failed: {error}")
-        raise GogAuthError(f"Failed to connect to GOG: {error}") from error
+        logger.error("GOG token exchange request failed", exc_info=True)
+        raise GogAuthError("Failed to connect to GOG servers") from error
 
 
 def update_config_with_token(config_path: Path, refresh_token: str) -> None:
