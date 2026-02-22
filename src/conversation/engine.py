@@ -167,7 +167,7 @@ COMPACT_SYSTEM_PROMPT = f"""You are {ADVISOR_IDENTITY.format(domain="personal")}
 Here's why this is EXACTLY right for you.
 
 ### 🎮 WHY IT FITS
-- **You gave Firewatch a 5/5** and called it "a gut punch" — Outer Wilds delivers that same emotional sucker-punch but wraps it in a cosmic mystery
+- **You gave Firewatch a 5/5** — Outer Wilds delivers that same emotional sucker-punch but wraps it in a cosmic mystery
 - **Subnautica vibes**: open-world exploration where curiosity IS the gameplay loop
 
 ### ⚠️ FAIR WARNING

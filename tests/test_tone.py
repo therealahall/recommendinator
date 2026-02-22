@@ -58,7 +58,7 @@ class TestToneInRecommendationPrompt:
 
     def test_includes_style_rules(self) -> None:
         prompt = build_recommendation_system_prompt(ContentType.BOOK)
-        assert "Mirror their language" in prompt
+        assert "mirror that language back" in prompt
 
     def test_includes_identity_with_content_type(self) -> None:
         prompt = build_recommendation_system_prompt(ContentType.BOOK)
@@ -83,7 +83,7 @@ class TestToneInConversationPrompt:
         assert "HYPE MACHINE" in FULL_SYSTEM_PROMPT
 
     def test_includes_style_rules(self) -> None:
-        assert "Mirror their language" in FULL_SYSTEM_PROMPT
+        assert "mirror that language back" in FULL_SYSTEM_PROMPT
 
     def test_includes_identity(self) -> None:
         assert "personal recommendation advisor" in FULL_SYSTEM_PROMPT.lower()

@@ -4,12 +4,14 @@ Covers content type grouping, anti-hallucination guardrails, and
 regression tests for LLM misclassification / fabricated reviews.
 """
 
+from src.conversation.engine import COMPACT_SYSTEM_PROMPT
 from src.llm.prompts import (
     build_blurb_prompt,
     build_blurb_system_prompt,
     build_recommendation_prompt,
     build_recommendation_system_prompt,
 )
+from src.llm.tone import STYLE_RULES
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 
 
@@ -446,19 +448,29 @@ class TestContentTypeMisclassificationRegression:
 class TestHallucinatedReviewsRegression:
     """Regression tests for LLM fabricating user reviews.
 
-    Bug reported: The LLM fabricated quotes like "You called Aladdin a
-    'gut punch of an ending'" for items that had NO user review. The model
-    invented review text because the prompt said "mention what they loved"
-    and the STYLE_RULES example demonstrated the review-quoting pattern.
+    Bug reported (round 1): The LLM fabricated quotes like "You called
+    Aladdin a 'gut punch of an ending'" for items that had NO user review.
 
-    Root cause: The instruction "mention titles, ratings, and what they loved"
-    encouraged the model to invent reasons even when no review existed.
-    The STYLE_RULES example ("called it 'a gut punch of an ending'") taught
-    the pattern of quoting reviews, which the model applied universally.
+    Root cause (round 1): The instruction "mention titles, ratings, and what
+    they loved" encouraged the model to invent reasons even when no review
+    existed.
 
-    Fix: Changed instruction to "mention titles and ratings" (removed "what
-    they loved"). Added explicit anti-hallucination rules in both the user
-    prompt and system prompt forbidding fabricated quotes.
+    Fix (round 1): Changed instruction to "mention titles and ratings"
+    (removed "what they loved"). Added explicit anti-hallucination rules in
+    both the user prompt and system prompt forbidding fabricated quotes.
+
+    Bug reported (round 2): Despite guardrails, LLM still fabricated "a gut
+    punch of an ending" for Band of Brothers (5/5, no review). The model
+    learned the quoting pattern from the STYLE_RULES example itself.
+
+    Root cause (round 2): STYLE_RULES contained the example "Since you gave
+    Firewatch a 5/5 and called it 'a gut punch of an ending'..." which
+    taught the model the exact fabrication pattern. The model followed the
+    demonstrated example over the prohibition rules.
+
+    Fix (round 2): Removed the fabricated-quote example from STYLE_RULES.
+    New example demonstrates specificity via titles and ratings only: "Since
+    you gave Firewatch a 5/5..." not "since you like narrative games".
     """
 
     def test_no_what_they_loved_instruction_regression(self) -> None:
@@ -508,3 +520,35 @@ class TestHallucinatedReviewsRegression:
             consumed_items=consumed,
         )
         assert "Do NOT invent quotes or opinions" in blurb_prompt
+
+    def test_style_rules_no_fabricated_quote_example_regression(self) -> None:
+        """Regression: STYLE_RULES must not demonstrate quoting a review.
+
+        Bug reported (round 2): Despite anti-hallucination guardrails, the
+        LLM fabricated "a gut punch of an ending" for Band of Brothers.
+
+        Root cause: STYLE_RULES contained the example 'called it "a gut
+        punch of an ending"' which taught the model to fabricate quotes.
+
+        Fix: Replaced the example with one that references titles and
+        ratings only, without demonstrating the quote-fabrication pattern.
+        """
+        # The rule itself must prohibit putting words in their mouth
+        assert "NEVER put words in their mouth" in STYLE_RULES
+        # Must not demonstrate the quote-attribution pattern via a worked example
+        assert "called it" not in STYLE_RULES
+        assert "gut punch" not in STYLE_RULES
+        # The example should demonstrate specificity via ratings, not quotes
+        assert "5/5" in STYLE_RULES
+
+    def test_compact_system_prompt_no_fabricated_quote_example_regression(
+        self,
+    ) -> None:
+        """Regression: COMPACT_SYSTEM_PROMPT must not demonstrate quoting a review.
+
+        The compact prompt's few-shot example contained the same "called it
+        'a gut punch'" pattern, teaching the model to fabricate quotes even
+        when STYLE_RULES was clean.
+        """
+        assert "called it" not in COMPACT_SYSTEM_PROMPT
+        assert "gut punch" not in COMPACT_SYSTEM_PROMPT
