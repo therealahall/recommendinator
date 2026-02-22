@@ -873,7 +873,15 @@ async def update_data(request: UpdateRequest) -> dict[str, Any]:
             }
         validation_errors = validate_source_config(source, config)
         if validation_errors:
-            raise HTTPException(status_code=400, detail="; ".join(validation_errors))
+            logger.warning(
+                "Sync config validation failed for %s: %s",
+                source,
+                "; ".join(validation_errors),
+            )
+            raise HTTPException(
+                status_code=400,
+                detail=f"Source '{source}' is not properly configured",
+            )
         resolved = [
             entry for entry in resolve_inputs(config) if entry.source_id == source
         ]
@@ -1355,12 +1363,20 @@ async def exchange_gog_token(request: GogExchangeRequest) -> dict[str, Any]:
                 "message": "GOG account connected successfully! You can now sync your GOG library.",
             }
         else:
-            # Return token for manual setup
+            # Log token server-side only; never send credentials in HTTP responses
+            logger.warning(
+                "GOG token obtained but config could not be updated. "
+                "Add the refresh_token to config.yaml manually. "
+                "Token: %s",
+                refresh_token,
+            )
             return {
                 "success": True,
                 "manual_setup": True,
-                "refresh_token": refresh_token,
-                "message": "Token obtained! Add it to your config.yaml manually.",
+                "message": (
+                    "Token obtained but could not be saved automatically. "
+                    "Check server logs and add the token to config.yaml manually."
+                ),
             }
 
     except GogAuthError as error:

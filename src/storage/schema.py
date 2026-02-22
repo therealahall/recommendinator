@@ -10,6 +10,11 @@ _ALLOWED_ENRICHMENT_TABLES: frozenset[str] = frozenset(
     {"content_items", "enrichment_status"}
 )
 
+# Whitelist of column names allowed in dynamic enrichment GROUP BY queries.
+_ALLOWED_ENRICHMENT_COLUMNS: frozenset[str] = frozenset(
+    {"enrichment_provider", "enrichment_quality"}
+)
+
 
 def create_schema(conn: sqlite3.Connection) -> None:
     """Create the database schema.
@@ -695,6 +700,8 @@ def _enrichment_group_query(
     table_name = es_prefix.split()[0]
     if table_name not in _ALLOWED_ENRICHMENT_TABLES:
         raise ValueError(f"Unknown SQL table: {table_name!r}")
+    if select_col not in _ALLOWED_ENRICHMENT_COLUMNS:
+        raise ValueError(f"Unknown enrichment column: {select_col!r}")
     col_prefix = f"es.{select_col}" if user_id else select_col
     query = (
         f"SELECT {col_prefix}, COUNT(*) FROM {es_prefix}{user_join}"

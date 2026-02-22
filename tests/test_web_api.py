@@ -353,7 +353,7 @@ def test_update_endpoint_steam_missing_api_key(client, mock_components):
 
     assert response.status_code == 400
     data = response.json()
-    assert "API key" in data["detail"] or "required" in data["detail"]
+    assert "not properly configured" in data["detail"]
 
 
 def test_update_endpoint_steam_missing_id(client, mock_components):
@@ -370,7 +370,7 @@ def test_update_endpoint_steam_missing_id(client, mock_components):
 
     assert response.status_code == 400
     data = response.json()
-    assert "steam_id" in data["detail"] or "vanity_url" in data["detail"]
+    assert "not properly configured" in data["detail"]
 
 
 def test_update_endpoint_steam_api_error(client, mock_components):

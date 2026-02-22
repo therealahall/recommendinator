@@ -142,7 +142,8 @@ def update_config_with_token(config_path: Path, refresh_token: str) -> None:
     try:
         # Read existing config
         if not config_path.exists():
-            raise GogAuthError(f"Config file not found: {config_path}")
+            logger.error("Config file not found at expected path")
+            raise GogAuthError("Config file not found")
 
         content = config_path.read_text()
 
@@ -179,9 +180,11 @@ def update_config_with_token(config_path: Path, refresh_token: str) -> None:
 
         logger.info("Updated GOG configuration in config.yaml")
 
+    except GogAuthError:
+        raise
     except Exception as error:
-        logger.error("Failed to update config: %s", error)
-        raise GogAuthError(f"Failed to update config file: {error}") from error
+        logger.error("Failed to update config: %s", error, exc_info=True)
+        raise GogAuthError("Failed to update config file") from error
 
 
 def is_gog_enabled(config: dict[str, Any]) -> bool:
