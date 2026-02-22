@@ -19,6 +19,13 @@ from src.storage.schema import create_schema, get_default_user_id
 from src.utils.list_merge import merge_string_lists
 from src.utils.sorting import get_sort_title
 
+# Whitelist of detail tables allowed in dynamic SQL queries.
+# Defense-in-depth: these names come from _DETAIL_TABLE_CONFIG (a class constant),
+# but validating them prevents accidental injection if the config is ever modified.
+_ALLOWED_DETAIL_TABLES: frozenset[str] = frozenset(
+    {"book_details", "movie_details", "tv_show_details", "video_game_details"}
+)
+
 # Status ordering for forward-only progression.
 # A status can only be overwritten by a status later in this sequence.
 _STATUS_ORDER: dict[str, int] = {
@@ -560,12 +567,14 @@ class SQLiteDB:
 
         metadata = item.metadata or {}
         table = config["table"]
+        if table not in _ALLOWED_DETAIL_TABLES:
+            raise ValueError(f"Unknown detail table: {table!r}")
         columns = config["columns"]
         known_keys = config["known_keys"]
 
         # Check for an existing row
         cursor.execute(
-            f"SELECT * FROM {table} WHERE content_item_id = ?",  # noqa: S608
+            f"SELECT * FROM {table} WHERE content_item_id = ?",
             (db_id,),
         )
         existing_row = cursor.fetchone()
@@ -664,12 +673,12 @@ class SQLiteDB:
             ]
             update_values.append(db_id)
             cursor.execute(
-                f"UPDATE {table} SET {set_clauses} WHERE content_item_id = ?",  # noqa: S608
+                f"UPDATE {table} SET {set_clauses} WHERE content_item_id = ?",
                 update_values,
             )
         else:
             cursor.execute(
-                f"INSERT INTO {table} ({col_list}) VALUES ({placeholders})",  # noqa: S608
+                f"INSERT INTO {table} ({col_list}) VALUES ({placeholders})",
                 values,
             )
 

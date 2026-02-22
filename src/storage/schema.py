@@ -3,6 +3,11 @@
 import json
 import sqlite3
 
+# Whitelist of table names/prefixes allowed in dynamic SQL queries.
+_ALLOWED_SQL_TABLES: frozenset[str] = frozenset(
+    {"content_items", "enrichment_status", "enrichment_status es"}
+)
+
 
 def create_schema(conn: sqlite3.Connection) -> None:
     """Create the database schema.
@@ -666,7 +671,9 @@ def _enrichment_count_query(
     user_params: tuple[int, ...],
 ) -> int:
     """Execute a COUNT query with optional user filtering."""
-    query = f"SELECT COUNT(*) FROM {table_prefix}{user_join} WHERE {where_clause}{user_filter}"  # noqa: S608
+    if table_prefix not in _ALLOWED_SQL_TABLES:
+        raise ValueError(f"Unknown SQL table prefix: {table_prefix!r}")
+    query = f"SELECT COUNT(*) FROM {table_prefix}{user_join} WHERE {where_clause}{user_filter}"
     cursor.execute(query, user_params)
     result: int = cursor.fetchone()[0]
     return result
@@ -682,9 +689,11 @@ def _enrichment_group_query(
     user_id: int | None,
 ) -> dict[str, int]:
     """Execute a GROUP BY query with optional user filtering."""
+    if es_prefix not in _ALLOWED_SQL_TABLES:
+        raise ValueError(f"Unknown SQL table prefix: {es_prefix!r}")
     col_prefix = f"es.{select_col}" if user_id else select_col
     query = (
-        f"SELECT {col_prefix}, COUNT(*) FROM {es_prefix}{user_join}"  # noqa: S608
+        f"SELECT {col_prefix}, COUNT(*) FROM {es_prefix}{user_join}"
         f" WHERE {col_prefix} IS NOT NULL{user_filter}"
         f" GROUP BY {col_prefix}"
     )
