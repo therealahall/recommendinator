@@ -375,7 +375,7 @@ class ConversationEngine:
                 )
 
         except Exception as error:
-            logger.error(f"LLM generation failed: {error}")
+            logger.error("LLM generation failed: %s", error)
             error_message = (
                 "I'm having trouble connecting to the AI. "
                 "Please make sure Ollama is running and try again."

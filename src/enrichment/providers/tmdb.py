@@ -149,7 +149,7 @@ class TMDBProvider(EnrichmentProvider):
         elif content_type == ContentType.TV_SHOW:
             return self._enrich_tv_show(item, api_key, language, include_keywords)
         else:
-            logger.warning(f"TMDB provider does not support {content_type}")
+            logger.warning("TMDB provider does not support %s", content_type)
             return None
 
     def _enrich_movie(
@@ -251,7 +251,7 @@ class TMDBProvider(EnrichmentProvider):
         search_title = clean_title_for_search(item.title)
         if search_title != item.title:
             logger.debug(
-                f"Cleaned title for search: '{item.title}' -> '{search_title}'"
+                "Cleaned title for search: '%s' -> '%s'", item.title, search_title
             )
 
         params = {
@@ -500,7 +500,7 @@ class TMDBProvider(EnrichmentProvider):
             return keywords if keywords else None
 
         except requests.RequestException:
-            logger.warning(f"Failed to fetch keywords for {media_type} {tmdb_id}")
+            logger.warning("Failed to fetch keywords for %s %s", media_type, tmdb_id)
             return None
 
     def _fetch_movie_keywords(self, tmdb_id: int, api_key: str) -> list[str] | None:
@@ -553,6 +553,6 @@ class TMDBProvider(EnrichmentProvider):
         except requests.RequestException:
             # Collection info is optional, don't fail enrichment
             logger.warning(
-                f"Failed to fetch collection {collection_id} for movie {movie_id}"
+                "Failed to fetch collection %s for movie %s", collection_id, movie_id
             )
             return None

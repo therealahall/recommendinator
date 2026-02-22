@@ -113,7 +113,7 @@ class MemoryExtractor:
             return memories
 
         except Exception as error:
-            logger.error(f"Memory extraction failed: {error}")
+            logger.error("Memory extraction failed: %s", error)
             return []
 
     def extract_from_single_message(
@@ -190,7 +190,7 @@ class MemoryExtractor:
             except json.JSONDecodeError:
                 pass
 
-        logger.warning(f"Could not parse extraction response: {response[:200]}")
+        logger.warning("Could not parse extraction response: %s", response[:200])
         return []
 
     def _validate_memories(self, items: list[Any]) -> list[dict[str, Any]]:

@@ -185,8 +185,9 @@ class RecommendationEngine:
 
         if not all_consumed_items:
             logger.warning(
-                f"No consumed items found across any content type. "
-                f"Cannot generate recommendations for {content_type.value}."
+                "No consumed items found across any content type. "
+                "Cannot generate recommendations for %s.",
+                content_type.value,
             )
             return []
 
@@ -203,7 +204,7 @@ class RecommendationEngine:
         unconsumed_items = [item for item in unconsumed_items if not item.ignored]
 
         if not unconsumed_items:
-            logger.warning(f"No unconsumed items found for {content_type.value}")
+            logger.warning("No unconsumed items found for %s", content_type.value)
             return []
 
         # Build series tracking (content-type specific) — before TV expansion
@@ -220,7 +221,8 @@ class RecommendationEngine:
             )
             unconsumed_items = expand_tv_shows_to_seasons(unconsumed_items)
             logger.info(
-                f"Expanded TV shows to {len(unconsumed_items)} season-level candidates"
+                "Expanded TV shows to %d season-level candidates",
+                len(unconsumed_items),
             )
 
         # -----------------------------------------------------------------
@@ -233,9 +235,10 @@ class RecommendationEngine:
                 user_preference_config.custom_rules
             )
             logger.info(
-                f"Interpreted {len(user_preference_config.custom_rules)} custom rules: "
-                f"boosts={list(interpreted_prefs.genre_boosts.keys())}, "
-                f"penalties={list(interpreted_prefs.genre_penalties.keys())}"
+                "Interpreted %d custom rules: boosts=%s, penalties=%s",
+                len(user_preference_config.custom_rules),
+                list(interpreted_prefs.genre_boosts.keys()),
+                list(interpreted_prefs.genre_penalties.keys()),
             )
 
             # Apply content type exclusions from interpreted preferences
@@ -249,8 +252,8 @@ class RecommendationEngine:
                 ]
                 if unconsumed_items:
                     logger.info(
-                        f"Content type exclusions removed "
-                        f"{original_count - len(unconsumed_items)} items"
+                        "Content type exclusions removed %d items",
+                        original_count - len(unconsumed_items),
                     )
                 else:
                     logger.warning(
@@ -262,8 +265,10 @@ class RecommendationEngine:
         preferences = self.preference_analyzer.analyze(all_consumed_items)
 
         logger.info(
-            f"Analyzed preferences from {len(all_consumed_items)} consumed items "
-            f"across all content types to recommend {content_type.value}s"
+            "Analyzed preferences from %d consumed items "
+            "across all content types to recommend %ss",
+            len(all_consumed_items),
+            content_type.value,
         )
 
         # -----------------------------------------------------------------
@@ -274,7 +279,7 @@ class RecommendationEngine:
             rated_items = [
                 item for item in all_consumed_items if item.rating is not None
             ]
-            rated_items.sort(key=lambda x: x.rating or 0, reverse=True)
+            rated_items.sort(key=lambda item: item.rating or 0, reverse=True)
 
             high_rated_refs = [
                 item
@@ -402,15 +407,16 @@ class RecommendationEngine:
                                     filtered_candidates.append(substitute_scored)
                                     seen_ids.add(substitute.id)
                                     logger.debug(
-                                        f"Substituted {scored_candidate.item.title} "
-                                        f"with {substitute.title} (earliest in "
-                                        f"{candidate_series_name})"
+                                        "Substituted %s with %s (earliest in %s)",
+                                        scored_candidate.item.title,
+                                        substitute.title,
+                                        candidate_series_name,
                                     )
                             substituted_series.add(candidate_series_name)
                     else:
                         logger.debug(
-                            f"Filtered out {scored_candidate.item.title} - "
-                            f"doesn't meet series recommendation rules"
+                            "Filtered out %s - doesn't meet series recommendation rules",
+                            scored_candidate.item.title,
                         )
 
             if not filtered_candidates:
@@ -596,7 +602,7 @@ class RecommendationEngine:
                                 }
                             )
             except Exception as error:
-                logger.warning(f"LLM recommendation generation failed: {error}")
+                logger.warning("LLM recommendation generation failed: %s", error)
 
         # -----------------------------------------------------------------
         # Final fallback

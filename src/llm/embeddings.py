@@ -71,7 +71,7 @@ class EmbeddingGenerator:
 
         for index in range(0, len(items), batch_size):
             batch = items[index : index + batch_size]
-            logger.info(f"Generating embeddings for batch {index // batch_size + 1}")
+            logger.info("Generating embeddings for batch %d", index // batch_size + 1)
 
             for item in batch:
                 try:
@@ -79,7 +79,7 @@ class EmbeddingGenerator:
                     embeddings.append(embedding)
                 except Exception as error:
                     logger.error(
-                        f"Failed to generate embedding for {item.title}: {error}"
+                        "Failed to generate embedding for %s: %s", item.title, error
                     )
                     # Append empty list or re-raise based on requirements
                     raise

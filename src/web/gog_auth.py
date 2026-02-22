@@ -180,7 +180,7 @@ def update_config_with_token(config_path: Path, refresh_token: str) -> None:
         logger.info("Updated GOG configuration in config.yaml")
 
     except Exception as error:
-        logger.error(f"Failed to update config: {error}")
+        logger.error("Failed to update config: %s", error)
         raise GogAuthError(f"Failed to update config file: {error}") from error
 
 

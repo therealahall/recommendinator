@@ -93,7 +93,7 @@ class PluginRegistry:
 
         self._discovered = True
         logger.info(
-            f"Discovered {len(self._plugins)} plugins: {list(self._plugins.keys())}"
+            "Discovered %d plugins: %s", len(self._plugins), list(self._plugins.keys())
         )
 
     def _discover_builtin_plugins(self) -> None:
@@ -115,10 +115,12 @@ class PluginRegistry:
                     self._register_plugins_from_module(module, f"builtin:{module_name}")
                 except Exception as error:
                     logger.warning(
-                        f"Failed to load built-in plugin module {module_name}: {error}"
+                        "Failed to load built-in plugin module %s: %s",
+                        module_name,
+                        error,
                     )
         except ImportError as error:
-            logger.warning(f"Failed to import sources package: {error}")
+            logger.warning("Failed to import sources package: %s", error)
 
     def _discover_private_plugins(self) -> None:
         """Discover private plugins from private/plugins/."""
@@ -127,7 +129,7 @@ class PluginRegistry:
         private_path = project_root / "private" / "plugins"
 
         if not private_path.exists():
-            logger.debug(f"No private plugins directory found at {private_path}")
+            logger.debug("No private plugins directory found at %s", private_path)
             return
 
         # Ensure private directory has __init__.py files
@@ -158,7 +160,9 @@ class PluginRegistry:
                 module = importlib.import_module(f"private.plugins.{module_name}")
                 self._register_plugins_from_module(module, f"private:{module_name}")
             except Exception as error:
-                logger.warning(f"Failed to load private plugin {module_name}: {error}")
+                logger.warning(
+                    "Failed to load private plugin %s: %s", module_name, error
+                )
 
     def _register_plugins_from_module(self, module: Any, source: str) -> None:
         """Register all SourcePlugin subclasses from a module.
@@ -183,11 +187,14 @@ class PluginRegistry:
                     plugin_instance = attr()
                     self.register(plugin_instance)
                     logger.debug(
-                        f"Registered plugin {plugin_instance.name} from {source}"
+                        "Registered plugin %s from %s", plugin_instance.name, source
                     )
                 except Exception as error:
                     logger.warning(
-                        f"Failed to instantiate plugin {attr_name} from {source}: {error}"
+                        "Failed to instantiate plugin %s from %s: %s",
+                        attr_name,
+                        source,
+                        error,
                     )
 
     def register(self, plugin: SourcePlugin) -> None:
@@ -203,7 +210,7 @@ class PluginRegistry:
             raise ValueError(f"Plugin '{plugin.name}' already registered")
 
         self._plugins[plugin.name] = plugin
-        logger.debug(f"Registered plugin: {plugin.name} ({plugin.display_name})")
+        logger.debug("Registered plugin: %s (%s)", plugin.name, plugin.display_name)
 
     def unregister(self, name: str) -> bool:
         """Unregister a plugin by name.

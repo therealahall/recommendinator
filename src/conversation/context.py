@@ -197,7 +197,9 @@ class ContextAssembler:
                 return relevant_items
 
             except Exception as error:
-                logger.warning(f"RAG retrieval failed, falling back to simple: {error}")
+                logger.warning(
+                    "RAG retrieval failed, falling back to simple: %s", error
+                )
 
         # Fallback: return high-rated completed items
         return self._get_high_rated_items(
@@ -406,7 +408,7 @@ class ContextAssembler:
 
         if profile.genre_affinities:
             sorted_genres = sorted(
-                profile.genre_affinities.items(), key=lambda x: x[1], reverse=True
+                profile.genre_affinities.items(), key=lambda pair: pair[1], reverse=True
             )
             top_genres = [
                 f"{genre} ({score:.1f}\u2605)" for genre, score in sorted_genres[:5]

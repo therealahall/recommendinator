@@ -114,14 +114,14 @@ class GoodreadsPlugin(SourcePlugin):
             ContentItem objects for each book in the export
         """
         source = self.get_source_identifier(config)
-        logger.info(f"Parsing Goodreads CSV file: {file_path}")
+        logger.info("Parsing Goodreads CSV file: %s", file_path)
 
         with open(file_path, encoding="utf-8") as csv_file:
             reader = csv.DictReader(csv_file)
             rows = list(reader)
 
         total = len(rows)
-        logger.info(f"Found {total} entries in Goodreads CSV file")
+        logger.info("Found %d entries in Goodreads CSV file", total)
         processed_count = 0
         for row in rows:
             title = row.get("Title", "").strip()
@@ -185,4 +185,4 @@ class GoodreadsPlugin(SourcePlugin):
             )
             processed_count += 1
 
-        logger.info(f"Imported {processed_count} items from Goodreads CSV file")
+        logger.info("Imported %d items from Goodreads CSV file", processed_count)

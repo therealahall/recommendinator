@@ -128,7 +128,7 @@ class JsonImportPlugin(SourcePlugin):
             ) from error
 
         file_format = "JSONL" if file_path.suffix == ".jsonl" else "JSON"
-        logger.info(f"Parsing {file_format} file: {file_path}")
+        logger.info("Parsing %s file: %s", file_format, file_path)
 
         try:
             entries = _load_json_or_jsonl(file_path)
@@ -137,7 +137,7 @@ class JsonImportPlugin(SourcePlugin):
         except (json.JSONDecodeError, ValueError) as error:
             raise SourceError(self.name, f"Failed to parse JSON: {error}") from error
 
-        logger.info(f"Found {len(entries)} entries in {file_format} file")
+        logger.info("Found %d entries in %s file", len(entries), file_format)
 
         yield from _parse_entries(
             entries,
@@ -237,8 +237,9 @@ def _parse_entries(
                 date_completed = datetime.strptime(date_str, "%Y-%m-%d").date()
             except ValueError:
                 logger.warning(
-                    f"Invalid date format for '{title}': {date_str}. "
-                    "Expected YYYY-MM-DD."
+                    "Invalid date format for '%s': %s. Expected YYYY-MM-DD.",
+                    title,
+                    date_str,
                 )
 
         # Parse review and notes
@@ -278,7 +279,7 @@ def _parse_entries(
         )
         count += 1
 
-    logger.info(f"Imported {count} items from JSON file")
+    logger.info("Imported %d items from JSON file", count)
 
 
 def _normalize_json_rating(raw_rating: Any) -> int | None:

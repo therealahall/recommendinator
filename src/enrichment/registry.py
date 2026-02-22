@@ -89,8 +89,9 @@ class EnrichmentRegistry:
 
         self._discovered = True
         logger.info(
-            f"Discovered {len(self._providers)} enrichment providers: "
-            f"{list(self._providers.keys())}"
+            "Discovered %d enrichment providers: %s",
+            len(self._providers),
+            list(self._providers.keys()),
         )
 
     def _discover_builtin_providers(self) -> None:
@@ -114,11 +115,12 @@ class EnrichmentRegistry:
                     )
                 except Exception as error:
                     logger.warning(
-                        f"Failed to load built-in enrichment provider module "
-                        f"{module_name}: {error}"
+                        "Failed to load built-in enrichment provider module %s: %s",
+                        module_name,
+                        error,
                     )
         except ImportError as error:
-            logger.warning(f"Failed to import enrichment providers package: {error}")
+            logger.warning("Failed to import enrichment providers package: %s", error)
 
     def _discover_private_providers(self) -> None:
         """Discover private providers from plugins/private/enrichment/."""
@@ -164,7 +166,9 @@ class EnrichmentRegistry:
                 self._register_providers_from_module(module, f"private:{module_name}")
             except Exception as error:
                 logger.warning(
-                    f"Failed to load private enrichment provider {module_name}: {error}"
+                    "Failed to load private enrichment provider %s: %s",
+                    module_name,
+                    error,
                 )
 
     def _register_providers_from_module(self, module: Any, source: str) -> None:
@@ -190,13 +194,16 @@ class EnrichmentRegistry:
                     provider_instance = attr()
                     self.register(provider_instance)
                     logger.debug(
-                        f"Registered enrichment provider {provider_instance.name} "
-                        f"from {source}"
+                        "Registered enrichment provider %s from %s",
+                        provider_instance.name,
+                        source,
                     )
                 except Exception as error:
                     logger.warning(
-                        f"Failed to instantiate enrichment provider {attr_name} "
-                        f"from {source}: {error}"
+                        "Failed to instantiate enrichment provider %s from %s: %s",
+                        attr_name,
+                        source,
+                        error,
                     )
 
     def register(self, provider: EnrichmentProvider) -> None:
@@ -215,7 +222,9 @@ class EnrichmentRegistry:
 
         self._providers[provider.name] = provider
         logger.debug(
-            f"Registered enrichment provider: {provider.name} ({provider.display_name})"
+            "Registered enrichment provider: %s (%s)",
+            provider.name,
+            provider.display_name,
         )
 
     def unregister(self, name: str) -> bool:

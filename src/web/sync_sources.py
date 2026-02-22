@@ -71,14 +71,15 @@ def resolve_inputs(config: dict[str, Any]) -> list[ResolvedInput]:
 
         plugin_name = entry.get("plugin")
         if not plugin_name:
-            logger.warning(f"Input '{source_id}' has no 'plugin' field, skipping")
+            logger.warning("Input '%s' has no 'plugin' field, skipping", source_id)
             continue
 
         plugin = registry.get_plugin(plugin_name)
         if plugin is None:
             logger.warning(
-                f"Input '{source_id}' references unknown plugin "
-                f"'{plugin_name}', skipping"
+                "Input '%s' references unknown plugin '%s', skipping",
+                source_id,
+                plugin_name,
             )
             continue
 

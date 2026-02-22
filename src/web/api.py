@@ -310,7 +310,7 @@ def discover_themes(themes_dir: Path) -> list[ThemeResponse]:
                 )
             )
         except (json.JSONDecodeError, KeyError, OSError):
-            logger.warning(f"Skipping invalid theme directory: {entry.name}")
+            logger.warning("Skipping invalid theme directory: %s", entry.name)
             continue
 
     return themes
@@ -395,7 +395,7 @@ async def get_recommendations(
         return response
 
     except Exception as error:
-        logger.error(f"Error generating recommendations: {error}")
+        logger.error("Error generating recommendations: %s", error)
         raise HTTPException(
             status_code=500, detail="Failed to generate recommendations"
         ) from error
@@ -818,7 +818,7 @@ async def mark_complete(request: CompletionRequest) -> dict[str, Any]:
         return {"message": f"Marked '{request.title}' as completed", "id": db_id}
 
     except Exception as error:
-        logger.error(f"Error marking content as completed: {error}")
+        logger.error("Error marking content as completed: %s", error)
         raise HTTPException(
             status_code=500, detail="Failed to mark content as completed"
         ) from error
@@ -930,8 +930,9 @@ async def update_data(request: UpdateRequest) -> dict[str, Any]:
                 enrichment_content_type = ContentType(content_type_str)
             except ValueError:
                 logger.warning(
-                    f"Invalid content_type '{content_type_str}' for source "
-                    f"{resolved[0].source_id}, enriching all types"
+                    "Invalid content_type '%s' for source %s, enriching all types",
+                    content_type_str,
+                    resolved[0].source_id,
                 )
 
     # Create completion callback for auto-enrichment
@@ -944,9 +945,9 @@ async def update_data(request: UpdateRequest) -> dict[str, Any]:
                 content_type=enrichment_content_type,
             )
             if started:
-                logger.info(f"[ENRICHMENT] Auto-started after sync: {message}")
+                logger.info("[ENRICHMENT] Auto-started after sync: %s", message)
             else:
-                logger.info(f"[ENRICHMENT] Auto-start skipped: {message}")
+                logger.info("[ENRICHMENT] Auto-start skipped: %s", message)
 
     # Start background sync
     source_label = humanize_source_id(source) if source != "all" else "All Sources"
@@ -957,7 +958,7 @@ async def update_data(request: UpdateRequest) -> dict[str, Any]:
     if not success:
         raise HTTPException(status_code=409, detail=message)
 
-    logger.info(f"[SYNC] Started background sync for: {source_label}")
+    logger.info("[SYNC] Started background sync for: %s", source_label)
     return {
         "message": f"Sync started for {source_label}. Use GET /api/sync/status to monitor progress.",
         "sources": sources_to_sync,
@@ -1346,7 +1347,7 @@ async def exchange_gog_token(request: GogExchangeRequest) -> dict[str, Any]:
                 config_updated = True
                 logger.info("Successfully connected GOG account and updated config")
             except GogAuthError as config_error:
-                logger.warning(f"Could not update config: {config_error}")
+                logger.warning("Could not update config: %s", config_error)
 
         if config_updated:
             return {
@@ -1363,12 +1364,12 @@ async def exchange_gog_token(request: GogExchangeRequest) -> dict[str, Any]:
             }
 
     except GogAuthError as error:
-        logger.warning(f"GOG auth error: {error}")
+        logger.warning("GOG auth error: %s", error)
         raise HTTPException(
             status_code=400, detail="GOG authentication failed"
         ) from error
     except Exception as error:
-        logger.error(f"Unexpected error during GOG token exchange: {error}")
+        logger.error("Unexpected error during GOG token exchange: %s", error)
         raise HTTPException(
             status_code=500, detail="Unexpected error during GOG authentication"
         ) from error

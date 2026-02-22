@@ -50,7 +50,7 @@ def get_steam_id_from_vanity_url(api_key: str, vanity_url: str) -> str | None:
             return str(steamid) if steamid else None
         return None
     except requests.RequestException as error:
-        logger.error(f"Error resolving Steam vanity URL: {error}")
+        logger.error("Error resolving Steam vanity URL: %s", error)
         raise SteamAPIError(f"Failed to resolve Steam ID: {error}") from error
 
 
@@ -82,7 +82,7 @@ def get_owned_games(
         games = data.get("response", {}).get("games", [])
         return list(games) if games else []
     except requests.RequestException as error:
-        logger.error(f"Error fetching Steam games: {error}")
+        logger.error("Error fetching Steam games: %s", error)
         raise SteamAPIError(f"Failed to fetch Steam games: {error}") from error
 
 
@@ -132,8 +132,8 @@ def get_game_details(
                 # Check for rate limiting (429) or server errors (5xx)
                 if response.status_code == 429:
                     logger.warning(
-                        f"Rate limited by Steam API. "
-                        f"Backing off for {retry_delay:.1f}s..."
+                        "Rate limited by Steam API. Backing off for %.1fs...",
+                        retry_delay,
                     )
                     time.sleep(retry_delay)
                     retry_delay *= backoff_multiplier
@@ -155,15 +155,22 @@ def get_game_details(
             except requests.RequestException as error:
                 if attempt < max_retries:
                     logger.warning(
-                        f"Error fetching game details for app ID {app_id}: {error}. "
-                        f"Retrying in {retry_delay:.1f}s (attempt {attempt + 1}/{max_retries})..."
+                        "Error fetching game details for app ID %s: %s. "
+                        "Retrying in %.1fs (attempt %d/%d)...",
+                        app_id,
+                        error,
+                        retry_delay,
+                        attempt + 1,
+                        max_retries,
                     )
                     time.sleep(retry_delay)
                     retry_delay *= backoff_multiplier
                 else:
                     logger.warning(
-                        f"Error fetching game details for app ID {app_id}: {error}. "
-                        f"Max retries exceeded, skipping."
+                        "Error fetching game details for app ID %s: %s. "
+                        "Max retries exceeded, skipping.",
+                        app_id,
+                        error,
                     )
 
         # Rate limit: wait between requests to avoid being blocked
@@ -336,9 +343,9 @@ def _fetch_steam_games(
             )
 
     # Fetch owned games
-    logger.info(f"Fetching owned games from Steam API for Steam ID: {steam_id}")
+    logger.info("Fetching owned games from Steam API for Steam ID: %s", steam_id)
     games = get_owned_games(api_key, steam_id, include_appinfo=True)
-    logger.info(f"Found {len(games)} games in Steam library")
+    logger.info("Found %d games in Steam library", len(games))
     if progress_callback:
         progress_callback(len(games), len(games), "owned_games")
 
@@ -350,8 +357,9 @@ def _fetch_steam_games(
     app_ids = [game["appid"] for game in games]
     total_games = len(app_ids)
     logger.info(
-        f"Fetching detailed information for {total_games} games "
-        "(this may take a while due to API rate limits)..."
+        "Fetching detailed information for %d games "
+        "(this may take a while due to API rate limits)...",
+        total_games,
     )
 
     def game_details_progress(current: int, total: int) -> None:
@@ -359,7 +367,7 @@ def _fetch_steam_games(
             progress_callback(current, total, "game_details")
 
     game_details = get_game_details(app_ids, progress_callback=game_details_progress)
-    logger.info(f"Successfully fetched details for {len(game_details)} games")
+    logger.info("Successfully fetched details for %d games", len(game_details))
 
     # Process each game
     count = 0

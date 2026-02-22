@@ -266,7 +266,7 @@ class RAWGProvider(EnrichmentProvider):
         )
 
         if content_type != ContentType.VIDEO_GAME:
-            logger.warning(f"RAWG provider does not support {content_type}")
+            logger.warning("RAWG provider does not support %s", content_type)
             return None
 
         api_key = config.get("api_key", "")
@@ -297,7 +297,7 @@ class RAWGProvider(EnrichmentProvider):
         search_title = clean_title_for_search(item.title)
         if search_title != item.title:
             logger.debug(
-                f"Cleaned title for search: '{item.title}' -> '{search_title}'"
+                "Cleaned title for search: '%s' -> '%s'", item.title, search_title
             )
 
         params: dict[str, str | int] = {
@@ -502,7 +502,7 @@ class RAWGProvider(EnrichmentProvider):
 
         except requests.RequestException:
             # Franchise info is optional — don't fail enrichment
-            logger.warning(f"Failed to fetch game-series for game {game_id}")
+            logger.warning("Failed to fetch game-series for game %s", game_id)
             return (None, None)
 
     def _extract_year(self, date_str: str) -> int | None:

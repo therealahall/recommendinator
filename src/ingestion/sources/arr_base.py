@@ -164,7 +164,7 @@ class ArrPlugin(SourcePlugin):
         base_url = config.get("url", self._default_url).rstrip("/")
         api_key = config.get("api_key", "").strip()
 
-        logger.info(f"Fetching items from {self.display_name}...")
+        logger.info("Fetching items from %s...", self.display_name)
         try:
             item_list = self._fetch_items(base_url, api_key)
         except requests.RequestException as error:
@@ -203,7 +203,7 @@ class ArrPlugin(SourcePlugin):
                 source=source,
             )
 
-        logger.info(f"Imported {processed_count} items from {self.display_name}")
+        logger.info("Imported %d items from %s", processed_count, self.display_name)
 
     def _fetch_items(self, base_url: str, api_key: str) -> list[dict[str, Any]]:
         """Fetch all items from the *arr API.
@@ -226,8 +226,8 @@ class ArrPlugin(SourcePlugin):
 
         data = response.json()
         if not isinstance(data, list):
-            logger.warning(f"Unexpected {self.display_name} API response format")
+            logger.warning("Unexpected %s API response format", self.display_name)
             return []
 
-        logger.info(f"Fetched {len(data)} items from {self.display_name}")
+        logger.info("Fetched %d items from %s", len(data), self.display_name)
         return list(data)

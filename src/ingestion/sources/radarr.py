@@ -97,7 +97,7 @@ def _fetch_radarr_collections(base_url: str, api_key: str) -> dict[int, dict[str
         response = requests.get(url, headers=headers, timeout=30)
         response.raise_for_status()
     except requests.RequestException as error:
-        logger.warning(f"Could not fetch Radarr collections: {error}")
+        logger.warning("Could not fetch Radarr collections: %s", error)
         return {}
 
     data = response.json()
@@ -119,7 +119,7 @@ def _fetch_radarr_collections(base_url: str, api_key: str) -> dict[int, dict[str
                 result[int(tmdb_id)] = {"title": title, "order": order}
 
     if result:
-        logger.info(f"Loaded collection info for {len(result)} movies")
+        logger.info("Loaded collection info for %d movies", len(result))
     return result
 
 

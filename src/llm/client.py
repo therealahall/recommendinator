@@ -59,7 +59,7 @@ class OllamaClient:
                 raise RuntimeError(f"No embedding returned from model {model}")
             return embedding
         except Exception as error:
-            logger.error(f"Failed to generate embedding: {error}")
+            logger.error("Failed to generate embedding: %s", error)
             raise RuntimeError(f"Embedding generation failed: {error}") from error
 
     def generate_embeddings(
@@ -85,7 +85,7 @@ class OllamaClient:
                 embedding = self.generate_embedding(text, model)
                 embeddings.append(embedding)
             except Exception as error:
-                logger.error(f"Failed to generate embedding for text: {error}")
+                logger.error("Failed to generate embedding for text: %s", error)
                 raise
 
         return embeddings
@@ -157,7 +157,7 @@ class OllamaClient:
 
             return content
         except Exception as error:
-            logger.error(f"Failed to generate text: {error}")
+            logger.error("Failed to generate text: %s", error)
             raise RuntimeError(f"Text generation failed: {error}") from error
 
     def check_model_available(self, model: str) -> bool:
@@ -194,7 +194,7 @@ class OllamaClient:
                 ]
             return []
         except Exception as error:
-            logger.error(f"Failed to list models: {error}")
+            logger.error("Failed to list models: %s", error)
             return []
 
     def generate_text_stream(
@@ -240,7 +240,7 @@ class OllamaClient:
             yield from self._iter_stream_chunks(response)
 
         except Exception as error:
-            logger.error(f"Failed to generate streaming text: {error}")
+            logger.error("Failed to generate streaming text: %s", error)
             raise RuntimeError(f"Streaming text generation failed: {error}") from error
 
     def chat_stream(
@@ -286,5 +286,5 @@ class OllamaClient:
             yield from self._iter_stream_chunks(response)
 
         except Exception as error:
-            logger.error(f"Failed to stream chat: {error}")
+            logger.error("Failed to stream chat: %s", error)
             raise RuntimeError(f"Chat streaming failed: {error}") from error

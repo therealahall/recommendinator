@@ -83,7 +83,7 @@ def execute_sync(
     if progress_callback:
         progress_callback(0, result.total_items, None, source_name)
 
-    logger.info(f"[SYNC] {source_name}: Found {result.total_items} items, saving...")
+    logger.info("[SYNC] %s: Found %d items, saving...", source_name, result.total_items)
 
     # Save each item
     embeddings_generated = 0
@@ -96,7 +96,12 @@ def execute_sync(
                 progress_callback(index, result.total_items, item.title, source_name)
 
             logger.debug(
-                f"[SYNC] {source_name}: Syncing {content_type} {item_num}/{result.total_items} - {item.title}"
+                "[SYNC] %s: Syncing %s %d/%d - %s",
+                source_name,
+                content_type,
+                item_num,
+                result.total_items,
+                item.title,
             )
 
             embedding = None
@@ -104,15 +109,21 @@ def execute_sync(
                 # Skip if embedding already exists (only checkable with external ID)
                 if not item.id or not storage_manager.has_embedding(item.id):
                     logger.info(
-                        f"[SYNC] {source_name}: Generating embedding "
-                        f"{item_num}/{result.total_items} - {item.title}"
+                        "[SYNC] %s: Generating embedding %d/%d - %s",
+                        source_name,
+                        item_num,
+                        result.total_items,
+                        item.title,
                     )
                     embedding = embedding_generator.generate_content_embedding(item)
                     embeddings_generated += 1
                 else:
                     logger.debug(
-                        f"[SYNC] {source_name}: Embedding exists, skipping "
-                        f"{item_num}/{result.total_items} - {item.title}"
+                        "[SYNC] %s: Embedding exists, skipping %d/%d - %s",
+                        source_name,
+                        item_num,
+                        result.total_items,
+                        item.title,
                     )
                     embeddings_skipped += 1
 
@@ -125,13 +136,14 @@ def execute_sync(
                     storage_manager.mark_item_needs_enrichment(db_id)
                 except Exception as enrich_error:
                     logger.warning(
-                        f"[SYNC] Failed to mark '{item.title}' for enrichment: "
-                        f"{enrich_error}"
+                        "[SYNC] Failed to mark '%s' for enrichment: %s",
+                        item.title,
+                        enrich_error,
                     )
 
         except Exception as error:
             error_message = f"Failed to process '{item.title}': {error}"
-            logger.warning(f"[SYNC] {source_name}: {error_message}")
+            logger.warning("[SYNC] %s: %s", source_name, error_message)
             result.errors.append(error_message)
 
     embedding_summary = ""
@@ -141,8 +153,11 @@ def execute_sync(
             f"{embeddings_skipped} skipped."
         )
     logger.info(
-        f"[SYNC] {source_name}: Completed. "
-        f"{result.items_synced}/{result.total_items} items saved.{embedding_summary}"
+        "[SYNC] %s: Completed. %d/%d items saved.%s",
+        source_name,
+        result.items_synced,
+        result.total_items,
+        embedding_summary,
     )
     return result
 
@@ -173,7 +188,7 @@ def execute_multi_source_sync(
     results: list[SyncResult] = []
 
     for plugin, plugin_config in sources:
-        logger.info(f"[SYNC] === Starting sync for source: {plugin.name} ===")
+        logger.info("[SYNC] === Starting sync for source: %s ===", plugin.name)
 
         try:
             result = execute_sync(
@@ -193,7 +208,7 @@ def execute_multi_source_sync(
 
         except Exception as error:
             error_message = f"Sync failed for {plugin.name}: {error}"
-            logger.error(f"[SYNC] {error_message}")
+            logger.error("[SYNC] %s", error_message)
             if error_callback:
                 error_callback(error_message)
             source_id = plugin_config.get("_source_id")
@@ -208,5 +223,5 @@ def execute_multi_source_sync(
             )
 
     total_synced = sum(result.items_synced for result in results)
-    logger.info(f"[SYNC] === Completed. Total items processed: {total_synced} ===")
+    logger.info("[SYNC] === Completed. Total items processed: %d ===", total_synced)
     return results

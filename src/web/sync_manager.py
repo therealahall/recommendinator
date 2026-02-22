@@ -162,14 +162,14 @@ class SyncManager:
                 job.status = SyncStatus.COMPLETED
                 job.completed_at = datetime.now()
                 job.items_processed = count
-            logger.info(f"Sync completed for {job.source}: {count} items processed")
+            logger.info("Sync completed for %s: %d items processed", job.source, count)
 
             # Run completion callback if provided
             if on_complete is not None:
                 try:
                     on_complete()
                 except Exception as callback_error:
-                    logger.error(f"Sync on_complete callback failed: {callback_error}")
+                    logger.error("Sync on_complete callback failed: %s", callback_error)
         except Exception:
             with self._lock:
                 job.status = SyncStatus.FAILED

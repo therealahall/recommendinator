@@ -293,7 +293,7 @@ class CsvImportPlugin(SourcePlugin):
             ContentItem objects for each row
         """
         source = self.get_source_identifier(config)
-        logger.info(f"Parsing CSV file: {file_path}")
+        logger.info("Parsing CSV file: %s", file_path)
         expected_columns = COMMON_COLUMNS | CONTENT_TYPE_COLUMNS.get(
             content_type.value, set()
         )
@@ -314,12 +314,12 @@ class CsvImportPlugin(SourcePlugin):
             unknown = actual_columns - expected_columns
             if unknown:
                 logger.warning(
-                    f"CSV contains unknown columns that will be ignored: "
-                    f"{', '.join(sorted(unknown))}"
+                    "CSV contains unknown columns that will be ignored: %s",
+                    ", ".join(sorted(unknown)),
                 )
 
         total = len(rows)
-        logger.info(f"Found {total} entries in CSV file")
+        logger.info("Found %d entries in CSV file", total)
         count = 0
         for row in rows:
             title = row.get("title", "").strip()
@@ -344,8 +344,9 @@ class CsvImportPlugin(SourcePlugin):
                     date_completed = datetime.strptime(date_str, "%Y-%m-%d").date()
                 except ValueError:
                     logger.warning(
-                        f"Invalid date format for '{title}': {date_str}. "
-                        "Expected YYYY-MM-DD."
+                        "Invalid date format for '%s': %s. Expected YYYY-MM-DD.",
+                        title,
+                        date_str,
                     )
 
             # Parse review and notes
@@ -385,7 +386,7 @@ class CsvImportPlugin(SourcePlugin):
             )
             count += 1
 
-        logger.info(f"Imported {count} items from CSV file")
+        logger.info("Imported %d items from CSV file", count)
 
 
 def _build_metadata(row: dict[str, str], content_type: ContentType) -> dict[str, Any]:

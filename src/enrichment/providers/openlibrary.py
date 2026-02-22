@@ -123,7 +123,7 @@ class OpenLibraryProvider(EnrichmentProvider):
         )
 
         if content_type != ContentType.BOOK:
-            logger.warning(f"OpenLibrary provider does not support {content_type}")
+            logger.warning("OpenLibrary provider does not support %s", content_type)
             return None
 
         # Try ISBN lookup first
@@ -174,7 +174,7 @@ class OpenLibraryProvider(EnrichmentProvider):
             return self._build_result_from_edition(edition)
 
         except requests.RequestException as error:
-            logger.warning(f"ISBN lookup failed for {isbn}: {error}")
+            logger.warning("ISBN lookup failed for %s: %s", isbn, error)
             return None
 
     def _search_book(self, item: ContentItem) -> EnrichmentResult:
@@ -190,7 +190,7 @@ class OpenLibraryProvider(EnrichmentProvider):
         search_title = clean_title_for_search(item.title)
         if search_title != item.title:
             logger.debug(
-                f"Cleaned title for search: '{item.title}' -> '{search_title}'"
+                "Cleaned title for search: '%s' -> '%s'", item.title, search_title
             )
 
         params: dict[str, Any] = {

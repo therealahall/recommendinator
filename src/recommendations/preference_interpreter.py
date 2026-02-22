@@ -602,7 +602,7 @@ class LLMPreferenceInterpreter:
             if cached_json:
                 return self._json_to_interpreted(cached_json)
         except Exception as error:
-            logger.debug(f"Cache lookup failed: {error}")
+            logger.debug("Cache lookup failed: %s", error)
         return None
 
     def _save_to_cache(
@@ -620,7 +620,7 @@ class LLMPreferenceInterpreter:
             cache_data = self._interpreted_to_json(interpreted)
             self.storage.save_cached_preference_interpretation(cache_key, cache_data)
         except Exception as error:
-            logger.debug(f"Cache save failed: {error}")
+            logger.debug("Cache save failed: %s", error)
 
     def _interpreted_to_json(self, interpreted: InterpretedPreference) -> str:
         """Convert InterpretedPreference to JSON string.
@@ -703,7 +703,7 @@ class LLMPreferenceInterpreter:
                 interpretation_notes=data.get("notes", "LLM interpretation"),
             )
         except (json.JSONDecodeError, KeyError, TypeError) as error:
-            logger.debug(f"Failed to parse LLM response: {error}")
+            logger.debug("Failed to parse LLM response: %s", error)
             return None
 
     def interpret_all(self, rules: list[str]) -> InterpretedPreference:
@@ -725,7 +725,7 @@ class LLMPreferenceInterpreter:
         cache_key = self._compute_cache_key(rules)
         cached = self._get_cached(cache_key)
         if cached is not None:
-            logger.debug(f"Using cached interpretation for {len(rules)} rules")
+            logger.debug("Using cached interpretation for %d rules", len(rules))
             return cached
 
         # Try LLM interpretation
@@ -742,12 +742,12 @@ class LLMPreferenceInterpreter:
             if llm_result is not None and not llm_result.is_empty():
                 llm_result.original_rule = "; ".join(rules)
                 self._save_to_cache(cache_key, llm_result)
-                logger.info(f"LLM interpreted {len(rules)} custom rules")
+                logger.info("LLM interpreted %d custom rules", len(rules))
                 return llm_result
 
         except Exception as error:
             logger.warning(
-                f"LLM interpretation failed, using pattern fallback: {error}"
+                "LLM interpretation failed, using pattern fallback: %s", error
             )
 
         # Fall back to pattern-based interpretation
@@ -773,4 +773,4 @@ class LLMPreferenceInterpreter:
             try:
                 self.storage.clear_cached_preference_interpretations()
             except Exception as error:
-                logger.warning(f"Failed to clear interpretation cache: {error}")
+                logger.warning("Failed to clear interpretation cache: %s", error)

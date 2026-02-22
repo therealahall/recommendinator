@@ -73,8 +73,8 @@ def reload_config() -> bool:
     try:
         config = load_config(Path(config_path))
         app_state["config"] = config
-        logger.info(f"Reloaded config from {config_path}")
+        logger.info("Reloaded config from %s", config_path)
         return True
     except Exception as error:
-        logger.error(f"Failed to reload config: {error}")
+        logger.error("Failed to reload config: %s", error)
         return False

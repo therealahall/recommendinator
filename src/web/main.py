@@ -93,15 +93,17 @@ def main() -> None:
     # Log accessible addresses
     logger.info("Starting Personal Recommendations web server...")
     logger.info("Server will be accessible at:")
-    logger.info(f"  - http://localhost:{port}")
+    logger.info("  - http://localhost:%s", port)
     if host == "0.0.0.0":
         local_ips = get_local_ip_addresses()
         for ip in local_ips:
-            logger.info(f"  - http://{ip}:{port}")
+            logger.info("  - http://%s:%s", ip, port)
     else:
-        logger.info(f"  - http://{host}:{port}")
+        logger.info("  - http://%s:%s", host, port)
     logger.info(
-        f"API documentation: http://{host if host != '0.0.0.0' else 'localhost'}:{port}/docs"
+        "API documentation: http://%s:%s/docs",
+        host if host != "0.0.0.0" else "localhost",
+        port,
     )
 
     # Start server

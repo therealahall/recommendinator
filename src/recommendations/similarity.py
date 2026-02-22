@@ -72,7 +72,7 @@ class SimilarityMatcher:
                         self.storage.save_content_item(item, embedding=embedding)
                 except Exception as error:
                     logger.warning(
-                        f"Failed to generate embedding for {item.title}: {error}"
+                        "Failed to generate embedding for %s: %s", item.title, error
                     )
                     continue
 
@@ -133,9 +133,9 @@ class SimilarityMatcher:
                     similar_items.append((matching_item, score))
 
             # Sort by score (descending)
-            similar_items.sort(key=lambda x: x[1], reverse=True)
+            similar_items.sort(key=lambda entry: entry[1], reverse=True)
 
             return similar_items
         except Exception as error:
-            logger.error(f"Similarity search failed: {error}")
+            logger.error("Similarity search failed: %s", error)
             return []

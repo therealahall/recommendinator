@@ -161,10 +161,14 @@ class EnrichmentManager:
             )
             self._thread.start()
 
+            type_msg = (
+                f" for {content_type.value}" if content_type else " for all types"
+            )
             retry_msg = " (including not_found)" if include_not_found else ""
             logger.info(
-                f"[ENRICHMENT] === Starting enrichment job"
-                f"{f' for {content_type.value}' if content_type else ' for all types'}{retry_msg} ==="
+                "[ENRICHMENT] === Starting enrichment job%s%s ===",
+                type_msg,
+                retry_msg,
             )
             return True
 
@@ -240,7 +244,8 @@ class EnrichmentManager:
                     if status and status.get("enrichment_quality") == "not_found":
                         not_found_ids.add(db_id)
                 logger.info(
-                    f"[ENRICHMENT] Found {len(not_found_ids)} not_found items to retry"
+                    "[ENRICHMENT] Found %d not_found items to retry",
+                    len(not_found_ids),
                 )
 
             # Process items in batches
@@ -280,16 +285,19 @@ class EnrichmentManager:
                 self._status.completed_at = time.time()
                 self._status.current_item = ""
 
+            job_result = "cancelled" if self._stop_requested else "completed"
             logger.info(
-                f"[ENRICHMENT] === Job {'cancelled' if self._stop_requested else 'completed'} === "
-                f"Processed: {self._status.items_processed}, "
-                f"Enriched: {self._status.items_enriched}, "
-                f"Not found: {self._status.items_not_found}, "
-                f"Failed: {self._status.items_failed}"
+                "[ENRICHMENT] === Job %s === "
+                "Processed: %d, Enriched: %d, Not found: %d, Failed: %d",
+                job_result,
+                self._status.items_processed,
+                self._status.items_enriched,
+                self._status.items_not_found,
+                self._status.items_failed,
             )
 
         except Exception as error:
-            logger.exception(f"Enrichment job failed with error: {error}")
+            logger.exception("Enrichment job failed with error: %s", error)
             with self._lock:
                 self._status.running = False
                 self._status.errors.append(f"Job error: {error}")
@@ -326,7 +334,11 @@ class EnrichmentManager:
         content_type_str = get_enum_value(content_type)
 
         logger.debug(
-            f"[ENRICHMENT] Processing {content_type_str} {item_num}/{total} - {item.title}"
+            "[ENRICHMENT] Processing %s %d/%d - %s",
+            content_type_str,
+            item_num,
+            total,
+            item.title,
         )
 
         # Find providers for this content type
@@ -340,7 +352,7 @@ class EnrichmentManager:
         if not matching_providers:
             # No providers available for this content type
             logger.debug(
-                f"[ENRICHMENT] No providers for {content_type_str}: {item.title}"
+                "[ENRICHMENT] No providers for %s: %s", content_type_str, item.title
             )
             self.storage_manager.mark_enrichment_complete(db_id, "none", "not_found")
             with self._lock:
@@ -359,7 +371,10 @@ class EnrichmentManager:
                 provider_config = self._get_provider_config(provider.name)
 
                 logger.debug(
-                    f"[ENRICHMENT] Trying {provider.name} for {content_type_str}: {item.title}"
+                    "[ENRICHMENT] Trying %s for %s: %s",
+                    provider.name,
+                    content_type_str,
+                    item.title,
                 )
 
                 # Enrich
@@ -372,8 +387,11 @@ class EnrichmentManager:
                         db_id, provider.name, result.match_quality
                     )
                     logger.info(
-                        f"[ENRICHMENT] Enriched {content_type_str} via {provider.name} "
-                        f"(quality={result.match_quality}): {item.title}"
+                        "[ENRICHMENT] Enriched %s via %s (quality=%s): %s",
+                        content_type_str,
+                        provider.name,
+                        result.match_quality,
+                        item.title,
                     )
                     with self._lock:
                         self._status.items_processed += 1
@@ -381,24 +399,28 @@ class EnrichmentManager:
                     return
                 else:
                     logger.debug(
-                        f"[ENRICHMENT] {provider.name} returned not_found: {item.title}"
+                        "[ENRICHMENT] %s returned not_found: %s",
+                        provider.name,
+                        item.title,
                     )
 
             except ProviderError as error:
-                logger.warning(f"[ENRICHMENT] Provider {provider.name} failed: {error}")
+                logger.warning(
+                    "[ENRICHMENT] Provider %s failed: %s", provider.name, error
+                )
                 with self._lock:
                     self._status.errors.append(f"{provider.name}: {error.message}")
 
             except Exception as error:
                 logger.warning(
-                    f"[ENRICHMENT] Unexpected error from {provider.name}: {error}"
+                    "[ENRICHMENT] Unexpected error from %s: %s", provider.name, error
                 )
                 with self._lock:
                     self._status.errors.append(f"{provider.name}: {error}")
 
         # No provider found a match
         logger.debug(
-            f"[ENRICHMENT] No match found for {content_type_str}: {item.title}"
+            "[ENRICHMENT] No match found for %s: %s", content_type_str, item.title
         )
         self.storage_manager.mark_enrichment_complete(db_id, "none", "not_found")
         with self._lock:

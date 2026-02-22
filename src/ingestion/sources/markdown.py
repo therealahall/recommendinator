@@ -157,7 +157,7 @@ class MarkdownImportPlugin(SourcePlugin):
                 self.name, f"Invalid content type: {content_type_str}"
             ) from error
 
-        logger.info(f"Parsing Markdown file: {file_path}")
+        logger.info("Parsing Markdown file: %s", file_path)
 
         try:
             content = file_path.read_text(encoding="utf-8")
@@ -190,7 +190,7 @@ def _parse_markdown(
     """
     # Pre-scan to count items so we can report a real total
     total = sum(1 for line in content.splitlines() if _ITEM_PATTERN.match(line.strip()))
-    logger.info(f"Found {total} entries in Markdown file")
+    logger.info("Found %d entries in Markdown file", total)
 
     current_status = ConsumptionStatus.UNREAD
     count = 0
@@ -247,8 +247,9 @@ def _parse_markdown(
                 date_completed = datetime.strptime(date_str.strip(), "%Y-%m-%d").date()
             except ValueError:
                 logger.warning(
-                    f"Invalid date format for '{title}': {date_str}. "
-                    "Expected YYYY-MM-DD."
+                    "Invalid date format for '%s': %s. Expected YYYY-MM-DD.",
+                    title,
+                    date_str,
                 )
 
         if progress_callback:
@@ -266,7 +267,7 @@ def _parse_markdown(
         )
         count += 1
 
-    logger.info(f"Imported {count} items from Markdown file")
+    logger.info("Imported %d items from Markdown file", count)
 
 
 def _match_section_status(heading_text: str) -> ConsumptionStatus | None:

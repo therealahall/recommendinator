@@ -300,7 +300,7 @@ def _fetch_epic_games(
     # Phase 2: Fetch all library records
     logger.info("Fetching Epic Games library...")
     library_records = get_library_items(api)
-    logger.info(f"Found {len(library_records)} items in Epic Games library")
+    logger.info("Found %d items in Epic Games library", len(library_records))
 
     if progress_callback:
         progress_callback(0, len(library_records), "Fetching library...")
@@ -329,14 +329,17 @@ def _fetch_epic_games(
             game_metadata = get_game_metadata(api, namespace, catalog_item_id)
         except EpicGamesAPIError:
             logger.warning(
-                f"Failed to fetch metadata for {app_name} "
-                f"({catalog_item_id}), skipping."
+                "Failed to fetch metadata for %s (%s), skipping.",
+                app_name,
+                catalog_item_id,
             )
             continue
 
         if game_metadata is None:
             logger.warning(
-                f"No metadata found for {app_name} ({catalog_item_id}), skipping."
+                "No metadata found for %s (%s), skipping.",
+                app_name,
+                catalog_item_id,
             )
             continue
 
@@ -371,4 +374,4 @@ def _fetch_epic_games(
         )
         count += 1
 
-    logger.info(f"Imported {count} base games from Epic Games Store")
+    logger.info("Imported %d base games from Epic Games Store", count)

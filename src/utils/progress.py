@@ -60,4 +60,4 @@ def log_progress(
         current, total, initial_count=initial_count, interval=interval
     ):
         percent = current * 100 // total
-        logger.info(f"Processing {label}: {current}/{total} ({percent}%)")
+        logger.info("Processing %s: %d/%d (%d%%)", label, current, total, percent)

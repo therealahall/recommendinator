@@ -56,7 +56,7 @@ class RecommendationGenerator:
 
         if len(unconsumed_items) < count:
             count = len(unconsumed_items)
-            logger.info(f"Reducing recommendation count to {count} (available items)")
+            logger.info("Reducing recommendation count to %d (available items)", count)
 
         # Build prompts
         system_prompt = build_recommendation_system_prompt(content_type)
@@ -81,7 +81,7 @@ class RecommendationGenerator:
             return recommendations[:count]  # Ensure we don't exceed count
 
         except Exception as error:
-            logger.error(f"Failed to generate recommendations: {error}")
+            logger.error("Failed to generate recommendations: %s", error)
             raise RuntimeError(f"Recommendation generation failed: {error}") from error
 
     def generate_blurbs(
@@ -133,7 +133,7 @@ class RecommendationGenerator:
             )
 
         except Exception as error:
-            logger.error(f"Failed to generate blurbs: {error}")
+            logger.error("Failed to generate blurbs: %s", error)
             raise RuntimeError(f"Blurb generation failed: {error}") from error
 
     def _parse_recommendations(

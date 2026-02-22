@@ -218,7 +218,7 @@ class ToolExecutor:
         try:
             return handler(params, user_id)
         except Exception as error:
-            logger.error(f"Tool {tool_name} failed: {error}")
+            logger.error("Tool %s failed: %s", tool_name, error)
             return ToolResult(
                 success=False,
                 message=f"Failed to execute {tool_name}. Please try again.",

@@ -65,7 +65,7 @@ def refresh_access_token(refresh_token: str) -> dict[str, str]:
             "refresh_token": str(data.get("refresh_token", refresh_token)),
         }
     except requests.RequestException as error:
-        logger.error(f"Error refreshing GOG access token: {error}")
+        logger.error("Error refreshing GOG access token: %s", error)
         raise GogAPIError(f"Failed to refresh access token: {error}") from error
 
 
@@ -105,8 +105,10 @@ def get_owned_games(
             all_products.extend(products)
 
             logger.info(
-                f"Fetched GOG library page {page}/{total_pages} "
-                f"({len(products)} products)"
+                "Fetched GOG library page %d/%d (%d products)",
+                page,
+                total_pages,
+                len(products),
             )
 
             page += 1
@@ -114,7 +116,7 @@ def get_owned_games(
                 time.sleep(rate_limit_seconds)
 
         except requests.RequestException as error:
-            logger.error(f"Error fetching GOG owned games (page {page}): {error}")
+            logger.error("Error fetching GOG owned games (page %d): %s", page, error)
             raise GogAPIError(f"Failed to fetch owned games: {error}") from error
 
     return all_products
@@ -142,7 +144,7 @@ def get_wishlist_product_ids(access_token: str) -> list[int]:
         wishlist = data.get("wishlist", {})
         return [int(product_id) for product_id in wishlist.keys()]
     except requests.RequestException as error:
-        logger.error(f"Error fetching GOG wishlist: {error}")
+        logger.error("Error fetching GOG wishlist: %s", error)
         raise GogAPIError(f"Failed to fetch wishlist: {error}") from error
 
 
@@ -164,12 +166,12 @@ def get_product_details(product_id: int) -> dict[str, Any] | None:
     try:
         response = requests.get(url, params=params, timeout=10)
         if response.status_code == 404:
-            logger.warning(f"GOG product {product_id} not found (404)")
+            logger.warning("GOG product %d not found (404)", product_id)
             return None
         response.raise_for_status()
         return dict(response.json())
     except requests.RequestException as error:
-        logger.error(f"Error fetching GOG product {product_id}: {error}")
+        logger.error("Error fetching GOG product %d: %s", product_id, error)
         raise GogAPIError(
             f"Failed to fetch product details for {product_id}: {error}"
         ) from error
@@ -214,14 +216,18 @@ def get_multiple_product_details(
             except GogAPIError:
                 if attempt < max_retries:
                     logger.warning(
-                        f"Retrying GOG product {product_id} in {retry_delay:.1f}s "
-                        f"(attempt {attempt + 1}/{max_retries})..."
+                        "Retrying GOG product %d in %.1fs (attempt %d/%d)...",
+                        product_id,
+                        retry_delay,
+                        attempt + 1,
+                        max_retries,
                     )
                     time.sleep(retry_delay)
                     retry_delay *= backoff_multiplier
                 else:
                     logger.warning(
-                        f"Max retries exceeded for GOG product {product_id}, skipping."
+                        "Max retries exceeded for GOG product %d, skipping.",
+                        product_id,
                     )
 
         # Rate limit between requests (skip after last)
@@ -369,7 +375,7 @@ def _fetch_gog_games(
     # Phase 2: Fetch owned games
     logger.info("Fetching owned games from GOG...")
     owned_products = get_owned_games(access_token)
-    logger.info(f"Found {len(owned_products)} owned games on GOG")
+    logger.info("Found %d owned games on GOG", len(owned_products))
 
     if progress_callback:
         progress_callback(len(owned_products), len(owned_products), "owned_games")
@@ -443,15 +449,16 @@ def _fetch_gog_games(
 
     logger.info("Fetching GOG wishlist...")
     wishlist_ids = get_wishlist_product_ids(access_token)
-    logger.info(f"Found {len(wishlist_ids)} items on GOG wishlist")
+    logger.info("Found %d items on GOG wishlist", len(wishlist_ids))
 
     # Filter out already-owned games
     new_wishlist_ids = [
         product_id for product_id in wishlist_ids if product_id not in owned_product_ids
     ]
     logger.info(
-        f"{len(new_wishlist_ids)} wishlist items not already owned "
-        f"(filtered {len(wishlist_ids) - len(new_wishlist_ids)} duplicates)"
+        "%d wishlist items not already owned (filtered %d duplicates)",
+        len(new_wishlist_ids),
+        len(wishlist_ids) - len(new_wishlist_ids),
     )
 
     if not new_wishlist_ids:
@@ -478,7 +485,9 @@ def _fetch_gog_games(
 
         if not title:
             # Without enrichment, we don't have titles for wishlist items
-            logger.debug(f"Skipping wishlist product {product_id} — no title available")
+            logger.debug(
+                "Skipping wishlist product %d — no title available", product_id
+            )
             continue
 
         metadata = {
