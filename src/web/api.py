@@ -1356,8 +1356,11 @@ async def exchange_gog_token(request: GogExchangeRequest) -> dict[str, Any]:
                 update_config_with_token(Path(config_path), refresh_token)
                 config_updated = True
                 logger.info("Successfully connected GOG account and updated config")
-            except GogAuthError as config_error:
-                logger.warning("Could not update config: %s", config_error)
+            except GogAuthError:
+                logger.warning(
+                    "Could not update config file automatically; "
+                    "manual setup required"
+                )
 
         if config_updated:
             return {

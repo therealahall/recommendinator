@@ -139,12 +139,11 @@ def update_config_with_token(config_path: Path, refresh_token: str) -> None:
     Raises:
         GogAuthError: If config update fails.
     """
-    try:
-        # Read existing config
-        if not config_path.exists():
-            logger.error("Config file not found at expected path")
-            raise GogAuthError("Config file not found")
+    if not config_path.exists():
+        logger.error("Config file not found at expected path")
+        raise GogAuthError("Config file not found")
 
+    try:
         content = config_path.read_text()
 
         # Try to update in-place using regex to preserve formatting
@@ -180,8 +179,6 @@ def update_config_with_token(config_path: Path, refresh_token: str) -> None:
 
         logger.info("Updated GOG configuration in config.yaml")
 
-    except GogAuthError:
-        raise
     except Exception as error:
         logger.error("Failed to update config: %s", error, exc_info=True)
         raise GogAuthError("Failed to update config file") from error

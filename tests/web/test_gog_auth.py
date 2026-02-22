@@ -151,26 +151,19 @@ class TestUpdateConfigWithToken:
             temp_path.unlink()
 
     def test_raises_error_for_missing_file(self) -> None:
-        """Test error when config file doesn't exist."""
-        with pytest.raises(GogAuthError) as exc_info:
+        """GogAuthError propagates with original message when config file is absent.
+
+        The exists check is outside the try block, so the error propagates
+        directly without being caught by the broad except Exception clause.
+        The message must not contain filesystem paths (security).
+        """
+        with pytest.raises(GogAuthError, match="Config file not found") as exc_info:
             update_config_with_token(Path("/nonexistent/config.yaml"), "token")
 
         error_message = str(exc_info.value)
-        assert "not found" in error_message
         # Security: filesystem path must not leak in error message
         assert "/nonexistent" not in error_message
         assert "config.yaml" not in error_message
-
-    def test_gog_auth_error_passes_through_unwrapped(self) -> None:
-        """Test that GogAuthError is not caught by the broad except clause.
-
-        The except GogAuthError: raise pass-through ensures that a GogAuthError
-        raised inside the try block propagates with its original message, rather
-        than being caught by except Exception and re-wrapped as a different
-        GogAuthError('Failed to update config file').
-        """
-        with pytest.raises(GogAuthError, match="Config file not found"):
-            update_config_with_token(Path("/nonexistent/config.yaml"), "token")
 
     def test_non_gog_error_is_wrapped(self) -> None:
         """Test that non-GogAuthError exceptions are wrapped with generic message."""

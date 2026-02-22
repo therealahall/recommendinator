@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.user_preferences import UserPreferenceConfig
 from src.web.app import create_app
+from src.web.gog_auth import GogAuthError
 from src.web.state import app_state
 from src.web.sync_manager import reset_sync_manager
 
@@ -1043,8 +1044,6 @@ class TestExchangeGogTokenEndpoint:
         Security regression test: before ff5e7f7, the token appeared in the
         HTTP response body in the manual_setup fallback branch.
         """
-        from src.web.gog_auth import GogAuthError
-
         app_state["config"]["inputs"]["gog"] = {"enabled": True}
 
         with (
@@ -1076,8 +1075,6 @@ class TestExchangeGogTokenEndpoint:
         self, client: TestClient, mock_components: dict
     ) -> None:
         """Auth failure returns generic 400 without leaking error details."""
-        from src.web.gog_auth import GogAuthError
-
         app_state["config"]["inputs"]["gog"] = {"enabled": True}
 
         with patch(
