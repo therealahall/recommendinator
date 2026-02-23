@@ -229,8 +229,9 @@ The project uses Claude Code plugins and custom agents to maintain code quality 
 
 - **security-review** (`.claude/agents/security-review.md`) — Pre-commit security audit agent. Automatically invoked before commits to check for credential exposure, injection vulnerabilities, CORS misconfigurations, and project-specific security rules. Uses Pyright LSP diagnostics to catch type safety issues with security implications. See `docs/SECURITY.md` for what it checks.
 - **code-review** (`.claude/agents/code-review.md`) — Pre-commit code quality agent. Performs line-by-line review of all changes for dead code, code smells, DRY violations, naming issues, type safety, over/under-engineering, and adherence to project standards. Complements the security-review agent: security-review handles vulnerabilities, code-review handles quality and design.
+- **commit-hygiene** (`.claude/agents/commit-hygiene.md`) — Commit structure and convention agent. Operates in two phases: (1) pre-commit, analyzes uncommitted changes and recommends how to split them into atomic commits (implementation, tests, docs separately); (2) pre-push, reviews unpushed commits for atomic structure, conventional commit format, message quality, and documentation completeness.
 
-**Both agents must approve changes before marking tasks as complete.** Run security-review and code-review before `make check`.
+**All agents must approve changes before marking tasks as complete.** Run security-review and code-review before `make check`. Run commit-hygiene before committing (to plan the split) and before pushing (to verify commit structure).
 
 ## Architecture Principles
 
@@ -308,6 +309,7 @@ This ensures users can discover and understand all configuration options.
 
 - [ ] **security-review agent** approves (no critical/high findings)
 - [ ] **code-review agent** approves (no critical/major issues)
+- [ ] **commit-hygiene agent** approves split plan (pre-commit) and commit structure (pre-push)
 - [ ] All tests pass: `pytest`
 - [ ] Formatting: `black --check src/ tests/`
 - [ ] Type checking: `mypy src/`
