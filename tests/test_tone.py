@@ -2,7 +2,12 @@
 
 from src.conversation.engine import FULL_SYSTEM_PROMPT
 from src.llm.prompts import build_recommendation_system_prompt
-from src.llm.tone import ADVISOR_IDENTITY, PERSONALITY_TRAITS, STYLE_RULES
+from src.llm.tone import (
+    ADVISOR_IDENTITY,
+    PERSONALITY_COMPACT,
+    PERSONALITY_TRAITS,
+    STYLE_RULES,
+)
 from src.models.content import ContentType
 
 
@@ -27,14 +32,26 @@ class TestToneConstants:
     def test_personality_traits_is_nonempty(self) -> None:
         assert PERSONALITY_TRAITS
 
-    def test_personality_traits_contains_hype_machine(self) -> None:
-        assert "HYPE MACHINE" in PERSONALITY_TRAITS
-
     def test_personality_traits_contains_honesty(self) -> None:
         assert "honest" in PERSONALITY_TRAITS.lower()
 
-    def test_personality_traits_contains_tastemaker(self) -> None:
-        assert "tastemaker" in PERSONALITY_TRAITS
+    def test_personality_traits_references_history_and_ratings(self) -> None:
+        assert "history and ratings" in PERSONALITY_TRAITS
+
+    def test_personality_traits_no_speech_pattern_suggestions(self) -> None:
+        """Personality traits must not contain hype-machine or speech-pattern language."""
+        banned_phrases = [
+            "hype machine",
+            "talk like",
+            "sprinkle",
+            "sound like",
+            "speak as",
+            "tastemaker",
+            "exclamation marks",
+        ]
+        traits_lower = PERSONALITY_TRAITS.lower()
+        for phrase in banned_phrases:
+            assert phrase not in traits_lower, f"Found banned phrase: {phrase!r}"
 
     def test_style_rules_is_nonempty(self) -> None:
         assert STYLE_RULES
@@ -54,11 +71,11 @@ class TestToneInRecommendationPrompt:
 
     def test_includes_personality_traits(self) -> None:
         prompt = build_recommendation_system_prompt(ContentType.BOOK)
-        assert "HYPE MACHINE" in prompt
+        assert "genuinely thrilled" in prompt
 
     def test_includes_style_rules(self) -> None:
         prompt = build_recommendation_system_prompt(ContentType.BOOK)
-        assert "mirror that language back" in prompt
+        assert "NEVER put words in their mouth" in prompt
 
     def test_includes_identity_with_content_type(self) -> None:
         prompt = build_recommendation_system_prompt(ContentType.BOOK)
@@ -80,10 +97,10 @@ class TestToneInConversationPrompt:
     """Tests that FULL_SYSTEM_PROMPT includes shared tone."""
 
     def test_includes_personality_traits(self) -> None:
-        assert "HYPE MACHINE" in FULL_SYSTEM_PROMPT
+        assert "genuinely thrilled" in FULL_SYSTEM_PROMPT
 
     def test_includes_style_rules(self) -> None:
-        assert "mirror that language back" in FULL_SYSTEM_PROMPT
+        assert "NEVER put words in their mouth" in FULL_SYSTEM_PROMPT
 
     def test_includes_identity(self) -> None:
         assert "personal recommendation advisor" in FULL_SYSTEM_PROMPT.lower()
@@ -107,3 +124,16 @@ class TestToneInConversationPrompt:
         assert "Prediction Rules" in FULL_SYSTEM_PROMPT
         assert "What NOT To Do" in FULL_SYSTEM_PROMPT
         assert "Pre-Scored Recommendations" in FULL_SYSTEM_PROMPT
+
+
+class TestPersonalityCompact:
+    """Tests for PERSONALITY_COMPACT used in 3B model prompts."""
+
+    def test_personality_compact_is_nonempty(self) -> None:
+        assert PERSONALITY_COMPACT
+
+    def test_personality_compact_no_hype_machine(self) -> None:
+        assert "hype machine" not in PERSONALITY_COMPACT.lower()
+
+    def test_personality_compact_has_anti_fabrication_instruction(self) -> None:
+        assert "NEVER put words in their mouth" in PERSONALITY_COMPACT

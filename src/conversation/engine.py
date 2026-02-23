@@ -167,7 +167,7 @@ COMPACT_SYSTEM_PROMPT = f"""You are {ADVISOR_IDENTITY.format(domain="personal")}
 Here's why this is EXACTLY right for you.
 
 ### 🎮 WHY IT FITS
-- **You gave Firewatch a 5/5** — Outer Wilds delivers that same emotional sucker-punch but wraps it in a cosmic mystery
+- **You gave Firewatch a 5/5** — Outer Wilds delivers that same blend of exploration and emotional storytelling, but wraps it in a cosmic mystery
 - **Subnautica vibes**: open-world exploration where curiosity IS the gameplay loop
 
 ### ⚠️ FAIR WARNING
@@ -177,7 +177,7 @@ Here's why this is EXACTLY right for you.
 - **Return of the Obra Dinn**: Different flavor — deduction puzzles instead of exploration, but the same "piece it together yourself" satisfaction
 
 ### 💎 MY PREDICTION
-You'll rate this **5/5** — the ending hits harder than Firewatch's.
+You'll rate this **5/5** — it nails the same storytelling quality that made Firewatch special.
 
 ## User Context
 {{user_context}}

@@ -474,8 +474,21 @@ class TestHallucinatedReviewsRegression:
     demonstrated example over the prohibition rules.
 
     Fix (round 2): Removed the fabricated-quote example from STYLE_RULES.
-    New example demonstrates specificity via titles and ratings only: "Since
-    you gave Firewatch a 5/5..." not "since you like narrative games".
+    Replaced with "Since you gave Firewatch a 5/5..." to demonstrate
+    specificity via titles and ratings only.
+
+    Bug reported (round 3): LLM fabricated "called it an absolute banger"
+    and "raved about" — attributing sentiments user never expressed.
+
+    Root cause (round 3): The "Since you gave Firewatch a 5/5..." example
+    still demonstrated how to speak about user history, which the model
+    extended to fabricated attributions. PERSONALITY_TRAITS phrasing like
+    "Talk like you just discovered something incredible" encouraged
+    invented analogies.
+
+    Fix (round 3): Removed all example phrasings and speech-pattern
+    suggestions. Added explicit NEVER rules against attributing quotes
+    or sentiments.
     """
 
     def test_no_what_they_loved_instruction_regression(self) -> None:
@@ -527,36 +540,51 @@ class TestHallucinatedReviewsRegression:
         assert "Do NOT invent quotes or opinions" in blurb_prompt
 
     def test_style_rules_no_fabricated_quote_example_regression(self) -> None:
-        """Regression: STYLE_RULES must not demonstrate quoting a review.
+        """Regression: STYLE_RULES must not suggest ways to speak or quote users.
 
         Bug reported (round 2): Despite anti-hallucination guardrails, the
         LLM fabricated "a gut punch of an ending" for Band of Brothers.
 
-        Root cause: STYLE_RULES contained the example 'called it "a gut
-        punch of an ending"' which taught the model to fabricate quotes.
+        Bug reported (round 3): LLM fabricated "called it an absolute
+        banger" and "raved about" — attributing sentiments user never
+        expressed. Style rules contained example phrasings that taught the
+        model to invent user quotes.
 
-        Fix: Replaced the example with one that references titles and
-        ratings only, without demonstrating the quote-fabrication pattern.
+        Root cause: STYLE_RULES contained example phrasings like 'Since you
+        gave Firewatch a 5/5...' and 'mirror that language back' which
+        taught the model to fabricate and attribute user quotes.
+
+        Fix: Removed all example phrasings and speech-pattern suggestions.
+        Added explicit rules against attributing quotes or sentiments.
         """
         # The rule itself must prohibit putting words in their mouth
         assert "NEVER put words in their mouth" in STYLE_RULES
         # Must not demonstrate the quote-attribution pattern via a worked example
         assert "called it" not in STYLE_RULES
         assert "gut punch" not in STYLE_RULES
-        # The example should demonstrate specificity via ratings, not quotes
-        assert "5/5" in STYLE_RULES
+        # Must not contain example phrasings that suggest ways to speak
+        assert "Since you gave" not in STYLE_RULES
+        assert "mirror" not in STYLE_RULES.lower()
+        # Must instruct against fabricating user sentiments
+        assert "NEVER fabricate" in STYLE_RULES
+        # Must still instruct specificity via titles and ratings
+        assert "reference their actual titles and ratings" in STYLE_RULES
 
     def test_compact_system_prompt_no_fabricated_quote_example_regression(
         self,
     ) -> None:
-        """Regression: COMPACT_SYSTEM_PROMPT must not demonstrate quoting a review.
+        """Regression: COMPACT_SYSTEM_PROMPT must not demonstrate quoting or attribution.
 
-        The compact prompt's few-shot example contained the same "called it
-        'a gut punch'" pattern, teaching the model to fabricate quotes even
-        when STYLE_RULES was clean.
+        The compact prompt's few-shot example contained the "called it
+        'a gut punch'" pattern and sentiment-attribution language like
+        "emotional sucker-punch" and "hits harder than Firewatch's",
+        teaching the model to fabricate quotes and attribute sentiments.
         """
         assert "called it" not in COMPACT_SYSTEM_PROMPT
         assert "gut punch" not in COMPACT_SYSTEM_PROMPT
+        assert "sucker-punch" not in COMPACT_SYSTEM_PROMPT
+        assert "hits harder" not in COMPACT_SYSTEM_PROMPT
+        assert "hype machine" not in COMPACT_SYSTEM_PROMPT.lower()
 
 
 # ===========================================================================
