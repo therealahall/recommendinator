@@ -661,11 +661,10 @@ class RecommendationEngine:
 
         try:
             if recommendations:
-                llm_recs = self.llm_generator.generate_recommendations(
+                llm_recs = self.llm_generator.generate_blurbs(
                     content_type=content_type,
+                    selected_items=[rec["item"] for rec in recommendations],
                     consumed_items=all_consumed_items,
-                    unconsumed_items=[rec["item"] for rec in recommendations],
-                    count=count,
                 )
                 # Build a lookup of title -> reasoning from LLM results.
                 # The LLM returns items in its own preferred order, which

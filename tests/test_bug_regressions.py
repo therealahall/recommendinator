@@ -2,11 +2,13 @@
 
 import sqlite3
 from pathlib import Path
+from typing import Any
 from unittest.mock import Mock
 
 from src.llm.client import OllamaClient
 from src.llm.recommendations import RecommendationGenerator
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.recommendations.engine import RecommendationEngine
 from src.recommendations.preference_interpreter import PatternBasedInterpreter
 from src.storage.schema import (
     create_schema,
@@ -32,7 +34,6 @@ class TestArticleStrippingRegression:
         Fix: Use re.sub(r"^(the|a|an)\\s+", "", s, flags=re.I) for
         leading-article removal.
         """
-        from src.recommendations.engine import RecommendationEngine
 
         engine = RecommendationEngine.__new__(RecommendationEngine)
 
@@ -48,7 +49,6 @@ class TestArticleStrippingRegression:
         Ensures the fix doesn't break the intended functionality of removing
         leading articles for matching purposes.
         """
-        from src.recommendations.engine import RecommendationEngine
 
         engine = RecommendationEngine.__new__(RecommendationEngine)
 
@@ -461,7 +461,6 @@ class TestLlmReasoningMismatchRegression:
         Fix: Build a title -> reasoning lookup from LLM results and match
         each pipeline recommendation by its title.
         """
-        from src.recommendations.engine import RecommendationEngine
 
         engine = RecommendationEngine.__new__(RecommendationEngine)
         engine.llm_generator = Mock(spec=RecommendationGenerator)
@@ -482,7 +481,7 @@ class TestLlmReasoningMismatchRegression:
         )
 
         # Simulate pipeline recommendations in order: Way of Kings, Fire & Blood
-        recommendations: list[dict[str, object]] = [
+        recommendations: list[dict[str, Any]] = [
             {
                 "item": way_of_kings,
                 "score": 0.9,
@@ -496,7 +495,7 @@ class TestLlmReasoningMismatchRegression:
         ]
 
         # LLM returns items in REVERSED order: Fire & Blood first
-        engine.llm_generator.generate_recommendations.return_value = [
+        engine.llm_generator.generate_blurbs.return_value = [
             {
                 "title": "Fire & Blood",
                 "author": "George R.R. Martin",
@@ -524,6 +523,77 @@ class TestLlmReasoningMismatchRegression:
         # Each recommendation must have its OWN reasoning, not the other's
         assert recommendations[0]["llm_reasoning"] == "LLM reasoning for Way of Kings"
         assert recommendations[1]["llm_reasoning"] == "LLM reasoning for Fire & Blood"
+
+    def test_enhance_uses_blurbs_for_pipeline_recommendations_regression(self) -> None:
+        """Regression test: LLM enhancement must use blurbs, not re-pick.
+
+        Bug reported: When requesting 5 recommendations with AI reasoning
+        enabled, only 3 received LLM reasoning. The remaining 2 had no
+        llm_reasoning field.
+
+        Root cause: _enhance_with_llm called generate_recommendations which
+        asks the LLM to "Pick the N best..." from the candidates. The LLM
+        would only select ~3 items regardless of count, so extra pipeline
+        recommendations never got reasoning attached.
+
+        Fix: Use generate_blurbs (which writes reasoning for ALL pre-selected
+        items) instead of generate_recommendations when the pipeline already
+        produced recommendations.
+        """
+
+        engine = RecommendationEngine.__new__(RecommendationEngine)
+        engine.llm_generator = Mock(spec=RecommendationGenerator)
+
+        items = [
+            ContentItem(
+                id=str(index),
+                title=f"Book {index}",
+                author=f"Author {index}",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            )
+            for index in range(1, 6)
+        ]
+
+        # Pipeline produced 5 recommendations
+        recommendations: list[dict[str, Any]] = [
+            {"item": item, "score": 0.9 - index * 0.05, "reasoning": "Pipeline"}
+            for index, item in enumerate(items)
+        ]
+
+        # generate_blurbs returns reasoning for ALL 5 items
+        engine.llm_generator.generate_blurbs.return_value = [
+            {
+                "title": item.title,
+                "author": item.author,
+                "reasoning": f"LLM blurb for {item.title}",
+                "item": item,
+            }
+            for item in items
+        ]
+
+        engine._enhance_with_llm(
+            recommendations=recommendations,
+            content_type=ContentType.BOOK,
+            all_consumed_items=[],
+            unconsumed_items=[],
+            count=5,
+            series_tracking={},
+        )
+
+        # ALL 5 recommendations must have LLM reasoning
+        for index, rec in enumerate(recommendations):
+            assert (
+                "llm_reasoning" in rec
+            ), f"Recommendation {index} ({rec['item'].title}) missing llm_reasoning"
+            assert rec["llm_reasoning"] == f"LLM blurb for Book {index + 1}"
+
+        # Must call generate_blurbs (not generate_recommendations) with all items
+        engine.llm_generator.generate_blurbs.assert_called_once_with(
+            content_type=ContentType.BOOK,
+            selected_items=items,
+            consumed_items=[],
+        )
 
     def test_bold_markers_stripped_from_parsed_titles_regression(self) -> None:
         """Regression test: bold markdown in LLM titles must not prevent matching.

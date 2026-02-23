@@ -23,19 +23,19 @@ install-dev:
 	python3.11 -m pip install -e ".[ai,dev]"
 
 test:
-	pytest
+	python3.11 -m pytest
 
 lint:
-	ruff check src/ tests/
+	python3.11 -m ruff check src/ tests/
 
 format:
-	black src/ tests/
+	python3.11 -m black src/ tests/
 
 format-check:
-	black --check src/ tests/
+	python3.11 -m black --check src/ tests/
 
 type-check:
-	mypy src/
+	python3.11 -m mypy src/
 
 check: format-check lint type-check test
 
