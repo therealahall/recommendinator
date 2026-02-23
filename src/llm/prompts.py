@@ -2,6 +2,7 @@
 
 from src.llm.tone import ADVISOR_IDENTITY, PERSONALITY_TRAITS, STYLE_RULES
 from src.models.content import ContentItem, ContentType, get_enum_value
+from src.utils.text import extract_raw_genres, format_genre_tag
 
 
 def build_recommendation_prompt(
@@ -56,9 +57,11 @@ def build_recommendation_prompt(
             rating_text = f"{item.rating}/5" if item.rating else "Unrated"
             review_text = f' — Review: "{item.review}"' if item.review else ""
             author_text = f" by {item.author}" if item.author else ""
+            genre_tag = format_genre_tag(item)
             # No type label for same-type items — redundant and confuses 3B models
             context_text += (
-                f"- **{item.title}**{author_text} ({rating_text}){review_text}\n"
+                f"- **{item.title}**{author_text}"
+                f" ({rating_text}){genre_tag}{review_text}\n"
             )
 
     if context_cross:
@@ -68,17 +71,19 @@ def build_recommendation_prompt(
             rating_text = f"{item.rating}/5" if item.rating else "Unrated"
             review_text = f' — Review: "{item.review}"' if item.review else ""
             author_text = f" by {item.author}" if item.author else ""
+            genre_tag = format_genre_tag(item)
             type_label = get_enum_value(item.content_type).replace("_", " ")
             context_text += (
                 f"- [{type_label}] **{item.title}**{author_text}"
-                f" ({rating_text}){review_text}\n"
+                f" ({rating_text}){genre_tag}{review_text}\n"
             )
 
     # Build list of unconsumed items
     items_text = ""
     for item_index, item in enumerate(unconsumed_items[:50], 1):
         author_text = f" by {item.author}" if item.author else ""
-        items_text += f"{item_index}. {item.title}{author_text}\n"
+        genre_tag = format_genre_tag(item)
+        items_text += f"{item_index}. {item.title}{author_text}{genre_tag}\n"
 
     prompt = f"""Pick the {count} best {content_type_name.lower()}s for this person from the candidates below.
 
@@ -184,9 +189,11 @@ def build_blurb_prompt(
         for item in favorites[:5]:
             rating_text = f"{item.rating}/5" if item.rating else "Unrated"
             author_text = f" by {item.author}" if item.author else ""
+            genre_tag = format_genre_tag(item)
             type_label = get_enum_value(item.content_type).replace("_", " ")
             context_text += (
-                f"- [{type_label}] **{item.title}**{author_text} ({rating_text})\n"
+                f"- [{type_label}] **{item.title}**{author_text}"
+                f" ({rating_text}){genre_tag}\n"
             )
         context_text += "\n"
 
@@ -194,7 +201,8 @@ def build_blurb_prompt(
     items_text = ""
     for item_index, item in enumerate(selected_items, 1):
         author_text = f" by {item.author}" if item.author else ""
-        items_text += f"{item_index}. {item.title}{author_text}\n"
+        genre_tag = format_genre_tag(item)
+        items_text += f"{item_index}. {item.title}{author_text}{genre_tag}\n"
 
     return f"""Write a 2-3 sentence blurb for each of these {content_type_name.lower()} picks explaining WHY it fits this person's taste.
 
@@ -225,10 +233,11 @@ def build_content_description(item: ContentItem) -> str:
     if item.review:
         parts.append(f"Review: {item.review}")
 
+    genres = extract_raw_genres(item)
+    if genres:
+        parts.append(f"Genre: {', '.join(genres)}")
+
     if item.metadata:
-        # Add relevant metadata
-        if "genre" in item.metadata:
-            parts.append(f"Genre: {item.metadata['genre']}")
         content_type_str = get_enum_value(item.content_type)
         if "pages" in item.metadata and content_type_str == "book":
             parts.append(f"Pages: {item.metadata['pages']}")

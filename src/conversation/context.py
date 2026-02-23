@@ -17,6 +17,7 @@ from src.models.conversation import (
     RecommendationBrief,
 )
 from src.utils.series import build_series_tracking, should_recommend_item
+from src.utils.text import format_genre_tag
 
 if TYPE_CHECKING:
     from src.conversation.memory import MemoryManager
@@ -486,9 +487,7 @@ def _format_item_detail(item: ContentItem) -> str:
     content_type_str = _format_content_type(item.content_type)
     author_str = f" by {item.author}" if item.author else ""
     rating_str = f" — {item.rating}/5" if item.rating is not None else ""
-
-    genres = item.metadata.get("genres", [])
-    genre_str = f" [{', '.join(genres[:4])}]" if genres else ""
+    genre_str = format_genre_tag(item)
 
     line = f"- [{content_type_str}] {item.title}{author_str}{rating_str}{genre_str}"
 
@@ -517,9 +516,7 @@ def _format_recommendation_brief(brief: RecommendationBrief) -> str:
     item = brief.item
     content_type_str = _format_content_type(item.content_type)
     author_str = f" by {item.author}" if item.author else ""
-
-    genres = item.metadata.get("genres", [])
-    genre_str = f" [{', '.join(genres[:4])}]" if genres else ""
+    genre_str = format_genre_tag(item)
 
     match_percent = round(brief.score * 100)
     lines = [

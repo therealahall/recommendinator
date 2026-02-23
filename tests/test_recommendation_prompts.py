@@ -4,10 +4,13 @@ Covers content type grouping, anti-hallucination guardrails, and
 regression tests for LLM misclassification / fabricated reviews.
 """
 
+from typing import Any
+
 from src.conversation.engine import COMPACT_SYSTEM_PROMPT
 from src.llm.prompts import (
     build_blurb_prompt,
     build_blurb_system_prompt,
+    build_content_description,
     build_recommendation_prompt,
     build_recommendation_system_prompt,
 )
@@ -22,6 +25,7 @@ def _make_item(
     review: str | None = None,
     author: str | None = None,
     status: ConsumptionStatus = ConsumptionStatus.COMPLETED,
+    metadata: dict[str, Any] | None = None,
 ) -> ContentItem:
     """Create a ContentItem for testing."""
     return ContentItem(
@@ -32,6 +36,7 @@ def _make_item(
         rating=rating,
         review=review,
         author=author,
+        metadata=metadata or {},
     )
 
 
@@ -552,3 +557,221 @@ class TestHallucinatedReviewsRegression:
         """
         assert "called it" not in COMPACT_SYSTEM_PROMPT
         assert "gut punch" not in COMPACT_SYSTEM_PROMPT
+
+
+# ===========================================================================
+# Genre metadata in prompts
+# ===========================================================================
+
+
+class TestGenreMetadataInPrompts:
+    """Tests that genre metadata appears in recommendation and blurb prompts."""
+
+    def test_genres_in_same_type_consumed_items(self) -> None:
+        """Same-type consumed items should include genre tags."""
+        book = _make_item(
+            "Dune",
+            ContentType.BOOK,
+            rating=5,
+            author="Frank Herbert",
+            metadata={"genres": ["Science Fiction", "Adventure"]},
+        )
+        unconsumed = _make_unconsumed(3)
+
+        prompt = build_recommendation_prompt(
+            content_type=ContentType.BOOK,
+            consumed_items=[book],
+            unconsumed_items=unconsumed,
+        )
+
+        assert "[Science Fiction, Adventure]" in prompt
+
+    def test_genres_in_cross_type_consumed_items(self) -> None:
+        """Cross-type consumed items should include genre tags."""
+        movie = _make_item(
+            "Blade Runner",
+            ContentType.MOVIE,
+            rating=5,
+            metadata={"genres": ["Sci-Fi", "Thriller"]},
+        )
+        unconsumed = _make_unconsumed(3)
+
+        prompt = build_recommendation_prompt(
+            content_type=ContentType.BOOK,
+            consumed_items=[movie],
+            unconsumed_items=unconsumed,
+        )
+
+        assert "[Sci-Fi, Thriller]" in prompt
+
+    def test_genres_in_candidate_items(self) -> None:
+        """Candidate (unconsumed) items should include genre tags."""
+        consumed = _make_books(3)
+        candidate = _make_item(
+            "Neuromancer",
+            ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            author="William Gibson",
+            metadata={"genres": ["Cyberpunk", "Science Fiction"]},
+        )
+
+        prompt = build_recommendation_prompt(
+            content_type=ContentType.BOOK,
+            consumed_items=consumed,
+            unconsumed_items=[candidate],
+        )
+
+        assert "[Cyberpunk, Science Fiction]" in prompt
+
+    def test_genres_in_blurb_favorites(self) -> None:
+        """Blurb prompt favorites should include genre tags."""
+        favorite = _make_item(
+            "Foundation",
+            ContentType.BOOK,
+            rating=5,
+            author="Isaac Asimov",
+            metadata={"genres": ["Science Fiction", "Classic"]},
+        )
+        selected = _make_books(2)
+
+        prompt = build_blurb_prompt(
+            content_type=ContentType.BOOK,
+            selected_items=selected,
+            consumed_items=[favorite],
+        )
+
+        assert "[Science Fiction, Classic]" in prompt
+
+    def test_genres_in_blurb_selected_items(self) -> None:
+        """Blurb prompt selected items should include genre tags."""
+        consumed = _make_books(3)
+        selected = _make_item(
+            "Hyperion",
+            ContentType.BOOK,
+            author="Dan Simmons",
+            metadata={"genres": ["Science Fiction", "Space Opera"]},
+        )
+
+        prompt = build_blurb_prompt(
+            content_type=ContentType.BOOK,
+            selected_items=[selected],
+            consumed_items=consumed,
+        )
+
+        assert "[Science Fiction, Space Opera]" in prompt
+
+    def test_no_empty_brackets_when_no_genres(self) -> None:
+        """Items without genres should not produce empty brackets."""
+        book = _make_item("No Genre Book", ContentType.BOOK, rating=5)
+        unconsumed = _make_unconsumed(3)
+
+        prompt = build_recommendation_prompt(
+            content_type=ContentType.BOOK,
+            consumed_items=[book],
+            unconsumed_items=unconsumed,
+        )
+
+        assert "[]" not in prompt
+
+    def test_genres_capped_at_four(self) -> None:
+        """Genre tags should include at most 4 genres."""
+        book = _make_item(
+            "Many Genres",
+            ContentType.BOOK,
+            rating=5,
+            metadata={
+                "genres": [
+                    "Fantasy",
+                    "Adventure",
+                    "Romance",
+                    "Mystery",
+                    "Horror",
+                    "Thriller",
+                ]
+            },
+        )
+        unconsumed = _make_unconsumed(3)
+
+        prompt = build_recommendation_prompt(
+            content_type=ContentType.BOOK,
+            consumed_items=[book],
+            unconsumed_items=unconsumed,
+        )
+
+        assert "[Fantasy, Adventure, Romance, Mystery]" in prompt
+        assert "Horror" not in prompt
+        assert "Thriller" not in prompt
+
+    def test_legacy_genre_string_fallback(self) -> None:
+        """Items with legacy 'genre' string should still get genre tags."""
+        book = _make_item(
+            "Legacy Book",
+            ContentType.BOOK,
+            rating=5,
+            metadata={"genre": "Science Fiction, Fantasy"},
+        )
+        unconsumed = _make_unconsumed(3)
+
+        prompt = build_recommendation_prompt(
+            content_type=ContentType.BOOK,
+            consumed_items=[book],
+            unconsumed_items=unconsumed,
+        )
+
+        assert "[Science Fiction, Fantasy]" in prompt
+
+    def test_genres_list_in_content_description(self) -> None:
+        """Canonical 'genres' list format is included in content descriptions."""
+        item = _make_item(
+            "Band of Brothers",
+            ContentType.TV_SHOW,
+            rating=5,
+            metadata={"genres": ["Drama", "War", "History"]},
+        )
+
+        description = build_content_description(item)
+
+        assert "Band of Brothers" in description
+        assert "Genre: Drama, War, History" in description
+
+
+class TestGenreMisclassificationRegression:
+    """Regression tests for LLM genre misclassification.
+
+    Bug reported: The LLM called Band of Brothers "hilarious" and confused
+    Duckman with The Amazing Race because the recommendation prompts included
+    only bare titles and ratings — no genre metadata. A 3B model cannot
+    reliably infer that Band of Brothers is a WWII drama from its title alone.
+
+    Root cause: ``build_recommendation_prompt()`` and ``build_blurb_prompt()``
+    did not include genre metadata, unlike the conversation context system
+    (``src/conversation/context.py``) which already included genres.
+
+    Fix: Added ``format_genre_tag()`` to all prompt templates so the LLM
+    sees genre context like ``[Drama, War]`` alongside each item.
+    """
+
+    def test_band_of_brothers_has_genre_context_regression(self) -> None:
+        """Regression: Band of Brothers should include drama/war genre tags.
+
+        Bug reported: LLM described Band of Brothers as "hilarious" because
+        the prompt had only the title and a 5/5 rating — no genre metadata
+        to indicate it is a WWII drama miniseries.
+        """
+        band_of_brothers = _make_item(
+            "Band of Brothers",
+            ContentType.TV_SHOW,
+            rating=5,
+            metadata={"genres": ["Drama", "War", "History"]},
+        )
+        unconsumed = _make_unconsumed(3, content_type=ContentType.TV_SHOW)
+
+        prompt = build_recommendation_prompt(
+            content_type=ContentType.TV_SHOW,
+            consumed_items=[band_of_brothers],
+            unconsumed_items=unconsumed,
+        )
+
+        # The LLM must see genre context to avoid calling it "hilarious"
+        assert "[Drama, War, History]" in prompt
+        assert "Band of Brothers" in prompt
