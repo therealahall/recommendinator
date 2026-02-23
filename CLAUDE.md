@@ -261,6 +261,37 @@ The project uses Claude Code plugins and custom agents to maintain code quality 
 
 This ensures users can discover and understand all configuration options.
 
+## Plan Mode Workflow
+
+**When plan mode is used and the plan is approved, create beads issues for each step.**
+
+After `ExitPlanMode` is approved by the user:
+
+1. **Create a bead for each plan step** using `bd create`, with:
+   - `--title` matching the plan step summary
+   - `--description` including the detailed implementation notes from the plan
+   - `--type` appropriate to the step (`task`, `feature`, `chore`, etc.)
+   - `--priority=2` unless the step is clearly critical (0) or low-priority (4)
+2. **Set up dependencies** between steps using `bd dep add` where steps must be completed in order (e.g., implementation blocks tests, tests block docs)
+3. **Work through the beads in order** — mark each `in_progress` before starting, `close` when done
+4. **Use parallel `bd create` calls** when creating multiple beads to maximize efficiency
+
+Example flow after plan approval:
+```bash
+# Create beads for each plan step (parallel)
+bd create --title="Add parser for new source" --description="..." --type=task --priority=2
+bd create --title="Write tests for new parser" --description="..." --type=task --priority=2
+bd create --title="Update CLI to support new source" --description="..." --type=task --priority=2
+bd create --title="Update documentation" --description="..." --type=chore --priority=2
+
+# Set dependencies (tests depend on implementation, docs depend on CLI)
+bd dep add <tests-id> <parser-id>
+bd dep add <cli-id> <parser-id>
+bd dep add <docs-id> <cli-id>
+```
+
+This ensures every plan step is tracked, has clear acceptance criteria, and nothing is forgotten across context compaction or long sessions.
+
 ## Adding New Features
 
 **Think before acting.** Do not jump straight into writing code. Ask clarifying questions if requirements are ambiguous, there are multiple valid approaches, or the scope is unclear. It is better to confirm intent upfront than to redo work.
