@@ -97,8 +97,9 @@ def build_recommendation_prompt(
         separator = "\n" if context_same else ""
         context_text += f"{separator}From other types they've enjoyed:\n\n"
         for item in context_cross:
+            # No review text for cross-type items — prevents review misattribution
             context_text += _format_context_item(
-                item, include_type_label=True, include_review=True
+                item, include_type_label=True, include_review=False
             )
 
     # Build list of unconsumed items
@@ -204,15 +205,46 @@ def build_blurb_prompt(
     content_type_str = get_enum_value(content_type)
     content_type_name = content_type_str.replace("_", " ").title()
 
-    # Build taste context from top consumed items
+    # Build taste context from top consumed items — split by content type
     favorites = [item for item in consumed_items if item.rating and item.rating >= 4]
+    same_type_favorites = [
+        item
+        for item in favorites
+        if get_enum_value(item.content_type) == content_type_str
+    ]
+    cross_type_favorites = [
+        item
+        for item in favorites
+        if get_enum_value(item.content_type) != content_type_str
+    ]
+
+    # When >= 5 same-type favorites exist, use only same-type (no cross-type noise).
+    # When < 5 same-type, fill remaining slots with cross-type items.
+    if len(same_type_favorites) >= 5:
+        context_same = same_type_favorites[:5]
+        context_cross: list[ContentItem] = []
+    else:
+        context_same = same_type_favorites
+        remaining_slots = 5 - len(context_same)
+        context_cross = cross_type_favorites[:remaining_slots]
+
     context_text = ""
-    if favorites:
-        context_text = "Their favorites:\n"
-        for item in favorites[:5]:
+    if context_same:
+        context_text = f"Their favorite {content_type_name.lower()}s:\n"
+        for item in context_same:
+            context_text += _format_context_item(
+                item, include_type_label=False, include_review=False
+            )
+
+    if context_cross:
+        separator = "\n" if context_same else ""
+        context_text += f"{separator}From other types:\n"
+        for item in context_cross:
             context_text += _format_context_item(
                 item, include_type_label=True, include_review=False
             )
+
+    if context_text:
         context_text += "\n"
 
     # Build selected items list

@@ -307,10 +307,29 @@ class TestAntiHallucinationGuardrails:
 
 
 class TestBlurbPromptTypeLabels:
-    """Tests that build_blurb_prompt includes type labels on favorites."""
+    """Tests that build_blurb_prompt uses type labels correctly.
 
-    def test_favorites_have_type_labels(self) -> None:
-        """Each favorite in the blurb prompt should have a [type] prefix."""
+    Same-type favorites should NOT have type labels (redundant).
+    Cross-type favorites should have type labels for disambiguation.
+    """
+
+    def test_same_type_favorites_have_no_type_label(self) -> None:
+        """Same-type favorites should NOT have a [type] prefix."""
+        books = _make_books(2)
+        selected = _make_books(2)
+
+        prompt = build_blurb_prompt(
+            content_type=ContentType.BOOK,
+            selected_items=selected,
+            consumed_items=books,
+        )
+
+        assert "[book]" not in prompt
+        for book in books:
+            assert f"**{book.title}**" in prompt
+
+    def test_cross_type_favorites_have_type_labels(self) -> None:
+        """Cross-type favorites should have a [type] prefix."""
         books = _make_books(2)
         movies = _make_movies(2)
         consumed = books + movies
@@ -322,20 +341,23 @@ class TestBlurbPromptTypeLabels:
             consumed_items=consumed,
         )
 
-        for book in books:
-            assert f"[book] **{book.title}**" in prompt
+        # Same-type books should NOT have labels
+        assert "[book]" not in prompt
+        # Cross-type movies should have labels
         for movie in movies:
             assert f"[movie] **{movie.title}**" in prompt
 
-    def test_tv_show_type_label_format(self) -> None:
-        """TV show favorites should use 'tv show' (space, not underscore) label."""
+    def test_tv_show_cross_type_label_format(self) -> None:
+        """TV show cross-type favorites should use 'tv show' (space, not underscore) label."""
+        books = _make_books(2)
         shows = _make_tv_shows(2)
-        selected = _make_tv_shows(1)
+        consumed = books + shows
+        selected = _make_books(1)
 
         prompt = build_blurb_prompt(
-            content_type=ContentType.TV_SHOW,
+            content_type=ContentType.BOOK,
             selected_items=selected,
-            consumed_items=shows,
+            consumed_items=consumed,
         )
 
         assert "[tv show]" in prompt
