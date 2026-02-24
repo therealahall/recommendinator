@@ -125,7 +125,8 @@ IMPORTANT formatting rules:
 - Use **bold** for emphasis on key connections
 - Address them as "you" — never say "the user"
 - Only pick from the candidates list above
-- ONLY quote reviews that appear above. If no review is shown for an item, do NOT invent one."""
+- ONLY quote reviews that appear above. If no review is shown for an item, do NOT invent one.
+- Reference ratings as numbers — do NOT interpret them as emotions or sentiments"""
 
     return prompt
 
@@ -162,9 +163,10 @@ def build_recommendation_system_prompt(content_type: ContentType) -> str:
 def build_blurb_system_prompt(content_type: ContentType) -> str:
     """Build a slim system prompt for writing blurbs about pre-selected items.
 
-    Uses only the advisor identity — no personality traits or style rules —
-    since the blurb prompt itself provides the formatting instructions.
-    This saves ~500 tokens compared to ``build_recommendation_system_prompt``.
+    Uses the advisor identity plus core behavioural guardrails (no spoilers,
+    no fabricated quotes, no sentiment inference from ratings). Omits
+    PERSONALITY_TRAITS and the full STYLE_RULES list to save ~500 tokens
+    compared to ``build_recommendation_system_prompt``.
 
     Args:
         content_type: Type of content being recommended
@@ -180,6 +182,8 @@ def build_blurb_system_prompt(content_type: ContentType) -> str:
         f"You are {identity}. Write enthusiastic, specific blurbs"
         " connecting each pick to the user's taste. Be concise."
         " NEVER invent quotes or reviews the user did not write."
+        " NEVER reveal plot twists, endings, or major surprises."
+        " State ratings as numbers, never interpret them as emotions or sentiments."
     )
 
 
@@ -263,7 +267,9 @@ Rules:
 - Connect to specific favorites above — mention titles and ratings
 - Address them as "you"
 - Be enthusiastic and specific, not generic
-- Do NOT invent quotes or opinions — only reference what's shown above"""
+- Do NOT invent quotes or opinions — only reference what's shown above
+- Do NOT reveal plot twists, endings, or major surprises
+- Reference ratings as numbers — do NOT interpret them as emotions or sentiments"""
 
 
 def build_content_description(item: ContentItem) -> str:
