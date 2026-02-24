@@ -126,6 +126,8 @@ IMPORTANT formatting rules:
 - Address them as "you" — never say "the user"
 - Only pick from the candidates list above
 - ONLY quote reviews that appear above. If no review is shown for an item, do NOT invent one.
+- Each review belongs to the item on the SAME line — do NOT attribute it to a different item
+- Author names are exact — do NOT claim two items share an author unless the names shown above match
 - Reference ratings as numbers — do NOT interpret them as emotions or sentiments"""
 
     return prompt
@@ -157,6 +159,8 @@ def build_recommendation_system_prompt(content_type: ContentType) -> str:
 ## Data Accuracy
 - ONLY reference reviews or quotes that appear in the user's item list
 - If an item has no review, reference only its rating — NEVER invent quotes
+- Each review belongs to the item on the SAME line — never attribute a review to a different item
+- Do NOT claim items share the same author unless the author names shown are identical
 - A book is NOT a show, a movie is NOT a game — use the correct content type"""
 
 
@@ -182,6 +186,7 @@ def build_blurb_system_prompt(content_type: ContentType) -> str:
         f"You are {identity}. Write enthusiastic, specific blurbs"
         " connecting each pick to the user's taste. Be concise."
         " NEVER invent quotes or reviews the user did not write."
+        " NEVER misattribute reviews or author connections between items."
         " NEVER reveal plot twists, endings, or major surprises."
         " State ratings as numbers, never interpret them as emotions or sentiments."
     )
@@ -268,6 +273,8 @@ Rules:
 - Address them as "you"
 - Be enthusiastic and specific, not generic
 - Do NOT invent quotes or opinions — only reference what's shown above
+- Each review belongs to the item on the SAME line — do NOT attribute it to a different item
+- Author names are exact — do NOT claim two items share an author unless the names shown above match
 - Do NOT reveal plot twists, endings, or major surprises
 - Reference ratings as numbers — do NOT interpret them as emotions or sentiments"""
 
