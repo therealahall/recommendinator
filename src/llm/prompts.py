@@ -5,6 +5,40 @@ from src.models.content import ContentItem, ContentType, get_enum_value
 from src.utils.text import extract_raw_genres, format_genre_tag
 
 
+def _format_context_item(
+    item: ContentItem,
+    *,
+    include_type_label: bool,
+    include_review: bool = False,
+) -> str:
+    """Format a single consumed item as a context line for LLM prompts.
+
+    Args:
+        item: Content item to format
+        include_type_label: Whether to prepend a [type] prefix
+        include_review: Whether to include the user's review text
+
+    Returns:
+        Formatted context line ending with newline
+    """
+    rating_text = f"{item.rating}/5" if item.rating else "Unrated"
+    author_text = f" by {item.author}" if item.author else ""
+    genre_tag = format_genre_tag(item)
+    review_text = (
+        f' — Review: "{item.review}"' if include_review and item.review else ""
+    )
+
+    if include_type_label:
+        type_label = get_enum_value(item.content_type).replace("_", " ")
+        return (
+            f"- [{type_label}] **{item.title}**{author_text}"
+            f" ({rating_text}){genre_tag}{review_text}\n"
+        )
+    return (
+        f"- **{item.title}**{author_text}" f" ({rating_text}){genre_tag}{review_text}\n"
+    )
+
+
 def build_recommendation_prompt(
     content_type: ContentType,
     consumed_items: list[ContentItem],
@@ -54,28 +88,17 @@ def build_recommendation_prompt(
     if context_same:
         context_text = f"Here are {content_type_name.lower()}s they love:\n\n"
         for item in context_same:
-            rating_text = f"{item.rating}/5" if item.rating else "Unrated"
-            review_text = f' — Review: "{item.review}"' if item.review else ""
-            author_text = f" by {item.author}" if item.author else ""
-            genre_tag = format_genre_tag(item)
-            # No type label for same-type items — redundant and confuses 3B models
-            context_text += (
-                f"- **{item.title}**{author_text}"
-                f" ({rating_text}){genre_tag}{review_text}\n"
+            # Same-type items keep reviews — no type label (redundant, confuses 3B models)
+            context_text += _format_context_item(
+                item, include_type_label=False, include_review=True
             )
 
     if context_cross:
         separator = "\n" if context_same else ""
         context_text += f"{separator}From other types they've enjoyed:\n\n"
         for item in context_cross:
-            rating_text = f"{item.rating}/5" if item.rating else "Unrated"
-            review_text = f' — Review: "{item.review}"' if item.review else ""
-            author_text = f" by {item.author}" if item.author else ""
-            genre_tag = format_genre_tag(item)
-            type_label = get_enum_value(item.content_type).replace("_", " ")
-            context_text += (
-                f"- [{type_label}] **{item.title}**{author_text}"
-                f" ({rating_text}){genre_tag}{review_text}\n"
+            context_text += _format_context_item(
+                item, include_type_label=True, include_review=True
             )
 
     # Build list of unconsumed items
@@ -187,13 +210,8 @@ def build_blurb_prompt(
     if favorites:
         context_text = "Their favorites:\n"
         for item in favorites[:5]:
-            rating_text = f"{item.rating}/5" if item.rating else "Unrated"
-            author_text = f" by {item.author}" if item.author else ""
-            genre_tag = format_genre_tag(item)
-            type_label = get_enum_value(item.content_type).replace("_", " ")
-            context_text += (
-                f"- [{type_label}] **{item.title}**{author_text}"
-                f" ({rating_text}){genre_tag}\n"
+            context_text += _format_context_item(
+                item, include_type_label=True, include_review=False
             )
         context_text += "\n"
 
