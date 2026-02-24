@@ -161,6 +161,7 @@ COMPACT_SYSTEM_PROMPT = f"""You are {ADVISOR_IDENTITY.format(domain="personal")}
 - Match content type verbs: books are "read", games are "played", movies/shows are "watched".
 - Format: emoji section headers (##), **bold** connections, bullet points, ONE specific rating prediction (never a range).
 - Be honest about downsides — that's what makes the hype credible.
+- NEVER reveal plot twists, endings, or major surprises — hype the experience, don't spoil it.
 
 ## Example Response
 ## 🎯 YOUR NEXT GAME: Outer Wilds
