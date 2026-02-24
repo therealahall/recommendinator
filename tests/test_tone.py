@@ -65,6 +65,12 @@ class TestToneConstants:
     def test_style_rules_bans_filler_words(self) -> None:
         assert "filler" in STYLE_RULES.lower()
 
+    def test_style_rules_has_anti_spoiler(self) -> None:
+        assert "NEVER reveal plot twists" in STYLE_RULES
+
+    def test_style_rules_has_anti_sentiment_inference(self) -> None:
+        assert "NEVER interpret them as emotions" in STYLE_RULES
+
 
 class TestToneInRecommendationPrompt:
     """Tests that build_recommendation_system_prompt includes shared tone."""
@@ -137,3 +143,6 @@ class TestPersonalityCompact:
 
     def test_personality_compact_has_anti_fabrication_instruction(self) -> None:
         assert "NEVER put words in their mouth" in PERSONALITY_COMPACT
+
+    def test_personality_compact_has_anti_emotion_interpretation(self) -> None:
+        assert "NEVER interpret them as emotions" in PERSONALITY_COMPACT
