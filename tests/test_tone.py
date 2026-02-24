@@ -1,6 +1,6 @@
 """Tests for shared AI tone constants."""
 
-from src.conversation.engine import FULL_SYSTEM_PROMPT
+from src.conversation.engine import COMPACT_SYSTEM_PROMPT, FULL_SYSTEM_PROMPT
 from src.llm.prompts import build_recommendation_system_prompt
 from src.llm.tone import (
     ADVISOR_IDENTITY,
@@ -71,6 +71,12 @@ class TestToneConstants:
     def test_style_rules_has_anti_sentiment_inference(self) -> None:
         assert "NEVER interpret them as emotions" in STYLE_RULES
 
+    def test_style_rules_has_anti_misattribution(self) -> None:
+        assert "belong to THAT item only" in STYLE_RULES
+
+    def test_style_rules_has_author_accuracy(self) -> None:
+        assert "claim two items share an author" in STYLE_RULES.lower()
+
 
 class TestToneInRecommendationPrompt:
     """Tests that build_recommendation_system_prompt includes shared tone."""
@@ -131,6 +137,12 @@ class TestToneInConversationPrompt:
         assert "What NOT To Do" in FULL_SYSTEM_PROMPT
         assert "Pre-Scored Recommendations" in FULL_SYSTEM_PROMPT
 
+    def test_has_anti_misattribution(self) -> None:
+        assert "belong to THAT item only" in FULL_SYSTEM_PROMPT
+
+    def test_has_author_accuracy(self) -> None:
+        assert "Do NOT claim items share the same author" in FULL_SYSTEM_PROMPT
+
 
 class TestPersonalityCompact:
     """Tests for PERSONALITY_COMPACT used in 3B model prompts."""
@@ -146,3 +158,13 @@ class TestPersonalityCompact:
 
     def test_personality_compact_has_anti_emotion_interpretation(self) -> None:
         assert "NEVER interpret them as emotions" in PERSONALITY_COMPACT
+
+
+class TestCompactSystemPromptGuardrails:
+    """Tests that COMPACT_SYSTEM_PROMPT includes essential guardrails."""
+
+    def test_has_anti_misattribution(self) -> None:
+        assert "belong to THAT item only" in COMPACT_SYSTEM_PROMPT
+
+    def test_has_anti_spoiler(self) -> None:
+        assert "NEVER reveal plot twists" in COMPACT_SYSTEM_PROMPT

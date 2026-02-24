@@ -1056,3 +1056,126 @@ class TestSentimentInferenceRegression:
         )
 
         assert "do NOT interpret them as emotions" in prompt
+
+
+# ===========================================================================
+# Review misattribution regression tests
+# ===========================================================================
+
+
+class TestReviewMisattributionRegression:
+    """Regression tests for review misattribution between items.
+
+    Bug reported (round 5): The LLM attributed American Dirt's review
+    ("a compelling read that I finished in 3 sessions") to Allanon's Quest.
+    Both books appeared in the same-type favorites list with reviews on
+    adjacent lines. The LLM grabbed the wrong review.
+
+    Root cause: No explicit rule told the LLM that each review is tied to
+    the item on the SAME line. The existing "ONLY quote reviews that appear
+    above" rule prevented inventing reviews but not swapping them between
+    items.
+
+    Fix: Added explicit anti-misattribution rules to STYLE_RULES, the Data
+    Accuracy section of build_recommendation_system_prompt, and the inline
+    rules of build_recommendation_prompt and build_blurb_prompt.
+    """
+
+    def test_style_rules_contain_anti_misattribution(self) -> None:
+        """STYLE_RULES should contain anti-misattribution instruction."""
+        assert "belong to THAT item only" in STYLE_RULES
+
+    def test_recommendation_system_prompt_has_anti_misattribution(self) -> None:
+        """Recommendation system prompt should have anti-misattribution rule."""
+        system_prompt = build_recommendation_system_prompt(ContentType.BOOK)
+        assert "review belongs to the item on the same line" in system_prompt.lower()
+
+    def test_recommendation_user_prompt_has_anti_misattribution(self) -> None:
+        """Recommendation user prompt should have anti-misattribution rule."""
+        consumed = _make_books(3)
+        unconsumed = _make_unconsumed(5)
+
+        prompt = build_recommendation_prompt(
+            content_type=ContentType.BOOK,
+            consumed_items=consumed,
+            unconsumed_items=unconsumed,
+        )
+
+        assert "belongs to the item on the SAME line" in prompt
+
+    def test_blurb_user_prompt_has_anti_misattribution(self) -> None:
+        """Blurb user prompt should have anti-misattribution rule."""
+        selected = _make_books(2)
+        consumed = _make_books(3)
+
+        prompt = build_blurb_prompt(
+            content_type=ContentType.BOOK,
+            selected_items=selected,
+            consumed_items=consumed,
+        )
+
+        assert "belongs to the item on the SAME line" in prompt
+
+    def test_blurb_system_prompt_has_anti_misattribution(self) -> None:
+        """Blurb system prompt should have anti-misattribution instruction."""
+        system_prompt = build_blurb_system_prompt(ContentType.BOOK)
+        assert "NEVER misattribute reviews" in system_prompt
+
+
+# ===========================================================================
+# Author hallucination regression tests
+# ===========================================================================
+
+
+class TestAuthorHallucinationRegression:
+    """Regression tests for fabricated author connections.
+
+    Bug reported (round 5): When recommending from Fire & Blood (George
+    R.R. Martin, 5/5), the LLM described The Way of Kings (Brandon
+    Sanderson) as "another of your author's works" and "inspired by George
+    R.R. Martin's grandiose fantasy epics." The LLM fabricated an author
+    connection that does not exist.
+
+    Root cause: No explicit rule told the LLM that author names are distinct
+    people and that shared authorship must not be claimed unless the names
+    match exactly. The LLM treated two fantasy authors as interchangeable.
+
+    Fix: Added explicit author-accuracy rules to STYLE_RULES, the Data
+    Accuracy section of build_recommendation_system_prompt, and the inline
+    rules of build_recommendation_prompt and build_blurb_prompt.
+    """
+
+    def test_style_rules_contain_author_accuracy(self) -> None:
+        """STYLE_RULES should contain author accuracy instruction."""
+        assert "claim two items share an author" in STYLE_RULES.lower()
+
+    def test_recommendation_system_prompt_has_author_accuracy(self) -> None:
+        """Recommendation system prompt should have author accuracy rule."""
+        system_prompt = build_recommendation_system_prompt(ContentType.BOOK)
+        assert "author names shown are identical" in system_prompt.lower()
+
+    def test_recommendation_user_prompt_has_author_accuracy(self) -> None:
+        """Recommendation user prompt should have author accuracy rule."""
+        consumed = _make_books(3)
+        unconsumed = _make_unconsumed(5)
+
+        prompt = build_recommendation_prompt(
+            content_type=ContentType.BOOK,
+            consumed_items=consumed,
+            unconsumed_items=unconsumed,
+        )
+
+        assert "do NOT claim two items share an author" in prompt
+
+    def test_blurb_user_prompt_has_author_accuracy(self) -> None:
+        """Blurb user prompt should have author accuracy rule."""
+        selected = _make_books(2)
+        consumed = _make_books(3)
+
+        prompt = build_blurb_prompt(
+            content_type=ContentType.BOOK,
+            selected_items=selected,
+            consumed_items=consumed,
+        )
+
+        assert "do NOT claim two items share an author" in prompt
