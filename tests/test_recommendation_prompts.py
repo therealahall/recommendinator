@@ -825,3 +825,234 @@ class TestGenreMisclassificationRegression:
         # The LLM must see genre context to avoid calling it "hilarious"
         assert "[Drama, War, History]" in prompt
         assert "Band of Brothers" in prompt
+
+
+# ===========================================================================
+# Cross-type review leaking regression tests
+# ===========================================================================
+
+
+class TestCrossTypeReviewLeakingRegression:
+    """Regression tests for cross-content-type review leaking.
+
+    Bug reported: Video game reviews/ratings appeared in movie recommendation
+    blurbs because build_blurb_prompt() showed favorites from ALL content types
+    without separation. The user rated video games highly but hadn't reviewed
+    movies — the LLM referenced game ratings when writing movie blurbs.
+
+    Root cause: build_blurb_prompt() lumped all favorites together with [type]
+    labels but no separation. build_recommendation_prompt() included review
+    text for cross-type items, giving the LLM wrong-type review content.
+
+    Fix: Applied same content-type separation logic to build_blurb_prompt()
+    (same-type vs cross-type grouping). Stripped review_text from cross-type
+    items in build_recommendation_prompt().
+    """
+
+    def test_blurb_excludes_cross_type_when_enough_same_type_regression(
+        self,
+    ) -> None:
+        """Regression: blurb should only show same-type favorites when >= 5 exist."""
+        movies = _make_movies(6)
+        games = [
+            _make_item(f"Game {index}", ContentType.VIDEO_GAME, rating=5)
+            for index in range(4)
+        ]
+        consumed = movies + games
+        selected = _make_movies(2)
+
+        prompt = build_blurb_prompt(
+            content_type=ContentType.MOVIE,
+            selected_items=selected,
+            consumed_items=consumed,
+        )
+
+        # First 5 movies should be present (capped at 5)
+        for movie in movies[:5]:
+            assert movie.title in prompt
+        # 6th movie should NOT appear — capped at 5 same-type items
+        assert movies[5].title not in prompt
+        # Games should NOT appear
+        for game in games:
+            assert game.title not in prompt
+        assert "From other types" not in prompt
+
+    def test_blurb_includes_cross_type_in_separate_section_regression(
+        self,
+    ) -> None:
+        """Regression: blurb should show cross-type in separate section when < 5 same-type."""
+        movies = _make_movies(2)
+        games = [
+            _make_item(f"Game {index}", ContentType.VIDEO_GAME, rating=5)
+            for index in range(3)
+        ]
+        consumed = movies + games
+        selected = _make_movies(2)
+
+        prompt = build_blurb_prompt(
+            content_type=ContentType.MOVIE,
+            selected_items=selected,
+            consumed_items=consumed,
+        )
+
+        assert "Their favorite movies:" in prompt
+        assert "From other types:" in prompt
+        # Movies in same-type section without type label prefix
+        for movie in movies:
+            assert f"[movie] **{movie.title}**" not in prompt
+            assert f"**{movie.title}**" in prompt
+        # Games in cross-type section with label
+        for game in games:
+            assert f"[video game] **{game.title}**" in prompt
+
+    def test_recommendation_cross_type_items_have_no_review_text_regression(
+        self,
+    ) -> None:
+        """Regression: cross-type items in recommendation prompt should NOT include review text."""
+        book_with_review = _make_item(
+            "Great Book",
+            ContentType.BOOK,
+            rating=5,
+            review="This book changed my life!",
+        )
+        unconsumed = _make_unconsumed(3, content_type=ContentType.MOVIE)
+
+        prompt = build_recommendation_prompt(
+            content_type=ContentType.MOVIE,
+            consumed_items=[book_with_review],
+            unconsumed_items=unconsumed,
+        )
+
+        # The book title should appear (cross-type fill)
+        assert "Great Book" in prompt
+        # But its review should NOT — prevents review misattribution
+        assert "This book changed my life!" not in prompt
+        assert "Review:" not in prompt
+
+    def test_recommendation_same_type_items_keep_review_text_regression(
+        self,
+    ) -> None:
+        """Regression: same-type items in recommendation prompt should keep review text."""
+        movie_with_review = _make_item(
+            "Great Movie",
+            ContentType.MOVIE,
+            rating=5,
+            review="Absolutely stunning visuals!",
+        )
+        unconsumed = _make_unconsumed(3, content_type=ContentType.MOVIE)
+
+        prompt = build_recommendation_prompt(
+            content_type=ContentType.MOVIE,
+            consumed_items=[movie_with_review],
+            unconsumed_items=unconsumed,
+        )
+
+        assert "Great Movie" in prompt
+        assert 'Review: "Absolutely stunning visuals!"' in prompt
+
+
+# ===========================================================================
+# Spoiler prevention regression tests
+# ===========================================================================
+
+
+class TestSpoilerPreventionRegression:
+    """Regression tests for spoiler prevention.
+
+    Bug reported: The LLM revealed plot endings/twists ("the ending that
+    pays homage to Beauty and the Beast"). No anti-spoiler instructions
+    existed anywhere in the prompts.
+
+    Root cause: The prompt system contained rules about hallucinating
+    reviews and fabricating user quotes, but nothing prevented the LLM
+    from discussing the content of the recommended items themselves.
+    Spoilers are not fabrications — the LLM knew the content — but they
+    are harmful regardless.
+
+    Fix: Added anti-spoiler rules to STYLE_RULES (inherited by
+    build_recommendation_system_prompt and FULL_SYSTEM_PROMPT),
+    build_blurb_system_prompt, the build_blurb_prompt user prompt,
+    and COMPACT_SYSTEM_PROMPT directly.
+    """
+
+    def test_style_rules_contain_anti_spoiler(self) -> None:
+        """STYLE_RULES should contain anti-spoiler instruction."""
+        assert "NEVER reveal plot twists" in STYLE_RULES
+
+    def test_recommendation_system_prompt_has_anti_spoiler(self) -> None:
+        """Recommendation system prompt should have anti-spoiler (via STYLE_RULES)."""
+        system_prompt = build_recommendation_system_prompt(ContentType.BOOK)
+        assert "NEVER reveal plot twists" in system_prompt
+
+    def test_blurb_system_prompt_has_anti_spoiler(self) -> None:
+        """Blurb system prompt should contain anti-spoiler instruction."""
+        system_prompt = build_blurb_system_prompt(ContentType.MOVIE)
+        assert "NEVER reveal plot twists" in system_prompt
+
+    def test_blurb_user_prompt_has_anti_spoiler(self) -> None:
+        """Blurb user prompt should contain anti-spoiler rule."""
+        selected = _make_books(2)
+        consumed = _make_books(3)
+
+        prompt = build_blurb_prompt(
+            content_type=ContentType.BOOK,
+            selected_items=selected,
+            consumed_items=consumed,
+        )
+
+        assert "Do NOT reveal plot twists" in prompt
+
+    def test_compact_system_prompt_has_anti_spoiler(self) -> None:
+        """COMPACT_SYSTEM_PROMPT should contain anti-spoiler instruction."""
+        assert "NEVER reveal plot twists" in COMPACT_SYSTEM_PROMPT
+
+
+# ===========================================================================
+# Sentiment inference regression tests
+# ===========================================================================
+
+
+class TestSentimentInferenceRegression:
+    """Regression tests for fabricated sentiment inference.
+
+    Bug reported (round 4): Despite three rounds of anti-hallucination
+    fixes, the LLM still converted numeric ratings into emotional language
+    ("called it an absolute banger", "sounds like you had a blast").
+    Current rules addressed quoting but not sentiment inference from ratings.
+
+    Root cause: No explicit rule banning emotion interpretation of numeric
+    ratings. The LLM treated "5/5" as permission to say "you loved it".
+
+    Fix: Added explicit rules banning interpretation of ratings as emotions
+    to STYLE_RULES, PERSONALITY_COMPACT, recommendation prompt, and blurb prompt.
+    """
+
+    def test_style_rules_ban_interpreting_ratings_as_emotions(self) -> None:
+        """STYLE_RULES should ban interpreting ratings as emotions."""
+        assert "NEVER interpret them as emotions" in STYLE_RULES
+
+    def test_recommendation_user_prompt_bans_emotion_interpretation(self) -> None:
+        """Recommendation user prompt should ban interpreting ratings as emotions."""
+        consumed = _make_books(3)
+        unconsumed = _make_unconsumed(5)
+
+        prompt = build_recommendation_prompt(
+            content_type=ContentType.BOOK,
+            consumed_items=consumed,
+            unconsumed_items=unconsumed,
+        )
+
+        assert "do NOT interpret them as emotions" in prompt
+
+    def test_blurb_user_prompt_bans_emotion_interpretation(self) -> None:
+        """Blurb user prompt should ban interpreting ratings as emotions."""
+        selected = _make_books(2)
+        consumed = _make_books(3)
+
+        prompt = build_blurb_prompt(
+            content_type=ContentType.BOOK,
+            selected_items=selected,
+            consumed_items=consumed,
+        )
+
+        assert "do NOT interpret them as emotions" in prompt
