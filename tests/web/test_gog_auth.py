@@ -1,5 +1,6 @@
 """Tests for GOG OAuth authentication."""
 
+import logging
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -100,7 +101,9 @@ class TestExchangeCodeForTokens:
         assert result["access_token"] == "access123"
 
     @patch("src.web.gog_auth.requests.get")
-    def test_exchange_failure(self, mock_get: MagicMock) -> None:
+    def test_exchange_failure(
+        self, mock_get: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """Test token exchange failure."""
         mock_response = MagicMock()
         mock_response.ok = False
@@ -109,8 +112,11 @@ class TestExchangeCodeForTokens:
         mock_response.json.return_value = {"error_description": "Invalid code"}
         mock_get.return_value = mock_response
 
-        with pytest.raises(GogAuthError, match="Token exchange failed"):
-            exchange_code_for_tokens("bad_code")
+        with caplog.at_level(logging.ERROR, logger="src.web.gog_auth"):
+            with pytest.raises(GogAuthError, match="Token exchange failed"):
+                exchange_code_for_tokens("bad_code")
+
+        assert "GOG token exchange failed with status 400" in caplog.text
 
     @patch("src.web.gog_auth.requests.get")
     def test_missing_refresh_token(self, mock_get: MagicMock) -> None:
@@ -129,7 +135,7 @@ class TestExchangeCodeForTokens:
 class TestUpdateConfigWithToken:
     """Tests for update_config_with_token function."""
 
-    def test_updates_existing_config(self) -> None:
+    def test_updates_existing_config(self, caplog: pytest.LogCaptureFixture) -> None:
         """Test updating an existing config file with GOG section."""
         config_content = """inputs:
   gog:
@@ -143,29 +149,35 @@ class TestUpdateConfigWithToken:
             temp_path = Path(temp_file.name)
 
         try:
-            update_config_with_token(temp_path, "new_refresh_token_123")
+            with caplog.at_level(logging.INFO, logger="src.web.gog_auth"):
+                update_config_with_token(temp_path, "new_refresh_token_123")
 
             updated_content = temp_path.read_text()
             assert "new_refresh_token_123" in updated_content
+            assert "Updated GOG refresh_token in config.yaml" in caplog.text
         finally:
             temp_path.unlink()
 
-    def test_raises_error_for_missing_file(self) -> None:
+    def test_raises_error_for_missing_file(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """GogAuthError propagates with original message when config file is absent.
 
         The exists check is outside the try block, so the error propagates
         directly without being caught by the broad except Exception clause.
         The message must not contain filesystem paths (security).
         """
-        with pytest.raises(GogAuthError, match="Config file not found") as exc_info:
-            update_config_with_token(Path("/nonexistent/config.yaml"), "token")
+        with caplog.at_level(logging.ERROR, logger="src.web.gog_auth"):
+            with pytest.raises(GogAuthError, match="Config file not found") as exc_info:
+                update_config_with_token(Path("/nonexistent/config.yaml"), "token")
 
         error_message = str(exc_info.value)
         # Security: filesystem path must not leak in error message
         assert "/nonexistent" not in error_message
         assert "config.yaml" not in error_message
+        assert "Config file not found at expected path" in caplog.text
 
-    def test_non_gog_error_is_wrapped(self) -> None:
+    def test_non_gog_error_is_wrapped(self, caplog: pytest.LogCaptureFixture) -> None:
         """Test that non-GogAuthError exceptions are wrapped with generic message."""
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".yaml", delete=False
@@ -174,11 +186,18 @@ class TestUpdateConfigWithToken:
             temp_path = Path(temp_file.name)
 
         try:
-            with patch.object(
-                Path, "read_text", side_effect=PermissionError("Permission denied")
-            ):
-                with pytest.raises(GogAuthError, match="Failed to update config file"):
-                    update_config_with_token(temp_path, "new_token")
+            with caplog.at_level(logging.ERROR, logger="src.web.gog_auth"):
+                with patch.object(
+                    Path,
+                    "read_text",
+                    side_effect=PermissionError("Permission denied"),
+                ):
+                    with pytest.raises(
+                        GogAuthError, match="Failed to update config file"
+                    ):
+                        update_config_with_token(temp_path, "new_token")
+
+            assert "Failed to update config: Permission denied" in caplog.text
         finally:
             temp_path.unlink()
 
