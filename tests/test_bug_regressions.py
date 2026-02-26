@@ -809,21 +809,18 @@ class TestBlurbBatchingRegression:
         error), and the exception was silently caught in _enhance_with_llm.
 
         Fix: Batch blurb generation into groups of BLURB_BATCH_SIZE (5) items,
-        making a separate LLM call per batch. If one batch fails, results from
-        successful batches are still returned.
+        run concurrently via ThreadPoolExecutor. If one batch fails, results
+        from successful batches are still returned.
         """
         mock_client = Mock(spec=OllamaClient)
         items = _make_book_items(_TEN_BOOK_NAMES)
 
-        call_count = 0
+        # Fail batch 2 based on prompt content (not call order, since batches
+        # run concurrently and completion order is non-deterministic).
+        batch_2_marker = items[BLURB_BATCH_SIZE].title  # first item of batch 2
 
         def fake_generate_text(prompt: str, **kwargs: Any) -> str:
-            # Manual counter because side_effect runs before Mock increments
-            # call_count, so mock_client.generate_text.call_count is unreliable
-            # inside the side_effect body.
-            nonlocal call_count
-            call_count += 1
-            if call_count == 2:
+            if batch_2_marker in prompt:
                 raise RuntimeError("LLM timeout")
             return _fake_blurb_response(items, prompt)
 
@@ -836,7 +833,7 @@ class TestBlurbBatchingRegression:
             consumed_items=[],
         )
 
-        # First batch (5 items) should succeed, second batch fails
+        # Batch 1 (5 items) should succeed, batch 2 fails
         assert len(results) == BLURB_BATCH_SIZE
 
         # Results should be from batch 1 (first 5 items)

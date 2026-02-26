@@ -2,6 +2,7 @@
 
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 from src.llm.client import OllamaClient
@@ -131,37 +132,54 @@ class RecommendationGenerator:
             for i in range(0, len(selected_items), BLURB_BATCH_SIZE)
         ]
 
-        all_results: list[dict[str, Any]] = []
-        errors: list[str] = []
-
         system_prompt = build_blurb_system_prompt(content_type)
 
-        for batch_index, batch in enumerate(batches):
+        def _generate_batch(batch: list[ContentItem]) -> list[dict[str, Any]]:
+            """Generate blurbs for a single batch (runs in thread)."""
             user_prompt = build_blurb_prompt(
                 content_type=content_type,
                 selected_items=batch,
                 consumed_items=consumed_items,
             )
+            response = self.client.generate_text(
+                prompt=user_prompt,
+                system_prompt=system_prompt,
+                model=model,
+                temperature=0.7,
+            )
+            return self._parse_recommendations(response, batch, count=len(batch))
 
+        # Single batch — skip threading overhead
+        if len(batches) == 1:
             try:
-                response = self.client.generate_text(
-                    prompt=user_prompt,
-                    system_prompt=system_prompt,
-                    model=model,
-                    temperature=0.7,
-                )
-
-                parsed = self._parse_recommendations(response, batch, count=len(batch))
-                all_results.extend(parsed)
-
+                return _generate_batch(batches[0])
             except Exception as error:
-                logger.warning(
-                    "Blurb generation failed for batch %d/%d: %s",
-                    batch_index + 1,
-                    len(batches),
-                    error,
-                )
-                errors.append(str(error))
+                logger.error("Blurb generation failed: %s", error)
+                raise RuntimeError("Blurb generation failed") from error
+
+        # Multiple batches — run concurrently (I/O-bound Ollama HTTP calls)
+        all_results: list[dict[str, Any]] = []
+        errors: list[str] = []
+
+        with ThreadPoolExecutor(max_workers=len(batches)) as executor:
+            future_to_index = {
+                executor.submit(_generate_batch, batch): batch_index
+                for batch_index, batch in enumerate(batches)
+            }
+
+            for future in as_completed(future_to_index):
+                batch_index = future_to_index[future]
+                try:
+                    parsed = future.result()
+                    all_results.extend(parsed)
+                except Exception as error:
+                    logger.warning(
+                        "Blurb generation failed for batch %d/%d: %s",
+                        batch_index + 1,
+                        len(batches),
+                        error,
+                    )
+                    errors.append(str(error))
 
         # Raise only when no results were produced AND at least one batch errored.
         # If all batches parsed successfully but returned no matches, return [].
@@ -250,6 +268,14 @@ class RecommendationGenerator:
                     ):
                         matching_item = item
                         break
+
+            if not matching_item:
+                logger.debug(
+                    "Blurb parsed title %r (author=%r) matched no item in batch of %d",
+                    title,
+                    author,
+                    len(unconsumed_items),
+                )
 
             recommendations.append(
                 {
