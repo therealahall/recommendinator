@@ -728,6 +728,11 @@ input[type="checkbox"] {
     color: var(--accent-light);
 }
 
+.rec-llm-reasoning em {
+    color: var(--accent-light);
+    font-style: normal;
+}
+
 .rec-reasoning {
     font-size: var(--text-sm);
     color: var(--text-secondary);
