@@ -44,7 +44,17 @@ src/
 └── utils/            # Utility functions (list_merge, series, sorting)
 tests/                # Mirrors src/ structure
 config/               # Configuration files (example.yaml for tests)
+private/              # Gitignored — private plugins NOT in the open source repo
+└── plugins/          # Private source plugins (personal_site_games.py, etc.)
 ```
+
+## Private Plugins (gitignored)
+
+**IMPORTANT:** The `private/` directory is in `.gitignore` and invisible to Glob/Grep tools (which respect gitignore). Always check it explicitly with `Read` or `ls` when investigating plugin issues.
+
+- **`private/plugins/personal_site_games.py`** — Imports video games from the owner's personal blog (markdown files with YAML frontmatter). Reads from `~/Programming/ahall/personal-site/src/content/games/`.
+- Private plugins follow the same `SourcePlugin` interface as `src/ingestion/sources/` plugins.
+- Tests for private plugins live alongside them or in a local test runner — they are NOT in the `tests/` directory.
 
 ## Development Standards
 
