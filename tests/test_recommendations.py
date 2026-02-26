@@ -144,6 +144,111 @@ class TestParsingYearsInReasoningRegression:
 # ===========================================================================
 
 
+class TestTrademarkSymbolMatchingRegression:
+    """Regression tests for trademark symbols breaking title matching.
+
+    Bug reported: "Middle-earth™: Shadow of Mordor™ Game of the Year Edition"
+    didn't get an AI description while other recommendations did.
+
+    Root cause: _parse_recommendations() uses substring matching
+    (``title_lower in item_title_lower``). The DB stores titles with trademark
+    symbols (™, ®, ©) but the LLM returns titles without them, so
+    "middle-earth" is not found in "middle-earth™" by Python's ``in`` operator.
+
+    Fix: Strip trademark symbols (™®©) from both sides before comparison,
+    matching the existing pattern used in sqlite_db.py and rawg.py.
+    """
+
+    @pytest.fixture()
+    def generator(self) -> RecommendationGenerator:
+        return RecommendationGenerator(Mock(spec=OllamaClient))
+
+    def test_trademark_symbol_in_db_title_matches_llm_title(
+        self, generator: RecommendationGenerator
+    ) -> None:
+        """Regression: DB title with ™ must match LLM title without it."""
+        unconsumed = [
+            ContentItem(
+                id="1",
+                title="Middle-earth™: Shadow of Mordor™ Game of the Year Edition",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.UNREAD,
+            ),
+        ]
+        response = (
+            "1. **Middle-earth: Shadow of Mordor Game of the Year Edition**\n"
+            "An excellent open-world action game set in Tolkien's universe."
+        )
+        recs = generator._parse_recommendations(response, unconsumed)
+
+        assert len(recs) == 1
+        assert recs[0]["item"] is not None
+        assert recs[0]["item"].id == "1"
+
+    def test_registered_symbol_in_db_title_matches_llm_title(
+        self, generator: RecommendationGenerator
+    ) -> None:
+        """Regression: DB title with ® must match LLM title without it."""
+        unconsumed = [
+            ContentItem(
+                id="1",
+                title="DOOM® Eternal",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.UNREAD,
+            ),
+        ]
+        response = (
+            "1. **DOOM Eternal**\n"
+            "A fast-paced shooter that keeps the adrenaline high."
+        )
+        recs = generator._parse_recommendations(response, unconsumed)
+
+        assert len(recs) == 1
+        assert recs[0]["item"] is not None
+        assert recs[0]["item"].id == "1"
+
+    def test_copyright_symbol_in_db_title_matches_llm_title(
+        self, generator: RecommendationGenerator
+    ) -> None:
+        """Regression: DB title with © must match LLM title without it."""
+        unconsumed = [
+            ContentItem(
+                id="1",
+                title="Some Game© Deluxe",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.UNREAD,
+            ),
+        ]
+        response = (
+            "1. **Some Game Deluxe**\n" "A polished edition with all the DLC included."
+        )
+        recs = generator._parse_recommendations(response, unconsumed)
+
+        assert len(recs) == 1
+        assert recs[0]["item"] is not None
+        assert recs[0]["item"].id == "1"
+
+    def test_fallback_path_strips_trademarks(
+        self, generator: RecommendationGenerator
+    ) -> None:
+        """Regression: fallback (prose) path must also strip trademark symbols."""
+        unconsumed = [
+            ContentItem(
+                id="1",
+                title="Middle-earth™: Shadow of Mordor™",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.UNREAD,
+            ),
+        ]
+        # No numbered list — triggers fallback path
+        response = "I think Middle-earth: Shadow of Mordor would be a great choice."
+        recs = generator._parse_recommendations(response, unconsumed)
+
+        assert len(recs) == 1
+        assert recs[0]["item"] is not None
+        assert recs[0]["item"].id == "1"
+
+
 def test_parse_recommendations_falls_back_to_title_search_when_no_numbered_list() -> (
     None
 ):
