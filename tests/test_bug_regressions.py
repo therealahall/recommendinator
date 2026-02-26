@@ -5,8 +5,10 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import Mock
 
+import pytest
+
 from src.llm.client import OllamaClient
-from src.llm.recommendations import RecommendationGenerator
+from src.llm.recommendations import BLURB_BATCH_SIZE, RecommendationGenerator
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.recommendations.engine import RecommendationEngine
 from src.recommendations.preference_interpreter import PatternBasedInterpreter
@@ -701,3 +703,178 @@ class TestLlmReasoningMismatchRegression:
         matched_db_titles = [rec["item"].title for rec in results]
         assert any("Magic Kingdom" in title for title in matched_db_titles)
         assert any("Name of the Wind" in title for title in matched_db_titles)
+
+
+def _make_book_items(names: list[str]) -> list[ContentItem]:
+    """Build a list of book ContentItems with unique, non-overlapping titles."""
+    return [
+        ContentItem(
+            id=str(index),
+            title=f"Book {name}",
+            author=f"Author {name}",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        )
+        for index, name in enumerate(names, 1)
+    ]
+
+
+# Names chosen so that no title is a substring of another (avoids false
+# matches in the fake LLM response builder used by the tests below).
+_TEN_BOOK_NAMES = [
+    "Alpha",
+    "Beta",
+    "Gamma",
+    "Delta",
+    "Epsilon",
+    "Zeta",
+    "Eta",
+    "Theta",
+    "Iota",
+    "Kappa",
+]
+
+
+def _fake_blurb_response(items: list[ContentItem], prompt: str) -> str:
+    """Build a numbered-list blurb response for items whose titles appear in *prompt*."""
+    lines = []
+    entry_num = 1
+    for item in items:
+        if item.title in prompt:
+            lines.append(
+                f"{entry_num}. **{item.title}** by {item.author}\n"
+                f"Great match for your taste."
+            )
+            entry_num += 1
+    return "\n\n".join(lines)
+
+
+class TestBlurbBatchingRegression:
+    """Regression tests for LLM blurb generation failing when count > 5."""
+
+    def test_blurbs_batched_for_more_than_five_items_regression(self) -> None:
+        """Regression test: Blurb generation must work for > 5 items.
+
+        Bug reported: When requesting more than 5 recommendations with LLM
+        reasoning enabled, no LLM reasoning appeared on any result. Results
+        came back with only pipeline reasoning.
+
+        Root cause: Local LLMs struggle with long prompts/responses. A single
+        blurb call with > 5 items would fail (timeout, truncation, or parsing
+        error), and the exception was silently caught in _enhance_with_llm.
+
+        Fix: Batch blurb generation into groups of BLURB_BATCH_SIZE (5) items,
+        making a separate LLM call per batch.
+        """
+        mock_client = Mock(spec=OllamaClient)
+        items = _make_book_items(_TEN_BOOK_NAMES)
+
+        mock_client.generate_text.side_effect = (
+            lambda prompt, **kw: _fake_blurb_response(items, prompt)
+        )
+
+        generator = RecommendationGenerator(mock_client)
+        results = generator.generate_blurbs(
+            ContentType.BOOK,
+            selected_items=items,
+            consumed_items=[],
+        )
+
+        # All 10 items should have blurbs
+        assert len(results) == 10
+
+        # Every item should be matched (not None)
+        unmatched = [rec["title"] for rec in results if rec["item"] is None]
+        assert not unmatched, f"Items with no match: {unmatched}"
+
+        # All titles present
+        result_titles = {rec["title"] for rec in results}
+        expected_titles = {item.title for item in items}
+        assert result_titles == expected_titles
+
+        # Should have made 2 LLM calls (batches of 5)
+        assert mock_client.generate_text.call_count == 2
+
+    def test_partial_batch_failure_returns_successful_batches_regression(
+        self,
+    ) -> None:
+        """Regression test: Partial batch failure should return successful results.
+
+        Bug reported: When requesting more than 5 recommendations with LLM
+        reasoning enabled, no LLM reasoning appeared on any result. Results
+        came back with only pipeline reasoning.
+
+        Root cause: Local LLMs struggle with long prompts/responses. A single
+        blurb call with > 5 items would fail (timeout, truncation, or parsing
+        error), and the exception was silently caught in _enhance_with_llm.
+
+        Fix: Batch blurb generation into groups of BLURB_BATCH_SIZE (5) items,
+        making a separate LLM call per batch. If one batch fails, results from
+        successful batches are still returned.
+        """
+        mock_client = Mock(spec=OllamaClient)
+        items = _make_book_items(_TEN_BOOK_NAMES)
+
+        call_count = 0
+
+        def fake_generate_text(prompt: str, **kwargs: Any) -> str:
+            # Manual counter because side_effect runs before Mock increments
+            # call_count, so mock_client.generate_text.call_count is unreliable
+            # inside the side_effect body.
+            nonlocal call_count
+            call_count += 1
+            if call_count == 2:
+                raise RuntimeError("LLM timeout")
+            return _fake_blurb_response(items, prompt)
+
+        mock_client.generate_text.side_effect = fake_generate_text
+
+        generator = RecommendationGenerator(mock_client)
+        results = generator.generate_blurbs(
+            ContentType.BOOK,
+            selected_items=items,
+            consumed_items=[],
+        )
+
+        # First batch (5 items) should succeed, second batch fails
+        assert len(results) == BLURB_BATCH_SIZE
+
+        # Results should be from batch 1 (first 5 items)
+        batch_1_titles = {item.title for item in items[:BLURB_BATCH_SIZE]}
+        result_titles = {rec["title"] for rec in results}
+        assert result_titles == batch_1_titles
+
+        # Both batches should have been attempted
+        assert mock_client.generate_text.call_count == 2
+
+    def test_all_batches_fail_raises_runtime_error_regression(self) -> None:
+        """Regression test: Total batch failure should raise RuntimeError.
+
+        Bug reported: When requesting more than 5 recommendations with LLM
+        reasoning enabled, no LLM reasoning appeared on any result. Results
+        came back with only pipeline reasoning.
+
+        Root cause: Local LLMs struggle with long prompts/responses. A single
+        blurb call with > 5 items would fail (timeout, truncation, or parsing
+        error), and the exception was silently caught in _enhance_with_llm.
+
+        Fix: Batch blurb generation into groups of BLURB_BATCH_SIZE (5) items.
+        When every batch fails, RuntimeError is raised so the caller knows.
+        """
+        mock_client = Mock(spec=OllamaClient)
+        mock_client.generate_text.side_effect = RuntimeError("LLM unavailable")
+
+        items = _make_book_items(
+            _TEN_BOOK_NAMES[: BLURB_BATCH_SIZE + 2]
+        )  # 7 items → 2 batches
+
+        generator = RecommendationGenerator(mock_client)
+
+        with pytest.raises(
+            RuntimeError, match=r"Blurb generation failed for all \d+ batch"
+        ):
+            generator.generate_blurbs(
+                ContentType.BOOK,
+                selected_items=items,
+                consumed_items=[],
+            )
