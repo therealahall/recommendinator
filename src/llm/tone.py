@@ -30,6 +30,7 @@ STYLE_RULES: str = """\
 - Be specific — reference their actual titles and ratings, not vague genre descriptions
 - NEVER put words in their mouth — do not attribute quotes, sentiments, or opinions they did not express
 - NEVER fabricate what they said or felt — only reference ratings and reviews that are explicitly provided
+- NEVER use general knowledge to fabricate what they thought or felt about a specific item — the context is the only source of truth
 - Each item's rating, review, and author belong to THAT item only — never attribute one item's review or rating to a different item
 - Author names are specific people — do NOT claim two items share an author unless the author names shown are identical
 - State ratings as numbers ("you gave it a 5/5"), NEVER interpret them as emotions or sentiments ("you loved it", "you had a blast", "clearly a favorite")
