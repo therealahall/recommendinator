@@ -321,7 +321,7 @@ async def get_recommendations(
     type: str = Query(
         ..., description="Content type (book, movie, tv_show, video_game)"
     ),
-    count: int = Query(5, ge=1, description="Number of recommendations"),
+    count: int = Query(5, ge=1, le=20, description="Number of recommendations"),
     use_llm: bool = Query(True, description="Use LLM for enhanced reasoning"),
     user_id: int = Query(1, ge=1, description="User ID for personalized preferences"),
 ) -> list[RecommendationResponse]:
@@ -348,7 +348,7 @@ async def get_recommendations(
     if count > max_count:
         raise HTTPException(
             status_code=400,
-            detail=f"Count exceeds maximum allowed ({max_count})",
+            detail="Requested count exceeds the maximum allowed",
         )
 
     try:

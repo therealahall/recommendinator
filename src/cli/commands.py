@@ -29,9 +29,9 @@ from src.web.sync_sources import resolve_inputs, validate_source_config
 )
 @click.option(
     "--count",
-    type=int,
+    type=click.IntRange(min=1, max=20),
     default=5,
-    help="Number of recommendations to generate",
+    help="Number of recommendations to generate (1-20)",
 )
 @click.option(
     "--format",
