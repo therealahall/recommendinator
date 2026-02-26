@@ -156,9 +156,12 @@ class RecommendationGenerator:
 
         # Try to extract numbered list items
         # Pattern: "1. Title by Author\n   Explanation..."
-        # Split by numbered list pattern
-        pattern = r"(\d+)\.\s+"
-        parts = re.split(pattern, response)
+        # Split by numbered list pattern — anchored to line starts AND
+        # restricted to 1–2 digit numbers so that years (1984, 2019) or
+        # other large numbers at the start of reasoning lines don't cause
+        # spurious splits that eat neighboring recommendations.
+        pattern = r"^(\d{1,2})\.\s+"
+        parts = re.split(pattern, response, flags=re.MULTILINE)
 
         # Process each recommendation (skip first empty part)
         for index in range(1, len(parts), 2):
