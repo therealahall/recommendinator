@@ -17,6 +17,10 @@ logger = logging.getLogger(__name__)
 
 _TRADEMARK_RE = re.compile(r"[™®©]")
 
+# Maximum items per LLM call when generating blurbs.  Local models struggle
+# with long prompts and responses, so we batch into smaller groups.
+BLURB_BATCH_SIZE = 5
+
 
 class RecommendationGenerator:
     """Generate recommendations using LLM."""
@@ -100,6 +104,12 @@ class RecommendationGenerator:
         asks only for enthusiastic blurbs. Uses a slimmer prompt that saves
         ~1,000-2,000 tokens.
 
+        When more than :data:`BLURB_BATCH_SIZE` items are provided, the
+        items are split into batches and a separate LLM call is made for
+        each batch.  This prevents local models from failing on long
+        prompts/responses while still supporting up to the configured
+        ``max_count`` (default 20).
+
         Args:
             content_type: Type of content being recommended
             selected_items: Pre-selected items to write blurbs for
@@ -110,33 +120,62 @@ class RecommendationGenerator:
             List of recommendation dicts with title, reasoning, and item
 
         Raises:
-            RuntimeError: If blurb generation fails
+            RuntimeError: If blurb generation fails for every batch
         """
         if not selected_items:
             return []
 
+        # Split into batches to keep each LLM call manageable
+        batches: list[list[ContentItem]] = [
+            selected_items[i : i + BLURB_BATCH_SIZE]
+            for i in range(0, len(selected_items), BLURB_BATCH_SIZE)
+        ]
+
+        all_results: list[dict[str, Any]] = []
+        errors: list[str] = []
+
         system_prompt = build_blurb_system_prompt(content_type)
-        user_prompt = build_blurb_prompt(
-            content_type=content_type,
-            selected_items=selected_items,
-            consumed_items=consumed_items,
-        )
 
-        try:
-            response = self.client.generate_text(
-                prompt=user_prompt,
-                system_prompt=system_prompt,
-                model=model,
-                temperature=0.7,
+        for batch_index, batch in enumerate(batches):
+            user_prompt = build_blurb_prompt(
+                content_type=content_type,
+                selected_items=batch,
+                consumed_items=consumed_items,
             )
 
-            return self._parse_recommendations(
-                response, selected_items, count=len(selected_items)
+            try:
+                response = self.client.generate_text(
+                    prompt=user_prompt,
+                    system_prompt=system_prompt,
+                    model=model,
+                    temperature=0.7,
+                )
+
+                parsed = self._parse_recommendations(response, batch, count=len(batch))
+                all_results.extend(parsed)
+
+            except Exception as error:
+                logger.warning(
+                    "Blurb generation failed for batch %d/%d: %s",
+                    batch_index + 1,
+                    len(batches),
+                    error,
+                )
+                errors.append(str(error))
+
+        # Raise only when no results were produced AND at least one batch errored.
+        # If all batches parsed successfully but returned no matches, return [].
+        if not all_results and errors:
+            logger.error(
+                "Blurb generation failed for all %d batch(es). Errors: %s",
+                len(batches),
+                "; ".join(errors),
+            )
+            raise RuntimeError(
+                f"Blurb generation failed for all {len(batches)} batch(es)"
             )
 
-        except Exception as error:
-            logger.error("Failed to generate blurbs: %s", error)
-            raise RuntimeError(f"Blurb generation failed: {error}") from error
+        return all_results
 
     def _parse_recommendations(
         self,
