@@ -140,7 +140,7 @@ class TestParsingYearsInReasoningRegression:
 
 
 # ===========================================================================
-# Parser fallback path tests
+# Trademark symbol matching regression tests
 # ===========================================================================
 
 
@@ -184,6 +184,7 @@ class TestTrademarkSymbolMatchingRegression:
         assert len(recs) == 1
         assert recs[0]["item"] is not None
         assert recs[0]["item"].id == "1"
+        assert "Tolkien" in recs[0]["reasoning"]
 
     def test_registered_symbol_in_db_title_matches_llm_title(
         self, generator: RecommendationGenerator
@@ -206,6 +207,7 @@ class TestTrademarkSymbolMatchingRegression:
         assert len(recs) == 1
         assert recs[0]["item"] is not None
         assert recs[0]["item"].id == "1"
+        assert "adrenaline" in recs[0]["reasoning"]
 
     def test_copyright_symbol_in_db_title_matches_llm_title(
         self, generator: RecommendationGenerator
@@ -227,6 +229,7 @@ class TestTrademarkSymbolMatchingRegression:
         assert len(recs) == 1
         assert recs[0]["item"] is not None
         assert recs[0]["item"].id == "1"
+        assert "DLC" in recs[0]["reasoning"]
 
     def test_fallback_path_strips_trademarks(
         self, generator: RecommendationGenerator
@@ -247,6 +250,11 @@ class TestTrademarkSymbolMatchingRegression:
         assert len(recs) == 1
         assert recs[0]["item"] is not None
         assert recs[0]["item"].id == "1"
+
+
+# ===========================================================================
+# Parser fallback path tests
+# ===========================================================================
 
 
 def test_parse_recommendations_falls_back_to_title_search_when_no_numbered_list() -> (

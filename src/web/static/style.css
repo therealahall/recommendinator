@@ -728,6 +728,7 @@ input[type="checkbox"] {
     color: var(--accent-light);
 }
 
+/* LLM uses *single-asterisk* for titles; render as accent text, not italic */
 .rec-llm-reasoning em {
     color: var(--accent-light);
     font-style: normal;

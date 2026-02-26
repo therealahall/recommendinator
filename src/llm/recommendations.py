@@ -15,6 +15,8 @@ from src.models.content import ContentItem, ContentType
 
 logger = logging.getLogger(__name__)
 
+_TRADEMARK_RE = re.compile(r"[™®©]")
+
 
 class RecommendationGenerator:
     """Generate recommendations using LLM."""
@@ -199,10 +201,10 @@ class RecommendationGenerator:
             # series suffix like "(The Kingkiller Chronicle, #1)" that the
             # LLM omits, so use substring containment rather than exact
             # equality.
-            title_lower = title.lower()
+            title_lower = _TRADEMARK_RE.sub("", title.lower())
             matching_item = None
             for item in unconsumed_items:
-                item_title_lower = item.title.lower()
+                item_title_lower = _TRADEMARK_RE.sub("", item.title.lower())
                 if title_lower in item_title_lower or item_title_lower in title_lower:
                     if author is None or (
                         item.author and item.author.lower() == author.lower()
@@ -222,8 +224,10 @@ class RecommendationGenerator:
         # If parsing failed, try simpler extraction
         if not recommendations:
             # Fallback: extract titles from response
+            response_lower = _TRADEMARK_RE.sub("", response.lower())
             for item in unconsumed_items:
-                if item.title.lower() in response.lower():
+                item_title_lower = _TRADEMARK_RE.sub("", item.title.lower())
+                if item_title_lower in response_lower:
                     recommendations.append(
                         {
                             "title": item.title,
