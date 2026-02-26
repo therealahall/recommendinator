@@ -77,16 +77,13 @@ private/              # Gitignored — private plugins NOT in the open source re
 
 **Tests are NEVER skipped.** Do not use `--ignore`, `pytest.mark.skip`, `@pytest.skip`, or any other mechanism to skip or exclude tests. Every test in the suite must run and pass. If a test is slow, hanging, or broken, **fix the test** — do not work around it by skipping it.
 
-**Run `make check` after every material change.** Each source code change must leave all four quality checks passing before moving on to the next change. Documentation-only changes (README, CLAUDE.md, docs/) do not require re-running tests.
+**Run all four checks after every material change.** Each source code change must leave all four quality checks passing before moving on to the next change. Documentation-only changes (README, CLAUDE.md, docs/) do not require re-running tests.
 
 ```bash
-python3.11 -m pytest          # All tests pass
-python3.11 -m black --check src/ tests/     # Formatting
-python3.11 -m mypy src/                     # Type checking (strict)
-python3.11 -m ruff check src/ tests/        # Linting
+command make check
 ```
 
-Or use the Makefile: `make check`
+Note: Use `command make check` (not bare `make check`) to bypass a zsh shell snapshot function that shadows the `make` binary in Claude Code's environment.
 
 ### Agent-Enforced Standards
 
@@ -138,7 +135,7 @@ The project uses Claude Code plugins and custom agents to maintain code quality 
 - **test-review** — Pre-commit test coverage and quality audit. See `.claude/agents/test-review.md`.
 - **commit-hygiene** — Atomic commit structure and conventional format. See `.claude/agents/commit-hygiene.md`.
 
-**All agents must approve changes before marking tasks as complete.** Run security-review, code-review, and test-review before `make check`. Run commit-hygiene before committing (to plan the split) and before pushing (to verify commit structure).
+**All agents must approve changes before marking tasks as complete.** Run security-review, code-review, and test-review before `command make check`. Run commit-hygiene before committing (to plan the split) and before pushing (to verify commit structure).
 
 ## Architecture Principles
 
@@ -188,7 +185,7 @@ This ensures every plan step is tracked, has clear acceptance criteria, and noth
 3. Ask questions if anything is unclear or if there are trade-offs to decide
 4. Write tests first (TDD recommended)
 5. Implement following existing patterns
-6. Ensure all checks pass (`make check`)
+6. Ensure all checks pass (`command make check`)
 7. Update documentation (ARCHITECTURE.md, README.md, QUICKSTART.md, CLAUDE.md, relevant docs/ files)
 8. Commit with proper message format
 
@@ -213,6 +210,6 @@ This ensures every plan step is tracked, has clear acceptance criteria, and noth
 
 1. Run **security-review**, **code-review**, and **test-review** agents
 2. Run **commit-hygiene** agent to plan commit split
-3. Run `make check` (pytest, black, mypy, ruff)
+3. Run `command make check` (pytest, black, mypy, ruff)
 4. Commit following the split plan from commit-hygiene
 5. Run **commit-hygiene** again pre-push to verify commit structure
