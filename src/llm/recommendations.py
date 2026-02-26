@@ -213,6 +213,9 @@ class RecommendationGenerator:
         """
         recommendations = []
 
+        logger.info("Raw LLM response received: %d chars", len(response))
+        logger.debug("Raw LLM response: %.500s", response)
+
         # Try to extract numbered list items
         # Pattern: "1. Title by Author\n   Explanation..."
         # Split by numbered list pattern — anchored to line starts AND
@@ -237,22 +240,39 @@ class RecommendationGenerator:
 
             title_line = lines[0]
 
-            # Extract title and author if present
+            # Extract title, author, and any inline reasoning.
             title = title_line
             author = None
-            if " by " in title_line:
-                parts_split = title_line.split(" by ", 1)
-                title = parts_split[0].strip()
-                author = parts_split[1].strip()
+            inline_reasoning = ""
 
-            # Strip markdown bold markers — the prompt asks for "**Title**"
-            # format, but we need the plain title for matching against items.
-            title = title.strip("*")
-            if author:
-                author = author.strip("*")
+            # Bold-marker pattern: **Title** [by Author | separator reasoning]
+            bold_match = re.match(r"\*\*(.+?)\*\*(.*)", title_line)
+            if bold_match:
+                title = bold_match.group(1).strip()
+                remainder = bold_match.group(2).strip()
+                if remainder.lower().startswith("by "):
+                    author = remainder[3:].strip()
+                elif remainder:
+                    # Strip leading separators (-, —, :) from inline reasoning
+                    inline_reasoning = re.sub(r"^[-—:]\s*", "", remainder).strip()
+            else:
+                # No bold markers — existing fallback behavior
+                if " by " in title_line:
+                    parts_split = title_line.split(" by ", 1)
+                    title = parts_split[0].strip()
+                    author = parts_split[1].strip()
+                title = title.strip("*")
+                if author:
+                    author = author.strip("*")
 
-            # Extract reasoning (remaining lines)
-            reasoning = "\n".join(lines[1:]).strip() if len(lines) > 1 else ""
+            # Combine inline reasoning with any remaining lines
+            remaining = "\n".join(lines[1:]).strip() if len(lines) > 1 else ""
+            if inline_reasoning and remaining:
+                reasoning = f"{inline_reasoning}\n{remaining}"
+            elif inline_reasoning:
+                reasoning = inline_reasoning
+            else:
+                reasoning = remaining
 
             # Try to find matching item.  Database titles often include a
             # series suffix like "(The Kingkiller Chronicle, #1)" that the
@@ -303,5 +323,14 @@ class RecommendationGenerator:
                     )
                     if len(recommendations) >= count:
                         break
+
+        matched_count = sum(1 for r in recommendations if r["item"] is not None)
+        reasoning_count = sum(1 for r in recommendations if r["reasoning"])
+        logger.info(
+            "Parse results: %d items parsed, %d matched, %d with reasoning",
+            len(recommendations),
+            matched_count,
+            reasoning_count,
+        )
 
         return recommendations
