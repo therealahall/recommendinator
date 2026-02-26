@@ -875,3 +875,171 @@ class TestBlurbBatchingRegression:
                 selected_items=items,
                 consumed_items=[],
             )
+
+
+def _make_movie_items(titles: list[str]) -> list[ContentItem]:
+    """Build a list of movie ContentItems for inline-reasoning tests.
+
+    Unlike _make_book_items, titles are used verbatim (not prefixed) because
+    the inline-reasoning tests assert exact title matching against realistic
+    LLM output that contains the real title.
+    """
+    return [
+        ContentItem(
+            id=str(index),
+            title=title,
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+        )
+        for index, title in enumerate(titles, 1)
+    ]
+
+
+class TestInlineReasoningRegression:
+    """Regression tests for inline reasoning being discarded by the parser.
+
+    Bug reported: llm_reasoning was "" (empty string) for all recommendations
+    even though the LLM generated output successfully. Title matching worked,
+    but reasoning was always blank.
+
+    Root cause: When the LLM puts reasoning on the same line as the title
+    (e.g. "1. **Gremlins** A fun horror-comedy..."), the parser treated the
+    entire first line as the title and only extracted reasoning from lines[1:].
+
+    Fix: Detect bold-marker titles (**Title**), extract the title from within
+    the markers, and treat the remainder of the line as inline reasoning.
+
+    Tests call _parse_recommendations directly to isolate the parsing logic
+    from the LLM call.
+    """
+
+    @pytest.fixture()
+    def generator(self) -> RecommendationGenerator:
+        """Create a RecommendationGenerator with a stub client."""
+        return RecommendationGenerator(Mock(spec=OllamaClient))
+
+    def test_no_author_inline_reasoning_captured_regression(
+        self, generator: RecommendationGenerator
+    ) -> None:
+        """Inline reasoning on the same line as a bold title must be captured.
+
+        Movies and games typically have no author, so the LLM outputs:
+        "1. **Gremlins** A fun horror-comedy that matches your taste"
+        The reasoning after **Title** must not be lost.
+        """
+        response = (
+            "1. **Gremlins** A fun horror-comedy that matches your taste\n\n"
+            "2. **Inception** A mind-bending thriller you will love"
+        )
+        items = _make_movie_items(["Gremlins", "Inception"])
+        results = generator._parse_recommendations(response, items, count=2)
+
+        assert len(results) == 2
+        assert results[0]["title"] == "Gremlins"
+        assert "horror-comedy" in results[0]["reasoning"]
+        assert results[0]["item"] is not None
+        assert results[1]["title"] == "Inception"
+        assert "mind-bending" in results[1]["reasoning"]
+        assert results[1]["item"] is not None
+
+    def test_multiline_reasoning_still_works_regression(
+        self, generator: RecommendationGenerator
+    ) -> None:
+        """Multi-line reasoning (title on one line, reasoning on next) must not regress.
+
+        This is the format that already worked before the fix. Ensure the
+        bold-marker extraction does not break it.
+        """
+        response = (
+            "1. **Gremlins**\n"
+            "A fun horror-comedy that matches your taste.\n\n"
+            "2. **Inception**\n"
+            "A mind-bending thriller you will love."
+        )
+        items = _make_movie_items(["Gremlins", "Inception"])
+        results = generator._parse_recommendations(response, items, count=2)
+
+        assert len(results) == 2
+        assert results[0]["title"] == "Gremlins"
+        assert "horror-comedy" in results[0]["reasoning"]
+        assert results[0]["item"] is not None
+        assert results[1]["title"] == "Inception"
+        assert "mind-bending" in results[1]["reasoning"]
+        assert results[1]["item"] is not None
+
+    def test_inline_reasoning_with_separator_regression(
+        self, generator: RecommendationGenerator
+    ) -> None:
+        """Inline reasoning preceded by a dash or colon separator must be captured.
+
+        LLMs often output: "1. **Title** - Reasoning..." or "1. **Title**: Reasoning..."
+        The separator must be stripped from the reasoning text.
+        """
+        response = (
+            "1. **Gremlins** - A fun horror-comedy\n\n"
+            "2. **Inception** — A mind-bending thriller\n\n"
+            "3. **Alien**: A terrifying sci-fi classic"
+        )
+        items = _make_movie_items(["Gremlins", "Inception", "Alien"])
+        results = generator._parse_recommendations(response, items, count=3)
+
+        assert len(results) == 3
+        assert results[0]["reasoning"].startswith(
+            "A fun"
+        ), f"Hyphen separator not stripped: {results[0]['reasoning']!r}"
+        assert results[1]["reasoning"].startswith(
+            "A mind"
+        ), f"Em-dash separator not stripped: {results[1]['reasoning']!r}"
+        assert results[2]["reasoning"].startswith(
+            "A terrifying"
+        ), f"Colon separator not stripped: {results[2]['reasoning']!r}"
+
+    def test_inline_and_multiline_reasoning_combined_regression(
+        self, generator: RecommendationGenerator
+    ) -> None:
+        """Inline reasoning + continuation lines must be combined into one string.
+
+        When the LLM puts some reasoning on the title line and continues on
+        subsequent lines, both parts must be captured.
+        """
+        response = (
+            "1. **Gremlins** A fun horror-comedy.\n"
+            "It perfectly matches your love of 80s creature features."
+        )
+        items = _make_movie_items(["Gremlins"])
+        results = generator._parse_recommendations(response, items, count=1)
+
+        assert len(results) == 1
+        reasoning = results[0]["reasoning"]
+        assert "horror-comedy" in reasoning
+        assert "creature features" in reasoning
+        assert results[0]["item"] is not None
+
+    def test_book_with_by_author_still_parses_correctly_regression(
+        self, generator: RecommendationGenerator
+    ) -> None:
+        """Bold title with 'by Author' must still extract the author correctly.
+
+        Books use "1. **Title** by Author" format. The inline-reasoning fix
+        must not break author extraction.
+        """
+        response = (
+            "1. **The Name of the Wind** by Patrick Rothfuss\n"
+            "Epic fantasy with beautiful prose."
+        )
+        unconsumed = [
+            ContentItem(
+                id="1",
+                title="The Name of the Wind",
+                author="Patrick Rothfuss",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            ),
+        ]
+        results = generator._parse_recommendations(response, unconsumed, count=1)
+
+        assert len(results) == 1
+        assert results[0]["title"] == "The Name of the Wind"
+        assert results[0]["author"] == "Patrick Rothfuss"
+        assert results[0]["item"] is not None
+        assert "beautiful prose" in results[0]["reasoning"]
