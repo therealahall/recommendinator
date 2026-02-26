@@ -6,7 +6,7 @@ regression tests for LLM misclassification / fabricated reviews.
 
 from typing import Any
 
-from src.conversation.engine import COMPACT_SYSTEM_PROMPT
+from src.conversation.engine import COMPACT_SYSTEM_PROMPT, FULL_SYSTEM_PROMPT
 from src.llm.prompts import (
     build_blurb_prompt,
     build_blurb_system_prompt,
@@ -1179,3 +1179,118 @@ class TestAuthorHallucinationRegression:
         )
 
         assert "do NOT claim two items share an author" in prompt
+
+
+# ===========================================================================
+# General knowledge fabrication regression tests
+# ===========================================================================
+
+
+class TestGeneralKnowledgeFabricationRegression:
+    """Regression tests for LLM using general knowledge to fabricate user opinions.
+
+    Bug reported (round 6): The LLM described a user as "someone who found
+    1984 to be a 'gut punch'" in a book recommendation, but the user's 1984
+    entry had NO review. The phrase "gut punch" existed only in a video game
+    review (Red Dead Redemption 2) that wasn't even in the recommendation
+    context. The LLM fabricated the quote using its general knowledge of 1984
+    as an emotionally impactful book.
+
+    Root cause: Anti-hallucination rules prohibited inventing quotes and
+    interpreting ratings as emotions, but did not explicitly prohibit using
+    general knowledge to fabricate what someone thought or felt about an item.
+    The model's training data gave it strong priors about 1984 being "a gut
+    punch," which overrode the anti-fabrication rules.
+
+    Fix: Added explicit "do NOT use general knowledge to fabricate" rules to
+    all prompt paths: recommendation system/user prompts, blurb system/user
+    prompts, conversation system prompts (full + compact), and STYLE_RULES.
+    """
+
+    def test_style_rules_ban_general_knowledge_fabrication_regression(self) -> None:
+        """STYLE_RULES should ban using general knowledge to fabricate user opinions."""
+        assert "general knowledge to fabricate" in STYLE_RULES.lower()
+
+    def test_recommendation_system_prompt_bans_general_knowledge_regression(
+        self,
+    ) -> None:
+        """Recommendation system prompt should ban general knowledge fabrication."""
+        system_prompt = build_recommendation_system_prompt(ContentType.BOOK)
+        assert "general knowledge to fabricate" in system_prompt.lower()
+
+    def test_recommendation_user_prompt_bans_general_knowledge_regression(
+        self,
+    ) -> None:
+        """Recommendation user prompt should ban general knowledge fabrication."""
+        consumed = _make_books(3)
+        unconsumed = _make_unconsumed(5)
+
+        prompt = build_recommendation_prompt(
+            content_type=ContentType.BOOK,
+            consumed_items=consumed,
+            unconsumed_items=unconsumed,
+        )
+
+        assert "general knowledge to fabricate" in prompt.lower()
+
+    def test_blurb_system_prompt_bans_general_knowledge_regression(self) -> None:
+        """Blurb system prompt should ban general knowledge fabrication."""
+        system_prompt = build_blurb_system_prompt(ContentType.BOOK)
+        assert "general knowledge to fabricate" in system_prompt.lower()
+
+    def test_blurb_user_prompt_bans_general_knowledge_regression(self) -> None:
+        """Blurb user prompt should ban general knowledge fabrication."""
+        selected = _make_books(2)
+        consumed = _make_books(3)
+
+        prompt = build_blurb_prompt(
+            content_type=ContentType.BOOK,
+            selected_items=selected,
+            consumed_items=consumed,
+        )
+
+        assert "general knowledge to fabricate" in prompt.lower()
+
+    def test_conversation_full_prompt_bans_general_knowledge_regression(self) -> None:
+        """FULL_SYSTEM_PROMPT should ban general knowledge fabrication."""
+        assert "general knowledge to fabricate" in FULL_SYSTEM_PROMPT.lower()
+
+    def test_conversation_compact_prompt_bans_general_knowledge_regression(
+        self,
+    ) -> None:
+        """COMPACT_SYSTEM_PROMPT should ban general knowledge fabrication."""
+        assert "general knowledge to fabricate" in COMPACT_SYSTEM_PROMPT.lower()
+
+
+# ===========================================================================
+# Cross-type review transfer regression tests
+# ===========================================================================
+
+
+class TestCrossTypeReviewTransferRegression:
+    """Regression tests for review language transferring across content types.
+
+    Bug reported (round 6): A book recommendation described the user as
+    "someone who found 1984 to be a 'gut punch'" — but the phrase "gut punch"
+    came from a video game review (Red Dead Redemption 2), not from the book.
+    The conversation context showed both items' reviews, and the LLM
+    transferred the game review's language to the book recommendation.
+
+    Root cause: The conversation system's context block shows reviews from
+    ALL content types. When a video game review says "gut punch" and a book
+    has no review, the LLM borrows the game review's phrasing and applies it
+    to the book because both appear in the same context window.
+
+    Fix: Added explicit cross-type review transfer rules to FULL_SYSTEM_PROMPT
+    and COMPACT_SYSTEM_PROMPT: "A review written for one content type belongs
+    to THAT item only — do NOT transfer review language or sentiments from a
+    [Video Game] review to describe a [Book], or vice versa."
+    """
+
+    def test_full_prompt_bans_cross_type_review_transfer_regression(self) -> None:
+        """FULL_SYSTEM_PROMPT should ban transferring reviews across content types."""
+        assert "transfer review language" in FULL_SYSTEM_PROMPT.lower()
+
+    def test_compact_prompt_bans_cross_type_review_transfer_regression(self) -> None:
+        """COMPACT_SYSTEM_PROMPT should ban transferring reviews across content types."""
+        assert "transfer review language" in COMPACT_SYSTEM_PROMPT.lower()
