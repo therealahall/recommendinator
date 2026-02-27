@@ -22,18 +22,13 @@ def _isolate_production_log_handlers() -> None:  # type: ignore[misc]
     """Prevent tests from writing to the production log file.
 
     ``src.web.app.configure_logging`` attaches a ``FileHandler`` for
-    ``logs/recommendations.log`` to the root logger.  This happens both:
-
-    1. At **import time** — ``app = get_app()`` at module level.
-    2. Inside tests that call ``create_app()`` explicitly.
-
-    Patching ``configure_logging`` blocks (2) but cannot block (1) because
-    importing the module to set up the patch triggers the module-level code
-    first.  So we also strip handlers in **setup** (before the test) to
-    clean up any that leaked from imports, and again in **teardown** to
-    catch any added during the test.
+    ``logs/recommendations.log`` to the root logger whenever ``create_app``
+    is called.  Patching it as a no-op prevents new handlers from being
+    created.  The handler-stripping in setup and teardown is a safety net
+    in case any code path bypasses the patch (e.g. a direct import that
+    triggers module-level initialisation).
     """
     _remove_production_log_handlers()
     with patch("src.web.app.configure_logging"):
-        yield  # type: ignore[misc]
+        yield
     _remove_production_log_handlers()

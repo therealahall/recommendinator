@@ -75,7 +75,6 @@ def configure_logging(config: dict) -> None:
     logging.getLogger("watchfiles").setLevel(logging.WARNING)
 
 
-# Module-level app instance for uvicorn import string support
 _app: FastAPI | None = None
 
 
@@ -203,5 +202,14 @@ def get_app() -> FastAPI:
     return _app
 
 
-# Create app instance for uvicorn import string support
-app = get_app()
+def __getattr__(name: str) -> FastAPI:
+    """Lazy module-level attribute for uvicorn import string support.
+
+    Defers ``get_app()`` until ``app`` is actually accessed (e.g. by
+    ``uvicorn src.web.app:app``) rather than running it at import time.
+    This prevents test-collection imports from triggering production
+    logging and full app initialisation as a side effect.
+    """
+    if name == "app":
+        return get_app()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
