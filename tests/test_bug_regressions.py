@@ -605,6 +605,7 @@ class TestLlmReasoningMismatchRegression:
             content_type=ContentType.BOOK,
             selected_items=items,
             consumed_items=[],
+            per_item_references=[[], [], [], [], []],
         )
 
     def test_bold_markers_stripped_from_parsed_titles_regression(self) -> None:
@@ -1613,3 +1614,192 @@ class TestConsumedTitleHighlightingRegression:
         consumed = self._consumed(["Nier: Automata"])
         _highlight_consumed_titles(recs, consumed)
         assert "**Nier: Automata**" in recs[0]["reasoning"]
+
+
+class TestAuthorlessTitleMatchingRegression:
+    """Regression tests for LLM-invented authors preventing item matching.
+
+    Bug reported: llm_reasoning was "" (empty string) for all movie and TV
+    show recommendations even though the LLM generated output.
+
+    Root cause (parser): When the LLM invents a director or creator as
+    "author" (e.g. "**Gremlins** by Joe Dante"), the matching condition
+    ``author is None or (item.author and ...)`` fails because:
+    - author is "Joe Dante" (not None)
+    - item.author is None for movies/TV
+    This prevents matching_item from being set.
+
+    Root cause (prompt): Both build_blurb_prompt and build_recommendation_prompt
+    told the LLM to use format "1. **Title** by Author" even for content types
+    that have no author (movies, TV shows, video games), confusing local models.
+
+    Fix (parser): Added fallback title-only matching when the LLM extracts an
+    author that doesn't match any item.
+
+    Fix (prompt): Removed "by Author" from the format instruction — all content
+    types now use "1. **Title**" format.
+    """
+
+    @pytest.fixture()
+    def generator(self) -> RecommendationGenerator:
+        """Create a RecommendationGenerator with a stub client."""
+        return RecommendationGenerator(Mock(spec=OllamaClient))
+
+    def test_invented_director_still_matches_movie_regression(
+        self, generator: RecommendationGenerator
+    ) -> None:
+        """Movie must match even when LLM invents a director as author.
+
+        The LLM outputs "**Gremlins** by Joe Dante" but the movie item has
+        author=None. The parser must fall back to title-only matching.
+        """
+        response = (
+            "1. **Gremlins** by Joe Dante\n"
+            "A fun horror-comedy that pairs with your love of Hocus Pocus (4/5).\n\n"
+            "2. **Inception** by Christopher Nolan\n"
+            "A mind-bending thriller you will love."
+        )
+        items = _make_movie_items(["Gremlins", "Inception"])
+        results = generator._parse_recommendations(response, items, count=2)
+
+        assert len(results) == 2
+        assert (
+            results[0]["item"] is not None
+        ), "Gremlins must match despite invented author"
+        assert results[0]["item"].title == "Gremlins"
+        assert "horror-comedy" in results[0]["reasoning"]
+        assert (
+            results[1]["item"] is not None
+        ), "Inception must match despite invented author"
+        assert results[1]["item"].title == "Inception"
+        assert "mind-bending" in results[1]["reasoning"]
+
+    def test_invented_creator_still_matches_tv_show_regression(
+        self, generator: RecommendationGenerator
+    ) -> None:
+        """TV show must match even when LLM invents a creator as author."""
+        response = (
+            "1. **Duckman** by Everett Peck\n"
+            "A perfect fit for your animated comedy taste."
+        )
+        items = [
+            ContentItem(
+                id="1",
+                title="Duckman (Season 1)",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.UNREAD,
+            ),
+        ]
+        results = generator._parse_recommendations(response, items, count=1)
+
+        assert len(results) == 1
+        assert (
+            results[0]["item"] is not None
+        ), "TV show must match via title substring despite invented author"
+        assert results[0]["item"].title == "Duckman (Season 1)"
+        assert "animated comedy" in results[0]["reasoning"]
+
+    def test_real_author_still_requires_exact_match_regression(
+        self, generator: RecommendationGenerator
+    ) -> None:
+        """Books with real authors must still require author match.
+
+        The fallback only activates when NO item matches with the author
+        constraint. When both a matching and non-matching item exist,
+        the correct one must be chosen.
+        """
+        response = (
+            "1. **The Name of the Wind** by Patrick Rothfuss\n"
+            "Epic fantasy with beautiful prose."
+        )
+        wrong_author_book = ContentItem(
+            id="1",
+            title="The Name of the Wind",
+            author="Brandon Sanderson",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        )
+        correct_author_book = ContentItem(
+            id="2",
+            title="The Name of the Wind",
+            author="Patrick Rothfuss",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        )
+        results = generator._parse_recommendations(
+            response, [wrong_author_book, correct_author_book], count=1
+        )
+
+        assert len(results) == 1
+        assert results[0]["item"] is not None
+        assert results[0]["item"].author == "Patrick Rothfuss"
+
+    def test_blurb_prompt_no_by_author_for_movies_regression(self) -> None:
+        """Blurb prompt must not instruct 'by Author' for authorless content.
+
+        The format rule confused local LLMs when the picks had no author,
+        causing garbled output with empty reasoning.
+        """
+        consumed = [
+            ContentItem(
+                id="c1",
+                title="Hook",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.COMPLETED,
+                rating=4,
+            ),
+        ]
+        selected = _make_movie_items(["Gremlins"])
+        prompt = build_blurb_prompt(ContentType.MOVIE, selected, consumed)
+        assert '"1. **Title**"' in prompt, (
+            "Blurb prompt for movies must use title-only format, "
+            f"not 'by Author'. Got: {prompt!r}"
+        )
+        assert '"1. **Title** by Author"' not in prompt
+
+    def test_recommendation_prompt_no_by_author_for_movies_regression(self) -> None:
+        """Recommendation prompt must not instruct 'by Author' for movies."""
+        consumed = [
+            ContentItem(
+                id="c1",
+                title="Hook",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.COMPLETED,
+                rating=4,
+            ),
+        ]
+        unconsumed = _make_movie_items(["Gremlins"])
+        prompt = build_recommendation_prompt(
+            ContentType.MOVIE, consumed, unconsumed, count=1
+        )
+        assert '"1. **Title**"' in prompt
+        assert '"1. **Title** by Author"' not in prompt
+
+    def test_blurb_prompt_keeps_by_author_for_books_regression(self) -> None:
+        """Blurb prompt must still include author in the picks list for books.
+
+        Books have authors; the picks list must include 'by Author' so the
+        LLM associates each blurb with the correct book.
+        """
+        consumed = [
+            ContentItem(
+                id="c1",
+                title="Mistborn",
+                author="Brandon Sanderson",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+            ),
+        ]
+        selected = [
+            ContentItem(
+                id="1",
+                title="The Way of Kings",
+                author="Brandon Sanderson",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            ),
+        ]
+        prompt = build_blurb_prompt(ContentType.BOOK, selected, consumed)
+        # The picks list should show "by Author" for books
+        assert "by Brandon Sanderson" in prompt

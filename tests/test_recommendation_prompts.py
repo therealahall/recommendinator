@@ -1294,3 +1294,162 @@ class TestCrossTypeReviewTransferRegression:
     def test_compact_prompt_bans_cross_type_review_transfer_regression(self) -> None:
         """COMPACT_SYSTEM_PROMPT should ban transferring reviews across content types."""
         assert "transfer review language" in COMPACT_SYSTEM_PROMPT.lower()
+
+
+class TestPerItemReferencesRegression:
+    """Regression tests for cross-genre comparison bug in blurb prompts.
+
+    Bug reported: The LLM generated a blurb for Middle Earth: Shadow of War
+    that compared it to Forza Horizon 4's "visceral action" — a racing game
+    with no genre overlap. This happened because build_blurb_prompt() picked
+    the first 5 high-rated favorites regardless of genre relevance, so the
+    LLM connected Middle Earth to whichever favorites appeared first.
+
+    Root cause: _find_contributing_reference_items() already computes
+    genre-relevant references per candidate, but _enhance_with_llm() passed
+    ALL consumed items to generate_blurbs(), and build_blurb_prompt()
+    ignored per-item context entirely.
+
+    Fix: Thread per_item_references from the engine through generate_blurbs()
+    to build_blurb_prompt(), which now emits "Related:" lines after each pick
+    so the LLM only draws comparisons to genuinely related items.
+    """
+
+    def test_related_line_includes_correct_refs_excludes_unrelated_regression(
+        self,
+    ) -> None:
+        """Per-item references produce a Related line with correct items only.
+
+        The Related line for an action RPG must include action/adventure
+        references and must NOT include the racing game (Forza), even though
+        Forza is a consumed favorite.
+        """
+        action_pick = _make_item(
+            "Middle Earth: Shadow of War",
+            ContentType.VIDEO_GAME,
+            metadata={"genres": ["action", "adventure"]},
+        )
+        ref_action_1 = _make_item(
+            "The Last of Us: Part 1",
+            ContentType.VIDEO_GAME,
+            rating=5,
+            metadata={"genres": ["action", "adventure"]},
+        )
+        ref_action_2 = _make_item(
+            "God of War",
+            ContentType.VIDEO_GAME,
+            rating=5,
+            metadata={"genres": ["action", "adventure"]},
+        )
+        forza = _make_item(
+            "Forza Horizon 4",
+            ContentType.VIDEO_GAME,
+            rating=5,
+            metadata={"genres": ["racing"]},
+        )
+
+        consumed = [ref_action_1, ref_action_2, forza]
+        per_item_refs = [[ref_action_1, ref_action_2]]
+
+        prompt = build_blurb_prompt(
+            content_type=ContentType.VIDEO_GAME,
+            selected_items=[action_pick],
+            consumed_items=consumed,
+            per_item_references=per_item_refs,
+        )
+
+        assert "Related: The Last of Us: Part 1 (5/5), God of War (5/5)" in prompt
+        related_line = next(
+            line for line in prompt.split("\n") if line.strip().startswith("Related:")
+        )
+        assert "Forza" not in related_line
+
+    def test_no_per_item_references_backward_compatible_regression(self) -> None:
+        """Without per_item_references, prompt should work as before (no Related lines)."""
+        pick = _make_item(
+            "Some Game",
+            ContentType.VIDEO_GAME,
+        )
+        consumed = [
+            _make_item(f"Fav {index}", ContentType.VIDEO_GAME, rating=5)
+            for index in range(5)
+        ]
+
+        prompt = build_blurb_prompt(
+            content_type=ContentType.VIDEO_GAME,
+            selected_items=[pick],
+            consumed_items=consumed,
+        )
+
+        assert "Related:" not in prompt
+
+    def test_empty_references_list_no_related_line_regression(self) -> None:
+        """When per_item_references contains an empty list, no Related line appears."""
+        pick = _make_item("Some Game", ContentType.VIDEO_GAME)
+        consumed = [
+            _make_item(f"Fav {index}", ContentType.VIDEO_GAME, rating=5)
+            for index in range(5)
+        ]
+
+        prompt = build_blurb_prompt(
+            content_type=ContentType.VIDEO_GAME,
+            selected_items=[pick],
+            consumed_items=consumed,
+            per_item_references=[[]],
+        )
+
+        assert "Related:" not in prompt
+
+    def test_prompt_rule_references_related_items_regression(self) -> None:
+        """The prompt rule should direct the LLM to use Related items."""
+        pick = _make_item("Some Game", ContentType.VIDEO_GAME)
+        ref = _make_item("Ref Game", ContentType.VIDEO_GAME, rating=4)
+
+        prompt = build_blurb_prompt(
+            content_type=ContentType.VIDEO_GAME,
+            selected_items=[pick],
+            consumed_items=[ref],
+            per_item_references=[[ref]],
+        )
+
+        assert "Related items when listed" in prompt
+
+    def test_multiple_picks_each_get_own_related_line_regression(self) -> None:
+        """Each pick gets its own Related line from its own references."""
+        pick_action = _make_item(
+            "Action Game",
+            ContentType.VIDEO_GAME,
+            metadata={"genres": ["action"]},
+        )
+        pick_racing = _make_item(
+            "Racing Game",
+            ContentType.VIDEO_GAME,
+            metadata={"genres": ["racing"]},
+        )
+        ref_action = _make_item("God of War", ContentType.VIDEO_GAME, rating=5)
+        ref_racing = _make_item("Gran Turismo", ContentType.VIDEO_GAME, rating=4)
+
+        consumed = [ref_action, ref_racing]
+        per_item_refs = [[ref_action], [ref_racing]]
+
+        prompt = build_blurb_prompt(
+            content_type=ContentType.VIDEO_GAME,
+            selected_items=[pick_action, pick_racing],
+            consumed_items=consumed,
+            per_item_references=per_item_refs,
+        )
+
+        related_lines = [
+            line.strip()
+            for line in prompt.split("\n")
+            if line.strip().startswith("Related:")
+        ]
+        assert (
+            len(related_lines) == 2
+        ), f"Expected 2 Related lines, found {len(related_lines)}: {related_lines}"
+        assert (
+            "God of War (5/5)" in related_lines[0]
+        ), f"Expected 'God of War (5/5)' in first Related line, got: {related_lines[0]!r}"
+        assert (
+            "Gran Turismo (4/5)" in related_lines[1]
+        ), f"Expected 'Gran Turismo (4/5)' in second Related line, got: {related_lines[1]!r}"

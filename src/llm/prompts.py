@@ -120,7 +120,7 @@ Candidates (NOT yet consumed):
 For each pick, write 2-3 sentences explaining WHY it's a great fit. Connect it to specific items they rated highly — mention titles and ratings. Be enthusiastic and specific, not generic.
 
 IMPORTANT formatting rules:
-- Use a numbered list: "1. **Title** by Author" on the first line, reasoning on the next lines
+- Use a numbered list: "1. **Title**" on the first line, reasoning on the next lines
 - Do NOT start the reasoning with "Reasoning:" or any label — just dive straight into WHY
 - Use **bold** for emphasis on key connections
 - Address them as "you" — never say "the user"
@@ -271,20 +271,29 @@ def build_blurb_prompt(
     if context_text:
         context_text += "\n"
 
-    # Build selected items list
+    # Build selected items list, with optional per-item reference lines
     items_text = ""
-    for item_index, item in enumerate(selected_items, 1):
+    for ref_index, item in enumerate(selected_items):
         author_text = f" by {item.author}" if item.author else ""
         genre_tag = format_genre_tag(item)
-        items_text += f"{item_index}. {item.title}{author_text}{genre_tag}\n"
+        items_text += f"{ref_index + 1}. {item.title}{author_text}{genre_tag}\n"
+
+        if per_item_references and ref_index < len(per_item_references):
+            refs = per_item_references[ref_index]
+            if refs:
+                ref_parts = [
+                    f"{ref.title} ({ref.rating}/5)" if ref.rating else ref.title
+                    for ref in refs
+                ]
+                items_text += f"   Related: {', '.join(ref_parts)}\n"
 
     return f"""Write a 2-3 sentence blurb for each of these {content_type_name.lower()} picks explaining WHY it fits this person's taste.
 
 {context_text}Picks:
 {items_text}
 Rules:
-- Numbered list: "1. **Title** by Author" then reasoning on the next lines
-- Connect to specific favorites above — mention titles and ratings
+- Numbered list: "1. **Title**" then reasoning on the next lines
+- Connect each pick to its Related items when listed, otherwise to favorites above — mention titles and ratings
 - Address them as "you"
 - Be enthusiastic and specific, not generic
 - Do NOT invent quotes or opinions — only reference what's shown above

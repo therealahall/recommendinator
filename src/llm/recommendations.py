@@ -208,6 +208,7 @@ class RecommendationGenerator:
         content_type: ContentType,
         selected_items: list[ContentItem],
         consumed_items: list[ContentItem],
+        per_item_references: list[list[ContentItem]] | None = None,
         model: str | None = None,
     ) -> list[dict[str, Any]]:
         """Generate blurbs for pre-selected recommendation items.
@@ -227,6 +228,8 @@ class RecommendationGenerator:
             content_type: Type of content being recommended
             selected_items: Pre-selected items to write blurbs for
             consumed_items: User's consumed items for taste reference
+            per_item_references: Genre-relevant reference items for each
+                pick, parallel to ``selected_items``.
             model: Optional model override
 
         Returns:
@@ -238,20 +241,43 @@ class RecommendationGenerator:
         if not selected_items:
             return []
 
+        if per_item_references is not None and len(per_item_references) != len(
+            selected_items
+        ):
+            logger.error(
+                "per_item_references length %d != selected_items length %d; "
+                "ignoring references",
+                len(per_item_references),
+                len(selected_items),
+            )
+            per_item_references = None
+
         # Split into batches to keep each LLM call manageable
         batches: list[list[ContentItem]] = [
             selected_items[i : i + BLURB_BATCH_SIZE]
             for i in range(0, len(selected_items), BLURB_BATCH_SIZE)
         ]
+        ref_batches: list[list[list[ContentItem]] | None] = (
+            [
+                per_item_references[i : i + BLURB_BATCH_SIZE]
+                for i in range(0, len(selected_items), BLURB_BATCH_SIZE)
+            ]
+            if per_item_references is not None
+            else [None] * len(batches)
+        )
 
         system_prompt = build_blurb_system_prompt(content_type)
 
-        def _generate_batch(batch: list[ContentItem]) -> list[dict[str, Any]]:
+        def _generate_batch(
+            batch: list[ContentItem],
+            batch_refs: list[list[ContentItem]] | None,
+        ) -> list[dict[str, Any]]:
             """Generate blurbs for a single batch (runs in thread)."""
             user_prompt = build_blurb_prompt(
                 content_type=content_type,
                 selected_items=batch,
                 consumed_items=consumed_items,
+                per_item_references=batch_refs,
             )
             response = self.client.generate_text(
                 prompt=user_prompt,
@@ -266,7 +292,7 @@ class RecommendationGenerator:
         # Single batch — skip threading overhead
         if len(batches) == 1:
             try:
-                return _generate_batch(batches[0])
+                return _generate_batch(batches[0], ref_batches[0])
             except Exception as error:
                 logger.error("Blurb generation failed: %s", error)
                 raise RuntimeError("Blurb generation failed") from error
@@ -277,7 +303,9 @@ class RecommendationGenerator:
 
         with ThreadPoolExecutor(max_workers=len(batches)) as executor:
             future_to_index = {
-                executor.submit(_generate_batch, batch): batch_index
+                executor.submit(
+                    _generate_batch, batch, ref_batches[batch_index]
+                ): batch_index
                 for batch_index, batch in enumerate(batches)
             }
 
@@ -406,6 +434,18 @@ class RecommendationGenerator:
                 if title_lower in item_title_lower or item_title_lower in title_lower:
                     if author is None or (
                         item.author and item.author.lower() == author.lower()
+                    ):
+                        matching_item = item
+                        break
+
+            # Fallback: when the LLM invents an author (e.g. a director for
+            # movies) that doesn't match any item, retry title-only matching.
+            if not matching_item and author is not None:
+                for item in unconsumed_items:
+                    item_title_lower = _TRADEMARK_RE.sub("", item.title.lower())
+                    if (
+                        title_lower in item_title_lower
+                        or item_title_lower in title_lower
                     ):
                         matching_item = item
                         break
