@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 from src.llm.embeddings import EmbeddingGenerator
-from src.llm.recommendations import RecommendationGenerator
+from src.llm.recommendations import RecommendationGenerator, _highlight_consumed_titles
 from src.models.content import ContentItem, ContentType, get_enum_value
 from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.genre_clusters import cluster_overlap
@@ -661,63 +661,32 @@ class RecommendationEngine:
 
         try:
             if recommendations:
-                per_item_refs = [
-                    list(rec.get("contributing_items") or []) for rec in recommendations
+                # Build (item, references) pairs for per-item blurb generation
+                items_with_refs = [
+                    (
+                        rec["item"],
+                        list(rec.get("contributing_items") or []),
+                    )
+                    for rec in recommendations
                 ]
-                llm_recs = self.llm_generator.generate_blurbs(
+                # One LLM call per item, concurrent — returns {item_id: blurb}
+                blurbs = self.llm_generator.generate_blurbs_per_item(
                     content_type=content_type,
-                    selected_items=[rec["item"] for rec in recommendations],
+                    items_with_refs=items_with_refs,
                     consumed_items=all_consumed_items,
-                    per_item_references=per_item_refs,
                 )
-                # Build a lookup of title -> reasoning from LLM results.
-                # The LLM returns items in its own preferred order, which
-                # differs from the pipeline ranking — match by title, not
-                # by index, so each recommendation gets its own reasoning.
-                matched_count = sum(1 for r in llm_recs if r.get("item") is not None)
-                logger.info(
-                    "LLM blurbs: %d returned, %d matched items",
-                    len(llm_recs),
-                    matched_count,
-                )
-
-                llm_reasoning_by_title: dict[str, str] = {}
-                for llm_rec in llm_recs:
-                    matched_item: ContentItem | None = llm_rec.get("item")
-                    if matched_item is not None:
-                        key = matched_item.title.lower()
-                    else:
-                        key = (llm_rec.get("title") or "").lower()
-                    if key:
-                        llm_reasoning_by_title[key] = llm_rec.get("reasoning", "")
-
+                # Direct assignment by item ID — no title matching needed
                 enhanced_count = 0
                 for rec in recommendations:
-                    rec_title = rec["item"].title.lower()
-                    if rec_title in llm_reasoning_by_title:
-                        rec["llm_reasoning"] = llm_reasoning_by_title[rec_title]
+                    blurb = blurbs.get(rec["item"].id, "")
+                    if blurb:
+                        rec["llm_reasoning"] = blurb
                         enhanced_count += 1
-                    else:
-                        for llm_title, reasoning in llm_reasoning_by_title.items():
-                            if llm_title in rec_title or rec_title in llm_title:
-                                rec["llm_reasoning"] = reasoning
-                                enhanced_count += 1
-                                break
-
-                if enhanced_count < len(recommendations):
-                    unmatched = [
-                        rec["item"].title
-                        for rec in recommendations
-                        if "llm_reasoning" not in rec
-                    ]
-                    logger.warning(
-                        "LLM blurb matching: %d/%d recommendations got reasoning. "
-                        "Unmatched: %s. LLM titles: %s",
-                        enhanced_count,
-                        len(recommendations),
-                        unmatched,
-                        list(llm_reasoning_by_title.keys()),
-                    )
+                logger.info(
+                    "LLM blurbs: %d/%d recommendations enhanced",
+                    enhanced_count,
+                    len(recommendations),
+                )
             else:
                 logger.info("Using LLM-only recommendations")
                 llm_recs = self.llm_generator.generate_recommendations(
@@ -754,6 +723,45 @@ class RecommendationEngine:
                         )
         except Exception as error:
             logger.warning("LLM recommendation generation failed: %s", error)
+
+    def generate_blurb_for_item(
+        self,
+        content_type: ContentType,
+        item: ContentItem,
+        consumed_items: list[ContentItem],
+        references: list[ContentItem] | None = None,
+    ) -> str | None:
+        """Generate a single LLM blurb for one recommendation item.
+
+        Public method for the streaming endpoint to call per-item.
+
+        Args:
+            content_type: Target content type
+            item: The item to generate a blurb for
+            consumed_items: User's consumed items for taste context
+            references: Contributing items for this recommendation
+
+        Returns:
+            Blurb text, or ``None`` if LLM is unavailable or fails
+        """
+        if not self.llm_generator:
+            return None
+        try:
+            blurb = self.llm_generator.generate_single_blurb(
+                content_type=content_type,
+                item=item,
+                consumed_items=consumed_items,
+                references=references,
+            )
+            # Apply consumed-title bold highlighting, same as the batch path
+            if blurb and consumed_items:
+                highlight_recs = [{"reasoning": blurb}]
+                _highlight_consumed_titles(highlight_recs, consumed_items)
+                blurb = highlight_recs[0]["reasoning"]
+            return blurb
+        except Exception as error:
+            logger.warning("Blurb generation failed for %r: %s", item.title, error)
+            return None
 
     def _build_fallback_recommendations(
         self,
