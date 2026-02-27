@@ -14,10 +14,7 @@ from src.llm.prompts import (
     build_recommendation_prompt,
     build_recommendation_system_prompt,
 )
-from src.llm.recommendations import (
-    RecommendationGenerator,
-    _highlight_consumed_titles,
-)
+from src.llm.recommendations import RecommendationGenerator
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.recommendations.engine import RecommendationEngine
 from src.recommendations.preference_interpreter import PatternBasedInterpreter
@@ -1429,123 +1426,6 @@ class TestCrossRecommendationReferenceRegression:
         assert (
             "unconsumed recommendations" in prompt.lower()
         ), "Recommendation system prompt must call candidates unconsumed"
-
-
-class TestConsumedTitleHighlightingRegression:
-    """Regression tests for consumed-item titles not highlighted in reasoning.
-
-    Bug reported: Video game recommendation reasoning text like "Just like
-    in Mass Effect (5/5), this game offers..." did not highlight the
-    consumed item titles "Mass Effect" or "Fable: Anniversary". The web UI
-    renders **bold** and *italic* text with accent colour via CSS, but the
-    LLM often writes consumed titles as plain text without markdown markers.
-
-    Root cause: No post-processing step wrapped consumed-item titles found
-    in reasoning text with **bold** markers.
-
-    Fix: Added _highlight_consumed_titles() which runs after parsing and
-    wraps any consumed-item title found in reasoning with **bold**.
-    """
-
-    @staticmethod
-    def _consumed(
-        titles: list[str],
-        *,
-        content_type: ContentType = ContentType.VIDEO_GAME,
-    ) -> list[ContentItem]:
-        """Build consumed items with ratings for test input."""
-        return [
-            ContentItem(
-                id=f"c{i}",
-                title=title,
-                content_type=content_type,
-                status=ConsumptionStatus.COMPLETED,
-                rating=5,
-            )
-            for i, title in enumerate(titles, 1)
-        ]
-
-    def test_plain_title_gets_bold_markers(self) -> None:
-        """Plain consumed title in reasoning is wrapped with **bold**."""
-        recs: list[dict[str, Any]] = [
-            {"reasoning": "Just like in Mass Effect (5/5), great RPG action."}
-        ]
-        consumed = self._consumed(["Mass Effect"])
-        _highlight_consumed_titles(recs, consumed)
-        assert "**Mass Effect**" in recs[0]["reasoning"]
-
-    def test_already_bold_title_not_double_wrapped(self) -> None:
-        """Title already in **bold** is not wrapped again."""
-        recs: list[dict[str, Any]] = [
-            {"reasoning": "Similar to **Mass Effect** in many ways."}
-        ]
-        consumed = self._consumed(["Mass Effect"])
-        _highlight_consumed_titles(recs, consumed)
-        assert "****" not in recs[0]["reasoning"]
-        assert recs[0]["reasoning"].count("**Mass Effect**") == 1
-
-    def test_multiple_consumed_titles_highlighted(self) -> None:
-        """Multiple consumed titles in the same reasoning are all wrapped."""
-        recs: list[dict[str, Any]] = [
-            {
-                "reasoning": (
-                    "You're in for lore and character development! "
-                    "Just like in Mass Effect (5/5), this game offers a "
-                    "rich universe. Plus, the tactical combat reminiscent "
-                    "of Fable: Anniversary (5/5) will keep you strategizing."
-                )
-            }
-        ]
-        consumed = self._consumed(["Mass Effect", "Fable: Anniversary"])
-        _highlight_consumed_titles(recs, consumed)
-        assert "**Mass Effect**" in recs[0]["reasoning"]
-        assert "**Fable: Anniversary**" in recs[0]["reasoning"]
-
-    def test_case_insensitive_matching(self) -> None:
-        """Title matching is case-insensitive, uses canonical case in output."""
-        recs: list[dict[str, Any]] = [
-            {"reasoning": "Reminds me of mass effect's deep story."}
-        ]
-        consumed = self._consumed(["Mass Effect"])
-        _highlight_consumed_titles(recs, consumed)
-        assert "**Mass Effect**" in recs[0]["reasoning"]
-
-    def test_longer_title_matched_first(self) -> None:
-        """Longer title is processed first to avoid partial wrapping."""
-        recs: list[dict[str, Any]] = [
-            {"reasoning": ("Like Mass Effect 2 and Mass Effect, both great games.")}
-        ]
-        consumed = self._consumed(["Mass Effect", "Mass Effect 2"])
-        _highlight_consumed_titles(recs, consumed)
-        assert "**Mass Effect 2**" in recs[0]["reasoning"]
-        assert "**Mass Effect**" in recs[0]["reasoning"]
-        # "Mass Effect 2" should not be double-wrapped
-        assert "****" not in recs[0]["reasoning"]
-
-    def test_empty_consumed_items_no_change(self) -> None:
-        """No changes when consumed_items is empty."""
-        recs: list[dict[str, Any]] = [
-            {"reasoning": "Great tactical RPG with deep story."}
-        ]
-        original = recs[0]["reasoning"]
-        _highlight_consumed_titles(recs, [])
-        assert recs[0]["reasoning"] == original
-
-    def test_empty_reasoning_no_error(self) -> None:
-        """Recs with empty reasoning are skipped without error."""
-        recs: list[dict[str, Any]] = [{"reasoning": ""}, {"reasoning": None}]
-        consumed = self._consumed(["Mass Effect"])
-        _highlight_consumed_titles(recs, consumed)
-        assert recs[0]["reasoning"] == ""
-
-    def test_title_with_special_regex_chars(self) -> None:
-        """Titles with regex special characters are escaped properly."""
-        recs: list[dict[str, Any]] = [
-            {"reasoning": "Similar to Nier: Automata (5/5) in many ways."}
-        ]
-        consumed = self._consumed(["Nier: Automata"])
-        _highlight_consumed_titles(recs, consumed)
-        assert "**Nier: Automata**" in recs[0]["reasoning"]
 
 
 class TestAuthorlessTitleMatchingRegression:

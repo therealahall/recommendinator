@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 from src.llm.embeddings import EmbeddingGenerator
-from src.llm.recommendations import RecommendationGenerator, _highlight_consumed_titles
+from src.llm.recommendations import RecommendationGenerator
 from src.models.content import ContentItem, ContentType, get_enum_value
 from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.genre_clusters import cluster_overlap
@@ -753,11 +753,6 @@ class RecommendationEngine:
                 consumed_items=consumed_items,
                 references=references,
             )
-            # Apply consumed-title bold highlighting, same as the batch path
-            if blurb and consumed_items:
-                highlight_recs = [{"reasoning": blurb}]
-                _highlight_consumed_titles(highlight_recs, consumed_items)
-                blurb = highlight_recs[0]["reasoning"]
             return blurb
         except Exception as error:
             logger.warning("Blurb generation failed for %r: %s", item.title, error)

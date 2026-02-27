@@ -19,50 +19,6 @@ logger = logging.getLogger(__name__)
 _TRADEMARK_RE = re.compile(r"[™®©]")
 
 
-def _highlight_consumed_titles(
-    recommendations: list[dict[str, Any]],
-    consumed_items: list[ContentItem],
-) -> None:
-    """Wrap consumed-item titles referenced in reasoning with **bold** markers.
-
-    When the LLM mentions items the user has consumed (e.g. "Mass Effect
-    (5/5)"), this wraps the title in **bold** so the web UI highlights
-    it via CSS.  Titles already wrapped in bold are skipped.
-
-    Processes longest titles first to avoid partial matches (e.g.
-    "Mass Effect 2" is wrapped before "Mass Effect").
-
-    Modifies *recommendations* in place.
-    """
-    if not consumed_items:
-        return
-
-    # Longest first to avoid partial matches
-    titles = sorted(
-        {item.title for item in consumed_items if item.title},
-        key=len,
-        reverse=True,
-    )
-
-    for rec in recommendations:
-        reasoning = rec.get("reasoning", "")
-        if not reasoning:
-            continue
-
-        for title in titles:
-            escaped = re.escape(title)
-            # Skip titles already wrapped in bold markers
-            pattern = r"(?<!\*\*)" + escaped + r"(?!\*\*)"
-            reasoning = re.sub(
-                pattern,
-                f"**{title}**",
-                reasoning,
-                flags=re.IGNORECASE,
-            )
-
-        rec["reasoning"] = reasoning
-
-
 def _fix_author_attributions(recommendations: list[dict[str, Any]]) -> None:
     """Fix cross-contaminated author names in reasoning text.
 
@@ -181,7 +137,6 @@ class RecommendationGenerator:
             recommendations = self._parse_recommendations(
                 response, unconsumed_items, count
             )
-            _highlight_consumed_titles(recommendations, consumed_items)
 
             return recommendations[:count]  # Ensure we don't exceed count
 
@@ -295,13 +250,6 @@ class RecommendationGenerator:
                             item.title,
                             error,
                         )
-
-        # Apply consumed-title highlighting to each blurb
-        if results and consumed_items:
-            highlight_recs = [{"reasoning": blurb} for blurb in results.values()]
-            _highlight_consumed_titles(highlight_recs, consumed_items)
-            for (item_id, _), rec in zip(results.items(), highlight_recs, strict=True):
-                results[item_id] = rec["reasoning"]
 
         return results
 
