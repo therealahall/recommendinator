@@ -2,11 +2,13 @@
 
 import json
 import logging
+from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, cast
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from src.cli.config import get_feature_flags
@@ -399,6 +401,159 @@ async def get_recommendations(
         raise HTTPException(
             status_code=500, detail="Failed to generate recommendations"
         ) from error
+
+
+@router.get("/recommendations/stream")
+async def stream_recommendations(
+    type: str = Query(
+        ..., description="Content type (book, movie, tv_show, video_game)"
+    ),
+    count: int = Query(5, ge=1, le=20, description="Number of recommendations"),
+    user_id: int = Query(1, ge=1, description="User ID for personalized preferences"),
+) -> StreamingResponse:
+    """Stream recommendations with progressive LLM blurb generation.
+
+    Returns Server-Sent Events in two phases:
+
+    - Phase 1 (immediate): ``{"type": "recommendations", "items": [...]}``
+      — pipeline results without LLM reasoning.
+    - Phase 2 (progressive): ``{"type": "blurb", "index": N, "llm_reasoning": "..."}``
+      per item as each LLM call completes.
+    - Final: ``{"type": "done"}``
+
+    Args:
+        type: Content type
+        count: Number of recommendations
+        user_id: User ID for loading per-user preferences
+
+    Returns:
+        SSE streaming response
+    """
+    engine = get_engine()
+    storage = get_storage()
+    config = get_config()
+
+    if not engine:
+        raise HTTPException(status_code=500, detail="Engine not initialized")
+
+    rec_config = config.get("recommendations", {}) if config else {}
+    max_count = rec_config.get("max_count", 20)
+    if count > max_count:
+        raise HTTPException(
+            status_code=400,
+            detail="Requested count exceeds the maximum allowed",
+        )
+
+    try:
+        content_type = ContentType.from_string(type)
+    except ValueError:
+        raise HTTPException(
+            status_code=400, detail=f"Invalid content type: {type}"
+        ) from None
+
+    def generate_sse() -> Iterator[str]:
+        """Generate SSE events: recommendations first, then blurbs."""
+        try:
+            user_preference_config = None
+            if storage:
+                user_preference_config = storage.get_user_preference_config(user_id)
+
+            # Generate recommendations without LLM reasoning
+            recommendations = engine.generate_recommendations(
+                content_type=content_type,
+                count=count,
+                use_llm=False,
+                user_preference_config=user_preference_config,
+            )
+
+            if not recommendations:
+                yield f"data: {json.dumps({'type': 'recommendations', 'items': []})}\n\n"
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                return
+
+            # Phase 1: send recommendations immediately (no LLM reasoning)
+            items_payload: list[dict[str, Any]] = []
+            for rec in recommendations:
+                item = rec["item"]
+                items_payload.append(
+                    {
+                        "db_id": item.db_id,
+                        "title": item.title,
+                        "author": item.author,
+                        "score": rec["score"],
+                        "similarity_score": rec["similarity_score"],
+                        "preference_score": rec["preference_score"],
+                        "reasoning": rec["reasoning"],
+                        "llm_reasoning": None,
+                        "score_breakdown": rec.get("score_breakdown", {}),
+                    }
+                )
+            event: dict[str, Any] = {
+                "type": "recommendations",
+                "items": items_payload,
+            }
+            yield f"data: {json.dumps(event)}\n\n"
+
+            # Phase 2: generate blurbs per item, stream as they complete
+            consumed_items = engine.storage.get_completed_items(
+                content_type=None, min_rating=None
+            )
+
+            items_with_index: list[tuple[int, ContentItem, list[ContentItem]]] = []
+            for idx, rec in enumerate(recommendations):
+                refs = list(rec.get("contributing_items") or [])
+                items_with_index.append((idx, rec["item"], refs))
+
+            with ThreadPoolExecutor(
+                max_workers=min(len(items_with_index), 4)
+            ) as executor:
+                future_to_index = {
+                    executor.submit(
+                        engine.generate_blurb_for_item,
+                        content_type,
+                        item,
+                        consumed_items,
+                        refs or None,
+                    ): idx
+                    for idx, item, refs in items_with_index
+                }
+                for future in as_completed(future_to_index):
+                    idx = future_to_index[future]
+                    try:
+                        blurb = future.result()
+                    except Exception as exc:
+                        logger.warning(
+                            "Streaming blurb failed for index %d: %s",
+                            idx,
+                            exc,
+                        )
+                        blurb = None
+                    if blurb:
+                        blurb_event = {
+                            "type": "blurb",
+                            "index": idx,
+                            "llm_reasoning": blurb,
+                        }
+                        yield f"data: {json.dumps(blurb_event)}\n\n"
+
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+        except Exception:
+            logger.error("Streaming recommendation error", exc_info=True)
+            error_event = {
+                "type": "error",
+                "message": "Failed to generate recommendations",
+            }
+            yield f"data: {json.dumps(error_event)}\n\n"
+
+    return StreamingResponse(
+        generate_sse(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 @router.get("/users", response_model=list[UserResponse])
