@@ -23,6 +23,117 @@ _TRADEMARK_RE = re.compile(r"[™®©]")
 BLURB_BATCH_SIZE = 5
 
 
+def _highlight_consumed_titles(
+    recommendations: list[dict[str, Any]],
+    consumed_items: list[ContentItem],
+) -> None:
+    """Wrap consumed-item titles referenced in reasoning with **bold** markers.
+
+    When the LLM mentions items the user has consumed (e.g. "Mass Effect
+    (5/5)"), this wraps the title in **bold** so the web UI highlights
+    it via CSS.  Titles already wrapped in bold are skipped.
+
+    Processes longest titles first to avoid partial matches (e.g.
+    "Mass Effect 2" is wrapped before "Mass Effect").
+
+    Modifies *recommendations* in place.
+    """
+    if not consumed_items:
+        return
+
+    # Longest first to avoid partial matches
+    titles = sorted(
+        {item.title for item in consumed_items if item.title},
+        key=len,
+        reverse=True,
+    )
+
+    for rec in recommendations:
+        reasoning = rec.get("reasoning", "")
+        if not reasoning:
+            continue
+
+        for title in titles:
+            escaped = re.escape(title)
+            # Skip titles already wrapped in bold markers
+            pattern = r"(?<!\*\*)" + escaped + r"(?!\*\*)"
+            reasoning = re.sub(
+                pattern,
+                f"**{title}**",
+                reasoning,
+                flags=re.IGNORECASE,
+            )
+
+        rec["reasoning"] = reasoning
+
+
+def _fix_author_attributions(recommendations: list[dict[str, Any]]) -> None:
+    """Fix cross-contaminated author names in reasoning text.
+
+    Local LLMs sometimes attribute item X to the author of item Y when
+    both appear in the same batch.  When the reasoning for an item
+    mentions another batch author but NOT the item's own author,
+    substitute the correct name.
+
+    Only applies when exactly one wrong author is found — ambiguous
+    cases (multiple wrong authors, or legitimate cross-references where
+    both authors are mentioned) are left untouched.
+
+    Modifies *recommendations* in place.
+    """
+    # Collect authors only from matched items.  Unmatched items have no
+    # reliable author-to-title binding, so including them would risk
+    # false-positive replacements.
+    batch_authors: dict[str, str] = {}  # lowercase -> original case
+    for rec in recommendations:
+        item = rec.get("item")
+        if item and item.author:
+            batch_authors[item.author.lower()] = item.author
+
+    for rec in recommendations:
+        item = rec.get("item")
+        reasoning = rec.get("reasoning", "")
+        if not item or not item.author or not reasoning:
+            continue
+
+        correct_author = item.author
+        reasoning_lower = reasoning.lower()
+
+        # Skip if correct author already mentioned — no misattribution.
+        # Use word boundaries to avoid false matches on common substrings
+        # (e.g. author "Wells" matching the word "wells" in prose).
+        if re.search(
+            r"\b" + re.escape(correct_author.lower()) + r"\b", reasoning_lower
+        ):
+            continue
+
+        # Find wrong authors from the batch that appear in the reasoning.
+        wrong_authors = [
+            original
+            for lower, original in batch_authors.items()
+            if lower != correct_author.lower()
+            and re.search(r"\b" + re.escape(lower) + r"\b", reasoning_lower)
+        ]
+
+        # Only fix the unambiguous case: exactly one wrong author found.
+        if len(wrong_authors) == 1:
+            # Escape backslashes in the replacement to prevent re.sub
+            # from interpreting them as group references.
+            safe_replacement = correct_author.replace("\\", "\\\\")
+            rec["reasoning"] = re.sub(
+                re.escape(wrong_authors[0]),
+                safe_replacement,
+                reasoning,
+                flags=re.IGNORECASE,
+            )
+            logger.info(
+                "Fixed author attribution in reasoning for %r: %r -> %r",
+                item.title,
+                wrong_authors[0],
+                correct_author,
+            )
+
+
 class RecommendationGenerator:
     """Generate recommendations using LLM."""
 
@@ -84,6 +195,7 @@ class RecommendationGenerator:
             recommendations = self._parse_recommendations(
                 response, unconsumed_items, count
             )
+            _highlight_consumed_titles(recommendations, consumed_items)
 
             return recommendations[:count]  # Ensure we don't exceed count
 
@@ -147,7 +259,9 @@ class RecommendationGenerator:
                 model=model,
                 temperature=0.7,
             )
-            return self._parse_recommendations(response, batch, count=len(batch))
+            results = self._parse_recommendations(response, batch, count=len(batch))
+            _highlight_consumed_titles(results, consumed_items)
+            return results
 
         # Single batch — skip threading overhead
         if len(batches) == 1:
@@ -330,6 +444,8 @@ class RecommendationGenerator:
                     )
                     if len(recommendations) >= count:
                         break
+
+        _fix_author_attributions(recommendations)
 
         matched_count = sum(1 for r in recommendations if r["item"] is not None)
         reasoning_count = sum(1 for r in recommendations if r["reasoning"])
