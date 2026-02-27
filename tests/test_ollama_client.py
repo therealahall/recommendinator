@@ -201,3 +201,158 @@ def test_chat_stream_with_context_window(mock_ollama_client):
 
     call_args = mock_ollama_client.chat.call_args
     assert call_args.kwargs["options"]["num_ctx"] == 8192
+
+
+def test_build_options_with_all_parameters(mock_ollama_client):
+    """_build_options includes all three options when all are provided.
+
+    Verifies that temperature, max_tokens (as num_predict), and
+    context_window_size (as num_ctx) are all present in the returned dict
+    when all three parameters are supplied simultaneously.
+    """
+    options = OllamaClient._build_options(
+        temperature=0.5,
+        max_tokens=200,
+        context_window_size=16384,
+    )
+    assert options["temperature"] == 0.5
+    assert options["num_predict"] == 200
+    assert options["num_ctx"] == 16384
+    assert len(options) == 3
+
+
+# ---------------------------------------------------------------------------
+# generate_text_stream tests (8C)
+# ---------------------------------------------------------------------------
+
+
+class TestGenerateTextStream:
+    """Tests for OllamaClient.generate_text_stream streaming text generation."""
+
+    def test_yields_chunks_from_streaming_response(
+        self, mock_ollama_client: Mock
+    ) -> None:
+        """generate_text_stream yields text chunks from the Ollama streaming response."""
+        chunk1 = Mock()
+        chunk1.message = Mock()
+        chunk1.message.content = "Hello"
+        chunk2 = Mock()
+        chunk2.message = Mock()
+        chunk2.message.content = " world"
+        chunk3 = Mock()
+        chunk3.message = Mock()
+        chunk3.message.content = "!"
+
+        mock_ollama_client.chat.return_value = iter([chunk1, chunk2, chunk3])
+
+        client = OllamaClient()
+        chunks = list(client.generate_text_stream("test prompt"))
+
+        assert chunks == ["Hello", " world", "!"]
+        call_args = mock_ollama_client.chat.call_args
+        assert call_args.kwargs["stream"] is True
+        assert call_args.kwargs["model"] == "mistral:7b"
+
+    def test_uses_system_prompt(self, mock_ollama_client: Mock) -> None:
+        """generate_text_stream includes system prompt in messages."""
+        mock_ollama_client.chat.return_value = iter([])
+
+        client = OllamaClient()
+        list(
+            client.generate_text_stream(
+                "user prompt", system_prompt="system instructions"
+            )
+        )
+
+        call_args = mock_ollama_client.chat.call_args
+        messages = call_args.kwargs["messages"]
+        assert len(messages) == 2
+        assert messages[0]["role"] == "system"
+        assert messages[0]["content"] == "system instructions"
+        assert messages[1]["role"] == "user"
+        assert messages[1]["content"] == "user prompt"
+
+    def test_no_system_prompt_sends_only_user_message(
+        self, mock_ollama_client: Mock
+    ) -> None:
+        """generate_text_stream sends only user message when no system prompt."""
+        mock_ollama_client.chat.return_value = iter([])
+
+        client = OllamaClient()
+        list(client.generate_text_stream("just a question"))
+
+        call_args = mock_ollama_client.chat.call_args
+        messages = call_args.kwargs["messages"]
+        assert len(messages) == 1
+        assert messages[0]["role"] == "user"
+
+    def test_custom_model_and_options(self, mock_ollama_client: Mock) -> None:
+        """generate_text_stream passes custom model, temperature, and max_tokens."""
+        mock_ollama_client.chat.return_value = iter([])
+
+        client = OllamaClient()
+        list(
+            client.generate_text_stream(
+                "prompt",
+                model="custom-model",
+                temperature=0.3,
+                max_tokens=50,
+                context_window_size=4096,
+            )
+        )
+
+        call_args = mock_ollama_client.chat.call_args
+        assert call_args.kwargs["model"] == "custom-model"
+        assert call_args.kwargs["options"]["temperature"] == 0.3
+        assert call_args.kwargs["options"]["num_predict"] == 50
+        assert call_args.kwargs["options"]["num_ctx"] == 4096
+
+    def test_skips_chunks_with_no_content(self, mock_ollama_client: Mock) -> None:
+        """generate_text_stream skips chunks with empty or missing content."""
+        chunk_good = Mock()
+        chunk_good.message = Mock()
+        chunk_good.message.content = "data"
+
+        chunk_empty = Mock()
+        chunk_empty.message = Mock()
+        chunk_empty.message.content = ""
+
+        chunk_none = Mock()
+        chunk_none.message = None
+
+        mock_ollama_client.chat.return_value = iter(
+            [chunk_good, chunk_empty, chunk_none]
+        )
+
+        client = OllamaClient()
+        chunks = list(client.generate_text_stream("prompt"))
+
+        assert chunks == ["data"]
+
+    def test_raises_runtime_error_on_failure(self, mock_ollama_client: Mock) -> None:
+        """generate_text_stream raises RuntimeError when Ollama call fails."""
+        mock_ollama_client.chat.side_effect = ConnectionError("Connection refused")
+
+        client = OllamaClient()
+
+        with pytest.raises(RuntimeError, match="Streaming text generation failed"):
+            list(client.generate_text_stream("prompt"))
+
+    def test_raises_runtime_error_on_iteration_failure(
+        self, mock_ollama_client: Mock
+    ) -> None:
+        """generate_text_stream raises RuntimeError when iteration fails mid-stream."""
+
+        def _failing_iter():
+            chunk = Mock()
+            chunk.message = Mock()
+            chunk.message.content = "start"
+            yield chunk
+            raise ConnectionError("Connection lost mid-stream")
+
+        mock_ollama_client.chat.return_value = _failing_iter()
+
+        client = OllamaClient()
+
+        with pytest.raises(RuntimeError, match="Streaming text generation failed"):
+            list(client.generate_text_stream("prompt"))

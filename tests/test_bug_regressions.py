@@ -18,6 +18,7 @@ from src.llm.recommendations import RecommendationGenerator
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.recommendations.engine import RecommendationEngine
 from src.recommendations.preference_interpreter import PatternBasedInterpreter
+from src.storage.manager import StorageManager
 from src.storage.schema import (
     create_schema,
     get_enrichment_stats,
@@ -43,7 +44,7 @@ class TestArticleStrippingRegression:
         leading-article removal.
         """
 
-        engine = RecommendationEngine.__new__(RecommendationEngine)
+        engine = RecommendationEngine(storage_manager=Mock(spec=StorageManager))
 
         # Test _titles_similar which also strips articles
         # "Into the Wild" should NOT have "the" stripped from the middle
@@ -58,7 +59,7 @@ class TestArticleStrippingRegression:
         leading articles for matching purposes.
         """
 
-        engine = RecommendationEngine.__new__(RecommendationEngine)
+        engine = RecommendationEngine(storage_manager=Mock(spec=StorageManager))
 
         # Leading articles should still be stripped for matching
         assert engine._titles_similar("The Matrix", "Matrix") is True
@@ -765,9 +766,13 @@ class TestPerItemBlurbGenerationRegression:
         mock_client = Mock(spec=OllamaClient)
         items = _make_book_items(_TEN_BOOK_NAMES)
 
-        mock_client.generate_text.side_effect = [
-            f"Great match for {item.title}." for item in items
-        ]
+        def fake_generate(prompt: str, **kwargs: Any) -> str:
+            for item in items:
+                if item.title in prompt:
+                    return f"Great match for {item.title}."
+            return "Great match."
+
+        mock_client.generate_text.side_effect = fake_generate
 
         generator = RecommendationGenerator(mock_client)
         results = generator.generate_blurbs_per_item(

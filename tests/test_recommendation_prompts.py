@@ -4,8 +4,6 @@ Covers content type grouping, anti-hallucination guardrails, and
 regression tests for LLM misclassification / fabricated reviews.
 """
 
-from typing import Any
-
 from src.conversation.engine import COMPACT_SYSTEM_PROMPT, FULL_SYSTEM_PROMPT
 from src.llm.prompts import (
     build_blurb_prompt,
@@ -17,29 +15,7 @@ from src.llm.prompts import (
 )
 from src.llm.tone import STYLE_RULES
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
-
-
-def _make_item(
-    title: str,
-    content_type: ContentType,
-    rating: int | None = None,
-    review: str | None = None,
-    author: str | None = None,
-    status: ConsumptionStatus = ConsumptionStatus.COMPLETED,
-    metadata: dict[str, Any] | None = None,
-) -> ContentItem:
-    """Create a ContentItem for testing."""
-    return ContentItem(
-        id=f"test-{title.lower().replace(' ', '-')}",
-        title=title,
-        content_type=content_type,
-        status=status,
-        rating=rating,
-        review=review,
-        author=author,
-        metadata=metadata or {},
-    )
-
+from tests.factories import make_item
 
 # ---------------------------------------------------------------------------
 # Helpers for building standard item sets
@@ -48,7 +24,7 @@ def _make_item(
 
 def _make_books(count: int, rating: int = 5) -> list[ContentItem]:
     return [
-        _make_item(
+        make_item(
             f"Book {index}",
             ContentType.BOOK,
             rating=rating,
@@ -60,14 +36,14 @@ def _make_books(count: int, rating: int = 5) -> list[ContentItem]:
 
 def _make_movies(count: int, rating: int = 5) -> list[ContentItem]:
     return [
-        _make_item(f"Movie {index}", ContentType.MOVIE, rating=rating)
+        make_item(f"Movie {index}", ContentType.MOVIE, rating=rating)
         for index in range(count)
     ]
 
 
 def _make_tv_shows(count: int, rating: int = 5) -> list[ContentItem]:
     return [
-        _make_item(f"TV Show {index}", ContentType.TV_SHOW, rating=rating)
+        make_item(f"TV Show {index}", ContentType.TV_SHOW, rating=rating)
         for index in range(count)
     ]
 
@@ -76,7 +52,7 @@ def _make_unconsumed(
     count: int, content_type: ContentType = ContentType.BOOK
 ) -> list[ContentItem]:
     return [
-        _make_item(
+        make_item(
             f"Candidate {index}",
             content_type=content_type,
             status=ConsumptionStatus.UNREAD,
@@ -375,7 +351,7 @@ class TestReviewTextPreservation:
 
     def test_review_included_when_present(self) -> None:
         """Items with reviews should have the review text in the prompt."""
-        book_with_review = _make_item(
+        book_with_review = make_item(
             "Reviewed Book",
             ContentType.BOOK,
             rating=5,
@@ -393,7 +369,7 @@ class TestReviewTextPreservation:
 
     def test_review_omitted_when_absent(self) -> None:
         """Items without reviews should not have any Review text."""
-        book_without_review = _make_item("No Review Book", ContentType.BOOK, rating=5)
+        book_without_review = make_item("No Review Book", ContentType.BOOK, rating=5)
         unconsumed = _make_unconsumed(3)
 
         prompt = build_recommendation_prompt(
@@ -620,7 +596,7 @@ class TestGenreMetadataInPrompts:
 
     def test_genres_in_same_type_consumed_items(self) -> None:
         """Same-type consumed items should include genre tags."""
-        book = _make_item(
+        book = make_item(
             "Dune",
             ContentType.BOOK,
             rating=5,
@@ -639,7 +615,7 @@ class TestGenreMetadataInPrompts:
 
     def test_genres_in_cross_type_consumed_items(self) -> None:
         """Cross-type consumed items should include genre tags."""
-        movie = _make_item(
+        movie = make_item(
             "Blade Runner",
             ContentType.MOVIE,
             rating=5,
@@ -658,7 +634,7 @@ class TestGenreMetadataInPrompts:
     def test_genres_in_candidate_items(self) -> None:
         """Candidate (unconsumed) items should include genre tags."""
         consumed = _make_books(3)
-        candidate = _make_item(
+        candidate = make_item(
             "Neuromancer",
             ContentType.BOOK,
             status=ConsumptionStatus.UNREAD,
@@ -676,7 +652,7 @@ class TestGenreMetadataInPrompts:
 
     def test_genres_in_blurb_favorites(self) -> None:
         """Blurb prompt favorites should include genre tags."""
-        favorite = _make_item(
+        favorite = make_item(
             "Foundation",
             ContentType.BOOK,
             rating=5,
@@ -696,7 +672,7 @@ class TestGenreMetadataInPrompts:
     def test_genres_in_blurb_selected_items(self) -> None:
         """Blurb prompt selected items should include genre tags."""
         consumed = _make_books(3)
-        selected = _make_item(
+        selected = make_item(
             "Hyperion",
             ContentType.BOOK,
             author="Dan Simmons",
@@ -713,7 +689,7 @@ class TestGenreMetadataInPrompts:
 
     def test_no_empty_brackets_when_no_genres(self) -> None:
         """Items without genres should not produce empty brackets."""
-        book = _make_item("No Genre Book", ContentType.BOOK, rating=5)
+        book = make_item("No Genre Book", ContentType.BOOK, rating=5)
         unconsumed = _make_unconsumed(3)
 
         prompt = build_recommendation_prompt(
@@ -726,7 +702,7 @@ class TestGenreMetadataInPrompts:
 
     def test_genres_capped_at_four(self) -> None:
         """Genre tags should include at most 4 genres."""
-        book = _make_item(
+        book = make_item(
             "Many Genres",
             ContentType.BOOK,
             rating=5,
@@ -755,7 +731,7 @@ class TestGenreMetadataInPrompts:
 
     def test_legacy_genre_string_fallback(self) -> None:
         """Items with legacy 'genre' string should still get genre tags."""
-        book = _make_item(
+        book = make_item(
             "Legacy Book",
             ContentType.BOOK,
             rating=5,
@@ -773,7 +749,7 @@ class TestGenreMetadataInPrompts:
 
     def test_genres_list_in_content_description(self) -> None:
         """Canonical 'genres' list format is included in content descriptions."""
-        item = _make_item(
+        item = make_item(
             "Band of Brothers",
             ContentType.TV_SHOW,
             rating=5,
@@ -809,7 +785,7 @@ class TestGenreMisclassificationRegression:
         the prompt had only the title and a 5/5 rating — no genre metadata
         to indicate it is a WWII drama miniseries.
         """
-        band_of_brothers = _make_item(
+        band_of_brothers = make_item(
             "Band of Brothers",
             ContentType.TV_SHOW,
             rating=5,
@@ -856,7 +832,7 @@ class TestCrossTypeReviewLeakingRegression:
         """Regression: blurb should only show same-type favorites when >= 5 exist."""
         movies = _make_movies(6)
         games = [
-            _make_item(f"Game {index}", ContentType.VIDEO_GAME, rating=5)
+            make_item(f"Game {index}", ContentType.VIDEO_GAME, rating=5)
             for index in range(4)
         ]
         consumed = movies + games
@@ -884,7 +860,7 @@ class TestCrossTypeReviewLeakingRegression:
         """Regression: blurb should show cross-type in separate section when < 5 same-type."""
         movies = _make_movies(2)
         games = [
-            _make_item(f"Game {index}", ContentType.VIDEO_GAME, rating=5)
+            make_item(f"Game {index}", ContentType.VIDEO_GAME, rating=5)
             for index in range(3)
         ]
         consumed = movies + games
@@ -910,7 +886,7 @@ class TestCrossTypeReviewLeakingRegression:
         self,
     ) -> None:
         """Regression: cross-type items in recommendation prompt should NOT include review text."""
-        book_with_review = _make_item(
+        book_with_review = make_item(
             "Great Book",
             ContentType.BOOK,
             rating=5,
@@ -934,7 +910,7 @@ class TestCrossTypeReviewLeakingRegression:
         self,
     ) -> None:
         """Regression: same-type items in recommendation prompt should keep review text."""
-        movie_with_review = _make_item(
+        movie_with_review = make_item(
             "Great Movie",
             ContentType.MOVIE,
             rating=5,
@@ -1325,24 +1301,24 @@ class TestPerItemReferencesRegression:
         references and must NOT include the racing game (Forza), even though
         Forza is a consumed favorite.
         """
-        action_pick = _make_item(
+        action_pick = make_item(
             "Middle Earth: Shadow of War",
             ContentType.VIDEO_GAME,
             metadata={"genres": ["action", "adventure"]},
         )
-        ref_action_1 = _make_item(
+        ref_action_1 = make_item(
             "The Last of Us: Part 1",
             ContentType.VIDEO_GAME,
             rating=5,
             metadata={"genres": ["action", "adventure"]},
         )
-        ref_action_2 = _make_item(
+        ref_action_2 = make_item(
             "God of War",
             ContentType.VIDEO_GAME,
             rating=5,
             metadata={"genres": ["action", "adventure"]},
         )
-        forza = _make_item(
+        forza = make_item(
             "Forza Horizon 4",
             ContentType.VIDEO_GAME,
             rating=5,
@@ -1367,12 +1343,12 @@ class TestPerItemReferencesRegression:
 
     def test_no_per_item_references_backward_compatible_regression(self) -> None:
         """Without per_item_references, prompt should work as before (no Related lines)."""
-        pick = _make_item(
+        pick = make_item(
             "Some Game",
             ContentType.VIDEO_GAME,
         )
         consumed = [
-            _make_item(f"Fav {index}", ContentType.VIDEO_GAME, rating=5)
+            make_item(f"Fav {index}", ContentType.VIDEO_GAME, rating=5)
             for index in range(5)
         ]
 
@@ -1386,9 +1362,9 @@ class TestPerItemReferencesRegression:
 
     def test_empty_references_list_no_related_line_regression(self) -> None:
         """When per_item_references contains an empty list, no Related line appears."""
-        pick = _make_item("Some Game", ContentType.VIDEO_GAME)
+        pick = make_item("Some Game", ContentType.VIDEO_GAME)
         consumed = [
-            _make_item(f"Fav {index}", ContentType.VIDEO_GAME, rating=5)
+            make_item(f"Fav {index}", ContentType.VIDEO_GAME, rating=5)
             for index in range(5)
         ]
 
@@ -1403,8 +1379,8 @@ class TestPerItemReferencesRegression:
 
     def test_prompt_rule_references_related_items_regression(self) -> None:
         """The prompt rule should direct the LLM to use Related items."""
-        pick = _make_item("Some Game", ContentType.VIDEO_GAME)
-        ref = _make_item("Ref Game", ContentType.VIDEO_GAME, rating=4)
+        pick = make_item("Some Game", ContentType.VIDEO_GAME)
+        ref = make_item("Ref Game", ContentType.VIDEO_GAME, rating=4)
 
         prompt = build_blurb_prompt(
             content_type=ContentType.VIDEO_GAME,
@@ -1417,18 +1393,18 @@ class TestPerItemReferencesRegression:
 
     def test_multiple_picks_each_get_own_related_line_regression(self) -> None:
         """Each pick gets its own Related line from its own references."""
-        pick_action = _make_item(
+        pick_action = make_item(
             "Action Game",
             ContentType.VIDEO_GAME,
             metadata={"genres": ["action"]},
         )
-        pick_racing = _make_item(
+        pick_racing = make_item(
             "Racing Game",
             ContentType.VIDEO_GAME,
             metadata={"genres": ["racing"]},
         )
-        ref_action = _make_item("God of War", ContentType.VIDEO_GAME, rating=5)
-        ref_racing = _make_item("Gran Turismo", ContentType.VIDEO_GAME, rating=4)
+        ref_action = make_item("God of War", ContentType.VIDEO_GAME, rating=5)
+        ref_racing = make_item("Gran Turismo", ContentType.VIDEO_GAME, rating=4)
 
         consumed = [ref_action, ref_racing]
         per_item_refs = [[ref_action], [ref_racing]]
@@ -1466,7 +1442,7 @@ class TestBuildSingleBlurbPrompt:
 
     def test_includes_item_title_and_author(self) -> None:
         """Prompt includes the pick's title and author."""
-        item = _make_item("Dune", ContentType.BOOK, author="Frank Herbert")
+        item = make_item("Dune", ContentType.BOOK, author="Frank Herbert")
         prompt = build_single_blurb_prompt(
             content_type=ContentType.BOOK,
             item=item,
@@ -1476,7 +1452,7 @@ class TestBuildSingleBlurbPrompt:
 
     def test_no_numbered_list_instruction(self) -> None:
         """Prompt instructs raw prose, not a numbered list."""
-        item = _make_item("Dune", ContentType.BOOK)
+        item = make_item("Dune", ContentType.BOOK)
         prompt = build_single_blurb_prompt(
             content_type=ContentType.BOOK,
             item=item,
@@ -1487,7 +1463,7 @@ class TestBuildSingleBlurbPrompt:
     def test_taste_context_from_same_type_favorites(self) -> None:
         """High-rated same-type items appear as taste context."""
         favorites = _make_books(3, rating=5)
-        item = _make_item("New Book", ContentType.BOOK)
+        item = make_item("New Book", ContentType.BOOK)
         prompt = build_single_blurb_prompt(
             content_type=ContentType.BOOK,
             item=item,
@@ -1499,12 +1475,12 @@ class TestBuildSingleBlurbPrompt:
 
     def test_cross_type_context_fills_remaining_slots(self) -> None:
         """Cross-type favorites fill remaining slots when < 5 same-type."""
-        same = [_make_item("Book 1", ContentType.BOOK, rating=5, author="A1")]
+        same = [make_item("Book 1", ContentType.BOOK, rating=5, author="A1")]
         cross = [
-            _make_item("Game 1", ContentType.VIDEO_GAME, rating=5),
-            _make_item("Movie 1", ContentType.MOVIE, rating=4),
+            make_item("Game 1", ContentType.VIDEO_GAME, rating=5),
+            make_item("Movie 1", ContentType.MOVIE, rating=4),
         ]
-        item = _make_item("New Book", ContentType.BOOK)
+        item = make_item("New Book", ContentType.BOOK)
         prompt = build_single_blurb_prompt(
             content_type=ContentType.BOOK,
             item=item,
@@ -1516,10 +1492,10 @@ class TestBuildSingleBlurbPrompt:
 
     def test_references_appear_as_related(self) -> None:
         """Per-item references render as a Related line."""
-        item = _make_item("New Book", ContentType.BOOK)
+        item = make_item("New Book", ContentType.BOOK)
         refs = [
-            _make_item("Ref A", ContentType.BOOK, rating=5),
-            _make_item("Ref B", ContentType.BOOK, rating=4),
+            make_item("Ref A", ContentType.BOOK, rating=5),
+            make_item("Ref B", ContentType.BOOK, rating=4),
         ]
         prompt = build_single_blurb_prompt(
             content_type=ContentType.BOOK,
@@ -1531,7 +1507,7 @@ class TestBuildSingleBlurbPrompt:
 
     def test_no_references_omits_related_line(self) -> None:
         """Without references, no Related line appears."""
-        item = _make_item("New Book", ContentType.BOOK)
+        item = make_item("New Book", ContentType.BOOK)
         prompt = build_single_blurb_prompt(
             content_type=ContentType.BOOK,
             item=item,
@@ -1542,7 +1518,7 @@ class TestBuildSingleBlurbPrompt:
 
     def test_content_type_name_in_prompt(self) -> None:
         """Prompt uses the human-readable content type name."""
-        item = _make_item("Hades", ContentType.VIDEO_GAME)
+        item = make_item("Hades", ContentType.VIDEO_GAME)
         prompt = build_single_blurb_prompt(
             content_type=ContentType.VIDEO_GAME,
             item=item,

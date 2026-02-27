@@ -406,7 +406,7 @@ class TestFactoryFunction:
 
         assert isinstance(engine, ConversationEngine)
         assert engine.storage is storage_manager
-        assert engine.ollama is mock_ollama
+        assert engine.ollama_client is mock_ollama
 
 
 class TestStreamingBehavior:

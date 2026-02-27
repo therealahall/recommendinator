@@ -1,6 +1,7 @@
 """Tests for ChromaDB vector database manager."""
 
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -121,3 +122,134 @@ def test_count_embeddings(temp_vector_db: VectorDB) -> None:
         temp_vector_db.add_embedding(f"item_{i}", [0.1, 0.2, 0.3])
 
     assert temp_vector_db.count_embeddings() == 5
+
+
+# ---------------------------------------------------------------------------
+# search_similar with exclude_ids (8G)
+# ---------------------------------------------------------------------------
+
+
+def test_search_similar_with_exclude_ids(temp_vector_db: VectorDB) -> None:
+    """Test that exclude_ids filters out specified content IDs from results."""
+    embeddings = [
+        ([0.1, 0.2, 0.3], "item_1", {"content_type": "book"}),
+        ([0.15, 0.25, 0.35], "item_2", {"content_type": "book"}),
+        ([0.2, 0.3, 0.4], "item_3", {"content_type": "book"}),
+    ]
+
+    for embedding, content_id, metadata in embeddings:
+        temp_vector_db.add_embedding(content_id, embedding, metadata)
+
+    # Search without exclude: all items should be returnable
+    query = [0.12, 0.22, 0.32]
+    results_all = temp_vector_db.search_similar(query, n_results=10)
+    all_ids = {r["content_id"] for r in results_all}
+    assert "item_1" in all_ids
+
+    # Search with exclude_ids: item_1 should be filtered out
+    results_filtered = temp_vector_db.search_similar(
+        query, n_results=10, exclude_ids=["item_1"]
+    )
+    filtered_ids = {r["content_id"] for r in results_filtered}
+    assert "item_1" not in filtered_ids
+    assert len(results_filtered) < len(results_all)
+
+
+def test_search_similar_exclude_ids_respects_n_results(
+    temp_vector_db: VectorDB,
+) -> None:
+    """Test that exclude_ids + n_results still returns at most n_results items."""
+    # Add enough items so filtering still leaves enough for n_results
+    for i in range(10):
+        temp_vector_db.add_embedding(
+            f"item_{i}", [0.1 * (i + 1), 0.2, 0.3], {"content_type": "book"}
+        )
+
+    results = temp_vector_db.search_similar(
+        [0.1, 0.2, 0.3],
+        n_results=3,
+        exclude_ids=["item_0", "item_1"],
+    )
+
+    assert len(results) <= 3
+    result_ids = {r["content_id"] for r in results}
+    assert "item_0" not in result_ids
+    assert "item_1" not in result_ids
+
+
+def test_search_similar_exclude_all_returns_empty(
+    temp_vector_db: VectorDB,
+) -> None:
+    """Test that excluding all items returns an empty list."""
+    temp_vector_db.add_embedding("only_item", [0.1, 0.2, 0.3], {"content_type": "book"})
+
+    results = temp_vector_db.search_similar(
+        [0.1, 0.2, 0.3],
+        n_results=10,
+        exclude_ids=["only_item"],
+    )
+
+    assert results == []
+
+
+def test_search_similar_distances_none_returns_none_score() -> None:
+    """Test that when ChromaDB returns distances=None, score is set to None.
+
+    This uses a mock to simulate the edge case where distances are not
+    returned by ChromaDB (e.g. when include=['metadatas'] is used or
+    an unusual configuration).
+    """
+    mock_collection = MagicMock()
+    mock_collection.query.return_value = {
+        "ids": [["item_1", "item_2"]],
+        "distances": None,
+        "metadatas": [[{"content_type": "book"}, {"content_type": "movie"}]],
+    }
+
+    with patch("chromadb.PersistentClient") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client.get_or_create_collection.return_value = mock_collection
+        mock_client_cls.return_value = mock_client
+
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db = VectorDB(Path(tmp) / "test_db")
+            # Replace the collection with our mock
+            db.collection = mock_collection
+
+            results = db.search_similar([0.1, 0.2, 0.3], n_results=2)
+
+    assert len(results) == 2
+    assert results[0]["content_id"] == "item_1"
+    assert results[0]["score"] is None
+    assert results[1]["content_id"] == "item_2"
+    assert results[1]["score"] is None
+
+
+def test_search_similar_metadatas_none_returns_empty_dict() -> None:
+    """Test that when ChromaDB returns metadatas=None, metadata is set to {}."""
+    mock_collection = MagicMock()
+    mock_collection.query.return_value = {
+        "ids": [["item_1"]],
+        "distances": [[0.1]],
+        "metadatas": None,
+    }
+
+    with patch("chromadb.PersistentClient") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client.get_or_create_collection.return_value = mock_collection
+        mock_client_cls.return_value = mock_client
+
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db = VectorDB(Path(tmp) / "test_db")
+            db.collection = mock_collection
+
+            results = db.search_similar([0.1, 0.2, 0.3], n_results=1)
+
+    assert len(results) == 1
+    assert results[0]["metadata"] == {}
+    # Score should be computed: 1.0 - 0.1 = 0.9
+    assert abs(results[0]["score"] - 0.9) < 1e-6

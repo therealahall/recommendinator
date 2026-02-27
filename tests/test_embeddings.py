@@ -89,3 +89,37 @@ def test_generate_embeddings_batch(mock_ollama_client):
     assert embeddings[0] == [0.1, 0.2]
     assert embeddings[1] == [0.3, 0.4]
     assert embeddings[2] == [0.5, 0.6]
+
+
+def test_generate_embeddings_batch_error_propagation(mock_ollama_client):
+    """Test that generate_embeddings_batch re-raises errors from the client.
+
+    When generate_content_embedding fails for an item in the batch, the
+    exception must propagate to the caller rather than being silently
+    swallowed. Previously only the success path was tested.
+    """
+    # First item succeeds, second item fails
+    mock_ollama_client.generate_embedding.side_effect = [
+        [0.1, 0.2],
+        RuntimeError("Embedding generation failed: connection refused"),
+    ]
+
+    items = [
+        ContentItem(
+            id="item_0",
+            title="Item 0",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        ),
+        ContentItem(
+            id="item_1",
+            title="Item 1",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        ),
+    ]
+
+    generator = EmbeddingGenerator(mock_ollama_client)
+
+    with pytest.raises(RuntimeError, match="connection refused"):
+        generator.generate_embeddings_batch(items, batch_size=5)

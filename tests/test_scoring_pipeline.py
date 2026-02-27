@@ -11,26 +11,7 @@ from src.recommendations.scorers import (
 )
 from src.recommendations.scoring_pipeline import ScoredCandidate, ScoringPipeline
 from src.utils.series import build_series_tracking
-
-
-def _make_item(
-    title: str = "Item",
-    metadata: dict | None = None,
-    rating: int | None = None,
-    author: str | None = None,
-    status: ConsumptionStatus = ConsumptionStatus.UNREAD,
-    content_type: ContentType = ContentType.BOOK,
-    item_id: str | None = None,
-) -> ContentItem:
-    return ContentItem(
-        id=item_id,
-        title=title,
-        content_type=content_type,
-        status=status,
-        rating=rating,
-        author=author,
-        metadata=metadata or {},
-    )
+from tests.factories import make_item
 
 
 def _build_context(
@@ -56,7 +37,7 @@ class TestScoringPipeline:
     def test_results_sorted_descending(self) -> None:
         """Higher-scoring candidates should appear first."""
         consumed = [
-            _make_item(
+            make_item(
                 rating=5,
                 metadata={"genre": "Fantasy"},
                 status=ConsumptionStatus.COMPLETED,
@@ -64,8 +45,8 @@ class TestScoringPipeline:
         ]
         context = _build_context(consumed=consumed)
 
-        good_match = _make_item(title="Good", metadata={"genre": "Fantasy"})
-        poor_match = _make_item(title="Poor", metadata={"genre": "Horror"})
+        good_match = make_item(title="Good", metadata={"genre": "Fantasy"})
+        poor_match = make_item(title="Poor", metadata={"genre": "Horror"})
 
         pipeline = ScoringPipeline(DEFAULT_SCORERS)
         result = pipeline.score_candidates_with_breakdown(
@@ -85,14 +66,14 @@ class TestScoringPipeline:
     def test_weight_normalization(self) -> None:
         """Aggregate score should be in [0, 1] regardless of weights."""
         consumed = [
-            _make_item(
+            make_item(
                 rating=5,
                 metadata={"genre": "Fantasy"},
                 status=ConsumptionStatus.COMPLETED,
             )
         ]
         context = _build_context(consumed=consumed)
-        candidate = _make_item(metadata={"genre": "Fantasy"})
+        candidate = make_item(metadata={"genre": "Fantasy"})
 
         pipeline = ScoringPipeline(DEFAULT_SCORERS)
         result = pipeline.score_candidates_with_breakdown([candidate], context)
@@ -110,7 +91,7 @@ class TestScoringPipeline:
                 return 0.0
 
         context = _build_context()
-        candidate = _make_item()
+        candidate = make_item()
 
         # All max
         pipeline = ScoringPipeline([AlwaysMaxScorer(weight=10.0)])
@@ -125,7 +106,7 @@ class TestScoringPipeline:
     def test_zero_total_weight(self) -> None:
         """If all scorers have weight 0, scores should be 0.0."""
         context = _build_context()
-        candidate = _make_item()
+        candidate = make_item()
         pipeline = ScoringPipeline(
             [GenreMatchScorer(weight=0.0), TagOverlapScorer(weight=0.0)]
         )
@@ -135,14 +116,14 @@ class TestScoringPipeline:
     def test_breakdown_keys_present(self) -> None:
         """score_candidates_with_breakdown returns expected scorer keys."""
         consumed = [
-            _make_item(
+            make_item(
                 rating=5,
                 metadata={"genre": "Fantasy"},
                 status=ConsumptionStatus.COMPLETED,
             )
         ]
         context = _build_context(consumed=consumed)
-        candidate = _make_item(title="Test", metadata={"genre": "Fantasy"})
+        candidate = make_item(title="Test", metadata={"genre": "Fantasy"})
 
         pipeline = ScoringPipeline(DEFAULT_SCORERS)
         results = pipeline.score_candidates_with_breakdown([candidate], context)
@@ -162,7 +143,7 @@ class TestScoringPipeline:
     def test_breakdown_sorted_descending(self) -> None:
         """score_candidates_with_breakdown returns results sorted descending."""
         consumed = [
-            _make_item(
+            make_item(
                 rating=5,
                 metadata={"genre": "Fantasy"},
                 status=ConsumptionStatus.COMPLETED,
@@ -170,8 +151,8 @@ class TestScoringPipeline:
         ]
         context = _build_context(consumed=consumed)
 
-        good_match = _make_item(title="Good", metadata={"genre": "Fantasy"})
-        poor_match = _make_item(title="Poor", metadata={"genre": "Horror"})
+        good_match = make_item(title="Good", metadata={"genre": "Fantasy"})
+        poor_match = make_item(title="Poor", metadata={"genre": "Horror"})
 
         pipeline = ScoringPipeline(DEFAULT_SCORERS)
         results = pipeline.score_candidates_with_breakdown(
@@ -207,7 +188,7 @@ class TestTiebreakerRegression:
         """
         # All items have same genre, so all scores will be similar
         consumed = [
-            _make_item(
+            make_item(
                 rating=5,
                 metadata={"genre": "Adventure"},
                 status=ConsumptionStatus.COMPLETED,
@@ -218,12 +199,12 @@ class TestTiebreakerRegression:
         # Create items that would sort differently alphabetically vs by series
         # "An Amazing Sequel" sorts before "The Zebra Adventure" alphabetically
         # (after article stripping: "Amazing Sequel" < "Zebra Adventure")
-        book_2 = _make_item(
+        book_2 = make_item(
             title="An Amazing Sequel (Test Series #2)",
             metadata={"genre": "Adventure"},
             item_id="2",
         )
-        book_1 = _make_item(
+        book_1 = make_item(
             title="The Zebra Adventure (Test Series #1)",
             metadata={"genre": "Adventure"},
             item_id="1",
@@ -246,7 +227,7 @@ class TestTiebreakerRegression:
         deterministic (not random) but also not purely alphabetical.
         """
         consumed = [
-            _make_item(
+            make_item(
                 rating=5,
                 metadata={"genre": "Fiction"},
                 status=ConsumptionStatus.COMPLETED,
@@ -256,7 +237,7 @@ class TestTiebreakerRegression:
 
         # Create multiple items with same genre (similar scores)
         items = [
-            _make_item(
+            make_item(
                 title=f"Book {chr(65 + i)}",  # Book A, Book B, Book C, ...
                 metadata={"genre": "Fiction"},
                 item_id=str(i),
@@ -280,7 +261,7 @@ class TestTiebreakerRegression:
     def test_tiebreaker_does_not_affect_different_scores(self) -> None:
         """Items with genuinely different scores should still sort by score."""
         consumed = [
-            _make_item(
+            make_item(
                 rating=5,
                 metadata={"genre": "Fantasy"},
                 status=ConsumptionStatus.COMPLETED,
@@ -289,12 +270,12 @@ class TestTiebreakerRegression:
         context = _build_context(consumed=consumed)
 
         # Different genres = different scores
-        fantasy_book = _make_item(
+        fantasy_book = make_item(
             title="Zzz Last Alphabetically",
             metadata={"genre": "Fantasy"},  # Matches consumed genre
             item_id="1",
         )
-        horror_book = _make_item(
+        horror_book = make_item(
             title="Aaa First Alphabetically",
             metadata={"genre": "Horror"},  # Different genre
             item_id="2",

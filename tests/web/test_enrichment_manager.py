@@ -6,6 +6,7 @@ import pytest
 
 from src.enrichment.manager import EnrichmentJobStatus, EnrichmentManager
 from src.models.content import ContentType
+from src.storage.manager import StorageManager
 from src.web.enrichment_manager import (
     WebEnrichmentManager,
     get_enrichment_manager,
@@ -30,7 +31,7 @@ class TestStartEnrichment:
 
     def test_start_enrichment_success(self, manager: WebEnrichmentManager) -> None:
         """Starting enrichment with valid args returns success."""
-        mock_storage = Mock()
+        mock_storage = Mock(spec=StorageManager)
         mock_config: dict = {"enrichment": {}}
 
         with (
@@ -46,7 +47,7 @@ class TestStartEnrichment:
         self, manager: WebEnrichmentManager
     ) -> None:
         """Starting enrichment with content type filter includes type in message."""
-        mock_storage = Mock()
+        mock_storage = Mock(spec=StorageManager)
         mock_config: dict = {"enrichment": {}}
 
         with (
@@ -64,7 +65,7 @@ class TestStartEnrichment:
         self, manager: WebEnrichmentManager
     ) -> None:
         """Starting enrichment with include_not_found includes retry info in message."""
-        mock_storage = Mock()
+        mock_storage = Mock(spec=StorageManager)
         mock_config: dict = {"enrichment": {}}
 
         with (
@@ -82,7 +83,7 @@ class TestStartEnrichment:
         self, manager: WebEnrichmentManager
     ) -> None:
         """Starting enrichment when a job is already running returns failure."""
-        mock_storage = Mock()
+        mock_storage = Mock(spec=StorageManager)
         mock_config: dict = {"enrichment": {}}
 
         # Start first job
@@ -107,7 +108,7 @@ class TestStartEnrichment:
         self, manager: WebEnrichmentManager
     ) -> None:
         """A new enrichment can start after the previous one completes."""
-        mock_storage = Mock()
+        mock_storage = Mock(spec=StorageManager)
         mock_config: dict = {"enrichment": {}}
 
         with (
@@ -131,7 +132,7 @@ class TestStartEnrichment:
         self, manager: WebEnrichmentManager
     ) -> None:
         """When the inner EnrichmentManager.start_enrichment returns False."""
-        mock_storage = Mock()
+        mock_storage = Mock(spec=StorageManager)
         mock_config: dict = {"enrichment": {}}
 
         with (
@@ -149,7 +150,7 @@ class TestStopEnrichment:
 
     def test_stop_enrichment_success(self, manager: WebEnrichmentManager) -> None:
         """Stopping a running enrichment returns success."""
-        mock_storage = Mock()
+        mock_storage = Mock(spec=StorageManager)
         mock_config: dict = {"enrichment": {}}
 
         with (
@@ -182,7 +183,7 @@ class TestGetStatus:
 
     def test_get_status_when_running(self, manager: WebEnrichmentManager) -> None:
         """Returns EnrichmentJobStatus when a job is active."""
-        mock_storage = Mock()
+        mock_storage = Mock(spec=StorageManager)
         mock_config: dict = {"enrichment": {}}
         expected_status = EnrichmentJobStatus(running=True, items_processed=5)
 
@@ -208,7 +209,7 @@ class TestIsRunning:
 
     def test_is_running_when_active(self, manager: WebEnrichmentManager) -> None:
         """Returns True when a job is actively running."""
-        mock_storage = Mock()
+        mock_storage = Mock(spec=StorageManager)
         mock_config: dict = {"enrichment": {}}
 
         with (
@@ -225,7 +226,7 @@ class TestIsRunning:
 
     def test_is_running_when_completed(self, manager: WebEnrichmentManager) -> None:
         """Returns False when the job has completed."""
-        mock_storage = Mock()
+        mock_storage = Mock(spec=StorageManager)
         mock_config: dict = {"enrichment": {}}
 
         with (

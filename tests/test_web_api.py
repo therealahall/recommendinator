@@ -1,16 +1,22 @@
 """Tests for web API endpoints."""
 
+import json
 from unittest.mock import Mock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
+from src.llm.client import OllamaClient
+from src.llm.embeddings import EmbeddingGenerator
+from src.llm.recommendations import RecommendationGenerator
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.user_preferences import UserPreferenceConfig
+from src.recommendations.engine import RecommendationEngine
+from src.storage.manager import StorageManager
 from src.web.app import create_app
 from src.web.gog_auth import GogAuthError
 from src.web.state import app_state
-from src.web.sync_manager import reset_sync_manager
+from src.web.sync_manager import SyncManager, reset_sync_manager
 
 
 @pytest.fixture
@@ -56,15 +62,16 @@ def mock_components(mock_config):
         patch("src.web.app.create_recommendation_engine") as mock_engine,
     ):
         # Setup mocks
-        mock_storage_manager = Mock()
+        mock_storage_manager = Mock(spec=StorageManager)
         mock_storage.return_value = mock_storage_manager
 
-        mock_client = Mock()
-        mock_embedding_gen = Mock()
-        mock_rec_gen = Mock()
+        mock_client = Mock(spec=OllamaClient)
+        mock_embedding_gen = Mock(spec=EmbeddingGenerator)
+        mock_rec_gen = Mock(spec=RecommendationGenerator)
         mock_llm.return_value = (mock_client, mock_embedding_gen, mock_rec_gen)
 
-        mock_engine_instance = Mock()
+        mock_engine_instance = Mock(spec=RecommendationEngine)
+        mock_engine_instance.storage = mock_storage_manager
         mock_engine.return_value = mock_engine_instance
 
         # Clear app state
@@ -104,36 +111,37 @@ def test_root_endpoint(client):
 
 
 def test_status_endpoint(client):
-    """Test status endpoint."""
+    """Test status endpoint returns expected values."""
     response = client.get("/api/status")
     assert response.status_code == 200
     data = response.json()
-    assert "status" in data
-    assert "version" in data
-    assert "components" in data
+    assert data["status"] in {"ready", "initializing"}
+    assert isinstance(data["version"], str)
+    assert isinstance(data["components"], dict)
 
 
-def test_status_ready_when_ai_disabled_regression(client):
-    """Regression test: Status should be 'ready' when AI is disabled.
+class TestStatusEndpointRegression:
+    """Regression tests for the status endpoint."""
 
-    Bug reported: "System is Initializing" banner displayed perpetually
-    when AI features are disabled.
+    def test_status_ready_when_ai_disabled_regression(self, client):
+        """Regression: Status should be 'ready' when AI is disabled.
 
-    Root cause: The status endpoint required embedding_generator to be
-    non-None for 'ready' status, but it is always None when AI is disabled.
+        Bug reported: "System is Initializing" banner displayed perpetually
+        when AI features are disabled.
+        Root cause: The status endpoint required embedding_generator to be
+        non-None for 'ready' status, but it is always None when AI is disabled.
+        Fix: Only require embedding_generator when ai_enabled is true.
+        """
+        # Simulate AI disabled: no embedding_gen, no features config
+        app_state["embedding_gen"] = None
+        app_state["config"] = {
+            "features": {"ai_enabled": False},
+        }
 
-    Fix: Only require embedding_generator when ai_enabled is true.
-    """
-    # Simulate AI disabled: no embedding_gen, no features config
-    app_state["embedding_gen"] = None
-    app_state["config"] = {
-        "features": {"ai_enabled": False},
-    }
-
-    response = client.get("/api/status")
-    assert response.status_code == 200
-    data = response.json()
-    assert data["status"] == "ready"
+        response = client.get("/api/status")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "ready"
 
 
 def test_sync_sources_endpoint(client, mock_config):
@@ -142,8 +150,8 @@ def test_sync_sources_endpoint(client, mock_config):
     assert response.status_code == 200
     sources = response.json()
     assert isinstance(sources, list)
-    # mock_config has goodreads enabled
-    assert len(sources) >= 1
+    # mock_config has exactly goodreads enabled
+    assert len(sources) == 1
     goodreads = next((s for s in sources if s["id"] == "goodreads"), None)
     assert goodreads is not None
     assert goodreads["display_name"] == "Goodreads"
@@ -1142,3 +1150,426 @@ class TestExchangeGogTokenEndpoint:
 
         assert response.status_code == 400
         assert "not enabled" in response.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# Pagination and Sorting Tests (8I)
+# ---------------------------------------------------------------------------
+
+
+class TestPaginationAndSorting:
+    """Tests for pagination offset and sort_by query params on /api/items."""
+
+    def test_offset_is_passed_to_storage(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """GET /api/items?offset=10 passes offset to storage layer."""
+        mock_components["storage"].get_content_items = Mock(return_value=[])
+
+        response = client.get("/api/items?offset=10")
+        assert response.status_code == 200
+
+        call_kwargs = mock_components["storage"].get_content_items.call_args[1]
+        assert call_kwargs["offset"] == 10
+
+    def test_offset_defaults_to_zero(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """GET /api/items without offset defaults to 0."""
+        mock_components["storage"].get_content_items = Mock(return_value=[])
+
+        response = client.get("/api/items")
+        assert response.status_code == 200
+
+        call_kwargs = mock_components["storage"].get_content_items.call_args[1]
+        assert call_kwargs["offset"] == 0
+
+    def test_sort_by_is_passed_to_storage(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """GET /api/items?sort_by=rating passes sort_by to storage layer."""
+        mock_components["storage"].get_content_items = Mock(return_value=[])
+
+        response = client.get("/api/items?sort_by=rating")
+        assert response.status_code == 200
+
+        call_kwargs = mock_components["storage"].get_content_items.call_args[1]
+        assert call_kwargs["sort_by"] == "rating"
+
+    def test_sort_by_defaults_to_title(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """GET /api/items without sort_by defaults to 'title'."""
+        mock_components["storage"].get_content_items = Mock(return_value=[])
+
+        response = client.get("/api/items")
+        assert response.status_code == 200
+
+        call_kwargs = mock_components["storage"].get_content_items.call_args[1]
+        assert call_kwargs["sort_by"] == "title"
+
+    def test_sort_by_invalid_value_returns_400(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """GET /api/items?sort_by=invalid returns 400 with error detail."""
+        response = client.get("/api/items?sort_by=invalid")
+        assert response.status_code == 400
+        assert "Invalid sort_by" in response.json()["detail"]
+
+    def test_sort_by_case_insensitive(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """GET /api/items?sort_by=Rating is accepted (case insensitive)."""
+        mock_components["storage"].get_content_items = Mock(return_value=[])
+
+        response = client.get("/api/items?sort_by=Rating")
+        assert response.status_code == 200
+
+        call_kwargs = mock_components["storage"].get_content_items.call_args[1]
+        assert call_kwargs["sort_by"] == "rating"
+
+    def test_sort_by_updated_at(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """GET /api/items?sort_by=updated_at is a valid sort option."""
+        mock_components["storage"].get_content_items = Mock(return_value=[])
+
+        response = client.get("/api/items?sort_by=updated_at")
+        assert response.status_code == 200
+
+        call_kwargs = mock_components["storage"].get_content_items.call_args[1]
+        assert call_kwargs["sort_by"] == "updated_at"
+
+    def test_sort_by_created_at(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """GET /api/items?sort_by=created_at is a valid sort option."""
+        mock_components["storage"].get_content_items = Mock(return_value=[])
+
+        response = client.get("/api/items?sort_by=created_at")
+        assert response.status_code == 200
+
+        call_kwargs = mock_components["storage"].get_content_items.call_args[1]
+        assert call_kwargs["sort_by"] == "created_at"
+
+    def test_offset_and_sort_by_combined(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """GET /api/items?offset=5&sort_by=rating passes both params correctly."""
+        mock_components["storage"].get_content_items = Mock(return_value=[])
+
+        response = client.get("/api/items?offset=5&sort_by=rating&limit=20")
+        assert response.status_code == 200
+
+        call_kwargs = mock_components["storage"].get_content_items.call_args[1]
+        assert call_kwargs["offset"] == 5
+        assert call_kwargs["sort_by"] == "rating"
+        assert call_kwargs["limit"] == 20
+
+
+# ---------------------------------------------------------------------------
+# Count > max_count validation (8J)
+# ---------------------------------------------------------------------------
+
+
+def test_recommendations_count_exceeds_max_returns_400(client, mock_components):
+    """GET /api/recommendations returns 400 when count exceeds config max_count.
+
+    The recommendations endpoint validates the requested count against the
+    max_count value from the recommendations config section (default: 20).
+    """
+    # Set a low max_count in config
+    app_state["config"]["recommendations"] = {"max_count": 5}
+
+    response = client.get("/api/recommendations?type=book&count=10")
+    assert response.status_code == 400
+    assert "exceeds the maximum allowed" in response.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# Export Endpoint Tests (8E)
+# ---------------------------------------------------------------------------
+
+
+class TestExportEndpoint:
+    """Tests for GET /api/items/export HTTP endpoint wiring."""
+
+    def test_csv_export(self, client: TestClient, mock_components: dict) -> None:
+        """CSV export returns attachment response with correct media type."""
+        mock_items = [
+            ContentItem(
+                id="1",
+                title="Test Book",
+                author="Author",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+                metadata={"genre": "Fantasy"},
+            ),
+        ]
+        mock_components["storage"].get_content_items = Mock(return_value=mock_items)
+
+        response = client.get("/api/items/export?type=book&format=csv")
+
+        assert response.status_code == 200
+        assert "text/csv" in response.headers["content-type"]
+        assert 'filename="books.csv"' in response.headers["content-disposition"]
+        assert "Test Book" in response.text
+
+    def test_json_export(self, client: TestClient, mock_components: dict) -> None:
+        """JSON export returns attachment response with correct media type."""
+        mock_items = [
+            ContentItem(
+                id="1",
+                title="Test Movie",
+                author="Director",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.COMPLETED,
+                rating=4,
+                metadata={},
+            ),
+        ]
+        mock_components["storage"].get_content_items = Mock(return_value=mock_items)
+
+        response = client.get("/api/items/export?type=movie&format=json")
+
+        assert response.status_code == 200
+        assert "application/json" in response.headers["content-type"]
+        assert 'filename="movies.json"' in response.headers["content-disposition"]
+        data = response.json()
+        assert len(data) == 1
+        assert data[0]["title"] == "Test Movie"
+
+    def test_invalid_format_returns_400(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """Invalid export format returns 400 error."""
+        response = client.get("/api/items/export?type=book&format=xml")
+
+        assert response.status_code == 400
+        assert "Invalid format" in response.json()["detail"]
+
+    def test_invalid_content_type_returns_400(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """Invalid content type returns 400 error."""
+        response = client.get("/api/items/export?type=podcast&format=csv")
+
+        assert response.status_code == 400
+        assert "Invalid content type" in response.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# Update Endpoint 409 Conflict Tests (8F)
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateEndpoint409Conflict:
+    """Tests for POST /api/update 409 Conflict when sync is already running."""
+
+    def test_update_returns_409_when_sync_already_running(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """POST /api/update returns 409 when a sync job is already in progress.
+
+        Bug coverage: The 409 conflict response path was untested.
+        This verifies that when the SyncManager reports a running job,
+        the endpoint returns HTTP 409 with an informative error message.
+        """
+        with patch("src.web.api.get_sync_manager") as mock_get_sync_manager:
+            mock_manager = Mock(spec=SyncManager)
+            mock_manager.is_running.return_value = True
+            mock_manager.get_status.return_value = {
+                "job": {"source": "goodreads"},
+            }
+            mock_get_sync_manager.return_value = mock_manager
+
+            response = client.post("/api/update", json={"source": "steam"})
+
+            assert response.status_code == 409
+            detail = response.json()["detail"]
+            assert "Sync already in progress" in detail
+            assert "goodreads" in detail
+
+
+# ---------------------------------------------------------------------------
+# SSE Streaming Endpoint Tests (8B)
+# ---------------------------------------------------------------------------
+
+
+def _parse_sse_events(response_text: str) -> list[dict]:
+    """Parse SSE text into a list of JSON event dicts."""
+    events = []
+    for line in response_text.strip().splitlines():
+        if line.startswith("data: "):
+            payload = line[len("data: ") :]
+            events.append(json.loads(payload))
+    return events
+
+
+class TestSSEStreamingEndpoint:
+    """Tests for GET /api/recommendations/stream SSE endpoint."""
+
+    def _make_recommendation(
+        self,
+        item_id: str = "1",
+        title: str = "Test Book",
+        author: str = "Author A",
+    ) -> dict:
+        """Create a mock recommendation dict matching engine output."""
+        item = ContentItem(
+            id=item_id,
+            db_id=int(item_id),
+            title=title,
+            author=author,
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        )
+        return {
+            "item": item,
+            "score": 0.85,
+            "similarity_score": 0.8,
+            "preference_score": 0.7,
+            "reasoning": "Rule-based reasoning",
+            "score_breakdown": {"genre_match": 0.9},
+            "contributing_items": [],
+        }
+
+    def test_phase1_recommendations_event(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """SSE stream emits a phase 1 'recommendations' event with items."""
+        rec = self._make_recommendation()
+        mock_components["engine"].generate_recommendations.return_value = [rec]
+        mock_components["engine"].generate_blurb_for_item.return_value = None
+        mock_components["storage"].get_user_preference_config.return_value = None
+        mock_components["storage"].get_completed_items.return_value = []
+
+        with client.stream(
+            "GET", "/api/recommendations/stream?type=book&count=1"
+        ) as response:
+            assert response.status_code == 200
+            body = response.read().decode()
+
+        events = _parse_sse_events(body)
+        rec_events = [e for e in events if e["type"] == "recommendations"]
+        assert len(rec_events) == 1
+        items = rec_events[0]["items"]
+        assert len(items) == 1
+        assert items[0]["title"] == "Test Book"
+        assert items[0]["llm_reasoning"] is None
+        assert items[0]["score"] == 0.85
+        assert items[0]["score_breakdown"] == {"genre_match": 0.9}
+
+    def test_blurb_events_streamed(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """SSE stream emits 'blurb' events as LLM generates them."""
+        rec = self._make_recommendation()
+        mock_components["engine"].generate_recommendations.return_value = [rec]
+        mock_components["engine"].generate_blurb_for_item.return_value = (
+            "This is a great match."
+        )
+        mock_components["storage"].get_user_preference_config.return_value = None
+        mock_components["storage"].get_completed_items.return_value = []
+
+        with client.stream(
+            "GET", "/api/recommendations/stream?type=book&count=1"
+        ) as response:
+            body = response.read().decode()
+
+        events = _parse_sse_events(body)
+        blurb_events = [e for e in events if e["type"] == "blurb"]
+        assert len(blurb_events) == 1
+        assert blurb_events[0]["index"] == 0
+        assert blurb_events[0]["llm_reasoning"] == "This is a great match."
+
+    def test_done_event_is_final(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """SSE stream ends with a 'done' event."""
+        rec = self._make_recommendation()
+        mock_components["engine"].generate_recommendations.return_value = [rec]
+        mock_components["engine"].generate_blurb_for_item.return_value = None
+        mock_components["storage"].get_user_preference_config.return_value = None
+        mock_components["storage"].get_completed_items.return_value = []
+
+        with client.stream(
+            "GET", "/api/recommendations/stream?type=book&count=1"
+        ) as response:
+            body = response.read().decode()
+
+        events = _parse_sse_events(body)
+        done_events = [e for e in events if e["type"] == "done"]
+        assert len(done_events) == 1
+        # done should be the last event
+        assert events[-1]["type"] == "done"
+
+    def test_error_event_on_engine_failure(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """SSE stream emits an 'error' event when the engine raises."""
+        mock_components["engine"].generate_recommendations.side_effect = RuntimeError(
+            "Engine failure"
+        )
+        mock_components["storage"].get_user_preference_config.return_value = None
+
+        with client.stream(
+            "GET", "/api/recommendations/stream?type=book&count=1"
+        ) as response:
+            body = response.read().decode()
+
+        events = _parse_sse_events(body)
+        error_events = [e for e in events if e["type"] == "error"]
+        assert len(error_events) == 1
+        assert "Failed to generate recommendations" in error_events[0]["message"]
+
+    def test_invalid_content_type_returns_400(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """SSE stream endpoint returns 400 for invalid content type."""
+        response = client.get("/api/recommendations/stream?type=invalid&count=1")
+        assert response.status_code == 400
+        assert "Invalid content type" in response.json()["detail"]
+
+    def test_empty_recommendations_sends_done(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """SSE stream sends empty items + done when no recommendations found."""
+        mock_components["engine"].generate_recommendations.return_value = []
+        mock_components["storage"].get_user_preference_config.return_value = None
+
+        with client.stream(
+            "GET", "/api/recommendations/stream?type=book&count=5"
+        ) as response:
+            body = response.read().decode()
+
+        events = _parse_sse_events(body)
+        assert len(events) == 2
+        assert events[0]["type"] == "recommendations"
+        assert events[0]["items"] == []
+        assert events[1]["type"] == "done"
+
+    def test_blurb_failure_skips_event(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """SSE stream does not emit a blurb event when blurb generation raises."""
+        rec = self._make_recommendation()
+        mock_components["engine"].generate_recommendations.return_value = [rec]
+        mock_components["engine"].generate_blurb_for_item.side_effect = RuntimeError(
+            "LLM unavailable"
+        )
+        mock_components["storage"].get_user_preference_config.return_value = None
+        mock_components["storage"].get_completed_items.return_value = []
+
+        with client.stream(
+            "GET", "/api/recommendations/stream?type=book&count=1"
+        ) as response:
+            body = response.read().decode()
+
+        events = _parse_sse_events(body)
+        blurb_events = [e for e in events if e["type"] == "blurb"]
+        assert len(blurb_events) == 0
+        # Should still get recommendations and done
+        assert events[0]["type"] == "recommendations"
+        assert events[-1]["type"] == "done"

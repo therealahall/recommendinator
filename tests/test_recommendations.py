@@ -368,24 +368,37 @@ def test_generate_recommendations_fewer_than_requested(
     assert len(recommendations) == 1
 
 
-def test_generate_recommendations_raises_on_llm_failure_regression(
-    mock_ollama_client: Mock,
-) -> None:
-    """Regression: LLM failure must raise RuntimeError, not the raw exception."""
-    mock_ollama_client.generate_text.side_effect = ConnectionError("Ollama unreachable")
+class TestRecommendationGeneratorRegression:
+    """Regression tests for RecommendationGenerator bugs."""
 
-    unconsumed = [
-        ContentItem(
-            id="1",
-            title="Book A",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
+    def test_llm_failure_raises_runtime_error_regression(
+        self,
+        mock_ollama_client: Mock,
+    ) -> None:
+        """Regression: LLM failure must raise RuntimeError, not the raw exception.
+
+        Bug reported: Raw ConnectionError leaked to callers instead of RuntimeError.
+        Root cause: generate_recommendations didn't wrap LLM errors.
+        Fix: Catch and re-raise as RuntimeError with descriptive message.
+        """
+        mock_ollama_client.generate_text.side_effect = ConnectionError(
+            "Ollama unreachable"
         )
-    ]
 
-    generator = RecommendationGenerator(mock_ollama_client)
-    with pytest.raises(RuntimeError, match="Recommendation generation failed"):
-        generator.generate_recommendations(ContentType.BOOK, [], unconsumed, count=5)
+        unconsumed = [
+            ContentItem(
+                id="1",
+                title="Book A",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            )
+        ]
+
+        generator = RecommendationGenerator(mock_ollama_client)
+        with pytest.raises(RuntimeError, match="Recommendation generation failed"):
+            generator.generate_recommendations(
+                ContentType.BOOK, [], unconsumed, count=5
+            )
 
 
 def test_generate_single_blurb(mock_ollama_client: Mock) -> None:
@@ -532,3 +545,108 @@ def test_generate_blurbs_per_item_partial_failure(
     assert len(blurbs) == 1
     assert "1" in blurbs
     assert blurbs["1"] == "Great match for your taste."
+
+
+# ===========================================================================
+# Single-item fast path tests (8D)
+# ===========================================================================
+
+
+class TestGenerateBlurbsPerItemSingleItemFastPath:
+    """Tests for the single-item fast path in generate_blurbs_per_item.
+
+    When ``len(items_with_refs) == 1``, the method skips
+    ``ThreadPoolExecutor`` overhead and calls ``generate_single_blurb``
+    directly in the current thread.
+    """
+
+    @pytest.fixture()
+    def generator(self, mock_ollama_client: Mock) -> RecommendationGenerator:
+        return RecommendationGenerator(mock_ollama_client)
+
+    def test_single_item_uses_fast_path(
+        self, generator: RecommendationGenerator, mock_ollama_client: Mock
+    ) -> None:
+        """Single item bypasses ThreadPoolExecutor and returns blurb directly."""
+        mock_ollama_client.generate_text.return_value = "A perfect sci-fi pick."
+
+        item = ContentItem(
+            id="42",
+            title="Book X",
+            author="Author X",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        )
+        consumed = [
+            ContentItem(
+                id="1",
+                title="Favorite Book",
+                author="Author",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+            )
+        ]
+        refs = [
+            ContentItem(
+                id="ref1",
+                title="Reference Book",
+                author="Ref Author",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+            )
+        ]
+
+        blurbs = generator.generate_blurbs_per_item(
+            content_type=ContentType.BOOK,
+            items_with_refs=[(item, refs)],
+            consumed_items=consumed,
+        )
+
+        assert blurbs == {"42": "A perfect sci-fi pick."}
+        mock_ollama_client.generate_text.assert_called_once()
+
+    def test_single_item_fast_path_handles_failure(
+        self, generator: RecommendationGenerator, mock_ollama_client: Mock
+    ) -> None:
+        """Single-item fast path logs warning and returns empty on failure."""
+        mock_ollama_client.generate_text.side_effect = RuntimeError("LLM down")
+
+        item = ContentItem(
+            id="42",
+            title="Book X",
+            author="Author X",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        )
+
+        blurbs = generator.generate_blurbs_per_item(
+            content_type=ContentType.BOOK,
+            items_with_refs=[(item, [])],
+            consumed_items=[],
+        )
+
+        assert blurbs == {}
+
+    def test_single_item_fast_path_does_not_use_thread_pool(
+        self, generator: RecommendationGenerator, mock_ollama_client: Mock
+    ) -> None:
+        """Single-item fast path skips ThreadPoolExecutor entirely."""
+        mock_ollama_client.generate_text.return_value = "Good match."
+
+        item = ContentItem(
+            id="42",
+            title="Book X",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        )
+
+        with patch("src.llm.recommendations.ThreadPoolExecutor") as mock_pool_cls:
+            blurbs = generator.generate_blurbs_per_item(
+                content_type=ContentType.BOOK,
+                items_with_refs=[(item, [])],
+                consumed_items=[],
+            )
+
+        mock_pool_cls.assert_not_called()
+        assert blurbs == {"42": "Good match."}

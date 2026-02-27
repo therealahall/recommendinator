@@ -5,26 +5,7 @@ import pytest
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.recommendations.preferences import UserPreferences
 from src.recommendations.ranking import RecommendationRanker
-
-
-def _make_item(
-    item_id: str,
-    title: str = "Item",
-    genres: str | None = None,
-    content_type: ContentType = ContentType.BOOK,
-    status: ConsumptionStatus = ConsumptionStatus.UNREAD,
-) -> ContentItem:
-    """Helper to build a ContentItem with optional genre metadata."""
-    metadata = {}
-    if genres:
-        metadata["genre"] = genres
-    return ContentItem(
-        id=item_id,
-        title=title,
-        content_type=content_type,
-        status=status,
-        metadata=metadata,
-    )
+from tests.factories import make_item
 
 
 @pytest.fixture
@@ -154,16 +135,20 @@ class TestDiversityScoring:
     def test_diversity_score_different_genres(self) -> None:
         """Items with genres unlike recently completed get a high diversity score."""
         recently_completed = [
-            _make_item(
-                "c1", genres="Science Fiction", status=ConsumptionStatus.COMPLETED
+            make_item(
+                item_id="c1",
+                genres="Science Fiction",
+                status=ConsumptionStatus.COMPLETED,
             ),
-            _make_item(
-                "c2", genres="Science Fiction", status=ConsumptionStatus.COMPLETED
+            make_item(
+                item_id="c2",
+                genres="Science Fiction",
+                status=ConsumptionStatus.COMPLETED,
             ),
         ]
 
         # Mystery candidate is different from sci-fi completed items
-        mystery_item = _make_item("u1", genres="Mystery")
+        mystery_item = make_item(item_id="u1", genres="Mystery")
         score = RecommendationRanker._calculate_diversity_score(
             mystery_item,
             RecommendationRanker._collect_recent_genres(recently_completed),
@@ -173,12 +158,14 @@ class TestDiversityScoring:
     def test_diversity_score_same_genres(self) -> None:
         """Items matching recently completed genres get a low diversity score."""
         recently_completed = [
-            _make_item(
-                "c1", genres="Science Fiction", status=ConsumptionStatus.COMPLETED
+            make_item(
+                item_id="c1",
+                genres="Science Fiction",
+                status=ConsumptionStatus.COMPLETED,
             ),
         ]
 
-        scifi_item = _make_item("u1", genres="Science Fiction")
+        scifi_item = make_item(item_id="u1", genres="Science Fiction")
         score = RecommendationRanker._calculate_diversity_score(
             scifi_item,
             RecommendationRanker._collect_recent_genres(recently_completed),
@@ -187,18 +174,20 @@ class TestDiversityScoring:
 
     def test_diversity_score_no_recent_items(self) -> None:
         """Without recent items, diversity score is neutral."""
-        item = _make_item("u1", genres="Mystery")
+        item = make_item(item_id="u1", genres="Mystery")
         score = RecommendationRanker._calculate_diversity_score(item, set())
         assert score == 0.5
 
     def test_diversity_score_no_genres_on_item(self) -> None:
         """Items without genre metadata get a neutral diversity score."""
         recently_completed = [
-            _make_item(
-                "c1", genres="Science Fiction", status=ConsumptionStatus.COMPLETED
+            make_item(
+                item_id="c1",
+                genres="Science Fiction",
+                status=ConsumptionStatus.COMPLETED,
             ),
         ]
-        no_genre_item = _make_item("u1")
+        no_genre_item = make_item(item_id="u1")
         score = RecommendationRanker._calculate_diversity_score(
             no_genre_item,
             RecommendationRanker._collect_recent_genres(recently_completed),
@@ -208,17 +197,23 @@ class TestDiversityScoring:
     def test_diversity_weight_affects_ranking(self, neutral_preferences) -> None:
         """When diversity_weight > 0, genre-different items rank higher."""
         recently_completed = [
-            _make_item(
-                "c1", genres="Science Fiction", status=ConsumptionStatus.COMPLETED
+            make_item(
+                item_id="c1",
+                genres="Science Fiction",
+                status=ConsumptionStatus.COMPLETED,
             ),
-            _make_item(
-                "c2", genres="Science Fiction", status=ConsumptionStatus.COMPLETED
+            make_item(
+                item_id="c2",
+                genres="Science Fiction",
+                status=ConsumptionStatus.COMPLETED,
             ),
         ]
 
         # Two candidates with equal similarity
-        scifi_item = _make_item("u1", title="Sci-Fi Book", genres="Science Fiction")
-        mystery_item = _make_item("u2", title="Mystery Book", genres="Mystery")
+        scifi_item = make_item(
+            item_id="u1", title="Sci-Fi Book", genres="Science Fiction"
+        )
+        mystery_item = make_item(item_id="u2", title="Mystery Book", genres="Mystery")
 
         ranker = RecommendationRanker(
             similarity_weight=0.5, preference_weight=0.0, diversity_weight=0.5
@@ -238,8 +233,10 @@ class TestDiversityScoring:
     def test_zero_diversity_weight_no_effect(self, neutral_preferences) -> None:
         """When diversity_weight is 0, diversity bonus has no effect on ranking."""
         recently_completed = [
-            _make_item(
-                "c1", genres="Science Fiction", status=ConsumptionStatus.COMPLETED
+            make_item(
+                item_id="c1",
+                genres="Science Fiction",
+                status=ConsumptionStatus.COMPLETED,
             ),
         ]
 
@@ -247,8 +244,10 @@ class TestDiversityScoring:
             similarity_weight=1.0, preference_weight=0.0, diversity_weight=0.0
         )
 
-        scifi_item = _make_item("u1", title="Sci-Fi Book", genres="Science Fiction")
-        mystery_item = _make_item("u2", title="Mystery Book", genres="Mystery")
+        scifi_item = make_item(
+            item_id="u1", title="Sci-Fi Book", genres="Science Fiction"
+        )
+        mystery_item = make_item(item_id="u2", title="Mystery Book", genres="Mystery")
 
         ranked = ranker.rank(
             candidates=[(scifi_item, 0.9), (mystery_item, 0.7)],

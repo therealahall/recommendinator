@@ -7,18 +7,7 @@ import pytest
 
 from src.ingestion.plugin_base import SourceError
 from src.ingestion.sync import SyncResult, execute_multi_source_sync, execute_sync
-from src.models.content import ConsumptionStatus, ContentItem, ContentType
-
-
-def _make_item(title: str, external_id: str | None = None) -> ContentItem:
-    """Create a minimal ContentItem for testing."""
-    return ContentItem(
-        id=external_id,
-        title=title,
-        author=None,
-        content_type=ContentType.BOOK,
-        status=ConsumptionStatus.COMPLETED,
-    )
+from tests.factories import make_item
 
 
 class TestSyncResult:
@@ -44,7 +33,7 @@ class TestExecuteSync:
 
     def test_basic_sync(self) -> None:
         """Items are fetched, saved, and counted."""
-        items = [_make_item("Book 1"), _make_item("Book 2")]
+        items = [make_item("Book 1"), make_item("Book 2")]
         plugin = MagicMock()
         plugin.display_name = "TestPlugin"
         plugin.fetch.return_value = iter(items)
@@ -65,7 +54,7 @@ class TestExecuteSync:
 
     def test_sync_with_embeddings(self) -> None:
         """Embeddings are generated when enabled."""
-        items = [_make_item("Book 1", external_id="ext_1")]
+        items = [make_item("Book 1", item_id="ext_1")]
         plugin = MagicMock()
         plugin.display_name = "TestPlugin"
         plugin.fetch.return_value = iter(items)
@@ -92,7 +81,7 @@ class TestExecuteSync:
 
     def test_sync_skips_existing_embeddings(self) -> None:
         """Embeddings are not regenerated for items that already have one."""
-        items = [_make_item("Book 1", external_id="ext_1")]
+        items = [make_item("Book 1", item_id="ext_1")]
         plugin = MagicMock()
         plugin.display_name = "TestPlugin"
         plugin.fetch.return_value = iter(items)
@@ -116,7 +105,7 @@ class TestExecuteSync:
 
     def test_sync_generates_embedding_for_items_without_external_id(self) -> None:
         """Items without external IDs always get embeddings (can't check existence)."""
-        items = [_make_item("Book 1")]  # id=None
+        items = [make_item("Book 1")]  # id=None
         plugin = MagicMock()
         plugin.display_name = "TestPlugin"
         plugin.fetch.return_value = iter(items)
@@ -142,7 +131,7 @@ class TestExecuteSync:
 
     def test_sync_without_embeddings(self) -> None:
         """Embedding generator is not called when use_embeddings is False."""
-        items = [_make_item("Book 1")]
+        items = [make_item("Book 1")]
         plugin = MagicMock()
         plugin.display_name = "TestPlugin"
         plugin.fetch.return_value = iter(items)
@@ -164,7 +153,7 @@ class TestExecuteSync:
 
     def test_sync_records_save_errors(self) -> None:
         """Errors during save are recorded but don't stop the sync."""
-        items = [_make_item("Good"), _make_item("Bad"), _make_item("Also Good")]
+        items = [make_item("Good"), make_item("Bad"), make_item("Also Good")]
         plugin = MagicMock()
         plugin.display_name = "TestPlugin"
         plugin.fetch.return_value = iter(items)
@@ -185,7 +174,7 @@ class TestExecuteSync:
 
     def test_progress_callback_called(self) -> None:
         """Progress callback receives updates during sync."""
-        items = [_make_item("Book 1")]
+        items = [make_item("Book 1")]
         plugin = MagicMock()
         plugin.display_name = "TestPlugin"
         plugin.fetch.return_value = iter(items)
@@ -265,12 +254,12 @@ class TestExecuteMultiSourceSync:
         plugin_a = MagicMock()
         plugin_a.name = "source_a"
         plugin_a.display_name = "Source A"
-        plugin_a.fetch.return_value = iter([_make_item("A1")])
+        plugin_a.fetch.return_value = iter([make_item("A1")])
 
         plugin_b = MagicMock()
         plugin_b.name = "source_b"
         plugin_b.display_name = "Source B"
-        plugin_b.fetch.return_value = iter([_make_item("B1"), _make_item("B2")])
+        plugin_b.fetch.return_value = iter([make_item("B1"), make_item("B2")])
 
         storage = MagicMock()
 
@@ -294,7 +283,7 @@ class TestExecuteMultiSourceSync:
         plugin_b = MagicMock()
         plugin_b.name = "working"
         plugin_b.display_name = "Working"
-        plugin_b.fetch.return_value = iter([_make_item("B1")])
+        plugin_b.fetch.return_value = iter([make_item("B1")])
 
         storage = MagicMock()
         error_callback = MagicMock()
@@ -327,7 +316,7 @@ class TestExecuteMultiSourceSync:
         plugin = MagicMock()
         plugin.name = "test"
         plugin.display_name = "Test"
-        plugin.fetch.return_value = iter([_make_item("Book 1")])
+        plugin.fetch.return_value = iter([make_item("Book 1")])
 
         storage = MagicMock()
         storage.save_content_item.return_value = 1
@@ -349,7 +338,7 @@ class TestAutoEnrichmentHook:
 
     def test_mark_for_enrichment_enabled(self) -> None:
         """Items are marked for enrichment when flag is True."""
-        items = [_make_item("Book 1"), _make_item("Book 2")]
+        items = [make_item("Book 1"), make_item("Book 2")]
         plugin = MagicMock()
         plugin.display_name = "TestPlugin"
         plugin.fetch.return_value = iter(items)
@@ -371,7 +360,7 @@ class TestAutoEnrichmentHook:
 
     def test_mark_for_enrichment_disabled(self) -> None:
         """Items are not marked for enrichment when flag is False."""
-        items = [_make_item("Book 1")]
+        items = [make_item("Book 1")]
         plugin = MagicMock()
         plugin.display_name = "TestPlugin"
         plugin.fetch.return_value = iter(items)
@@ -391,7 +380,7 @@ class TestAutoEnrichmentHook:
 
     def test_mark_for_enrichment_default_disabled(self) -> None:
         """mark_for_enrichment defaults to False."""
-        items = [_make_item("Book 1")]
+        items = [make_item("Book 1")]
         plugin = MagicMock()
         plugin.display_name = "TestPlugin"
         plugin.fetch.return_value = iter(items)
@@ -411,7 +400,7 @@ class TestAutoEnrichmentHook:
 
     def test_mark_for_enrichment_error_does_not_fail_sync(self) -> None:
         """Errors from marking for enrichment don't stop the sync."""
-        items = [_make_item("Book 1"), _make_item("Book 2")]
+        items = [make_item("Book 1"), make_item("Book 2")]
         plugin = MagicMock()
         plugin.display_name = "TestPlugin"
         plugin.fetch.return_value = iter(items)
@@ -436,7 +425,7 @@ class TestAutoEnrichmentHook:
 
     def test_mark_for_enrichment_skipped_when_no_db_id(self) -> None:
         """Enrichment marking is skipped when save returns None/0."""
-        items = [_make_item("Book 1")]
+        items = [make_item("Book 1")]
         plugin = MagicMock()
         plugin.display_name = "TestPlugin"
         plugin.fetch.return_value = iter(items)
@@ -460,7 +449,7 @@ class TestSyncEmbeddingLogging:
 
     def test_logs_generating_embedding(self, caplog: pytest.LogCaptureFixture) -> None:
         """Generating an embedding logs an INFO message with item title."""
-        items = [_make_item("The Name of the Wind", external_id="ext_1")]
+        items = [make_item("The Name of the Wind", item_id="ext_1")]
         plugin = MagicMock()
         plugin.display_name = "TestPlugin"
         plugin.fetch.return_value = iter(items)
@@ -490,7 +479,7 @@ class TestSyncEmbeddingLogging:
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         """Skipping an existing embedding logs a DEBUG message."""
-        items = [_make_item("Dune", external_id="ext_1")]
+        items = [make_item("Dune", item_id="ext_1")]
         plugin = MagicMock()
         plugin.display_name = "TestPlugin"
         plugin.fetch.return_value = iter(items)
@@ -518,9 +507,9 @@ class TestSyncEmbeddingLogging:
     ) -> None:
         """Completion log includes counts of generated and skipped embeddings."""
         items = [
-            _make_item("New Book", external_id="new_1"),
-            _make_item("Old Book", external_id="old_1"),
-            _make_item("Another New", external_id="new_2"),
+            make_item("New Book", item_id="new_1"),
+            make_item("Old Book", item_id="old_1"),
+            make_item("Another New", item_id="new_2"),
         ]
         plugin = MagicMock()
         plugin.display_name = "TestPlugin"
@@ -551,7 +540,7 @@ class TestSyncEmbeddingLogging:
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         """Completion log has no embedding summary when embeddings are disabled."""
-        items = [_make_item("Book 1")]
+        items = [make_item("Book 1")]
         plugin = MagicMock()
         plugin.display_name = "TestPlugin"
         plugin.fetch.return_value = iter(items)

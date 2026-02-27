@@ -17,30 +17,7 @@ from src.recommendations.scorers import (
     extract_genres,
 )
 from src.utils.series import build_series_tracking
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _make_item(
-    title: str = "Test Item",
-    content_type: ContentType = ContentType.BOOK,
-    status: ConsumptionStatus = ConsumptionStatus.COMPLETED,
-    rating: int | None = None,
-    author: str | None = None,
-    metadata: dict | None = None,
-    item_id: str | None = None,
-) -> ContentItem:
-    return ContentItem(
-        id=item_id,
-        title=title,
-        content_type=content_type,
-        status=status,
-        rating=rating,
-        author=author,
-        metadata=metadata or {},
-    )
+from tests.factories import make_item
 
 
 def _build_context(
@@ -69,27 +46,27 @@ def _build_context(
 
 class TestExtractGenres:
     def test_single_genre(self) -> None:
-        item = _make_item(metadata={"genre": "Fantasy"})
+        item = make_item(metadata={"genre": "Fantasy"})
         assert extract_genres(item) == ["fantasy"]
 
     def test_genres_list(self) -> None:
-        item = _make_item(metadata={"genres": ["Action", "RPG"]})
+        item = make_item(metadata={"genres": ["Action", "RPG"]})
         assert extract_genres(item) == ["action", "rpg"]
 
     def test_both_genre_and_genres(self) -> None:
-        item = _make_item(metadata={"genre": "Sci-Fi", "genres": ["Action"]})
+        item = make_item(metadata={"genre": "Sci-Fi", "genres": ["Action"]})
         result = extract_genres(item)
         # "sci-fi" is normalized to "science fiction"
         assert "science fiction" in result
         assert "action" in result
 
     def test_no_metadata(self) -> None:
-        item = _make_item(metadata={})
+        item = make_item(metadata={})
         assert extract_genres(item) == []
 
     def test_tags_included_for_cross_content_matching(self) -> None:
         """Tags should be extracted alongside genres for cross-content-type matching."""
-        item = _make_item(
+        item = make_item(
             metadata={"genres": ["Fantasy"], "tags": ["epic", "adventure"]}
         )
         result = extract_genres(item)
@@ -99,7 +76,7 @@ class TestExtractGenres:
 
     def test_tags_list_as_string(self) -> None:
         """Tags as comma-separated string should be extracted."""
-        item = _make_item(metadata={"tags": "sci-fi, space opera"})
+        item = make_item(metadata={"tags": "sci-fi, space opera"})
         result = extract_genres(item)
         # "sci-fi" is normalized to "science fiction"
         assert "science fiction" in result
@@ -108,15 +85,15 @@ class TestExtractGenres:
 
 class TestExtractCreator:
     def test_author_field(self) -> None:
-        item = _make_item(author="Brandon Sanderson")
+        item = make_item(author="Brandon Sanderson")
         assert extract_creator(item) == "brandon sanderson"
 
     def test_director_metadata(self) -> None:
-        item = _make_item(metadata={"director": "Christopher Nolan"})
+        item = make_item(metadata={"director": "Christopher Nolan"})
         assert extract_creator(item) == "christopher nolan"
 
     def test_no_creator(self) -> None:
-        item = _make_item()
+        item = make_item()
         assert extract_creator(item) is None
 
 
@@ -128,8 +105,8 @@ class TestExtractCreator:
 class TestScoringContext:
     def test_populates_consumed_genres(self) -> None:
         consumed = [
-            _make_item(rating=5, metadata={"genre": "Fantasy"}),
-            _make_item(rating=4, metadata={"genres": ["Sci-Fi", "Action"]}),
+            make_item(rating=5, metadata={"genre": "Fantasy"}),
+            make_item(rating=4, metadata={"genres": ["Sci-Fi", "Action"]}),
         ]
         context = _build_context(consumed=consumed)
         assert "fantasy" in context.consumed_genres
@@ -139,8 +116,8 @@ class TestScoringContext:
 
     def test_populates_consumed_creators(self) -> None:
         consumed = [
-            _make_item(author="Author A", rating=5),
-            _make_item(metadata={"director": "Director B"}, rating=3),
+            make_item(author="Author A", rating=5),
+            make_item(metadata={"director": "Director B"}, rating=3),
         ]
         context = _build_context(consumed=consumed)
         assert "author a" in context.consumed_creators
@@ -148,8 +125,8 @@ class TestScoringContext:
 
     def test_ratings_by_genre(self) -> None:
         consumed = [
-            _make_item(rating=5, metadata={"genre": "Fantasy"}),
-            _make_item(rating=3, metadata={"genre": "Fantasy"}),
+            make_item(rating=5, metadata={"genre": "Fantasy"}),
+            make_item(rating=3, metadata={"genre": "Fantasy"}),
         ]
         context = _build_context(consumed=consumed)
         assert context.ratings_by_genre["fantasy"] == [5, 3]
@@ -162,9 +139,9 @@ class TestScoringContext:
 
 class TestGenreMatchScorer:
     def test_preferred_genre_scores_high(self) -> None:
-        consumed = [_make_item(rating=5, metadata={"genre": "Fantasy"})]
+        consumed = [make_item(rating=5, metadata={"genre": "Fantasy"})]
         context = _build_context(consumed=consumed)
-        candidate = _make_item(
+        candidate = make_item(
             status=ConsumptionStatus.UNREAD, metadata={"genre": "Fantasy"}
         )
         scorer = GenreMatchScorer()
@@ -172,9 +149,9 @@ class TestGenreMatchScorer:
         assert score > 0.5
 
     def test_disliked_genre_scores_low(self) -> None:
-        consumed = [_make_item(rating=1, metadata={"genre": "Romance"})]
+        consumed = [make_item(rating=1, metadata={"genre": "Romance"})]
         context = _build_context(consumed=consumed)
-        candidate = _make_item(
+        candidate = make_item(
             status=ConsumptionStatus.UNREAD, metadata={"genre": "Romance"}
         )
         scorer = GenreMatchScorer()
@@ -183,7 +160,7 @@ class TestGenreMatchScorer:
 
     def test_no_genre_returns_neutral(self) -> None:
         context = _build_context(consumed=[])
-        candidate = _make_item(status=ConsumptionStatus.UNREAD)
+        candidate = make_item(status=ConsumptionStatus.UNREAD)
         scorer = GenreMatchScorer()
         assert scorer.score(candidate, context) == 0.5
 
@@ -195,9 +172,9 @@ class TestGenreMatchScorer:
 
 class TestCreatorMatchScorer:
     def test_preferred_author_scores_high(self) -> None:
-        consumed = [_make_item(author="Brandon Sanderson", rating=5)]
+        consumed = [make_item(author="Brandon Sanderson", rating=5)]
         context = _build_context(consumed=consumed)
-        candidate = _make_item(
+        candidate = make_item(
             author="Brandon Sanderson", status=ConsumptionStatus.UNREAD
         )
         scorer = CreatorMatchScorer()
@@ -206,13 +183,13 @@ class TestCreatorMatchScorer:
 
     def test_unknown_creator_neutral(self) -> None:
         context = _build_context(consumed=[])
-        candidate = _make_item(author="Unknown Author", status=ConsumptionStatus.UNREAD)
+        candidate = make_item(author="Unknown Author", status=ConsumptionStatus.UNREAD)
         scorer = CreatorMatchScorer()
         assert scorer.score(candidate, context) == 0.5
 
     def test_no_creator_neutral(self) -> None:
         context = _build_context(consumed=[])
-        candidate = _make_item(status=ConsumptionStatus.UNREAD)
+        candidate = make_item(status=ConsumptionStatus.UNREAD)
         scorer = CreatorMatchScorer()
         assert scorer.score(candidate, context) == 0.5
 
@@ -236,9 +213,9 @@ class TestTagOverlapScorer:
 
     def test_single_match_scores_low(self) -> None:
         """One matching genre should score 0.3."""
-        consumed = [_make_item(metadata={"genre": "Fantasy"}, rating=5)]
+        consumed = [make_item(metadata={"genre": "Fantasy"}, rating=5)]
         context = _build_context(consumed=consumed)
-        candidate = _make_item(
+        candidate = make_item(
             status=ConsumptionStatus.UNREAD, metadata={"genre": "Fantasy"}
         )
         scorer = TagOverlapScorer()
@@ -246,9 +223,9 @@ class TestTagOverlapScorer:
 
     def test_no_overlap(self) -> None:
         """No matching genres should score 0.0."""
-        consumed = [_make_item(metadata={"genre": "Fantasy"}, rating=5)]
+        consumed = [make_item(metadata={"genre": "Fantasy"}, rating=5)]
         context = _build_context(consumed=consumed)
-        candidate = _make_item(
+        candidate = make_item(
             status=ConsumptionStatus.UNREAD, metadata={"genre": "Comedy"}
         )
         scorer = TagOverlapScorer()
@@ -256,9 +233,9 @@ class TestTagOverlapScorer:
 
     def test_two_matches_scores_medium(self) -> None:
         """Two matching genres should score 0.5."""
-        consumed = [_make_item(metadata={"genres": ["Fantasy", "Action"]}, rating=5)]
+        consumed = [make_item(metadata={"genres": ["Fantasy", "Action"]}, rating=5)]
         context = _build_context(consumed=consumed)
-        candidate = _make_item(
+        candidate = make_item(
             status=ConsumptionStatus.UNREAD,
             metadata={"genres": ["Action", "Fantasy", "Horror"]},
         )
@@ -268,12 +245,10 @@ class TestTagOverlapScorer:
     def test_three_matches_scores_high(self) -> None:
         """Three matching genres should score 0.8."""
         consumed = [
-            _make_item(
-                metadata={"genres": ["Fantasy", "Action", "Adventure"]}, rating=5
-            )
+            make_item(metadata={"genres": ["Fantasy", "Action", "Adventure"]}, rating=5)
         ]
         context = _build_context(consumed=consumed)
-        candidate = _make_item(
+        candidate = make_item(
             status=ConsumptionStatus.UNREAD,
             metadata={"genres": ["Action", "Fantasy", "Adventure"]},
         )
@@ -283,7 +258,7 @@ class TestTagOverlapScorer:
     def test_five_matches_scores_max(self) -> None:
         """Five or more matching genres should score 1.0."""
         consumed = [
-            _make_item(
+            make_item(
                 metadata={
                     "genres": ["Fantasy", "Action", "Adventure", "Drama", "Mystery"]
                 },
@@ -291,7 +266,7 @@ class TestTagOverlapScorer:
             )
         ]
         context = _build_context(consumed=consumed)
-        candidate = _make_item(
+        candidate = make_item(
             status=ConsumptionStatus.UNREAD,
             metadata={"genres": ["Fantasy", "Action", "Adventure", "Drama", "Mystery"]},
         )
@@ -301,16 +276,16 @@ class TestTagOverlapScorer:
     def test_empty_genres_returns_zero(self) -> None:
         """No genres at all should score 0.0."""
         context = _build_context(consumed=[])
-        candidate = _make_item(status=ConsumptionStatus.UNREAD, metadata={})
+        candidate = make_item(status=ConsumptionStatus.UNREAD, metadata={})
         scorer = TagOverlapScorer()
         assert scorer.score(candidate, context) == 0.0
 
     def test_cluster_match_provides_semantic_floor(self) -> None:
         """Candidate with 'space warfare' should score well against consumed 'war'
         via shared cluster even without direct term overlap."""
-        consumed = [_make_item(metadata={"genres": ["War"]}, rating=5)]
+        consumed = [make_item(metadata={"genres": ["War"]}, rating=5)]
         context = _build_context(consumed=consumed)
-        candidate = _make_item(
+        candidate = make_item(
             status=ConsumptionStatus.UNREAD,
             metadata={"genres": ["Space Warfare"]},
         )
@@ -321,9 +296,9 @@ class TestTagOverlapScorer:
 
     def test_direct_match_still_works(self) -> None:
         """Direct term matching should still work and take precedence."""
-        consumed = [_make_item(metadata={"genres": ["Fantasy", "Action"]}, rating=5)]
+        consumed = [make_item(metadata={"genres": ["Fantasy", "Action"]}, rating=5)]
         context = _build_context(consumed=consumed)
-        candidate = _make_item(
+        candidate = make_item(
             status=ConsumptionStatus.UNREAD,
             metadata={"genres": ["Fantasy", "Action"]},
         )
@@ -337,8 +312,8 @@ class TestScoringContextClusters:
     def test_consumed_clusters_populated(self) -> None:
         """ScoringContext should populate consumed_clusters from genres."""
         consumed = [
-            _make_item(rating=5, metadata={"genre": "Science Fiction"}),
-            _make_item(rating=5, metadata={"genre": "Fantasy"}),
+            make_item(rating=5, metadata={"genre": "Science Fiction"}),
+            make_item(rating=5, metadata={"genre": "Fantasy"}),
         ]
         context = _build_context(consumed=consumed)
         assert "science_fiction" in context.consumed_clusters
@@ -359,10 +334,10 @@ class TestSeriesOrderScorer:
     def test_next_in_sequence_high_rating(self) -> None:
         """Next in series with high rating (5) should score 1.0."""
         consumed = [
-            _make_item(title="Mistborn (Mistborn, #1)", rating=5),
+            make_item(title="Mistborn (Mistborn, #1)", rating=5),
         ]
         context = _build_context(consumed=consumed)
-        candidate = _make_item(
+        candidate = make_item(
             title="Mistborn (Mistborn, #2)", status=ConsumptionStatus.UNREAD
         )
         scorer = SeriesOrderScorer()
@@ -371,10 +346,10 @@ class TestSeriesOrderScorer:
     def test_next_in_sequence_good_rating(self) -> None:
         """Next in series with good rating (4) should score 1.0."""
         consumed = [
-            _make_item(title="Mistborn (Mistborn, #1)", rating=4),
+            make_item(title="Mistborn (Mistborn, #1)", rating=4),
         ]
         context = _build_context(consumed=consumed)
-        candidate = _make_item(
+        candidate = make_item(
             title="Mistborn (Mistborn, #2)", status=ConsumptionStatus.UNREAD
         )
         scorer = SeriesOrderScorer()
@@ -383,10 +358,10 @@ class TestSeriesOrderScorer:
     def test_next_in_sequence_moderate_rating(self) -> None:
         """Next in series with moderate rating (3) should score ~0.85."""
         consumed = [
-            _make_item(title="Mistborn (Mistborn, #1)", rating=3),
+            make_item(title="Mistborn (Mistborn, #1)", rating=3),
         ]
         context = _build_context(consumed=consumed)
-        candidate = _make_item(
+        candidate = make_item(
             title="Mistborn (Mistborn, #2)", status=ConsumptionStatus.UNREAD
         )
         scorer = SeriesOrderScorer()
@@ -396,10 +371,10 @@ class TestSeriesOrderScorer:
     def test_next_in_sequence_low_rating(self) -> None:
         """Next in series with low rating (2) should score ~0.7."""
         consumed = [
-            _make_item(title="Mistborn (Mistborn, #1)", rating=2),
+            make_item(title="Mistborn (Mistborn, #1)", rating=2),
         ]
         context = _build_context(consumed=consumed)
-        candidate = _make_item(
+        candidate = make_item(
             title="Mistborn (Mistborn, #2)", status=ConsumptionStatus.UNREAD
         )
         scorer = SeriesOrderScorer()
@@ -409,10 +384,10 @@ class TestSeriesOrderScorer:
     def test_next_in_sequence_very_low_rating(self) -> None:
         """Next in series with very low rating (1) should score ~0.6."""
         consumed = [
-            _make_item(title="Mistborn (Mistborn, #1)", rating=1),
+            make_item(title="Mistborn (Mistborn, #1)", rating=1),
         ]
         context = _build_context(consumed=consumed)
-        candidate = _make_item(
+        candidate = make_item(
             title="Mistborn (Mistborn, #2)", status=ConsumptionStatus.UNREAD
         )
         scorer = SeriesOrderScorer()
@@ -422,10 +397,10 @@ class TestSeriesOrderScorer:
     def test_next_in_sequence_no_rating(self) -> None:
         """Next in series with no rating should score ~0.85 (default)."""
         consumed = [
-            _make_item(title="Mistborn (Mistborn, #1)", rating=None),
+            make_item(title="Mistborn (Mistborn, #1)", rating=None),
         ]
         context = _build_context(consumed=consumed)
-        candidate = _make_item(
+        candidate = make_item(
             title="Mistborn (Mistborn, #2)", status=ConsumptionStatus.UNREAD
         )
         scorer = SeriesOrderScorer()
@@ -435,11 +410,11 @@ class TestSeriesOrderScorer:
     def test_next_in_sequence_average_of_multiple_books(self) -> None:
         """Rating boost should use average of all consumed books in series."""
         consumed = [
-            _make_item(title="Mistborn (Mistborn, #1)", rating=5),
-            _make_item(title="Mistborn (Mistborn, #2)", rating=3),
+            make_item(title="Mistborn (Mistborn, #1)", rating=5),
+            make_item(title="Mistborn (Mistborn, #2)", rating=3),
         ]
         context = _build_context(consumed=consumed)
-        candidate = _make_item(
+        candidate = make_item(
             title="Mistborn (Mistborn, #3)", status=ConsumptionStatus.UNREAD
         )
         scorer = SeriesOrderScorer()
@@ -449,14 +424,14 @@ class TestSeriesOrderScorer:
 
     def test_first_in_unstarted_series(self) -> None:
         context = _build_context(consumed=[])
-        candidate = _make_item(title="Dune (Dune, #1)", status=ConsumptionStatus.UNREAD)
+        candidate = make_item(title="Dune (Dune, #1)", status=ConsumptionStatus.UNREAD)
         scorer = SeriesOrderScorer()
         assert scorer.score(candidate, context) == 0.8
 
     def test_too_far_ahead(self) -> None:
-        consumed = [_make_item(title="Mistborn (Mistborn, #1)", rating=5)]
+        consumed = [make_item(title="Mistborn (Mistborn, #1)", rating=5)]
         context = _build_context(consumed=consumed)
-        candidate = _make_item(
+        candidate = make_item(
             title="Mistborn (Mistborn, #5)", status=ConsumptionStatus.UNREAD
         )
         scorer = SeriesOrderScorer()
@@ -469,12 +444,12 @@ class TestSeriesOrderScorer:
         is already consumed (or a duplicate) and should be deprioritized.
         """
         consumed = [
-            _make_item(title="Mistborn (Mistborn, #1)", rating=5),
-            _make_item(title="Mistborn (Mistborn, #2)", rating=4),
-            _make_item(title="Mistborn (Mistborn, #3)", rating=4),
+            make_item(title="Mistborn (Mistborn, #1)", rating=5),
+            make_item(title="Mistborn (Mistborn, #2)", rating=4),
+            make_item(title="Mistborn (Mistborn, #3)", rating=4),
         ]
         context = _build_context(consumed=consumed)
-        candidate = _make_item(
+        candidate = make_item(
             title="Mistborn (Mistborn, #3)", status=ConsumptionStatus.UNREAD
         )
         scorer = SeriesOrderScorer()
@@ -488,11 +463,11 @@ class TestSeriesOrderScorer:
         (the user has already moved past it in the series).
         """
         consumed = [
-            _make_item(title="Mistborn (Mistborn, #1)", rating=5),
-            _make_item(title="Mistborn (Mistborn, #3)", rating=4),
+            make_item(title="Mistborn (Mistborn, #1)", rating=5),
+            make_item(title="Mistborn (Mistborn, #3)", rating=4),
         ]
         context = _build_context(consumed=consumed)
-        candidate = _make_item(
+        candidate = make_item(
             title="Mistborn (Mistborn, #2)", status=ConsumptionStatus.UNREAD
         )
         scorer = SeriesOrderScorer()
@@ -500,9 +475,7 @@ class TestSeriesOrderScorer:
 
     def test_non_series_neutral(self) -> None:
         context = _build_context(consumed=[])
-        candidate = _make_item(
-            title="Standalone Novel", status=ConsumptionStatus.UNREAD
-        )
+        candidate = make_item(title="Standalone Novel", status=ConsumptionStatus.UNREAD)
         scorer = SeriesOrderScorer()
         assert scorer.score(candidate, context) == 0.5
 
@@ -515,11 +488,11 @@ class TestSeriesOrderScorer:
 class TestRatingPatternScorer:
     def test_high_average_in_genre(self) -> None:
         consumed = [
-            _make_item(rating=5, metadata={"genre": "Fantasy"}),
-            _make_item(rating=5, metadata={"genre": "Fantasy"}),
+            make_item(rating=5, metadata={"genre": "Fantasy"}),
+            make_item(rating=5, metadata={"genre": "Fantasy"}),
         ]
         context = _build_context(consumed=consumed)
-        candidate = _make_item(
+        candidate = make_item(
             status=ConsumptionStatus.UNREAD, metadata={"genre": "Fantasy"}
         )
         scorer = RatingPatternScorer()
@@ -529,11 +502,11 @@ class TestRatingPatternScorer:
 
     def test_low_average_in_genre(self) -> None:
         consumed = [
-            _make_item(rating=1, metadata={"genre": "Horror"}),
-            _make_item(rating=1, metadata={"genre": "Horror"}),
+            make_item(rating=1, metadata={"genre": "Horror"}),
+            make_item(rating=1, metadata={"genre": "Horror"}),
         ]
         context = _build_context(consumed=consumed)
-        candidate = _make_item(
+        candidate = make_item(
             status=ConsumptionStatus.UNREAD, metadata={"genre": "Horror"}
         )
         scorer = RatingPatternScorer()
@@ -542,9 +515,9 @@ class TestRatingPatternScorer:
         assert score == 0.0
 
     def test_no_matching_genre_neutral(self) -> None:
-        consumed = [_make_item(rating=5, metadata={"genre": "Fantasy"})]
+        consumed = [make_item(rating=5, metadata={"genre": "Fantasy"})]
         context = _build_context(consumed=consumed)
-        candidate = _make_item(
+        candidate = make_item(
             status=ConsumptionStatus.UNREAD, metadata={"genre": "Romance"}
         )
         scorer = RatingPatternScorer()
@@ -552,7 +525,7 @@ class TestRatingPatternScorer:
 
     def test_no_genre_info_neutral(self) -> None:
         context = _build_context(consumed=[])
-        candidate = _make_item(status=ConsumptionStatus.UNREAD)
+        candidate = make_item(status=ConsumptionStatus.UNREAD)
         scorer = RatingPatternScorer()
         assert scorer.score(candidate, context) == 0.5
 
@@ -565,7 +538,7 @@ class TestRatingPatternScorer:
 class TestSemanticSimilarityScorer:
     def test_returns_precomputed_score(self) -> None:
         """Scorer returns the pre-computed similarity score for a candidate."""
-        candidate = _make_item(item_id="item-1", status=ConsumptionStatus.UNREAD)
+        candidate = make_item(item_id="item-1", status=ConsumptionStatus.UNREAD)
         context = _build_context(consumed=[])
         context.similarity_scores = {"item-1": 0.85}
         scorer = SemanticSimilarityScorer()
@@ -573,7 +546,7 @@ class TestSemanticSimilarityScorer:
 
     def test_returns_zero_when_candidate_not_in_scores(self) -> None:
         """Scorer returns 0.0 when candidate id is not in similarity_scores."""
-        candidate = _make_item(item_id="item-2", status=ConsumptionStatus.UNREAD)
+        candidate = make_item(item_id="item-2", status=ConsumptionStatus.UNREAD)
         context = _build_context(consumed=[])
         context.similarity_scores = {"item-1": 0.85}
         scorer = SemanticSimilarityScorer()
@@ -581,14 +554,14 @@ class TestSemanticSimilarityScorer:
 
     def test_returns_zero_when_similarity_scores_empty(self) -> None:
         """Scorer returns 0.0 when no similarity scores are available."""
-        candidate = _make_item(item_id="item-1", status=ConsumptionStatus.UNREAD)
+        candidate = make_item(item_id="item-1", status=ConsumptionStatus.UNREAD)
         context = _build_context(consumed=[])
         scorer = SemanticSimilarityScorer()
         assert scorer.score(candidate, context) == 0.0
 
     def test_handles_none_candidate_id(self) -> None:
         """Scorer handles candidates with None id via dict lookup."""
-        candidate = _make_item(status=ConsumptionStatus.UNREAD)
+        candidate = make_item(status=ConsumptionStatus.UNREAD)
         assert candidate.id is None
         context = _build_context(consumed=[])
         context.similarity_scores = {None: 0.7}
@@ -611,7 +584,7 @@ class TestSemanticSimilarityScorer:
 
     def test_no_fallback_without_parent_id(self) -> None:
         """Scorer does not fall back when parent_id is None."""
-        candidate = _make_item(item_id="tvdb:123:s1", status=ConsumptionStatus.UNREAD)
+        candidate = make_item(item_id="tvdb:123:s1", status=ConsumptionStatus.UNREAD)
         assert candidate.parent_id is None
         context = _build_context(consumed=[])
         context.similarity_scores = {"tvdb:123": 0.9}
@@ -727,7 +700,7 @@ class TestCustomPreferenceScorer:
 
     def test_genre_boost_scores_high(self) -> None:
         """Items matching a boosted genre should score above 0.5."""
-        candidate = _make_item(
+        candidate = make_item(
             metadata={"genre": "horror"}, status=ConsumptionStatus.UNREAD
         )
         context = _build_context(consumed=[])
@@ -737,7 +710,7 @@ class TestCustomPreferenceScorer:
 
     def test_genre_penalty_scores_low(self) -> None:
         """Items matching a penalized genre should score below 0.5."""
-        candidate = _make_item(
+        candidate = make_item(
             metadata={"genre": "romance"}, status=ConsumptionStatus.UNREAD
         )
         context = _build_context(consumed=[])
@@ -747,7 +720,7 @@ class TestCustomPreferenceScorer:
 
     def test_partial_boost(self) -> None:
         """Partial boost factor maps proportionally."""
-        candidate = _make_item(
+        candidate = make_item(
             metadata={"genre": "mystery"}, status=ConsumptionStatus.UNREAD
         )
         context = _build_context(consumed=[])
@@ -757,7 +730,7 @@ class TestCustomPreferenceScorer:
 
     def test_partial_penalty(self) -> None:
         """Partial penalty factor maps proportionally."""
-        candidate = _make_item(
+        candidate = make_item(
             metadata={"genre": "thriller"}, status=ConsumptionStatus.UNREAD
         )
         context = _build_context(consumed=[])
@@ -767,7 +740,7 @@ class TestCustomPreferenceScorer:
 
     def test_no_matching_rules_returns_neutral(self) -> None:
         """Items not matching any rule should return 0.5."""
-        candidate = _make_item(
+        candidate = make_item(
             metadata={"genre": "drama"}, status=ConsumptionStatus.UNREAD
         )
         context = _build_context(consumed=[])
@@ -779,7 +752,7 @@ class TestCustomPreferenceScorer:
 
     def test_no_genre_info_returns_neutral(self) -> None:
         """Items without genre metadata should return 0.5."""
-        candidate = _make_item(metadata={}, status=ConsumptionStatus.UNREAD)
+        candidate = make_item(metadata={}, status=ConsumptionStatus.UNREAD)
         context = _build_context(consumed=[])
         scorer = CustomPreferenceScorer(genre_boosts={"comedy": 1.0})
         score = scorer.score(candidate, context)
@@ -787,7 +760,7 @@ class TestCustomPreferenceScorer:
 
     def test_penalty_takes_precedence_over_boost(self) -> None:
         """When a genre has both boost and penalty, penalty wins."""
-        candidate = _make_item(
+        candidate = make_item(
             metadata={"genres": ["horror", "comedy"]}, status=ConsumptionStatus.UNREAD
         )
         context = _build_context(consumed=[])
@@ -801,7 +774,7 @@ class TestCustomPreferenceScorer:
 
     def test_case_insensitive_matching(self) -> None:
         """Genre matching should be case-insensitive."""
-        candidate = _make_item(
+        candidate = make_item(
             metadata={"genre": "Horror"}, status=ConsumptionStatus.UNREAD
         )
         context = _build_context(consumed=[])
@@ -816,7 +789,7 @@ class TestCustomPreferenceScorer:
 
     def test_empty_rules_returns_neutral(self) -> None:
         """Empty boost and penalty dicts should return 0.5."""
-        candidate = _make_item(
+        candidate = make_item(
             metadata={"genre": "fantasy"}, status=ConsumptionStatus.UNREAD
         )
         context = _build_context(consumed=[])
@@ -835,7 +808,7 @@ class TestContentLengthScorer:
 
     def test_no_preferences_returns_neutral(self) -> None:
         """No content_length_preferences in context returns 0.5 (neutral)."""
-        candidate = _make_item(
+        candidate = make_item(
             content_type=ContentType.BOOK,
             metadata={"pages": 800},
             status=ConsumptionStatus.UNREAD,
@@ -846,7 +819,7 @@ class TestContentLengthScorer:
 
     def test_exact_match_returns_1(self) -> None:
         """Short book with short preference returns 1.0."""
-        candidate = _make_item(
+        candidate = make_item(
             content_type=ContentType.BOOK,
             metadata={"pages": 200},
             status=ConsumptionStatus.UNREAD,
@@ -858,7 +831,7 @@ class TestContentLengthScorer:
 
     def test_opposite_returns_04(self) -> None:
         """Long book with short preference returns 0.4."""
-        candidate = _make_item(
+        candidate = make_item(
             content_type=ContentType.BOOK,
             metadata={"pages": 800},
             status=ConsumptionStatus.UNREAD,
