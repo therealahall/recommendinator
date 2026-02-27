@@ -129,7 +129,9 @@ IMPORTANT formatting rules:
 - Do NOT use your general knowledge to fabricate what someone thought or felt — only reference reviews and ratings explicitly shown above
 - Each review belongs to the item on the SAME line — do NOT attribute it to a different item
 - Author names are exact — do NOT claim two items share an author unless the names shown above match
-- Reference ratings as numbers — do NOT interpret them as emotions or sentiments"""
+- Reference ratings as numbers — do NOT interpret them as emotions or sentiments
+- Write about the recommended item itself — do NOT describe its sequels, prequels, or other entries in the same franchise
+- Do NOT reference other candidates as things the user has played or enjoyed — they have NOT consumed any candidate. Only reference items from the rated list above."""
 
     return prompt
 
@@ -163,7 +165,9 @@ def build_recommendation_system_prompt(content_type: ContentType) -> str:
 - Do NOT use your general knowledge to fabricate what they thought or felt about an item — only reference reviews and ratings explicitly provided
 - Each review belongs to the item on the SAME line — never attribute a review to a different item
 - Do NOT claim items share the same author unless the author names shown are identical
-- A book is NOT a show, a movie is NOT a game — use the correct content type"""
+- A book is NOT a show, a movie is NOT a game — use the correct content type
+- Write about the RECOMMENDED item itself — NOT about its sequels, prequels, or other entries in the same series that appear in the user's history
+- NEVER reference other candidates or picks as things the user has consumed — they are unconsumed recommendations"""
 
 
 def build_blurb_system_prompt(content_type: ContentType) -> str:
@@ -192,6 +196,10 @@ def build_blurb_system_prompt(content_type: ContentType) -> str:
         " NEVER misattribute reviews or author connections between items."
         " NEVER reveal plot twists, endings, or major surprises."
         " State ratings as numbers, never interpret them as emotions or sentiments."
+        " Write about the RECOMMENDED item itself — NEVER write about its"
+        " sequels, prequels, or other series entries instead."
+        " NEVER reference other picks as things the user has consumed —"
+        " only reference the user's favorites."
     )
 
 
@@ -199,6 +207,7 @@ def build_blurb_prompt(
     content_type: ContentType,
     selected_items: list[ContentItem],
     consumed_items: list[ContentItem],
+    per_item_references: list[list[ContentItem]] | None = None,
 ) -> str:
     """Build a prompt for writing blurbs about pre-selected recommendation items.
 
@@ -210,6 +219,9 @@ def build_blurb_prompt(
         content_type: Type of content being recommended
         selected_items: Pre-selected items to write blurbs for
         consumed_items: User's favorites for taste reference
+        per_item_references: Genre-relevant reference items for each pick.
+            ``per_item_references[i]`` lists the consumed items that
+            contributed to recommending ``selected_items[i]``.
 
     Returns:
         Formatted prompt string
@@ -280,7 +292,9 @@ Rules:
 - Each review belongs to the item on the SAME line — do NOT attribute it to a different item
 - Author names are exact — do NOT claim two items share an author unless the names shown above match
 - Do NOT reveal plot twists, endings, or major surprises
-- Reference ratings as numbers — do NOT interpret them as emotions or sentiments"""
+- Reference ratings as numbers — do NOT interpret them as emotions or sentiments
+- Each blurb must describe the PICK itself — do NOT write about its sequels, prequels, or other series entries
+- Do NOT reference other picks as things the user has played or enjoyed — they have NOT consumed any pick. Only reference favorites listed above."""
 
 
 def build_content_description(item: ContentItem) -> str:
