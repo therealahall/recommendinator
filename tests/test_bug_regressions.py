@@ -1043,3 +1043,63 @@ class TestInlineReasoningRegression:
         assert results[0]["author"] == "Patrick Rothfuss"
         assert results[0]["item"] is not None
         assert "beautiful prose" in results[0]["reasoning"]
+
+    def test_by_author_with_inline_reasoning_regression(
+        self, generator: RecommendationGenerator
+    ) -> None:
+        """Bold title with 'by Author - reasoning' must extract both fields.
+
+        Bug reported: When the LLM outputs inline reasoning after the author
+        on the same line (e.g. "**Title** by Author - Great book..."), the
+        parser grabbed everything after "by " as the author, corrupting it
+        with reasoning text and discarding the reasoning entirely.
+
+        Root cause: Greedy grab of remainder[3:] after "by " prefix.
+
+        Fix: Split author text at the first separator (-, —, –, :) to
+        separate author from inline reasoning.
+        """
+        response = (
+            "1. **The Name of the Wind** by Patrick Rothfuss - "
+            "A beautifully written epic fantasy"
+        )
+        unconsumed = [
+            ContentItem(
+                id="1",
+                title="The Name of the Wind",
+                author="Patrick Rothfuss",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            ),
+        ]
+        results = generator._parse_recommendations(response, unconsumed, count=1)
+
+        assert len(results) == 1
+        assert (
+            results[0]["author"] == "Patrick Rothfuss"
+        ), f"Author must not absorb separator, got: {results[0]['author']!r}"
+        assert "beautifully written" in results[0]["reasoning"]
+        assert results[0]["item"] is not None
+
+    def test_en_dash_separator_stripped_regression(
+        self, generator: RecommendationGenerator
+    ) -> None:
+        """En-dash (U+2013) separator must be stripped like em-dash and hyphen.
+
+        Bug reported: LLMs emit en-dashes (–) which are visually identical
+        to em-dashes (—), but the separator regex only handled em-dashes,
+        leaving the en-dash in the reasoning text.
+
+        Root cause: Character class [-—:] missing U+2013 (–).
+
+        Fix: Add en-dash to both separator patterns.
+        """
+        response = "1. **Gremlins** \u2013 A fun horror-comedy"
+        items = _make_movie_items(["Gremlins"])
+        results = generator._parse_recommendations(response, items, count=1)
+
+        assert len(results) == 1
+        assert results[0]["reasoning"].startswith(
+            "A fun"
+        ), f"En-dash separator not stripped: {results[0]['reasoning']!r}"
+        assert results[0]["item"] is not None
