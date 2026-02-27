@@ -280,6 +280,12 @@
 
         resultsDiv.innerHTML = '<div class="empty-state"><span class="spinner"></span> Loading recommendations...</div>';
 
+        // Use streaming endpoint when LLM reasoning is enabled
+        if (useLlm && aiFeatures.llm_reasoning_enabled) {
+            fetchRecommendationsStreaming(contentType, count, resultsDiv);
+            return;
+        }
+
         var params = new URLSearchParams({
             type: contentType,
             count: count,
@@ -296,15 +302,148 @@
                 renderRecommendations(recs);
             })
             .catch(function (error) {
-                resultsDiv.innerHTML = '<div class="status-bar error" style="display:block">Failed to load recommendations: ' + escapeHtml(error.message) + '</div>';
+                resultsDiv.textContent = "";
+                var errDiv = document.createElement("div");
+                errDiv.className = "status-bar error";
+                errDiv.style.display = "block";
+                errDiv.textContent = "Failed to load recommendations: " + error.message;
+                resultsDiv.appendChild(errDiv);
             });
     }
 
-    function renderRecommendations(recs) {
+    function fetchRecommendationsStreaming(contentType, count, resultsDiv) {
+        var params = new URLSearchParams({
+            type: contentType,
+            count: count,
+            user_id: currentUserId.toString()
+        });
+
+        fetch(API_BASE + "/recommendations/stream?" + params)
+            .then(function (response) {
+                if (!response.ok) throw new Error("HTTP " + response.status);
+
+                // Fallback: if ReadableStream not supported, read full response
+                if (!response.body || !response.body.getReader) {
+                    return response.text().then(function (text) {
+                        processRecSSELines(text, resultsDiv);
+                    });
+                }
+
+                var reader = response.body.getReader();
+                var decoder = new TextDecoder();
+                var buffer = "";
+
+                function read() {
+                    return reader.read().then(function (result) {
+                        if (result.done) return;
+                        buffer += decoder.decode(result.value, { stream: true });
+
+                        // Process complete lines
+                        var lines = buffer.split("\n");
+                        buffer = lines.pop() || "";
+                        lines.forEach(function (line) {
+                            processRecSSELine(line, resultsDiv);
+                        });
+
+                        return read();
+                    });
+                }
+
+                return read();
+            })
+            .catch(function (error) {
+                // Fallback to sync endpoint on streaming failure
+                console.warn("Streaming failed, falling back to sync:", error);
+                var fallbackParams = new URLSearchParams({
+                    type: contentType,
+                    count: count,
+                    use_llm: "true",
+                    user_id: currentUserId.toString()
+                });
+                fetch(API_BASE + "/recommendations?" + fallbackParams)
+                    .then(function (r) {
+                        if (!r.ok) throw new Error("HTTP " + r.status);
+                        return r.json();
+                    })
+                    .then(function (recs) { renderRecommendations(recs); })
+                    .catch(function (err) {
+                        resultsDiv.textContent = "";
+                        var errDiv = document.createElement("div");
+                        errDiv.className = "status-bar error";
+                        errDiv.style.display = "block";
+                        errDiv.textContent = "Failed to load recommendations: " + err.message;
+                        resultsDiv.appendChild(errDiv);
+                    });
+            });
+    }
+
+    function processRecSSELines(text, resultsDiv) {
+        text.split("\n").forEach(function (line) {
+            processRecSSELine(line, resultsDiv);
+        });
+    }
+
+    function processRecSSELine(line, resultsDiv) {
+        if (!line.startsWith("data: ")) return;
+        var data;
+        try {
+            data = JSON.parse(line.substring(6));
+        } catch (e) {
+            return;
+        }
+
+        if (data.type === "recommendations") {
+            renderRecommendations(data.items, true);
+        } else if (data.type === "blurb") {
+            var idx = data.index;
+            if (typeof idx !== "number" || idx < 0) return;
+            var cards = resultsDiv.querySelectorAll(".rec-card");
+            if (idx >= cards.length) return;
+            var card = cards[idx];
+            var dots = card.querySelector(".loading-dots");
+            if (dots) {
+                var reasoningDiv = document.createElement("div");
+                reasoningDiv.className = "rec-llm-reasoning";
+                reasoningDiv.innerHTML = renderMarkdown(data.llm_reasoning);
+                dots.parentNode.replaceChild(reasoningDiv, dots);
+            }
+            // Fold pipeline reasoning into score details now that LLM reasoning exists
+            var pipelineReasoning = card.querySelector(".rec-reasoning:not(.rec-reasoning-folded)");
+            if (pipelineReasoning) {
+                var details = card.querySelector(".score-details");
+                if (details) {
+                    var folded = pipelineReasoning.cloneNode(true);
+                    folded.classList.add("rec-reasoning-folded");
+                    details.insertBefore(folded, details.querySelector(".score-breakdown"));
+                }
+                pipelineReasoning.remove();
+            }
+        } else if (data.type === "done") {
+            // Remove any remaining loading dots (blurb generation failed for those)
+            resultsDiv.querySelectorAll(".loading-dots").forEach(function (el) {
+                el.remove();
+            });
+        } else if (data.type === "error") {
+            resultsDiv.textContent = "";
+            var errDiv = document.createElement("div");
+            errDiv.className = "status-bar error";
+            errDiv.style.display = "block";
+            errDiv.textContent = "Failed to load recommendations: " + (data.message || "Unknown error");
+            resultsDiv.appendChild(errDiv);
+        }
+    }
+
+    function renderRecommendations(recs, streaming) {
         var resultsDiv = document.getElementById("recResults");
 
         if (!recs || recs.length === 0) {
-            resultsDiv.innerHTML = '<div class="empty-state"><p>No recommendations available. Try adding more content to your library.</p></div>';
+            resultsDiv.textContent = "";
+            var empty = document.createElement("div");
+            empty.className = "empty-state";
+            var p = document.createElement("p");
+            p.textContent = "No recommendations available. Try adding more content to your library.";
+            empty.appendChild(p);
+            resultsDiv.appendChild(empty);
             return;
         }
 
@@ -312,7 +451,7 @@
         recs.forEach(function (rec, index) {
             var hasLlmReasoning = rec.llm_reasoning && rec.llm_reasoning.trim();
             var hasBreakdown = rec.score_breakdown && Object.keys(rec.score_breakdown).length > 0;
-            var defaultOpen = !hasLlmReasoning;
+            var defaultOpen = !hasLlmReasoning && !streaming;
 
             html += '<div class="rec-card">';
             html += '<div class="rec-header">';
@@ -336,11 +475,14 @@
             // LLM reasoning (rendered as markdown when available)
             if (hasLlmReasoning) {
                 html += '<div class="rec-llm-reasoning">' + renderMarkdown(rec.llm_reasoning) + '</div>';
+            } else if (streaming) {
+                // Show loading dots placeholder while blurbs stream in
+                html += '<div class="loading-dots"><span></span><span></span><span></span></div>';
             }
 
             // When LLM reasoning is active, fold pipeline reasoning into score details.
             // When LLM reasoning is absent, show pipeline reasoning in its normal position.
-            if (!hasLlmReasoning && rec.reasoning) {
+            if (!hasLlmReasoning && !streaming && rec.reasoning) {
                 html += '<div class="rec-reasoning">' + escapeHtml(rec.reasoning) + '</div>';
             }
 

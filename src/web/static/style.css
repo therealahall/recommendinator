@@ -734,6 +734,24 @@ input[type="checkbox"] {
     font-style: normal;
 }
 
+/* LLM outputs numbered lists ("1. **Title**"); strip list chrome so items
+   render as styled paragraphs rather than browser-default bullet/number lists. */
+.rec-llm-reasoning ol,
+.rec-llm-reasoning ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.rec-llm-reasoning li {
+    margin: 0 0 var(--space-2) 0;
+    padding: 0;
+}
+
+.rec-llm-reasoning li:last-child {
+    margin-bottom: 0;
+}
+
 .rec-reasoning {
     font-size: var(--text-sm);
     color: var(--text-secondary);
@@ -746,6 +764,35 @@ input[type="checkbox"] {
     margin-bottom: var(--space-3);
     padding-bottom: var(--space-3);
     border-bottom: 1px solid var(--border);
+}
+
+/* Loading dots for streaming blurbs */
+.loading-dots {
+    display: flex;
+    gap: 4px;
+    padding: var(--space-2) 0;
+}
+
+.loading-dots span {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    opacity: 0.3;
+    animation: dot-pulse 1.4s ease-in-out infinite;
+}
+
+.loading-dots span:nth-child(2) {
+    animation-delay: 0.2s;
+}
+
+.loading-dots span:nth-child(3) {
+    animation-delay: 0.4s;
+}
+
+@keyframes dot-pulse {
+    0%, 80%, 100% { opacity: 0.3; }
+    40% { opacity: 1; }
 }
 
 /* Score Breakdown */
