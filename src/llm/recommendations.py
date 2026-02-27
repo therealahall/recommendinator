@@ -251,10 +251,17 @@ class RecommendationGenerator:
                 title = bold_match.group(1).strip()
                 remainder = bold_match.group(2).strip()
                 if remainder.lower().startswith("by "):
-                    author = remainder[3:].strip()
+                    author_text = remainder[3:].strip()
+                    # Split author from inline reasoning at first separator
+                    sep_match = re.search(r"\s+[-—–]\s+|:\s+", author_text)
+                    if sep_match:
+                        author = author_text[: sep_match.start()].strip()
+                        inline_reasoning = author_text[sep_match.end() :].strip()
+                    else:
+                        author = author_text
                 elif remainder:
-                    # Strip leading separators (-, —, :) from inline reasoning
-                    inline_reasoning = re.sub(r"^[-—:]\s*", "", remainder).strip()
+                    # Strip leading separators (-, —, –, :) from inline reasoning
+                    inline_reasoning = re.sub(r"^[-—–:]\s*", "", remainder).strip()
             else:
                 # No bold markers — existing fallback behavior
                 if " by " in title_line:
