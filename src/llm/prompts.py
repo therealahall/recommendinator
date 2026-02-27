@@ -170,6 +170,67 @@ def build_recommendation_system_prompt(content_type: ContentType) -> str:
 - NEVER reference other candidates or picks as things the user has consumed — they are unconsumed recommendations"""
 
 
+def _build_blurb_taste_context(
+    content_type: ContentType,
+    consumed_items: list[ContentItem],
+) -> str:
+    """Build taste context text for blurb prompts.
+
+    Selects up to 5 high-rated favorites, preferring same-type items.
+    Used by both ``build_blurb_prompt`` and ``build_single_blurb_prompt``.
+
+    Args:
+        content_type: Type of content being recommended
+        consumed_items: User's consumed items
+
+    Returns:
+        Formatted taste context string (may be empty)
+    """
+    content_type_str = get_enum_value(content_type)
+    content_type_name = content_type_str.replace("_", " ").title()
+
+    favorites = [item for item in consumed_items if item.rating and item.rating >= 4]
+    same_type_favorites = [
+        item
+        for item in favorites
+        if get_enum_value(item.content_type) == content_type_str
+    ]
+    cross_type_favorites = [
+        item
+        for item in favorites
+        if get_enum_value(item.content_type) != content_type_str
+    ]
+
+    if len(same_type_favorites) >= 5:
+        context_same = same_type_favorites[:5]
+        context_cross: list[ContentItem] = []
+    else:
+        context_same = same_type_favorites
+        remaining_slots = 5 - len(context_same)
+        context_cross = cross_type_favorites[:remaining_slots]
+
+    context_text = ""
+    if context_same:
+        context_text = f"Their favorite {content_type_name.lower()}s:\n"
+        for item in context_same:
+            context_text += _format_context_item(
+                item, include_type_label=False, include_review=False
+            )
+
+    if context_cross:
+        separator = "\n" if context_same else ""
+        context_text += f"{separator}From other types:\n"
+        for item in context_cross:
+            context_text += _format_context_item(
+                item, include_type_label=True, include_review=False
+            )
+
+    if context_text:
+        context_text += "\n"
+
+    return context_text
+
+
 def build_blurb_system_prompt(content_type: ContentType) -> str:
     """Build a slim system prompt for writing blurbs about pre-selected items.
 
@@ -229,47 +290,7 @@ def build_blurb_prompt(
     content_type_str = get_enum_value(content_type)
     content_type_name = content_type_str.replace("_", " ").title()
 
-    # Build taste context from top consumed items — split by content type
-    favorites = [item for item in consumed_items if item.rating and item.rating >= 4]
-    same_type_favorites = [
-        item
-        for item in favorites
-        if get_enum_value(item.content_type) == content_type_str
-    ]
-    cross_type_favorites = [
-        item
-        for item in favorites
-        if get_enum_value(item.content_type) != content_type_str
-    ]
-
-    # When >= 5 same-type favorites exist, use only same-type (no cross-type noise).
-    # When < 5 same-type, fill remaining slots with cross-type items.
-    if len(same_type_favorites) >= 5:
-        context_same = same_type_favorites[:5]
-        context_cross: list[ContentItem] = []
-    else:
-        context_same = same_type_favorites
-        remaining_slots = 5 - len(context_same)
-        context_cross = cross_type_favorites[:remaining_slots]
-
-    context_text = ""
-    if context_same:
-        context_text = f"Their favorite {content_type_name.lower()}s:\n"
-        for item in context_same:
-            context_text += _format_context_item(
-                item, include_type_label=False, include_review=False
-            )
-
-    if context_cross:
-        separator = "\n" if context_same else ""
-        context_text += f"{separator}From other types:\n"
-        for item in context_cross:
-            context_text += _format_context_item(
-                item, include_type_label=True, include_review=False
-            )
-
-    if context_text:
-        context_text += "\n"
+    context_text = _build_blurb_taste_context(content_type, consumed_items)
 
     # Build selected items list, with optional per-item reference lines
     items_text = ""
@@ -304,6 +325,68 @@ Rules:
 - Reference ratings as numbers — do NOT interpret them as emotions or sentiments
 - Each blurb must describe the PICK itself — do NOT write about its sequels, prequels, or other series entries
 - Do NOT reference other picks as things the user has played or enjoyed — they have NOT consumed any pick. Only reference favorites listed above."""
+
+
+def build_single_blurb_prompt(
+    content_type: ContentType,
+    item: ContentItem,
+    consumed_items: list[ContentItem],
+    references: list[ContentItem] | None = None,
+) -> str:
+    """Build a prompt for writing a blurb about exactly ONE recommendation item.
+
+    Unlike ``build_blurb_prompt`` which asks for a numbered list of blurbs,
+    this prompt targets a single item and expects raw prose back — no title
+    prefix, no numbered list.  This eliminates the need for response parsing
+    and title-matching, which is the root cause of blurb mismatches for
+    movies and TV shows.
+
+    Args:
+        content_type: Type of content being recommended
+        item: The single pre-selected item to write a blurb for
+        consumed_items: User's favorites for taste reference
+        references: Genre-relevant reference items that contributed to
+            recommending this item.
+
+    Returns:
+        Formatted prompt string
+    """
+    content_type_str = get_enum_value(content_type)
+    content_type_name = content_type_str.replace("_", " ").title()
+
+    context_text = _build_blurb_taste_context(content_type, consumed_items)
+
+    # Build the single item line
+    author_text = f" by {item.author}" if item.author else ""
+    genre_tag = format_genre_tag(item)
+    item_line = f"{item.title}{author_text}{genre_tag}"
+
+    # Optional reference line
+    ref_line = ""
+    if references:
+        ref_parts = [
+            f"{ref.title} ({ref.rating}/5)" if ref.rating else ref.title
+            for ref in references
+        ]
+        ref_line = f"\nRelated: {', '.join(ref_parts)}"
+
+    return f"""Write a 2-3 sentence blurb explaining WHY this {content_type_name.lower()} pick fits this person's taste.
+
+{context_text}Pick: {item_line}{ref_line}
+
+Rules:
+- Write only the blurb — no title, no numbered list, just the explanation
+- Connect the pick to its Related items when listed, otherwise to favorites above — mention titles and ratings
+- Address them as "you"
+- Be enthusiastic and specific, not generic
+- Do NOT invent quotes or opinions — only reference what's shown above
+- Do NOT use your general knowledge to fabricate what someone thought or felt — only reference reviews and ratings explicitly shown above
+- Each review belongs to the item on the SAME line — do NOT attribute it to a different item
+- Author names are exact — do NOT claim two items share an author unless the names shown above match
+- Do NOT reveal plot twists, endings, or major surprises
+- Reference ratings as numbers — do NOT interpret them as emotions or sentiments
+- Describe the PICK itself — do NOT write about its sequels, prequels, or other series entries
+- Do NOT reference any other recommendation as something the user has consumed — only reference favorites listed above."""
 
 
 def build_content_description(item: ContentItem) -> str:
