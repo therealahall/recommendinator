@@ -44,7 +44,6 @@ tests/
 !README.md
 Makefile
 requirements-dev.txt
-pyproject.toml
 phase-7-plan.md
 docs/
 
