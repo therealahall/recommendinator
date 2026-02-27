@@ -1022,9 +1022,14 @@ class RecommendationEngine:
             influencing_items.extend(adaptations)
 
         if contributing_items:
+            seen_db_ids = {
+                item.db_id for item in influencing_items if item.db_id is not None
+            }
             for contrib in contributing_items:
-                if contrib not in influencing_items:
+                if contrib.db_id not in seen_db_ids:
                     influencing_items.append(contrib)
+                    if contrib.db_id is not None:
+                        seen_db_ids.add(contrib.db_id)
 
         if influencing_items:
             # Group by content type

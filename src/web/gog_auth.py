@@ -148,10 +148,13 @@ def update_config_with_token(config_path: Path, refresh_token: str) -> None:
 
         # Try to update in-place using regex to preserve formatting
         # Look for refresh_token under gog section
+        # Use a callable replacement to avoid backslash interpretation of the token
         pattern = r"(gog:.*?refresh_token:\s*)[\"']?[^\"'\n]*[\"']?"
-        replacement = rf'\1"{refresh_token}"'
 
-        new_content, count = re.subn(pattern, replacement, content, flags=re.DOTALL)
+        def _replace_token(match: re.Match[str]) -> str:
+            return f'{match.group(1)}"{refresh_token}"'
+
+        new_content, count = re.subn(pattern, _replace_token, content, flags=re.DOTALL)
 
         if count > 0:
             config_path.write_text(new_content)

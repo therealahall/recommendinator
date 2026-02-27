@@ -260,11 +260,20 @@ class EnrichmentManager:
 
                 # Add any remaining not_found items to this batch
                 if not_found_ids and len(items) < batch_size:
-                    # Fetch some not_found items to fill the batch
-                    for db_id in list(not_found_ids)[: batch_size - len(items)]:
-                        item = self.storage_manager.get_content_item(db_id)
-                        if item:
-                            items.append((db_id, item))
+                    # Fetch not_found items in a single batch query
+                    batch_ids = list(not_found_ids)[: batch_size - len(items)]
+                    batch_items = self.storage_manager.get_content_items_by_db_ids(
+                        batch_ids
+                    )
+                    # Build a db_id -> item map from the batch results
+                    fetched_map = {
+                        item.db_id: item
+                        for item in batch_items
+                        if item.db_id is not None
+                    }
+                    for db_id in batch_ids:
+                        if db_id in fetched_map:
+                            items.append((db_id, fetched_map[db_id]))
                         not_found_ids.discard(db_id)
 
                 if not items:

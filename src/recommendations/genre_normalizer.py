@@ -7,21 +7,21 @@ to a common vocabulary, filtering out noise and platform-specific terms.
 import json
 import re
 
-# Patterns to strip from the beginning of terms
+# Pre-compiled patterns to strip from the beginning of terms
 PREFIX_PATTERNS = [
-    r"^fiction,\s*",
-    r"^genre:\s*",
-    r"^firm:\s*",
-    r"^subject:\s*",
+    re.compile(r"^fiction,\s*", re.IGNORECASE),
+    re.compile(r"^genre:\s*", re.IGNORECASE),
+    re.compile(r"^firm:\s*", re.IGNORECASE),
+    re.compile(r"^subject:\s*", re.IGNORECASE),
 ]
 
-# Patterns to strip from the end of terms
+# Pre-compiled patterns to strip from the end of terms
 SUFFIX_PATTERNS = [
-    r",\s*fiction$",
-    r",\s*general$",
-    r"\s*\(fictitious character\).*$",
-    r"\s*\(imaginary place\).*$",
-    r"\s*\(imaginary\).*$",
+    re.compile(r",\s*fiction$", re.IGNORECASE),
+    re.compile(r",\s*general$", re.IGNORECASE),
+    re.compile(r"\s*\(fictitious character\).*$", re.IGNORECASE),
+    re.compile(r"\s*\(imaginary place\).*$", re.IGNORECASE),
+    re.compile(r"\s*\(imaginary\).*$", re.IGNORECASE),
 ]
 
 # Terms to completely exclude (noise)
@@ -1105,12 +1105,12 @@ def normalize_term(term: str) -> str | None:
             return None
 
     # Strip prefixes
-    for pattern in PREFIX_PATTERNS:
-        normalized = re.sub(pattern, "", normalized, flags=re.IGNORECASE)
+    for prefix_re in PREFIX_PATTERNS:
+        normalized = prefix_re.sub("", normalized)
 
     # Strip suffixes
-    for pattern in SUFFIX_PATTERNS:
-        normalized = re.sub(pattern, "", normalized, flags=re.IGNORECASE)
+    for suffix_re in SUFFIX_PATTERNS:
+        normalized = suffix_re.sub("", normalized)
 
     # Strip again after pattern removal
     normalized = normalized.strip()

@@ -23,6 +23,11 @@ class WebEnrichmentManager:
 
     Wraps EnrichmentManager to provide thread-safe web access
     and singleton behavior for the web application.
+
+    Note: This is the public interface for the web layer.
+    Its return types (``tuple[bool, str]``) differ from the core
+    ``EnrichmentManager`` (``bool`` / ``None``) because the web layer
+    needs human-readable status messages for HTTP responses.
     """
 
     def __init__(self) -> None:

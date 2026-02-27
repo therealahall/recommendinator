@@ -5,10 +5,11 @@ import os
 import sys
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
 from src.cli.config import (
     create_llm_components,
@@ -136,15 +137,20 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         logger.error("Failed to initialize components: %s", error)
         raise
 
+    # Configure web settings
+    web_config = config.get("web", {})
+
     # Create FastAPI app
+    debug_mode = web_config.get("debug", False)
     app = FastAPI(
         title="Personal Recommendations API",
         description="API for personalized content recommendations",
         version=APP_VERSION,
+        docs_url="/docs" if debug_mode else None,
+        redoc_url="/redoc" if debug_mode else None,
     )
 
     # Configure CORS (default to localhost only)
-    web_config = config.get("web", {})
     allowed_origins = web_config.get("allowed_origins", ["http://localhost:18473"])
 
     # Disable credentials when wildcard origin is used (browser requirement)
@@ -154,9 +160,28 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         CORSMiddleware,
         allow_origins=allowed_origins,
         allow_credentials=allow_credentials,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
+        allow_headers=["Content-Type", "Accept"],
     )
+
+    # Security headers middleware
+    class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+        async def dispatch(
+            self, request: Request, call_next: RequestResponseEndpoint
+        ) -> Response:
+            response = await call_next(request)
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            response.headers["X-Frame-Options"] = "DENY"
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; "
+                "script-src 'self' 'unsafe-inline'; "
+                "style-src 'self' 'unsafe-inline'; "
+                "img-src 'self' data: https:; "
+                "connect-src 'self'"
+            )
+            return response
+
+    app.add_middleware(SecurityHeadersMiddleware)
 
     # Include API routers
     app.include_router(api_router)

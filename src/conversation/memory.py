@@ -7,6 +7,8 @@ from typing import Any, Literal
 from src.models.conversation import ConversationMessage, CoreMemory, PreferenceProfile
 from src.storage.manager import StorageManager
 from src.storage.schema import (
+    ConversationMessageDict,
+    CoreMemoryDict,
     clear_conversation_history,
     delete_core_memory,
     get_conversation_history,
@@ -273,7 +275,7 @@ class MemoryManager:
 
     # Helper Methods
 
-    def _dict_to_core_memory(self, memory_dict: dict[str, Any]) -> CoreMemory:
+    def _dict_to_core_memory(self, memory_dict: CoreMemoryDict) -> CoreMemory:
         """Convert a dictionary to a CoreMemory object.
 
         Args:
@@ -282,29 +284,31 @@ class MemoryManager:
         Returns:
             CoreMemory object
         """
-        created_at = memory_dict.get("created_at")
-        updated_at = memory_dict.get("updated_at")
+        created_at_str = memory_dict.get("created_at")
+        updated_at_str = memory_dict.get("updated_at")
 
-        # Parse datetime strings if needed
-        if isinstance(created_at, str):
-            created_at = datetime.fromisoformat(created_at)
-        if isinstance(updated_at, str):
-            updated_at = datetime.fromisoformat(updated_at)
+        # Parse datetime strings
+        parsed_created_at = (
+            datetime.fromisoformat(created_at_str) if created_at_str else None
+        )
+        parsed_updated_at = (
+            datetime.fromisoformat(updated_at_str) if updated_at_str else None
+        )
 
         return CoreMemory(
             id=memory_dict["id"],
             user_id=memory_dict["user_id"],
             memory_text=memory_dict["memory_text"],
-            memory_type=memory_dict["memory_type"],
+            memory_type=memory_dict["memory_type"],  # type: ignore[arg-type]
             source=memory_dict["source"],
             confidence=memory_dict.get("confidence", 1.0),
             is_active=memory_dict.get("is_active", True),
-            created_at=created_at,
-            updated_at=updated_at,
+            created_at=parsed_created_at,
+            updated_at=parsed_updated_at,
         )
 
     def _dict_to_conversation_message(
-        self, message_dict: dict[str, Any]
+        self, message_dict: ConversationMessageDict
     ) -> ConversationMessage:
         """Convert a dictionary to a ConversationMessage object.
 
@@ -314,19 +318,20 @@ class MemoryManager:
         Returns:
             ConversationMessage object
         """
-        created_at = message_dict.get("created_at")
+        created_at_str = message_dict.get("created_at")
 
-        # Parse datetime string if needed
-        if isinstance(created_at, str):
-            created_at = datetime.fromisoformat(created_at)
+        # Parse datetime string
+        parsed_created_at = (
+            datetime.fromisoformat(created_at_str) if created_at_str else None
+        )
 
         return ConversationMessage(
             id=message_dict["id"],
             user_id=message_dict["user_id"],
-            role=message_dict["role"],
+            role=message_dict["role"],  # type: ignore[arg-type]
             content=message_dict["content"],
             tool_calls=message_dict.get("tool_calls"),
-            created_at=created_at,
+            created_at=parsed_created_at,
         )
 
     def _dict_to_preference_profile(

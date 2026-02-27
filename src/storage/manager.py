@@ -14,6 +14,10 @@ from src.models.content import (
 )
 from src.models.user_preferences import UserPreferenceConfig
 from src.storage.schema import (
+    ConversationMessageDict,
+    CoreMemoryDict,
+    EnrichmentStatusDict,
+    UserDict,
     clear_cached_preference_interpretations,
     clear_conversation_history,
     delete_core_memory,
@@ -108,7 +112,7 @@ class StorageManager:
             existing = self.get_content_item_by_external_id(
                 external_id=item.id,
                 content_type=ContentType(item.content_type),
-                user_id=user_id or item.user_id,
+                user_id=user_id if user_id is not None else item.user_id,
             )
             if existing is not None:
                 resolved_item = resolve_conflict(
@@ -150,6 +154,17 @@ class StorageManager:
             ContentItem if found, None otherwise
         """
         return self.sqlite_db.get_content_item(db_id, user_id=user_id)
+
+    def get_content_items_by_db_ids(self, db_ids: list[int]) -> list[ContentItem]:
+        """Get multiple content items by their database IDs in a single query.
+
+        Args:
+            db_ids: List of database IDs to fetch
+
+        Returns:
+            List of ContentItem objects found
+        """
+        return self.sqlite_db.get_content_items_by_db_ids(db_ids)
 
     def get_content_items(
         self,
@@ -454,7 +469,7 @@ class StorageManager:
             user_id=user_id,
         )
 
-    def get_all_users(self) -> list[dict[str, Any]]:
+    def get_all_users(self) -> list[UserDict]:
         """Get all users.
 
         Returns:
@@ -476,14 +491,10 @@ class StorageManager:
         """
         with self.sqlite_db.connection() as conn:
             user = get_user_by_id(conn, user_id)
-            if (
-                user
-                and user.get("settings")
-                and "preference_config" in user["settings"]
-            ):
-                return UserPreferenceConfig.from_dict(
-                    user["settings"]["preference_config"]
-                )
+            if user is not None:
+                settings = user["settings"]
+                if settings and "preference_config" in settings:
+                    return UserPreferenceConfig.from_dict(settings["preference_config"])
             return UserPreferenceConfig()
 
     def save_user_preference_config(
@@ -566,7 +577,9 @@ class StorageManager:
             include_not_found=include_not_found,
         )
 
-    def get_enrichment_status(self, content_item_id: int) -> dict | None:
+    def get_enrichment_status(
+        self, content_item_id: int
+    ) -> EnrichmentStatusDict | None:
         """Get enrichment status for a content item.
 
         Args:
@@ -688,7 +701,7 @@ class StorageManager:
         user_id: int,
         active_only: bool = True,
         memory_type: str | None = None,
-    ) -> list[dict]:
+    ) -> list[CoreMemoryDict]:
         """Get core memories for a user.
 
         Args:
@@ -776,7 +789,7 @@ class StorageManager:
         self,
         user_id: int,
         limit: int = 50,
-    ) -> list[dict]:
+    ) -> list[ConversationMessageDict]:
         """Get recent conversation history for a user.
 
         Args:

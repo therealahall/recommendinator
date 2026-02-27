@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from src.models.content import ContentItem
@@ -46,7 +46,9 @@ class ConversationMessage:
     role: Literal["user", "assistant"]
     content: str
     id: int | None = None
-    tool_calls: list[dict] | None = None  # JSON-serializable list of tool calls
+    tool_calls: list[dict[str, Any]] | None = (
+        None  # JSON-serializable list of tool calls
+    )
     created_at: datetime | None = None
 
 
@@ -85,9 +87,9 @@ class ToolResult:
 
     success: bool
     message: str
-    data: dict | None = None
+    data: dict[str, Any] | None = None
     needs_clarification: bool = False
-    clarification_options: list[dict] | None = None  # For ambiguous matches
+    clarification_options: list[dict[str, Any]] | None = None  # For ambiguous matches
 
 
 @dataclass
@@ -101,7 +103,7 @@ class ConversationChunk:
     chunk_type: Literal["text", "tool_call", "tool_result", "memory_extracted", "done"]
     content: str | None = None
     tool_name: str | None = None
-    tool_params: dict | None = None
+    tool_params: dict[str, Any] | None = None
     tool_result: ToolResult | None = None
     memory: CoreMemory | None = None
 

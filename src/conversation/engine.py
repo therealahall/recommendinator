@@ -226,7 +226,7 @@ class ConversationEngine:
                 ``llm.context_window_size``, and ``context.compact_mode``
         """
         self.storage = storage_manager
-        self.ollama = ollama_client
+        self.ollama_client = ollama_client
 
         self.memory = memory_manager or MemoryManager(storage_manager)
         self.context_assembler = context_assembler or ContextAssembler(
@@ -319,14 +319,11 @@ class ConversationEngine:
         # 3. Build system prompt with context (and tools for full mode)
         if self.compact_mode:
             user_context_block = build_user_context_block_compact(context)
-        else:
-            user_context_block = build_user_context_block(context)
-
-        if self.compact_mode:
             system_prompt = self.system_prompt_template.format(
                 user_context=user_context_block,
             )
         else:
+            user_context_block = build_user_context_block(context)
             tool_descriptions = get_tool_descriptions()
             system_prompt = self.system_prompt_template.format(
                 tool_descriptions=tool_descriptions,
@@ -348,10 +345,10 @@ class ConversationEngine:
 
         try:
             if stream:
-                for chunk in self.ollama.chat_stream(
+                for chunk in self.ollama_client.chat_stream(
                     messages=messages,
                     system_prompt=system_prompt,
-                    model=self.ollama.conversation_model,
+                    model=self.ollama_client.conversation_model,
                     temperature=self.temperature,
                     max_tokens=self.max_tokens,
                     context_window_size=self.context_window_size,
@@ -369,10 +366,10 @@ class ConversationEngine:
                     )
             else:
                 # Non-streaming fallback
-                full_response = self.ollama.generate_text(
+                full_response = self.ollama_client.generate_text(
                     prompt=message,
                     system_prompt=system_prompt,
-                    model=self.ollama.conversation_model,
+                    model=self.ollama_client.conversation_model,
                     temperature=self.temperature,
                     max_tokens=self.max_tokens,
                     context_window_size=self.context_window_size,

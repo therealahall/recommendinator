@@ -229,7 +229,11 @@ class SQLiteDB:
             Database ID of the saved item
         """
         # Use provided user_id, fall back to item's user_id, then default
-        effective_user_id = user_id or item.user_id or get_default_user_id()
+        effective_user_id = (
+            user_id
+            if user_id is not None
+            else (item.user_id if item.user_id is not None else get_default_user_id())
+        )
 
         with self.connection() as conn:
             cursor = conn.cursor()
@@ -237,7 +241,7 @@ class SQLiteDB:
             content_type_value = get_enum_value(item.content_type)
 
             # Check if item exists (by user_id, external_id, and content_type)
-            existing_id = None
+            existing_id: int | None = None
             if item.id:
                 cursor.execute(
                     """SELECT id FROM content_items
@@ -246,7 +250,7 @@ class SQLiteDB:
                 )
                 row = cursor.fetchone()
                 if row:
-                    existing_id = row["id"]
+                    existing_id = int(row["id"])
 
             # Fallback: check by normalized title to merge items from different sources
             if existing_id is None and item.title:
@@ -263,7 +267,7 @@ class SQLiteDB:
                             normalize_title_for_matching(row["title"])
                             == normalized_title
                         ):
-                            existing_id = row["id"]
+                            existing_id = int(row["id"])
                             break
 
             if existing_id:
@@ -364,7 +368,10 @@ class SQLiteDB:
                         1 if item.ignored else 0,
                     ),
                 )
-                db_id = cursor.lastrowid
+                lastrowid = cursor.lastrowid
+                if lastrowid is None:
+                    raise RuntimeError("INSERT did not return a row ID")
+                db_id = lastrowid
 
             # Save to type-specific detail table
             self._save_detail_table(cursor, db_id, item, content_type_value)
@@ -374,7 +381,7 @@ class SQLiteDB:
                 self._handle_tv_season_change(cursor, db_id)
 
             conn.commit()
-            return db_id  # type: ignore
+            return db_id
 
     # Configuration for type-specific detail tables.
     # Each entry maps content_type value to:
@@ -775,6 +782,25 @@ class SQLiteDB:
                 return self._row_to_content_item(row)
             return None
 
+    def get_content_items_by_db_ids(self, db_ids: list[int]) -> list[ContentItem]:
+        """Get multiple content items by their database IDs in a single query.
+
+        Args:
+            db_ids: List of database IDs to fetch
+
+        Returns:
+            List of ContentItem objects found (may be shorter than db_ids)
+        """
+        if not db_ids:
+            return []
+
+        with self.connection() as conn:
+            cursor = conn.cursor()
+            placeholders = ", ".join("?" for _ in db_ids)
+            query = f"{_CONTENT_ITEM_SELECT} WHERE ci.id IN ({placeholders})"
+            cursor.execute(query, db_ids)
+            return [self._row_to_content_item(row) for row in cursor.fetchall()]
+
     def get_content_items(
         self,
         user_id: int | None = None,
@@ -830,6 +856,11 @@ class SQLiteDB:
 
             # Apply SQL-level sorting for non-title sorts
             # Title sorting is done in Python to handle article stripping
+            _VALID_SORT_OPTIONS = frozenset(
+                {"title", "updated_at", "rating", "created_at"}
+            )
+            if sort_by not in _VALID_SORT_OPTIONS:
+                raise ValueError(f"Invalid sort_by: {sort_by!r}")
             if sort_by == "updated_at":
                 query += " ORDER BY ci.updated_at DESC"
             elif sort_by == "created_at":

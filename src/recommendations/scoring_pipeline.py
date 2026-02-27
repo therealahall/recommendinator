@@ -12,7 +12,9 @@ from src.utils.series import is_first_item_in_series
 
 logger = logging.getLogger(__name__)
 
-# Build reverse map: scorer class -> config key
+# Build reverse map: scorer class -> config key.
+# Derived from SCORER_NAME_MAP at import time — if SCORER_NAME_MAP is extended,
+# this must be rebuilt (or the new scorer won't appear in breakdowns).
 _CLASS_TO_NAME: dict[type[Scorer], str] = {
     scorer_class: name for name, scorer_class in SCORER_NAME_MAP.items()
 }
@@ -34,7 +36,7 @@ def _tiebreaker_key(item: ContentItem) -> tuple[int, str]:
     """
     is_first = is_first_item_in_series(item=item)
     # Hash the title for stable pseudo-random ordering (avoids pure alphabetical)
-    title_hash = hashlib.md5(item.title.encode()).hexdigest()
+    title_hash = hashlib.md5(item.title.encode(), usedforsecurity=False).hexdigest()
     return (0 if is_first else 1, title_hash)
 
 

@@ -194,8 +194,8 @@ class GenreMatchScorer(Scorer):
         genre_scores = [
             context.preferences.get_genre_score(genre) for genre in candidate_genres
         ]
-        # Use the best matching genre
-        best = max(genre_scores) if genre_scores else 0.0
+        # Use the best matching genre (genre_scores is non-empty since candidate_genres is)
+        best = max(genre_scores)
         # Map [-1, 1] -> [0, 1]
         return (best + 1.0) / 2.0
 

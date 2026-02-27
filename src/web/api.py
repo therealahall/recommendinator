@@ -357,7 +357,8 @@ async def get_recommendations(
         content_type = ContentType.from_string(type)
     except ValueError:
         raise HTTPException(
-            status_code=400, detail=f"Invalid content type: {type}"
+            status_code=400,
+            detail="Invalid content type. Valid options: book, movie, tv_show, video_game",
         ) from None
 
     try:
@@ -448,7 +449,8 @@ async def stream_recommendations(
         content_type = ContentType.from_string(type)
     except ValueError:
         raise HTTPException(
-            status_code=400, detail=f"Invalid content type: {type}"
+            status_code=400,
+            detail="Invalid content type. Valid options: book, movie, tv_show, video_game",
         ) from None
 
     def generate_sse() -> Iterator[str]:
@@ -660,7 +662,8 @@ async def list_items(
             content_type = ContentType.from_string(type)
         except ValueError:
             raise HTTPException(
-                status_code=400, detail=f"Invalid content type: {type}"
+                status_code=400,
+                detail="Invalid content type. Valid options: book, movie, tv_show, video_game",
             ) from None
 
     consumption_status = None
@@ -669,7 +672,8 @@ async def list_items(
             consumption_status = ConsumptionStatus(status.lower())
         except ValueError:
             raise HTTPException(
-                status_code=400, detail=f"Invalid status: {status}"
+                status_code=400,
+                detail="Invalid status. Valid options: unread, currently_consuming, completed",
             ) from None
 
     # Validate sort_by parameter
@@ -677,7 +681,7 @@ async def list_items(
     if sort_by.lower() not in valid_sort_options:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid sort_by: {sort_by}. Valid options: {', '.join(sorted(valid_sort_options))}",
+            detail="Invalid sort_by. Valid options: created_at, rating, title, updated_at",
         )
 
     items = storage.get_content_items(
@@ -719,14 +723,15 @@ async def export_items(
         content_type = ContentType.from_string(type)
     except ValueError:
         raise HTTPException(
-            status_code=400, detail=f"Invalid content type: {type}"
+            status_code=400,
+            detail="Invalid content type. Valid options: book, movie, tv_show, video_game",
         ) from None
 
     export_format = format.lower()
     if export_format not in {"csv", "json"}:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid format: {format}. Must be csv or json",
+            detail="Invalid format. Valid options: csv, json",
         )
 
     items = storage.get_content_items(
@@ -844,8 +849,7 @@ async def edit_item(
     if request.status not in valid_statuses:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid status: {request.status}. "
-            f"Valid options: {', '.join(sorted(valid_statuses))}",
+            detail="Invalid status. Valid options: completed, currently_consuming, unread",
         )
 
     success = storage.update_item_from_ui(
@@ -1268,7 +1272,7 @@ async def start_enrichment(
         except ValueError:
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid content type: {request.content_type}",
+                detail="Invalid content type. Valid options: book, movie, tv_show, video_game",
             ) from None
 
     enrichment_manager = get_enrichment_manager()
@@ -1395,7 +1399,7 @@ async def reset_enrichment(
         except ValueError:
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid content type: {request.content_type}",
+                detail="Invalid content type. Valid options: book, movie, tv_show, video_game",
             ) from None
 
     count = storage.reset_enrichment_status(

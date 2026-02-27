@@ -222,7 +222,7 @@ class CsvImportPlugin(SourcePlugin):
         path = config.get("path")
         if not path:
             errors.append("'path' is required")
-        elif not Path(path).exists():
+        elif not Path(path).resolve().exists():
             errors.append(f"CSV file not found: {path}")
 
         content_type = config.get("content_type", "")

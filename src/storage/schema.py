@@ -2,6 +2,54 @@
 
 import json
 import sqlite3
+from typing import Any, TypedDict
+
+
+class EnrichmentStatusDict(TypedDict):
+    """Enrichment status for a content item."""
+
+    content_item_id: int
+    last_enriched_at: str | None
+    enrichment_provider: str | None
+    enrichment_quality: str | None
+    needs_enrichment: bool
+    enrichment_error: str | None
+
+
+class CoreMemoryDict(TypedDict):
+    """A core memory record."""
+
+    id: int
+    user_id: int
+    memory_text: str
+    memory_type: str
+    source: str
+    confidence: float
+    created_at: str
+    updated_at: str | None
+    is_active: bool
+
+
+class ConversationMessageDict(TypedDict):
+    """A conversation message record."""
+
+    id: int
+    user_id: int
+    role: str
+    content: str
+    tool_calls: list[dict[str, Any]] | None
+    created_at: str
+
+
+class UserDict(TypedDict):
+    """A user record."""
+
+    id: int
+    username: str
+    display_name: str | None
+    created_at: str
+    settings: dict[str, Any] | None
+
 
 # Whitelist of table names allowed in dynamic SQL queries.
 # Defense-in-depth: these names come from hardcoded strings in
@@ -277,6 +325,19 @@ def create_schema(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+_ALLOWED_ALTER_TABLES = frozenset(
+    {
+        "book_details",
+        "movie_details",
+        "tv_show_details",
+        "video_game_details",
+        "content_items",
+    }
+)
+_ALLOWED_ALTER_COLUMNS = frozenset({"tags", "description", "ignored"})
+_ALLOWED_ALTER_TYPES = frozenset({"TEXT", "BOOLEAN DEFAULT 0"})
+
+
 def _add_column_if_not_exists(
     cursor: sqlite3.Cursor, table: str, column: str, column_type: str
 ) -> None:
@@ -284,10 +345,20 @@ def _add_column_if_not_exists(
 
     Args:
         cursor: SQLite cursor
-        table: Table name
-        column: Column name to add
-        column_type: SQL type for the column
+        table: Table name (must be in _ALLOWED_ALTER_TABLES)
+        column: Column name to add (must be in _ALLOWED_ALTER_COLUMNS)
+        column_type: SQL type for the column (must be in _ALLOWED_ALTER_TYPES)
+
+    Raises:
+        ValueError: If table, column, or column_type is not in the allowlist.
     """
+    if table not in _ALLOWED_ALTER_TABLES:
+        raise ValueError(f"Table {table!r} not in allowed tables for ALTER")
+    if column not in _ALLOWED_ALTER_COLUMNS:
+        raise ValueError(f"Column {column!r} not in allowed columns for ALTER")
+    if column_type not in _ALLOWED_ALTER_TYPES:
+        raise ValueError(f"Column type {column_type!r} not in allowed types for ALTER")
+
     # Check if column exists using PRAGMA table_info
     cursor.execute(f"PRAGMA table_info({table})")
     columns = [row[1] for row in cursor.fetchall()]
@@ -299,7 +370,7 @@ def _add_column_if_not_exists(
 # User management functions
 
 
-def _row_to_user_dict(row: tuple) -> dict:
+def _row_to_user_dict(row: tuple) -> UserDict:
     """Convert a user row tuple to a user dict.
 
     Args:
@@ -323,7 +394,7 @@ def _row_to_user_dict(row: tuple) -> dict:
     }
 
 
-def get_user_by_id(conn: sqlite3.Connection, user_id: int) -> dict | None:
+def get_user_by_id(conn: sqlite3.Connection, user_id: int) -> UserDict | None:
     """Get a user by ID.
 
     Args:
@@ -342,7 +413,7 @@ def get_user_by_id(conn: sqlite3.Connection, user_id: int) -> dict | None:
     return _row_to_user_dict(row) if row else None
 
 
-def get_user_by_username(conn: sqlite3.Connection, username: str) -> dict | None:
+def get_user_by_username(conn: sqlite3.Connection, username: str) -> UserDict | None:
     """Get a user by username.
 
     Args:
@@ -421,7 +492,7 @@ def update_user_settings(
     conn.commit()
 
 
-def get_all_users(conn: sqlite3.Connection) -> list[dict]:
+def get_all_users(conn: sqlite3.Connection) -> list[UserDict]:
     """Get all users.
 
     Args:
@@ -513,7 +584,7 @@ def clear_cached_preference_interpretations(conn: sqlite3.Connection) -> int:
 
 def get_enrichment_status(
     conn: sqlite3.Connection, content_item_id: int
-) -> dict | None:
+) -> EnrichmentStatusDict | None:
     """Get enrichment status for a content item.
 
     Args:
@@ -829,7 +900,7 @@ def get_core_memories(
     user_id: int,
     active_only: bool = True,
     memory_type: str | None = None,
-) -> list[dict]:
+) -> list[CoreMemoryDict]:
     """Get core memories for a user.
 
     Args:
@@ -860,20 +931,20 @@ def get_core_memories(
     query += " ORDER BY created_at DESC"
 
     cursor.execute(query, params)
-    memories = []
+    memories: list[CoreMemoryDict] = []
     for row in cursor.fetchall():
         memories.append(
-            {
-                "id": row[0],
-                "user_id": row[1],
-                "memory_text": row[2],
-                "memory_type": row[3],
-                "source": row[4],
-                "confidence": row[5],
-                "created_at": row[6],
-                "updated_at": row[7],
-                "is_active": bool(row[8]),
-            }
+            CoreMemoryDict(
+                id=row[0],
+                user_id=row[1],
+                memory_text=row[2],
+                memory_type=row[3],
+                source=row[4],
+                confidence=row[5],
+                created_at=row[6],
+                updated_at=row[7],
+                is_active=bool(row[8]),
+            )
         )
     return memories
 
@@ -975,7 +1046,7 @@ def get_conversation_history(
     conn: sqlite3.Connection,
     user_id: int,
     limit: int = 50,
-) -> list[dict]:
+) -> list[ConversationMessageDict]:
     """Get recent conversation history for a user.
 
     Args:
@@ -997,7 +1068,7 @@ def get_conversation_history(
         """,
         (user_id, limit),
     )
-    messages = []
+    messages: list[ConversationMessageDict] = []
     for row in cursor.fetchall():
         tool_calls = None
         if row[4]:
@@ -1006,14 +1077,14 @@ def get_conversation_history(
             except (json.JSONDecodeError, TypeError):
                 pass
         messages.append(
-            {
-                "id": row[0],
-                "user_id": row[1],
-                "role": row[2],
-                "content": row[3],
-                "tool_calls": tool_calls,
-                "created_at": row[5],
-            }
+            ConversationMessageDict(
+                id=row[0],
+                user_id=row[1],
+                role=row[2],
+                content=row[3],
+                tool_calls=tool_calls,
+                created_at=row[5],
+            )
         )
     # Return in chronological order (oldest first)
     return list(reversed(messages))

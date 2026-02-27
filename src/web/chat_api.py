@@ -119,7 +119,7 @@ async def chat(request: ChatRequest) -> StreamingResponse:
         except ValueError:
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid content type: {request.content_type}",
+                detail="Invalid content type. Valid options: book, movie, tv_show, video_game",
             ) from None
 
     def generate_sse() -> Iterator[str]:
