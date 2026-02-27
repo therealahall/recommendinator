@@ -7,20 +7,16 @@ from typing import Any
 
 from src.llm.client import OllamaClient
 from src.llm.prompts import (
-    build_blurb_prompt,
     build_blurb_system_prompt,
     build_recommendation_prompt,
     build_recommendation_system_prompt,
+    build_single_blurb_prompt,
 )
 from src.models.content import ContentItem, ContentType
 
 logger = logging.getLogger(__name__)
 
 _TRADEMARK_RE = re.compile(r"[™®©]")
-
-# Maximum items per LLM call when generating blurbs.  Local models struggle
-# with long prompts and responses, so we batch into smaller groups.
-BLURB_BATCH_SIZE = 5
 
 
 def _highlight_consumed_titles(
@@ -81,9 +77,6 @@ def _fix_author_attributions(recommendations: list[dict[str, Any]]) -> None:
 
     Modifies *recommendations* in place.
     """
-    # Collect authors only from matched items.  Unmatched items have no
-    # reliable author-to-title binding, so including them would risk
-    # false-positive replacements.
     batch_authors: dict[str, str] = {}  # lowercase -> original case
     for rec in recommendations:
         item = rec.get("item")
@@ -99,15 +92,11 @@ def _fix_author_attributions(recommendations: list[dict[str, Any]]) -> None:
         correct_author = item.author
         reasoning_lower = reasoning.lower()
 
-        # Skip if correct author already mentioned — no misattribution.
-        # Use word boundaries to avoid false matches on common substrings
-        # (e.g. author "Wells" matching the word "wells" in prose).
         if re.search(
             r"\b" + re.escape(correct_author.lower()) + r"\b", reasoning_lower
         ):
             continue
 
-        # Find wrong authors from the batch that appear in the reasoning.
         wrong_authors = [
             original
             for lower, original in batch_authors.items()
@@ -115,10 +104,7 @@ def _fix_author_attributions(recommendations: list[dict[str, Any]]) -> None:
             and re.search(r"\b" + re.escape(lower) + r"\b", reasoning_lower)
         ]
 
-        # Only fix the unambiguous case: exactly one wrong author found.
         if len(wrong_authors) == 1:
-            # Escape backslashes in the replacement to prevent re.sub
-            # from interpreting them as group references.
             safe_replacement = correct_author.replace("\\", "\\\\")
             rec["reasoning"] = re.sub(
                 re.escape(wrong_authors[0]),
@@ -203,139 +189,121 @@ class RecommendationGenerator:
             logger.error("Failed to generate recommendations: %s", error)
             raise RuntimeError(f"Recommendation generation failed: {error}") from error
 
-    def generate_blurbs(
+    def generate_single_blurb(
         self,
         content_type: ContentType,
-        selected_items: list[ContentItem],
+        item: ContentItem,
         consumed_items: list[ContentItem],
-        per_item_references: list[list[ContentItem]] | None = None,
+        references: list[ContentItem] | None = None,
         model: str | None = None,
-    ) -> list[dict[str, Any]]:
-        """Generate blurbs for pre-selected recommendation items.
+    ) -> str:
+        """Generate a blurb for a single recommendation item.
 
-        Unlike ``generate_recommendations`` which asks the LLM to pick from
-        a large candidate list, this method accepts pre-selected items and
-        asks only for enthusiastic blurbs. Uses a slimmer prompt that saves
-        ~1,000-2,000 tokens.
-
-        When more than :data:`BLURB_BATCH_SIZE` items are provided, the
-        items are split into batches and a separate LLM call is made for
-        each batch.  This prevents local models from failing on long
-        prompts/responses while still supporting up to the configured
-        ``max_count`` (default 20).
+        One LLM call, returns raw prose.  No parsing or title-matching
+        needed because the response describes exactly one pre-identified
+        item.
 
         Args:
             content_type: Type of content being recommended
-            selected_items: Pre-selected items to write blurbs for
+            item: The single item to write a blurb for
             consumed_items: User's consumed items for taste reference
-            per_item_references: Genre-relevant reference items for each
-                pick, parallel to ``selected_items``.
+            references: Genre-relevant reference items for this pick
             model: Optional model override
 
         Returns:
-            List of recommendation dicts with title, reasoning, and item
-
-        Raises:
-            RuntimeError: If blurb generation fails for every batch
+            Blurb text (stripped)
         """
-        if not selected_items:
-            return []
-
-        if per_item_references is not None and len(per_item_references) != len(
-            selected_items
-        ):
-            logger.error(
-                "per_item_references length %d != selected_items length %d; "
-                "ignoring references",
-                len(per_item_references),
-                len(selected_items),
-            )
-            per_item_references = None
-
-        # Split into batches to keep each LLM call manageable
-        batches: list[list[ContentItem]] = [
-            selected_items[i : i + BLURB_BATCH_SIZE]
-            for i in range(0, len(selected_items), BLURB_BATCH_SIZE)
-        ]
-        ref_batches: list[list[list[ContentItem]] | None] = (
-            [
-                per_item_references[i : i + BLURB_BATCH_SIZE]
-                for i in range(0, len(selected_items), BLURB_BATCH_SIZE)
-            ]
-            if per_item_references is not None
-            else [None] * len(batches)
-        )
-
         system_prompt = build_blurb_system_prompt(content_type)
+        user_prompt = build_single_blurb_prompt(
+            content_type=content_type,
+            item=item,
+            consumed_items=consumed_items,
+            references=references,
+        )
+        response = self.client.generate_text(
+            prompt=user_prompt,
+            system_prompt=system_prompt,
+            model=model,
+            temperature=0.7,
+        )
+        return response.strip()
 
-        def _generate_batch(
-            batch: list[ContentItem],
-            batch_refs: list[list[ContentItem]] | None,
-        ) -> list[dict[str, Any]]:
-            """Generate blurbs for a single batch (runs in thread)."""
-            user_prompt = build_blurb_prompt(
+    def generate_blurbs_per_item(
+        self,
+        content_type: ContentType,
+        items_with_refs: list[tuple[ContentItem, list[ContentItem]]],
+        consumed_items: list[ContentItem],
+        model: str | None = None,
+    ) -> dict[str, str]:
+        """Generate blurbs for multiple items, one LLM call per item.
+
+        Uses ``ThreadPoolExecutor`` to run calls concurrently (I/O-bound
+        Ollama HTTP calls).  Returns a mapping of ``item.id`` to blurb
+        text with consumed-title highlighting applied.
+
+        Args:
+            content_type: Type of content being recommended
+            items_with_refs: List of ``(item, references)`` pairs
+            consumed_items: User's consumed items for taste reference
+            model: Optional model override
+
+        Returns:
+            Dict mapping item ID to highlighted blurb text
+        """
+        if not items_with_refs:
+            return {}
+
+        def _generate_one(
+            item: ContentItem, refs: list[ContentItem]
+        ) -> tuple[str, str]:
+            """Generate a blurb for one item (runs in thread)."""
+            blurb = self.generate_single_blurb(
                 content_type=content_type,
-                selected_items=batch,
+                item=item,
                 consumed_items=consumed_items,
-                per_item_references=batch_refs,
-            )
-            response = self.client.generate_text(
-                prompt=user_prompt,
-                system_prompt=system_prompt,
+                references=refs or None,
                 model=model,
-                temperature=0.7,
             )
-            results = self._parse_recommendations(response, batch, count=len(batch))
-            _highlight_consumed_titles(results, consumed_items)
-            return results
+            return (item.id or "", blurb)
 
-        # Single batch — skip threading overhead
-        if len(batches) == 1:
+        results: dict[str, str] = {}
+
+        # Single item — skip threading overhead
+        if len(items_with_refs) == 1:
+            item, refs = items_with_refs[0]
             try:
-                return _generate_batch(batches[0], ref_batches[0])
+                item_id, blurb = _generate_one(item, refs)
+                results[item_id] = blurb
             except Exception as error:
-                logger.error("Blurb generation failed: %s", error)
-                raise RuntimeError("Blurb generation failed") from error
+                logger.warning("Blurb generation failed for %r: %s", item.title, error)
+        else:
+            with ThreadPoolExecutor(
+                max_workers=min(len(items_with_refs), 4)
+            ) as executor:
+                future_to_item = {
+                    executor.submit(_generate_one, item, refs): item
+                    for item, refs in items_with_refs
+                }
+                for future in as_completed(future_to_item):
+                    item = future_to_item[future]
+                    try:
+                        item_id, blurb = future.result()
+                        results[item_id] = blurb
+                    except Exception as error:
+                        logger.warning(
+                            "Blurb generation failed for %r: %s",
+                            item.title,
+                            error,
+                        )
 
-        # Multiple batches — run concurrently (I/O-bound Ollama HTTP calls)
-        all_results: list[dict[str, Any]] = []
-        errors: list[str] = []
+        # Apply consumed-title highlighting to each blurb
+        if results and consumed_items:
+            highlight_recs = [{"reasoning": blurb} for blurb in results.values()]
+            _highlight_consumed_titles(highlight_recs, consumed_items)
+            for (item_id, _), rec in zip(results.items(), highlight_recs, strict=True):
+                results[item_id] = rec["reasoning"]
 
-        with ThreadPoolExecutor(max_workers=len(batches)) as executor:
-            future_to_index = {
-                executor.submit(
-                    _generate_batch, batch, ref_batches[batch_index]
-                ): batch_index
-                for batch_index, batch in enumerate(batches)
-            }
-
-            for future in as_completed(future_to_index):
-                batch_index = future_to_index[future]
-                try:
-                    parsed = future.result()
-                    all_results.extend(parsed)
-                except Exception as error:
-                    logger.warning(
-                        "Blurb generation failed for batch %d/%d: %s",
-                        batch_index + 1,
-                        len(batches),
-                        error,
-                    )
-                    errors.append(str(error))
-
-        # Raise only when no results were produced AND at least one batch errored.
-        # If all batches parsed successfully but returned no matches, return [].
-        if not all_results and errors:
-            logger.error(
-                "Blurb generation failed for all %d batch(es). Errors: %s",
-                len(batches),
-                "; ".join(errors),
-            )
-            raise RuntimeError(
-                f"Blurb generation failed for all {len(batches)} batch(es)"
-            )
-
-        return all_results
+        return results
 
     def _parse_recommendations(
         self,
