@@ -1,5 +1,6 @@
 """Tests for recommendation generation."""
 
+from typing import Any
 from unittest.mock import Mock, patch
 
 import pytest
@@ -387,14 +388,11 @@ def test_generate_recommendations_raises_on_llm_failure_regression(
         generator.generate_recommendations(ContentType.BOOK, [], unconsumed, count=5)
 
 
-def test_generate_blurbs(mock_ollama_client: Mock) -> None:
-    """Test blurb generation for pre-selected items."""
-    mock_response = """1. **Book A** by Author A
-You gave Favorite Book a 5/5 — Book A has the same space exploration vibe.
-
-2. **Book B** by Author B
-Like your favorite, this one goes deep on character development."""
-    mock_ollama_client.generate_text.return_value = mock_response
+def test_generate_single_blurb(mock_ollama_client: Mock) -> None:
+    """Test single-item blurb generation returns stripped prose."""
+    mock_ollama_client.generate_text.return_value = (
+        "  You gave Favorite Book a 5/5 — Book A has the same space exploration vibe.  "
+    )
 
     consumed = [
         ContentItem(
@@ -406,129 +404,131 @@ Like your favorite, this one goes deep on character development."""
             rating=5,
         )
     ]
-
-    selected = [
-        ContentItem(
-            id="2",
-            title="Book A",
-            author="Author A",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-        ),
-        ContentItem(
-            id="3",
-            title="Book B",
-            author="Author B",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-        ),
-    ]
+    item = ContentItem(
+        id="2",
+        title="Book A",
+        author="Author A",
+        content_type=ContentType.BOOK,
+        status=ConsumptionStatus.UNREAD,
+    )
 
     generator = RecommendationGenerator(mock_ollama_client)
-    blurbs = generator.generate_blurbs(
+    blurb = generator.generate_single_blurb(
         content_type=ContentType.BOOK,
-        selected_items=selected,
+        item=item,
         consumed_items=consumed,
     )
 
-    assert len(blurbs) == 2
-    assert blurbs[0]["title"] == "Book A"
-    assert blurbs[1]["title"] == "Book B"
-
-
-def test_generate_blurbs_empty_selection(mock_ollama_client: Mock) -> None:
-    """Test blurb generation with no selected items returns empty list."""
-    generator = RecommendationGenerator(mock_ollama_client)
-    blurbs = generator.generate_blurbs(
-        content_type=ContentType.BOOK,
-        selected_items=[],
-        consumed_items=[],
+    assert (
+        blurb
+        == "You gave Favorite Book a 5/5 — Book A has the same space exploration vibe."
     )
-
-    assert blurbs == []
-    mock_ollama_client.generate_text.assert_not_called()
-
-
-def test_generate_blurbs_unmatched_titles(mock_ollama_client: Mock) -> None:
-    """Test blurb generation when LLM returns titles that don't match selected items.
-
-    When the LLM hallucinates or returns titles that don't correspond to any
-    of the selected items, the parser still returns entries but with
-    ``item: None`` since no match can be found in the selected items list.
-    """
-    mock_response = """1. **Unknown Book** by Mystery Author
-This is a fascinating read you'll love.
-
-2. **Mystery Title** by Another Author
-Great themes that match your taste."""
-    mock_ollama_client.generate_text.return_value = mock_response
-
-    consumed = [
-        ContentItem(
-            id="1",
-            title="Favorite Book",
-            author="Author",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-        )
-    ]
-
-    selected = [
-        ContentItem(
-            id="2",
-            title="Book A",
-            author="Author A",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-        ),
-        ContentItem(
-            id="3",
-            title="Book B",
-            author="Author B",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-        ),
-    ]
-
-    generator = RecommendationGenerator(mock_ollama_client)
-    blurbs = generator.generate_blurbs(
-        content_type=ContentType.BOOK,
-        selected_items=selected,
-        consumed_items=consumed,
-    )
-
-    # The parser returns entries for each numbered item the LLM produced,
-    # but none match the selected items, so every entry has item=None.
-    assert len(blurbs) == 2
-    assert blurbs[0]["title"] == "Unknown Book"
-    assert blurbs[0]["item"] is None
-    assert blurbs[1]["title"] == "Mystery Title"
-    assert blurbs[1]["item"] is None
-
-    # Verify the LLM was still called with the prompt
     mock_ollama_client.generate_text.assert_called_once()
 
 
-def test_generate_blurbs_raises_on_llm_failure_regression(
-    mock_ollama_client: Mock,
-) -> None:
-    """Regression: LLM failure during blurb generation must raise RuntimeError."""
-    mock_ollama_client.generate_text.side_effect = ConnectionError("Ollama unreachable")
+def test_generate_blurbs_per_item(mock_ollama_client: Mock) -> None:
+    """Test per-item blurb generation returns dict keyed by item ID."""
+    mock_ollama_client.generate_text.side_effect = [
+        "Book A has the same space exploration vibe.",
+        "Like your favorite, this one goes deep on character development.",
+    ]
 
-    selected = [
+    consumed = [
         ContentItem(
             id="1",
-            title="Book A",
+            title="Favorite Book",
+            author="Author",
             content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
         )
     ]
 
-    generator = RecommendationGenerator(mock_ollama_client)
-    with pytest.raises(RuntimeError, match="Blurb generation failed"):
-        generator.generate_blurbs(
+    items = [
+        ContentItem(
+            id="2",
+            title="Book A",
+            author="Author A",
             content_type=ContentType.BOOK,
-            selected_items=selected,
-            consumed_items=[],
-        )
+            status=ConsumptionStatus.UNREAD,
+        ),
+        ContentItem(
+            id="3",
+            title="Book B",
+            author="Author B",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        ),
+    ]
+
+    generator = RecommendationGenerator(mock_ollama_client)
+    blurbs = generator.generate_blurbs_per_item(
+        content_type=ContentType.BOOK,
+        items_with_refs=[(items[0], []), (items[1], [])],
+        consumed_items=consumed,
+    )
+
+    assert len(blurbs) == 2
+    assert "2" in blurbs
+    assert "3" in blurbs
+    assert mock_ollama_client.generate_text.call_count == 2
+
+
+def test_generate_blurbs_per_item_empty(mock_ollama_client: Mock) -> None:
+    """Test per-item blurb generation with no items returns empty dict."""
+    generator = RecommendationGenerator(mock_ollama_client)
+    blurbs = generator.generate_blurbs_per_item(
+        content_type=ContentType.BOOK,
+        items_with_refs=[],
+        consumed_items=[],
+    )
+
+    assert blurbs == {}
+    mock_ollama_client.generate_text.assert_not_called()
+
+
+def test_generate_blurbs_per_item_partial_failure(
+    mock_ollama_client: Mock,
+) -> None:
+    """Test per-item blurb generation returns successful results on partial failure.
+
+    Uses prompt-keyed side_effect so the outcome is deterministic regardless
+    of thread execution order (Book A always succeeds, Book B always fails).
+    """
+
+    def _prompt_keyed_response(**kwargs: Any) -> str:
+        prompt = kwargs.get("prompt", "")
+        if "Book B" in prompt:
+            raise ConnectionError("Ollama unreachable")
+        return "Great match for your taste."
+
+    mock_ollama_client.generate_text.side_effect = _prompt_keyed_response
+
+    items = [
+        ContentItem(
+            id="1",
+            title="Book A",
+            author="Author A",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        ),
+        ContentItem(
+            id="2",
+            title="Book B",
+            author="Author B",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        ),
+    ]
+
+    generator = RecommendationGenerator(mock_ollama_client)
+    blurbs = generator.generate_blurbs_per_item(
+        content_type=ContentType.BOOK,
+        items_with_refs=[(items[0], []), (items[1], [])],
+        consumed_items=[],
+    )
+
+    # Book A succeeded, Book B failed — should still get the successful one
+    assert len(blurbs) == 1
+    assert "1" in blurbs
+    assert blurbs["1"] == "Great match for your taste."

@@ -15,7 +15,6 @@ from src.llm.prompts import (
     build_recommendation_system_prompt,
 )
 from src.llm.recommendations import (
-    BLURB_BATCH_SIZE,
     RecommendationGenerator,
     _highlight_consumed_titles,
 )
@@ -506,21 +505,11 @@ class TestLlmReasoningMismatchRegression:
             },
         ]
 
-        # LLM returns items in REVERSED order: Fire & Blood first
-        engine.llm_generator.generate_blurbs.return_value = [
-            {
-                "title": "Fire & Blood",
-                "author": "George R.R. Martin",
-                "reasoning": "LLM reasoning for Fire & Blood",
-                "item": fire_and_blood,
-            },
-            {
-                "title": "The Way of Kings",
-                "author": "Brandon Sanderson",
-                "reasoning": "LLM reasoning for Way of Kings",
-                "item": way_of_kings,
-            },
-        ]
+        # Per-item blurbs return {item_id: blurb_text}
+        engine.llm_generator.generate_blurbs_per_item.return_value = {
+            "1": "LLM reasoning for Way of Kings",
+            "2": "LLM reasoning for Fire & Blood",
+        }
 
         # Call the actual production code
         engine._enhance_with_llm(
@@ -532,12 +521,14 @@ class TestLlmReasoningMismatchRegression:
             series_tracking={},
         )
 
-        # Each recommendation must have its OWN reasoning, not the other's
+        # Each recommendation must have its OWN reasoning matched by item ID
         assert recommendations[0]["llm_reasoning"] == "LLM reasoning for Way of Kings"
         assert recommendations[1]["llm_reasoning"] == "LLM reasoning for Fire & Blood"
 
-    def test_enhance_uses_blurbs_for_pipeline_recommendations_regression(self) -> None:
-        """Regression test: LLM enhancement must use blurbs, not re-pick.
+    def test_enhance_uses_per_item_blurbs_for_pipeline_recommendations_regression(
+        self,
+    ) -> None:
+        """Regression test: LLM enhancement must use per-item blurbs, not re-pick.
 
         Bug reported: When requesting 5 recommendations with AI reasoning
         enabled, only 3 received LLM reasoning. The remaining 2 had no
@@ -548,9 +539,9 @@ class TestLlmReasoningMismatchRegression:
         would only select ~3 items regardless of count, so extra pipeline
         recommendations never got reasoning attached.
 
-        Fix: Use generate_blurbs (which writes reasoning for ALL pre-selected
-        items) instead of generate_recommendations when the pipeline already
-        produced recommendations.
+        Fix: Use generate_blurbs_per_item (one LLM call per item, concurrent)
+        instead of batch generation. Direct assignment by item ID eliminates
+        title-matching failures.
         """
 
         engine = RecommendationEngine.__new__(RecommendationEngine)
@@ -573,16 +564,10 @@ class TestLlmReasoningMismatchRegression:
             for index, item in enumerate(items)
         ]
 
-        # generate_blurbs returns reasoning for ALL 5 items
-        engine.llm_generator.generate_blurbs.return_value = [
-            {
-                "title": item.title,
-                "author": item.author,
-                "reasoning": f"LLM blurb for {item.title}",
-                "item": item,
-            }
-            for item in items
-        ]
+        # generate_blurbs_per_item returns {item_id: blurb} for ALL 5 items
+        engine.llm_generator.generate_blurbs_per_item.return_value = {
+            item.id: f"LLM blurb for {item.title}" for item in items
+        }
 
         engine._enhance_with_llm(
             recommendations=recommendations,
@@ -600,13 +585,17 @@ class TestLlmReasoningMismatchRegression:
             ), f"Recommendation {index} ({rec['item'].title}) missing llm_reasoning"
             assert rec["llm_reasoning"] == f"LLM blurb for Book {index + 1}"
 
-        # Must call generate_blurbs (not generate_recommendations) with all items
-        engine.llm_generator.generate_blurbs.assert_called_once_with(
-            content_type=ContentType.BOOK,
-            selected_items=items,
-            consumed_items=[],
-            per_item_references=[[], [], [], [], []],
+        # Must call generate_blurbs_per_item (not generate_recommendations)
+        engine.llm_generator.generate_blurbs_per_item.assert_called_once()
+
+        # Verify contributing_items were passed through as references
+        call_kwargs = engine.llm_generator.generate_blurbs_per_item.call_args
+        items_with_refs = call_kwargs.kwargs.get(
+            "items_with_refs", call_kwargs.args[1] if len(call_kwargs.args) > 1 else []
         )
+        assert len(items_with_refs) == 5
+        for item_ref_pair in items_with_refs:
+            assert len(item_ref_pair) == 2  # (item, references) tuple
 
     def test_bold_markers_stripped_from_parsed_titles_regression(self) -> None:
         """Regression test: bold markdown in LLM titles must not prevent matching.
@@ -760,132 +749,75 @@ def _fake_blurb_response(items: list[ContentItem], prompt: str) -> str:
     return "\n\n".join(lines)
 
 
-class TestBlurbBatchingRegression:
-    """Regression tests for LLM blurb generation failing when count > 5."""
+class TestPerItemBlurbGenerationRegression:
+    """Regression tests for per-item blurb generation (replaced batch system).
 
-    def test_blurbs_batched_for_more_than_five_items_regression(self) -> None:
-        """Regression test: Blurb generation must work for > 5 items.
+    The old batch system parsed numbered lists and matched titles back to
+    items, which failed for movies/TV shows. The per-item system makes one
+    LLM call per item and assigns by ID — no parsing or matching needed.
+    """
 
-        Bug reported: When requesting more than 5 recommendations with LLM
-        reasoning enabled, no LLM reasoning appeared on any result. Results
-        came back with only pipeline reasoning.
+    def test_per_item_blurbs_for_many_items_regression(self) -> None:
+        """Regression: Per-item blurbs must work for > 5 items.
 
-        Root cause: Local LLMs struggle with long prompts/responses. A single
-        blurb call with > 5 items would fail (timeout, truncation, or parsing
-        error), and the exception was silently caught in _enhance_with_llm.
+        Bug reported: Batch system failed for movies/TV because title matching
+        broke when the LLM mangled titles or injected director names.
 
-        Fix: Batch blurb generation into groups of BLURB_BATCH_SIZE (5) items,
-        making a separate LLM call per batch.
+        Fix: One LLM call per item, concurrent. No parsing needed.
         """
         mock_client = Mock(spec=OllamaClient)
         items = _make_book_items(_TEN_BOOK_NAMES)
 
-        mock_client.generate_text.side_effect = (
-            lambda prompt, **kw: _fake_blurb_response(items, prompt)
-        )
+        mock_client.generate_text.side_effect = [
+            f"Great match for {item.title}." for item in items
+        ]
 
         generator = RecommendationGenerator(mock_client)
-        results = generator.generate_blurbs(
+        results = generator.generate_blurbs_per_item(
             ContentType.BOOK,
-            selected_items=items,
+            items_with_refs=[(item, []) for item in items],
             consumed_items=[],
         )
 
         # All 10 items should have blurbs
         assert len(results) == 10
+        for item in items:
+            assert item.id in results
 
-        # Every item should be matched (not None)
-        unmatched = [rec["title"] for rec in results if rec["item"] is None]
-        assert not unmatched, f"Items with no match: {unmatched}"
+        # Should have made 10 LLM calls (one per item)
+        assert mock_client.generate_text.call_count == 10
 
-        # All titles present
-        result_titles = {rec["title"] for rec in results}
-        expected_titles = {item.title for item in items}
-        assert result_titles == expected_titles
+    def test_partial_failure_returns_successful_items_regression(self) -> None:
+        """Regression: If some items fail, successful items still get blurbs.
 
-        # Should have made 2 LLM calls (batches of 5)
-        assert mock_client.generate_text.call_count == 2
-
-    def test_partial_batch_failure_returns_successful_batches_regression(
-        self,
-    ) -> None:
-        """Regression test: Partial batch failure should return successful results.
-
-        Bug reported: When requesting more than 5 recommendations with LLM
-        reasoning enabled, no LLM reasoning appeared on any result. Results
-        came back with only pipeline reasoning.
-
-        Root cause: Local LLMs struggle with long prompts/responses. A single
-        blurb call with > 5 items would fail (timeout, truncation, or parsing
-        error), and the exception was silently caught in _enhance_with_llm.
-
-        Fix: Batch blurb generation into groups of BLURB_BATCH_SIZE (5) items,
-        run concurrently via ThreadPoolExecutor. If one batch fails, results
-        from successful batches are still returned.
+        Fix: Per-item generation catches individual failures and returns
+        blurbs for items that succeeded.
         """
         mock_client = Mock(spec=OllamaClient)
         items = _make_book_items(_TEN_BOOK_NAMES)
 
-        # Fail batch 2 based on prompt content (not call order, since batches
-        # run concurrently and completion order is non-deterministic).
-        batch_2_marker = items[BLURB_BATCH_SIZE].title  # first item of batch 2
-
-        def fake_generate_text(prompt: str, **kwargs: Any) -> str:
-            if batch_2_marker in prompt:
+        # Fail for every other item
+        def fake_generate(prompt: str, **kwargs: Any) -> str:
+            if items[1].title in prompt:
                 raise RuntimeError("LLM timeout")
-            return _fake_blurb_response(items, prompt)
+            if items[3].title in prompt:
+                raise RuntimeError("LLM timeout")
+            return "Great match for your taste."
 
-        mock_client.generate_text.side_effect = fake_generate_text
+        mock_client.generate_text.side_effect = fake_generate
 
         generator = RecommendationGenerator(mock_client)
-        results = generator.generate_blurbs(
+        results = generator.generate_blurbs_per_item(
             ContentType.BOOK,
-            selected_items=items,
+            items_with_refs=[(item, []) for item in items[:5]],
             consumed_items=[],
         )
 
-        # Batch 1 (5 items) should succeed, batch 2 fails
-        assert len(results) == BLURB_BATCH_SIZE
-
-        # Results should be from batch 1 (first 5 items)
-        batch_1_titles = {item.title for item in items[:BLURB_BATCH_SIZE]}
-        result_titles = {rec["title"] for rec in results}
-        assert result_titles == batch_1_titles
-
-        # Both batches should have been attempted
-        assert mock_client.generate_text.call_count == 2
-
-    def test_all_batches_fail_raises_runtime_error_regression(self) -> None:
-        """Regression test: Total batch failure should raise RuntimeError.
-
-        Bug reported: When requesting more than 5 recommendations with LLM
-        reasoning enabled, no LLM reasoning appeared on any result. Results
-        came back with only pipeline reasoning.
-
-        Root cause: Local LLMs struggle with long prompts/responses. A single
-        blurb call with > 5 items would fail (timeout, truncation, or parsing
-        error), and the exception was silently caught in _enhance_with_llm.
-
-        Fix: Batch blurb generation into groups of BLURB_BATCH_SIZE (5) items.
-        When every batch fails, RuntimeError is raised so the caller knows.
-        """
-        mock_client = Mock(spec=OllamaClient)
-        mock_client.generate_text.side_effect = RuntimeError("LLM unavailable")
-
-        items = _make_book_items(
-            _TEN_BOOK_NAMES[: BLURB_BATCH_SIZE + 2]
-        )  # 7 items → 2 batches
-
-        generator = RecommendationGenerator(mock_client)
-
-        with pytest.raises(
-            RuntimeError, match=r"Blurb generation failed for all \d+ batch"
-        ):
-            generator.generate_blurbs(
-                ContentType.BOOK,
-                selected_items=items,
-                consumed_items=[],
-            )
+        # 3 out of 5 should succeed
+        assert len(results) == 3
+        assert items[0].id in results
+        assert items[2].id in results
+        assert items[4].id in results
 
 
 def _make_movie_items(titles: list[str]) -> list[ContentItem]:

@@ -13,6 +13,7 @@ from src.llm.prompts import (
     build_content_description,
     build_recommendation_prompt,
     build_recommendation_system_prompt,
+    build_single_blurb_prompt,
 )
 from src.llm.tone import STYLE_RULES
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
@@ -1453,3 +1454,98 @@ class TestPerItemReferencesRegression:
         assert (
             "Gran Turismo (4/5)" in related_lines[1]
         ), f"Expected 'Gran Turismo (4/5)' in second Related line, got: {related_lines[1]!r}"
+
+
+# ---------------------------------------------------------------------------
+# build_single_blurb_prompt tests
+# ---------------------------------------------------------------------------
+
+
+class TestBuildSingleBlurbPrompt:
+    """Tests for the single-item blurb prompt builder."""
+
+    def test_includes_item_title_and_author(self) -> None:
+        """Prompt includes the pick's title and author."""
+        item = _make_item("Dune", ContentType.BOOK, author="Frank Herbert")
+        prompt = build_single_blurb_prompt(
+            content_type=ContentType.BOOK,
+            item=item,
+            consumed_items=[],
+        )
+        assert "Pick: Dune by Frank Herbert" in prompt
+
+    def test_no_numbered_list_instruction(self) -> None:
+        """Prompt instructs raw prose, not a numbered list."""
+        item = _make_item("Dune", ContentType.BOOK)
+        prompt = build_single_blurb_prompt(
+            content_type=ContentType.BOOK,
+            item=item,
+            consumed_items=[],
+        )
+        assert "no title, no numbered list" in prompt
+
+    def test_taste_context_from_same_type_favorites(self) -> None:
+        """High-rated same-type items appear as taste context."""
+        favorites = _make_books(3, rating=5)
+        item = _make_item("New Book", ContentType.BOOK)
+        prompt = build_single_blurb_prompt(
+            content_type=ContentType.BOOK,
+            item=item,
+            consumed_items=favorites,
+        )
+        assert "Their favorite books:" in prompt
+        for fav in favorites:
+            assert fav.title in prompt
+
+    def test_cross_type_context_fills_remaining_slots(self) -> None:
+        """Cross-type favorites fill remaining slots when < 5 same-type."""
+        same = [_make_item("Book 1", ContentType.BOOK, rating=5, author="A1")]
+        cross = [
+            _make_item("Game 1", ContentType.VIDEO_GAME, rating=5),
+            _make_item("Movie 1", ContentType.MOVIE, rating=4),
+        ]
+        item = _make_item("New Book", ContentType.BOOK)
+        prompt = build_single_blurb_prompt(
+            content_type=ContentType.BOOK,
+            item=item,
+            consumed_items=same + cross,
+        )
+        assert "From other types:" in prompt
+        assert "Game 1" in prompt
+        assert "Movie 1" in prompt
+
+    def test_references_appear_as_related(self) -> None:
+        """Per-item references render as a Related line."""
+        item = _make_item("New Book", ContentType.BOOK)
+        refs = [
+            _make_item("Ref A", ContentType.BOOK, rating=5),
+            _make_item("Ref B", ContentType.BOOK, rating=4),
+        ]
+        prompt = build_single_blurb_prompt(
+            content_type=ContentType.BOOK,
+            item=item,
+            consumed_items=[],
+            references=refs,
+        )
+        assert "Related: Ref A (5/5), Ref B (4/5)" in prompt
+
+    def test_no_references_omits_related_line(self) -> None:
+        """Without references, no Related line appears."""
+        item = _make_item("New Book", ContentType.BOOK)
+        prompt = build_single_blurb_prompt(
+            content_type=ContentType.BOOK,
+            item=item,
+            consumed_items=[],
+            references=None,
+        )
+        assert "Related:" not in prompt
+
+    def test_content_type_name_in_prompt(self) -> None:
+        """Prompt uses the human-readable content type name."""
+        item = _make_item("Hades", ContentType.VIDEO_GAME)
+        prompt = build_single_blurb_prompt(
+            content_type=ContentType.VIDEO_GAME,
+            item=item,
+            consumed_items=[],
+        )
+        assert "video game pick" in prompt
