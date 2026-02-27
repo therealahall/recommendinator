@@ -8,7 +8,17 @@ from unittest.mock import Mock
 import pytest
 
 from src.llm.client import OllamaClient
-from src.llm.recommendations import BLURB_BATCH_SIZE, RecommendationGenerator
+from src.llm.prompts import (
+    build_blurb_prompt,
+    build_blurb_system_prompt,
+    build_recommendation_prompt,
+    build_recommendation_system_prompt,
+)
+from src.llm.recommendations import (
+    BLURB_BATCH_SIZE,
+    RecommendationGenerator,
+    _highlight_consumed_titles,
+)
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.recommendations.engine import RecommendationEngine
 from src.recommendations.preference_interpreter import PatternBasedInterpreter
@@ -1103,3 +1113,503 @@ class TestInlineReasoningRegression:
             "A fun"
         ), f"En-dash separator not stripped: {results[0]['reasoning']!r}"
         assert results[0]["item"] is not None
+
+    def test_cross_item_author_attribution_fixed_regression(
+        self, generator: RecommendationGenerator
+    ) -> None:
+        """Wrong author name in reasoning must be replaced with the correct one.
+
+        Bug reported: LLM reasoning for "All Systems Red" (by Martha Wells)
+        said "Brandon Sanderson's storytelling" because both books were in the
+        same recommendation batch and the local LLM confused the authors.
+
+        Root cause: No post-processing validation of author names in reasoning
+        text against the matched item's actual author.
+
+        Fix: After parsing, scan each recommendation's reasoning for author
+        names from other items in the batch. When the reasoning mentions a
+        wrong author but NOT the correct author, substitute the correct name.
+        """
+        response = (
+            "1. **All Systems Red** by Martha Wells\n"
+            "You can't deny the epic scope of Brandon Sanderson's "
+            "storytelling - with All Systems Red, his ability to create "
+            "a captivating narrative was on full display.\n\n"
+            "2. **The Way of Kings** by Brandon Sanderson\n"
+            "Brandon Sanderson delivers a sprawling epic that will keep "
+            "you reading."
+        )
+        unconsumed = [
+            ContentItem(
+                id="1",
+                title="All Systems Red",
+                author="Martha Wells",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            ),
+            ContentItem(
+                id="2",
+                title="The Way of Kings",
+                author="Brandon Sanderson",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            ),
+        ]
+        results = generator._parse_recommendations(response, unconsumed, count=2)
+
+        assert len(results) == 2
+
+        # "All Systems Red" reasoning must reference Martha Wells, not Sanderson
+        all_systems_red_rec = next(
+            r for r in results if r["title"] == "All Systems Red"
+        )
+        assert "Martha Wells" in all_systems_red_rec["reasoning"], (
+            f"Correct author missing from reasoning: "
+            f"{all_systems_red_rec['reasoning']!r}"
+        )
+        assert "Brandon Sanderson" not in all_systems_red_rec["reasoning"], (
+            f"Wrong author still in reasoning: " f"{all_systems_red_rec['reasoning']!r}"
+        )
+
+        # "The Way of Kings" reasoning must NOT be corrupted by the fix —
+        # Sanderson is the correct author and must remain bit-for-bit identical.
+        way_of_kings_rec = next(r for r in results if r["title"] == "The Way of Kings")
+        assert way_of_kings_rec["reasoning"] == (
+            "Brandon Sanderson delivers a sprawling epic that will keep " "you reading."
+        ), f"Way of Kings reasoning was corrupted: {way_of_kings_rec['reasoning']!r}"
+
+    def test_cross_item_author_fix_skips_legitimate_comparison(
+        self, generator: RecommendationGenerator
+    ) -> None:
+        """Legitimate cross-reference mentioning both authors must not be altered.
+
+        Bug reported: Same as test_cross_item_author_attribution_fixed_regression.
+
+        Root cause: Same root cause.
+
+        Fix: Same fix. This test verifies the boundary condition where both
+        authors are legitimately mentioned (cross-reference), and the fix must
+        leave reasoning untouched because the correct author IS present.
+        """
+        response = (
+            "1. **All Systems Red** by Martha Wells\n"
+            "If you loved Brandon Sanderson's epic worldbuilding, you'll "
+            "enjoy Martha Wells' tight, character-driven sci-fi.\n\n"
+            "2. **The Way of Kings** by Brandon Sanderson\n"
+            "An epic fantasy masterpiece."
+        )
+        unconsumed = [
+            ContentItem(
+                id="1",
+                title="All Systems Red",
+                author="Martha Wells",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            ),
+            ContentItem(
+                id="2",
+                title="The Way of Kings",
+                author="Brandon Sanderson",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            ),
+        ]
+        results = generator._parse_recommendations(response, unconsumed, count=2)
+
+        all_systems_red_rec = next(
+            r for r in results if r["title"] == "All Systems Red"
+        )
+        # Both authors present — reasoning should be untouched
+        assert "Brandon Sanderson" in all_systems_red_rec["reasoning"]
+        assert "Martha Wells" in all_systems_red_rec["reasoning"]
+
+    def test_cross_item_author_fix_no_author_items_unaffected(
+        self, generator: RecommendationGenerator
+    ) -> None:
+        """No-author items in a mixed batch must not be processed by the fix.
+
+        Bug reported: Same as test_cross_item_author_attribution_fixed_regression.
+
+        Root cause: Same root cause.
+
+        Fix: Same fix. This test verifies that in a mixed batch (book + movie),
+        if the movie's reasoning mentions the book author's name, the fix does
+        not touch the movie because it has no author of its own to substitute.
+        """
+        response = (
+            "1. **All Systems Red** by Martha Wells\n"
+            "Martha Wells writes compelling sci-fi.\n\n"
+            "2. **Alien**\n"
+            "Martha Wells fans would enjoy this claustrophobic thriller."
+        )
+        book = ContentItem(
+            id="1",
+            title="All Systems Red",
+            author="Martha Wells",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        )
+        movie = ContentItem(
+            id="2",
+            title="Alien",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+        )
+        results = generator._parse_recommendations(response, [book, movie], count=2)
+
+        assert len(results) == 2
+        alien_rec = next(r for r in results if r["title"] == "Alien")
+        # Fix must not touch the movie — it has no correct author to substitute
+        assert alien_rec["reasoning"] == (
+            "Martha Wells fans would enjoy this claustrophobic thriller."
+        ), f"Movie reasoning was wrongly modified: {alien_rec['reasoning']!r}"
+
+    def test_cross_item_multiple_wrong_authors_left_untouched(
+        self, generator: RecommendationGenerator
+    ) -> None:
+        """Ambiguous misattribution (two wrong authors) must not be modified.
+
+        Bug reported: Same as test_cross_item_author_attribution_fixed_regression.
+
+        Root cause: Same root cause.
+
+        Fix: The fix only applies when exactly one wrong author is identified.
+        When two wrong authors appear, the case is ambiguous and reasoning is
+        left unchanged.
+        """
+        response = (
+            "1. **All Systems Red** by Martha Wells\n"
+            "Both Brandon Sanderson and Robin Hobb have influenced this "
+            "work.\n\n"
+            "2. **The Way of Kings** by Brandon Sanderson\n"
+            "Brandon Sanderson's epic fantasy at its finest.\n\n"
+            "3. **Assassin's Apprentice** by Robin Hobb\n"
+            "Robin Hobb's character-driven masterpiece."
+        )
+        unconsumed = [
+            ContentItem(
+                id="1",
+                title="All Systems Red",
+                author="Martha Wells",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            ),
+            ContentItem(
+                id="2",
+                title="The Way of Kings",
+                author="Brandon Sanderson",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            ),
+            ContentItem(
+                id="3",
+                title="Assassin's Apprentice",
+                author="Robin Hobb",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            ),
+        ]
+        results = generator._parse_recommendations(response, unconsumed, count=3)
+
+        all_systems_red_rec = next(
+            r for r in results if r["title"] == "All Systems Red"
+        )
+        # Two wrong authors found — ambiguous, must be left untouched
+        assert all_systems_red_rec["reasoning"] == (
+            "Both Brandon Sanderson and Robin Hobb have influenced this work."
+        ), (
+            "Ambiguous reasoning was incorrectly modified: "
+            f"{all_systems_red_rec['reasoning']!r}"
+        )
+
+
+def _make_game_items(titles: list[str], *, author: str = "Studio") -> list[ContentItem]:
+    """Build a list of video game ContentItems."""
+    return [
+        ContentItem(
+            id=str(index),
+            title=title,
+            author=author,
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+        )
+        for index, title in enumerate(titles, 1)
+    ]
+
+
+class TestSequelConfusionRegression:
+    """Regression tests for LLM writing about sequels instead of the recommended item.
+
+    Bug reported: When recommending Dishonored, the LLM reasoning text talked
+    about Dishonored 2 because the sequel appeared in the consumed favorites
+    context. The blurb said "With elements similar to Dishonored's own sequel,
+    Dishonored 2..." instead of describing Dishonored itself.
+
+    Root cause: No prompt instruction told the LLM to write about the
+    recommended item rather than its sequels/prequels in the user's history.
+
+    Fix: Added anti-sequel instructions to all four prompt builders:
+    build_recommendation_prompt, build_recommendation_system_prompt,
+    build_blurb_prompt, build_blurb_system_prompt.
+    """
+
+    def test_blurb_prompt_contains_anti_sequel_instruction(self) -> None:
+        """build_blurb_prompt must instruct the LLM not to write about sequels."""
+        consumed = [
+            ContentItem(
+                id="c1",
+                title="Dishonored 2",
+                author="Arkane Studios",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.COMPLETED,
+                rating=4,
+            ),
+        ]
+        selected = _make_game_items(["Dishonored"], author="Arkane Studios")
+        prompt = build_blurb_prompt(ContentType.VIDEO_GAME, selected, consumed)
+        assert (
+            "sequel" in prompt.lower()
+        ), "Blurb prompt must warn the LLM not to write about sequels"
+        assert (
+            "prequel" in prompt.lower()
+        ), "Blurb prompt must warn the LLM not to write about prequels"
+
+    def test_recommendation_prompt_contains_anti_sequel_instruction(
+        self,
+    ) -> None:
+        """build_recommendation_prompt must instruct the LLM not to write about sequels."""
+        consumed = [
+            ContentItem(
+                id="c1",
+                title="Dishonored 2",
+                author="Arkane Studios",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.COMPLETED,
+                rating=4,
+            ),
+        ]
+        unconsumed = _make_game_items(["Dishonored"], author="Arkane Studios")
+        prompt = build_recommendation_prompt(
+            ContentType.VIDEO_GAME, consumed, unconsumed, count=1
+        )
+        assert (
+            "sequel" in prompt.lower()
+        ), "Recommendation prompt must warn the LLM not to write about sequels"
+        assert (
+            "prequel" in prompt.lower()
+        ), "Recommendation prompt must warn the LLM not to write about prequels"
+
+    def test_blurb_system_prompt_contains_anti_sequel_instruction(
+        self,
+    ) -> None:
+        """build_blurb_system_prompt must instruct the LLM not to write about sequels."""
+        prompt = build_blurb_system_prompt(ContentType.VIDEO_GAME)
+        assert "sequel" in prompt.lower(), "Blurb system prompt must warn about sequels"
+
+    def test_recommendation_system_prompt_contains_anti_sequel_instruction(
+        self,
+    ) -> None:
+        """build_recommendation_system_prompt must warn about sequels."""
+        prompt = build_recommendation_system_prompt(ContentType.VIDEO_GAME)
+        assert (
+            "sequel" in prompt.lower()
+        ), "Recommendation system prompt must warn about sequels"
+
+
+class TestCrossRecommendationReferenceRegression:
+    """Regression tests for LLM referencing other recommendations as consumed items.
+
+    Bug reported: A video game recommendation blurb said "shares the grid-based
+    exploration and puzzle-solving elements from Dungeon Siege" when Dungeon Siege
+    was another recommendation — not something the user had actually played.
+
+    Root cause: The LLM sees both the user's favorites and the list of
+    picks/candidates in the prompt. Without an explicit prohibition, it sometimes
+    references items from the picks/candidates list as if the user has consumed
+    them.
+
+    Fix: Added anti-cross-reference instructions to all four prompt builders
+    telling the LLM that candidates/picks are unconsumed and must not be
+    referenced as things the user has played.
+    """
+
+    def test_blurb_prompt_warns_against_referencing_other_picks_regression(
+        self,
+    ) -> None:
+        """build_blurb_prompt must tell the LLM not to reference other picks."""
+        consumed = [
+            ContentItem(
+                id="c1",
+                title="Metroid Dread",
+                author="Nintendo",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.COMPLETED,
+                rating=4,
+            ),
+        ]
+        selected = _make_game_items(
+            ["Dungeon Siege", "Legend of Grimrock"], author="Various"
+        )
+        prompt = build_blurb_prompt(ContentType.VIDEO_GAME, selected, consumed)
+        assert (
+            "not consumed" in prompt.lower()
+        ), "Blurb prompt must warn that picks are unconsumed"
+
+    def test_recommendation_prompt_warns_against_referencing_candidates_regression(
+        self,
+    ) -> None:
+        """build_recommendation_prompt must tell the LLM not to reference candidates."""
+        consumed = [
+            ContentItem(
+                id="c1",
+                title="Metroid Dread",
+                author="Nintendo",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.COMPLETED,
+                rating=4,
+            ),
+        ]
+        unconsumed = _make_game_items(
+            ["Dungeon Siege", "Legend of Grimrock"], author="Various"
+        )
+        prompt = build_recommendation_prompt(
+            ContentType.VIDEO_GAME, consumed, unconsumed, count=2
+        )
+        assert (
+            "not consumed" in prompt.lower()
+        ), "Recommendation prompt must warn that candidates are unconsumed"
+
+    def test_blurb_system_prompt_warns_against_cross_reference_regression(
+        self,
+    ) -> None:
+        """build_blurb_system_prompt must warn about referencing other picks."""
+        prompt = build_blurb_system_prompt(ContentType.VIDEO_GAME)
+        assert (
+            "never reference other picks" in prompt.lower()
+        ), "Blurb system prompt must explicitly prohibit referencing other picks"
+
+    def test_recommendation_system_prompt_warns_against_cross_reference_regression(
+        self,
+    ) -> None:
+        """build_recommendation_system_prompt must warn about referencing candidates."""
+        prompt = build_recommendation_system_prompt(ContentType.VIDEO_GAME)
+        assert (
+            "unconsumed recommendations" in prompt.lower()
+        ), "Recommendation system prompt must call candidates unconsumed"
+
+
+class TestConsumedTitleHighlightingRegression:
+    """Regression tests for consumed-item titles not highlighted in reasoning.
+
+    Bug reported: Video game recommendation reasoning text like "Just like
+    in Mass Effect (5/5), this game offers..." did not highlight the
+    consumed item titles "Mass Effect" or "Fable: Anniversary". The web UI
+    renders **bold** and *italic* text with accent colour via CSS, but the
+    LLM often writes consumed titles as plain text without markdown markers.
+
+    Root cause: No post-processing step wrapped consumed-item titles found
+    in reasoning text with **bold** markers.
+
+    Fix: Added _highlight_consumed_titles() which runs after parsing and
+    wraps any consumed-item title found in reasoning with **bold**.
+    """
+
+    @staticmethod
+    def _consumed(
+        titles: list[str],
+        *,
+        content_type: ContentType = ContentType.VIDEO_GAME,
+    ) -> list[ContentItem]:
+        """Build consumed items with ratings for test input."""
+        return [
+            ContentItem(
+                id=f"c{i}",
+                title=title,
+                content_type=content_type,
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+            )
+            for i, title in enumerate(titles, 1)
+        ]
+
+    def test_plain_title_gets_bold_markers(self) -> None:
+        """Plain consumed title in reasoning is wrapped with **bold**."""
+        recs: list[dict[str, Any]] = [
+            {"reasoning": "Just like in Mass Effect (5/5), great RPG action."}
+        ]
+        consumed = self._consumed(["Mass Effect"])
+        _highlight_consumed_titles(recs, consumed)
+        assert "**Mass Effect**" in recs[0]["reasoning"]
+
+    def test_already_bold_title_not_double_wrapped(self) -> None:
+        """Title already in **bold** is not wrapped again."""
+        recs: list[dict[str, Any]] = [
+            {"reasoning": "Similar to **Mass Effect** in many ways."}
+        ]
+        consumed = self._consumed(["Mass Effect"])
+        _highlight_consumed_titles(recs, consumed)
+        assert "****" not in recs[0]["reasoning"]
+        assert recs[0]["reasoning"].count("**Mass Effect**") == 1
+
+    def test_multiple_consumed_titles_highlighted(self) -> None:
+        """Multiple consumed titles in the same reasoning are all wrapped."""
+        recs: list[dict[str, Any]] = [
+            {
+                "reasoning": (
+                    "You're in for lore and character development! "
+                    "Just like in Mass Effect (5/5), this game offers a "
+                    "rich universe. Plus, the tactical combat reminiscent "
+                    "of Fable: Anniversary (5/5) will keep you strategizing."
+                )
+            }
+        ]
+        consumed = self._consumed(["Mass Effect", "Fable: Anniversary"])
+        _highlight_consumed_titles(recs, consumed)
+        assert "**Mass Effect**" in recs[0]["reasoning"]
+        assert "**Fable: Anniversary**" in recs[0]["reasoning"]
+
+    def test_case_insensitive_matching(self) -> None:
+        """Title matching is case-insensitive, uses canonical case in output."""
+        recs: list[dict[str, Any]] = [
+            {"reasoning": "Reminds me of mass effect's deep story."}
+        ]
+        consumed = self._consumed(["Mass Effect"])
+        _highlight_consumed_titles(recs, consumed)
+        assert "**Mass Effect**" in recs[0]["reasoning"]
+
+    def test_longer_title_matched_first(self) -> None:
+        """Longer title is processed first to avoid partial wrapping."""
+        recs: list[dict[str, Any]] = [
+            {"reasoning": ("Like Mass Effect 2 and Mass Effect, both great games.")}
+        ]
+        consumed = self._consumed(["Mass Effect", "Mass Effect 2"])
+        _highlight_consumed_titles(recs, consumed)
+        assert "**Mass Effect 2**" in recs[0]["reasoning"]
+        assert "**Mass Effect**" in recs[0]["reasoning"]
+        # "Mass Effect 2" should not be double-wrapped
+        assert "****" not in recs[0]["reasoning"]
+
+    def test_empty_consumed_items_no_change(self) -> None:
+        """No changes when consumed_items is empty."""
+        recs: list[dict[str, Any]] = [
+            {"reasoning": "Great tactical RPG with deep story."}
+        ]
+        original = recs[0]["reasoning"]
+        _highlight_consumed_titles(recs, [])
+        assert recs[0]["reasoning"] == original
+
+    def test_empty_reasoning_no_error(self) -> None:
+        """Recs with empty reasoning are skipped without error."""
+        recs: list[dict[str, Any]] = [{"reasoning": ""}, {"reasoning": None}]
+        consumed = self._consumed(["Mass Effect"])
+        _highlight_consumed_titles(recs, consumed)
+        assert recs[0]["reasoning"] == ""
+
+    def test_title_with_special_regex_chars(self) -> None:
+        """Titles with regex special characters are escaped properly."""
+        recs: list[dict[str, Any]] = [
+            {"reasoning": "Similar to Nier: Automata (5/5) in many ways."}
+        ]
+        consumed = self._consumed(["Nier: Automata"])
+        _highlight_consumed_titles(recs, consumed)
+        assert "**Nier: Automata**" in recs[0]["reasoning"]
