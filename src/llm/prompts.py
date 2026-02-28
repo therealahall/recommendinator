@@ -21,7 +21,6 @@ def _format_context_item(
     Returns:
         Formatted context line ending with newline
     """
-    rating_text = f"{item.rating}/5" if item.rating else "Unrated"
     author_text = f" by {item.author}" if item.author else ""
     genre_tag = format_genre_tag(item)
     review_text = (
@@ -32,11 +31,9 @@ def _format_context_item(
         type_label = get_enum_value(item.content_type).replace("_", " ")
         return (
             f"- [{type_label}] **{item.title}**{author_text}"
-            f" ({rating_text}){genre_tag}{review_text}\n"
+            f"{genre_tag}{review_text}\n"
         )
-    return (
-        f"- **{item.title}**{author_text}" f" ({rating_text}){genre_tag}{review_text}\n"
-    )
+    return f"- **{item.title}**{author_text}{genre_tag}{review_text}\n"
 
 
 def build_recommendation_prompt(
@@ -59,7 +56,7 @@ def build_recommendation_prompt(
     content_type_str = get_enum_value(content_type)
     content_type_name = content_type_str.replace("_", " ").title()
 
-    # Build context from consumed items — include ratings and reviews
+    # Build context from consumed items — include reviews for same-type
     high_rated = [item for item in consumed_items if item.rating and item.rating >= 4]
 
     # Split into same-type and cross-type to reduce confusion for small models
@@ -117,7 +114,7 @@ Candidates (NOT yet consumed):
 
 {items_text}
 
-For each pick, write 2-3 sentences explaining WHY it's a great fit. Connect it to specific items they rated highly — mention titles and ratings. Be enthusiastic and specific, not generic.
+For each pick, write 2-3 sentences explaining WHY it's a great fit. Connect it to specific items they enjoyed — mention titles. Be enthusiastic and specific, not generic.
 
 IMPORTANT formatting rules:
 - Use a numbered list: "1. **Title**" on the first line, reasoning on the next lines
@@ -125,13 +122,11 @@ IMPORTANT formatting rules:
 - Use **bold** for emphasis on key connections
 - Address them as "you" — never say "the user"
 - Only pick from the candidates list above
-- ONLY quote reviews that appear above. If no review is shown for an item, do NOT invent one.
-- Do NOT use your general knowledge to fabricate what someone thought or felt — only reference reviews and ratings explicitly shown above
+- Only reference what's shown above — do NOT invent quotes, opinions, or facts about items
 - Each review belongs to the item on the SAME line — do NOT attribute it to a different item
 - Author names are exact — do NOT claim two items share an author unless the names shown above match
-- Reference ratings as numbers — do NOT interpret them as emotions or sentiments
 - Write about the recommended item itself — do NOT describe its sequels, prequels, or other entries in the same franchise
-- Do NOT reference other candidates as things the user has played or enjoyed — they have NOT consumed any candidate. Only reference items from the rated list above."""
+- Do NOT reference other candidates as things the user has consumed — they have NOT consumed any candidate. Only reference items from the favorites list above."""
 
     return prompt
 
@@ -160,14 +155,12 @@ def build_recommendation_system_prompt(content_type: ContentType) -> str:
 - Only recommend items from the provided candidate list
 
 ## Data Accuracy
-- ONLY reference reviews or quotes that appear in the user's item list
-- If an item has no review, reference only its rating — NEVER invent quotes
-- Do NOT use your general knowledge to fabricate what they thought or felt about an item — only reference reviews and ratings explicitly provided
-- Each review belongs to the item on the SAME line — never attribute a review to a different item
+- Only reference what's shown in the user's item list — do NOT invent quotes, opinions, or facts
+- Each review belongs to the item on the SAME line — never attribute it to a different item
 - Do NOT claim items share the same author unless the author names shown are identical
 - A book is NOT a show, a movie is NOT a game — use the correct content type
-- Write about the RECOMMENDED item itself — NOT about its sequels, prequels, or other entries in the same series that appear in the user's history
-- NEVER reference other candidates or picks as things the user has consumed — they are unconsumed recommendations"""
+- Write about the RECOMMENDED item itself — NOT about its sequels, prequels, or other entries in the same franchise
+- NEVER reference candidates or picks as things the user has consumed — they are unconsumed recommendations"""
 
 
 def _build_blurb_taste_context(
@@ -235,7 +228,7 @@ def build_blurb_system_prompt(content_type: ContentType) -> str:
     """Build a slim system prompt for writing blurbs about pre-selected items.
 
     Uses the advisor identity plus core behavioural guardrails (no spoilers,
-    no fabricated quotes, no sentiment inference from ratings). Omits
+    no fabricated quotes, no misattribution). Omits
     PERSONALITY_TRAITS and the full STYLE_RULES list to save ~500 tokens
     compared to ``build_recommendation_system_prompt``.
 
@@ -252,11 +245,9 @@ def build_blurb_system_prompt(content_type: ContentType) -> str:
     return (
         f"You are {identity}. Write enthusiastic, specific blurbs"
         " connecting each pick to the user's taste. Be concise."
-        " NEVER invent quotes or reviews the user did not write."
-        " NEVER use general knowledge to fabricate what they thought or felt."
-        " NEVER misattribute reviews or author connections between items."
+        " NEVER invent quotes, opinions, or facts the user did not express."
+        " NEVER misattribute reviews or authors between items."
         " NEVER reveal plot twists, endings, or major surprises."
-        " State ratings as numbers, never interpret them as emotions or sentiments."
         " Write about the RECOMMENDED item itself — NEVER write about its"
         " sequels, prequels, or other series entries instead."
         " NEVER reference other picks as things the user has consumed —"
@@ -302,10 +293,7 @@ def build_blurb_prompt(
         if per_item_references and ref_index < len(per_item_references):
             refs = per_item_references[ref_index]
             if refs:
-                ref_parts = [
-                    f"{ref.title} ({ref.rating}/5)" if ref.rating else ref.title
-                    for ref in refs
-                ]
+                ref_parts = [ref.title for ref in refs]
                 items_text += f"   Related: {', '.join(ref_parts)}\n"
 
     return f"""Write a 2-3 sentence blurb for each of these {content_type_name.lower()} picks explaining WHY it fits this person's taste.
@@ -314,17 +302,15 @@ def build_blurb_prompt(
 {items_text}
 Rules:
 - Numbered list: "1. **Title**" then reasoning on the next lines
-- Connect each pick to its Related items when listed, otherwise to favorites above — mention titles and ratings
+- Connect each pick to its Related items when listed, otherwise to favorites above — mention specific titles
 - Address them as "you"
 - Be enthusiastic and specific, not generic
-- Do NOT invent quotes or opinions — only reference what's shown above
-- Do NOT use your general knowledge to fabricate what someone thought or felt — only reference reviews and ratings explicitly shown above
+- Only reference what's shown above — do NOT invent quotes, opinions, or facts about items
 - Each review belongs to the item on the SAME line — do NOT attribute it to a different item
 - Author names are exact — do NOT claim two items share an author unless the names shown above match
 - Do NOT reveal plot twists, endings, or major surprises
-- Reference ratings as numbers — do NOT interpret them as emotions or sentiments
 - Each blurb must describe the PICK itself — do NOT write about its sequels, prequels, or other series entries
-- Do NOT reference other picks as things the user has played or enjoyed — they have NOT consumed any pick. Only reference favorites listed above."""
+- Do NOT reference other picks as things the user has consumed — they have NOT consumed any pick. Only reference favorites listed above."""
 
 
 def build_single_blurb_prompt(
@@ -364,10 +350,7 @@ def build_single_blurb_prompt(
     # Optional reference line
     ref_line = ""
     if references:
-        ref_parts = [
-            f"{ref.title} ({ref.rating}/5)" if ref.rating else ref.title
-            for ref in references
-        ]
+        ref_parts = [ref.title for ref in references]
         ref_line = f"\nRelated: {', '.join(ref_parts)}"
 
     return f"""Write a 2-3 sentence blurb explaining WHY this {content_type_name.lower()} pick fits this person's taste.
@@ -376,15 +359,13 @@ def build_single_blurb_prompt(
 
 Rules:
 - Write only the blurb — no title, no numbered list, just the explanation
-- Connect the pick to its Related items when listed, otherwise to favorites above — mention titles and ratings
+- Connect the pick to its Related items when listed, otherwise to favorites above — mention specific titles
 - Address them as "you"
 - Be enthusiastic and specific, not generic
-- Do NOT invent quotes or opinions — only reference what's shown above
-- Do NOT use your general knowledge to fabricate what someone thought or felt — only reference reviews and ratings explicitly shown above
+- Only reference what's shown above — do NOT invent quotes, opinions, or facts about items
 - Each review belongs to the item on the SAME line — do NOT attribute it to a different item
 - Author names are exact — do NOT claim two items share an author unless the names shown above match
 - Do NOT reveal plot twists, endings, or major surprises
-- Reference ratings as numbers — do NOT interpret them as emotions or sentiments
 - Describe the PICK itself — do NOT write about its sequels, prequels, or other series entries
 - Do NOT reference any other recommendation as something the user has consumed — only reference favorites listed above."""
 
