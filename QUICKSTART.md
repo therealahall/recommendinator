@@ -16,11 +16,14 @@ That's it. No AI, no external services required.
 git clone https://github.com/ahall/personal-recommendations.git
 cd personal-recommendations
 
+# Install uv (if not already installed)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
 # Install dependencies (base only, no AI)
-python3.11 -m pip install .
+uv sync --locked
 
 # Or install with AI features (ollama, chromadb)
-python3.11 -m pip install ".[ai]"
+uv sync --locked --extra ai
 
 # Set up configuration
 cp config/example.yaml config/config.yaml

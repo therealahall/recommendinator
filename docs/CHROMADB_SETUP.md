@@ -7,14 +7,22 @@ This guide explains how to set up ChromaDB locally for the Personal Recommendati
 ChromaDB is included in the `ai` optional dependency group. To install it:
 
 ```bash
-python3.11 -m pip install ".[ai]"
+uv sync --locked --extra ai
 ```
 
-Or install ChromaDB directly:
+## Upgrading from ChromaDB 0.x to 1.x
+
+ChromaDB 1.x uses a different database format. If you previously used ChromaDB 0.x, you must delete the old data and re-embed:
 
 ```bash
-python3.11 -m pip install chromadb
+# Delete old ChromaDB data
+rm -rf data/chroma_db/ data/chromadb/
+
+# Re-embed all content
+python3.11 -m src.cli update --source all
 ```
+
+The database will be recreated automatically on the next run.
 
 ## Python Version Compatibility
 
@@ -59,15 +67,14 @@ python3.11 -m pytest tests/test_storage_manager.py -v
 
 1. Verify installation:
    ```bash
-   pip list | grep chromadb
+   uv pip list | grep chromadb
    ```
 
 2. Check Python version compatibility (see above)
 
 3. Try reinstalling:
    ```bash
-   pip uninstall chromadb
-   pip install chromadb
+   uv sync --locked --extra ai --reinstall-package chromadb
    ```
 
 ### Installation fails on Python 3.14
@@ -76,11 +83,9 @@ If installation fails with Python 3.14, you have two options:
 
 1. **Use Python 3.11 or 3.12** (recommended):
    ```bash
-   # Create a virtual environment with Python 3.11
-   python3.11 -m venv venv
-   source venv/bin/activate  # On Linux/Mac
-   pip install ".[ai]"
+   uv sync --locked --extra ai
    ```
+   uv automatically uses the Python version from `.python-version` (3.11).
 
 2. **Wait for ChromaDB Python 3.14 support** or use a workaround
 

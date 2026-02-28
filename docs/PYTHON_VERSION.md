@@ -4,14 +4,16 @@
 
 **Use Python 3.11** for this project to ensure full compatibility with all dependencies, especially ChromaDB.
 
+The project includes a `.python-version` file that pins Python 3.11, which uv reads automatically.
+
 ## Quick Setup
 
 ```bash
-# Verify Python 3.11 is available
-python3.11 --version
+# Install uv (if not already installed)
+curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Install all dependencies (AI + dev tools, editable mode)
-python3.11 -m pip install -e ".[ai,dev]"
+# Install all dependencies (AI + dev tools)
+uv sync --locked --extra ai --extra dev
 
 # Run tests
 python3.11 -m pytest tests/ -v
@@ -32,7 +34,7 @@ While Python 3.14.2 is available on your system, ChromaDB doesn't have full supp
 
 ## Using Python 3.11
 
-Since `python3` is aliased to Python 3.14.2, use `python3.11` explicitly:
+uv automatically selects Python 3.11 based on the `.python-version` file. For direct commands, use `python3.11` explicitly:
 
 ```bash
 # Instead of: python3 script.py
@@ -42,12 +44,10 @@ Since `python3` is aliased to Python 3.14.2, use `python3.11` explicitly:
 # Use: python3.11 -m pytest
 ```
 
-## Virtual Environment (Optional)
+## Virtual Environment
 
-If you want to isolate dependencies:
+uv manages the virtual environment automatically at `.venv/`. To install dependencies:
 
 ```bash
-python3.11 -m venv venv
-source venv/bin/activate  # On Linux/Mac
-pip install -e ".[ai,dev]"
+uv sync --locked --extra ai --extra dev
 ```

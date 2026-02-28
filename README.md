@@ -45,7 +45,8 @@ If you change the host to `0.0.0.0` to allow LAN access, **anyone on your networ
 # Clone and install
 git clone https://github.com/ahall/personal-recommendations.git
 cd personal-recommendations
-python3.11 -m pip install ".[ai]"
+curl -LsSf https://astral.sh/uv/install.sh | sh  # install uv if needed
+uv sync --locked --extra ai
 
 # Set up config
 cp config/example.yaml config/config.yaml
@@ -155,10 +156,7 @@ If you prefer to set up manually:
 
 Epic Games uses the [Legendary](https://github.com/derrod/legendary) launcher's authentication:
 
-1. **Install Legendary:**
-   ```bash
-   pip install legendary-gl
-   ```
+1. **Legendary is included** in the base dependencies (`uv sync` installs it automatically).
 
 2. **Authenticate via browser:**
    ```bash

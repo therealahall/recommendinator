@@ -111,6 +111,7 @@ config = load_config(Path("config/config.yaml"))
 ## Technology Stack
 
 - **Python**: 3.11+ (3.14.2 available, 3.11 recommended for ChromaDB)
+- **Package manager**: uv (lockfile: `uv.lock`, Python version: `.python-version`)
 - **LLM**: Ollama (local, AMD-compatible)
 - **Vector DB**: ChromaDB
 - **SQL DB**: SQLite
