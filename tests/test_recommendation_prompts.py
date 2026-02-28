@@ -171,8 +171,9 @@ class TestContentTypeGrouping:
             unconsumed_items=unconsumed,
         )
 
-        # Only 10 of 15 books should appear
-        book_count = sum(1 for book in books if book.title in prompt)
+        # Only 10 of 15 books should appear — use **title** to avoid
+        # substring matches (e.g. "Book 1" matching "Book 10")
+        book_count = sum(1 for book in books if f"**{book.title}**" in prompt)
         assert book_count == 10
 
     def test_no_context_when_no_high_rated_items(self) -> None:
@@ -841,11 +842,10 @@ class TestCrossTypeReviewLeakingRegression:
             consumed_items=consumed,
         )
 
-        # First 5 movies should be present (capped at 5)
-        for movie in movies[:5]:
-            assert movie.title in prompt
-        # 6th movie should NOT appear — capped at 5 same-type items
-        assert movies[5].title not in prompt
+        # Exactly 5 of the 6 movies should appear (capped at 5, order may vary
+        # due to same-rating tier shuffling for variety)
+        movie_count = sum(1 for movie in movies if f"**{movie.title}**" in prompt)
+        assert movie_count == 5
         # Games should NOT appear
         for game in games:
             assert game.title not in prompt
@@ -1572,3 +1572,50 @@ class TestBuildSingleBlurbPrompt:
             consumed_items=[],
         )
         assert "video game pick" in prompt
+
+
+# ---------------------------------------------------------------------------
+# Verb guardrail tests
+# ---------------------------------------------------------------------------
+
+
+class TestVerbGuardrails:
+    """Verify all prompt functions include content-type verb guidance."""
+
+    _VERB_PHRASES = ["READ books", "WATCH movies", "PLAY video games"]
+
+    def test_recommendation_prompt_has_verb_guidance(self) -> None:
+        """build_recommendation_prompt includes verb guidance."""
+        books = _make_books(3)
+        unconsumed = _make_unconsumed(3)
+        prompt = build_recommendation_prompt(ContentType.BOOK, books, unconsumed)
+        for phrase in self._VERB_PHRASES:
+            assert phrase in prompt
+
+    def test_recommendation_system_prompt_has_verb_guidance(self) -> None:
+        """build_recommendation_system_prompt includes verb guidance."""
+        prompt = build_recommendation_system_prompt(ContentType.BOOK)
+        for phrase in self._VERB_PHRASES:
+            assert phrase in prompt
+
+    def test_blurb_system_prompt_has_verb_guidance(self) -> None:
+        """build_blurb_system_prompt includes verb guidance."""
+        prompt = build_blurb_system_prompt(ContentType.MOVIE)
+        for phrase in self._VERB_PHRASES:
+            assert phrase in prompt
+
+    def test_blurb_prompt_has_verb_guidance(self) -> None:
+        """build_blurb_prompt includes verb guidance."""
+        selected = [make_item("Pick", ContentType.BOOK)]
+        prompt = build_blurb_prompt(ContentType.BOOK, selected, consumed_items=[])
+        for phrase in self._VERB_PHRASES:
+            assert phrase in prompt
+
+    def test_single_blurb_prompt_has_verb_guidance(self) -> None:
+        """build_single_blurb_prompt includes verb guidance."""
+        item = make_item("Pick", ContentType.VIDEO_GAME)
+        prompt = build_single_blurb_prompt(
+            ContentType.VIDEO_GAME, item, consumed_items=[]
+        )
+        for phrase in self._VERB_PHRASES:
+            assert phrase in prompt

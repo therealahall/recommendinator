@@ -9,10 +9,12 @@ import pytest
 
 from src.llm.client import OllamaClient
 from src.llm.prompts import (
+    _build_blurb_taste_context,
     build_blurb_prompt,
     build_blurb_system_prompt,
     build_recommendation_prompt,
     build_recommendation_system_prompt,
+    build_single_blurb_prompt,
 )
 from src.llm.recommendations import RecommendationGenerator
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
@@ -26,6 +28,7 @@ from src.storage.schema import (
     mark_item_needs_enrichment,
 )
 from src.storage.sqlite_db import SQLiteDB
+from tests.factories import make_item
 
 
 class TestArticleStrippingRegression:
@@ -1620,3 +1623,150 @@ class TestAuthorlessTitleMatchingRegression:
         prompt = build_blurb_prompt(ContentType.BOOK, selected, consumed)
         # The picks list should show "by Author" for books
         assert "by Brandon Sanderson" in prompt
+
+
+class TestVerbConfusionRegression:
+    """Regression: blurbs said 'watching Fable: Anniversary' (a video game).
+
+    Root cause: No verb guardrail in prompts. The LLM would use "watch" or
+    "read" for any content type since the prompt didn't specify the correct
+    verb per content type.
+
+    Fix: All prompt functions now include "READ books, WATCH movies and TV
+    shows, and PLAY video games" guidance.
+    """
+
+    def test_video_game_blurb_includes_play_verb_regression(self) -> None:
+        """Regression: build_single_blurb_prompt for VIDEO_GAME must include
+        'PLAY video games' to prevent verb confusion like 'watching Fable'."""
+        item = make_item("Fable: Anniversary", ContentType.VIDEO_GAME)
+        prompt = build_single_blurb_prompt(
+            ContentType.VIDEO_GAME, item, consumed_items=[]
+        )
+        assert "PLAY video games" in prompt
+
+
+class TestFavoritesRelevanceRegression:
+    """Regression: every book blurb referenced 1984 (alphabetically first).
+
+    Root cause: ``get_completed_items()`` returns items sorted
+    alphabetically, and ``_build_blurb_taste_context()`` took ``[:5]`` —
+    always the same alphabetically-first items regardless of genre.
+
+    Fix: When target_items are provided, favorites are scored by genre
+    relevance (Jaccard for same-type, cluster_overlap for cross-type,
+    creator bonus, rating boost) and only the most relevant are selected.
+    """
+
+    def test_genre_relevant_favorites_selected_over_alphabetical_regression(
+        self,
+    ) -> None:
+        """Fantasy recommendations should select fantasy favorites, not
+        alphabetically-first unrelated items like '1984'."""
+
+        def _book(title: str, genres: list[str], rating: int = 5) -> ContentItem:
+            return make_item(
+                title,
+                ContentType.BOOK,
+                rating=rating,
+                metadata={"genres": genres},
+            )
+
+        # 10 same-type favorites with diverse genres — alphabetically,
+        # the non-fantasy items come first
+        favorites = [
+            _book("1984", ["dystopian", "political fiction"]),
+            _book("Argo", ["thriller", "political thriller"]),
+            _book("Brief History of Time", ["science", "non-fiction"]),
+            _book("Crime and Punishment", ["literary fiction", "psychological"]),
+            _book("Dune", ["science fiction", "space opera"]),
+            _book("Eye of the World", ["fantasy", "epic fantasy"]),
+            _book("Gardens of the Moon", ["fantasy", "dark fantasy"]),
+            _book("Harry Potter", ["fantasy", "young adult"]),
+            _book("Mistborn", ["fantasy", "epic fantasy"]),
+            _book("Name of the Wind", ["fantasy", "epic fantasy"]),
+        ]
+
+        # Target: a fantasy book recommendation
+        target = make_item(
+            "The Way of Kings",
+            ContentType.BOOK,
+            metadata={"genres": ["fantasy", "epic fantasy"]},
+        )
+
+        context = _build_blurb_taste_context(
+            ContentType.BOOK, favorites, target_items=[target]
+        )
+
+        # Fantasy favorites should be selected
+        assert (
+            "Mistborn" in context
+            or "Name of the Wind" in context
+            or "Eye of the World" in context
+        )
+        # The alphabetically-first non-fantasy items should NOT dominate
+        # (1984, Argo, Brief History should not all appear)
+        non_fantasy_count = sum(
+            1 for title in ["1984", "Argo", "Brief History of Time"] if title in context
+        )
+        fantasy_count = sum(
+            1
+            for title in [
+                "Eye of the World",
+                "Gardens of the Moon",
+                "Harry Potter",
+                "Mistborn",
+                "Name of the Wind",
+            ]
+            if title in context
+        )
+        assert fantasy_count > non_fantasy_count, (
+            f"Expected more fantasy than non-fantasy favorites for a fantasy "
+            f"target, got {fantasy_count} fantasy vs {non_fantasy_count} "
+            f"non-fantasy in context:\n{context}"
+        )
+
+    def test_low_rated_favorites_excluded_regression(self) -> None:
+        """Items rated below 3 should never appear as favorites."""
+        favorites = [
+            make_item(
+                "Bad Book", ContentType.BOOK, rating=2, metadata={"genres": ["fantasy"]}
+            ),
+            make_item(
+                "Good Book",
+                ContentType.BOOK,
+                rating=5,
+                metadata={"genres": ["fantasy"]},
+            ),
+        ]
+        target = make_item("Target", ContentType.BOOK, metadata={"genres": ["fantasy"]})
+
+        context = _build_blurb_taste_context(
+            ContentType.BOOK, favorites, target_items=[target]
+        )
+        assert "Good Book" in context
+        # Bad Book has rating 2 — filtered out by the rating >= 4 favorites filter
+        assert "Bad Book" not in context
+
+    def test_cross_type_favorites_require_minimum_overlap_regression(self) -> None:
+        """Cross-type favorites with low genre overlap should be excluded."""
+        favorites = [
+            # A movie with completely unrelated genres
+            make_item(
+                "Unrelated Movie",
+                ContentType.MOVIE,
+                rating=5,
+                metadata={"genres": ["romantic comedy"]},
+            ),
+        ]
+        target = make_item(
+            "Dark Fantasy Book",
+            ContentType.BOOK,
+            metadata={"genres": ["dark fantasy", "horror"]},
+        )
+
+        context = _build_blurb_taste_context(
+            ContentType.BOOK, favorites, target_items=[target]
+        )
+        # The unrelated movie shouldn't appear due to low cluster overlap
+        assert "Unrelated Movie" not in context
