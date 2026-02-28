@@ -32,7 +32,7 @@ WORKDIR /app
 RUN useradd --create-home --shell /bin/bash appuser
 
 # Copy virtual environment from builder
-COPY --from=builder /app/.venv /app/.venv
+COPY --from=builder --chown=appuser:appuser /app/.venv /app/.venv
 
 # Use the virtual environment's Python
 ENV PATH="/app/.venv/bin:$PATH"
@@ -44,7 +44,7 @@ COPY config/example.yaml ./config/example.yaml
 
 # Create directories for data and inputs
 RUN mkdir -p data inputs config && \
-    chown -R appuser:appuser /app
+    chown -R appuser:appuser data inputs config
 
 # Switch to non-root user
 USER appuser
