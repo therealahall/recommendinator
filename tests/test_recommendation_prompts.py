@@ -1732,6 +1732,126 @@ class TestRelatedItemsIncludeGenreTags:
         assert "The Black Elfstone [Fantasy, Epic Fantasy]" in prompt
 
 
+class TestAntiGenreTagInProseGuardrails:
+    """Regression: genre tags like (Comedy) must not appear in blurb text.
+
+    Bug reported: Blurbs included literal genre parentheticals in prose —
+    e.g. 'You'll love "Legally Blonde" (Comedy)'.
+
+    Fix: Prompt rules now forbid including genre tags in output text.
+    """
+
+    _RULE_PHRASE = "Do NOT include genre tags"
+
+    def test_recommendation_prompt_has_anti_genre_tag_rule_regression(self) -> None:
+        books = _make_books(3)
+        unconsumed = _make_unconsumed(3)
+        prompt = build_recommendation_prompt(ContentType.BOOK, books, unconsumed)
+        assert self._RULE_PHRASE in prompt
+
+    def test_recommendation_system_prompt_has_anti_genre_tag_rule_regression(
+        self,
+    ) -> None:
+        prompt = build_recommendation_system_prompt(ContentType.BOOK)
+        assert self._RULE_PHRASE in prompt
+
+    def test_blurb_system_prompt_has_anti_genre_tag_rule_regression(self) -> None:
+        prompt = build_blurb_system_prompt(ContentType.BOOK)
+        assert self._RULE_PHRASE in prompt
+
+    def test_blurb_prompt_has_anti_genre_tag_rule_regression(self) -> None:
+        selected = [make_item("Pick", ContentType.BOOK)]
+        prompt = build_blurb_prompt(ContentType.BOOK, selected, consumed_items=[])
+        assert self._RULE_PHRASE in prompt
+
+    def test_single_blurb_prompt_has_anti_genre_tag_rule_regression(self) -> None:
+        item = make_item("Pick", ContentType.BOOK)
+        prompt = build_single_blurb_prompt(ContentType.BOOK, item, consumed_items=[])
+        assert self._RULE_PHRASE in prompt
+
+
+class TestAntiCircularJustificationGuardrails:
+    """Regression: LLM justified picks by citing user's experience with
+    the pick's own series — circular reasoning.
+
+    Bug reported: A Ranger's Apprentice recommendation said "just as you
+    experienced in the (Ranger's Apprentice) series" — justifying a pick
+    by referencing the user's experience with that same series.
+
+    Fix: Prompt rules now forbid circular self-series justification.
+    """
+
+    _RULE_PHRASE = "circular"
+
+    def test_recommendation_prompt_has_anti_circular_rule_regression(self) -> None:
+        books = _make_books(3)
+        unconsumed = _make_unconsumed(3)
+        prompt = build_recommendation_prompt(ContentType.BOOK, books, unconsumed)
+        assert self._RULE_PHRASE in prompt
+
+    def test_recommendation_system_prompt_has_anti_circular_rule_regression(
+        self,
+    ) -> None:
+        prompt = build_recommendation_system_prompt(ContentType.BOOK)
+        assert self._RULE_PHRASE in prompt
+
+    def test_blurb_system_prompt_has_anti_circular_rule_regression(self) -> None:
+        prompt = build_blurb_system_prompt(ContentType.BOOK)
+        assert self._RULE_PHRASE in prompt
+
+    def test_blurb_prompt_has_anti_circular_rule_regression(self) -> None:
+        selected = [make_item("Pick", ContentType.BOOK)]
+        prompt = build_blurb_prompt(ContentType.BOOK, selected, consumed_items=[])
+        assert self._RULE_PHRASE in prompt
+
+    def test_single_blurb_prompt_has_anti_circular_rule_regression(self) -> None:
+        item = make_item("Pick", ContentType.BOOK)
+        prompt = build_single_blurb_prompt(ContentType.BOOK, item, consumed_items=[])
+        assert self._RULE_PHRASE in prompt
+
+
+class TestVarietyInstructionGuardrails:
+    """Regression: blurbs opened with repetitive formulaic phrases.
+
+    Bug reported: Three consecutive blurbs started with "You'll adore..."
+    and nearly all used "much like" as the connector.
+
+    Fix: Prompt rules now ban formulaic openers and repeated connectors.
+    """
+
+    _VARIETY_PHRASES = [
+        "You'll adore",
+        "You'll love",
+        "If you enjoyed",
+    ]
+
+    def test_recommendation_prompt_has_variety_instruction_regression(self) -> None:
+        books = _make_books(3)
+        unconsumed = _make_unconsumed(3)
+        prompt = build_recommendation_prompt(ContentType.BOOK, books, unconsumed)
+        for phrase in self._VARIETY_PHRASES:
+            assert phrase in prompt, f"Missing variety phrase: {phrase!r}"
+
+    def test_blurb_system_prompt_has_variety_instruction_regression(self) -> None:
+        prompt = build_blurb_system_prompt(ContentType.BOOK)
+        for phrase in self._VARIETY_PHRASES:
+            assert phrase in prompt, f"Missing variety phrase: {phrase!r}"
+
+    def test_blurb_prompt_has_variety_instruction_regression(self) -> None:
+        selected = [make_item("Pick", ContentType.BOOK)]
+        prompt = build_blurb_prompt(ContentType.BOOK, selected, consumed_items=[])
+        for phrase in self._VARIETY_PHRASES:
+            assert phrase in prompt, f"Missing variety phrase: {phrase!r}"
+
+    def test_single_blurb_prompt_has_variety_instruction_regression(self) -> None:
+        item = make_item("Pick", ContentType.VIDEO_GAME)
+        prompt = build_single_blurb_prompt(
+            ContentType.VIDEO_GAME, item, consumed_items=[]
+        )
+        for phrase in self._VARIETY_PHRASES:
+            assert phrase in prompt, f"Missing variety phrase: {phrase!r}"
+
+
 class TestVerbGuardrails:
     """Verify all prompt functions include content-type verb guidance.
 

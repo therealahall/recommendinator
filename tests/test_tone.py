@@ -63,7 +63,13 @@ class TestToneConstants:
         assert '"you"' in STYLE_RULES
 
     def test_style_rules_bans_filler_words(self) -> None:
-        assert "filler" in STYLE_RULES.lower()
+        for word in ["immersive", "engaging", "compelling", "beloved"]:
+            assert word in STYLE_RULES, f"Missing filler word ban: {word!r}"
+
+    def test_style_rules_has_variety_instruction(self) -> None:
+        assert "Vary your phrasing" in STYLE_RULES
+        assert "much like" in STYLE_RULES
+        assert "just like" in STYLE_RULES
 
     def test_style_rules_has_anti_spoiler(self) -> None:
         assert "NEVER reveal plot twists" in STYLE_RULES
