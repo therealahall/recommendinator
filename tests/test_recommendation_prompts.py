@@ -1382,7 +1382,9 @@ class TestPerItemReferencesRegression:
             per_item_references=per_item_refs,
         )
 
-        assert "Related: The Last of Us: Part 1, God of War" in prompt
+        # Related line now includes genre tags for accuracy
+        assert "Related: The Last of Us: Part 1 [action, adventure]" in prompt
+        assert "God of War [action, adventure]" in prompt
         related_line = next(
             line for line in prompt.split("\n") if line.strip().startswith("Related:")
         )
@@ -1538,7 +1540,7 @@ class TestBuildSingleBlurbPrompt:
         assert "Movie 1" in prompt
 
     def test_references_appear_as_related(self) -> None:
-        """Per-item references render as a Related line."""
+        """References without genre metadata render as plain titles in Related line."""
         item = make_item("New Book", ContentType.BOOK)
         refs = [
             make_item("Ref A", ContentType.BOOK, rating=5),
@@ -1550,6 +1552,7 @@ class TestBuildSingleBlurbPrompt:
             consumed_items=[],
             references=refs,
         )
+        # No genres on these refs, so no brackets appended
         assert "Related: Ref A, Ref B" in prompt
 
     def test_no_references_omits_related_line(self) -> None:
@@ -1575,14 +1578,173 @@ class TestBuildSingleBlurbPrompt:
 
 
 # ---------------------------------------------------------------------------
-# Verb guardrail tests
+# LLM guardrail tests (series names, genre accuracy, Related: tags, verbs)
 # ---------------------------------------------------------------------------
 
 
-class TestVerbGuardrails:
-    """Verify all prompt functions include content-type verb guidance."""
+class TestSeriesNameGuardrails:
+    """Verify prompts instruct the LLM to use series names, not entry titles.
 
-    _VERB_PHRASES = ["READ books", "WATCH movies", "PLAY video games"]
+    Bug reported: Blurbs referred to "your favorite series, Harry Potter and
+    the Order of the Phoenix" — treating an individual book title as the
+    series name.  The series is "Harry Potter", not the individual entry.
+
+    Fix: Favorites context now annotates series entries with "(Series Name
+    series)" and prompt rules tell the LLM to use that series name.
+
+    Note: Only blurb prompts are tested here.  Recommendation prompts
+    (build_recommendation_prompt/system_prompt) do not include this
+    guardrail because they select items, not write prose about them —
+    series name confusion is a blurb-generation issue.
+    """
+
+    _SERIES_PHRASE = "series name"
+
+    def test_blurb_system_prompt_has_series_guardrail(self) -> None:
+        """Blurb system prompt instructs LLM to use series name."""
+        prompt = build_blurb_system_prompt(ContentType.BOOK)
+        assert self._SERIES_PHRASE in prompt.lower()
+
+    def test_blurb_prompt_has_series_guardrail(self) -> None:
+        """Blurb prompt rules include series name instruction."""
+        selected = [make_item("Pick", ContentType.BOOK)]
+        prompt = build_blurb_prompt(ContentType.BOOK, selected, consumed_items=[])
+        assert self._SERIES_PHRASE in prompt.lower()
+
+    def test_single_blurb_prompt_has_series_guardrail(self) -> None:
+        """Single blurb prompt rules include series name instruction."""
+        item = make_item("Pick", ContentType.BOOK)
+        prompt = build_single_blurb_prompt(ContentType.BOOK, item, consumed_items=[])
+        assert self._SERIES_PHRASE in prompt.lower()
+
+    def test_series_annotation_appears_in_favorites_context(self) -> None:
+        """Favorites with series metadata show '(Series series)' annotation."""
+        favorites = [
+            make_item(
+                "Harry Potter and the Order of the Phoenix",
+                ContentType.BOOK,
+                rating=5,
+                author="J.K. Rowling",
+                metadata={"series_name": "Harry Potter", "series_number": 5},
+            ),
+        ]
+        selected = [make_item("New Book", ContentType.BOOK)]
+        prompt = build_blurb_prompt(
+            ContentType.BOOK, selected, consumed_items=favorites
+        )
+        assert "(Harry Potter series)" in prompt
+
+    def test_no_series_annotation_for_standalone_titles(self) -> None:
+        """Standalone titles (no series metadata) get no annotation."""
+        favorites = [
+            make_item(
+                "The Road",
+                ContentType.BOOK,
+                rating=5,
+                author="Cormac McCarthy",
+            ),
+        ]
+        selected = [make_item("New Book", ContentType.BOOK)]
+        prompt = build_blurb_prompt(
+            ContentType.BOOK, selected, consumed_items=favorites
+        )
+        assert "series)" not in prompt
+
+
+class TestGenreAccuracyGuardrails:
+    """Verify prompts instruct the LLM not to invent genre attributes.
+
+    Bug reported: A blurb claimed the Shannara series (fantasy) involved
+    "space warfare" when comparing it to a StarCraft recommendation.
+
+    Fix: Prompt rules now explicitly forbid attributing genres, settings, or
+    themes to referenced items that aren't listed in their genre brackets.
+
+    Note: Only blurb prompts are tested here.  Recommendation prompts do not
+    have Related: lines with genre brackets — they use a different format
+    for candidates — so the genre-accuracy guardrail is blurb-specific.
+    """
+
+    _GENRE_PHRASE = "genre brackets"
+
+    def test_blurb_system_prompt_has_genre_accuracy_guardrail(self) -> None:
+        """Blurb system prompt warns against inventing genres."""
+        prompt = build_blurb_system_prompt(ContentType.BOOK)
+        assert self._GENRE_PHRASE in prompt.lower()
+
+    def test_blurb_prompt_has_genre_accuracy_guardrail(self) -> None:
+        """Blurb prompt rules include genre accuracy instruction."""
+        selected = [make_item("Pick", ContentType.BOOK)]
+        prompt = build_blurb_prompt(ContentType.BOOK, selected, consumed_items=[])
+        assert self._GENRE_PHRASE in prompt.lower()
+
+    def test_single_blurb_prompt_has_genre_accuracy_guardrail(self) -> None:
+        """Single blurb prompt rules include genre accuracy instruction."""
+        item = make_item("Pick", ContentType.BOOK)
+        prompt = build_single_blurb_prompt(ContentType.BOOK, item, consumed_items=[])
+        assert self._GENRE_PHRASE in prompt.lower()
+
+
+class TestRelatedItemsIncludeGenreTags:
+    """Verify Related: lines include genre tags so the LLM knows each
+    reference's actual genre and doesn't invent settings or themes.
+
+    Bug reported: A blurb claimed the Shannara series involved "space warfare"
+    because the Related line only showed titles without genre context.
+    """
+
+    def test_blurb_prompt_related_line_includes_genres(self) -> None:
+        """Related: line in build_blurb_prompt includes genre brackets."""
+        selected = [make_item("Pick", ContentType.BOOK)]
+        refs = [
+            make_item(
+                "Bloodfire Quest",
+                ContentType.BOOK,
+                rating=5,
+                genres="Fantasy, Epic Fantasy",
+            ),
+        ]
+        prompt = build_blurb_prompt(
+            ContentType.BOOK,
+            selected,
+            consumed_items=[],
+            per_item_references=[refs],
+        )
+        assert "Bloodfire Quest [Fantasy, Epic Fantasy]" in prompt
+
+    def test_single_blurb_prompt_related_line_includes_genres(self) -> None:
+        """Related: line in build_single_blurb_prompt includes genre brackets."""
+        item = make_item("Pick", ContentType.BOOK)
+        refs = [
+            make_item(
+                "The Black Elfstone",
+                ContentType.BOOK,
+                rating=5,
+                genres="Fantasy, Epic Fantasy",
+            ),
+        ]
+        prompt = build_single_blurb_prompt(
+            ContentType.BOOK,
+            item,
+            consumed_items=[],
+            references=refs,
+        )
+        assert "The Black Elfstone [Fantasy, Epic Fantasy]" in prompt
+
+
+class TestVerbGuardrails:
+    """Verify all prompt functions include content-type verb guidance.
+
+    Prevents the regression where blurbs used "watching" for video games.
+    See TestVerbConfusionRegression in test_bug_regressions.py for the
+    original incident.
+    """
+
+    _VERB_PHRASES = [
+        "READ books",
+        "WATCH movies and TV shows",
+        "PLAY video games",
+    ]
 
     def test_recommendation_prompt_has_verb_guidance(self) -> None:
         """build_recommendation_prompt includes verb guidance."""

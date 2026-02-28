@@ -1632,8 +1632,9 @@ class TestVerbConfusionRegression:
     "read" for any content type since the prompt didn't specify the correct
     verb per content type.
 
-    Fix: All prompt functions now include "READ books, WATCH movies and TV
-    shows, and PLAY video games" guidance.
+    Fix: build_single_blurb_prompt (and all other prompt functions — see
+    TestVerbGuardrails in test_recommendation_prompts.py) now includes
+    "READ books, WATCH movies and TV shows, and PLAY video games" guidance.
     """
 
     def test_video_game_blurb_includes_play_verb_regression(self) -> None:
@@ -1727,15 +1728,18 @@ class TestFavoritesRelevanceRegression:
         )
 
     def test_low_rated_favorites_excluded_regression(self) -> None:
-        """Items rated below 3 should never appear as favorites."""
+        """Items rated below 4 should never appear as favorites (threshold is >= 4)."""
         favorites = [
             make_item(
-                "Bad Book", ContentType.BOOK, rating=2, metadata={"genres": ["fantasy"]}
+                "Rating 2", ContentType.BOOK, rating=2, metadata={"genres": ["fantasy"]}
             ),
             make_item(
-                "Good Book",
+                "Rating 3", ContentType.BOOK, rating=3, metadata={"genres": ["fantasy"]}
+            ),
+            make_item(
+                "Rating 4",
                 ContentType.BOOK,
-                rating=5,
+                rating=4,
                 metadata={"genres": ["fantasy"]},
             ),
         ]
@@ -1744,9 +1748,10 @@ class TestFavoritesRelevanceRegression:
         context = _build_blurb_taste_context(
             ContentType.BOOK, favorites, target_items=[target]
         )
-        assert "Good Book" in context
-        # Bad Book has rating 2 — filtered out by the rating >= 4 favorites filter
-        assert "Bad Book" not in context
+        assert "Rating 4" in context
+        # Rating 3 is the boundary — excluded by the >= 4 filter
+        assert "Rating 3" not in context
+        assert "Rating 2" not in context
 
     def test_cross_type_favorites_require_minimum_overlap_regression(self) -> None:
         """Cross-type favorites with low genre overlap should be excluded."""
@@ -1768,5 +1773,154 @@ class TestFavoritesRelevanceRegression:
         context = _build_blurb_taste_context(
             ContentType.BOOK, favorites, target_items=[target]
         )
-        # The unrelated movie shouldn't appear due to low cluster overlap
+        # The unrelated movie shouldn't appear due to low cluster overlap;
+        # with no same-type favorites either, context should be empty.
         assert "Unrelated Movie" not in context
+        assert context == ""
+
+    def test_fallback_when_target_has_no_genre_data_regression(self) -> None:
+        """When target items have no genre metadata, the fallback path
+        returns rating-sorted favorites rather than crashing or returning empty."""
+        favorites = [
+            make_item("Good Book", ContentType.BOOK, rating=5),
+            make_item("Great Book", ContentType.BOOK, rating=4),
+        ]
+        # Target with no genre metadata triggers the fallback path
+        target_no_genres = make_item("Target", ContentType.BOOK)
+        context = _build_blurb_taste_context(
+            ContentType.BOOK, favorites, target_items=[target_no_genres]
+        )
+        assert "Good Book" in context
+        assert "Great Book" in context
+
+
+class TestSeriesNameConfusionRegression:
+    """Regression tests for LLM treating book titles as series names.
+
+    Bug reported: Blurb said "your favorite series, Harry Potter and the
+    Order of the Phoenix" — treating an individual book title as the series
+    name.  The series is "Harry Potter", not the individual entry.
+
+    Root cause: Favorites context showed the full title without any series
+    name annotation, so the LLM had no way to distinguish a series entry
+    from a standalone title.
+
+    Fix: _format_context_item now appends "(Series series)" when series
+    metadata is present, and prompt rules instruct the LLM to use the
+    series name shown in parentheses.
+    """
+
+    def test_series_entry_annotated_in_blurb_context_regression(self) -> None:
+        """Favorites with series metadata should show series annotation.
+
+        Before the fix, "Harry Potter and the Order of the Phoenix" appeared
+        with no series context.  After the fix, it shows
+        "(Harry Potter series)" so the LLM knows the series name.
+        """
+        consumed = [
+            make_item(
+                "Harry Potter and the Order of the Phoenix",
+                ContentType.BOOK,
+                rating=5,
+                author="J.K. Rowling",
+                metadata={"series_name": "Harry Potter", "series_number": 5},
+            ),
+        ]
+        target = make_item(
+            "The Ruins of Gorlan",
+            ContentType.BOOK,
+            metadata={"genres": ["fantasy"]},
+        )
+        prompt = build_single_blurb_prompt(
+            ContentType.BOOK, target, consumed_items=consumed
+        )
+        assert "(Harry Potter series)" in prompt
+        # The individual title should still be present
+        assert "Harry Potter and the Order of the Phoenix" in prompt
+
+    def test_standalone_title_no_series_annotation_regression(self) -> None:
+        """Standalone titles without series metadata should NOT get annotation."""
+        consumed = [
+            make_item(
+                "The Road",
+                ContentType.BOOK,
+                rating=5,
+                author="Cormac McCarthy",
+            ),
+        ]
+        target = make_item("Pick", ContentType.BOOK)
+        prompt = build_single_blurb_prompt(
+            ContentType.BOOK, target, consumed_items=consumed
+        )
+        assert "The Road" in prompt
+        assert "series)" not in prompt
+
+    def test_blurb_system_prompt_has_series_name_guardrail_regression(
+        self,
+    ) -> None:
+        """Blurb system prompt must instruct LLM to use series names."""
+        prompt = build_blurb_system_prompt(ContentType.BOOK)
+        assert (
+            "series name" in prompt.lower()
+        ), "System prompt must tell the LLM to use series names"
+
+
+class TestGenreSettingHallucinationRegression:
+    """Regression tests for LLM inventing genre attributes for referenced items.
+
+    Bug reported: A blurb for "Heaven's Devils" (StarCraft — sci-fi) claimed
+    the Shannara series (fantasy) involved "space warfare", saying the
+    recommendation was "much like your beloved Shannara series" in the
+    "vast expanse of space warfare".
+
+    Root cause: (1) Referenced items in the Related: line had no genre tags,
+    so the LLM had to guess their genre — and guessed wrong.  (2) No prompt
+    guardrail prevented the LLM from inventing genre attributes.
+
+    Fix: Related: lines now include genre brackets, and prompt rules
+    explicitly forbid attributing genres not shown in the brackets.
+    """
+
+    def test_related_line_includes_genre_tags_regression(self) -> None:
+        """Related: line must include genre brackets so the LLM knows each
+        reference's actual genre and doesn't invent "space warfare" for a
+        fantasy series.
+        """
+        target = make_item(
+            "Heaven's Devils",
+            ContentType.BOOK,
+            metadata={"genres": ["science fiction"]},
+        )
+        refs = [
+            make_item(
+                "Bloodfire Quest",
+                ContentType.BOOK,
+                rating=5,
+                author="Terry Brooks",
+                genres="Fantasy, Epic Fantasy",
+            ),
+        ]
+        prompt = build_single_blurb_prompt(
+            ContentType.BOOK,
+            target,
+            consumed_items=[],
+            references=refs,
+        )
+        assert "Bloodfire Quest [Fantasy, Epic Fantasy]" in prompt
+
+    def test_blurb_prompt_has_genre_accuracy_guardrail_regression(self) -> None:
+        """Blurb prompt rules must forbid inventing genre attributes."""
+        selected = [make_item("Pick", ContentType.BOOK)]
+        prompt = build_blurb_prompt(ContentType.BOOK, selected, consumed_items=[])
+        assert (
+            "genre brackets" in prompt.lower()
+        ), "Prompt must reference genre brackets to prevent invention"
+
+    def test_blurb_system_prompt_has_genre_accuracy_guardrail_regression(
+        self,
+    ) -> None:
+        """Blurb system prompt must forbid inventing genre attributes."""
+        prompt = build_blurb_system_prompt(ContentType.BOOK)
+        assert (
+            "genre brackets" in prompt.lower()
+        ), "System prompt must reference genre brackets"
