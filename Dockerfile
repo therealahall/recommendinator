@@ -38,13 +38,13 @@ COPY --from=builder --chown=appuser:appuser /app/.venv /app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 
 # Copy application code
-COPY src/ ./src/
-COPY templates/ ./templates/
-COPY config/example.yaml ./config/example.yaml
+COPY --chown=appuser:appuser src/ ./src/
+COPY --chown=appuser:appuser templates/ ./templates/
+COPY --chown=appuser:appuser config/example.yaml ./config/example.yaml
 
 # Create directories for data and inputs
-RUN mkdir -p data inputs config && \
-    chown -R appuser:appuser data inputs config
+RUN mkdir -p data inputs config logs && \
+    chown -R appuser:appuser data inputs config logs
 
 # Switch to non-root user
 USER appuser
