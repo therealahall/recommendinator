@@ -16,6 +16,13 @@ if TYPE_CHECKING:
 _GENRE_UNSAFE_RE = re.compile(r"[^\w\s\-&',./]")
 _MAX_GENRE_LENGTH = 50
 
+# Broader allowlist for free-text metadata (series names, etc.) that gets
+# interpolated into LLM prompts.  Allows colons and parentheses beyond
+# what the genre allowlist permits, but still strips control characters
+# and prompt-injection vectors like newlines.
+_PROMPT_TEXT_UNSAFE_RE = re.compile(r"[^\w\s\-&',./:()!?]")
+_MAX_PROMPT_TEXT_LENGTH = 100
+
 _UPPERCASE_WORDS: dict[str, str] = {
     "tv": "TV",
     "gog": "GOG",
@@ -56,6 +63,24 @@ def _sanitize_genre(raw: str) -> str:
     cleaned = raw.replace("\n", " ").replace("\r", " ").strip()
     cleaned = _GENRE_UNSAFE_RE.sub("", cleaned)
     return cleaned[:_MAX_GENRE_LENGTH]
+
+
+def sanitize_prompt_text(raw: str) -> str:
+    """Sanitize free-text metadata before interpolating it into an LLM prompt.
+
+    Uses a broader character allowlist than ``_sanitize_genre`` (permits
+    colons, parentheses, etc.) while still stripping newlines, control
+    characters, and other prompt-injection vectors.
+
+    Args:
+        raw: Raw text string from metadata (e.g., series name).
+
+    Returns:
+        Sanitized string, possibly empty.
+    """
+    cleaned = raw.replace("\n", " ").replace("\r", " ").strip()
+    cleaned = _PROMPT_TEXT_UNSAFE_RE.sub("", cleaned)
+    return cleaned[:_MAX_PROMPT_TEXT_LENGTH]
 
 
 def extract_raw_genres(item: ContentItem, limit: int = 4) -> list[str]:
