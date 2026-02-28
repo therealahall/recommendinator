@@ -4,7 +4,10 @@ import random
 
 from src.llm.tone import ADVISOR_IDENTITY, PERSONALITY_TRAITS, STYLE_RULES
 from src.models.content import ContentItem, ContentType, get_enum_value
-from src.utils.text import extract_raw_genres, format_genre_tag
+from src.recommendations.genre_clusters import cluster_overlap as _cluster_overlap
+from src.recommendations.scorers import extract_creator, extract_genres
+from src.utils.series import get_series_name
+from src.utils.text import extract_raw_genres, format_genre_tag, sanitize_prompt_text
 
 # Cross-type items must exceed this overlap to be included as favorites.
 # Matches the engine's _CROSS_TYPE_MIN_OVERLAP threshold.
@@ -37,13 +40,20 @@ def _format_context_item(
         f' — Review: "{item.review}"' if include_review and item.review else ""
     )
 
+    # Annotate series entries so the LLM refers to "the Harry Potter series"
+    # instead of treating "Harry Potter and the Order of the Phoenix" as a
+    # series name.
+    raw_series_name = get_series_name(item)
+    series_name = sanitize_prompt_text(raw_series_name) if raw_series_name else ""
+    series_tag = f" ({series_name} series)" if series_name else ""
+
     if include_type_label:
         type_label = get_enum_value(item.content_type).replace("_", " ")
         return (
-            f"- [{type_label}] **{item.title}**{author_text}"
+            f"- [{type_label}] **{item.title}**{series_tag}{author_text}"
             f"{genre_tag}{review_text}\n"
         )
-    return f"- **{item.title}**{author_text}{genre_tag}{review_text}\n"
+    return f"- **{item.title}**{series_tag}{author_text}{genre_tag}{review_text}\n"
 
 
 def _shuffle_items_by_rating_tier(items: list[ContentItem]) -> list[ContentItem]:
@@ -247,11 +257,6 @@ def _score_favorites_by_relevance(
         Tuple of (same_type_favorites, cross_type_favorites), each list
         containing up to *cap* items total (same-type fills first).
     """
-    # Lazy imports to avoid circular dependency:
-    # prompts → genre_clusters → recommendations/__init__ → engine → embeddings → prompts
-    from src.recommendations.genre_clusters import cluster_overlap as _cluster_overlap
-    from src.recommendations.scorers import extract_creator, extract_genres
-
     # Compute the union of target genres for matching
     target_genres_set: set[str] = set()
     target_genres_list: list[str] = []
@@ -424,6 +429,11 @@ def build_blurb_system_prompt(content_type: ContentType) -> str:
         " sequels, prequels, or other series entries instead."
         " NEVER reference other picks as things the user has consumed —"
         " only reference the user's favorites."
+        " When a favorite is part of a series, refer to the SERIES by its"
+        " series name (shown in parentheses), not the individual entry title."
+        " NEVER claim a referenced item has genres, settings, or themes"
+        " that are not listed in its genre brackets — a fantasy series is"
+        " NOT set in space, and a sci-fi series is NOT set in a medieval realm."
         " Use correct verbs for each content type — you READ books,"
         " WATCH movies and TV shows, and PLAY video games."
     )
@@ -469,7 +479,7 @@ def build_blurb_prompt(
         if per_item_references and ref_index < len(per_item_references):
             refs = per_item_references[ref_index]
             if refs:
-                ref_parts = [ref.title for ref in refs]
+                ref_parts = [f"{ref.title}{format_genre_tag(ref)}" for ref in refs]
                 items_text += f"   Related: {', '.join(ref_parts)}\n"
 
     return f"""Write a 2-3 sentence blurb for each of these {content_type_name.lower()} picks explaining WHY it fits this person's taste.
@@ -487,6 +497,8 @@ Rules:
 - Do NOT reveal plot twists, endings, or major surprises
 - Each blurb must describe the PICK itself — do NOT write about its sequels, prequels, or other series entries
 - Do NOT reference other picks as things the user has consumed — they have NOT consumed any pick. Only reference favorites listed above.
+- When a favorite is part of a series, refer to the SERIES by its series name (shown in parentheses), not the individual entry title
+- NEVER claim a referenced item has genres, settings, or themes not listed in its genre brackets — a fantasy series is NOT set in space
 - Use correct verbs for each content type — you READ books, WATCH movies and TV shows, and PLAY video games"""
 
 
@@ -526,10 +538,11 @@ def build_single_blurb_prompt(
     genre_tag = format_genre_tag(item)
     item_line = f"{item.title}{author_text}{genre_tag}"
 
-    # Optional reference line
+    # Optional reference line (with genre tags so the LLM knows each
+    # reference's actual genre and doesn't invent settings or themes).
     ref_line = ""
     if references:
-        ref_parts = [ref.title for ref in references]
+        ref_parts = [f"{ref.title}{format_genre_tag(ref)}" for ref in references]
         ref_line = f"\nRelated: {', '.join(ref_parts)}"
 
     return f"""Write a 2-3 sentence blurb explaining WHY this {content_type_name.lower()} pick fits this person's taste.
@@ -547,6 +560,8 @@ Rules:
 - Do NOT reveal plot twists, endings, or major surprises
 - Describe the PICK itself — do NOT write about its sequels, prequels, or other series entries
 - Do NOT reference any other recommendation as something the user has consumed — only reference favorites listed above.
+- When a favorite is part of a series, refer to the SERIES by its series name (shown in parentheses), not the individual entry title
+- NEVER claim a referenced item has genres, settings, or themes not listed in its genre brackets — a fantasy series is NOT set in space
 - Use correct verbs for each content type — you READ books, WATCH movies and TV shows, and PLAY video games"""
 
 
