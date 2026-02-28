@@ -1,10 +1,11 @@
-.PHONY: help install install-ai install-dev test lint format type-check clean run
+.PHONY: help install install-ai install-dev lock test lint format type-check clean run
 
 help:
 	@echo "Available commands:"
 	@echo "  make install       - Install base dependencies (no AI)"
 	@echo "  make install-ai    - Install base + AI dependencies (ollama, chromadb)"
-	@echo "  make install-dev   - Install all dependencies in editable mode (AI + dev tools)"
+	@echo "  make install-dev   - Install all dependencies (AI + dev tools)"
+	@echo "  make lock          - Regenerate uv.lock from pyproject.toml"
 	@echo "  make test          - Run tests"
 	@echo "  make lint          - Run linters"
 	@echo "  make format        - Format code with black"
@@ -14,13 +15,16 @@ help:
 	@echo "  make run           - Run the application"
 
 install:
-	python3.11 -m pip install .
+	uv sync --locked
 
 install-ai:
-	python3.11 -m pip install ".[ai]"
+	uv sync --locked --extra ai
 
 install-dev:
-	python3.11 -m pip install -e ".[ai,dev]"
+	uv sync --locked --extra ai --extra dev
+
+lock:
+	uv lock
 
 test:
 	python3.11 -m pytest

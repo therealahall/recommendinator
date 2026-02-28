@@ -2,7 +2,9 @@
 # Multi-stage build for smaller final image
 
 # Build stage
-FROM python:3.11-slim as builder
+FROM python:3.11-slim AS builder
+
+COPY --from=ghcr.io/astral-sh/uv:0.10.7 /uv /bin/uv
 
 WORKDIR /app
 
@@ -11,10 +13,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy project files and install dependencies
-COPY pyproject.toml .
+# Copy dependency files first for layer caching
+COPY pyproject.toml uv.lock .python-version ./
+
+# Install dependencies (without the project itself) for caching
+RUN uv sync --locked --extra ai --no-install-project
+
+# Copy source and install the project
 COPY src/ ./src/
-RUN pip install --no-cache-dir --user ".[ai]"
+RUN uv sync --locked --extra ai
 
 # Runtime stage
 FROM python:3.11-slim
@@ -24,11 +31,11 @@ WORKDIR /app
 # Create non-root user for security
 RUN useradd --create-home --shell /bin/bash appuser
 
-# Copy installed packages from builder
-COPY --from=builder /root/.local /home/appuser/.local
+# Copy virtual environment from builder
+COPY --from=builder /app/.venv /app/.venv
 
-# Make sure scripts in .local are usable
-ENV PATH=/home/appuser/.local/bin:$PATH
+# Use the virtual environment's Python
+ENV PATH="/app/.venv/bin:$PATH"
 
 # Copy application code
 COPY src/ ./src/
