@@ -255,14 +255,14 @@ class TestAntiHallucinationGuardrails:
         system_prompt = build_recommendation_system_prompt(ContentType.BOOK)
 
         assert "## Data Accuracy" in system_prompt
-        assert "NEVER invent quotes" in system_prompt
+        assert "do NOT invent quotes, opinions, or facts" in system_prompt
         assert "A book is NOT a show" in system_prompt
 
     def test_blurb_system_prompt_has_anti_hallucination(self) -> None:
         """Blurb system prompt should contain anti-hallucination instruction."""
         system_prompt = build_blurb_system_prompt(ContentType.MOVIE)
 
-        assert "NEVER invent quotes or reviews" in system_prompt
+        assert "NEVER invent quotes, opinions, or facts" in system_prompt
 
     def test_blurb_prompt_has_anti_hallucination_rule(self) -> None:
         """Blurb prompt rules should include anti-hallucination instruction."""
@@ -275,7 +275,7 @@ class TestAntiHallucinationGuardrails:
             consumed_items=consumed,
         )
 
-        assert "Do NOT invent quotes or opinions" in prompt
+        assert "do NOT invent quotes, opinions, or facts" in prompt
 
 
 # ===========================================================================
@@ -502,10 +502,10 @@ class TestHallucinatedReviewsRegression:
         )
 
         assert "what they loved" not in prompt
-        assert "mention titles and ratings" in prompt
+        assert "mention titles" in prompt
 
     def test_anti_hallucination_in_user_prompt_regression(self) -> None:
-        """Regression: user prompt must contain review-quoting guardrail."""
+        """Regression: user prompt must contain anti-fabrication guardrail."""
         consumed = _make_books(3)
         unconsumed = _make_unconsumed(5)
 
@@ -515,8 +515,7 @@ class TestHallucinatedReviewsRegression:
             unconsumed_items=unconsumed,
         )
 
-        assert "ONLY quote reviews that appear above" in prompt
-        assert "do NOT invent one" in prompt
+        assert "do NOT invent quotes, opinions, or facts" in prompt
 
     def test_anti_hallucination_in_system_prompt_regression(self) -> None:
         """Regression: system prompt must forbid inventing quotes."""
@@ -536,7 +535,7 @@ class TestHallucinatedReviewsRegression:
             selected_items=selected,
             consumed_items=consumed,
         )
-        assert "Do NOT invent quotes or opinions" in blurb_prompt
+        assert "do NOT invent quotes, opinions, or facts" in blurb_prompt
 
     def test_style_rules_no_fabricated_quote_example_regression(self) -> None:
         """Regression: STYLE_RULES must not suggest ways to speak or quote users.
@@ -556,18 +555,16 @@ class TestHallucinatedReviewsRegression:
         Fix: Removed all example phrasings and speech-pattern suggestions.
         Added explicit rules against attributing quotes or sentiments.
         """
-        # The rule itself must prohibit putting words in their mouth
-        assert "NEVER put words in their mouth" in STYLE_RULES
+        # The rule itself must prohibit inventing quotes or opinions
+        assert "NEVER invent quotes, opinions, or facts" in STYLE_RULES
         # Must not demonstrate the quote-attribution pattern via a worked example
         assert "called it" not in STYLE_RULES
         assert "gut punch" not in STYLE_RULES
         # Must not contain example phrasings that suggest ways to speak
         assert "Since you gave" not in STYLE_RULES
         assert "mirror" not in STYLE_RULES.lower()
-        # Must instruct against fabricating user sentiments
-        assert "NEVER fabricate" in STYLE_RULES
-        # Must still instruct specificity via titles and ratings
-        assert "reference their actual titles and ratings" in STYLE_RULES
+        # Must still instruct specificity via titles
+        assert "reference their actual titles" in STYLE_RULES
 
     def test_compact_system_prompt_no_fabricated_quote_example_regression(
         self,
@@ -989,27 +986,30 @@ class TestSpoilerPreventionRegression:
 # ===========================================================================
 
 
-class TestSentimentInferenceRegression:
-    """Regression tests for fabricated sentiment inference.
+class TestRatingsRemovedFromPromptsRegression:
+    """Regression: numeric ratings must NOT appear in recommendation/blurb prompts.
 
-    Bug reported (round 4): Despite three rounds of anti-hallucination
-    fixes, the LLM still converted numeric ratings into emotional language
-    ("called it an absolute banger", "sounds like you had a blast").
-    Current rules addressed quoting but not sentiment inference from ratings.
+    Bug reported (round 7): Despite multiple anti-hallucination fixes, the
+    LLM continued to fabricate ratings for recommended items (Dishonored 4/5,
+    Dragon Age Origins 5/5, Eye of the Beholder 4/5) and parrot ratings for
+    consumed items. The user does not want ratings re-exposed in blurbs.
 
-    Root cause: No explicit rule banning emotion interpretation of numeric
-    ratings. The LLM treated "5/5" as permission to say "you loved it".
+    Root cause: Showing numeric ratings (5/5) in context items primed the LLM
+    to attach ratings to everything, including recommendations it was inventing
+    ratings for. The "mention titles and ratings" instruction actively
+    encouraged this behavior.
 
-    Fix: Added explicit rules banning interpretation of ratings as emotions
-    to STYLE_RULES, PERSONALITY_COMPACT, recommendation prompt, and blurb prompt.
+    Fix: Removed all numeric ratings from prompt context items, Related lines,
+    and instructions. The system still filters by rating >= 4 internally but
+    presents items as "things they love" without numbers.
+
+    Note: Conversation prompts (engine.py) intentionally retain ratings for
+    the chat system's rating-prediction feature. This class covers only the
+    recommendation and blurb prompt paths.
     """
 
-    def test_style_rules_ban_interpreting_ratings_as_emotions(self) -> None:
-        """STYLE_RULES should ban interpreting ratings as emotions."""
-        assert "NEVER interpret them as emotions" in STYLE_RULES
-
-    def test_recommendation_user_prompt_bans_emotion_interpretation(self) -> None:
-        """Recommendation user prompt should ban interpreting ratings as emotions."""
+    def test_consumed_items_have_no_rating_in_prompt_regression(self) -> None:
+        """Regression: consumed items should NOT include (N/5) rating text."""
         consumed = _make_books(3)
         unconsumed = _make_unconsumed(5)
 
@@ -1019,10 +1019,11 @@ class TestSentimentInferenceRegression:
             unconsumed_items=unconsumed,
         )
 
-        assert "do NOT interpret them as emotions" in prompt
+        assert "Book 0" in prompt
+        assert "/5)" not in prompt
 
-    def test_blurb_user_prompt_bans_emotion_interpretation(self) -> None:
-        """Blurb user prompt should ban interpreting ratings as emotions."""
+    def test_blurb_favorites_have_no_rating_regression(self) -> None:
+        """Regression: blurb prompt favorites should NOT include (N/5) rating text."""
         selected = _make_books(2)
         consumed = _make_books(3)
 
@@ -1032,7 +1033,52 @@ class TestSentimentInferenceRegression:
             consumed_items=consumed,
         )
 
-        assert "do NOT interpret them as emotions" in prompt
+        assert "Book 0" in prompt
+        assert "/5)" not in prompt
+
+    def test_blurb_related_lines_have_no_rating_regression(self) -> None:
+        """Regression: blurb Related: lines should NOT include (N/5) rating text."""
+        ref = make_item("Ref Game", ContentType.VIDEO_GAME, rating=5)
+        pick = make_item("New Game", ContentType.VIDEO_GAME)
+
+        prompt = build_blurb_prompt(
+            content_type=ContentType.VIDEO_GAME,
+            selected_items=[pick],
+            consumed_items=[ref],
+            per_item_references=[[ref]],
+        )
+
+        assert "Related: Ref Game" in prompt
+        assert "/5)" not in prompt
+
+    def test_single_blurb_favorites_have_no_rating_regression(self) -> None:
+        """Regression: single blurb favorites should NOT include (N/5) rating text."""
+        item = make_item("New Book", ContentType.BOOK)
+        consumed = _make_books(3)
+
+        prompt = build_single_blurb_prompt(
+            content_type=ContentType.BOOK,
+            item=item,
+            consumed_items=consumed,
+        )
+
+        assert "Book 0" in prompt
+        assert "/5)" not in prompt
+
+    def test_single_blurb_references_have_no_rating_regression(self) -> None:
+        """Regression: single blurb Related: lines should NOT include (N/5)."""
+        item = make_item("New Book", ContentType.BOOK)
+        refs = [make_item("Ref A", ContentType.BOOK, rating=5)]
+
+        prompt = build_single_blurb_prompt(
+            content_type=ContentType.BOOK,
+            item=item,
+            consumed_items=[],
+            references=refs,
+        )
+
+        assert "Related: Ref A" in prompt
+        assert "/5)" not in prompt
 
 
 # ===========================================================================
@@ -1096,7 +1142,7 @@ class TestReviewMisattributionRegression:
     def test_blurb_system_prompt_has_anti_misattribution(self) -> None:
         """Blurb system prompt should have anti-misattribution instruction."""
         system_prompt = build_blurb_system_prompt(ContentType.BOOK)
-        assert "NEVER misattribute reviews" in system_prompt
+        assert "NEVER misattribute reviews or authors" in system_prompt
 
 
 # ===========================================================================
@@ -1123,8 +1169,8 @@ class TestAuthorHallucinationRegression:
     """
 
     def test_style_rules_contain_author_accuracy(self) -> None:
-        """STYLE_RULES should contain author accuracy instruction."""
-        assert "claim two items share an author" in STYLE_RULES.lower()
+        """STYLE_RULES should contain anti-misattribution covering authors."""
+        assert "never attribute one item's details to another" in STYLE_RULES.lower()
 
     def test_recommendation_system_prompt_has_author_accuracy(self) -> None:
         """Recommendation system prompt should have author accuracy rule."""
@@ -1176,29 +1222,30 @@ class TestGeneralKnowledgeFabricationRegression:
     Root cause: Anti-hallucination rules prohibited inventing quotes and
     interpreting ratings as emotions, but did not explicitly prohibit using
     general knowledge to fabricate what someone thought or felt about an item.
-    The model's training data gave it strong priors about 1984 being "a gut
-    punch," which overrode the anti-fabrication rules.
 
-    Fix: Added explicit "do NOT use general knowledge to fabricate" rules to
-    all prompt paths: recommendation system/user prompts, blurb system/user
-    prompts, conversation system prompts (full + compact), and STYLE_RULES.
+    Fix (round 6): Added explicit "do NOT use general knowledge to fabricate"
+    rules to all prompt paths.
+
+    Fix (round 7): Consolidated into broader "do NOT invent quotes, opinions,
+    or facts about items" rule which covers general knowledge fabrication.
+    Conversation prompts retain the explicit general-knowledge wording.
     """
 
-    def test_style_rules_ban_general_knowledge_fabrication_regression(self) -> None:
-        """STYLE_RULES should ban using general knowledge to fabricate user opinions."""
-        assert "general knowledge to fabricate" in STYLE_RULES.lower()
+    def test_style_rules_ban_fabrication_regression(self) -> None:
+        """STYLE_RULES should ban inventing facts (covers general knowledge fabrication)."""
+        assert "NEVER invent quotes, opinions, or facts" in STYLE_RULES
 
-    def test_recommendation_system_prompt_bans_general_knowledge_regression(
+    def test_recommendation_system_prompt_bans_fabrication_regression(
         self,
     ) -> None:
-        """Recommendation system prompt should ban general knowledge fabrication."""
+        """Recommendation system prompt should ban fabrication."""
         system_prompt = build_recommendation_system_prompt(ContentType.BOOK)
-        assert "general knowledge to fabricate" in system_prompt.lower()
+        assert "do NOT invent quotes, opinions, or facts" in system_prompt
 
-    def test_recommendation_user_prompt_bans_general_knowledge_regression(
+    def test_recommendation_user_prompt_bans_fabrication_regression(
         self,
     ) -> None:
-        """Recommendation user prompt should ban general knowledge fabrication."""
+        """Recommendation user prompt should ban fabrication."""
         consumed = _make_books(3)
         unconsumed = _make_unconsumed(5)
 
@@ -1208,15 +1255,15 @@ class TestGeneralKnowledgeFabricationRegression:
             unconsumed_items=unconsumed,
         )
 
-        assert "general knowledge to fabricate" in prompt.lower()
+        assert "do NOT invent quotes, opinions, or facts" in prompt
 
-    def test_blurb_system_prompt_bans_general_knowledge_regression(self) -> None:
-        """Blurb system prompt should ban general knowledge fabrication."""
+    def test_blurb_system_prompt_bans_fabrication_regression(self) -> None:
+        """Blurb system prompt should ban fabrication."""
         system_prompt = build_blurb_system_prompt(ContentType.BOOK)
-        assert "general knowledge to fabricate" in system_prompt.lower()
+        assert "NEVER invent quotes, opinions, or facts" in system_prompt
 
-    def test_blurb_user_prompt_bans_general_knowledge_regression(self) -> None:
-        """Blurb user prompt should ban general knowledge fabrication."""
+    def test_blurb_user_prompt_bans_fabrication_regression(self) -> None:
+        """Blurb user prompt should ban fabrication."""
         selected = _make_books(2)
         consumed = _make_books(3)
 
@@ -1226,7 +1273,7 @@ class TestGeneralKnowledgeFabricationRegression:
             consumed_items=consumed,
         )
 
-        assert "general knowledge to fabricate" in prompt.lower()
+        assert "do NOT invent quotes, opinions, or facts" in prompt
 
     def test_conversation_full_prompt_bans_general_knowledge_regression(self) -> None:
         """FULL_SYSTEM_PROMPT should ban general knowledge fabrication."""
@@ -1335,7 +1382,7 @@ class TestPerItemReferencesRegression:
             per_item_references=per_item_refs,
         )
 
-        assert "Related: The Last of Us: Part 1 (5/5), God of War (5/5)" in prompt
+        assert "Related: The Last of Us: Part 1, God of War" in prompt
         related_line = next(
             line for line in prompt.split("\n") if line.strip().startswith("Related:")
         )
@@ -1425,11 +1472,11 @@ class TestPerItemReferencesRegression:
             len(related_lines) == 2
         ), f"Expected 2 Related lines, found {len(related_lines)}: {related_lines}"
         assert (
-            "God of War (5/5)" in related_lines[0]
-        ), f"Expected 'God of War (5/5)' in first Related line, got: {related_lines[0]!r}"
+            "God of War" in related_lines[0]
+        ), f"Expected 'God of War' in first Related line, got: {related_lines[0]!r}"
         assert (
-            "Gran Turismo (4/5)" in related_lines[1]
-        ), f"Expected 'Gran Turismo (4/5)' in second Related line, got: {related_lines[1]!r}"
+            "Gran Turismo" in related_lines[1]
+        ), f"Expected 'Gran Turismo' in second Related line, got: {related_lines[1]!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -1503,7 +1550,7 @@ class TestBuildSingleBlurbPrompt:
             consumed_items=[],
             references=refs,
         )
-        assert "Related: Ref A (5/5), Ref B (4/5)" in prompt
+        assert "Related: Ref A, Ref B" in prompt
 
     def test_no_references_omits_related_line(self) -> None:
         """Without references, no Related line appears."""

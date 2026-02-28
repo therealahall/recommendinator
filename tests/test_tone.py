@@ -35,8 +35,8 @@ class TestToneConstants:
     def test_personality_traits_contains_honesty(self) -> None:
         assert "honest" in PERSONALITY_TRAITS.lower()
 
-    def test_personality_traits_references_history_and_ratings(self) -> None:
-        assert "history and ratings" in PERSONALITY_TRAITS
+    def test_personality_traits_references_history(self) -> None:
+        assert "SPECIFIC history" in PERSONALITY_TRAITS
 
     def test_personality_traits_no_speech_pattern_suggestions(self) -> None:
         """Personality traits must not contain hype-machine or speech-pattern language."""
@@ -68,14 +68,11 @@ class TestToneConstants:
     def test_style_rules_has_anti_spoiler(self) -> None:
         assert "NEVER reveal plot twists" in STYLE_RULES
 
-    def test_style_rules_has_anti_sentiment_inference(self) -> None:
-        assert "NEVER interpret them as emotions" in STYLE_RULES
-
     def test_style_rules_has_anti_misattribution(self) -> None:
         assert "belong to THAT item only" in STYLE_RULES
 
     def test_style_rules_has_author_accuracy(self) -> None:
-        assert "claim two items share an author" in STYLE_RULES.lower()
+        assert "never attribute one item's details to another" in STYLE_RULES.lower()
 
 
 class TestToneInRecommendationPrompt:
@@ -87,7 +84,7 @@ class TestToneInRecommendationPrompt:
 
     def test_includes_style_rules(self) -> None:
         prompt = build_recommendation_system_prompt(ContentType.BOOK)
-        assert "NEVER put words in their mouth" in prompt
+        assert "NEVER invent quotes, opinions, or facts" in prompt
 
     def test_includes_identity_with_content_type(self) -> None:
         prompt = build_recommendation_system_prompt(ContentType.BOOK)
@@ -112,7 +109,7 @@ class TestToneInConversationPrompt:
         assert "genuinely thrilled" in FULL_SYSTEM_PROMPT
 
     def test_includes_style_rules(self) -> None:
-        assert "NEVER put words in their mouth" in FULL_SYSTEM_PROMPT
+        assert "NEVER invent quotes, opinions, or facts" in FULL_SYSTEM_PROMPT
 
     def test_includes_identity(self) -> None:
         assert "personal recommendation advisor" in FULL_SYSTEM_PROMPT.lower()
@@ -155,9 +152,6 @@ class TestPersonalityCompact:
 
     def test_personality_compact_has_anti_fabrication_instruction(self) -> None:
         assert "NEVER put words in their mouth" in PERSONALITY_COMPACT
-
-    def test_personality_compact_has_anti_emotion_interpretation(self) -> None:
-        assert "NEVER interpret them as emotions" in PERSONALITY_COMPACT
 
 
 class TestCompactSystemPromptGuardrails:
