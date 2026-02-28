@@ -1,8 +1,18 @@
 """Prompt templates for LLM interactions."""
 
+import random
+
 from src.llm.tone import ADVISOR_IDENTITY, PERSONALITY_TRAITS, STYLE_RULES
 from src.models.content import ContentItem, ContentType, get_enum_value
 from src.utils.text import extract_raw_genres, format_genre_tag
+
+# Cross-type items must exceed this overlap to be included as favorites.
+# Matches the engine's _CROSS_TYPE_MIN_OVERLAP threshold.
+_CROSS_TYPE_MIN_OVERLAP = 0.25
+
+# Items whose relevance scores differ by at most this amount are shuffled
+# together for variety across runs.
+_SCORE_PROXIMITY_THRESHOLD = 0.05
 
 
 def _format_context_item(
@@ -34,6 +44,19 @@ def _format_context_item(
             f"{genre_tag}{review_text}\n"
         )
     return f"- **{item.title}**{author_text}{genre_tag}{review_text}\n"
+
+
+def _shuffle_items_by_rating_tier(items: list[ContentItem]) -> list[ContentItem]:
+    """Sort by rating DESC and shuffle within same-rating groups for variety."""
+    by_rating: dict[int, list[ContentItem]] = {}
+    for item in items:
+        by_rating.setdefault(item.rating or 0, []).append(item)
+    result: list[ContentItem] = []
+    for rating in sorted(by_rating, reverse=True):
+        group = by_rating[rating]
+        random.shuffle(group)
+        result.extend(group)
+    return result
 
 
 def build_recommendation_prompt(
@@ -70,6 +93,10 @@ def build_recommendation_prompt(
         for item in high_rated
         if get_enum_value(item.content_type) != content_type_str
     ]
+
+    # Shuffle within same-rating tiers for variety
+    same_type_items = _shuffle_items_by_rating_tier(same_type_items)
+    cross_type_items = _shuffle_items_by_rating_tier(cross_type_items)
 
     # When >= 5 same-type items exist, use only same-type (no cross-type noise).
     # When < 5 same-type items, fill remaining slots with cross-type items.
@@ -126,7 +153,8 @@ IMPORTANT formatting rules:
 - Each review belongs to the item on the SAME line — do NOT attribute it to a different item
 - Author names are exact — do NOT claim two items share an author unless the names shown above match
 - Write about the recommended item itself — do NOT describe its sequels, prequels, or other entries in the same franchise
-- Do NOT reference other candidates as things the user has consumed — they have NOT consumed any candidate. Only reference items from the favorites list above."""
+- Do NOT reference other candidates as things the user has consumed — they have NOT consumed any candidate. Only reference items from the favorites list above.
+- Use correct verbs for each content type — you READ books, WATCH movies and TV shows, and PLAY video games"""
 
     return prompt
 
@@ -158,23 +186,152 @@ def build_recommendation_system_prompt(content_type: ContentType) -> str:
 - Only reference what's shown in the user's item list — do NOT invent quotes, opinions, or facts
 - Each review belongs to the item on the SAME line — never attribute it to a different item
 - Do NOT claim items share the same author unless the author names shown are identical
-- A book is NOT a show, a movie is NOT a game — use the correct content type
+- A book is NOT a show, a movie is NOT a game — use the correct content type; you READ books, WATCH movies and TV shows, and PLAY video games
 - Write about the RECOMMENDED item itself — NOT about its sequels, prequels, or other entries in the same franchise
 - NEVER reference candidates or picks as things the user has consumed — they are unconsumed recommendations"""
+
+
+def _shuffle_close_scores(
+    items_with_scores: list[tuple[ContentItem, float]],
+) -> list[ContentItem]:
+    """Shuffle items whose relevance scores are within a small tolerance.
+
+    Items are already sorted by descending score.  Adjacent items whose
+    scores differ by at most ``_SCORE_PROXIMITY_THRESHOLD`` are grouped
+    and shuffled so the ordering varies across runs while still respecting
+    meaningful relevance differences.
+
+    Replicates the engine's ``_shuffle_close_scores`` logic without
+    importing from the engine (avoids tight coupling).
+    """
+    if not items_with_scores:
+        return []
+
+    groups: list[list[ContentItem]] = [[items_with_scores[0][0]]]
+    group_score = items_with_scores[0][1]
+
+    for item, score in items_with_scores[1:]:
+        if group_score - score <= _SCORE_PROXIMITY_THRESHOLD:
+            groups[-1].append(item)
+        else:
+            groups.append([item])
+            group_score = score
+
+    result: list[ContentItem] = []
+    for group in groups:
+        random.shuffle(group)
+        result.extend(group)
+    return result
+
+
+def _score_favorites_by_relevance(
+    favorites: list[ContentItem],
+    target_items: list[ContentItem],
+    candidate_type: str,
+    cap: int,
+) -> tuple[list[ContentItem], list[ContentItem]]:
+    """Score and select favorites most relevant to the target items.
+
+    Uses the same scoring model as the engine's
+    ``_find_contributing_reference_items``: Jaccard for same-type,
+    ``cluster_overlap`` for cross-type, creator match bonus, and
+    high-rating boost.
+
+    Args:
+        favorites: High-rated consumed items (rating >= 4).
+        target_items: The recommendation items to match against.
+        candidate_type: The content type string of the recommendations.
+        cap: Maximum total favorites to return.
+
+    Returns:
+        Tuple of (same_type_favorites, cross_type_favorites), each list
+        containing up to *cap* items total (same-type fills first).
+    """
+    # Lazy imports to avoid circular dependency:
+    # prompts → genre_clusters → recommendations/__init__ → engine → embeddings → prompts
+    from src.recommendations.genre_clusters import cluster_overlap as _cluster_overlap
+    from src.recommendations.scorers import extract_creator, extract_genres
+
+    # Compute the union of target genres for matching
+    target_genres_set: set[str] = set()
+    target_genres_list: list[str] = []
+    target_creators: set[str] = set()
+    for target in target_items:
+        genres = extract_genres(target)
+        target_genres_set.update(genres)
+        target_genres_list.extend(genres)
+        creator = extract_creator(target)
+        if creator:
+            target_creators.add(creator)
+
+    scored: list[tuple[ContentItem, float]] = []
+    for fav in favorites:
+        overlap = 0.0
+        fav_genres = extract_genres(fav)
+        fav_genres_set = set(fav_genres)
+        fav_type = get_enum_value(fav.content_type)
+        is_same_type = fav_type == candidate_type
+
+        if target_genres_set and fav_genres_set:
+            if is_same_type:
+                # Same type: raw Jaccard (shared vocabulary)
+                intersection = target_genres_set & fav_genres_set
+                if intersection:
+                    overlap += len(intersection) / len(
+                        target_genres_set | fav_genres_set
+                    )
+            else:
+                # Cross type: thematic cluster overlap
+                overlap += _cluster_overlap(target_genres_list, fav_genres)
+
+        fav_creator = extract_creator(fav)
+        if fav_creator and fav_creator in target_creators:
+            overlap += 0.5
+
+        if fav.rating and fav.rating >= 4:
+            overlap += 0.15
+
+        if overlap > 0:
+            scored.append((fav, overlap))
+
+    scored.sort(key=lambda pair: pair[1], reverse=True)
+
+    # Split into same-type and cross-type, respecting the overlap threshold
+    same_type: list[tuple[ContentItem, float]] = []
+    cross_type: list[tuple[ContentItem, float]] = []
+    for item, score in scored:
+        item_type = get_enum_value(item.content_type)
+        if item_type == candidate_type:
+            same_type.append((item, score))
+        elif score >= _CROSS_TYPE_MIN_OVERLAP:
+            cross_type.append((item, score))
+
+    # Fill same-type first, then cross-type up to cap
+    same_result = _shuffle_close_scores(same_type[:cap])
+    remaining = cap - len(same_result)
+    cross_result = (
+        _shuffle_close_scores(cross_type[:remaining]) if remaining > 0 else []
+    )
+
+    return same_result, cross_result
 
 
 def _build_blurb_taste_context(
     content_type: ContentType,
     consumed_items: list[ContentItem],
+    target_items: list[ContentItem] | None = None,
 ) -> str:
     """Build taste context text for blurb prompts.
 
-    Selects up to 5 high-rated favorites, preferring same-type items.
-    Used by both ``build_blurb_prompt`` and ``build_single_blurb_prompt``.
+    When *target_items* are provided, selects up to 5 genre-relevant
+    favorites using the engine's scoring model (Jaccard, cluster overlap,
+    creator bonus, rating boost).  Otherwise falls back to rating-sorted
+    selection with tier shuffling.
 
     Args:
         content_type: Type of content being recommended
         consumed_items: User's consumed items
+        target_items: Recommendation items to match favorites against
 
     Returns:
         Formatted taste context string (may be empty)
@@ -183,24 +340,39 @@ def _build_blurb_taste_context(
     content_type_name = content_type_str.replace("_", " ").title()
 
     favorites = [item for item in consumed_items if item.rating and item.rating >= 4]
-    same_type_favorites = [
-        item
-        for item in favorites
-        if get_enum_value(item.content_type) == content_type_str
-    ]
-    cross_type_favorites = [
-        item
-        for item in favorites
-        if get_enum_value(item.content_type) != content_type_str
-    ]
 
-    if len(same_type_favorites) >= 5:
-        context_same = same_type_favorites[:5]
-        context_cross: list[ContentItem] = []
+    context_same: list[ContentItem]
+    context_cross: list[ContentItem]
+
+    # Only use genre-relevance scoring when target items have genre data;
+    # otherwise, scoring has nothing to work with and the fallback is better.
+    if target_items and any(extract_raw_genres(t) for t in target_items):
+        context_same, context_cross = _score_favorites_by_relevance(
+            favorites, target_items, content_type_str, cap=5
+        )
     else:
-        context_same = same_type_favorites
-        remaining_slots = 5 - len(context_same)
-        context_cross = cross_type_favorites[:remaining_slots]
+        # Fallback: sort by rating DESC, shuffle within same-rating tiers
+        same_type_favorites = [
+            item
+            for item in favorites
+            if get_enum_value(item.content_type) == content_type_str
+        ]
+        cross_type_favorites = [
+            item
+            for item in favorites
+            if get_enum_value(item.content_type) != content_type_str
+        ]
+
+        same_type_favorites = _shuffle_items_by_rating_tier(same_type_favorites)
+        cross_type_favorites = _shuffle_items_by_rating_tier(cross_type_favorites)
+
+        if len(same_type_favorites) >= 5:
+            context_same = same_type_favorites[:5]
+            context_cross = []
+        else:
+            context_same = same_type_favorites
+            remaining_slots = 5 - len(context_same)
+            context_cross = cross_type_favorites[:remaining_slots]
 
     context_text = ""
     if context_same:
@@ -252,6 +424,8 @@ def build_blurb_system_prompt(content_type: ContentType) -> str:
         " sequels, prequels, or other series entries instead."
         " NEVER reference other picks as things the user has consumed —"
         " only reference the user's favorites."
+        " Use correct verbs for each content type — you READ books,"
+        " WATCH movies and TV shows, and PLAY video games."
     )
 
 
@@ -281,7 +455,9 @@ def build_blurb_prompt(
     content_type_str = get_enum_value(content_type)
     content_type_name = content_type_str.replace("_", " ").title()
 
-    context_text = _build_blurb_taste_context(content_type, consumed_items)
+    context_text = _build_blurb_taste_context(
+        content_type, consumed_items, target_items=selected_items
+    )
 
     # Build selected items list, with optional per-item reference lines
     items_text = ""
@@ -310,7 +486,8 @@ Rules:
 - Author names are exact — do NOT claim two items share an author unless the names shown above match
 - Do NOT reveal plot twists, endings, or major surprises
 - Each blurb must describe the PICK itself — do NOT write about its sequels, prequels, or other series entries
-- Do NOT reference other picks as things the user has consumed — they have NOT consumed any pick. Only reference favorites listed above."""
+- Do NOT reference other picks as things the user has consumed — they have NOT consumed any pick. Only reference favorites listed above.
+- Use correct verbs for each content type — you READ books, WATCH movies and TV shows, and PLAY video games"""
 
 
 def build_single_blurb_prompt(
@@ -340,7 +517,9 @@ def build_single_blurb_prompt(
     content_type_str = get_enum_value(content_type)
     content_type_name = content_type_str.replace("_", " ").title()
 
-    context_text = _build_blurb_taste_context(content_type, consumed_items)
+    context_text = _build_blurb_taste_context(
+        content_type, consumed_items, target_items=[item]
+    )
 
     # Build the single item line
     author_text = f" by {item.author}" if item.author else ""
@@ -367,7 +546,8 @@ Rules:
 - Author names are exact — do NOT claim two items share an author unless the names shown above match
 - Do NOT reveal plot twists, endings, or major surprises
 - Describe the PICK itself — do NOT write about its sequels, prequels, or other series entries
-- Do NOT reference any other recommendation as something the user has consumed — only reference favorites listed above."""
+- Do NOT reference any other recommendation as something the user has consumed — only reference favorites listed above.
+- Use correct verbs for each content type — you READ books, WATCH movies and TV shows, and PLAY video games"""
 
 
 def build_content_description(item: ContentItem) -> str:
