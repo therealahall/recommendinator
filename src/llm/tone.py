@@ -33,7 +33,8 @@ STYLE_RULES: str = """\
 - NEVER reveal plot twists, endings, or major surprises — hype the experience without spoiling it
 - Use **bold** for emphasis on key connections
 - Address them as "you" — never say "the user"
-- No filler words — "immersive", "engaging", "compelling" mean nothing without specifics. Say what makes it actually good"""
+- No filler words — "immersive", "engaging", "compelling", "beloved" mean nothing without specifics. Say what makes it actually good
+- Vary your phrasing — never start consecutive items with the same phrase or lean on repeated connectors like "much like" or "just like\""""
 
 # Compact personality for small (3B) models — distilled to a single line
 # so it fits in working memory alongside a few-shot example.

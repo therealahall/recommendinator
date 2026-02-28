@@ -164,7 +164,10 @@ IMPORTANT formatting rules:
 - Author names are exact — do NOT claim two items share an author unless the names shown above match
 - Write about the recommended item itself — do NOT describe its sequels, prequels, or other entries in the same franchise
 - Do NOT reference other candidates as things the user has consumed — they have NOT consumed any candidate. Only reference items from the favorites list above.
-- Use correct verbs for each content type — you READ books, WATCH movies and TV shows, and PLAY video games"""
+- Use correct verbs for each content type — you READ books, WATCH movies and TV shows, and PLAY video games
+- Do NOT include genre tags like (Comedy) or (Fantasy) in the blurb text — only use genres to understand the item
+- Do NOT justify a pick by referencing the user's experience with the pick's OWN series — that's circular. Connect it to DIFFERENT favorites.
+- Vary your opening — do NOT start with formulaic phrases like "You'll adore", "You'll love", or "If you enjoyed" — jump straight into WHAT connects the pick to their taste"""
 
     return prompt
 
@@ -198,7 +201,9 @@ def build_recommendation_system_prompt(content_type: ContentType) -> str:
 - Do NOT claim items share the same author unless the author names shown are identical
 - A book is NOT a show, a movie is NOT a game — use the correct content type; you READ books, WATCH movies and TV shows, and PLAY video games
 - Write about the RECOMMENDED item itself — NOT about its sequels, prequels, or other entries in the same franchise
-- NEVER reference candidates or picks as things the user has consumed — they are unconsumed recommendations"""
+- NEVER reference candidates or picks as things the user has consumed — they are unconsumed recommendations
+- Do NOT include genre tags like (Comedy) or (Fantasy) in recommendation text — genres are metadata, not prose
+- Do NOT justify a pick by referencing the user's experience with the pick's OWN series — that's circular; connect it to DIFFERENT favorites"""
 
 
 def _shuffle_close_scores(
@@ -436,6 +441,12 @@ def build_blurb_system_prompt(content_type: ContentType) -> str:
         " NOT set in space, and a sci-fi series is NOT set in a medieval realm."
         " Use correct verbs for each content type — you READ books,"
         " WATCH movies and TV shows, and PLAY video games."
+        " Do NOT include genre tags like (Comedy) or (Fantasy) in the"
+        " blurb text — genres are metadata for your understanding, not prose."
+        " Do NOT justify a pick by saying the user enjoyed the pick's OWN"
+        " series — that's circular; connect it to DIFFERENT favorites."
+        " Vary your opening — do NOT start with formulaic phrases like"
+        " 'You'll adore', 'You'll love', or 'If you enjoyed'."
     )
 
 
@@ -499,7 +510,10 @@ Rules:
 - Do NOT reference other picks as things the user has consumed — they have NOT consumed any pick. Only reference favorites listed above.
 - When a favorite is part of a series, refer to the SERIES by its series name (shown in parentheses), not the individual entry title
 - NEVER claim a referenced item has genres, settings, or themes not listed in its genre brackets — a fantasy series is NOT set in space
-- Use correct verbs for each content type — you READ books, WATCH movies and TV shows, and PLAY video games"""
+- Use correct verbs for each content type — you READ books, WATCH movies and TV shows, and PLAY video games
+- Do NOT include genre tags like (Comedy) or (Fantasy) in the blurb text — only use genres to understand the item
+- Do NOT justify a pick by referencing the user's experience with the pick's OWN series — that's circular. Connect it to DIFFERENT favorites.
+- Vary your opening — do NOT start with formulaic phrases like "You'll adore", "You'll love", or "If you enjoyed" — jump straight into WHAT connects the pick to their taste"""
 
 
 def build_single_blurb_prompt(
@@ -562,7 +576,10 @@ Rules:
 - Do NOT reference any other recommendation as something the user has consumed — only reference favorites listed above.
 - When a favorite is part of a series, refer to the SERIES by its series name (shown in parentheses), not the individual entry title
 - NEVER claim a referenced item has genres, settings, or themes not listed in its genre brackets — a fantasy series is NOT set in space
-- Use correct verbs for each content type — you READ books, WATCH movies and TV shows, and PLAY video games"""
+- Use correct verbs for each content type — you READ books, WATCH movies and TV shows, and PLAY video games
+- Do NOT include genre tags like (Comedy) or (Fantasy) in the blurb text — only use genres to understand the item
+- Do NOT justify a pick by referencing the user's experience with the pick's OWN series — that's circular. Connect it to DIFFERENT favorites.
+- Vary your opening — do NOT start with "You'll adore", "You'll love", or "If you enjoyed" — jump straight into WHAT connects the pick to their taste"""
 
 
 def build_content_description(item: ContentItem) -> str:
