@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import sqlite3
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -79,12 +82,21 @@ class StorageManager:
         self.source_priority = source_priority or []
 
         # Only initialize vector DB if AI is enabled and path provided.
-        # Deferred import: chromadb is heavy (~500MB+) and should not load
+        # Deferred import: chromadb is heavy (~500 MB+) and should not load
         # when AI features are disabled.
         if ai_enabled and vector_db_path:
             from src.storage.vector_db import VectorDB
 
             self.vector_db = VectorDB(vector_db_path, vector_collection_name)
+
+    @contextmanager
+    def connection(self) -> Generator[sqlite3.Connection, None, None]:
+        """Yield a managed SQLite connection.
+
+        Delegates to the underlying SQLiteDB connection context manager.
+        """
+        with self.sqlite_db.connection() as conn:
+            yield conn
 
     def save_content_item(
         self,

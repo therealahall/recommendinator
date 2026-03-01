@@ -55,7 +55,7 @@ class MemoryManager:
         Returns:
             List of CoreMemory objects
         """
-        with self.storage.sqlite_db.connection() as conn:
+        with self.storage.connection() as conn:
             memory_dicts = get_core_memories(
                 conn, user_id, active_only=active_only, memory_type=memory_type
             )
@@ -83,7 +83,7 @@ class MemoryManager:
         Returns:
             The saved CoreMemory with its ID
         """
-        with self.storage.sqlite_db.connection() as conn:
+        with self.storage.connection() as conn:
             memory_id = save_core_memory(
                 conn,
                 user_id=user_id,
@@ -120,7 +120,7 @@ class MemoryManager:
         Returns:
             True if updated, False if not found
         """
-        with self.storage.sqlite_db.connection() as conn:
+        with self.storage.connection() as conn:
             return update_core_memory(
                 conn,
                 memory_id=memory_id,
@@ -137,7 +137,7 @@ class MemoryManager:
         Returns:
             True if deleted, False if not found
         """
-        with self.storage.sqlite_db.connection() as conn:
+        with self.storage.connection() as conn:
             return delete_core_memory(conn, memory_id)
 
     def deactivate_memory(self, memory_id: int) -> bool:
@@ -178,7 +178,7 @@ class MemoryManager:
         Returns:
             List of ConversationMessage objects ordered chronologically
         """
-        with self.storage.sqlite_db.connection() as conn:
+        with self.storage.connection() as conn:
             message_dicts = get_conversation_history(conn, user_id, limit=limit)
             return [
                 self._dict_to_conversation_message(message_dict)
@@ -203,7 +203,7 @@ class MemoryManager:
         Returns:
             The saved ConversationMessage with its ID
         """
-        with self.storage.sqlite_db.connection() as conn:
+        with self.storage.connection() as conn:
             message_id = save_conversation_message(
                 conn,
                 user_id=user_id,
@@ -231,7 +231,7 @@ class MemoryManager:
         Returns:
             Number of messages deleted
         """
-        with self.storage.sqlite_db.connection() as conn:
+        with self.storage.connection() as conn:
             return clear_conversation_history(conn, user_id)
 
     # Preference Profile Operations
@@ -245,7 +245,7 @@ class MemoryManager:
         Returns:
             PreferenceProfile or None if not found
         """
-        with self.storage.sqlite_db.connection() as conn:
+        with self.storage.connection() as conn:
             profile_dict = get_preference_profile(conn, user_id)
             if profile_dict:
                 return self._dict_to_preference_profile(profile_dict)
@@ -260,7 +260,7 @@ class MemoryManager:
         Returns:
             Profile ID
         """
-        with self.storage.sqlite_db.connection() as conn:
+        with self.storage.connection() as conn:
             profile_data = {
                 "genre_affinities": profile.genre_affinities,
                 "theme_preferences": profile.theme_preferences,

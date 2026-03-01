@@ -30,7 +30,7 @@ YEAR_PATTERN = re.compile(r"\s*\(\d{4}\)\s*$")
 COUNTRY_PATTERN = re.compile(r"\s*\([A-Z]{2,3}\)\s*$")
 
 
-def clean_title_for_search(title: str) -> str:
+def clean_media_title_for_search(title: str) -> str:
     """Remove year and country suffixes from title for better search matching.
 
     Examples:
@@ -248,7 +248,7 @@ class TMDBProvider(EnrichmentProvider):
         Returns:
             TMDB ID if found, None otherwise.
         """
-        search_title = clean_title_for_search(item.title)
+        search_title = clean_media_title_for_search(item.title)
         if search_title != item.title:
             logger.debug(
                 "Cleaned title for search: '%s' -> '%s'", item.title, search_title

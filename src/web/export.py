@@ -127,7 +127,7 @@ def _item_to_export_dict(
             # Map genres list back to genre string
             genres = item.metadata.get("genres")
             if isinstance(genres, list) and genres:
-                result[column] = genres[0] if for_csv else genres[0]
+                result[column] = genres[0]
             elif value is not None:
                 result[column] = value
             else:

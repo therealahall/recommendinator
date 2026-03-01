@@ -35,7 +35,8 @@ def _tiebreaker_key(item: ContentItem) -> tuple[int, str]:
         Lower values sort first, so first-in-series items come first.
     """
     is_first = is_first_item_in_series(item=item)
-    # Hash the title for stable pseudo-random ordering (avoids pure alphabetical)
+    # Hash the title for stable pseudo-random ordering (avoids pure alphabetical).
+    # MD5 chosen for speed; this is not a security context (usedforsecurity=False).
     title_hash = hashlib.md5(item.title.encode(), usedforsecurity=False).hexdigest()
     return (0 if is_first else 1, title_hash)
 

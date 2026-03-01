@@ -163,7 +163,7 @@ def _release_sort_key(entry: dict[str, Any]) -> str:
     return entry.get("released") or "9999-12-31"
 
 
-def clean_title_for_search(title: str) -> str:
+def clean_game_title_for_search(title: str) -> str:
     """Remove DLC suffixes, edition info, and trademark symbols for better search matching.
 
     Examples:
@@ -294,7 +294,7 @@ class RAWGProvider(EnrichmentProvider):
             RAWG game ID if found, None otherwise
         """
         # Clean title to remove edition suffixes and trademark symbols
-        search_title = clean_title_for_search(item.title)
+        search_title = clean_game_title_for_search(item.title)
         if search_title != item.title:
             logger.debug(
                 "Cleaned title for search: '%s' -> '%s'", item.title, search_title

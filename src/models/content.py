@@ -40,7 +40,7 @@ class ContentType(str, Enum):
             ) from None
 
 
-def get_enum_value(value: "Enum | str | Any") -> str:
+def get_enum_value(value: "Enum | str") -> str:
     """Extract the string value from an enum member or pass through strings.
 
     Handles the common pattern where a value may be either an Enum instance

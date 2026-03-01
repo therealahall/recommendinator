@@ -58,7 +58,7 @@ class MemoryExtractor:
             ollama_client: Ollama client for LLM interactions
             model: Model to use for extraction (defaults to client's default)
         """
-        self.ollama = ollama_client
+        self.ollama_client = ollama_client
         self.model = model
 
     def extract_from_conversation(
@@ -88,7 +88,7 @@ class MemoryExtractor:
 
         try:
             # Get LLM response
-            response = self.ollama.generate_text(
+            response = self.ollama_client.generate_text(
                 prompt=prompt,
                 system_prompt=MEMORY_EXTRACTION_SYSTEM_PROMPT,
                 model=self.model,
