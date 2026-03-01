@@ -136,6 +136,16 @@ class FeaturesStatus(BaseModel):
     llm_reasoning_enabled: bool = False
 
 
+class RecommendationsConfig(BaseModel):
+    """Recommendations configuration exposed to the frontend.
+
+    Defaults mirror config/example.yaml recommendations section.
+    """
+
+    max_count: int = 20
+    default_count: int = 5
+
+
 class StatusResponse(BaseModel):
     """Response model for system status."""
 
@@ -143,6 +153,9 @@ class StatusResponse(BaseModel):
     version: str
     components: dict[str, bool]
     features: FeaturesStatus = Field(default_factory=FeaturesStatus)
+    recommendations_config: RecommendationsConfig = Field(
+        default_factory=RecommendationsConfig
+    )
 
 
 class UserPreferenceResponse(BaseModel):
@@ -323,12 +336,27 @@ def discover_themes(themes_dir: Path) -> list[ThemeResponse]:
     return themes
 
 
+def _get_recommendations_config(config: dict[str, Any] | None) -> RecommendationsConfig:
+    """Extract recommendations config from the loaded config dict.
+
+    Falls back to model defaults when the config or section is absent.
+    """
+    rec_section = config.get("recommendations", {}) if config else {}
+    return RecommendationsConfig(
+        **{
+            k: rec_section[k]
+            for k in ("max_count", "default_count")
+            if k in rec_section
+        }
+    )
+
+
 @router.get("/recommendations", response_model=list[RecommendationResponse])
 async def get_recommendations(
     type: str = Query(
         ..., description="Content type (book, movie, tv_show, video_game)"
     ),
-    count: int = Query(5, ge=1, le=20, description="Number of recommendations"),
+    count: int = Query(5, ge=1, description="Number of recommendations"),
     use_llm: bool = Query(True, description="Use LLM for enhanced reasoning"),
     user_id: int = Query(1, ge=1, description="User ID for personalized preferences"),
 ) -> list[RecommendationResponse]:
@@ -349,9 +377,8 @@ async def get_recommendations(
     if not engine:
         raise HTTPException(status_code=500, detail="Engine not initialized")
 
-    # Validate count against max_count from config
-    rec_config = config.get("recommendations", {}) if config else {}
-    max_count = rec_config.get("max_count", 20)
+    # Validate count against config-driven max_count (may be tighter than hard limit)
+    max_count = _get_recommendations_config(config).max_count
     if count > max_count:
         raise HTTPException(
             status_code=400,
@@ -414,7 +441,7 @@ async def stream_recommendations(
     type: str = Query(
         ..., description="Content type (book, movie, tv_show, video_game)"
     ),
-    count: int = Query(5, ge=1, le=20, description="Number of recommendations"),
+    count: int = Query(5, ge=1, description="Number of recommendations"),
     user_id: int = Query(1, ge=1, description="User ID for personalized preferences"),
 ) -> StreamingResponse:
     """Stream recommendations with progressive LLM blurb generation.
@@ -442,8 +469,7 @@ async def stream_recommendations(
     if not engine:
         raise HTTPException(status_code=500, detail="Engine not initialized")
 
-    rec_config = config.get("recommendations", {}) if config else {}
-    max_count = rec_config.get("max_count", 20)
+    max_count = _get_recommendations_config(config).max_count
     if count > max_count:
         raise HTTPException(
             status_code=400,
@@ -1173,6 +1199,7 @@ async def get_status() -> StatusResponse:
         version=APP_VERSION,
         components=components,
         features=features,
+        recommendations_config=_get_recommendations_config(config),
     )
 
 

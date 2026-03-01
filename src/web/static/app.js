@@ -157,6 +157,18 @@
                     aiFeatures = data.features;
                 }
 
+                // Apply recommendations config to the count input
+                if (data.recommendations_config) {
+                    var recCountInput = document.getElementById("recCount");
+                    if (recCountInput) {
+                        recCountInput.max = data.recommendations_config.max_count;
+                        if (!recCountInput.dataset.configLoaded) {
+                            recCountInput.value = data.recommendations_config.default_count;
+                            recCountInput.dataset.configLoaded = "true";
+                        }
+                    }
+                }
+
                 // Hide AI-dependent UI elements when disabled
                 updateAiReasoningVisibility();
                 updateChatTabVisibility();
