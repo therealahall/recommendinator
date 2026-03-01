@@ -86,12 +86,13 @@ def _build_sonarr_metadata(series: dict[str, Any]) -> dict[str, Any]:
         metadata["genres"] = genres
 
     # Season/episode info from statistics
+    # Keys must match tv_show_details column mapping in sqlite_db.py
     statistics = series.get("statistics", {})
     if statistics:
         if statistics.get("seasonCount"):
-            metadata["total_seasons"] = statistics["seasonCount"]
+            metadata["seasons"] = statistics["seasonCount"]
         if statistics.get("episodeCount"):
-            metadata["total_episodes"] = statistics["episodeCount"]
+            metadata["episodes"] = statistics["episodeCount"]
         if statistics.get("episodeFileCount"):
             metadata["downloaded_episodes"] = statistics["episodeFileCount"]
 

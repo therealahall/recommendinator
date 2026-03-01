@@ -253,8 +253,8 @@ class TestSonarrPluginFetch:
         assert metadata["year"] == 2008
         assert metadata["network"] == "AMC"
         assert metadata["genres"] == ["Drama", "Crime", "Thriller"]
-        assert metadata["total_seasons"] == 5
-        assert metadata["total_episodes"] == 62
+        assert metadata["seasons"] == 5
+        assert metadata["episodes"] == 62
         assert metadata["downloaded_episodes"] == 62
 
     @patch("src.ingestion.sources.arr_base.requests.get")
