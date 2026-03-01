@@ -573,6 +573,18 @@ input[type="checkbox"] {
     cursor: pointer;
 }
 
+/* Recommendation controls */
+.rec-controls {
+    display: flex;
+    gap: var(--space-3);
+    align-items: flex-end;
+    flex-wrap: wrap;
+}
+
+.rec-controls .btn {
+    white-space: nowrap;
+}
+
 /* Form layout */
 .form-row {
     display: flex;
@@ -1980,6 +1992,11 @@ input[type="checkbox"] {
         padding: var(--space-4);
         padding-top: calc(var(--space-4) + 44px);
         padding-left: calc(var(--space-4) + 36px);
+    }
+
+    .rec-controls {
+        flex-direction: column;
+        align-items: stretch;
     }
 
     .form-row {
