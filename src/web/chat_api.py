@@ -10,10 +10,9 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from src.conversation.memory import MemoryManager
 from src.conversation.profile import ProfileGenerator
 from src.models.content import ContentType
-from src.web.state import get_conversation_engine, get_storage
+from src.web.state import get_conversation_engine, get_memory_manager, get_storage
 
 logger = logging.getLogger(__name__)
 
@@ -211,11 +210,10 @@ async def get_chat_history(
     limit: int = Query(default=50, ge=1, le=200),
 ) -> list[MessageResponse]:
     """Get recent conversation history for a user."""
-    storage = get_storage()
-    if not storage:
+    memory_manager = get_memory_manager()
+    if not memory_manager:
         raise HTTPException(status_code=503, detail="Storage not available")
 
-    memory_manager = MemoryManager(storage)
     messages = memory_manager.get_conversation_history(user_id=user_id, limit=limit)
 
     return [
@@ -241,11 +239,10 @@ async def get_memories(
     include_inactive: bool = Query(default=False),
 ) -> list[MemoryResponse]:
     """Get user's core memories."""
-    storage = get_storage()
-    if not storage:
+    memory_manager = get_memory_manager()
+    if not memory_manager:
         raise HTTPException(status_code=503, detail="Storage not available")
 
-    memory_manager = MemoryManager(storage)
     memories = memory_manager.get_core_memories(
         user_id=user_id,
         active_only=not include_inactive,
@@ -268,11 +265,10 @@ async def get_memories(
 @router.post("/memories")
 async def create_memory(request: MemoryCreateRequest) -> MemoryResponse:
     """Create a new user-stated memory."""
-    storage = get_storage()
-    if not storage:
+    memory_manager = get_memory_manager()
+    if not memory_manager:
         raise HTTPException(status_code=503, detail="Storage not available")
 
-    memory_manager = MemoryManager(storage)
     memory = memory_manager.save_core_memory(
         user_id=request.user_id,
         memory_text=request.memory_text,
@@ -298,11 +294,9 @@ async def update_memory(
     request: MemoryUpdateRequest,
 ) -> dict:
     """Update a memory (edit text or toggle active status)."""
-    storage = get_storage()
-    if not storage:
+    memory_manager = get_memory_manager()
+    if not memory_manager:
         raise HTTPException(status_code=503, detail="Storage not available")
-
-    memory_manager = MemoryManager(storage)
 
     # Update the memory
     success = memory_manager.update_core_memory(

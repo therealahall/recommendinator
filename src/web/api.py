@@ -4,6 +4,8 @@ import json
 import logging
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version
 from pathlib import Path
 from typing import Any, cast
 
@@ -49,7 +51,10 @@ from src.web.sync_sources import (
 
 logger = logging.getLogger(__name__)
 
-APP_VERSION = "1.0.0"
+try:
+    APP_VERSION = _pkg_version("personal-recommendations")
+except PackageNotFoundError:
+    APP_VERSION = "1.0.0"
 
 router = APIRouter(prefix="/api", tags=["api"])
 
