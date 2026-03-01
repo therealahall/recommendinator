@@ -2069,3 +2069,128 @@ class TestGenerateBlurbForItem:
         )
 
         assert result is None
+
+
+class TestSameSeriesReferenceExclusionRegression:
+    """Regression tests for same-series exclusion in contributing references.
+
+    Bug reported: "The Expanse (Season 2)" recommendation showed reasoning
+    "Recommended because you liked The Expanse", which is circular
+    self-referencing within a series.
+
+    Root cause: _find_contributing_reference_items() did not check whether
+    a consumed item belonged to the same series as the candidate, so earlier
+    entries in a series could appear as the "why" for recommending a later
+    entry.
+
+    Fix: get_series_name() is called on the candidate and on each consumed
+    item; items sharing the candidate's series name are skipped.
+    """
+
+    def test_same_series_consumed_item_excluded_regression(self) -> None:
+        """Regression: Series S1 must NOT appear as a reference for S2."""
+        engine = RecommendationEngine.__new__(RecommendationEngine)
+
+        candidate = ContentItem(
+            id="expanse_s2",
+            title="The Expanse (The Expanse, Season 2)",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genres": ["Science Fiction", "Drama"]},
+        )
+
+        same_series_consumed = ContentItem(
+            id="expanse_s1",
+            title="The Expanse (The Expanse, Season 1)",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            metadata={"genres": ["Science Fiction", "Drama"]},
+        )
+
+        other_consumed = ContentItem(
+            id="battlestar",
+            title="Battlestar Galactica",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            metadata={"genres": ["Science Fiction", "Drama"]},
+        )
+
+        result = engine._find_contributing_reference_items(
+            candidate, [same_series_consumed, other_consumed]
+        )
+
+        result_titles = [item.title for item in result]
+        assert (
+            "The Expanse (The Expanse, Season 1)" not in result_titles
+        ), "Same-series items must not appear as contributing references"
+        assert "Battlestar Galactica" in result_titles
+
+    def test_non_series_candidate_unaffected(self) -> None:
+        """Candidate with no series membership must not filter any consumed item."""
+        engine = RecommendationEngine.__new__(RecommendationEngine)
+
+        candidate = ContentItem(
+            id="interstellar",
+            title="Interstellar",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genres": ["Science Fiction"]},
+        )
+
+        series_consumed = ContentItem(
+            id="godfather_2",
+            title="The Godfather (The Godfather, Part 2)",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            metadata={"genres": ["Drama", "Crime"]},
+        )
+
+        result = engine._find_contributing_reference_items(candidate, [series_consumed])
+
+        result_titles = [item.title for item in result]
+        assert "The Godfather (The Godfather, Part 2)" in result_titles, (
+            "Series-member consumed items must not be filtered when the "
+            "candidate is not part of any series"
+        )
+
+    def test_case_insensitive_series_name_matching(self) -> None:
+        """Series name comparison must be case-insensitive."""
+        engine = RecommendationEngine.__new__(RecommendationEngine)
+
+        candidate = ContentItem(
+            id="expanse_s2",
+            title="The Expanse (The Expanse, Season 2)",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genres": ["Science Fiction"]},
+        )
+
+        # Simulate metadata with different casing
+        consumed = ContentItem(
+            id="expanse_s1",
+            title="the expanse (the expanse, Season 1)",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            metadata={"genres": ["Science Fiction"]},
+        )
+
+        other = ContentItem(
+            id="firefly",
+            title="Firefly",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            metadata={"genres": ["Science Fiction"]},
+        )
+
+        result = engine._find_contributing_reference_items(candidate, [consumed, other])
+
+        result_titles = [item.title for item in result]
+        assert (
+            "the expanse (the expanse, Season 1)" not in result_titles
+        ), "Case-insensitive series name match should still exclude"
+        assert "Firefly" in result_titles
