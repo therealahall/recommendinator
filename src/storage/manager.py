@@ -182,7 +182,7 @@ class StorageManager:
         self,
         user_id: int | None = None,
         content_type: ContentType | None = None,
-        status: ConsumptionStatus | None = None,
+        status: ConsumptionStatus | list[ConsumptionStatus] | None = None,
         min_rating: int | None = None,
         limit: int | None = None,
         offset: int = 0,
@@ -194,7 +194,8 @@ class StorageManager:
         Args:
             user_id: Filter by user ID
             content_type: Filter by content type
-            status: Filter by consumption status
+            status: Filter by consumption status (single value or list for
+                IN-clause filtering)
             min_rating: Minimum rating (inclusive)
             limit: Maximum number of results
             offset: Number of results to skip (for pagination)
@@ -223,7 +224,7 @@ class StorageManager:
         content_type: ContentType | None = None,
         limit: int | None = None,
     ) -> list[ContentItem]:
-        """Get unconsumed items (status = UNREAD).
+        """Get unconsumed items (status = UNREAD or CURRENTLY_CONSUMING).
 
         Args:
             user_id: Filter by user ID
@@ -244,7 +245,7 @@ class StorageManager:
         min_rating: int | None = None,
         limit: int | None = None,
     ) -> list[ContentItem]:
-        """Get completed items with optional minimum rating.
+        """Get completed items (status = COMPLETED or CURRENTLY_CONSUMING).
 
         Args:
             user_id: Filter by user ID
