@@ -147,6 +147,43 @@ class TestStatusEndpointRegression:
         assert data["status"] == "ready"
 
 
+class TestStatusRecommendationsConfig:
+    """Tests for recommendations_config in the /api/status response."""
+
+    def test_status_includes_recommendations_config_defaults(self, client):
+        """GET /api/status includes default max_count and default_count."""
+        app_state.config = {"features": {"ai_enabled": False}}
+
+        response = client.get("/api/status")
+        assert response.status_code == 200
+        rec_cfg = response.json()["recommendations_config"]
+        assert rec_cfg["max_count"] == 20
+        assert rec_cfg["default_count"] == 5
+
+    def test_status_reads_recommendations_config_from_config(self, client):
+        """GET /api/status surfaces max_count and default_count from config."""
+        app_state.config = {
+            "features": {"ai_enabled": False},
+            "recommendations": {"max_count": 50, "default_count": 10},
+        }
+
+        response = client.get("/api/status")
+        assert response.status_code == 200
+        rec_cfg = response.json()["recommendations_config"]
+        assert rec_cfg["max_count"] == 50
+        assert rec_cfg["default_count"] == 10
+
+    def test_status_with_no_config_uses_defaults(self, client):
+        """GET /api/status returns defaults when config is None."""
+        app_state.config = None
+
+        response = client.get("/api/status")
+        assert response.status_code == 200
+        rec_cfg = response.json()["recommendations_config"]
+        assert rec_cfg["max_count"] == 20
+        assert rec_cfg["default_count"] == 5
+
+
 def test_sync_sources_endpoint(client, mock_config):
     """Test sync sources endpoint returns only enabled sources from config."""
     response = client.get("/api/sync/sources")
@@ -1287,6 +1324,30 @@ def test_recommendations_count_exceeds_max_returns_400(client, mock_components):
     response = client.get("/api/recommendations?type=book&count=10")
     assert response.status_code == 400
     assert "exceeds the maximum allowed" in response.json()["detail"]
+
+
+def test_stream_recommendations_count_exceeds_max_returns_400(client, mock_components):
+    """GET /api/recommendations/stream returns 400 when count exceeds config max_count.
+
+    The streaming endpoint applies the same max_count enforcement as the
+    non-streaming endpoint.
+    """
+    app_state.config["recommendations"] = {"max_count": 5}
+
+    response = client.get("/api/recommendations/stream?type=book&count=10")
+    assert response.status_code == 400
+    assert "exceeds the maximum allowed" in response.json()["detail"]
+
+
+def test_recommendations_count_at_max_is_allowed(client, mock_components):
+    """GET /api/recommendations allows count == max_count (boundary)."""
+    app_state.config["recommendations"] = {"max_count": 5}
+    mock_components["engine"].generate_recommendations.return_value = []
+    mock_components["storage"].get_user_preference_config.return_value = None
+    mock_components["storage"].get_completed_items.return_value = []
+
+    response = client.get("/api/recommendations?type=book&count=5")
+    assert response.status_code == 200
 
 
 # ---------------------------------------------------------------------------
