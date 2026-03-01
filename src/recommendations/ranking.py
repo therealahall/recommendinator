@@ -6,13 +6,9 @@ from typing import Any
 from src.models.content import ContentItem, ContentType
 from src.recommendations.genre_normalizer import extract_and_normalize_genres
 from src.recommendations.preferences import UserPreferences
-from src.utils.series import is_first_item_in_series
 
 logger = logging.getLogger(__name__)
 
-
-# Bonus applied when an item is the first entry in an unstarted series.
-_SERIES_FIRST_ITEM_BONUS = 0.1
 
 # Adaptation bonus range: base + (rating - 4) * per_star.
 # For a 5-star rated adaptation: 0.15 + 1*0.05 = 0.20
@@ -88,11 +84,6 @@ class RecommendationRanker:
             # Calculate diversity bonus based on genre difference from recent items
             diversity_bonus = self._calculate_diversity_score(item, recent_genres)
 
-            # Series bonus: boost first items in unstarted series (all content types)
-            series_bonus = 0.0
-            if is_first_item_in_series(item=item):
-                series_bonus = _SERIES_FIRST_ITEM_BONUS
-
             # Adaptation bonus: boost direct adaptations of consumed content
             # (e.g., LOTR books -> LOTR movies)
             adaptation_bonus = 0.0
@@ -118,7 +109,6 @@ class RecommendationRanker:
                 self.similarity_weight * similarity_score
                 + self.preference_weight * normalized_preference
                 + self.diversity_weight * diversity_bonus
-                + series_bonus
                 + adaptation_bonus
             )
 
@@ -133,7 +123,6 @@ class RecommendationRanker:
                 "similarity_score": similarity_score,
                 "preference_score": preference_score,
                 "diversity_bonus": diversity_bonus,
-                "series_bonus": series_bonus,
                 "adaptation_bonus": adaptation_bonus,
             }
 
