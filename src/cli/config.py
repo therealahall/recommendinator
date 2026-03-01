@@ -10,10 +10,13 @@ from src.llm.embeddings import EmbeddingGenerator
 from src.llm.recommendations import RecommendationGenerator
 from src.recommendations.engine import RecommendationEngine
 from src.recommendations.scorers import (
+    ContentLengthScorer,
+    ContinuationScorer,
     CreatorMatchScorer,
     GenreMatchScorer,
     RatingPatternScorer,
     Scorer,
+    SeriesAffinityScorer,
     SeriesOrderScorer,
     TagOverlapScorer,
 )
@@ -156,6 +159,9 @@ _SCORER_CONFIG_MAP: dict[str, type[Scorer]] = {
     "tag_overlap": TagOverlapScorer,
     "series_order": SeriesOrderScorer,
     "rating_pattern": RatingPatternScorer,
+    "content_length": ContentLengthScorer,
+    "continuation": ContinuationScorer,
+    "series_affinity": SeriesAffinityScorer,
 }
 
 
