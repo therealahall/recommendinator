@@ -75,6 +75,8 @@ RecommendationEngine
   |     |-- SeriesOrderScorer     — next-in-sequence boosting
   |     |-- RatingPatternScorer   — rating history in matching genres
   |     |-- ContentLengthScorer   — soft penalty for length preference mismatch
+  |     |-- ContinuationScorer   — boost items the user is actively consuming
+  |     |-- SeriesAffinityScorer — boost items in well-rated franchises (avg >= 4)
   |     |-- CustomPreferenceScorer — user natural language rules
   |     |-- [SemanticSimilarityScorer]  (when AI enabled)
   |

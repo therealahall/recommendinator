@@ -171,6 +171,8 @@ recommendations:
     rating_pattern: 1.0
     semantic_similarity: 1.5  # Only active when ai_enabled is true
     content_length: 1.0  # Soft penalty for items not matching length preferences
+    continuation: 1.5  # Boost items you're currently consuming (e.g., in-progress TV shows)
+    series_affinity: 1.0  # Boost items in franchises you've rated well (avg >= 4)
 
   # Content length preferences apply a soft scoring penalty to candidates.
   # Set per content type: "any" (no penalty), "short", "medium", or "long".
