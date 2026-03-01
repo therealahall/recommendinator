@@ -1123,14 +1123,8 @@ def normalize_term(term: str) -> str | None:
     if normalized in NORMALIZATIONS:
         normalized = NORMALIZATIONS[normalized]
 
-    # Check if allowed (or if it's a reasonably short, clean term)
+    # Check if allowed
     if normalized in ALLOWED_TERMS:
-        return normalized
-
-    # Allow terms that are short and don't contain problematic patterns
-    if len(normalized) <= 25 and normalized.replace(" ", "").isalpha():
-        # Only allow if it seems like a real genre/tag
-        # (not too long, only letters/spaces)
         return normalized
 
     return None

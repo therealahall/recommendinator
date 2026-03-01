@@ -10,6 +10,8 @@ from src.storage.manager import StorageManager
 
 logger = logging.getLogger(__name__)
 
+_MAX_SIMILARITY_CANDIDATES = 500
+
 
 class SimilarityMatcher:
     """Match content using vector similarity."""
@@ -53,7 +55,7 @@ class SimilarityMatcher:
         reference_embeddings = []
         for item in reference_items:
             # Check if embedding exists
-            content_id = item.id if item.id else None
+            content_id = item.id
             if (
                 content_id
                 and self.storage.vector_db is not None
@@ -114,9 +116,11 @@ class SimilarityMatcher:
                 return []
 
             # Build a lookup dictionary for efficient item retrieval
-            # Get all items of this content type and index by external_id
+            # Get items of this content type (bounded) and index by external_id
             all_items = self.storage.get_content_items(
-                user_id=user_id, content_type=content_type
+                user_id=user_id,
+                content_type=content_type,
+                limit=_MAX_SIMILARITY_CANDIDATES,
             )
             items_by_id = {item.id: item for item in all_items if item.id}
 

@@ -426,6 +426,8 @@ def _fetch_gog_games(
                 "linux": works_on.get("Linux", False),
             }
 
+        count += 1
+
         if progress_callback:
             progress_callback(count, len(owned_products), title)
 
@@ -441,7 +443,6 @@ def _fetch_gog_games(
             metadata=metadata,
             source=source,
         )
-        count += 1
 
     # Phase 4: Wishlist (if enabled)
     if not include_wishlist:

@@ -274,7 +274,7 @@ class EnrichmentManager:
                     for db_id in batch_ids:
                         if db_id in fetched_map:
                             items.append((db_id, fetched_map[db_id]))
-                        not_found_ids.discard(db_id)
+                            not_found_ids.discard(db_id)
 
                 if not items:
                     # No more items to process
