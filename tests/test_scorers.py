@@ -858,7 +858,7 @@ class TestContinuationScorer:
     """Tests for the ContinuationScorer.
 
     Items with CURRENTLY_CONSUMING status score 1.0; all others score 0.0.
-    Default weight: 1.5.
+    Default weight: 3.0.
     """
 
     def test_currently_consuming_scores_1(self) -> None:
@@ -895,20 +895,20 @@ class TestContinuationScorer:
         assert scorer.score(candidate, context) == 0.0
 
     def test_default_weight(self) -> None:
-        """ContinuationScorer default weight is 1.5."""
+        """ContinuationScorer default weight is 3.0."""
         scorer = ContinuationScorer()
-        assert scorer.weight == 1.5
+        assert scorer.weight == 3.0
 
     def test_clone(self) -> None:
         """Cloning preserves type and applies new weight."""
-        scorer = ContinuationScorer(weight=1.5)
-        cloned = scorer.clone(weight=3.0)
+        scorer = ContinuationScorer(weight=3.0)
+        cloned = scorer.clone(weight=5.0)
         assert isinstance(cloned, ContinuationScorer)
-        assert cloned.weight == 3.0
+        assert cloned.weight == 5.0
 
     def test_weight_override_to_zero(self) -> None:
         """Weight is set to 0.0 via build_scorers_with_overrides."""
-        base = [ContinuationScorer(weight=1.5)]
+        base = [ContinuationScorer(weight=3.0)]
         result = build_scorers_with_overrides(base, {"continuation": 0.0})
         assert result[0].weight == 0.0
 
