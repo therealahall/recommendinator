@@ -595,6 +595,13 @@ input[type="checkbox"] {
     letter-spacing: 0.05em;
 }
 
+.form-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: var(--space-3);
+}
+
 /* ============================================================
    Badges
    ============================================================ */
@@ -1981,6 +1988,12 @@ input[type="checkbox"] {
 
     .form-group {
         width: 100%;
+    }
+
+    .form-actions {
+        flex-direction: column;
+        gap: var(--space-3);
+        align-items: stretch;
     }
 
     .score-label {

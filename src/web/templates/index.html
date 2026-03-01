@@ -83,7 +83,7 @@
                 <div class="card">
                     <form id="recForm">
                         <div class="form-row">
-                            <div class="form-group">
+                            <div class="form-group" style="flex: 1;">
                                 <label for="recType">Content Type</label>
                                 <select id="recType">
                                     <option value="book">Book</option>
@@ -96,16 +96,12 @@
                                 <label for="recCount">Count</label>
                                 <input type="number" id="recCount" min="1" max="20" value="5">
                             </div>
-                            <div class="form-group">
-                                <label>&nbsp;</label>
-                                <label class="checkbox-label">
-                                    <input type="checkbox" id="recUseLlm" checked> Use AI reasoning
-                                </label>
-                            </div>
-                            <div class="form-group">
-                                <label>&nbsp;</label>
-                                <button type="submit" class="btn btn-primary">Get Recommendations</button>
-                            </div>
+                        </div>
+                        <div class="form-actions">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="recUseLlm" checked> Use AI reasoning
+                            </label>
+                            <button type="submit" class="btn btn-primary">Get Recommendations</button>
                         </div>
                     </form>
                 </div>
