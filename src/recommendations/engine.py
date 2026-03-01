@@ -9,6 +9,10 @@ from src.llm.embeddings import EmbeddingGenerator
 from src.llm.recommendations import RecommendationGenerator
 from src.models.content import ContentItem, ContentType, get_enum_value
 from src.models.user_preferences import UserPreferenceConfig
+from src.recommendations.constants import (
+    CROSS_TYPE_MIN_OVERLAP,
+    SCORE_PROXIMITY_THRESHOLD,
+)
 from src.recommendations.genre_clusters import cluster_overlap
 from src.recommendations.preference_interpreter import (
     InterpretedPreference,
@@ -57,9 +61,6 @@ _CONTENT_TYPE_NATURAL_LABEL: dict[str, str] = {
     "video_game": "the video game",
 }
 
-# Overlap scores within this tolerance are considered "close enough" to
-# shuffle, so the reference item order varies across runs.
-_SCORE_PROXIMITY_THRESHOLD = 0.05
 
 # Default diversity weight applied when variety_after_completion is enabled
 # but the user hasn't set an explicit diversity_weight.  0.2 gives a subtle
@@ -73,7 +74,7 @@ def _shuffle_close_scores(
     """Shuffle items that have similar overlap scores.
 
     Items are already sorted by descending score.  Adjacent items whose
-    scores differ by at most ``_SCORE_PROXIMITY_THRESHOLD`` are grouped
+    scores differ by at most ``SCORE_PROXIMITY_THRESHOLD`` are grouped
     together and shuffled, so the ordering feels dynamic across runs
     while still respecting meaningful relevance differences.
     """
@@ -84,7 +85,7 @@ def _shuffle_close_scores(
     group_score = items_with_scores[0][1]
 
     for item, score in items_with_scores[1:]:
-        if group_score - score <= _SCORE_PROXIMITY_THRESHOLD:
+        if group_score - score <= SCORE_PROXIMITY_THRESHOLD:
             groups[-1].append(item)
         else:
             groups.append([item])
@@ -875,12 +876,6 @@ class RecommendationEngine:
 
         return t1_norm in t2_norm or t2_norm in t1_norm
 
-    # Minimum genre/creator overlap for a cross-type item to qualify as
-    # a meaningful reference.  Prevents incidental single-genre matches
-    # (e.g., "Drama" alone ≈ 0.2 Jaccard) from producing identical
-    # cross-type lists across all recommendations.
-    _CROSS_TYPE_MIN_OVERLAP = 0.25
-
     def _find_contributing_reference_items(
         self,
         candidate: ContentItem,
@@ -974,7 +969,7 @@ class RecommendationEngine:
             # Cross-type items must clear a minimum overlap threshold
             # to avoid the same broadly-matching items appearing for
             # every recommendation in a category.
-            if not is_same_type and score < self._CROSS_TYPE_MIN_OVERLAP:
+            if not is_same_type and score < CROSS_TYPE_MIN_OVERLAP:
                 continue
 
             type_list = by_type.setdefault(item_type, [])

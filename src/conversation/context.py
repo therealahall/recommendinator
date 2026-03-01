@@ -17,7 +17,11 @@ from src.models.conversation import (
     RecommendationBrief,
 )
 from src.utils.series import build_series_tracking, should_recommend_item
-from src.utils.text import format_genre_tag
+from src.utils.text import (
+    _MAX_PROMPT_TEXT_LENGTH,
+    format_genre_tag,
+    sanitize_prompt_text,
+)
 
 if TYPE_CHECKING:
     from src.conversation.memory import MemoryManager
@@ -55,7 +59,7 @@ class ContextAssembler:
         """
         self.storage = storage_manager
         self.memory = memory_manager
-        self.ollama = ollama_client
+        self.ollama_client = ollama_client
         self.recommendation_engine = recommendation_engine
 
     def assemble_context(
@@ -159,10 +163,10 @@ class ContextAssembler:
             List of relevant ContentItem objects
         """
         # If vector search is available, use it
-        if self.ollama and self.storage.vector_db:
+        if self.ollama_client and self.storage.vector_db:
             try:
                 # Generate query embedding
-                query_embedding = self.ollama.generate_embedding(query)
+                query_embedding = self.ollama_client.generate_embedding(query)
 
                 # Search for similar items
                 results = self.storage.search_similar(
@@ -485,18 +489,20 @@ def _format_item_detail(item: ContentItem) -> str:
         Formatted detail string
     """
     content_type_str = _format_content_type(item.content_type)
-    author_str = f" by {item.author}" if item.author else ""
+    safe_title = sanitize_prompt_text(item.title)
+    safe_author = sanitize_prompt_text(item.author) if item.author else ""
+    author_str = f" by {safe_author}" if safe_author else ""
     rating_str = f" — {item.rating}/5" if item.rating is not None else ""
     genre_str = format_genre_tag(item)
 
-    line = f"- [{content_type_str}] {item.title}{author_str}{rating_str}{genre_str}"
+    line = f"- [{content_type_str}] {safe_title}{author_str}{rating_str}{genre_str}"
 
     # Include review snippet if available (truncated)
     if item.review:
-        review_snippet = item.review[:150]
-        if len(item.review) > 150:
-            review_snippet += "..."
-        line += f'\n  Review: "{review_snippet}"'
+        safe_review = sanitize_prompt_text(item.review)
+        if len(item.review) > _MAX_PROMPT_TEXT_LENGTH:
+            safe_review += "..."
+        line += f'\n  Review: "{safe_review}"'
 
     return line
 
@@ -515,12 +521,14 @@ def _format_recommendation_brief(brief: RecommendationBrief) -> str:
     """
     item = brief.item
     content_type_str = _format_content_type(item.content_type)
-    author_str = f" by {item.author}" if item.author else ""
+    safe_title = sanitize_prompt_text(item.title)
+    safe_author = sanitize_prompt_text(item.author) if item.author else ""
+    author_str = f" by {safe_author}" if safe_author else ""
     genre_str = format_genre_tag(item)
 
     match_percent = round(brief.score * 100)
     lines = [
-        f"- [{content_type_str}] {item.title}{author_str}{genre_str}",
+        f"- [{content_type_str}] {safe_title}{author_str}{genre_str}",
         f"  Match: {match_percent}%",
     ]
 
@@ -561,9 +569,11 @@ def _format_item_compact(item: ContentItem) -> str:
         Single-line compact string
     """
     content_type_str = _format_content_type(item.content_type)
-    author_str = f" by {item.author}" if item.author else ""
+    safe_title = sanitize_prompt_text(item.title)
+    safe_author = sanitize_prompt_text(item.author) if item.author else ""
+    author_str = f" by {safe_author}" if safe_author else ""
     rating_str = f" — {item.rating}/5" if item.rating is not None else ""
-    return f"- [{content_type_str}] {item.title}{author_str}{rating_str}"
+    return f"- [{content_type_str}] {safe_title}{author_str}{rating_str}"
 
 
 def _format_recommendation_brief_compact(brief: RecommendationBrief) -> str:
@@ -580,10 +590,12 @@ def _format_recommendation_brief_compact(brief: RecommendationBrief) -> str:
     """
     item = brief.item
     content_type_str = _format_content_type(item.content_type)
-    author_str = f" by {item.author}" if item.author else ""
+    safe_title = sanitize_prompt_text(item.title)
+    safe_author = sanitize_prompt_text(item.author) if item.author else ""
+    author_str = f" by {safe_author}" if safe_author else ""
     match_percent = round(brief.score * 100)
 
-    line = f"- [{content_type_str}] {item.title}{author_str} — {match_percent}% match"
+    line = f"- [{content_type_str}] {safe_title}{author_str} — {match_percent}% match"
     if brief.reasoning:
         # Truncate reasoning to first sentence or 100 chars
         short_reason = brief.reasoning[:100]

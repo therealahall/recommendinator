@@ -4,18 +4,14 @@ import random
 
 from src.llm.tone import ADVISOR_IDENTITY, PERSONALITY_TRAITS, STYLE_RULES
 from src.models.content import ContentItem, ContentType, get_enum_value
+from src.recommendations.constants import (
+    CROSS_TYPE_MIN_OVERLAP,
+    SCORE_PROXIMITY_THRESHOLD,
+)
 from src.recommendations.genre_clusters import cluster_overlap as _cluster_overlap
 from src.recommendations.scorers import extract_creator, extract_genres
 from src.utils.series import get_series_name
 from src.utils.text import extract_raw_genres, format_genre_tag, sanitize_prompt_text
-
-# Cross-type items must exceed this overlap to be included as favorites.
-# Matches the engine's _CROSS_TYPE_MIN_OVERLAP threshold.
-_CROSS_TYPE_MIN_OVERLAP = 0.25
-
-# Items whose relevance scores differ by at most this amount are shuffled
-# together for variety across runs.
-_SCORE_PROXIMITY_THRESHOLD = 0.05
 
 
 def _format_context_item(
@@ -34,10 +30,13 @@ def _format_context_item(
     Returns:
         Formatted context line ending with newline
     """
-    author_text = f" by {item.author}" if item.author else ""
+    safe_title = sanitize_prompt_text(item.title)
+    safe_author = sanitize_prompt_text(item.author) if item.author else ""
+    author_text = f" by {safe_author}" if safe_author else ""
     genre_tag = format_genre_tag(item)
+    safe_review = sanitize_prompt_text(item.review) if item.review else ""
     review_text = (
-        f' — Review: "{item.review}"' if include_review and item.review else ""
+        f' — Review: "{safe_review}"' if include_review and safe_review else ""
     )
 
     # Annotate series entries so the LLM refers to "the Harry Potter series"
@@ -50,10 +49,10 @@ def _format_context_item(
     if include_type_label:
         type_label = get_enum_value(item.content_type).replace("_", " ")
         return (
-            f"- [{type_label}] **{item.title}**{series_tag}{author_text}"
+            f"- [{type_label}] **{safe_title}**{series_tag}{author_text}"
             f"{genre_tag}{review_text}\n"
         )
-    return f"- **{item.title}**{series_tag}{author_text}{genre_tag}{review_text}\n"
+    return f"- **{safe_title}**{series_tag}{author_text}{genre_tag}{review_text}\n"
 
 
 def _shuffle_items_by_rating_tier(items: list[ContentItem]) -> list[ContentItem]:
@@ -139,9 +138,11 @@ def build_recommendation_prompt(
     # Build list of unconsumed items
     items_text = ""
     for item_index, item in enumerate(unconsumed_items[:50], 1):
-        author_text = f" by {item.author}" if item.author else ""
+        safe_title = sanitize_prompt_text(item.title)
+        safe_author = sanitize_prompt_text(item.author) if item.author else ""
+        author_text = f" by {safe_author}" if safe_author else ""
         genre_tag = format_genre_tag(item)
-        items_text += f"{item_index}. {item.title}{author_text}{genre_tag}\n"
+        items_text += f"{item_index}. {safe_title}{author_text}{genre_tag}\n"
 
     prompt = f"""Pick the {count} best {content_type_name.lower()}s for this person from the candidates below.
 
@@ -203,7 +204,8 @@ def build_recommendation_system_prompt(content_type: ContentType) -> str:
 - Write about the RECOMMENDED item itself — NOT about its sequels, prequels, or other entries in the same franchise
 - NEVER reference candidates or picks as things the user has consumed — they are unconsumed recommendations
 - Do NOT include genre tags like (Comedy) or (Fantasy) in recommendation text — genres are metadata, not prose
-- Do NOT justify a pick by referencing the user's experience with the pick's OWN series — that's circular; connect it to DIFFERENT favorites"""
+- Do NOT justify a pick by referencing the user's experience with the pick's OWN series — that's circular; connect it to DIFFERENT favorites
+- Vary your opening — do NOT start with formulaic phrases like "You'll adore", "You'll love", or "If you enjoyed" — jump straight into WHAT connects the pick to their taste"""
 
 
 def _shuffle_close_scores(
@@ -212,7 +214,7 @@ def _shuffle_close_scores(
     """Shuffle items whose relevance scores are within a small tolerance.
 
     Items are already sorted by descending score.  Adjacent items whose
-    scores differ by at most ``_SCORE_PROXIMITY_THRESHOLD`` are grouped
+    scores differ by at most ``SCORE_PROXIMITY_THRESHOLD`` are grouped
     and shuffled so the ordering varies across runs while still respecting
     meaningful relevance differences.
 
@@ -226,7 +228,7 @@ def _shuffle_close_scores(
     group_score = items_with_scores[0][1]
 
     for item, score in items_with_scores[1:]:
-        if group_score - score <= _SCORE_PROXIMITY_THRESHOLD:
+        if group_score - score <= SCORE_PROXIMITY_THRESHOLD:
             groups[-1].append(item)
         else:
             groups.append([item])
@@ -313,7 +315,7 @@ def _score_favorites_by_relevance(
         item_type = get_enum_value(item.content_type)
         if item_type == candidate_type:
             same_type.append((item, score))
-        elif score >= _CROSS_TYPE_MIN_OVERLAP:
+        elif score >= CROSS_TYPE_MIN_OVERLAP:
             cross_type.append((item, score))
 
     # Fill same-type first, then cross-type up to cap
@@ -483,9 +485,11 @@ def build_blurb_prompt(
     # Build selected items list, with optional per-item reference lines
     items_text = ""
     for ref_index, item in enumerate(selected_items):
-        author_text = f" by {item.author}" if item.author else ""
+        safe_title = sanitize_prompt_text(item.title)
+        safe_author = sanitize_prompt_text(item.author) if item.author else ""
+        author_text = f" by {safe_author}" if safe_author else ""
         genre_tag = format_genre_tag(item)
-        items_text += f"{ref_index + 1}. {item.title}{author_text}{genre_tag}\n"
+        items_text += f"{ref_index + 1}. {safe_title}{author_text}{genre_tag}\n"
 
         if per_item_references and ref_index < len(per_item_references):
             refs = per_item_references[ref_index]
@@ -548,9 +552,11 @@ def build_single_blurb_prompt(
     )
 
     # Build the single item line
-    author_text = f" by {item.author}" if item.author else ""
+    safe_title = sanitize_prompt_text(item.title)
+    safe_author = sanitize_prompt_text(item.author) if item.author else ""
+    author_text = f" by {safe_author}" if safe_author else ""
     genre_tag = format_genre_tag(item)
-    item_line = f"{item.title}{author_text}{genre_tag}"
+    item_line = f"{safe_title}{author_text}{genre_tag}"
 
     # Optional reference line (with genre tags so the LLM knows each
     # reference's actual genre and doesn't invent settings or themes).
@@ -591,13 +597,13 @@ def build_content_description(item: ContentItem) -> str:
     Returns:
         Description string
     """
-    parts = [item.title]
+    parts = [sanitize_prompt_text(item.title)]
 
     if item.author:
-        parts.append(f"by {item.author}")
+        parts.append(f"by {sanitize_prompt_text(item.author)}")
 
     if item.review:
-        parts.append(f"Review: {item.review}")
+        parts.append(f"Review: {sanitize_prompt_text(item.review)}")
 
     genres = extract_raw_genres(item)
     if genres:
