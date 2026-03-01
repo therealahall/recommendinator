@@ -39,6 +39,7 @@ from src.utils.series import (
     extract_series_info,
     find_earliest_recommendable,
     get_series_name,
+    get_series_name_from_metadata,
     inject_seasons_watched_tracking,
     should_recommend_item,
 )
@@ -916,6 +917,9 @@ class RecommendationEngine:
         # items from contributing references — e.g., "The Expanse (Season 2)"
         # must not cite "The Expanse (Season 1)" as a reason.
         candidate_series_name = get_series_name(candidate)
+        candidate_series_lower = (
+            candidate_series_name.lower() if candidate_series_name is not None else None
+        )
 
         scored: list[tuple[ContentItem, float]] = []
         for consumed in all_consumed_items:
@@ -927,13 +931,27 @@ class RecommendationEngine:
 
             # Skip items from the same series — a continuation recommendation
             # shouldn't cite earlier entries as "why" it was recommended.
-            if candidate_series_name is not None:
+            if candidate_series_lower is not None:
                 consumed_series = get_series_name(consumed)
                 if (
                     consumed_series is not None
-                    and consumed_series.lower() == candidate_series_name.lower()
+                    and consumed_series.lower() == candidate_series_lower
                 ):
                     continue
+
+                # Fallback: consumed item may be a show-level entry without
+                # a season marker (e.g. "The Expanse" with no Season N).
+                if consumed_series is None:
+                    if consumed.title.strip().lower() == candidate_series_lower:
+                        continue
+                    consumed_meta_series = get_series_name_from_metadata(
+                        consumed.metadata
+                    )
+                    if (
+                        consumed_meta_series is not None
+                        and consumed_meta_series.lower() == candidate_series_lower
+                    ):
+                        continue
 
             overlap = 0.0
             consumed_genres = list(extract_genres(consumed))

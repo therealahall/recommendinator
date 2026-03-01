@@ -262,6 +262,31 @@ def _extract_from_metadata(
     return None
 
 
+def get_series_name_from_metadata(metadata: dict | None) -> str | None:
+    """Extract series name from metadata without requiring an item number.
+
+    Used for show-level items that carry a series_name but no season marker.
+    Unlike :func:`extract_series_info`, this does not require an item number,
+    so it returns a result for show-level entries like ``{"series_name": "The
+    Expanse"}`` that lack a ``season`` field.
+
+    Args:
+        metadata: Metadata dictionary, or None.
+
+    Returns:
+        Series name if found, None otherwise.
+    """
+    if not metadata:
+        return None
+    for key in ("series_name", "series", "series_title", "franchise"):
+        val = metadata.get(key)
+        if val is not None:
+            stripped = str(val).strip()
+            if stripped:
+                return stripped
+    return None
+
+
 def get_series_name(
     item: ContentItem | None = None, *, title: str | None = None
 ) -> str | None:
