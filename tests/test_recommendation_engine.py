@@ -2085,6 +2085,11 @@ class TestSameSeriesReferenceExclusionRegression:
 
     Fix: get_series_name() is called on the candidate and on each consumed
     item; items sharing the candidate's series name are skipped.
+
+    Extended fix: when get_series_name() returns None for a consumed item
+    (show-level items with no season marker), fall back to comparing the
+    consumed item's title and metadata series_name directly against the
+    candidate's series name via get_series_name_from_metadata().
     """
 
     def test_same_series_consumed_item_excluded_regression(self) -> None:
@@ -2168,7 +2173,7 @@ class TestSameSeriesReferenceExclusionRegression:
             metadata={"genres": ["Science Fiction"]},
         )
 
-        # Simulate metadata with different casing
+        # Title in all-lowercase — verifies case-insensitive series name extraction
         consumed = ContentItem(
             id="expanse_s1",
             title="the expanse (the expanse, Season 1)",
@@ -2194,3 +2199,163 @@ class TestSameSeriesReferenceExclusionRegression:
             "the expanse (the expanse, Season 1)" not in result_titles
         ), "Case-insensitive series name match should still exclude"
         assert "Firefly" in result_titles
+
+    def test_show_level_item_excluded_from_season_references_regression(self) -> None:
+        """Regression: show-level "The Expanse" must not be a reference for Season 2.
+
+        Bug reported: "The Expanse (Season 2)" recommendation showed reasoning
+        "Recommended because you liked The Expanse", which is circular.
+
+        Root cause: get_series_name() returns None for show-level items (no
+        season marker in title, no season number in metadata), so the existing
+        same-series check was bypassed.  The consumed item's title IS the
+        series name — we must compare it directly.
+
+        Fix: after the get_series_name comparison, fall back to comparing the
+        consumed item's title against the candidate's series name.
+        """
+        engine = RecommendationEngine.__new__(RecommendationEngine)
+
+        # Candidate: expanded season with series metadata
+        candidate = ContentItem(
+            id="expanse_s2",
+            title="The Expanse (Season 2)",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            metadata={
+                "genres": ["Science Fiction", "Drama"],
+                "series_name": "The Expanse",
+                "season": 2,
+            },
+        )
+
+        # Consumed: show-level item — no season marker in title
+        show_level_consumed = ContentItem(
+            id="expanse_show",
+            title="The Expanse",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            metadata={"genres": ["Science Fiction", "Drama"]},
+        )
+
+        other_consumed = ContentItem(
+            id="firefly",
+            title="Firefly",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            metadata={"genres": ["Science Fiction"]},
+        )
+
+        result = engine._find_contributing_reference_items(
+            candidate, [show_level_consumed, other_consumed]
+        )
+
+        result_titles = [item.title for item in result]
+        assert "The Expanse" not in result_titles, (
+            "Show-level items must not appear as contributing references for "
+            "their own seasons"
+        )
+        assert "Firefly" in result_titles
+
+    def test_show_level_metadata_series_name_excluded_regression(self) -> None:
+        """Regression: metadata series_name triggers exclusion when title does not match.
+
+        Bug reported: consumed item with series_name metadata but a
+        non-matching title appeared as a contributing reference for its own
+        series (e.g. "My Expanse Review" cited for "The Expanse (Season 3)").
+
+        Root cause: get_series_name() requires both a series name AND a
+        numeric position — without a season key it returns None, bypassing
+        the primary same-series check.
+
+        Fix: after the title comparison, fall back to
+        get_series_name_from_metadata() to check metadata series_name/series/
+        series_title/franchise fields.
+        """
+        engine = RecommendationEngine.__new__(RecommendationEngine)
+
+        candidate = ContentItem(
+            id="expanse_s3",
+            title="The Expanse (Season 3)",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            metadata={
+                "genres": ["Science Fiction"],
+                "series_name": "The Expanse",
+                "season": 3,
+            },
+        )
+
+        # Consumed item has series_name metadata but no season number
+        consumed_with_meta = ContentItem(
+            id="expanse_show",
+            title="My Expanse Review",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.COMPLETED,
+            rating=4,
+            metadata={
+                "genres": ["Science Fiction"],
+                "series_name": "The Expanse",
+            },
+        )
+
+        other = ContentItem(
+            id="bsg",
+            title="Battlestar Galactica",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            metadata={"genres": ["Science Fiction"]},
+        )
+
+        result = engine._find_contributing_reference_items(
+            candidate, [consumed_with_meta, other]
+        )
+
+        result_titles = [item.title for item in result]
+        assert "My Expanse Review" not in result_titles, (
+            "Consumed items with matching metadata series_name must be "
+            "excluded from contributing references"
+        )
+        assert "Battlestar Galactica" in result_titles
+
+    @pytest.mark.parametrize(
+        "metadata_key",
+        ["series_name", "series", "series_title", "franchise"],
+    )
+    def test_all_metadata_series_keys_trigger_exclusion(
+        self, metadata_key: str
+    ) -> None:
+        """All supported metadata keys must trigger same-series exclusion."""
+        engine = RecommendationEngine.__new__(RecommendationEngine)
+
+        candidate = ContentItem(
+            id="expanse_s3",
+            title="The Expanse (Season 3)",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            metadata={
+                "genres": ["Science Fiction"],
+                "series_name": "The Expanse",
+                "season": 3,
+            },
+        )
+
+        consumed = ContentItem(
+            id="expanse_show",
+            title="My Expanse Review",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.COMPLETED,
+            rating=4,
+            metadata={"genres": ["Science Fiction"], metadata_key: "The Expanse"},
+        )
+
+        result = engine._find_contributing_reference_items(candidate, [consumed])
+
+        result_titles = [item.title for item in result]
+        assert "My Expanse Review" not in result_titles, (
+            f"Consumed item with {metadata_key!r} metadata key must be "
+            f"excluded from contributing references"
+        )
