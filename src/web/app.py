@@ -19,6 +19,7 @@ from src.cli.config import (
     resolve_config_path,
 )
 from src.conversation.engine import create_conversation_engine
+from src.conversation.memory import MemoryManager
 from src.web.api import APP_VERSION
 from src.web.api import router as api_router
 from src.web.chat_api import router as chat_router
@@ -112,13 +113,12 @@ def create_app(config_path: Path | None = None) -> FastAPI:
             actual_config_path = config_path or Path("config/example.yaml")
 
         # Store in app state
-        app_state["config"] = config
-        app_state["config_path"] = str(actual_config_path.resolve())
-        app_state["storage"] = storage
-        app_state["embedding_gen"] = embedding_gen
-        app_state["rec_gen"] = rec_gen
-        app_state["engine"] = engine
-        app_state["ollama_client"] = llm_client
+        app_state.config = config
+        app_state.config_path = str(actual_config_path.resolve())
+        app_state.storage = storage
+        app_state.embedding_gen = embedding_gen
+        app_state.engine = engine
+        app_state.ollama_client = llm_client
 
         # Initialize conversation engine if LLM is available
         if llm_client:
@@ -128,11 +128,14 @@ def create_app(config_path: Path | None = None) -> FastAPI:
                 recommendation_engine=engine,
                 conversation_config=config.get("conversation"),
             )
-            app_state["conversation_engine"] = conversation_engine
+            app_state.conversation_engine = conversation_engine
             logger.info("Conversation engine initialized")
         else:
-            app_state["conversation_engine"] = None
+            app_state.conversation_engine = None
             logger.info("Conversation engine not available (LLM disabled)")
+
+        # Cache a shared MemoryManager instance
+        app_state.memory_manager = MemoryManager(storage)
     except Exception as error:
         logger.error("Failed to initialize components: %s", error)
         raise
@@ -174,7 +177,7 @@ def create_app(config_path: Path | None = None) -> FastAPI:
             response.headers["X-Frame-Options"] = "DENY"
             response.headers["Content-Security-Policy"] = (
                 "default-src 'self'; "
-                "script-src 'self' 'unsafe-inline'; "
+                "script-src 'self' https://cdn.jsdelivr.net; "
                 "style-src 'self' 'unsafe-inline'; "
                 "img-src 'self' data: https:; "
                 "connect-src 'self'"

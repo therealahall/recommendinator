@@ -1117,13 +1117,13 @@
             if (source.id === "gog" && gogStatus && gogStatus.enabled && !gogStatus.connected) {
                 html += '<div class="gog-connect-flow" id="gogConnectFlow">';
                 html += '<div class="gog-connect-step">';
-                html += '<button class="btn btn-primary" onclick="window.openGogAuth()">Connect GOG Account</button>';
+                html += '<button class="btn btn-primary" data-action="openGogAuth">Connect GOG Account</button>';
                 html += '</div>';
                 html += '<div class="gog-connect-step gog-code-step" id="gogCodeStep" style="display:none;">';
                 html += '<p class="help-text" style="margin:8px 0;">Paste the redirect URL after logging in:</p>';
                 html += '<div class="gog-input-row">';
                 html += '<input type="text" id="gogCodeInput" placeholder="Paste URL here...">';
-                html += '<button class="btn btn-primary" onclick="window.submitGogCode()">Connect</button>';
+                html += '<button class="btn btn-primary" data-action="submitGogCode">Connect</button>';
                 html += '</div>';
                 html += '<div id="gogConnectStatus" style="margin-top:8px;"></div>';
                 html += '</div>';
@@ -1385,19 +1385,15 @@
             .then(function (data) {
                 input.value = "";
 
-                if (data.manual_setup && data.refresh_token) {
-                    // Show token for manual setup
+                if (data.manual_setup) {
+                    // Server never sends the token in the response;
+                    // display the server-provided instructions instead.
                     if (statusDiv) {
-                        statusDiv.innerHTML = '<div class="gog-manual-setup">' +
-                            '<p class="text-success" style="margin-bottom:8px;">Token obtained! Add this to your config.yaml:</p>' +
-                            '<pre class="gog-token-display">inputs:\n  gog:\n    refresh_token: "' + escapeHtml(data.refresh_token) + '"</pre>' +
-                            '<button class="btn btn-small btn-secondary" onclick="navigator.clipboard.writeText(\'' + escapeHtml(data.refresh_token) + '\').then(function(){alert(\'Token copied!\')})">Copy Token</button>' +
-                            '<p class="text-muted" style="font-size:0.85em; margin-top:8px;">After updating config.yaml, restart the server to sync.</p>' +
-                            '</div>';
+                        statusDiv.textContent = data.message;
                     }
                 } else {
                     if (statusDiv) {
-                        statusDiv.innerHTML = '<span class="text-success">' + escapeHtml(data.message) + '</span>';
+                        statusDiv.textContent = data.message;
                     }
                     // Refresh sync sources to show the sync button
                     setTimeout(function () {
@@ -2434,10 +2430,10 @@
                     '<h3>Chat with your recommendation advisor</h3>' +
                     '<p>Ask for recommendations, mark items as completed, or tell me about your preferences.</p>' +
                     '<div class="chat-suggestions">' +
-                    '<button class="suggestion-btn" onclick="window.sendChatSuggestion(\'What game do you think will be my next obsession?\', \'video_game\')">What game will be my next obsession?</button>' +
-                    '<button class="suggestion-btn" onclick="window.sendChatSuggestion(\'What book do you think I\\\'ll get lost in next?\', \'book\')">What book will I get lost in next?</button>' +
-                    '<button class="suggestion-btn" onclick="window.sendChatSuggestion(\'What movie should I watch this weekend?\', \'movie\')">What movie should I watch this weekend?</button>' +
-                    '<button class="suggestion-btn" onclick="window.sendChatSuggestion(\'What TV show should I binge next?\', \'tv_show\')">What TV show should I binge next?</button>' +
+                    '<button class="suggestion-btn" data-suggestion="What game do you think will be my next obsession?" data-content-type="video_game">What game will be my next obsession?</button>' +
+                    '<button class="suggestion-btn" data-suggestion="What book do you think I\'ll get lost in next?" data-content-type="book">What book will I get lost in next?</button>' +
+                    '<button class="suggestion-btn" data-suggestion="What movie should I watch this weekend?" data-content-type="movie">What movie should I watch this weekend?</button>' +
+                    '<button class="suggestion-btn" data-suggestion="What TV show should I binge next?" data-content-type="tv_show">What TV show should I binge next?</button>' +
                     '</div></div>';
             })
             .catch(function (error) {
@@ -2475,8 +2471,8 @@
                 '<div class="memory-meta">' +
                 '<span class="memory-type">' + typeLabel + '</span>' +
                 '<div class="memory-actions">' +
-                '<button onclick="window.toggleMemory(' + m.id + ', ' + m.is_active + ')">' + (m.is_active ? "Disable" : "Enable") + '</button>' +
-                '<button class="delete" onclick="window.deleteMemory(' + m.id + ')">Delete</button>' +
+                '<button data-action="toggleMemory" data-memory-id="' + m.id + '" data-is-active="' + m.is_active + '">' + (m.is_active ? "Disable" : "Enable") + '</button>' +
+                '<button class="delete" data-action="deleteMemory" data-memory-id="' + m.id + '">Delete</button>' +
                 '</div></div></div>';
         }).join("");
     }
@@ -2488,8 +2484,8 @@
             '<h3>Add Memory</h3>' +
             '<textarea id="newMemoryText" placeholder="e.g., I prefer shorter games during weekdays"></textarea>' +
             '<div class="memory-modal-actions">' +
-            '<button class="btn btn-secondary" onclick="this.closest(\'.memory-modal\').remove()">Cancel</button>' +
-            '<button class="btn btn-primary" onclick="window.saveNewMemory()">Save</button>' +
+            '<button class="btn btn-secondary" data-action="closeModal">Cancel</button>' +
+            '<button class="btn btn-primary" data-action="saveNewMemory">Save</button>' +
             '</div></div>';
         document.body.appendChild(modal);
         document.getElementById("newMemoryText").focus();
@@ -2629,6 +2625,53 @@
         var percent = ((value - min) / (max - min)) * 100;
         slider.style.setProperty("--value-percent", percent + "%");
     }
+
+    // -----------------------------------------------------------------------
+    // Event Delegation (replaces inline onclick handlers for CSP compliance)
+    // -----------------------------------------------------------------------
+
+    document.addEventListener("click", function (e) {
+        var target = e.target.closest("[data-action]");
+        if (target) {
+            var action = target.getAttribute("data-action");
+            if (action === "openGogAuth" && window.openGogAuth) {
+                window.openGogAuth();
+            } else if (action === "submitGogCode" && window.submitGogCode) {
+                window.submitGogCode();
+            } else if (action === "copyToken") {
+                var token = target.getAttribute("data-token");
+                if (token) {
+                    navigator.clipboard.writeText(token).then(function () {
+                        alert("Token copied!");
+                    });
+                }
+            } else if (action === "toggleMemory" && window.toggleMemory) {
+                var memId = parseInt(target.getAttribute("data-memory-id"), 10);
+                var isActive = target.getAttribute("data-is-active") === "true";
+                window.toggleMemory(memId, isActive);
+            } else if (action === "deleteMemory" && window.deleteMemory) {
+                window.deleteMemory(parseInt(target.getAttribute("data-memory-id"), 10));
+            } else if (action === "closeModal") {
+                var modal = target.closest(".memory-modal");
+                if (modal) modal.remove();
+            } else if (action === "saveNewMemory" && window.saveNewMemory) {
+                window.saveNewMemory();
+            } else if (action === "triggerEnrichment" && window.triggerEnrichment) {
+                window.triggerEnrichment();
+            } else if (action === "resetAndReenrich" && window.resetAndReenrich) {
+                window.resetAndReenrich();
+            }
+            return;
+        }
+
+        // Chat suggestion buttons (data-suggestion)
+        var suggestionBtn = e.target.closest("[data-suggestion]");
+        if (suggestionBtn && window.sendChatSuggestion) {
+            var text = suggestionBtn.getAttribute("data-suggestion");
+            var contentType = suggestionBtn.getAttribute("data-content-type");
+            window.sendChatSuggestion(text, contentType);
+        }
+    });
 
     // -----------------------------------------------------------------------
     // Boot
