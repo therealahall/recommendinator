@@ -31,13 +31,14 @@ from src.recommendations.scorers import (
     extract_genres,
 )
 from src.recommendations.scoring_pipeline import ScoredCandidate, ScoringPipeline
-from src.recommendations.similarity import SimilarityMatcher
+from src.recommendations.similarity import _MAX_SIMILARITY_CANDIDATES, SimilarityMatcher
 from src.storage.manager import StorageManager
 from src.utils.series import (
     build_series_tracking,
     expand_tv_shows_to_seasons,
     extract_series_info,
     find_earliest_recommendable,
+    get_series_name,
     inject_seasons_watched_tracking,
     should_recommend_item,
 )
@@ -270,7 +271,7 @@ class RecommendationEngine:
 
         # Pre-compute similarity scores (AI path)
         similarity_scores = self._compute_similarity_scores(
-            all_consumed_items, content_type
+            all_consumed_items, content_type, len(unconsumed_items)
         )
 
         # Score all unconsumed candidates via the pipeline (always runs)
@@ -381,6 +382,7 @@ class RecommendationEngine:
         self,
         all_consumed_items: list[ContentItem],
         content_type: ContentType,
+        candidate_count: int,
     ) -> dict[str | None, float]:
         """Pre-compute vector-similarity scores for candidate items.
 
@@ -390,6 +392,9 @@ class RecommendationEngine:
         Args:
             all_consumed_items: All consumed items across content types.
             content_type: Target content type for recommendations.
+            candidate_count: Upper bound on similarity search results,
+                set to the number of unconsumed candidates so no candidate
+                is missed. Capped at _MAX_SIMILARITY_CANDIDATES internally.
 
         Returns:
             Mapping of item ID to similarity score. Empty when AI is disabled.
@@ -413,10 +418,13 @@ class RecommendationEngine:
 
         exclude_ids = [item.id for item in all_consumed_items if item.id]
 
+        capped_limit = min(candidate_count, _MAX_SIMILARITY_CANDIDATES)
+
         similar_candidates = self.similarity_matcher.find_similar(
             reference_items=reference_items,
             content_type=content_type,
             exclude_ids=exclude_ids,
+            limit=capped_limit,
         )
 
         if similar_candidates:
@@ -904,6 +912,11 @@ class RecommendationEngine:
         candidate_creator = extract_creator(candidate)
         candidate_type = get_enum_value(candidate.content_type)
 
+        # Determine candidate's series name so we can exclude same-series
+        # items from contributing references — e.g., "The Expanse (Season 2)"
+        # must not cite "The Expanse (Season 1)" as a reason.
+        candidate_series_name = get_series_name(candidate)
+
         scored: list[tuple[ContentItem, float]] = []
         for consumed in all_consumed_items:
             # Skip items the user actively disliked — they should never
@@ -911,6 +924,17 @@ class RecommendationEngine:
             # (rating is None) are kept.
             if consumed.rating is not None and consumed.rating < 3:
                 continue
+
+            # Skip items from the same series — a continuation recommendation
+            # shouldn't cite earlier entries as "why" it was recommended.
+            if candidate_series_name is not None:
+                consumed_series = get_series_name(consumed)
+                if (
+                    consumed_series is not None
+                    and consumed_series.lower() == candidate_series_name.lower()
+                ):
+                    continue
+
             overlap = 0.0
             consumed_genres = list(extract_genres(consumed))
             consumed_genres_set = set(consumed_genres)
