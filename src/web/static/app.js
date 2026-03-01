@@ -814,6 +814,7 @@
         "series_order",
         "rating_pattern",
         "semantic_similarity",
+        "content_length",
         "continuation",
         "series_affinity"
     ];
@@ -849,7 +850,8 @@
             series_order: 1.5,
             rating_pattern: 1.0,
             semantic_similarity: 1.5,
-            continuation: 1.5,
+            content_length: 1.0,
+            continuation: 3.0,
             series_affinity: 1.0
         };
 
@@ -859,9 +861,13 @@
                 return;
             }
 
-            var value = prefs.scorer_weights[key] !== undefined
+            var rawValue = prefs.scorer_weights[key] !== undefined
                 ? prefs.scorer_weights[key]
                 : defaultWeights[key];
+            var value = parseFloat(rawValue);
+            if (!isFinite(value)) {
+                value = defaultWeights[key] !== undefined ? defaultWeights[key] : 1.0;
+            }
             html += '<div class="slider-row">';
             html += '<span class="slider-label">' + formatScorerName(key) + '</span>';
             html += '<input type="range" min="0" max="5" step="0.1" value="' + value + '" data-scorer="' + key + '" class="pref-slider">';
