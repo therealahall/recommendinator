@@ -74,15 +74,38 @@ def test_save_content_item_with_embedding(
 
 
 def test_get_unconsumed_items(temp_storage_manager: StorageManager) -> None:
-    """Test getting unconsumed items."""
+    """Test getting unconsumed items (UNREAD + CURRENTLY_CONSUMING)."""
     items = [
         ContentItem(
-            id=f"item_{i}",
-            title=f"Item {i}",
+            id="item_0",
+            title="Item 0",
             content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD if i < 3 else ConsumptionStatus.COMPLETED,
-        )
-        for i in range(5)
+            status=ConsumptionStatus.UNREAD,
+        ),
+        ContentItem(
+            id="item_1",
+            title="Item 1",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        ),
+        ContentItem(
+            id="item_2",
+            title="Item 2",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.CURRENTLY_CONSUMING,
+        ),
+        ContentItem(
+            id="item_3",
+            title="Item 3",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+        ),
+        ContentItem(
+            id="item_4",
+            title="Item 4",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+        ),
     ]
 
     for item in items:
@@ -90,27 +113,50 @@ def test_get_unconsumed_items(temp_storage_manager: StorageManager) -> None:
 
     unconsumed = temp_storage_manager.get_unconsumed_items()
     assert len(unconsumed) == 3
-    assert all(item.status == ConsumptionStatus.UNREAD for item in unconsumed)
+    assert all(
+        item.status in {ConsumptionStatus.UNREAD, ConsumptionStatus.CURRENTLY_CONSUMING}
+        for item in unconsumed
+    )
 
 
 def test_get_completed_items(temp_storage_manager: StorageManager) -> None:
-    """Test getting completed items."""
+    """Test getting completed items (COMPLETED + CURRENTLY_CONSUMING)."""
     items = [
         ContentItem(
-            id=f"item_{i}",
-            title=f"Item {i}",
+            id="item_0",
+            title="Item 0",
             content_type=ContentType.BOOK,
             status=ConsumptionStatus.COMPLETED,
-            rating=3 + i,
-        )
-        for i in range(3)
+            rating=3,
+        ),
+        ContentItem(
+            id="item_1",
+            title="Item 1",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=4,
+        ),
+        ContentItem(
+            id="item_2",
+            title="Item 2",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+        ),
+        ContentItem(
+            id="item_3",
+            title="Item 3",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.CURRENTLY_CONSUMING,
+            rating=5,
+        ),
     ]
 
     for item in items:
         temp_storage_manager.save_content_item(item)
 
     completed = temp_storage_manager.get_completed_items(min_rating=4)
-    assert len(completed) == 2
+    assert len(completed) == 3
 
 
 def test_search_similar(temp_storage_manager_with_ai: StorageManager) -> None:

@@ -157,11 +157,21 @@ def test_get_content_items_with_filters(temp_db: SQLiteDB) -> None:
         )
         for i in range(5)
     ]
+    items.append(
+        ContentItem(
+            id="book_in_progress",
+            title="Book In Progress",
+            author="Author",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.CURRENTLY_CONSUMING,
+            rating=3,
+        )
+    )
 
     for item in items:
         temp_db.save_content_item(item)
 
-    # Test filters
+    # Single-status filters must only match the requested status
     completed = temp_db.get_content_items(status=ConsumptionStatus.COMPLETED)
     assert len(completed) == 3
 
@@ -172,19 +182,42 @@ def test_get_content_items_with_filters(temp_db: SQLiteDB) -> None:
     assert len(high_rated) == 3
 
     books = temp_db.get_content_items(content_type=ContentType.BOOK)
-    assert len(books) == 5
+    assert len(books) == 6
 
 
 def test_get_unconsumed_items(temp_db: SQLiteDB) -> None:
-    """Test getting unconsumed items."""
+    """Test getting unconsumed items (UNREAD + CURRENTLY_CONSUMING)."""
     items = [
         ContentItem(
-            id=f"item_{i}",
-            title=f"Item {i}",
+            id="item_0",
+            title="Item 0",
             content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD if i < 3 else ConsumptionStatus.COMPLETED,
-        )
-        for i in range(5)
+            status=ConsumptionStatus.UNREAD,
+        ),
+        ContentItem(
+            id="item_1",
+            title="Item 1",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        ),
+        ContentItem(
+            id="item_2",
+            title="Item 2",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.CURRENTLY_CONSUMING,
+        ),
+        ContentItem(
+            id="item_3",
+            title="Item 3",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+        ),
+        ContentItem(
+            id="item_4",
+            title="Item 4",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+        ),
     ]
 
     for item in items:
@@ -192,27 +225,61 @@ def test_get_unconsumed_items(temp_db: SQLiteDB) -> None:
 
     unconsumed = temp_db.get_unconsumed_items()
     assert len(unconsumed) == 3
-    assert all(item.status == ConsumptionStatus.UNREAD for item in unconsumed)
+    assert all(
+        item.status in {ConsumptionStatus.UNREAD, ConsumptionStatus.CURRENTLY_CONSUMING}
+        for item in unconsumed
+    )
 
 
 def test_get_completed_items(temp_db: SQLiteDB) -> None:
-    """Test getting completed items."""
+    """Test getting completed items (COMPLETED + CURRENTLY_CONSUMING)."""
     items = [
         ContentItem(
-            id=f"item_{i}",
-            title=f"Item {i}",
+            id="item_0",
+            title="Item 0",
             content_type=ContentType.BOOK,
             status=ConsumptionStatus.COMPLETED,
-            rating=3 + i,  # Ratings 3, 4, 5
-        )
-        for i in range(3)
+            rating=3,
+        ),
+        ContentItem(
+            id="item_1",
+            title="Item 1",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=4,
+        ),
+        ContentItem(
+            id="item_2",
+            title="Item 2",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+        ),
+        ContentItem(
+            id="item_3",
+            title="Item 3",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.CURRENTLY_CONSUMING,
+            rating=5,
+        ),
+        ContentItem(
+            id="item_4",
+            title="Item 4",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        ),
     ]
 
     for item in items:
         temp_db.save_content_item(item)
 
+    # All completed + currently consuming
+    all_completed = temp_db.get_completed_items()
+    assert len(all_completed) == 4
+
+    # With min_rating filter
     completed = temp_db.get_completed_items(min_rating=4)
-    assert len(completed) == 2
+    assert len(completed) == 3
     assert all(item.rating >= 4 for item in completed)
 
 
