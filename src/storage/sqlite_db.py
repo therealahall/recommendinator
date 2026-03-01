@@ -34,6 +34,11 @@ _STATUS_ORDER: dict[str, int] = {
     "completed": 2,
 }
 
+# Whitelist of valid sort_by options for get_content_items().
+_VALID_SORT_OPTIONS: frozenset[str] = frozenset(
+    {"title", "updated_at", "rating", "created_at"}
+)
+
 # Shared SELECT query for content items with all detail joins.
 # Used by get_content_item_by_id and get_content_items.
 _CONTENT_ITEM_SELECT = """
@@ -805,7 +810,7 @@ class SQLiteDB:
         self,
         user_id: int | None = None,
         content_type: ContentType | None = None,
-        status: ConsumptionStatus | None = None,
+        status: ConsumptionStatus | list[ConsumptionStatus] | None = None,
         min_rating: int | None = None,
         limit: int | None = None,
         offset: int = 0,
@@ -817,7 +822,8 @@ class SQLiteDB:
         Args:
             user_id: Filter by user ID (defaults to default user)
             content_type: Filter by content type
-            status: Filter by consumption status
+            status: Filter by consumption status (single value or list for
+                IN-clause filtering)
             min_rating: Minimum rating (inclusive)
             limit: Maximum number of results
             offset: Number of results to skip (for pagination)
@@ -829,6 +835,10 @@ class SQLiteDB:
         Returns:
             List of ContentItem objects
         """
+        # An empty status list matches nothing by definition.
+        if isinstance(status, list) and not status:
+            return []
+
         # Default to default user if not specified
         effective_user_id = user_id if user_id is not None else get_default_user_id()
 
@@ -837,15 +847,20 @@ class SQLiteDB:
             query = _CONTENT_ITEM_SELECT + " WHERE ci.user_id = ?"
             params: list[Any] = [effective_user_id]
 
-            if content_type:
+            if content_type is not None:
                 query += " AND ci.content_type = ?"
                 content_type_value = get_enum_value(content_type)
                 params.append(content_type_value)
 
-            if status:
-                query += " AND ci.status = ?"
-                status_value = get_enum_value(status)
-                params.append(status_value)
+            if status is not None:
+                if isinstance(status, list):
+                    placeholders = ", ".join("?" for _ in status)
+                    query += f" AND ci.status IN ({placeholders})"
+                    params.extend(get_enum_value(s) for s in status)
+                else:
+                    query += " AND ci.status = ?"
+                    status_value = get_enum_value(status)
+                    params.append(status_value)
 
             if min_rating is not None:
                 query += " AND ci.rating >= ?"
@@ -856,9 +871,6 @@ class SQLiteDB:
 
             # Apply SQL-level sorting for non-title sorts
             # Title sorting is done in Python to handle article stripping
-            _VALID_SORT_OPTIONS = frozenset(
-                {"title", "updated_at", "rating", "created_at"}
-            )
             if sort_by not in _VALID_SORT_OPTIONS:
                 raise ValueError(f"Invalid sort_by: {sort_by!r}")
             if sort_by == "updated_at":
@@ -899,7 +911,7 @@ class SQLiteDB:
         content_type: ContentType | None = None,
         limit: int | None = None,
     ) -> list[ContentItem]:
-        """Get unconsumed items (status = UNREAD).
+        """Get unconsumed items (status = UNREAD or CURRENTLY_CONSUMING).
 
         Args:
             user_id: Filter by user ID
@@ -912,7 +924,7 @@ class SQLiteDB:
         return self.get_content_items(
             user_id=user_id,
             content_type=content_type,
-            status=ConsumptionStatus.UNREAD,
+            status=[ConsumptionStatus.UNREAD, ConsumptionStatus.CURRENTLY_CONSUMING],
             limit=limit,
         )
 
@@ -923,7 +935,7 @@ class SQLiteDB:
         min_rating: int | None = None,
         limit: int | None = None,
     ) -> list[ContentItem]:
-        """Get completed items with optional minimum rating.
+        """Get completed items (status = COMPLETED or CURRENTLY_CONSUMING).
 
         Args:
             user_id: Filter by user ID
@@ -937,7 +949,7 @@ class SQLiteDB:
         return self.get_content_items(
             user_id=user_id,
             content_type=content_type,
-            status=ConsumptionStatus.COMPLETED,
+            status=[ConsumptionStatus.COMPLETED, ConsumptionStatus.CURRENTLY_CONSUMING],
             min_rating=min_rating,
             limit=limit,
         )
