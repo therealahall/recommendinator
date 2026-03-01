@@ -1342,18 +1342,26 @@ class SQLiteDB:
 
             # Find items without enrichment status or with needs_enrichment=TRUE
             # Optionally also include items with enrichment_quality='not_found'
-            not_found_clause = ""
             if include_not_found:
-                not_found_clause = " OR es.enrichment_quality = 'not_found'"
+                status_filter = (
+                    "(es.content_item_id IS NULL OR es.needs_enrichment = 1"
+                    " OR es.enrichment_quality = ?)"
+                )
+            else:
+                status_filter = (
+                    "(es.content_item_id IS NULL OR es.needs_enrichment = 1)"
+                )
 
             query = f"""
                 SELECT ci.id
                 FROM content_items ci
                 LEFT JOIN enrichment_status es ON ci.id = es.content_item_id
                 WHERE ci.user_id = ?
-                  AND (es.content_item_id IS NULL OR es.needs_enrichment = 1{not_found_clause})
+                  AND {status_filter}
             """
             params: list[Any] = [effective_user_id]
+            if include_not_found:
+                params.append("not_found")
 
             if content_type:
                 query += " AND ci.content_type = ?"

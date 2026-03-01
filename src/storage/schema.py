@@ -66,6 +66,9 @@ _ALLOWED_ENRICHMENT_COLUMNS: frozenset[str] = frozenset(
     {"enrichment_provider", "enrichment_quality"}
 )
 
+# Whitelist of SQL table aliases allowed in enrichment queries.
+_ALLOWED_ENRICHMENT_ALIASES: frozenset[str] = frozenset({"es"})
+
 
 def create_schema(conn: sqlite3.Connection) -> None:
     """Create the database schema.
@@ -359,7 +362,8 @@ def _add_column_if_not_exists(
     if column_type not in _ALLOWED_ALTER_TYPES:
         raise ValueError(f"Column type {column_type!r} not in allowed types for ALTER")
 
-    # Check if column exists using PRAGMA table_info
+    # DDL/PRAGMA cannot use parameterized queries — allowlist above is the
+    # sole injection defense.  All values are validated against frozensets.
     cursor.execute(f"PRAGMA table_info({table})")
     columns = [row[1] for row in cursor.fetchall()]
 
@@ -745,17 +749,20 @@ def reset_enrichment_status(
 
 def _enrichment_count_query(
     cursor: sqlite3.Cursor,
-    table_prefix: str,
+    table_name: str,
+    table_alias: str | None,
     where_clause: str,
     user_join: str,
     user_filter: str,
     user_params: tuple[int, ...],
 ) -> int:
     """Execute a COUNT query with optional user filtering."""
-    table_name = table_prefix.split()[0]
     if table_name not in _ALLOWED_ENRICHMENT_TABLES:
         raise ValueError(f"Unknown SQL table: {table_name!r}")
-    query = f"SELECT COUNT(*) FROM {table_prefix}{user_join} WHERE {where_clause}{user_filter}"
+    if table_alias is not None and table_alias not in _ALLOWED_ENRICHMENT_ALIASES:
+        raise ValueError(f"Unknown SQL table alias: {table_alias!r}")
+    from_clause = f"{table_name} {table_alias}" if table_alias else table_name
+    query = f"SELECT COUNT(*) FROM {from_clause}{user_join} WHERE {where_clause}{user_filter}"
     cursor.execute(query, user_params)
     result: int = cursor.fetchone()[0]
     return result
@@ -764,21 +771,23 @@ def _enrichment_count_query(
 def _enrichment_group_query(
     cursor: sqlite3.Cursor,
     select_col: str,
-    es_prefix: str,
+    table_name: str,
+    table_alias: str | None,
     user_join: str,
     user_filter: str,
     user_params: tuple[int, ...],
-    user_id: int | None,
 ) -> dict[str, int]:
     """Execute a GROUP BY query with optional user filtering."""
-    table_name = es_prefix.split()[0]
     if table_name not in _ALLOWED_ENRICHMENT_TABLES:
         raise ValueError(f"Unknown SQL table: {table_name!r}")
+    if table_alias is not None and table_alias not in _ALLOWED_ENRICHMENT_ALIASES:
+        raise ValueError(f"Unknown SQL table alias: {table_alias!r}")
     if select_col not in _ALLOWED_ENRICHMENT_COLUMNS:
         raise ValueError(f"Unknown enrichment column: {select_col!r}")
-    col_prefix = f"es.{select_col}" if user_id else select_col
+    from_clause = f"{table_name} {table_alias}" if table_alias else table_name
+    col_prefix = f"{table_alias}.{select_col}" if table_alias else select_col
     query = (
-        f"SELECT {col_prefix}, COUNT(*) FROM {es_prefix}{user_join}"
+        f"SELECT {col_prefix}, COUNT(*) FROM {from_clause}{user_join}"
         f" WHERE {col_prefix} IS NOT NULL{user_filter}"
         f" GROUP BY {col_prefix}"
     )
@@ -809,9 +818,17 @@ def get_enrichment_stats(
     user_params: tuple[int, ...] = (user_id,) if user_id else ()
 
     # Use 'es' alias when joining, plain table name otherwise
-    es_prefix = "enrichment_status es" if user_id else "enrichment_status"
+    es_alias: str | None = "es" if user_id else None
 
-    count_args = (cursor, es_prefix, "1=1", user_join, user_filter, user_params)
+    count_args = (
+        cursor,
+        "enrichment_status",
+        es_alias,
+        "1=1",
+        user_join,
+        user_filter,
+        user_params,
+    )
 
     # total_items doesn't use the enrichment join, so query directly
     if user_id:
@@ -821,13 +838,20 @@ def get_enrichment_stats(
         total_items: int = cursor.fetchone()[0]
     else:
         total_items = _enrichment_count_query(
-            cursor, "content_items", "1=1", user_join, user_filter, user_params
+            cursor,
+            "content_items",
+            None,
+            "1=1",
+            user_join,
+            user_filter,
+            user_params,
         )
 
     tracked_items: int = _enrichment_count_query(*count_args)
     needs_enrichment: int = _enrichment_count_query(
         cursor,
-        es_prefix,
+        "enrichment_status",
+        es_alias,
         "es.needs_enrichment = 1" if user_id else "needs_enrichment = 1",
         user_join,
         user_filter,
@@ -835,7 +859,8 @@ def get_enrichment_stats(
     )
     enriched: int = _enrichment_count_query(
         cursor,
-        es_prefix,
+        "enrichment_status",
+        es_alias,
         (
             "es.needs_enrichment = 0 AND es.enrichment_error IS NULL"
             " AND es.enrichment_provider != 'none'"
@@ -849,7 +874,8 @@ def get_enrichment_stats(
     )
     failed: int = _enrichment_count_query(
         cursor,
-        es_prefix,
+        "enrichment_status",
+        es_alias,
         (
             "es.enrichment_error IS NOT NULL"
             if user_id
@@ -865,20 +891,20 @@ def get_enrichment_stats(
     by_provider = _enrichment_group_query(
         cursor,
         "enrichment_provider",
-        es_prefix,
+        "enrichment_status",
+        es_alias,
         user_join,
         user_filter,
         user_params,
-        user_id,
     )
     by_quality = _enrichment_group_query(
         cursor,
         "enrichment_quality",
-        es_prefix,
+        "enrichment_status",
+        es_alias,
         user_join,
         user_filter,
         user_params,
-        user_id,
     )
 
     return {
