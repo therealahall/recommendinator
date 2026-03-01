@@ -1924,3 +1924,250 @@ class TestGenreSettingHallucinationRegression:
         assert (
             "genre brackets" in prompt.lower()
         ), "System prompt must reference genre brackets"
+
+
+class TestCurrentlyConsumingInclusionRegression:
+    """Regression tests for CURRENTLY_CONSUMING items missing from recommendation pools.
+
+    Bug reported: TV shows with currently_consuming status (e.g. DuckTales
+    seasons 1-3 watched, Wednesday, Welcome to Wrexham) were invisible to the
+    recommendation engine.
+
+    Root cause: get_unconsumed_items() only returned UNREAD items and
+    get_completed_items() only returned COMPLETED items, so
+    CURRENTLY_CONSUMING fell through the gap — excluded from both candidate
+    generation and preference analysis.
+
+    Fix: get_unconsumed_items() now returns UNREAD + CURRENTLY_CONSUMING;
+    get_completed_items() now returns COMPLETED + CURRENTLY_CONSUMING.
+    get_content_items() accepts a list of statuses for IN-clause filtering.
+    """
+
+    def test_unconsumed_includes_currently_consuming(self, tmp_path: Path) -> None:
+        """get_unconsumed_items must return both UNREAD and CURRENTLY_CONSUMING."""
+        database = SQLiteDB(tmp_path / "test.db")
+
+        database.save_content_item(
+            ContentItem(
+                id="unread",
+                title="Unwatched Show",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.UNREAD,
+            )
+        )
+        database.save_content_item(
+            ContentItem(
+                id="in-progress",
+                title="DuckTales (Season 2)",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.CURRENTLY_CONSUMING,
+            )
+        )
+        database.save_content_item(
+            ContentItem(
+                id="done",
+                title="Finished Show",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.COMPLETED,
+                rating=4,
+            )
+        )
+
+        items = database.get_unconsumed_items()
+        titles = {item.title for item in items}
+        assert (
+            len(items) == 2
+        ), f"Expected 2 unconsumed items, got {len(items)}: {titles}"
+        assert (
+            "Unwatched Show" in titles
+        ), f"UNREAD item missing from unconsumed: {titles}"
+        assert (
+            "DuckTales (Season 2)" in titles
+        ), f"CURRENTLY_CONSUMING item missing from unconsumed: {titles}"
+        assert (
+            "Finished Show" not in titles
+        ), f"COMPLETED item should not be in unconsumed: {titles}"
+
+    def test_completed_includes_currently_consuming(self, tmp_path: Path) -> None:
+        """get_completed_items must return both COMPLETED and CURRENTLY_CONSUMING."""
+        database = SQLiteDB(tmp_path / "test.db")
+
+        database.save_content_item(
+            ContentItem(
+                id="unread",
+                title="Unwatched Show",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.UNREAD,
+            )
+        )
+        database.save_content_item(
+            ContentItem(
+                id="in-progress",
+                title="Wednesday",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.CURRENTLY_CONSUMING,
+                rating=4,
+            )
+        )
+        database.save_content_item(
+            ContentItem(
+                id="done",
+                title="Finished Show",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+            )
+        )
+
+        items = database.get_completed_items()
+        titles = {item.title for item in items}
+        assert (
+            len(items) == 2
+        ), f"Expected 2 completed items, got {len(items)}: {titles}"
+        assert (
+            "Wednesday" in titles
+        ), f"CURRENTLY_CONSUMING item missing from completed: {titles}"
+        assert (
+            "Finished Show" in titles
+        ), f"COMPLETED item missing from completed: {titles}"
+        assert (
+            "Unwatched Show" not in titles
+        ), f"UNREAD item should not be in completed: {titles}"
+
+    def test_completed_min_rating_applies_to_currently_consuming(
+        self, tmp_path: Path
+    ) -> None:
+        """min_rating filter must apply to CURRENTLY_CONSUMING items too."""
+        database = SQLiteDB(tmp_path / "test.db")
+
+        database.save_content_item(
+            ContentItem(
+                id="high-rated",
+                title="Welcome to Wrexham",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.CURRENTLY_CONSUMING,
+                rating=5,
+            )
+        )
+        database.save_content_item(
+            ContentItem(
+                id="low-rated",
+                title="Mediocre Show",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.CURRENTLY_CONSUMING,
+                rating=2,
+            )
+        )
+        database.save_content_item(
+            ContentItem(
+                id="completed-high",
+                title="Completed High Rated",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+            )
+        )
+
+        items = database.get_completed_items(min_rating=4)
+        titles = {item.title for item in items}
+        assert (
+            len(items) == 2
+        ), f"Expected 2 items with min_rating=4, got {len(items)}: {titles}"
+        assert (
+            "Welcome to Wrexham" in titles
+        ), f"High-rated CURRENTLY_CONSUMING item missing: {titles}"
+        assert (
+            "Completed High Rated" in titles
+        ), f"High-rated COMPLETED item missing: {titles}"
+        assert (
+            "Mediocre Show" not in titles
+        ), f"Low-rated item should be excluded by min_rating: {titles}"
+
+    def test_get_content_items_multi_status_filter(self, tmp_path: Path) -> None:
+        """get_content_items with a list of statuses must use IN-clause filtering."""
+        database = SQLiteDB(tmp_path / "test.db")
+
+        database.save_content_item(
+            ContentItem(
+                id="unread",
+                title="Unread Book",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            )
+        )
+        database.save_content_item(
+            ContentItem(
+                id="in-progress",
+                title="Reading Now",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.CURRENTLY_CONSUMING,
+            )
+        )
+        database.save_content_item(
+            ContentItem(
+                id="done",
+                title="Finished Book",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                rating=4,
+            )
+        )
+
+        items = database.get_content_items(
+            status=[ConsumptionStatus.UNREAD, ConsumptionStatus.CURRENTLY_CONSUMING]
+        )
+        titles = {item.title for item in items}
+        assert (
+            len(items) == 2
+        ), f"Expected 2 items for multi-status filter, got {len(items)}: {titles}"
+        assert "Unread Book" in titles, f"UNREAD item missing: {titles}"
+        assert "Reading Now" in titles, f"CURRENTLY_CONSUMING item missing: {titles}"
+        assert (
+            "Finished Book" not in titles
+        ), f"COMPLETED item should be excluded: {titles}"
+
+    def test_get_content_items_single_status_still_works(self, tmp_path: Path) -> None:
+        """Single ConsumptionStatus value must still work after multi-status support."""
+        database = SQLiteDB(tmp_path / "test.db")
+
+        database.save_content_item(
+            ContentItem(
+                id="unread",
+                title="Unread Book",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            )
+        )
+        database.save_content_item(
+            ContentItem(
+                id="done",
+                title="Finished Book",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                rating=4,
+            )
+        )
+
+        items = database.get_content_items(status=ConsumptionStatus.COMPLETED)
+        titles = {item.title for item in items}
+        assert titles == {
+            "Finished Book"
+        }, f"Expected only COMPLETED item, got: {titles}"
+
+    def test_get_content_items_empty_status_list_returns_nothing(
+        self, tmp_path: Path
+    ) -> None:
+        """get_content_items with an empty status list must return [], not crash."""
+        database = SQLiteDB(tmp_path / "test.db")
+
+        database.save_content_item(
+            ContentItem(
+                id="unread",
+                title="Some Book",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            )
+        )
+
+        items = database.get_content_items(status=[])
+        assert items == [], f"Empty status list must return no items, got: {items}"
