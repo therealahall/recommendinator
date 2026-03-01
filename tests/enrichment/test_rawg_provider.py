@@ -11,7 +11,7 @@ from src.enrichment.providers.rawg import (
     RAWGProvider,
     _filter_outlier_titles,
     _longest_common_prefix,
-    clean_title_for_search,
+    clean_game_title_for_search,
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 
@@ -22,73 +22,74 @@ class TestCleanTitleForSearch:
     def test_removes_goty_edition_dash(self) -> None:
         """Test removal of GOTY Edition with dash."""
         assert (
-            clean_title_for_search("The Witcher 3: Wild Hunt - GOTY Edition")
+            clean_game_title_for_search("The Witcher 3: Wild Hunt - GOTY Edition")
             == "The Witcher 3: Wild Hunt"
         )
 
     def test_removes_deluxe_edition_colon(self) -> None:
         """Test removal of Deluxe Edition with colon."""
         assert (
-            clean_title_for_search("Horizon Zero Dawn: Complete Edition")
+            clean_game_title_for_search("Horizon Zero Dawn: Complete Edition")
             == "Horizon Zero Dawn"
         )
 
     def test_removes_remastered_dash(self) -> None:
         """Test removal of Remastered suffix."""
-        assert clean_title_for_search("Dark Souls - Remastered") == "Dark Souls"
+        assert clean_game_title_for_search("Dark Souls - Remastered") == "Dark Souls"
 
     def test_removes_edition_in_parentheses(self) -> None:
         """Test removal of edition in parentheses."""
-        assert clean_title_for_search("Mass Effect (Legendary)") == "Mass Effect"
-        assert clean_title_for_search("Skyrim (Special Edition)") == "Skyrim"
+        assert clean_game_title_for_search("Mass Effect (Legendary)") == "Mass Effect"
+        assert clean_game_title_for_search("Skyrim (Special Edition)") == "Skyrim"
 
     def test_removes_trademark_symbols(self) -> None:
         """Test removal of trademark and registered symbols."""
-        assert clean_title_for_search("Cyberpunk 2077™") == "Cyberpunk 2077"
-        assert clean_title_for_search("DOOM®") == "DOOM"
-        assert clean_title_for_search("The Sims™ 4") == "The Sims 4"
+        assert clean_game_title_for_search("Cyberpunk 2077™") == "Cyberpunk 2077"
+        assert clean_game_title_for_search("DOOM®") == "DOOM"
+        assert clean_game_title_for_search("The Sims™ 4") == "The Sims 4"
 
     def test_preserves_title_without_edition(self) -> None:
         """Test that titles without edition info are unchanged."""
-        assert clean_title_for_search("Elden Ring") == "Elden Ring"
-        assert clean_title_for_search("Hollow Knight") == "Hollow Knight"
+        assert clean_game_title_for_search("Elden Ring") == "Elden Ring"
+        assert clean_game_title_for_search("Hollow Knight") == "Hollow Knight"
 
     def test_preserves_colons_in_subtitles(self) -> None:
         """Test that colons in game subtitles are preserved."""
         assert (
-            clean_title_for_search("The Witcher 3: Wild Hunt")
+            clean_game_title_for_search("The Witcher 3: Wild Hunt")
             == "The Witcher 3: Wild Hunt"
         )
         assert (
-            clean_title_for_search("Resident Evil 4: Separate Ways")
+            clean_game_title_for_search("Resident Evil 4: Separate Ways")
             == "Resident Evil 4: Separate Ways"
         )
 
     def test_handles_combined_patterns(self) -> None:
         """Test that multiple patterns are handled together."""
         assert (
-            clean_title_for_search("DOOM® Eternal - Deluxe Edition") == "DOOM Eternal"
+            clean_game_title_for_search("DOOM® Eternal - Deluxe Edition")
+            == "DOOM Eternal"
         )
 
     def test_removes_dlc_suffix(self) -> None:
         """Test removal of DLC suffix like '+ Re Mind (DLC)'."""
         assert (
-            clean_title_for_search("KINGDOM HEARTS III + Re Mind (DLC)")
+            clean_game_title_for_search("KINGDOM HEARTS III + Re Mind (DLC)")
             == "KINGDOM HEARTS III"
         )
 
     def test_removes_generic_dlc_suffix(self) -> None:
         """Test removal of generic DLC suffix."""
-        assert clean_title_for_search("Game + DLC Pack (DLC)") == "Game"
+        assert clean_game_title_for_search("Game + DLC Pack (DLC)") == "Game"
 
     def test_dlc_suffix_case_insensitive(self) -> None:
         """Test that DLC suffix removal is case insensitive."""
-        assert clean_title_for_search("Game + Expansion (dlc)") == "Game"
+        assert clean_game_title_for_search("Game + Expansion (dlc)") == "Game"
 
     def test_title_without_dlc_unchanged(self) -> None:
         """Test that titles without DLC suffix are unchanged."""
-        assert clean_title_for_search("Elden Ring") == "Elden Ring"
-        assert clean_title_for_search("Final Fantasy X") == "Final Fantasy X"
+        assert clean_game_title_for_search("Elden Ring") == "Elden Ring"
+        assert clean_game_title_for_search("Final Fantasy X") == "Final Fantasy X"
 
 
 class TestRAWGProviderProperties:

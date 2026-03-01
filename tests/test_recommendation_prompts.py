@@ -6,6 +6,7 @@ regression tests for LLM misclassification / fabricated reviews.
 
 from src.conversation.engine import COMPACT_SYSTEM_PROMPT, FULL_SYSTEM_PROMPT
 from src.llm.prompts import (
+    _shuffle_items_by_rating_tier,
     build_blurb_prompt,
     build_blurb_system_prompt,
     build_content_description,
@@ -1732,11 +1733,14 @@ class TestRelatedItemsIncludeGenreTags:
         assert "The Black Elfstone [Fantasy, Epic Fantasy]" in prompt
 
 
-class TestAntiGenreTagInProseGuardrails:
+class TestAntiGenreTagInProseRegression:
     """Regression: genre tags like (Comedy) must not appear in blurb text.
 
     Bug reported: Blurbs included literal genre parentheticals in prose —
     e.g. 'You'll love "Legally Blonde" (Comedy)'.
+
+    Root cause: No prompt instruction told the LLM to exclude genre
+    metadata from the output prose. The LLM echoed genre tags verbatim.
 
     Fix: Prompt rules now forbid including genre tags in output text.
     """
@@ -1770,7 +1774,7 @@ class TestAntiGenreTagInProseGuardrails:
         assert self._RULE_PHRASE in prompt
 
 
-class TestAntiCircularJustificationGuardrails:
+class TestAntiCircularJustificationRegression:
     """Regression: LLM justified picks by citing user's experience with
     the pick's own series — circular reasoning.
 
@@ -1778,10 +1782,14 @@ class TestAntiCircularJustificationGuardrails:
     experienced in the (Ranger's Apprentice) series" — justifying a pick
     by referencing the user's experience with that same series.
 
+    Root cause: No prompt instruction distinguished between valid cross-
+    series references and circular self-series justification. The LLM
+    defaulted to citing the most topically relevant series — the pick itself.
+
     Fix: Prompt rules now forbid circular self-series justification.
     """
 
-    _RULE_PHRASE = "circular"
+    _RULE_PHRASE = "that's circular"
 
     def test_recommendation_prompt_has_anti_circular_rule_regression(self) -> None:
         books = _make_books(3)
@@ -1810,13 +1818,17 @@ class TestAntiCircularJustificationGuardrails:
         assert self._RULE_PHRASE in prompt
 
 
-class TestVarietyInstructionGuardrails:
+class TestVarietyInstructionRegression:
     """Regression: blurbs opened with repetitive formulaic phrases.
 
     Bug reported: Three consecutive blurbs started with "You'll adore..."
     and nearly all used "much like" as the connector.
 
+    Root cause: No prompt instruction prohibited formulaic opener patterns.
+    The LLM converged on a small set of safe, generic openers across items.
+
     Fix: Prompt rules now ban formulaic openers and repeated connectors.
+    The banned phrases must be kept in sync with the prompt text.
     """
 
     _VARIETY_PHRASES = [
@@ -1825,31 +1837,39 @@ class TestVarietyInstructionGuardrails:
         "If you enjoyed",
     ]
 
+    def _assert_variety_prohibition(self, prompt: str) -> None:
+        """Assert the prompt contains the variety prohibition, not just the phrases."""
+        assert "do NOT start" in prompt, "Missing variety prohibition prefix"
+        for phrase in self._VARIETY_PHRASES:
+            assert phrase in prompt, f"Missing variety phrase: {phrase!r}"
+
     def test_recommendation_prompt_has_variety_instruction_regression(self) -> None:
         books = _make_books(3)
         unconsumed = _make_unconsumed(3)
         prompt = build_recommendation_prompt(ContentType.BOOK, books, unconsumed)
-        for phrase in self._VARIETY_PHRASES:
-            assert phrase in prompt, f"Missing variety phrase: {phrase!r}"
+        self._assert_variety_prohibition(prompt)
+
+    def test_recommendation_system_prompt_has_variety_instruction_regression(
+        self,
+    ) -> None:
+        prompt = build_recommendation_system_prompt(ContentType.BOOK)
+        self._assert_variety_prohibition(prompt)
 
     def test_blurb_system_prompt_has_variety_instruction_regression(self) -> None:
         prompt = build_blurb_system_prompt(ContentType.BOOK)
-        for phrase in self._VARIETY_PHRASES:
-            assert phrase in prompt, f"Missing variety phrase: {phrase!r}"
+        self._assert_variety_prohibition(prompt)
 
     def test_blurb_prompt_has_variety_instruction_regression(self) -> None:
         selected = [make_item("Pick", ContentType.BOOK)]
         prompt = build_blurb_prompt(ContentType.BOOK, selected, consumed_items=[])
-        for phrase in self._VARIETY_PHRASES:
-            assert phrase in prompt, f"Missing variety phrase: {phrase!r}"
+        self._assert_variety_prohibition(prompt)
 
     def test_single_blurb_prompt_has_variety_instruction_regression(self) -> None:
         item = make_item("Pick", ContentType.VIDEO_GAME)
         prompt = build_single_blurb_prompt(
             ContentType.VIDEO_GAME, item, consumed_items=[]
         )
-        for phrase in self._VARIETY_PHRASES:
-            assert phrase in prompt, f"Missing variety phrase: {phrase!r}"
+        self._assert_variety_prohibition(prompt)
 
 
 class TestVerbGuardrails:
@@ -1901,3 +1921,156 @@ class TestVerbGuardrails:
         )
         for phrase in self._VERB_PHRASES:
             assert phrase in prompt
+
+
+# ===========================================================================
+# Variety guardrail tests for recommendation system prompt
+# ===========================================================================
+
+
+class TestRecommendationSystemPromptRegression:
+    """Tests for data-accuracy and anti-hallucination guardrails in the system prompt."""
+
+    def test_system_prompt_contains_data_accuracy_section(self) -> None:
+        """build_recommendation_system_prompt includes data accuracy guardrails."""
+        prompt = build_recommendation_system_prompt(ContentType.BOOK)
+        assert "Data Accuracy" in prompt
+
+    def test_system_prompt_forbids_genre_tags_in_prose(self) -> None:
+        """System prompt instructs LLM not to embed genre tags in recommendation text."""
+        prompt = build_recommendation_system_prompt(ContentType.MOVIE)
+        assert "genre tags" in prompt.lower()
+
+    def test_system_prompt_forbids_circular_series_references(self) -> None:
+        """System prompt warns against circular same-series justification."""
+        prompt = build_recommendation_system_prompt(ContentType.BOOK)
+        assert "circular" in prompt.lower()
+
+
+# ===========================================================================
+# Shuffle by rating tier tests
+# ===========================================================================
+
+
+class TestShuffleItemsByRatingTier:
+    """Tests for _shuffle_items_by_rating_tier grouping and ordering."""
+
+    def test_higher_rated_items_come_first(self) -> None:
+        """Items with higher ratings appear before items with lower ratings."""
+        items = [
+            make_item("Low", ContentType.BOOK, rating=2),
+            make_item("High", ContentType.BOOK, rating=5),
+            make_item("Mid", ContentType.BOOK, rating=3),
+        ]
+
+        result = _shuffle_items_by_rating_tier(items)
+
+        assert len(result) == 3
+        ratings = [item.rating for item in result]
+        # Should be in descending order of rating groups
+        assert ratings[0] == 5
+        assert ratings[-1] == 2
+
+    def test_same_rating_items_grouped_together(self) -> None:
+        """Items with the same rating are adjacent in the output."""
+        items = [
+            make_item("A", ContentType.BOOK, rating=3),
+            make_item("B", ContentType.BOOK, rating=5),
+            make_item("C", ContentType.BOOK, rating=3),
+            make_item("D", ContentType.BOOK, rating=5),
+        ]
+
+        result = _shuffle_items_by_rating_tier(items)
+
+        assert len(result) == 4
+        # The first two should be rating=5, last two should be rating=3
+        assert result[0].rating == 5
+        assert result[1].rating == 5
+        assert result[2].rating == 3
+        assert result[3].rating == 3
+
+    def test_none_rating_treated_as_zero(self) -> None:
+        """Items with None rating are grouped as 0 (lowest tier)."""
+        items = [
+            make_item("Rated", ContentType.BOOK, rating=4),
+            make_item("Unrated", ContentType.BOOK, rating=None),
+        ]
+
+        result = _shuffle_items_by_rating_tier(items)
+
+        assert len(result) == 2
+        assert result[0].title == "Rated"
+        assert result[1].title == "Unrated"
+
+    def test_empty_list_returns_empty(self) -> None:
+        """Empty input returns empty list without error."""
+        result = _shuffle_items_by_rating_tier([])
+        assert result == []
+
+    def test_single_item_returns_single(self) -> None:
+        """Single-item input returns that item unchanged."""
+        items = [make_item("Only", ContentType.BOOK, rating=3)]
+        result = _shuffle_items_by_rating_tier(items)
+        assert len(result) == 1
+        assert result[0].title == "Only"
+
+
+# ===========================================================================
+# Prompt count boundary tests
+# ===========================================================================
+
+
+class TestPromptCountBoundaries:
+    """Tests for count=0 and large candidate list boundaries."""
+
+    def test_count_zero_still_builds_prompt(self) -> None:
+        """build_recommendation_prompt with count=0 produces a valid prompt with 0 picks."""
+        consumed = _make_books(3)
+        unconsumed = _make_unconsumed(5)
+
+        prompt = build_recommendation_prompt(
+            content_type=ContentType.BOOK,
+            consumed_items=consumed,
+            unconsumed_items=unconsumed,
+            count=0,
+        )
+
+        # Prompt is still generated and embeds the count instruction
+        assert isinstance(prompt, str)
+        assert len(prompt) > 0
+        assert "Pick the 0 best" in prompt
+
+    def test_fifty_plus_candidates_truncated_to_fifty(self) -> None:
+        """Only the first 50 unconsumed candidates appear in the prompt.
+
+        build_recommendation_prompt caps at 50 candidates to keep the
+        prompt within token limits.
+        """
+        consumed = _make_books(3)
+        unconsumed = _make_unconsumed(55)
+
+        prompt = build_recommendation_prompt(
+            content_type=ContentType.BOOK,
+            consumed_items=consumed,
+            unconsumed_items=unconsumed,
+            count=5,
+        )
+
+        # The 50th candidate should appear
+        assert "Candidate 49" in prompt
+        # The 51st candidate should NOT appear
+        assert "Candidate 50" not in prompt
+
+    def test_exactly_fifty_candidates_all_present(self) -> None:
+        """When exactly 50 candidates provided, all appear in the prompt."""
+        consumed = _make_books(3)
+        unconsumed = _make_unconsumed(50)
+
+        prompt = build_recommendation_prompt(
+            content_type=ContentType.BOOK,
+            consumed_items=consumed,
+            unconsumed_items=unconsumed,
+        )
+
+        # All 50 should be present
+        assert "Candidate 49" in prompt

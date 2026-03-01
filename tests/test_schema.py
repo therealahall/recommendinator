@@ -311,11 +311,11 @@ class TestEnrichmentSQLWhitelist:
             _enrichment_group_query(
                 cursor=cursor,
                 select_col="malicious_col; DROP TABLE content_items; --",
-                es_prefix="enrichment_status",
+                table_name="enrichment_status",
+                table_alias=None,
                 user_join="",
                 user_filter="",
                 user_params=(),
-                user_id=None,
             )
 
     def test_empty_string_column_raises_value_error(
@@ -329,24 +329,25 @@ class TestEnrichmentSQLWhitelist:
             _enrichment_group_query(
                 cursor=cursor,
                 select_col="",
-                es_prefix="enrichment_status",
+                table_name="enrichment_status",
+                table_alias=None,
                 user_join="",
                 user_filter="",
                 user_params=(),
-                user_id=None,
             )
 
     def test_count_query_rejects_unknown_table(
         self, temp_db: sqlite3.Connection
     ) -> None:
-        """_enrichment_count_query raises ValueError for unknown table prefix."""
+        """_enrichment_count_query raises ValueError for unknown table name."""
         create_schema(temp_db)
         cursor = temp_db.cursor()
 
         with pytest.raises(ValueError, match="Unknown SQL table"):
             _enrichment_count_query(
                 cursor=cursor,
-                table_prefix="malicious_table; DROP TABLE users; --",
+                table_name="malicious_table; DROP TABLE users; --",
+                table_alias=None,
                 where_clause="1=1",
                 user_join="",
                 user_filter="",
@@ -356,7 +357,7 @@ class TestEnrichmentSQLWhitelist:
     def test_group_query_rejects_unknown_table(
         self, temp_db: sqlite3.Connection
     ) -> None:
-        """_enrichment_group_query raises ValueError for unknown es_prefix."""
+        """_enrichment_group_query raises ValueError for unknown table name."""
         create_schema(temp_db)
         cursor = temp_db.cursor()
 
@@ -364,9 +365,45 @@ class TestEnrichmentSQLWhitelist:
             _enrichment_group_query(
                 cursor=cursor,
                 select_col="enrichment_provider",
-                es_prefix="injected_table",
+                table_name="injected_table",
+                table_alias=None,
                 user_join="",
                 user_filter="",
                 user_params=(),
-                user_id=None,
             )
+
+    def test_count_query_rejects_unknown_alias(
+        self, temp_db: sqlite3.Connection
+    ) -> None:
+        """_enrichment_count_query raises ValueError for unknown table alias."""
+        create_schema(temp_db)
+        cursor = temp_db.cursor()
+
+        with pytest.raises(ValueError, match="Unknown SQL table alias"):
+            _enrichment_count_query(
+                cursor=cursor,
+                table_name="enrichment_status",
+                table_alias="injected",
+                where_clause="1=1",
+                user_join="",
+                user_filter="",
+                user_params=(),
+            )
+
+    def test_count_query_accepts_valid_alias(self, temp_db: sqlite3.Connection) -> None:
+        """_enrichment_count_query accepts the allowlisted 'es' alias."""
+        create_schema(temp_db)
+        cursor = temp_db.cursor()
+
+        # Should not raise — "es" is in the allowlist
+        result = _enrichment_count_query(
+            cursor=cursor,
+            table_name="enrichment_status",
+            table_alias="es",
+            where_clause="1=1",
+            user_join="",
+            user_filter="",
+            user_params=(),
+        )
+
+        assert isinstance(result, int)

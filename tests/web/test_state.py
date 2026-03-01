@@ -1,6 +1,7 @@
 """Tests for web application state management functions."""
 
 import logging
+from dataclasses import fields
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -8,6 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.web.state import (
+    AppState,
     app_state,
     get_conversation_engine,
     get_ollama_client,
@@ -18,11 +20,14 @@ from src.web.state import (
 @pytest.fixture(autouse=True)
 def _clean_app_state() -> Any:
     """Save and restore app_state around each test."""
-    saved = dict(app_state)
-    app_state.clear()
+    saved = {f.name: getattr(app_state, f.name) for f in fields(app_state)}
+    # Reset to defaults
+    fresh = AppState()
+    for f in fields(fresh):
+        setattr(app_state, f.name, getattr(fresh, f.name))
     yield
-    app_state.clear()
-    app_state.update(saved)
+    for f in fields(app_state):
+        setattr(app_state, f.name, saved[f.name])
 
 
 # ---------------------------------------------------------------------------
@@ -38,14 +43,14 @@ class TestReloadConfig:
         config_file = tmp_path / "config.yaml"
         config_file.write_text("ollama:\n  model: test-model\n")
 
-        app_state["config_path"] = str(config_file)
-        app_state["config"] = {"old": "config"}
+        app_state.config_path = str(config_file)
+        app_state.config = {"old": "config"}
 
         result = reload_config()
 
         assert result is True
-        assert app_state["config"]["ollama"]["model"] == "test-model"
-        assert "old" not in app_state["config"]
+        assert app_state.config["ollama"]["model"] == "test-model"
+        assert "old" not in app_state.config
 
     def test_reload_config_no_config_path(self) -> None:
         """reload_config returns False when no config_path is stored."""
@@ -70,7 +75,7 @@ class TestReloadConfig:
         so we mock it to simulate a genuine failure such as a permissions
         error or corrupted file.
         """
-        app_state["config_path"] = "/some/path.yaml"
+        app_state.config_path = "/some/path.yaml"
 
         with patch(
             "src.web.state.load_config",
@@ -83,8 +88,8 @@ class TestReloadConfig:
     def test_reload_config_preserves_old_config_on_failure(self) -> None:
         """reload_config does not replace existing config when reload fails."""
         original_config = {"preserved": True}
-        app_state["config"] = original_config
-        app_state["config_path"] = "/some/path.yaml"
+        app_state.config = original_config
+        app_state.config_path = "/some/path.yaml"
 
         with patch(
             "src.web.state.load_config",
@@ -92,13 +97,13 @@ class TestReloadConfig:
         ):
             reload_config()
 
-        assert app_state["config"] is original_config
+        assert app_state.config is original_config
 
     def test_reload_config_logs_error_on_failure(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         """reload_config logs an error when the reload fails."""
-        app_state["config_path"] = "/some/path.yaml"
+        app_state.config_path = "/some/path.yaml"
 
         with (
             caplog.at_level(logging.ERROR, logger="src.web.state"),
@@ -129,7 +134,7 @@ class TestGetConversationEngine:
     def test_returns_engine_when_set(self) -> None:
         """get_conversation_engine returns the stored engine."""
         mock_engine = MagicMock()
-        app_state["conversation_engine"] = mock_engine
+        app_state.conversation_engine = mock_engine
 
         result = get_conversation_engine()
 
@@ -153,7 +158,7 @@ class TestGetOllamaClient:
     def test_returns_client_when_set(self) -> None:
         """get_ollama_client returns the stored client."""
         mock_client = MagicMock()
-        app_state["ollama_client"] = mock_client
+        app_state.ollama_client = mock_client
 
         result = get_ollama_client()
 

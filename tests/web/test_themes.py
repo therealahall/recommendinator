@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Generator
+from dataclasses import fields
 from pathlib import Path
 
 import pytest
@@ -14,12 +15,21 @@ from src.web.api import ThemeResponse, discover_themes, router
 from src.web.state import app_state
 
 
+def _save_state() -> dict:
+    return {f.name: getattr(app_state, f.name) for f in fields(app_state)}
+
+
+def _restore_state(saved: dict) -> None:
+    for key, value in saved.items():
+        setattr(app_state, key, value)
+
+
 @pytest.fixture
 def test_client() -> Generator[TestClient, None, None]:
     """Create a test client with minimal state for theme endpoints."""
-    original_state = app_state.copy()
+    original_state = _save_state()
 
-    app_state["config"] = {"web": {"theme": "nord"}}
+    app_state.config = {"web": {"theme": "nord"}}
 
     app = FastAPI()
     app.include_router(router)
@@ -27,8 +37,7 @@ def test_client() -> Generator[TestClient, None, None]:
     with TestClient(app) as client:
         yield client
 
-    app_state.clear()
-    app_state.update(original_state)
+    _restore_state(original_state)
 
 
 class TestDiscoverThemes:
@@ -162,8 +171,8 @@ class TestThemeEndpoints:
 
     def test_get_default_theme_falls_back_to_nord(self) -> None:
         """GET /api/themes/default falls back to nord when not configured."""
-        original_state = app_state.copy()
-        app_state["config"] = {"web": {}}
+        original_state = _save_state()
+        app_state.config = {"web": {}}
 
         app = FastAPI()
         app.include_router(router)
@@ -171,8 +180,7 @@ class TestThemeEndpoints:
         with TestClient(app) as client:
             response = client.get("/api/themes/default")
 
-        app_state.clear()
-        app_state.update(original_state)
+        _restore_state(original_state)
 
         assert response.status_code == 200
         assert response.json()["theme"] == "nord"

@@ -1,6 +1,7 @@
 """Tests for web API endpoints."""
 
 import json
+from dataclasses import fields
 from unittest.mock import Mock, patch
 
 import pytest
@@ -15,7 +16,7 @@ from src.recommendations.engine import RecommendationEngine
 from src.storage.manager import StorageManager
 from src.web.app import create_app
 from src.web.gog_auth import GogAuthError
-from src.web.state import app_state
+from src.web.state import AppState, app_state
 from src.web.sync_manager import SyncManager, reset_sync_manager
 
 
@@ -74,17 +75,19 @@ def mock_components(mock_config):
         mock_engine_instance.storage = mock_storage_manager
         mock_engine.return_value = mock_engine_instance
 
-        # Clear app state
-        app_state.clear()
+        # Reset app state to defaults
+        fresh = AppState()
+        for f in fields(fresh):
+            setattr(app_state, f.name, getattr(fresh, f.name))
 
         # Create app
         app = create_app()
 
         # Store mocks in app state for access in tests
-        app_state["storage"] = mock_storage_manager
-        app_state["embedding_gen"] = mock_embedding_gen
-        app_state["engine"] = mock_engine_instance
-        app_state["config"] = mock_config
+        app_state.storage = mock_storage_manager
+        app_state.embedding_gen = mock_embedding_gen
+        app_state.engine = mock_engine_instance
+        app_state.config = mock_config
 
         yield {
             "app": app,
@@ -133,8 +136,8 @@ class TestStatusEndpointRegression:
         Fix: Only require embedding_generator when ai_enabled is true.
         """
         # Simulate AI disabled: no embedding_gen, no features config
-        app_state["embedding_gen"] = None
-        app_state["config"] = {
+        app_state.embedding_gen = None
+        app_state.config = {
             "features": {"ai_enabled": False},
         }
 
@@ -161,7 +164,7 @@ def test_sync_sources_endpoint(client, mock_config):
 def test_sync_sources_only_enabled(client):
     """Test that disabled sources (enabled: false) are not returned."""
     # Override config: only goodreads and sonarr enabled
-    app_state["config"] = {
+    app_state.config = {
         "inputs": {
             "goodreads": {
                 "plugin": "goodreads",
@@ -316,7 +319,7 @@ def test_update_endpoint(client, mock_components):
 def test_update_endpoint_steam(client, mock_components):
     """Test update endpoint starts background sync for Steam."""
     # Update app_state config to include Steam
-    app_state["config"]["inputs"]["steam"] = {
+    app_state.config["inputs"]["steam"] = {
         "plugin": "steam",
         "api_key": "test_api_key",
         "steam_id": "76561198000000000",
@@ -334,7 +337,7 @@ def test_update_endpoint_steam(client, mock_components):
 
 def test_update_endpoint_steam_disabled(client, mock_components):
     """Test update endpoint with disabled Steam source."""
-    app_state["config"]["inputs"]["steam"] = {
+    app_state.config["inputs"]["steam"] = {
         "plugin": "steam",
         "api_key": "test_api_key",
         "steam_id": "76561198000000000",
@@ -351,7 +354,7 @@ def test_update_endpoint_steam_disabled(client, mock_components):
 
 def test_update_endpoint_steam_missing_api_key(client, mock_components):
     """Test update endpoint with missing Steam API key."""
-    app_state["config"]["inputs"]["steam"] = {
+    app_state.config["inputs"]["steam"] = {
         "plugin": "steam",
         "api_key": "",
         "steam_id": "76561198000000000",
@@ -370,7 +373,7 @@ def test_update_endpoint_steam_missing_api_key(client, mock_components):
 
 def test_update_endpoint_steam_missing_id(client, mock_components):
     """Test update endpoint with missing Steam ID."""
-    app_state["config"]["inputs"]["steam"] = {
+    app_state.config["inputs"]["steam"] = {
         "plugin": "steam",
         "api_key": "test_api_key",
         "steam_id": "",
@@ -394,7 +397,7 @@ def test_update_endpoint_steam_api_error(client, mock_components):
     Note: With background sync, API errors during the actual sync are handled
     asynchronously. This test verifies the sync can be started when config is valid.
     """
-    app_state["config"]["inputs"]["steam"] = {
+    app_state.config["inputs"]["steam"] = {
         "plugin": "steam",
         "api_key": "test_api_key",
         "steam_id": "76561198000000000",
@@ -412,7 +415,7 @@ def test_update_endpoint_steam_api_error(client, mock_components):
 
 def test_update_endpoint_all_sources(client, mock_components):
     """Test update endpoint with 'all' source starts background sync."""
-    app_state["config"]["inputs"]["steam"] = {
+    app_state.config["inputs"]["steam"] = {
         "plugin": "steam",
         "api_key": "test_api_key",
         "steam_id": "76561198000000000",
@@ -1020,7 +1023,7 @@ class TestExchangeGogTokenEndpoint:
         self, client: TestClient, mock_components: dict
     ) -> None:
         """Response contains no token when config is updated successfully."""
-        app_state["config"]["inputs"]["gog"] = {"enabled": True}
+        app_state.config["inputs"]["gog"] = {"enabled": True}
 
         with (
             patch("src.web.api.get_config_path", return_value="/tmp/fake.yaml"),
@@ -1052,7 +1055,7 @@ class TestExchangeGogTokenEndpoint:
         Security regression test: before ff5e7f7, the token appeared in the
         HTTP response body in the manual_setup fallback branch.
         """
-        app_state["config"]["inputs"]["gog"] = {"enabled": True}
+        app_state.config["inputs"]["gog"] = {"enabled": True}
 
         with (
             patch("src.web.api.get_config_path", return_value="/tmp/fake.yaml"),
@@ -1083,7 +1086,7 @@ class TestExchangeGogTokenEndpoint:
         self, client: TestClient, mock_components: dict
     ) -> None:
         """Auth failure returns generic 400 without leaking error details."""
-        app_state["config"]["inputs"]["gog"] = {"enabled": True}
+        app_state.config["inputs"]["gog"] = {"enabled": True}
 
         with patch(
             "src.web.api.extract_code_from_input",
@@ -1100,7 +1103,7 @@ class TestExchangeGogTokenEndpoint:
         self, client: TestClient, mock_components: dict
     ) -> None:
         """Unexpected exceptions return a generic 500 without leaking error details."""
-        app_state["config"]["inputs"]["gog"] = {"enabled": True}
+        app_state.config["inputs"]["gog"] = {"enabled": True}
 
         with patch(
             "src.web.api.extract_code_from_input",
@@ -1117,7 +1120,7 @@ class TestExchangeGogTokenEndpoint:
         self, client: TestClient, mock_components: dict
     ) -> None:
         """Manual setup response when config_path is None must not include token."""
-        app_state["config"]["inputs"]["gog"] = {"enabled": True}
+        app_state.config["inputs"]["gog"] = {"enabled": True}
 
         with (
             patch("src.web.api.get_config_path", return_value=None),
@@ -1144,7 +1147,7 @@ class TestExchangeGogTokenEndpoint:
         self, client: TestClient, mock_components: dict
     ) -> None:
         """Endpoint rejects requests when GOG is not enabled."""
-        app_state["config"]["inputs"]["gog"] = {"enabled": False}
+        app_state.config["inputs"]["gog"] = {"enabled": False}
 
         response = client.post("/api/gog/exchange", json={"code_or_url": "some_code"})
 
@@ -1279,7 +1282,7 @@ def test_recommendations_count_exceeds_max_returns_400(client, mock_components):
     max_count value from the recommendations config section (default: 20).
     """
     # Set a low max_count in config
-    app_state["config"]["recommendations"] = {"max_count": 5}
+    app_state.config["recommendations"] = {"max_count": 5}
 
     response = client.get("/api/recommendations?type=book&count=10")
     assert response.status_code == 400

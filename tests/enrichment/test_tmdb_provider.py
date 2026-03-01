@@ -7,7 +7,7 @@ import pytest
 import requests
 
 from src.enrichment.provider_base import ProviderError
-from src.enrichment.providers.tmdb import TMDBProvider, clean_title_for_search
+from src.enrichment.providers.tmdb import TMDBProvider, clean_media_title_for_search
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 
 
@@ -16,24 +16,24 @@ class TestCleanTitleForSearch:
 
     def test_removes_year_suffix(self) -> None:
         """Test removal of year in parentheses."""
-        assert clean_title_for_search("Monster (2022)") == "Monster"
-        assert clean_title_for_search("The Matrix (1999)") == "The Matrix"
+        assert clean_media_title_for_search("Monster (2022)") == "Monster"
+        assert clean_media_title_for_search("The Matrix (1999)") == "The Matrix"
 
     def test_removes_country_code(self) -> None:
         """Test removal of country codes."""
-        assert clean_title_for_search("Euphoria (US)") == "Euphoria"
-        assert clean_title_for_search("The Office (UK)") == "The Office"
+        assert clean_media_title_for_search("Euphoria (US)") == "Euphoria"
+        assert clean_media_title_for_search("The Office (UK)") == "The Office"
 
     def test_preserves_title_without_suffix(self) -> None:
         """Test that titles without suffixes are unchanged."""
-        assert clean_title_for_search("Breaking Bad") == "Breaking Bad"
-        assert clean_title_for_search("The Sopranos") == "The Sopranos"
+        assert clean_media_title_for_search("Breaking Bad") == "Breaking Bad"
+        assert clean_media_title_for_search("The Sopranos") == "The Sopranos"
 
     def test_handles_title_with_parentheses_content(self) -> None:
         """Test that meaningful parenthetical content is preserved."""
         # Only removes specific patterns at end of title
         assert (
-            clean_title_for_search("Spider-Man: Into the Spider-Verse")
+            clean_media_title_for_search("Spider-Man: Into the Spider-Verse")
             == "Spider-Man: Into the Spider-Verse"
         )
 

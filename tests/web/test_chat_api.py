@@ -3,6 +3,7 @@
 import json
 import tempfile
 from collections.abc import Generator, Iterator
+from dataclasses import fields
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -47,13 +48,12 @@ def test_client(
     mock_conversation_engine: MagicMock,
 ) -> Generator[TestClient, None, None]:
     """Create a test client with mocked dependencies."""
-    # Store original state
-    original_state = app_state.copy()
+    saved = {f.name: getattr(app_state, f.name) for f in fields(app_state)}
 
-    # Set up test state
-    app_state["storage"] = storage_manager
-    app_state["conversation_engine"] = mock_conversation_engine
-    app_state["config"] = {"web": {"allowed_origins": ["*"]}}
+    app_state.storage = storage_manager
+    app_state.conversation_engine = mock_conversation_engine
+    app_state.memory_manager = MemoryManager(storage_manager)
+    app_state.config = {"web": {"allowed_origins": ["*"]}}
 
     app = FastAPI()
     app.include_router(router)
@@ -61,9 +61,8 @@ def test_client(
     with TestClient(app) as client:
         yield client
 
-    # Restore original state
-    app_state.clear()
-    app_state.update(original_state)
+    for key, value in saved.items():
+        setattr(app_state, key, value)
 
 
 class TestChatEndpoint:
@@ -199,11 +198,10 @@ class TestChatEndpoint:
         storage_manager: StorageManager,
     ) -> None:
         """Test chat when conversation engine is not available."""
-        # Store original state
-        original_state = app_state.copy()
+        saved = {f.name: getattr(app_state, f.name) for f in fields(app_state)}
 
-        app_state["storage"] = storage_manager
-        app_state["conversation_engine"] = None
+        app_state.storage = storage_manager
+        app_state.conversation_engine = None
 
         from fastapi import FastAPI
 
@@ -221,9 +219,8 @@ class TestChatEndpoint:
             assert response.status_code == 503
             assert "not available" in response.json()["detail"]
 
-        # Restore
-        app_state.clear()
-        app_state.update(original_state)
+        for key, value in saved.items():
+            setattr(app_state, key, value)
 
 
 class TestChatResetEndpoint:

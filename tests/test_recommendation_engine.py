@@ -5,6 +5,7 @@ from unittest.mock import Mock
 import pytest
 
 from src.llm.embeddings import EmbeddingGenerator
+from src.llm.recommendations import RecommendationGenerator
 from src.models.content import (
     ConsumptionStatus,
     ContentItem,
@@ -259,8 +260,8 @@ class TestAIEngine:
 
         assert len(recommendations) == 1
         reasoning = recommendations[0].get("reasoning", "")
-        # Reasoning should mention the specific item that influenced the recommendation
-        assert "dune" in reasoning.lower() or "preferences" in reasoning.lower()
+        # Reasoning should mention the specific cross-type item that contributed
+        assert "dune" in reasoning.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -1925,3 +1926,146 @@ class TestPipelineOutputKeys:
             assert "adaptations" in recommendation
             assert isinstance(recommendation["contributing_items"], list)
             assert isinstance(recommendation["adaptations"], list)
+
+
+# ---------------------------------------------------------------------------
+# generate_blurb_for_item tests
+# ---------------------------------------------------------------------------
+
+
+class TestGenerateBlurbForItem:
+    """Tests for RecommendationEngine.generate_blurb_for_item."""
+
+    def test_success_path_returns_blurb(self, mock_storage, mock_embedding_gen) -> None:
+        """generate_blurb_for_item returns blurb text on success."""
+        mock_llm_gen = Mock(spec=RecommendationGenerator)
+        mock_llm_gen.generate_single_blurb.return_value = "A gripping sci-fi epic."
+
+        engine = RecommendationEngine(
+            storage_manager=mock_storage,
+            embedding_generator=mock_embedding_gen,
+            recommendation_generator=mock_llm_gen,
+        )
+
+        item = ContentItem(
+            id="1",
+            title="Dune",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        )
+        consumed = [
+            ContentItem(
+                id="2",
+                title="Foundation",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+            )
+        ]
+
+        result = engine.generate_blurb_for_item(
+            content_type=ContentType.BOOK,
+            item=item,
+            consumed_items=consumed,
+        )
+
+        assert result == "A gripping sci-fi epic."
+        mock_llm_gen.generate_single_blurb.assert_called_once_with(
+            content_type=ContentType.BOOK,
+            item=item,
+            consumed_items=consumed,
+            references=None,
+        )
+
+    def test_failure_returns_none(self, mock_storage, mock_embedding_gen) -> None:
+        """generate_blurb_for_item returns None when LLM raises."""
+        mock_llm_gen = Mock(spec=RecommendationGenerator)
+        mock_llm_gen.generate_single_blurb.side_effect = RuntimeError("LLM down")
+
+        engine = RecommendationEngine(
+            storage_manager=mock_storage,
+            embedding_generator=mock_embedding_gen,
+            recommendation_generator=mock_llm_gen,
+        )
+
+        item = ContentItem(
+            id="1",
+            title="Dune",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        )
+
+        result = engine.generate_blurb_for_item(
+            content_type=ContentType.BOOK,
+            item=item,
+            consumed_items=[],
+        )
+
+        assert result is None
+
+    def test_references_forwarded_to_llm(
+        self, mock_storage, mock_embedding_gen
+    ) -> None:
+        """generate_blurb_for_item forwards references to the LLM generator."""
+        mock_llm_gen = Mock(spec=RecommendationGenerator)
+        mock_llm_gen.generate_single_blurb.return_value = "Blurb with refs."
+
+        engine = RecommendationEngine(
+            storage_manager=mock_storage,
+            embedding_generator=mock_embedding_gen,
+            recommendation_generator=mock_llm_gen,
+        )
+
+        item = ContentItem(
+            id="1",
+            title="Dune",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        )
+        refs = [
+            ContentItem(
+                id="3",
+                title="Foundation",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+            )
+        ]
+
+        result = engine.generate_blurb_for_item(
+            content_type=ContentType.BOOK,
+            item=item,
+            consumed_items=[],
+            references=refs,
+        )
+
+        assert result == "Blurb with refs."
+        mock_llm_gen.generate_single_blurb.assert_called_once_with(
+            content_type=ContentType.BOOK,
+            item=item,
+            consumed_items=[],
+            references=refs,
+        )
+
+    def test_no_llm_returns_none(self, mock_storage, mock_embedding_gen) -> None:
+        """generate_blurb_for_item returns None when no LLM generator."""
+        engine = RecommendationEngine(
+            storage_manager=mock_storage,
+            embedding_generator=mock_embedding_gen,
+            recommendation_generator=None,
+        )
+
+        item = ContentItem(
+            id="1",
+            title="Dune",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        )
+
+        result = engine.generate_blurb_for_item(
+            content_type=ContentType.BOOK,
+            item=item,
+            consumed_items=[],
+        )
+
+        assert result is None
