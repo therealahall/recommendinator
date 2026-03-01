@@ -270,7 +270,7 @@ class RecommendationEngine:
 
         # Pre-compute similarity scores (AI path)
         similarity_scores = self._compute_similarity_scores(
-            all_consumed_items, content_type, count
+            all_consumed_items, content_type
         )
 
         # Score all unconsumed candidates via the pipeline (always runs)
@@ -312,9 +312,6 @@ class RecommendationEngine:
             unconsumed_items, scoring_context
         )
 
-        # Take top count*3 from pipeline for further processing
-        top_candidates: list[ScoredCandidate] = pipeline_scored[: count * 3]
-
         # Filter / substitute candidates based on series rules (when enabled)
         apply_series_rules = (
             user_preference_config is None or user_preference_config.series_in_order
@@ -322,18 +319,18 @@ class RecommendationEngine:
 
         if apply_series_rules:
             filtered_candidates = self._apply_series_filtering(
-                top_candidates, pipeline_scored, series_tracking, unconsumed_items
+                pipeline_scored, series_tracking, unconsumed_items
             )
         else:
             logger.info("Series ordering disabled by user preference")
-            filtered_candidates = top_candidates
+            filtered_candidates = pipeline_scored
 
         # Detect adaptations & find contributing reference items
         candidate_metadata, adaptations_map = self._build_candidate_metadata(
             filtered_candidates, all_consumed_items
         )
 
-        # Rank (adaptation bonus, series bonus, preference adjustments)
+        # Rank (adaptation bonus, preference adjustments)
         breakdown_by_id: dict[str | None, dict[str, float]] = {
             meta["item"].id: meta["score_breakdown"] for meta in candidate_metadata
         }
@@ -384,7 +381,6 @@ class RecommendationEngine:
         self,
         all_consumed_items: list[ContentItem],
         content_type: ContentType,
-        count: int,
     ) -> dict[str | None, float]:
         """Pre-compute vector-similarity scores for candidate items.
 
@@ -394,7 +390,6 @@ class RecommendationEngine:
         Args:
             all_consumed_items: All consumed items across content types.
             content_type: Target content type for recommendations.
-            count: Requested recommendation count (influences search breadth).
 
         Returns:
             Mapping of item ID to similarity score. Empty when AI is disabled.
@@ -422,7 +417,6 @@ class RecommendationEngine:
             reference_items=reference_items,
             content_type=content_type,
             exclude_ids=exclude_ids,
-            limit=count * 3,
         )
 
         if similar_candidates:
@@ -431,8 +425,7 @@ class RecommendationEngine:
 
     def _apply_series_filtering(
         self,
-        top_candidates: list[ScoredCandidate],
-        all_scored: list[ScoredCandidate],
+        pipeline_scored: list[ScoredCandidate],
         series_tracking: dict[str, set[int]],
         unconsumed_items: list[ContentItem],
     ) -> list[ScoredCandidate]:
@@ -443,8 +436,7 @@ class RecommendationEngine:
         are recommended Book #1 before Book #3, etc.
 
         Args:
-            top_candidates: Top pipeline-scored candidates to filter.
-            all_scored: All pipeline-scored candidates (for substitute lookup).
+            pipeline_scored: All pipeline-scored candidates, sorted by score.
             series_tracking: Series name to consumed item numbers.
             unconsumed_items: All unconsumed items for substitute search.
 
@@ -452,13 +444,13 @@ class RecommendationEngine:
             Filtered and substituted candidate list.
         """
         scored_by_id: dict[str | None, ScoredCandidate] = {
-            scored.item.id: scored for scored in all_scored
+            scored.item.id: scored for scored in pipeline_scored
         }
         substituted_series: set[str] = set()
         seen_ids: set[str | None] = set()
 
         filtered_candidates: list[ScoredCandidate] = []
-        for scored_candidate in top_candidates:
+        for scored_candidate in pipeline_scored:
             if should_recommend_item(
                 scored_candidate.item,
                 series_tracking,
@@ -503,7 +495,7 @@ class RecommendationEngine:
             logger.warning(
                 "Series filtering removed all candidates, using original candidates"
             )
-            return top_candidates
+            return pipeline_scored
 
         return filtered_candidates
 
