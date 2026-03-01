@@ -4,12 +4,14 @@ from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.recommendations.preferences import PreferenceAnalyzer
 from src.recommendations.scorers import (
     ContentLengthScorer,
+    ContinuationScorer,
     CreatorMatchScorer,
     CustomPreferenceScorer,
     GenreMatchScorer,
     RatingPatternScorer,
     ScoringContext,
     SemanticSimilarityScorer,
+    SeriesAffinityScorer,
     SeriesOrderScorer,
     TagOverlapScorer,
     build_scorers_with_overrides,
@@ -845,3 +847,289 @@ class TestContentLengthScorer:
         """ContentLengthScorer default weight is 1.0."""
         scorer = ContentLengthScorer()
         assert scorer.weight == 1.0
+
+
+# ---------------------------------------------------------------------------
+# ContinuationScorer tests
+# ---------------------------------------------------------------------------
+
+
+class TestContinuationScorer:
+    """Tests for the ContinuationScorer.
+
+    Items with CURRENTLY_CONSUMING status score 1.0; all others score 0.0.
+    Default weight: 1.5.
+    """
+
+    def test_currently_consuming_scores_1(self) -> None:
+        """Items the user is actively consuming should score 1.0."""
+        candidate = make_item(
+            title="Breaking Bad (Season 3)",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.CURRENTLY_CONSUMING,
+        )
+        context = _build_context(consumed=[])
+        scorer = ContinuationScorer()
+        assert scorer.score(candidate, context) == 1.0
+
+    def test_unread_scores_0(self) -> None:
+        """Unread items should score 0.0."""
+        candidate = make_item(
+            title="The Wire (Season 1)",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+        )
+        context = _build_context(consumed=[])
+        scorer = ContinuationScorer()
+        assert scorer.score(candidate, context) == 0.0
+
+    def test_completed_scores_0(self) -> None:
+        """Completed items should score 0.0."""
+        candidate = make_item(
+            title="The Sopranos (Season 1)",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.COMPLETED,
+        )
+        context = _build_context(consumed=[])
+        scorer = ContinuationScorer()
+        assert scorer.score(candidate, context) == 0.0
+
+    def test_default_weight(self) -> None:
+        """ContinuationScorer default weight is 1.5."""
+        scorer = ContinuationScorer()
+        assert scorer.weight == 1.5
+
+    def test_clone(self) -> None:
+        """Cloning preserves type and applies new weight."""
+        scorer = ContinuationScorer(weight=1.5)
+        cloned = scorer.clone(weight=3.0)
+        assert isinstance(cloned, ContinuationScorer)
+        assert cloned.weight == 3.0
+
+    def test_weight_override_to_zero(self) -> None:
+        """Weight is set to 0.0 via build_scorers_with_overrides."""
+        base = [ContinuationScorer(weight=1.5)]
+        result = build_scorers_with_overrides(base, {"continuation": 0.0})
+        assert result[0].weight == 0.0
+
+
+# ---------------------------------------------------------------------------
+# SeriesAffinityScorer tests
+# ---------------------------------------------------------------------------
+
+
+class TestSeriesAffinityScorer:
+    """Tests for the SeriesAffinityScorer.
+
+    Items in a franchise the user has rated well (avg >= 4.0) score 1.0.
+    Items in a franchise with lower ratings score 0.5 (neutral).
+    Items not in a series or in a series with no consumed entries score 0.5.
+    Default weight: 1.0.
+    """
+
+    def test_well_rated_series_scores_1(self) -> None:
+        """Item in a series where user averaged 4+ should score 1.0."""
+        consumed = [
+            make_item(
+                title="Final Fantasy I",
+                content_type=ContentType.VIDEO_GAME,
+                metadata={"series": "Final Fantasy", "series_number": 1},
+                rating=5,
+            ),
+            make_item(
+                title="Final Fantasy V",
+                content_type=ContentType.VIDEO_GAME,
+                metadata={"series": "Final Fantasy", "series_number": 5},
+                rating=4,
+            ),
+        ]
+        candidate = make_item(
+            title="Final Fantasy VII",
+            content_type=ContentType.VIDEO_GAME,
+            metadata={"series": "Final Fantasy", "series_number": 7},
+            status=ConsumptionStatus.UNREAD,
+        )
+        context = _build_context(consumed=consumed)
+        scorer = SeriesAffinityScorer()
+        assert scorer.score(candidate, context) == 1.0
+
+    def test_poorly_rated_series_scores_neutral(self) -> None:
+        """Item in a series where user averaged < 4.0 should score 0.5."""
+        consumed = [
+            make_item(
+                title="Final Fantasy I",
+                content_type=ContentType.VIDEO_GAME,
+                metadata={"series": "Final Fantasy", "series_number": 1},
+                rating=2,
+            ),
+            make_item(
+                title="Final Fantasy V",
+                content_type=ContentType.VIDEO_GAME,
+                metadata={"series": "Final Fantasy", "series_number": 5},
+                rating=3,
+            ),
+        ]
+        candidate = make_item(
+            title="Final Fantasy VII",
+            content_type=ContentType.VIDEO_GAME,
+            metadata={"series": "Final Fantasy", "series_number": 7},
+            status=ConsumptionStatus.UNREAD,
+        )
+        context = _build_context(consumed=consumed)
+        scorer = SeriesAffinityScorer()
+        assert scorer.score(candidate, context) == 0.5
+
+    def test_minimum_rating_scores_neutral(self) -> None:
+        """A single entry rated 1 (minimum) should still score 0.5, not lower.
+
+        SeriesAffinityScorer must never return below 0.5 — it can only
+        boost, not penalize.
+        """
+        consumed = [
+            make_item(
+                title="Dune (Dune, #1)",
+                metadata={"series": "Dune", "series_number": 1},
+                rating=1,
+            ),
+        ]
+        candidate = make_item(
+            title="Dune (Dune, #2)",
+            metadata={"series": "Dune", "series_number": 2},
+            status=ConsumptionStatus.UNREAD,
+        )
+        context = _build_context(consumed=consumed)
+        scorer = SeriesAffinityScorer()
+        assert scorer.score(candidate, context) == 0.5
+
+    def test_no_consumed_entries_scores_neutral(self) -> None:
+        """Item in a series with no consumed entries should score 0.5."""
+        candidate = make_item(
+            title="Final Fantasy VII",
+            content_type=ContentType.VIDEO_GAME,
+            metadata={"series": "Final Fantasy", "series_number": 7},
+            status=ConsumptionStatus.UNREAD,
+        )
+        context = _build_context(consumed=[])
+        scorer = SeriesAffinityScorer()
+        assert scorer.score(candidate, context) == 0.5
+
+    def test_consumed_but_unrated_series_scores_neutral(self) -> None:
+        """Item in a series where all consumed entries lack ratings should score 0.5.
+
+        series_ratings is only populated when item.rating is not None.
+        A consumed but unrated entry creates a series_tracking key but no
+        series_ratings key, so the scorer falls through to the neutral path.
+        """
+        consumed = [
+            make_item(
+                title="Dune (Dune, #1)",
+                metadata={"series": "Dune", "series_number": 1},
+                rating=None,
+            ),
+        ]
+        candidate = make_item(
+            title="Dune (Dune, #2)",
+            metadata={"series": "Dune", "series_number": 2},
+            status=ConsumptionStatus.UNREAD,
+        )
+        context = _build_context(consumed=consumed)
+        scorer = SeriesAffinityScorer()
+        assert scorer.score(candidate, context) == 0.5
+
+    def test_not_in_series_scores_neutral(self) -> None:
+        """Item not in any series should score 0.5."""
+        candidate = make_item(
+            title="Standalone Game",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+        )
+        context = _build_context(consumed=[])
+        scorer = SeriesAffinityScorer()
+        assert scorer.score(candidate, context) == 0.5
+
+    def test_exactly_4_average_scores_1(self) -> None:
+        """Boundary: average rating of exactly 4.0 should score 1.0."""
+        consumed = [
+            make_item(
+                title="Dune (Dune, #1)",
+                metadata={"series": "Dune", "series_number": 1},
+                rating=4,
+            ),
+        ]
+        candidate = make_item(
+            title="Dune (Dune, #2)",
+            metadata={"series": "Dune", "series_number": 2},
+            status=ConsumptionStatus.UNREAD,
+        )
+        context = _build_context(consumed=consumed)
+        scorer = SeriesAffinityScorer()
+        assert scorer.score(candidate, context) == 1.0
+
+    def test_just_below_4_average_scores_neutral(self) -> None:
+        """Average rating just below 4.0 should score 0.5."""
+        consumed = [
+            make_item(
+                title="Dune (Dune, #1)",
+                metadata={"series": "Dune", "series_number": 1},
+                rating=3,
+            ),
+            make_item(
+                title="Dune (Dune, #2)",
+                metadata={"series": "Dune", "series_number": 2},
+                rating=4,
+            ),
+        ]
+        candidate = make_item(
+            title="Dune (Dune, #3)",
+            metadata={"series": "Dune", "series_number": 3},
+            status=ConsumptionStatus.UNREAD,
+        )
+        context = _build_context(consumed=consumed)
+        scorer = SeriesAffinityScorer()
+        # avg is 3.5, below 4.0
+        assert scorer.score(candidate, context) == 0.5
+
+    def test_unrated_consumed_entries_excluded_from_average(self) -> None:
+        """Unrated consumed entries should not drag down the series average."""
+        consumed = [
+            make_item(
+                title="Final Fantasy I",
+                content_type=ContentType.VIDEO_GAME,
+                metadata={"series": "Final Fantasy", "series_number": 1},
+                rating=5,
+            ),
+            make_item(
+                title="Final Fantasy II",
+                content_type=ContentType.VIDEO_GAME,
+                metadata={"series": "Final Fantasy", "series_number": 2},
+                rating=None,
+            ),
+        ]
+        candidate = make_item(
+            title="Final Fantasy VII",
+            content_type=ContentType.VIDEO_GAME,
+            metadata={"series": "Final Fantasy", "series_number": 7},
+            status=ConsumptionStatus.UNREAD,
+        )
+        context = _build_context(consumed=consumed)
+        scorer = SeriesAffinityScorer()
+        # Only the rated entry (5) counts; average is 5.0 >= 4.0 -> 1.0
+        assert scorer.score(candidate, context) == 1.0
+
+    def test_default_weight(self) -> None:
+        """SeriesAffinityScorer default weight is 1.0."""
+        scorer = SeriesAffinityScorer()
+        assert scorer.weight == 1.0
+
+    def test_clone(self) -> None:
+        """Cloning preserves type and applies new weight."""
+        scorer = SeriesAffinityScorer(weight=1.0)
+        cloned = scorer.clone(weight=2.5)
+        assert isinstance(cloned, SeriesAffinityScorer)
+        assert cloned.weight == 2.5
+
+    def test_weight_override_to_zero(self) -> None:
+        """Weight is set to 0.0 via build_scorers_with_overrides."""
+        base = [SeriesAffinityScorer(weight=1.0)]
+        result = build_scorers_with_overrides(base, {"series_affinity": 0.0})
+        assert result[0].weight == 0.0

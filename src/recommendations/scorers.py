@@ -13,7 +13,7 @@ from abc import ABC, abstractmethod
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-from src.models.content import ContentItem, ContentType
+from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.recommendations.content_length import score_length_match
 from src.recommendations.genre_clusters import get_clusters_for_terms
 from src.recommendations.genre_normalizer import extract_and_normalize_genres
@@ -58,6 +58,20 @@ def extract_creator(item: ContentItem) -> str | None:
             if value:
                 return str(value).lower()
     return None
+
+
+def _average_series_rating(series_ratings: list[int]) -> float | None:
+    """Return the average of *series_ratings*, or ``None`` if the list is empty.
+
+    Args:
+        series_ratings: List of integer ratings for a series.
+
+    Returns:
+        Average as a float, or ``None`` when no ratings are available.
+    """
+    if not series_ratings:
+        return None
+    return sum(series_ratings) / len(series_ratings)
 
 
 @dataclass
@@ -348,13 +362,11 @@ class SeriesOrderScorer(Scorer):
         Returns:
             Score between 0.7 and 1.0 based on average rating of series
         """
-        series_ratings = context.series_ratings.get(series_name, [])
+        avg_rating = _average_series_rating(context.series_ratings.get(series_name, []))
 
-        if not series_ratings:
+        if avg_rating is None:
             # No ratings available, use base score
             return 0.85
-
-        avg_rating = sum(series_ratings) / len(series_ratings)
 
         # Map average rating to score:
         # 4-5 stars -> 1.0 (highly enjoyed, definitely continue)
@@ -507,9 +519,52 @@ class CustomPreferenceScorer(Scorer):
         return 0.5  # Neutral when no rules match
 
 
-# ---------------------------------------------------------------------------
-# Default scorer set
-# ---------------------------------------------------------------------------
+class ContinuationScorer(Scorer):
+    """Boost items the user is actively consuming.
+
+    Items with status CURRENTLY_CONSUMING (e.g., a TV show season being
+    watched) score 1.0; all others score 0.0.
+
+    Weight default: 1.5
+    """
+
+    def __init__(self, weight: float = 1.5) -> None:
+        super().__init__(weight)
+
+    def score(self, candidate: ContentItem, context: ScoringContext) -> float:
+        if candidate.status == ConsumptionStatus.CURRENTLY_CONSUMING:
+            return 1.0
+        return 0.0
+
+
+class SeriesAffinityScorer(Scorer):
+    """Boost items in a franchise the user has rated well.
+
+    If the user has consumed entries in the same series and their average
+    rating is >= 4.0, the candidate scores 1.0.  Otherwise returns 0.5
+    (neutral) so unrelated items are not penalised.
+
+    Weight default: 1.0
+    """
+
+    def __init__(self, weight: float = 1.0) -> None:
+        super().__init__(weight)
+
+    def score(self, candidate: ContentItem, context: ScoringContext) -> float:
+        series_info = extract_series_info(
+            candidate.title, candidate.metadata, candidate.content_type
+        )
+        if series_info is None:
+            return 0.5  # not in a series – neutral
+
+        series_name, _ = series_info
+        avg_rating = _average_series_rating(context.series_ratings.get(series_name, []))
+        if avg_rating is None:
+            return 0.5  # no consumed entries in this series – neutral
+
+        if avg_rating >= 4.0:
+            return 1.0
+        return 0.5
 
 
 class ContentLengthScorer(Scorer):
@@ -530,6 +585,10 @@ class ContentLengthScorer(Scorer):
         return score_length_match(candidate, context.content_length_preferences)
 
 
+# ---------------------------------------------------------------------------
+# Default scorer set
+# ---------------------------------------------------------------------------
+
 DEFAULT_SCORERS: list[Scorer] = [
     GenreMatchScorer(),
     CreatorMatchScorer(),
@@ -537,6 +596,8 @@ DEFAULT_SCORERS: list[Scorer] = [
     SeriesOrderScorer(),
     RatingPatternScorer(),
     ContentLengthScorer(),
+    ContinuationScorer(),
+    SeriesAffinityScorer(),
 ]
 
 
@@ -553,6 +614,8 @@ SCORER_NAME_MAP: dict[str, type[Scorer]] = {
     "semantic_similarity": SemanticSimilarityScorer,
     "custom_preference": CustomPreferenceScorer,
     "content_length": ContentLengthScorer,
+    "continuation": ContinuationScorer,
+    "series_affinity": SeriesAffinityScorer,
 }
 
 

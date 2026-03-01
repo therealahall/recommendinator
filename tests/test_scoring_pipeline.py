@@ -136,6 +136,8 @@ class TestScoringPipeline:
         assert "tag_overlap" in scored.score_breakdown
         assert "series_order" in scored.score_breakdown
         assert "rating_pattern" in scored.score_breakdown
+        assert "continuation" in scored.score_breakdown
+        assert "series_affinity" in scored.score_breakdown
         # All raw scores should be in [0, 1]
         for raw_score in scored.score_breakdown.values():
             assert 0.0 <= raw_score <= 1.0

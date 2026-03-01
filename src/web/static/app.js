@@ -170,7 +170,7 @@
                 }
 
                 // Hide AI-dependent UI elements when disabled
-                updateAiReasoningVisibility();
+                updateAiButtonVisibility();
                 updateChatTabVisibility();
             })
             .catch(function () {
@@ -180,17 +180,13 @@
             });
     }
 
-    function updateAiReasoningVisibility() {
-        var aiReasoningContainer = document.getElementById("recUseLlm");
-        if (aiReasoningContainer) {
-            var container = aiReasoningContainer.closest(".checkbox-label");
-            if (container) {
-                if (!aiFeatures.ai_enabled || !aiFeatures.llm_reasoning_enabled) {
-                    container.style.display = "none";
-                    aiReasoningContainer.checked = false;
-                } else {
-                    container.style.display = "";
-                }
+    function updateAiButtonVisibility() {
+        var aiBtn = document.getElementById("recAiBtn");
+        if (aiBtn) {
+            if (!aiFeatures.ai_enabled || !aiFeatures.llm_reasoning_enabled) {
+                aiBtn.style.display = "none";
+            } else {
+                aiBtn.style.display = "";
             }
         }
     }
@@ -277,17 +273,23 @@
     // -----------------------------------------------------------------------
 
     function setupRecommendationForm() {
-        var form = document.getElementById("recForm");
-        form.addEventListener("submit", function (event) {
-            event.preventDefault();
-            fetchRecommendations();
-        });
+        var quickBtn = document.getElementById("recQuickBtn");
+        var aiBtn = document.getElementById("recAiBtn");
+        if (quickBtn) {
+            quickBtn.addEventListener("click", function () {
+                fetchRecommendations(false);
+            });
+        }
+        if (aiBtn) {
+            aiBtn.addEventListener("click", function () {
+                fetchRecommendations(true);
+            });
+        }
     }
 
-    function fetchRecommendations() {
+    function fetchRecommendations(useLlm) {
         var contentType = document.getElementById("recType").value;
         var count = document.getElementById("recCount").value;
-        var useLlm = document.getElementById("recUseLlm").checked;
         var resultsDiv = document.getElementById("recResults");
 
         resultsDiv.innerHTML = '<div class="empty-state"><span class="spinner"></span> Loading recommendations...</div>';
@@ -811,7 +813,9 @@
         "tag_overlap",
         "series_order",
         "rating_pattern",
-        "semantic_similarity"
+        "semantic_similarity",
+        "continuation",
+        "series_affinity"
     ];
 
     function loadPreferences() {
@@ -844,7 +848,9 @@
             tag_overlap: 1.0,
             series_order: 1.5,
             rating_pattern: 1.0,
-            semantic_similarity: 1.5
+            semantic_similarity: 1.5,
+            continuation: 1.5,
+            series_affinity: 1.0
         };
 
         scorerKeys.forEach(function (key) {
