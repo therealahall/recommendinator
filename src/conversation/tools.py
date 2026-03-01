@@ -160,6 +160,12 @@ CONVERSATION_TOOLS = [
 ]
 
 
+# tool["name"] is str but typed Any due to dict[str, Any] — str() cast for mypy
+_VALID_TOOL_NAMES: frozenset[str] = frozenset(
+    str(tool["name"]) for tool in CONVERSATION_TOOLS
+)
+
+
 def get_tool_descriptions() -> str:
     """Get formatted tool descriptions for inclusion in prompts.
 
@@ -583,6 +589,8 @@ def parse_tool_call_from_text(text: str) -> tuple[str | None, dict[str, Any] | N
                     tool_name = (
                         data.get("tool") or data.get("function") or data.get("name")
                     )
+                    if tool_name not in _VALID_TOOL_NAMES:
+                        return None, None
                     params = (
                         data.get("params")
                         or data.get("arguments")
@@ -620,6 +628,8 @@ def parse_tool_call_from_text(text: str) -> tuple[str | None, dict[str, Any] | N
                     tool_name = (
                         data.get("tool") or data.get("function") or data.get("name")
                     )
+                    if tool_name not in _VALID_TOOL_NAMES:
+                        return None, None
                     params = (
                         data.get("params")
                         or data.get("arguments")
