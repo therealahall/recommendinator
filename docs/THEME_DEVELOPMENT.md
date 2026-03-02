@@ -37,67 +37,70 @@ All fields are required.
 
 ## CSS Color Variables
 
-Override these variables in `colors.css` using a `:root` selector. You only need to override the variables you want to change — unset variables keep their Nord defaults.
+Override these variables in `colors.css` using a `:root` selector. You only need to override the variables you want to change — unset variables keep their dark-theme defaults.
 
 ### Background Colors
 
-| Variable | Default (Nord) | Description |
-|----------|---------------|-------------|
-| `--nord0` | `#2e3440` | Base background reference |
-| `--nord1` | `#3b4252` | Card background reference |
-| `--nord2` | `#434c5e` | Elevated/hover background reference |
-| `--nord3` | `#4c566a` | Border reference |
-| `--bg-primary` | `var(--nord0)` | Page background |
-| `--bg-card` | `var(--nord1)` | Card backgrounds |
-| `--bg-sidebar` | `var(--nord0)` | Sidebar background |
-| `--bg-elevated` | `var(--nord2)` | Elevated surfaces |
-| `--bg-input` | `var(--nord0)` | Input field backgrounds |
-| `--bg-hover` | `var(--nord2)` | Hover state backgrounds |
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `--bg-primary` | `#2e3440` | Page background |
+| `--bg-card` | `#3b4252` | Card backgrounds |
+| `--bg-sidebar` | `#2e3440` | Sidebar background |
+| `--bg-elevated` | `#434c5e` | Elevated surfaces |
+| `--bg-input` | `#2e3440` | Input field backgrounds |
+| `--bg-hover` | `#434c5e` | Hover state backgrounds |
+| `--bg-secondary` | `#3b4252` | Secondary surfaces (code blocks) |
+| `--bg-active` | `color-mix(in srgb, var(--accent) 20%, transparent)` | Active/selected state (auto-derived from accent) |
 
 ### Text Colors
 
-| Variable | Default (Nord) | Description |
-|----------|---------------|-------------|
-| `--nord4` | `#d8dee9` | Secondary text reference |
-| `--nord5` | `#e5e9f0` | Body text reference |
-| `--nord6` | `#eceff4` | Primary text reference |
-| `--text-primary` | `var(--nord6)` | Primary text |
-| `--text-secondary` | `var(--nord4)` | Secondary/dimmer text |
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `--text-primary` | `#eceff4` | Primary text |
+| `--text-secondary` | `#d8dee9` | Secondary/dimmer text |
 | `--text-muted` | `#97abbe` | Muted/label text |
-| `--text-inverse` | `var(--nord0)` | Text on accent backgrounds |
+| `--text-inverse` | `#2e3440` | Text on accent backgrounds |
 
 ### Accent Colors
 
-| Variable | Default (Nord) | Description |
-|----------|---------------|-------------|
+| Variable | Default | Description |
+|----------|---------|-------------|
 | `--accent` | `#81a1c1` | Primary accent (buttons, links, active states) |
 | `--accent-light` | `#88c0d0` | Light accent (highlights, ratings) |
 | `--accent-teal` | `#8fbcbb` | Teal accent (supplementary) |
 
 ### Border Colors
 
-| Variable | Default (Nord) | Description |
-|----------|---------------|-------------|
-| `--border-default` | `var(--nord3)` | Standard borders |
-| `--border-subtle` | `var(--nord2)` | Subtle/secondary borders |
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `--border-default` | `#4c566a` | Standard borders |
+| `--border-subtle` | `#434c5e` | Subtle/secondary borders |
 | `--border-focus` | `var(--accent)` | Focus ring color |
 
 ### Semantic Colors
 
-| Variable | Default (Nord) | Description |
-|----------|---------------|-------------|
+| Variable | Default | Description |
+|----------|---------|-------------|
 | `--color-success` | `#a3be8c` | Success states (completed, unignore) |
 | `--color-warning` | `#ebcb8b` | Warning states (unread badges) |
 | `--color-error` | `#bf616a` | Error states (danger buttons, failures) |
 | `--color-info` | `var(--accent)` | Info states (loading, sync) |
 
+### Overlay Colors
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `--overlay-dark` | `rgba(0, 0, 0, 0.6)` | Modal backdrop overlays |
+| `--overlay-medium` | `rgba(0, 0, 0, 0.5)` | Sidebar mobile overlay |
+
 ### Shadow Variables
 
-| Variable | Default (Nord) | Description |
-|----------|---------------|-------------|
-| `--shadow-sm` | `0 1px 2px rgba(0,0,0,0.3)` | Small shadow |
-| `--shadow-md` | `0 2px 8px rgba(0,0,0,0.3)` | Medium shadow |
-| `--shadow-lg` | `0 4px 16px rgba(0,0,0,0.4)` | Large shadow |
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `--shadow-sm` | `0 1px 2px rgba(0, 0, 0, 0.3)` | Small shadow |
+| `--shadow-md` | `0 2px 8px rgba(0, 0, 0, 0.3)` | Medium shadow |
+| `--shadow-lg` | `0 4px 16px rgba(0, 0, 0, 0.4)` | Large shadow |
+| `--shadow-tooltip` | `0 4px 12px rgba(0, 0, 0, 0.25)` | Tooltip shadow |
 
 ## How color-mix() Works
 

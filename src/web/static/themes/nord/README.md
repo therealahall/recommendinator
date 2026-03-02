@@ -4,10 +4,10 @@ The default dark theme based on the [Nord color palette](https://www.nordtheme.c
 
 ## Colors
 
-- **Backgrounds:** Polar Night (nord0-nord3)
-- **Text:** Snow Storm (nord4-nord6)
-- **Accents:** Frost (nord7-nord10)
-- **Semantic:** Aurora (nord11-nord14)
+- **Backgrounds:** Dark navy and charcoal
+- **Text:** Light snow-white tones
+- **Accents:** Frost blues and teals
+- **Semantic:** Aurora greens, yellows, and reds
 
 ## Notes
 

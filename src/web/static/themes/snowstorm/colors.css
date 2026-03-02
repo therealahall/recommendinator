@@ -1,19 +1,8 @@
 /* Snowstorm — Light Theme
-   Inverts the Nord palette: Snow Storm for backgrounds, Polar Night for text.
-   Accent and Aurora colors adjusted for white-background readability. */
+   Inverts the default dark palette: light backgrounds, dark text.
+   Accent and semantic colors adjusted for white-background readability. */
 
 :root {
-    /* Nord Polar Night — repurposed as text */
-    --nord0: #eceff4;
-    --nord1: #e5e9f0;
-    --nord2: #d8dee9;
-    --nord3: #c0c8d4;
-
-    /* Nord Snow Storm — repurposed as backgrounds */
-    --nord4: #4c566a;
-    --nord5: #3b4252;
-    --nord6: #2e3440;
-
     /* Frost accents — deeper for contrast on white */
     --accent: #5e81ac;
     --accent-light: #5490a3;
@@ -26,6 +15,7 @@
     --bg-elevated: #e5e9f0;
     --bg-input: #ffffff;
     --bg-hover: #dde2ea;
+    --bg-secondary: #e5e9f0;
 
     /* Text */
     --text-primary: #2e3440;
@@ -38,14 +28,19 @@
     --border-subtle: #d8dee9;
     --border-focus: var(--accent);
 
-    /* Aurora — adjusted for light backgrounds */
+    /* Semantic colors — adjusted for light backgrounds */
     --color-success: #5a8a4a;
     --color-warning: #bf8c20;
     --color-error: #b04850;
     --color-info: var(--accent);
 
+    /* Overlays — lighter for light theme */
+    --overlay-dark: rgba(0, 0, 0, 0.4);
+    --overlay-medium: rgba(0, 0, 0, 0.3);
+
     /* Shadows (lighter for light theme) */
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.08);
     --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.1);
     --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.12);
+    --shadow-tooltip: 0 4px 12px rgba(0, 0, 0, 0.08);
 }
