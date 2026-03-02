@@ -68,7 +68,7 @@
 
         // Validate against known themes when cache is available
         if (cachedThemes && cachedThemes.length > 0) {
-            var known = cachedThemes.some(function (t) { return t.id === themeId; });
+            var known = cachedThemes.some(function (theme) { return theme.id === themeId; });
             if (!known) return;
         }
 
@@ -83,18 +83,18 @@
             fetch(API_BASE + "/themes/default").then(function (response) { return response.json(); })
         ])
             .then(function (results) {
-                var themes = results[0];
-                var defaultData = results[1];
+                var themeList = results[0];
+                var defaultThemeData = results[1];
 
-                if (!themes || themes.length === 0) return;
+                if (!themeList || themeList.length === 0) return;
 
-                cachedThemes = themes;
-                cachedDefaultTheme = defaultData.theme || "nord";
+                cachedThemes = themeList;
+                cachedDefaultTheme = defaultThemeData.theme || "nord";
 
                 // Apply config default if no localStorage preference
                 var storedTheme = localStorage.getItem("theme");
-                if (!storedTheme && defaultData.theme) {
-                    applyTheme(defaultData.theme);
+                if (!storedTheme && defaultThemeData.theme) {
+                    applyTheme(defaultThemeData.theme);
                 }
             })
             .catch(function () {
@@ -704,15 +704,21 @@
 
         var html = '<div class="library-grid">';
         items.forEach(function (item) {
+            var dbId = parseInt(item.db_id, 10);
+            var hasValidId = !isNaN(dbId);
+            if (!hasValidId) {
+                console.warn("renderLibrary: non-integer db_id for item", item.title);
+                dbId = 0;
+            }
             var ignoredClass = item.ignored ? " ignored" : "";
-            html += '<div class="library-item' + ignoredClass + '" data-db-id="' + (item.db_id || "") + '">';
+            html += '<div class="library-item' + ignoredClass + '" data-db-id="' + dbId + '">';
             html += '<h3>' + escapeHtml(item.title) + '</h3>';
             if (item.author) {
                 html += '<div class="item-author">' + escapeHtml(item.author) + '</div>';
             }
             html += '<div class="library-item-badges">';
             html += '<span class="badge badge-type">' + formatContentType(item.content_type) + '</span>';
-            html += '<span class="badge badge-status ' + item.status + '">' + formatStatus(item.status, item.content_type) + '</span>';
+            html += '<span class="badge badge-status ' + safeStatusClass(item.status) + '">' + formatStatus(item.status, item.content_type) + '</span>';
             if (item.rating) {
                 html += '<span class="badge badge-rating">' + renderStars(item.rating) + '</span>';
             }
@@ -720,12 +726,12 @@
                 html += '<span class="badge badge-ignored">Ignored</span>';
             }
             html += '</div>';
-            if (item.db_id) {
+            if (hasValidId) {
                 var ignoreLabel = item.ignored ? "Unignore" : "Ignore";
                 var ignoreClass = item.ignored ? "btn-unignore" : "btn-ignore";
                 html += '<div class="library-item-actions">';
-                html += '<button class="btn btn-small btn-secondary edit-lib-btn" data-db-id="' + item.db_id + '" title="Edit this item">Edit</button>';
-                html += '<button class="btn btn-small ' + ignoreClass + ' ignore-lib-btn" data-db-id="' + item.db_id + '" data-ignored="' + (item.ignored ? "true" : "false") + '" title="' + ignoreLabel + ' this item">' + ignoreLabel + '</button>';
+                html += '<button class="btn btn-small btn-secondary edit-lib-btn" data-db-id="' + dbId + '" title="Edit this item">Edit</button>';
+                html += '<button class="btn btn-small ' + ignoreClass + ' ignore-lib-btn" data-db-id="' + dbId + '" data-ignored="' + (item.ignored ? "true" : "false") + '" title="' + ignoreLabel + ' this item">' + ignoreLabel + '</button>';
                 html += '</div>';
             }
             html += '</div>';
@@ -764,7 +770,7 @@
             tv_show: "TV Show",
             video_game: "Video Game"
         };
-        return map[type] || type;
+        return map[type] || escapeHtml(type);
     }
 
     function formatStatus(status, contentType) {
@@ -785,7 +791,13 @@
             }
             return "Unread";  // books and default
         }
-        return status;
+        return escapeHtml(status);
+    }
+
+    function safeStatusClass(status) {
+        // Must match ConsumptionStatus enum in src/models/content_item.py
+        var valid = ["unread", "currently_consuming", "completed"];
+        return valid.indexOf(status) >= 0 ? status : "unknown";
     }
 
     function renderStars(rating) {
@@ -836,6 +848,7 @@
         // Appearance section (theme selector) — built via DOM methods to avoid
         // attribute-context escaping issues with innerHTML string concatenation
         var appearanceSection = null;
+        var themeSelect = null;
         if (cachedThemes && cachedThemes.length > 0) {
             var activeTheme = localStorage.getItem("theme") || cachedDefaultTheme || "nord";
             appearanceSection = document.createElement("div");
@@ -853,7 +866,7 @@
             label.textContent = "Theme";
             row.appendChild(label);
 
-            var themeSelect = document.createElement("select");
+            themeSelect = document.createElement("select");
             themeSelect.className = "theme-select";
             themeSelect.id = "prefThemeSelect";
             cachedThemes.forEach(function (theme) {
@@ -987,7 +1000,6 @@
         // Prepend appearance section (built via DOM) and attach listener
         if (appearanceSection) {
             container.insertBefore(appearanceSection, container.firstChild);
-            var themeSelect = document.getElementById("prefThemeSelect");
             themeSelect.addEventListener("change", function () {
                 applyTheme(themeSelect.value);
             });
@@ -1618,9 +1630,17 @@
                     }
                     if (btn) btn.disabled = true;
                     if (statusDiv) {
-                        var progress = status.items_processed + "/" + status.total_items;
-                        var current = status.current_item ? " - " + status.current_item : "";
-                        statusDiv.innerHTML = '<span class="spinner"></span> Enriching ' + progress + current;
+                        var processed = parseInt(status.items_processed, 10) || 0;
+                        var total = parseInt(status.total_items, 10) || 0;
+                        var progressText = " Enriching " + processed + "/" + total;
+                        if (status.current_item) {
+                            progressText += " - " + status.current_item;
+                        }
+                        statusDiv.textContent = "";
+                        var spinner = document.createElement("span");
+                        spinner.className = "spinner";
+                        statusDiv.appendChild(spinner);
+                        statusDiv.appendChild(document.createTextNode(progressText));
                     }
                     loadEnrichmentStats();
                 } else if (status.completed || status.cancelled) {
@@ -1629,15 +1649,21 @@
                     if (btn) btn.disabled = false;
                     if (statusDiv && status.items_processed > 0) {
                         var msg = status.cancelled ? "Enrichment cancelled" : "Enrichment complete";
-                        msg += ": " + status.items_enriched + " enriched, " + status.items_not_found + " not found";
-                        statusDiv.innerHTML = '<span class="text-success">' + msg + '</span>';
+                        var enriched = parseInt(status.items_enriched, 10) || 0;
+                        var notFound = parseInt(status.items_not_found, 10) || 0;
+                        msg += ": " + enriched + " enriched, " + notFound + " not found";
+                        statusDiv.textContent = "";
+                        var successSpan = document.createElement("span");
+                        successSpan.className = "text-success";
+                        successSpan.textContent = msg;
+                        statusDiv.appendChild(successSpan);
                     }
                     loadEnrichmentStats();
                 } else {
                     // Idle - stop polling
                     stopEnrichmentPolling();
                     if (btn) btn.disabled = false;
-                    if (statusDiv) statusDiv.innerHTML = "";
+                    if (statusDiv) statusDiv.textContent = "";
                 }
             })
             .catch(function (error) {
@@ -2078,7 +2104,7 @@
         var badges = card.querySelector(".library-item-badges");
         if (badges) {
             var badgeHtml = '<span class="badge badge-type">' + formatContentType(updatedItem.content_type) + '</span>';
-            badgeHtml += '<span class="badge badge-status ' + updatedItem.status + '">' + formatStatus(updatedItem.status, updatedItem.content_type) + '</span>';
+            badgeHtml += '<span class="badge badge-status ' + safeStatusClass(updatedItem.status) + '">' + formatStatus(updatedItem.status, updatedItem.content_type) + '</span>';
             if (updatedItem.rating) {
                 badgeHtml += '<span class="badge badge-rating">' + renderStars(updatedItem.rating) + '</span>';
             }
@@ -2400,7 +2426,7 @@
             appendText(data.content);
             scrollChatToBottom();
         } else if (data.type === "tool_call") {
-            addToolIndicator(data.tool, "executing");
+            addToolIndicator(data.tool);
         } else if (data.type === "tool_result") {
             updateToolIndicator(data.tool, data.result);
             // Refresh memories if relevant tool was called
@@ -2451,28 +2477,37 @@
         return el;
     }
 
-    function addToolIndicator(toolName, status) {
+    function addToolIndicator(toolName) {
         var messagesEl = document.getElementById("chatMessages");
         var el = document.createElement("div");
         el.className = "tool-indicator";
         el.dataset.tool = toolName;
 
-        var text = formatToolName(toolName);
-        el.innerHTML = '<span class="tool-icon">&#9881;</span> ' + text + '...';
+        var icon = document.createElement("span");
+        icon.className = "tool-icon";
+        icon.textContent = "\u2699";
+        el.appendChild(icon);
+        el.appendChild(document.createTextNode(" " + formatToolName(toolName) + "..."));
 
         messagesEl.appendChild(el);
         scrollChatToBottom();
     }
 
     function updateToolIndicator(toolName, result) {
-        var indicators = document.querySelectorAll('.tool-indicator[data-tool="' + toolName + '"]');
-        indicators.forEach(function (el) {
+        document.querySelectorAll(".tool-indicator").forEach(function (el) {
+            if (el.dataset.tool !== toolName) return;
+            el.textContent = "";
+            el.classList.remove("success");
+            var icon = document.createElement("span");
+            icon.className = "tool-icon";
             if (result && result.success) {
                 el.classList.add("success");
-                el.innerHTML = '<span class="tool-icon">&#10003;</span> ' + result.message;
+                icon.textContent = "\u2713";
             } else {
-                el.innerHTML = '<span class="tool-icon">&#10007;</span> ' + (result ? result.message : "Failed");
+                icon.textContent = "\u2717";
             }
+            el.appendChild(icon);
+            el.appendChild(document.createTextNode(" " + (result ? result.message : "Failed")));
         });
     }
 
@@ -2542,17 +2577,22 @@
         }
 
         container.innerHTML = memories.map(function (m) {
+            var memId = parseInt(m.id, 10);
+            if (isNaN(memId)) {
+                console.warn("renderMemories: skipping memory with non-integer id", m.id);
+                return "";
+            }
             var typeClass = m.memory_type === "user_stated" ? "user-stated" : "inferred";
             var inactiveClass = m.is_active ? "" : " inactive";
             var typeLabel = m.memory_type === "user_stated" ? "Stated" : "Inferred";
 
-            return '<div class="memory-item ' + typeClass + inactiveClass + '" data-id="' + m.id + '">' +
+            return '<div class="memory-item ' + typeClass + inactiveClass + '" data-id="' + memId + '">' +
                 '<div class="memory-text">' + escapeHtml(m.memory_text) + '</div>' +
                 '<div class="memory-meta">' +
                 '<span class="memory-type">' + typeLabel + '</span>' +
                 '<div class="memory-actions">' +
-                '<button data-action="toggleMemory" data-memory-id="' + m.id + '" data-is-active="' + m.is_active + '">' + (m.is_active ? "Disable" : "Enable") + '</button>' +
-                '<button class="delete" data-action="deleteMemory" data-memory-id="' + m.id + '">Delete</button>' +
+                '<button data-action="toggleMemory" data-memory-id="' + memId + '" data-is-active="' + m.is_active + '">' + (m.is_active ? "Disable" : "Enable") + '</button>' +
+                '<button class="delete" data-action="deleteMemory" data-memory-id="' + memId + '">Delete</button>' +
                 '</div></div></div>';
         }).join("");
     }
