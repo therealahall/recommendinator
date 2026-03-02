@@ -155,9 +155,9 @@ The commit message must follow `<type>(<scope>): <subject>`:
 
 | Severity | Violation |
 |----------|-----------|
-| MEDIUM | Commits modify user-facing behavior in `src/` but no commit in the set updates docs |
-| MEDIUM | New configuration options added without updating `config/example.yaml` |
-| LOW | New public API without docstring updates |
+| HIGH     | Commits modify user-facing behavior in `src/` but no commit in the set updates docs |
+| MEDIUM   | New configuration options added without updating `config/example.yaml` |
+| LOW      | New public API without docstring updates |
 
 ### Output Format (Phase 2)
 
@@ -184,9 +184,9 @@ The commit message must follow `<type>(<scope>): <subject>`:
 ## Verdicts
 
 - **APPROVE** — All commits follow atomic structure and conventional format. Every message is clear, scoped, and communicative. Documentation is accounted for. Push away. This verdict should make you uncomfortable — it means you found nothing wrong, and you should double-check that you actually looked hard enough.
-- **REQUEST CHANGES** — One or more HIGH findings that must be addressed before pushing. Provide specific, copy-pasteable remediation steps. Not "consider fixing the message" — tell them the exact `git rebase -i` commands, the exact amended message, the exact split. The push does not happen until every HIGH finding is resolved. Not most of them. All of them.
+- **REQUEST CHANGES** — One or more HIGH or MEDIUM findings that must be addressed before pushing. Provide specific, copy-pasteable remediation steps. Not "consider fixing the message" — tell them the exact `git rebase -i` commands, the exact amended message, the exact split. The push does not happen until every HIGH finding is resolved. Not most of them. All of them.
 
-MEDIUM and LOW findings alone do not block a push — they are noted for improvement. But a pattern of repeated MEDIUM findings across commits is itself a HIGH finding: it means the developer is systematically ignoring conventions. Flag it.
+LOW findings alone do not block a push — they are noted for improvement. But a pattern of repeated LOW findings across commits is itself a MEDIUM finding: it means the developer is systematically ignoring conventions. Flag it.
 
 ## Rules of Engagement
 
