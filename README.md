@@ -15,18 +15,21 @@ Most recommendation systems are black boxes that harvest your data. This one:
 
 ### Core Features (No AI Required)
 
-- **Multi-source ingestion** — Import from Goodreads, Steam, Sonarr, Radarr, or generic CSV/JSON/Markdown files
+- **Multi-source ingestion** — Import from Goodreads, Steam, GOG, Epic Games, Sonarr, Radarr, or generic CSV/JSON/Markdown files
 - **Cross-content recommendations** — Your love of sci-fi books influences game and movie suggestions via semantic genre clusters that bridge different vocabularies
 - **Smart scoring pipeline** — Genre matching, creator preferences, series order, cluster-aware tag overlap, rating patterns
 - **Custom rules** — Natural language preferences like "avoid horror" or "prefer short books"
 - **Content length filtering** — Prefer short books, long games, any movie length
 - **Multi-user support** — Each user gets their own preferences and history
+- **Metadata enrichment** — Automatically fills in missing metadata from TMDB, OpenLibrary, and RAWG
+- **Themeable web UI** — Ships with Nord and Snowstorm themes, or create your own
 - **Dual interface** — CLI for automation, web UI for browsing
 
 ### Optional AI Features (Opt-In)
 
 When you enable AI with a local Ollama instance:
 
+- **Conversational chat** — Ask questions about your library, get recommendations through natural conversation with memory and user profiling
 - **Semantic similarity** — Find content similar in meaning, not just tags
 - **LLM reasoning** — Natural language explanations for recommendations
 - **Smart rule interpretation** — LLM understands complex preference rules
@@ -115,7 +118,7 @@ The easiest way to connect your GOG account:
        enabled: true
    ```
 
-2. Start the web server and go to the **Sync** tab
+2. Start the web server and go to the **Data** tab
 3. Follow the "Connect GOG Account" wizard - it handles the OAuth flow for you
 
 **Option 2: Manual Setup**
@@ -211,6 +214,11 @@ recommendations:
     series_order: 1.5
     tag_overlap: 1.0
     rating_pattern: 1.0
+    content_length: 1.0
+    continuation: 2.0
+    series_affinity: 1.0
+    custom_preference: 1.0
+    semantic_similarity: 1.0  # AI only
 
 # Per-user diversity bonus (set in user preferences, not global config)
 # diversity_weight: 0.2  # 0.0 = disabled, higher = more genre variety
@@ -237,6 +245,11 @@ python3.11 -m src.cli preferences set-weight genre_match 3.0
 python3.11 -m src.cli preferences set-length book short
 python3.11 -m src.cli preferences custom-rules add "avoid horror"
 python3.11 -m src.cli preferences custom-rules add "prefer sci-fi"
+
+# Enrich metadata from external APIs
+python3.11 -m src.cli enrichment start
+python3.11 -m src.cli enrichment start --type movie    # specific content type
+python3.11 -m src.cli enrichment status
 ```
 
 ## How Scoring Works
@@ -249,7 +262,10 @@ The recommendation engine scores candidates through multiple factors:
 | **Creator Match** | Prefers authors/directors/developers you've enjoyed |
 | **Tag Overlap** | Threshold-based tag matching with semantic cluster bridging |
 | **Series Order** | Prioritizes next items in series you're reading/watching |
+| **Continuation** | Boosts items you're actively consuming (e.g., current TV season) |
+| **Series Affinity** | Boosts items in franchises you've rated well |
 | **Rating Pattern** | Learns from your rating history within genres |
+| **Content Length** | Matches candidates to your preferred length (short books, long games) |
 | **Custom Rules** | Applies your explicit preferences ("avoid X", "prefer Y") |
 | **Semantic Similarity** | *(AI only)* Finds conceptually similar content |
 
@@ -278,12 +294,15 @@ See [docs/MODEL_RECOMMENDATIONS.md](docs/MODEL_RECOMMENDATIONS.md) for model sel
 personal-recommendations/
 ├── src/
 │   ├── cli/              # Command-line interface
-│   ├── web/              # FastAPI web interface
-│   ├── ingestion/        # Data source parsers
+│   ├── web/              # FastAPI web interface (themes in static/themes/)
+│   ├── ingestion/        # Data source parsers (plugins in sources/)
 │   ├── recommendations/  # Scoring pipeline and engine
+│   ├── conversation/     # Conversational AI chat system (optional)
+│   ├── enrichment/       # Background metadata enrichment (TMDB, OpenLibrary, RAWG)
 │   ├── storage/          # SQLite + optional ChromaDB
 │   ├── llm/              # Ollama integration (optional)
-│   └── models/           # Data models
+│   ├── models/           # Data models
+│   └── utils/            # Utility functions
 ├── tests/                # Test suite
 ├── config/               # Configuration files
 ├── templates/            # Import file templates
@@ -305,6 +324,9 @@ personal-recommendations/
 | [docs/MODEL_RECOMMENDATIONS.md](docs/MODEL_RECOMMENDATIONS.md) | Ollama model selection |
 | [docs/CHROMADB_SETUP.md](docs/CHROMADB_SETUP.md) | ChromaDB setup (AI-only) |
 | [docs/SECURITY.md](docs/SECURITY.md) | Security considerations |
+| [docs/OLLAMA_SETUP_GUIDE.md](docs/OLLAMA_SETUP_GUIDE.md) | Ollama installation and setup |
+| [docs/PYTHON_VERSION.md](docs/PYTHON_VERSION.md) | Python version requirements |
+| [docs/THEME_DEVELOPMENT.md](docs/THEME_DEVELOPMENT.md) | Creating custom web UI themes |
 
 ## Requirements
 
