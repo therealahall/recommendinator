@@ -851,8 +851,20 @@
             rating_pattern: 1.0,
             semantic_similarity: 1.5,
             content_length: 1.0,
-            continuation: 3.0,
+            continuation: 2.0,
             series_affinity: 1.0
+        };
+
+        var scorerTooltips = {
+            genre_match: "Scores recommendations by how well their genres match your preferences. Higher weight means genre alignment matters more. Default: 2.0",
+            creator_match: "Boosts items by creators (authors, directors, developers) you've enjoyed before. Default: 1.5",
+            tag_overlap: "Scores items by how many tags and genres they share with things you've consumed. Also uses semantic genre clusters for fuzzy matching. Default: 1.0",
+            series_order: "Prioritizes the next item in a series you've started (e.g. Fallout 1, then Fallout 2). Scores higher when you rated earlier entries well. Default: 1.5",
+            rating_pattern: "Uses your rating history per genre to predict how much you'd enjoy a recommendation. Genres you rate highly get boosted. Default: 1.0",
+            semantic_similarity: "Uses AI embeddings to find items that are semantically similar to what you've enjoyed, even when tags don't overlap. Requires AI features. Default: 1.5",
+            content_length: "Soft-penalizes items that don't match your preferred content length (short/medium/long) per content type. Default: 1.0",
+            continuation: "Strongly boosts items you're currently consuming (e.g. a TV show you're mid-way through). Default: 2.0",
+            series_affinity: "Boosts items from franchises you've rated highly (avg 4+ stars). Keeps recommending series you love. Default: 1.0"
         };
 
         scorerKeys.forEach(function (key) {
@@ -869,9 +881,17 @@
                 value = defaultWeights[key] !== undefined ? defaultWeights[key] : 1.0;
             }
             html += '<div class="slider-row">';
-            html += '<span class="slider-label">' + formatScorerName(key) + '</span>';
-            html += '<input type="range" min="0" max="5" step="0.1" value="' + value + '" data-scorer="' + key + '" class="pref-slider">';
-            html += '<span class="slider-value" data-value-for="' + key + '">' + value.toFixed(1) + '</span>';
+            html += '<span class="slider-label">' + escapeHtml(formatScorerName(key));
+            if (scorerTooltips[key]) {
+                html += '<span class="scorer-tooltip-wrap" tabindex="0">';
+                html += '<span class="scorer-tooltip-icon" aria-label="Info">?</span>';
+                html += '<span class="scorer-tooltip-text">' + escapeHtml(scorerTooltips[key]) + '</span>';
+                html += '</span>';
+            }
+            html += '</span>';
+            var escapedKey = escapeHtml(key);
+            html += '<input type="range" min="0" max="5" step="0.1" value="' + value + '" data-scorer="' + escapedKey + '" class="pref-slider">';
+            html += '<span class="slider-value" data-value-for="' + escapedKey + '">' + value.toFixed(1) + '</span>';
             html += '</div>';
         });
 
