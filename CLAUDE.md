@@ -2,9 +2,9 @@
 
 ## Project Overview
 
-Personal recommendation system that analyzes user ratings/reviews across media types (books, movies, TV shows, video games) using a local LLM via Ollama.
+Personal recommendation system that analyzes user ratings/reviews across media types (books, movies, TV shows, video games) optionally using a local LLM via Ollama.
 
-**Key Features:** Multi-source ingestion, cross-content-type recommendations, local LLM (privacy-preserving), dual CLI/web interface, vector-based semantic search.
+**Key Features:** Multi-source ingestion, cross-content-type recommendations, optional local LLM (privacy-preserving), dual CLI/web interface, vector-based semantic search.
 
 ## Required Reading
 
@@ -52,7 +52,6 @@ private/              # Gitignored — private plugins NOT in the open source re
 
 **IMPORTANT:** The `private/` directory is in `.gitignore` and invisible to Glob/Grep tools (which respect gitignore). Always check it explicitly with `Read` or `ls` when investigating plugin issues.
 
-- **`private/plugins/personal_site_games.py`** — Imports video games from the owner's personal blog (markdown files with YAML frontmatter). Reads from `~/Programming/ahall/personal-site/src/content/games/`.
 - Private plugins follow the same `SourcePlugin` interface as `src/ingestion/sources/` plugins.
 - Tests for private plugins live alongside them or in a local test runner — they are NOT in the `tests/` directory.
 
@@ -61,6 +60,7 @@ private/              # Gitignored — private plugins NOT in the open source re
 ### Running Commands
 
 - **Never use `cd` in front of commands.** The workspace path is already the project root.
+- **Never use `sed` or `awk` to edit files.** Use the `Edit` tool instead — it provides atomic replacements, is reviewable, and avoids regex escaping bugs. There are no exceptions.
 - **Never pipe test output or use head, tail, etc.** Run each command directly:
   - `python3.11 -m pytest tests/` (not `pytest | head` or similar)
   - `python3.11 -m black --check src/ tests/`
@@ -110,9 +110,9 @@ config = load_config(Path("config/config.yaml"))
 
 ## Technology Stack
 
-- **Python**: 3.11+ (3.14.2 available, 3.11 recommended for ChromaDB)
+- **Python**: 3.11+ (3.11 recommended for ChromaDB)
 - **Package manager**: uv (lockfile: `uv.lock`, Python version: `.python-version`)
-- **LLM**: Ollama (local, AMD-compatible)
+- **LLM**: Ollama (local)
 - **Vector DB**: ChromaDB
 - **SQL DB**: SQLite
 - **Web**: FastAPI
@@ -188,7 +188,7 @@ This ensures every plan step is tracked, has clear acceptance criteria, and noth
 5. Implement following existing patterns
 6. Ensure all checks pass (`command make check`)
 7. Update documentation (ARCHITECTURE.md, README.md, QUICKSTART.md, CLAUDE.md, relevant docs/ files)
-8. Commit with proper message format
+8. Atomic commits with proper message format following conventional commit standards
 
 ## Adding New Data Sources
 
