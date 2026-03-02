@@ -1,6 +1,6 @@
 # Ollama Model Recommendations
 
-This guide helps you choose the best Ollama models for the Personal Recommendations system, especially for AMD processors.
+This guide helps you choose the best Ollama models for the Personal Recommendations system.
 
 ## Model Strategy
 

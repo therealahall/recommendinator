@@ -49,8 +49,8 @@ inputs:
 The application may connect to:
 
 | Service | Purpose | When |
-|---------|---------|------|
-| Ollama (localhost) | LLM and embeddings | When AI enabled |
+|--------|---------|------|
+| Ollama | LLM and embeddings | When AI enabled |
 | Steam API | Game library sync | When Steam source enabled |
 | GOG API | Game library sync | When GOG source enabled |
 | Epic Games API | Game library sync | When Epic source enabled |

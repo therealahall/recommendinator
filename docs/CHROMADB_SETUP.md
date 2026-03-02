@@ -10,20 +10,6 @@ ChromaDB is included in the `ai` optional dependency group. To install it:
 uv sync --locked --extra ai
 ```
 
-## Upgrading from ChromaDB 0.x to 1.x
-
-ChromaDB 1.x uses a different database format. If you previously used ChromaDB 0.x, you must delete the old data and re-embed:
-
-```bash
-# Delete old ChromaDB data
-rm -rf data/chroma_db/ data/chromadb/
-
-# Re-embed all content
-python3.11 -m src.cli update --source all
-```
-
-The database will be recreated automatically on the next run.
-
 ## Python Version Compatibility
 
 **Note:** ChromaDB may not have full support for Python 3.14 yet. If you encounter installation issues:
@@ -76,18 +62,6 @@ python3.11 -m pytest tests/test_storage_manager.py -v
    ```bash
    uv sync --locked --extra ai --reinstall-package chromadb
    ```
-
-### Installation fails on Python 3.14
-
-If installation fails with Python 3.14, you have two options:
-
-1. **Use Python 3.11 or 3.12** (recommended):
-   ```bash
-   uv sync --locked --extra ai
-   ```
-   uv automatically uses the Python version from `.python-version` (3.11).
-
-2. **Wait for ChromaDB Python 3.14 support** or use a workaround
 
 ## ChromaDB Storage Location
 

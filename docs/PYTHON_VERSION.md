@@ -28,9 +28,6 @@ python3.11 -m src.cli ...
 - **All dependencies tested**: Production dependencies are tested on Python 3.11
 - **Stable**: Python 3.11 is a stable, well-supported version
 
-## Note on Python 3.14
-
-While Python 3.14.2 is available on your system, ChromaDB doesn't have full support for it yet. You can use Python 3.14 for development, but ChromaDB features won't work until ChromaDB adds Python 3.14 support.
 
 ## Using Python 3.11
 

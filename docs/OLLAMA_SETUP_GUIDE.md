@@ -1,18 +1,6 @@
 # Ollama Setup Guide
 
-Hardware-specific model recommendations and setup steps for the Personal Recommendations AI features.
-
-## Hardware Profile
-
-| Component | Spec |
-|---|---|
-| GPU | AMD Radeon 780M (RDNA 3 iGPU, shared system RAM) |
-| System RAM | 64 GB (32 GB budget for model inference) |
-| OS | Fedora Linux |
-| Ollama | Running in Docker |
-| Inference Mode | CPU (ROCm for RDNA 3 iGPUs in Docker is experimental/unreliable) |
-
-The Radeon 780M is an integrated GPU that shares system RAM — there is no dedicated VRAM. This means model size directly equals latency, and quality-per-parameter is the most important factor when choosing a model.
+Model recommendations and setup steps for the Personal Recommendations AI features.
 
 ## Recommended Models
 
@@ -21,7 +9,7 @@ The Radeon 780M is an integrated GPU that shares system RAM — there is no dedi
 | | |
 |---|---|
 | **Size** | ~9 GB RAM |
-| **Speed (CPU)** | ~5-8 tokens/sec on this hardware |
+| **Speed (CPU)** | ~5-8 tokens/sec |
 | **Instruction Following** | Best-in-class for this parameter count |
 | **Structured Output** | Excellent JSON + formatted text |
 | **Personality/Creativity** | Strong — matches the conversational recommendation style |
