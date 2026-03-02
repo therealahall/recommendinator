@@ -147,7 +147,7 @@ web:
   debug: false  # Set to true for development (enables auto-reload on file changes)
   # UI theme — set the default theme for the web interface.
   # Available themes are in src/web/static/themes/ (e.g., "nord", "snowstorm").
-  # Users can override this per-browser via the theme switcher in the sidebar.
+  # Users can override this per-browser via the theme switcher in Preferences.
   theme: "nord"
   # CORS allowed origins — defaults to localhost only for security.
   # Set to ["*"] to allow all origins (not recommended for production).

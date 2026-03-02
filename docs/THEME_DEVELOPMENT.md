@@ -148,7 +148,7 @@ When you override `--color-success` in your theme, the badge backgrounds and bor
 
 4. **Test your theme:**
    - Start the server
-   - Select your theme from the sidebar dropdown
+   - Select your theme from the Preferences tab
    - Check all pages: Recommendations, Library, Chat, Data, Preferences
    - Verify text readability, badge contrast, and button visibility
 
@@ -166,7 +166,7 @@ Themes only affect **color** variables. The following are not theme-overridable:
 
 ## Theme Persistence
 
-- Users select a theme via the sidebar dropdown
+- Users select a theme via the Preferences tab
 - The selection is saved to `localStorage` per browser
 - Server admins can set a default theme via `web.theme` in `config.yaml`
 - `localStorage` takes priority over the config default
