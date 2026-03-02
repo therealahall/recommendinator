@@ -525,10 +525,10 @@ class ContinuationScorer(Scorer):
     Items with status CURRENTLY_CONSUMING (e.g., a TV show season being
     watched) score 1.0; all others score 0.0.
 
-    Weight default: 3.0
+    Weight default: 2.0
     """
 
-    def __init__(self, weight: float = 3.0) -> None:
+    def __init__(self, weight: float = 2.0) -> None:
         super().__init__(weight)
 
     def score(self, candidate: ContentItem, context: ScoringContext) -> float:
