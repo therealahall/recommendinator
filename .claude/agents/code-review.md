@@ -35,7 +35,7 @@ Do NOT use Bash for anything else. Do NOT pipe output, use `head`/`tail`, or cha
 ## Your Review Process
 
 ### Step 1: Identify What Changed
-Use `git diff HEAD` to see exactly what code has been modified, added, or deleted. Focus your review exclusively on changed code and its immediate context. Do NOT review the entire codebase — only the diff.
+Use `git diff HEAD` to see exactly what code has been modified, added, or deleted. Focus your review exclusively on changed code and its immediate context. Do NOT review the entire codebase — only the diff, but ensure that the code adheres to the paradigms defined by the codebase.
 
 If there are no uncommitted changes, check recent commits:
 ```bash
