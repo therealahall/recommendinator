@@ -237,10 +237,6 @@ body {
     font-weight: 500;
 }
 
-.sidebar-footer select + label {
-    margin-top: var(--space-3);
-}
-
 .sidebar-footer select {
     width: 100%;
     padding: var(--space-2) var(--space-2);
@@ -1092,7 +1088,8 @@ input[type="checkbox"] {
     flex-shrink: 0;
 }
 
-.length-select {
+.length-select,
+.theme-select {
     padding: var(--space-2) var(--space-3);
     background: var(--bg-input);
     border: 1px solid var(--border-default);
@@ -1103,7 +1100,8 @@ input[type="checkbox"] {
     cursor: pointer;
 }
 
-.length-select:focus {
+.length-select:focus,
+.theme-select:focus {
     outline: none;
     border-color: var(--accent);
 }

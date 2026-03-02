@@ -13,6 +13,8 @@
     // State
     var currentUserId = 1;
     var currentTab = "recommendations";
+    var cachedThemes = null;
+    var cachedDefaultTheme = null;
     var aiFeatures = {
         ai_enabled: false,
         embeddings_enabled: false,
@@ -60,20 +62,22 @@
     function applyTheme(themeId) {
         var link = document.getElementById("theme-stylesheet");
         if (!link) return;
-        if (themeId === "nord") {
-            // Nord is the default in :root, clear the override
-            link.href = "/static/themes/nord/colors.css";
-        } else {
-            link.href = "/static/themes/" + themeId + "/colors.css";
+
+        // Validate themeId: only safe path-segment characters allowed
+        if (!themeId || !/^[a-zA-Z0-9_-]+$/.test(themeId)) return;
+
+        // Validate against known themes when cache is available
+        if (cachedThemes && cachedThemes.length > 0) {
+            var known = cachedThemes.some(function (t) { return t.id === themeId; });
+            if (!known) return;
         }
+
+        link.href = "/static/themes/" + themeId + "/colors.css";
         localStorage.setItem("theme", themeId);
     }
 
     function loadThemes() {
-        var select = document.getElementById("themeSelect");
-        if (!select) return;
-
-        // Fetch themes and default in parallel
+        // Fetch themes and default in parallel, cache for renderPreferences
         Promise.all([
             fetch(API_BASE + "/themes").then(function (response) { return response.json(); }),
             fetch(API_BASE + "/themes/default").then(function (response) { return response.json(); })
@@ -84,27 +88,14 @@
 
                 if (!themes || themes.length === 0) return;
 
-                select.innerHTML = "";
-                themes.forEach(function (theme) {
-                    var option = document.createElement("option");
-                    option.value = theme.id;
-                    option.textContent = theme.name;
-                    select.appendChild(option);
-                });
+                cachedThemes = themes;
+                cachedDefaultTheme = defaultData.theme || "nord";
 
-                // Use localStorage preference if set, otherwise config default
+                // Apply config default if no localStorage preference
                 var storedTheme = localStorage.getItem("theme");
-                var activeTheme = storedTheme || defaultData.theme || "nord";
-                select.value = activeTheme;
-
-                // Apply theme if not already applied from localStorage
                 if (!storedTheme && defaultData.theme) {
                     applyTheme(defaultData.theme);
                 }
-
-                select.addEventListener("change", function () {
-                    applyTheme(select.value);
-                });
             })
             .catch(function () {
                 // Silently ignore if themes endpoint not available
@@ -840,7 +831,43 @@
     function renderPreferences(prefs) {
         var container = document.getElementById("prefContent");
 
-        var html = '<div class="pref-section">';
+        var html = '';
+
+        // Appearance section (theme selector) — built via DOM methods to avoid
+        // attribute-context escaping issues with innerHTML string concatenation
+        var appearanceSection = null;
+        if (cachedThemes && cachedThemes.length > 0) {
+            var activeTheme = localStorage.getItem("theme") || cachedDefaultTheme || "nord";
+            appearanceSection = document.createElement("div");
+            appearanceSection.className = "pref-section";
+
+            var heading = document.createElement("h3");
+            heading.textContent = "Appearance";
+            appearanceSection.appendChild(heading);
+
+            var row = document.createElement("div");
+            row.className = "dropdown-row";
+
+            var label = document.createElement("span");
+            label.className = "dropdown-label";
+            label.textContent = "Theme";
+            row.appendChild(label);
+
+            var themeSelect = document.createElement("select");
+            themeSelect.className = "theme-select";
+            themeSelect.id = "prefThemeSelect";
+            cachedThemes.forEach(function (theme) {
+                var option = document.createElement("option");
+                option.value = theme.id;
+                option.textContent = theme.name;
+                if (activeTheme === theme.id) option.selected = true;
+                themeSelect.appendChild(option);
+            });
+            row.appendChild(themeSelect);
+            appearanceSection.appendChild(row);
+        }
+
+        html += '<div class="pref-section">';
         html += '<h3>Scorer Weights</h3>';
 
         var defaultWeights = {
@@ -956,6 +983,15 @@
         html += ' <span id="prefSaveStatus" class="text-muted"></span>';
 
         container.innerHTML = html;
+
+        // Prepend appearance section (built via DOM) and attach listener
+        if (appearanceSection) {
+            container.insertBefore(appearanceSection, container.firstChild);
+            var themeSelect = document.getElementById("prefThemeSelect");
+            themeSelect.addEventListener("change", function () {
+                applyTheme(themeSelect.value);
+            });
+        }
 
         // Attach slider listeners with gradient fill
         container.querySelectorAll(".pref-slider").forEach(function (slider) {
