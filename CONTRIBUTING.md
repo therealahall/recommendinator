@@ -22,11 +22,13 @@ Thank you for your interest in contributing to Personal Recommendations! This do
 3. Ensure all checks pass (see [Quality Checks](#quality-checks))
 4. Submit a pull request
 
-**Automated code review:** When using Claude Code, two review agents run automatically before commits:
-- **security-review** — Audits for vulnerabilities, credential leaks, and unsafe patterns. See [docs/SECURITY.md](docs/SECURITY.md) for details.
+**Automated code review:** When using Claude Code, four review agents run before commits:
 - **code-review** — Reviews code quality, design, naming, DRY compliance, and adherence to project standards.
+- **security-review** — Audits for vulnerabilities, credential leaks, and unsafe patterns. See [docs/SECURITY.md](docs/SECURITY.md) for details.
+- **test-review** — Audits test coverage, correctness, mock hygiene, regression test format, and edge case handling.
+- **commit-hygiene** — Enforces atomic commit structure and conventional commit format.
 
-Both agents must approve changes before they are committed. Contributors can expect feedback on PRs touching security-sensitive areas (authentication, configuration, network requests) as well as general code quality concerns.
+All four agents must approve changes before they are committed. Agent definitions live in `.claude/agents/`. Contributors can expect feedback on PRs touching security-sensitive areas (authentication, configuration, network requests) as well as general code quality and test coverage concerns.
 
 ## Quality Checks
 
@@ -120,6 +122,17 @@ class TestMyFeatureRegression:
         # Test implementation...
 ```
 
+## Pre-commit Workflow
+
+Before committing, run the review agents and quality checks:
+
+1. Run **security-review**, **code-review**, and **test-review** agents (can run in parallel)
+2. Address all agent findings
+3. Run **commit-hygiene** agent to plan atomic commit split
+4. Run all quality checks: `command make check`
+5. Commit following the split plan from commit-hygiene
+6. Run **commit-hygiene** again before pushing to verify commit structure
+
 ## Commit Messages
 
 Follow **Conventional Commits**:
@@ -151,6 +164,7 @@ See [docs/PLUGIN_DEVELOPMENT.md](docs/PLUGIN_DEVELOPMENT.md) for a complete guid
 src/
 ├── cli/              # Click CLI interface
 ├── web/              # FastAPI web interface
+│   └── static/themes/  # UI themes (folder-per-theme, auto-discovered)
 ├── ingestion/        # Data ingestion
 │   └── sources/      # Source plugins (auto-discovered)
 ├── llm/              # Ollama interaction (optional)
@@ -164,6 +178,7 @@ tests/                # Mirrors src/ structure
 config/               # Configuration files
 templates/            # Import file templates (CSV, JSON, Markdown)
 docs/                 # Additional documentation
+.claude/agents/       # Claude Code review agent definitions
 ```
 
 ## UI Themes

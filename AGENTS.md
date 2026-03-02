@@ -12,6 +12,22 @@ bd close <id>         # Complete work
 bd sync               # Sync with git
 ```
 
+## Operational Essentials
+
+### Python Version
+
+**Always use `python3.11` for all commands.** Do not use bare `python` or `python3`.
+
+### Running Commands
+
+- **Never use `cd` in front of commands.** The workspace path is already the project root.
+- **Never pipe test output or use head, tail, etc.** Run each command directly.
+- Use `command make check` (not bare `make check`) to bypass a zsh shell snapshot function that shadows the `make` binary in Claude Code's environment.
+
+### Security
+
+**NEVER use `config/config.yaml`** — contains secrets (API keys, Steam IDs). Always use `config/example.yaml` for tests and examples.
+
 ## Landing the Plane (Session Completion)
 
 **When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
@@ -37,4 +53,3 @@ bd sync               # Sync with git
 - NEVER stop before pushing - that leaves work stranded locally
 - NEVER say "ready to push when you are" - YOU must push
 - If push fails, resolve and retry until it succeeds
-

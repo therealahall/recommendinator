@@ -11,6 +11,8 @@ That's it. No AI, no external services required.
 
 ## Installation
 
+### Option 1: Local Installation
+
 ```bash
 # Clone the repository
 git clone https://github.com/ahall/personal-recommendations.git
@@ -29,46 +31,77 @@ uv sync --locked --extra ai
 cp config/example.yaml config/config.yaml
 ```
 
-## Import Your Data
-
-### Option A: Goodreads (Books)
-
-1. Export your library from Goodreads: My Books → Import/Export → Export Library
-2. Save to `inputs/goodreads_library_export.csv`
-3. Enable in `config/config.yaml`:
-   ```yaml
-   inputs:
-     goodreads:
-       plugin: goodreads
-       path: "inputs/goodreads_library_export.csv"
-       enabled: true
-   ```
-4. Import: `python3.11 -m src.cli update --source goodreads`
-
-### Option B: Steam (Games)
-
-1. Get your Steam API key: https://steamcommunity.com/dev/apikey
-2. Find your Steam ID (64-bit) from your profile URL
-3. Configure in `config/config.yaml`:
-   ```yaml
-   inputs:
-     steam:
-       plugin: steam
-       api_key: "your-api-key"
-       steam_id: "your-steam-id"
-       enabled: true
-   ```
-4. Import: `python3.11 -m src.cli update --source steam`
-
-### Option C: Generic CSV/JSON/Markdown
-
-Use the templates in `templates/` as a starting point:
+### Option 2: Docker
 
 ```bash
-# Copy a template
-cp templates/movies.csv inputs/my_movies.csv
+# Without AI (default)
+docker compose up
 
-# Edit with your data, then configure and import
+# With AI (Ollama sidecar)
+docker compose --profile ai up
+```
+
+Access the web interface at http://localhost:18473.
+
+## Import Your Data
+
+The system supports multiple data sources through a plugin architecture. See `config/example.yaml` for the full list of available plugins and their configuration options.
+
+**Available plugins:** Goodreads (books), Steam (games), GOG (games), Epic Games (games), Sonarr (TV shows), Radarr (movies), and generic CSV/JSON/Markdown importers for any content type.
+
+### Configure a source
+
+Each source is configured under `inputs:` in `config/config.yaml`. Enable the ones you want and fill in any required fields (API keys, file paths, etc.):
+
+```yaml
+inputs:
+  goodreads:
+    plugin: goodreads
+    path: "inputs/goodreads_library_export.csv"
+    enabled: true
+
+  steam:
+    plugin: steam
+    api_key: "your-steam-api-key"
+    steam_id: "your-steam-id"
+    enabled: true
+```
+
+Some sources (GOG, Epic Games) require OAuth setup — see the [README.md](README.md) for step-by-step instructions.
+
+### Generic CSV/JSON/Markdown
+
+For sources without a dedicated plugin, use the generic importers. Templates for each content type are in the `templates/` directory:
+
+```bash
+# Copy a template and fill in your data
+cp templates/movies.csv inputs/my_movies.csv
+```
+
+Then configure the source in your config:
+
+```yaml
+inputs:
+  my_movies:
+    plugin: csv_import
+    path: "inputs/my_movies.csv"
+    content_type: "movie"
+    enabled: true
+```
+
+You can have multiple instances of the same plugin (e.g., two `json_import` sources for different files) — just give each a unique name.
+
+### Sync your data
+
+```bash
+# Sync a specific source
+python3.11 -m src.cli update --source goodreads
+
+# Sync all enabled sources
+python3.11 -m src.cli update --source all
+
+# List configured sources
+python3.11 -m src.cli update --source list
 ```
 
 ## Get Recommendations
@@ -93,7 +126,7 @@ python3.11 -m src.cli recommend --type tv_show --count 5
 python3.11 -m src.web
 ```
 
-Open http://localhost:18473 in your browser.
+Open http://localhost:18473 in your browser. The web UI provides browsing, syncing, recommendations, and (with AI enabled) a conversational chat interface.
 
 ## Customize Your Preferences
 
@@ -140,19 +173,10 @@ If you want semantic similarity and LLM-powered explanations:
 
 See [docs/MODEL_RECOMMENDATIONS.md](docs/MODEL_RECOMMENDATIONS.md) for model guidance.
 
-## Verify Your Setup
-
-```bash
-# Run the test suite
-python3.11 -m pytest
-
-# Check code quality
-make check
-```
-
 ## Next Steps
 
-- [README.md](README.md) — Full feature overview
+- [README.md](README.md) — Full feature overview, source-specific setup guides
 - [ARCHITECTURE.md](ARCHITECTURE.md) — How the system works
+- [docs/PLUGIN_DEVELOPMENT.md](docs/PLUGIN_DEVELOPMENT.md) — Creating custom data source plugins
 - [docs/CUSTOM_RULES.md](docs/CUSTOM_RULES.md) — Advanced preference rules
 - [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) — Common issues
