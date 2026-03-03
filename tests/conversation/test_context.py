@@ -18,6 +18,7 @@ from src.conversation.context import (
     build_user_context_block_compact,
 )
 from src.conversation.memory import MemoryManager
+from src.llm.client import OllamaClient
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.conversation import (
     ConversationContext,
@@ -26,7 +27,9 @@ from src.models.conversation import (
     PreferenceProfile,
     RecommendationBrief,
 )
+from src.recommendations.engine import RecommendationEngine
 from src.storage.manager import StorageManager
+from src.storage.vector_db import VectorDB
 
 
 @pytest.fixture
@@ -431,7 +434,7 @@ class TestRAGRetrieval:
     ) -> None:
         """Test RAG retrieval with mocked Ollama client."""
         # Create mock Ollama client
-        mock_ollama = MagicMock()
+        mock_ollama = MagicMock(spec=OllamaClient)
         mock_ollama.generate_embedding.return_value = [0.1] * 384
 
         # Create assembler with mock
@@ -712,7 +715,7 @@ class TestPipelineBacklogIntegration:
             rating=5,
         )
 
-        mock_engine = MagicMock()
+        mock_engine = MagicMock(spec=RecommendationEngine)
         mock_engine.generate_recommendations.return_value = [
             {
                 "item": pipeline_item,
@@ -799,7 +802,7 @@ class TestPipelineBacklogIntegration:
             user_id=1,
         )
 
-        mock_engine = MagicMock()
+        mock_engine = MagicMock(spec=RecommendationEngine)
         assembler = ContextAssembler(
             storage_manager=storage_manager,
             memory_manager=memory_manager,
@@ -833,7 +836,7 @@ class TestPipelineBacklogIntegration:
             user_id=1,
         )
 
-        mock_engine = MagicMock()
+        mock_engine = MagicMock(spec=RecommendationEngine)
         mock_engine.generate_recommendations.side_effect = RuntimeError("boom")
 
         assembler = ContextAssembler(
@@ -1099,7 +1102,7 @@ class TestRAGBypassWithPipeline:
             status=ConsumptionStatus.UNREAD,
         )
 
-        mock_engine = MagicMock()
+        mock_engine = MagicMock(spec=RecommendationEngine)
         mock_engine.generate_recommendations.return_value = [
             {
                 "item": pipeline_item,
@@ -1113,7 +1116,7 @@ class TestRAGBypassWithPipeline:
             },
         ]
 
-        mock_ollama = MagicMock()
+        mock_ollama = MagicMock(spec=OllamaClient)
 
         assembler = ContextAssembler(
             storage_manager=storage_manager,
@@ -1348,7 +1351,7 @@ class TestBuildUserContextBlockCompact:
         memory_manager: MemoryManager,
     ) -> None:
         """generate_embedding IS called when there is no pipeline."""
-        mock_ollama = MagicMock()
+        mock_ollama = MagicMock(spec=OllamaClient)
         mock_ollama.generate_embedding.return_value = [0.1] * 384
 
         assembler = ContextAssembler(
@@ -1359,7 +1362,7 @@ class TestBuildUserContextBlockCompact:
         )
 
         # Need vector_db to trigger the embedding path
-        storage_manager.vector_db = MagicMock()
+        storage_manager.vector_db = MagicMock(spec=VectorDB)
         storage_manager.vector_db.search_similar = MagicMock(return_value=[])
         storage_manager.search_similar = MagicMock(return_value=[])
 

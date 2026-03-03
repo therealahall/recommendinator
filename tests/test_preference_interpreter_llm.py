@@ -5,23 +5,25 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from src.llm.client import OllamaClient
 from src.recommendations.preference_interpreter import (
     InterpretedPreference,
     LLMPreferenceInterpreter,
     PatternConfidence,
 )
+from src.storage.manager import StorageManager
 
 
 @pytest.fixture
 def mock_ollama_client() -> MagicMock:
     """Create a mock OllamaClient."""
-    return MagicMock()
+    return MagicMock(spec=OllamaClient)
 
 
 @pytest.fixture
 def mock_storage_manager() -> MagicMock:
     """Create a mock StorageManager with cache methods."""
-    manager = MagicMock()
+    manager = MagicMock(spec=StorageManager)
     manager.get_cached_preference_interpretation.return_value = None
     return manager
 

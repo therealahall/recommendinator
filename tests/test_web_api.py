@@ -118,9 +118,47 @@ def test_status_endpoint(client):
     response = client.get("/api/status")
     assert response.status_code == 200
     data = response.json()
-    assert data["status"] in {"ready", "initializing"}
+    assert data["status"] == "ready"
     assert isinstance(data["version"], str)
     assert isinstance(data["components"], dict)
+
+
+class TestSecurityHeaders:
+    """Tests for security-related HTTP headers."""
+
+    def test_csp_script_src_self_only(self, client):
+        """CSP script-src should be 'self' only (no CDN)."""
+        response = client.get("/api/status")
+        csp = response.headers["Content-Security-Policy"]
+        assert "script-src 'self'" in csp
+        assert "cdn.jsdelivr.net" not in csp
+
+    def test_csp_frame_ancestors_none(self, client):
+        """CSP should include frame-ancestors 'none'."""
+        csp = client.get("/api/status").headers["Content-Security-Policy"]
+        assert "frame-ancestors 'none'" in csp
+
+    def test_csp_style_src_no_unsafe_inline(self, client):
+        """CSP style-src should not include 'unsafe-inline'."""
+        csp = client.get("/api/status").headers["Content-Security-Policy"]
+        assert "style-src 'self'" in csp
+        assert "unsafe-inline" not in csp
+
+    def test_referrer_policy(self, client):
+        """Referrer-Policy header should be set."""
+        headers = client.get("/api/status").headers
+        assert headers["Referrer-Policy"] == "strict-origin-when-cross-origin"
+
+    def test_permissions_policy(self, client):
+        """Permissions-Policy header should restrict sensitive features."""
+        policy = client.get("/api/status").headers["Permissions-Policy"]
+        assert "camera=()" in policy
+        assert "microphone=()" in policy
+        assert "geolocation=()" in policy
+
+    def test_x_frame_options_deny(self, client):
+        """X-Frame-Options should be DENY."""
+        assert client.get("/api/status").headers["X-Frame-Options"] == "DENY"
 
 
 class TestStatusEndpointRegression:
@@ -1637,3 +1675,121 @@ class TestSSEStreamingEndpoint:
         # Should still get recommendations and done
         assert events[0]["type"] == "recommendations"
         assert events[-1]["type"] == "done"
+
+
+class TestConfigReload:
+    """Tests for POST /api/config/reload."""
+
+    def test_reload_success(self, client, mock_components):
+        """Successful config reload returns 200."""
+        with patch("src.web.api.reload_config", return_value=True):
+            response = client.post("/api/config/reload")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+
+    def test_reload_failure(self, client, mock_components):
+        """Failed config reload returns 500."""
+        with patch("src.web.api.reload_config", return_value=False):
+            response = client.post("/api/config/reload")
+        assert response.status_code == 500
+
+
+class TestGogStatus:
+    """Tests for GET /api/gog/status."""
+
+    def test_gog_enabled_connected(self, client, mock_components):
+        """GOG enabled and connected returns correct flags."""
+        with (
+            patch("src.web.api.is_gog_enabled", return_value=True),
+            patch("src.web.api.has_gog_token", return_value=True),
+            patch("src.web.api.get_gog_auth_url", return_value="https://auth.gog.com"),
+        ):
+            response = client.get("/api/gog/status")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["enabled"] is True
+        assert data["connected"] is True
+        assert data["auth_url"] == "https://auth.gog.com"
+
+    def test_gog_disabled(self, client, mock_components):
+        """GOG disabled returns enabled=False and no auth_url."""
+        with (
+            patch("src.web.api.is_gog_enabled", return_value=False),
+            patch("src.web.api.has_gog_token", return_value=False),
+        ):
+            response = client.get("/api/gog/status")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["enabled"] is False
+        assert data["connected"] is False
+        assert data["auth_url"] is None
+
+    def test_gog_status_no_config(self, client, mock_components):
+        """No config returns 500."""
+        app_state.config = None
+        response = client.get("/api/gog/status")
+        assert response.status_code == 500
+
+
+class TestEnrichmentErrorPaths:
+    """Tests for enrichment endpoint error paths."""
+
+    def test_stop_enrichment_not_running(self, client, mock_components):
+        """Stopping when not running returns 400."""
+        from src.web.enrichment_manager import WebEnrichmentManager
+
+        with patch("src.web.api.get_enrichment_manager") as mock_get:
+            manager = Mock(spec=WebEnrichmentManager)
+            manager.stop_enrichment.return_value = (False, "No enrichment running")
+            mock_get.return_value = manager
+            response = client.post("/api/enrichment/stop")
+        assert response.status_code == 400
+
+    def test_reset_enrichment_no_storage(self, client, mock_components):
+        """Reset when storage not available returns 500."""
+        app_state.storage = None
+        response = client.post(
+            "/api/enrichment/reset",
+            json={"reset_type": "all"},
+        )
+        assert response.status_code == 500
+
+
+class TestIgnoreItem500:
+    """Test PATCH /items/{id}/ignore 500 path."""
+
+    def test_set_ignored_fails(self, client, mock_components):
+        """set_item_ignored returning False produces 500."""
+        mock_item = ContentItem(
+            id="1",
+            title="Test",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        )
+        mock_components["storage"].get_content_item.return_value = mock_item
+        mock_components["storage"].set_item_ignored.return_value = False
+
+        response = client.patch(
+            "/api/items/1/ignore",
+            json={"ignored": True},
+        )
+        assert response.status_code == 500
+
+
+class TestItemToResponseInvalidSeasons:
+    """Test _item_to_response with non-numeric seasons."""
+
+    def test_invalid_seasons_returns_none(self, client, mock_components):
+        """Non-numeric seasons metadata should not crash."""
+        from src.web.api import _item_to_response
+
+        item = ContentItem(
+            id="tv1",
+            title="Test Show",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"seasons": "invalid"},
+        )
+        result = _item_to_response(item)
+        assert result.total_seasons is None

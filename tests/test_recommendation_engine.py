@@ -16,13 +16,14 @@ from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.engine import RecommendationEngine, _shuffle_close_scores
 from src.recommendations.preferences import PreferenceAnalyzer, UserPreferences
 from src.storage.manager import StorageManager
+from src.storage.vector_db import VectorDB
 
 
 @pytest.fixture
 def mock_storage():
     """Create a mock storage manager."""
     storage = Mock(spec=StorageManager)
-    storage.vector_db = Mock()
+    storage.vector_db = Mock(spec=VectorDB)
     storage.vector_db.has_embedding = Mock(return_value=False)
     storage.vector_db.get_embedding = Mock(return_value=None)
     return storage

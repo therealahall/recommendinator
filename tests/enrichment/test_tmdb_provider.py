@@ -162,8 +162,16 @@ class TestTMDBProviderMovieEnrichment:
 
         with patch("requests.get") as mock_get:
             mock_get.side_effect = [
-                MagicMock(status_code=200, json=lambda: mock_movie_response),
-                MagicMock(status_code=200, json=lambda: mock_keywords_response),
+                MagicMock(
+                    spec=requests.Response,
+                    status_code=200,
+                    json=lambda: mock_movie_response,
+                ),
+                MagicMock(
+                    spec=requests.Response,
+                    status_code=200,
+                    json=lambda: mock_keywords_response,
+                ),
             ]
 
             result = provider.enrich(item, config)
@@ -197,9 +205,21 @@ class TestTMDBProviderMovieEnrichment:
 
         with patch("requests.get") as mock_get:
             mock_get.side_effect = [
-                MagicMock(status_code=200, json=lambda: mock_search_response),
-                MagicMock(status_code=200, json=lambda: mock_movie_response),
-                MagicMock(status_code=200, json=lambda: mock_keywords_response),
+                MagicMock(
+                    spec=requests.Response,
+                    status_code=200,
+                    json=lambda: mock_search_response,
+                ),
+                MagicMock(
+                    spec=requests.Response,
+                    status_code=200,
+                    json=lambda: mock_movie_response,
+                ),
+                MagicMock(
+                    spec=requests.Response,
+                    status_code=200,
+                    json=lambda: mock_keywords_response,
+                ),
             ]
 
             result = provider.enrich(movie_item, config)
@@ -263,10 +283,26 @@ class TestTMDBProviderMovieEnrichment:
 
         with patch("requests.get") as mock_get:
             mock_get.side_effect = [
-                MagicMock(status_code=200, json=lambda: mock_empty_response),
-                MagicMock(status_code=200, json=lambda: mock_found_response),
-                MagicMock(status_code=200, json=lambda: mock_movie_response),
-                MagicMock(status_code=200, json=lambda: mock_keywords_response),
+                MagicMock(
+                    spec=requests.Response,
+                    status_code=200,
+                    json=lambda: mock_empty_response,
+                ),
+                MagicMock(
+                    spec=requests.Response,
+                    status_code=200,
+                    json=lambda: mock_found_response,
+                ),
+                MagicMock(
+                    spec=requests.Response,
+                    status_code=200,
+                    json=lambda: mock_movie_response,
+                ),
+                MagicMock(
+                    spec=requests.Response,
+                    status_code=200,
+                    json=lambda: mock_keywords_response,
+                ),
             ]
 
             result = provider.enrich(item, config)
@@ -295,8 +331,16 @@ class TestTMDBProviderMovieEnrichment:
 
         with patch("requests.get") as mock_get:
             mock_get.side_effect = [
-                MagicMock(status_code=200, json=lambda: mock_movie_response),
-                MagicMock(status_code=200, json=lambda: mock_keywords_response),
+                MagicMock(
+                    spec=requests.Response,
+                    status_code=200,
+                    json=lambda: mock_movie_response,
+                ),
+                MagicMock(
+                    spec=requests.Response,
+                    status_code=200,
+                    json=lambda: mock_keywords_response,
+                ),
             ]
 
             result = provider.enrich(item, config)
@@ -358,9 +402,21 @@ class TestTMDBProviderTVShowEnrichment:
 
         with patch("requests.get") as mock_get:
             mock_get.side_effect = [
-                MagicMock(status_code=200, json=lambda: mock_search_response),
-                MagicMock(status_code=200, json=lambda: mock_tv_response),
-                MagicMock(status_code=200, json=lambda: mock_keywords_response),
+                MagicMock(
+                    spec=requests.Response,
+                    status_code=200,
+                    json=lambda: mock_search_response,
+                ),
+                MagicMock(
+                    spec=requests.Response,
+                    status_code=200,
+                    json=lambda: mock_tv_response,
+                ),
+                MagicMock(
+                    spec=requests.Response,
+                    status_code=200,
+                    json=lambda: mock_keywords_response,
+                ),
             ]
 
             result = provider.enrich(tv_item, config)
@@ -414,8 +470,16 @@ class TestTMDBProviderTVShowEnrichment:
 
         with patch("requests.get") as mock_get:
             mock_get.side_effect = [
-                MagicMock(status_code=200, json=lambda: mock_tv_response),
-                MagicMock(status_code=200, json=lambda: mock_keywords_response),
+                MagicMock(
+                    spec=requests.Response,
+                    status_code=200,
+                    json=lambda: mock_tv_response,
+                ),
+                MagicMock(
+                    spec=requests.Response,
+                    status_code=200,
+                    json=lambda: mock_keywords_response,
+                ),
             ]
 
             result = provider.enrich(item, config)
@@ -459,7 +523,11 @@ class TestTMDBProviderKeywords:
         with patch("requests.get") as mock_get:
             # Movie details succeeds, keywords fails
             mock_get.side_effect = [
-                MagicMock(status_code=200, json=lambda: mock_movie_response),
+                MagicMock(
+                    spec=requests.Response,
+                    status_code=200,
+                    json=lambda: mock_movie_response,
+                ),
                 requests.RequestException("Keywords failed"),
             ]
 

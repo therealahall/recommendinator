@@ -11,6 +11,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from src.conversation.engine import ConversationEngine
 from src.conversation.memory import MemoryManager
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.conversation import ConversationChunk
@@ -30,7 +31,7 @@ def storage_manager() -> Generator[StorageManager, None, None]:
 @pytest.fixture
 def mock_conversation_engine() -> MagicMock:
     """Create a mock conversation engine."""
-    engine = MagicMock()
+    engine = MagicMock(spec=ConversationEngine)
 
     def mock_process_message(*args, **kwargs) -> Iterator[ConversationChunk]:
         yield ConversationChunk(chunk_type="text", content="Hello! ")

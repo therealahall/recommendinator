@@ -17,6 +17,7 @@ def make_item(
     review: str | None = None,
     metadata: dict[str, Any] | None = None,
     genres: str | None = None,
+    source: str | None = None,
 ) -> ContentItem:
     """Create a ``ContentItem`` with minimal boilerplate.
 
@@ -38,4 +39,5 @@ def make_item(
         author=author,
         review=review,
         metadata=effective_metadata,
+        source=source,
     )

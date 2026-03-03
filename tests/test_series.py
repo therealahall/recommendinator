@@ -13,6 +13,7 @@ from src.utils.series import (
     inject_seasons_watched_tracking,
     is_first_item_in_series,
     should_recommend_item,
+    strip_series_suffix_from_title,
 )
 
 
@@ -1102,3 +1103,35 @@ class TestTitleRegexPatternsRegression:
         assert result is not None
         assert result[0] == "FINAL FANTASY"
         assert result[1] == 10
+
+
+class TestStripSeriesSuffixFromTitle:
+    """Tests for strip_series_suffix_from_title function."""
+
+    def test_strips_hash_number_suffix(self) -> None:
+        result = strip_series_suffix_from_title(
+            "Words of Radiance (The Stormlight Archive, #2)"
+        )
+        assert result == "Words of Radiance"
+
+    def test_strips_book_number_suffix(self) -> None:
+        result = strip_series_suffix_from_title(
+            "The Sword of Kaigen (The Jet City Universe Book 1)"
+        )
+        assert result == "The Sword of Kaigen"
+
+    def test_no_suffix_unchanged(self) -> None:
+        assert strip_series_suffix_from_title("Dune") == "Dune"
+
+    def test_empty_string(self) -> None:
+        assert strip_series_suffix_from_title("") == ""
+
+    def test_non_series_parens_preserved(self) -> None:
+        """Parenthetical content without series patterns should be kept."""
+        assert strip_series_suffix_from_title("Portal 2 (Game)") == "Portal 2 (Game)"
+
+    def test_multiple_parens_only_strips_series(self) -> None:
+        result = strip_series_suffix_from_title(
+            "The Way of Kings (Cosmere) (The Stormlight Archive, #1)"
+        )
+        assert result == "The Way of Kings (Cosmere)"

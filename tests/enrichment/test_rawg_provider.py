@@ -206,9 +206,15 @@ class TestRAWGProviderEnrichment:
 
         with patch("requests.get") as mock_get:
             mock_get.side_effect = [
-                MagicMock(status_code=200, json=lambda: mock_search),
-                MagicMock(status_code=200, json=lambda: mock_game),
-                MagicMock(status_code=200, json=lambda: mock_series),
+                MagicMock(
+                    spec=requests.Response, status_code=200, json=lambda: mock_search
+                ),
+                MagicMock(
+                    spec=requests.Response, status_code=200, json=lambda: mock_game
+                ),
+                MagicMock(
+                    spec=requests.Response, status_code=200, json=lambda: mock_series
+                ),
             ]
 
             result = provider.enrich(game_item, config)
@@ -239,7 +245,9 @@ class TestRAWGProviderEnrichment:
         mock_search = {"results": []}
 
         with patch("requests.get") as mock_get:
-            mock_get.return_value = MagicMock(status_code=200, json=lambda: mock_search)
+            mock_get.return_value = MagicMock(
+                spec=requests.Response, status_code=200, json=lambda: mock_search
+            )
 
             result = provider.enrich(item, config)
 
@@ -293,9 +301,15 @@ class TestRAWGProviderEnrichment:
 
         with patch("requests.get") as mock_get:
             mock_get.side_effect = [
-                MagicMock(status_code=200, json=lambda: mock_search),
-                MagicMock(status_code=200, json=lambda: mock_game),
-                MagicMock(status_code=200, json=lambda: mock_series),
+                MagicMock(
+                    spec=requests.Response, status_code=200, json=lambda: mock_search
+                ),
+                MagicMock(
+                    spec=requests.Response, status_code=200, json=lambda: mock_game
+                ),
+                MagicMock(
+                    spec=requests.Response, status_code=200, json=lambda: mock_series
+                ),
             ]
 
             result = provider.enrich(item, config)
@@ -627,9 +641,15 @@ class TestRAWGFranchiseExtraction:
 
         with patch("requests.get") as mock_get:
             mock_get.side_effect = [
-                MagicMock(status_code=200, json=lambda: mock_search),
-                MagicMock(status_code=200, json=lambda: mock_game),
-                MagicMock(status_code=200, json=lambda: mock_series),
+                MagicMock(
+                    spec=requests.Response, status_code=200, json=lambda: mock_search
+                ),
+                MagicMock(
+                    spec=requests.Response, status_code=200, json=lambda: mock_game
+                ),
+                MagicMock(
+                    spec=requests.Response, status_code=200, json=lambda: mock_series
+                ),
             ]
 
             result = provider.enrich(item, {"api_key": "test-key"})
@@ -670,8 +690,12 @@ class TestRAWGFranchiseExtraction:
         with patch("requests.get") as mock_get:
             # Search succeeds, game details succeed, game-series fails
             mock_get.side_effect = [
-                MagicMock(status_code=200, json=lambda: mock_search),
-                MagicMock(status_code=200, json=lambda: mock_game),
+                MagicMock(
+                    spec=requests.Response, status_code=200, json=lambda: mock_search
+                ),
+                MagicMock(
+                    spec=requests.Response, status_code=200, json=lambda: mock_game
+                ),
                 requests.RequestException("Series endpoint failed"),
             ]
 

@@ -290,6 +290,27 @@ class TestKeepExisting:
         assert result.metadata["year"] == "2020"
 
 
+class TestUnknownStrategy:
+    """Tests for unknown conflict strategy handling."""
+
+    def test_unknown_strategy_raises_value_error(self) -> None:
+        """Passing an unrecognized strategy should raise ValueError."""
+        existing = ContentItem(
+            id="x",
+            title="Test",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        )
+        incoming = ContentItem(
+            id="x",
+            title="Test",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        )
+        with pytest.raises(ValueError, match="Unknown conflict strategy"):
+            resolve_conflict(existing, incoming, strategy="not_a_strategy")  # type: ignore[arg-type]
+
+
 class TestEdgeCases:
     """Tests for edge cases in conflict resolution."""
 

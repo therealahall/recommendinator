@@ -1,5 +1,6 @@
 """Tests for web server entry point utilities."""
 
+import socket
 from unittest.mock import MagicMock, patch
 
 from src.web.main import get_local_ip_addresses
@@ -21,7 +22,7 @@ class TestGetLocalIpAddresses:
         )
         mock_socket.AF_INET = 2
         mock_socket.SOCK_DGRAM = 2
-        mock_udp_socket = MagicMock()
+        mock_udp_socket = MagicMock(spec=socket.socket)
         mock_udp_socket.getsockname.return_value = ("192.168.1.100", 12345)
         mock_socket.socket.return_value = mock_udp_socket
 
@@ -40,7 +41,7 @@ class TestGetLocalIpAddresses:
         )
         mock_socket.AF_INET = 2
         mock_socket.SOCK_DGRAM = 2
-        mock_udp_socket = MagicMock()
+        mock_udp_socket = MagicMock(spec=socket.socket)
         mock_udp_socket.getsockname.return_value = ("192.168.1.100", 12345)
         mock_socket.socket.return_value = mock_udp_socket
 
@@ -60,7 +61,7 @@ class TestGetLocalIpAddresses:
         )
         mock_socket.AF_INET = 2
         mock_socket.SOCK_DGRAM = 2
-        mock_udp_socket = MagicMock()
+        mock_udp_socket = MagicMock(spec=socket.socket)
         mock_udp_socket.getsockname.return_value = ("10.0.0.5", 12345)
         mock_socket.socket.return_value = mock_udp_socket
 
@@ -78,7 +79,7 @@ class TestGetLocalIpAddresses:
         mock_socket.gethostbyname_ex.side_effect = OSError("DNS lookup failed")
         mock_socket.AF_INET = 2
         mock_socket.SOCK_DGRAM = 2
-        mock_udp_socket = MagicMock()
+        mock_udp_socket = MagicMock(spec=socket.socket)
         mock_udp_socket.getsockname.return_value = ("192.168.1.100", 12345)
         mock_socket.socket.return_value = mock_udp_socket
 
@@ -99,7 +100,7 @@ class TestGetLocalIpAddresses:
         )
         mock_socket.AF_INET = 2
         mock_socket.SOCK_DGRAM = 2
-        mock_udp_socket = MagicMock()
+        mock_udp_socket = MagicMock(spec=socket.socket)
         mock_udp_socket.connect.side_effect = OSError("Network unreachable")
         mock_socket.socket.return_value = mock_udp_socket
 
@@ -114,7 +115,7 @@ class TestGetLocalIpAddresses:
         mock_socket.gethostbyname_ex.side_effect = OSError("DNS lookup failed")
         mock_socket.AF_INET = 2
         mock_socket.SOCK_DGRAM = 2
-        mock_udp_socket = MagicMock()
+        mock_udp_socket = MagicMock(spec=socket.socket)
         mock_udp_socket.connect.side_effect = OSError("Network unreachable")
         mock_socket.socket.return_value = mock_udp_socket
 
@@ -133,7 +134,7 @@ class TestGetLocalIpAddresses:
         )
         mock_socket.AF_INET = 2
         mock_socket.SOCK_DGRAM = 2
-        mock_udp_socket = MagicMock()
+        mock_udp_socket = MagicMock(spec=socket.socket)
         mock_udp_socket.getsockname.return_value = ("192.168.1.100", 12345)
         mock_socket.socket.return_value = mock_udp_socket
 
@@ -153,7 +154,7 @@ class TestGetLocalIpAddresses:
         )
         mock_socket.AF_INET = 2
         mock_socket.SOCK_DGRAM = 2
-        mock_udp_socket = MagicMock()
+        mock_udp_socket = MagicMock(spec=socket.socket)
         mock_udp_socket.getsockname.return_value = ("10.0.0.5", 12345)
         mock_socket.socket.return_value = mock_udp_socket
 
@@ -176,7 +177,7 @@ class TestGetLocalIpAddresses:
         )
         mock_socket.AF_INET = 2
         mock_socket.SOCK_DGRAM = 2
-        mock_udp_socket = MagicMock()
+        mock_udp_socket = MagicMock(spec=socket.socket)
         mock_udp_socket.getsockname.return_value = ("10.0.0.5", 12345)
         mock_socket.socket.return_value = mock_udp_socket
 
@@ -202,7 +203,7 @@ class TestGetLocalIpAddresses:
         )
         mock_socket.AF_INET = 2
         mock_socket.SOCK_DGRAM = 2
-        mock_udp_socket = MagicMock()
+        mock_udp_socket = MagicMock(spec=socket.socket)
         mock_udp_socket.connect.side_effect = OSError("Network unreachable")
         mock_socket.socket.return_value = mock_udp_socket
 
@@ -217,7 +218,7 @@ class TestGetLocalIpAddresses:
         mock_socket.gethostbyname_ex.return_value = ("myhost", [], [])
         mock_socket.AF_INET = 2
         mock_socket.SOCK_DGRAM = 2
-        mock_udp_socket = MagicMock()
+        mock_udp_socket = MagicMock(spec=socket.socket)
         mock_udp_socket.getsockname.return_value = ("192.168.1.100", 12345)
         mock_socket.socket.return_value = mock_udp_socket
 

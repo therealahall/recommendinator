@@ -9,6 +9,7 @@ import pytest
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.sqlite_db import (
     SQLiteDB,
+    _assert_safe_identifier,
     _resolve_status_forward,
     normalize_title_for_matching,
 )
@@ -549,6 +550,127 @@ class TestNormalizeTitleForMatching:
         # Should contain "civil" not "c1v1l"
         normalized = normalize_title_for_matching("Civil War")
         assert "civil" in normalized
+
+
+# ---------------------------------------------------------------------------
+# Normalized Title Indexed Lookup Tests
+# ---------------------------------------------------------------------------
+
+
+class TestNormalizedTitleLookup:
+    """Tests for the indexed normalized_title column used during save."""
+
+    def test_insert_populates_normalized_title(self, temp_db: SQLiteDB) -> None:
+        """Test that INSERT populates the normalized_title column."""
+        item = ContentItem(
+            id="nt_1",
+            title="The Matrix™",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.COMPLETED,
+        )
+        db_id = temp_db.save_content_item(item)
+
+        with temp_db.connection() as conn:
+            row = conn.execute(
+                "SELECT normalized_title FROM content_items WHERE id = ?",
+                (db_id,),
+            ).fetchone()
+        assert row is not None
+        assert row["normalized_title"] == normalize_title_for_matching("The Matrix™")
+
+    def test_update_syncs_normalized_title(self, temp_db: SQLiteDB) -> None:
+        """Test that UPDATE keeps normalized_title in sync with title."""
+        item = ContentItem(
+            id="nt_2",
+            title="Old Title",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        )
+        db_id = temp_db.save_content_item(item)
+
+        # Re-save with a new title
+        updated = ContentItem(
+            id="nt_2",
+            title="New Title: Remastered",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+        )
+        db_id_2 = temp_db.save_content_item(updated)
+        assert db_id == db_id_2
+
+        with temp_db.connection() as conn:
+            row = conn.execute(
+                "SELECT normalized_title FROM content_items WHERE id = ?",
+                (db_id,),
+            ).fetchone()
+        assert row is not None
+        assert row["normalized_title"] == normalize_title_for_matching(
+            "New Title: Remastered"
+        )
+
+    def test_title_fallback_uses_indexed_lookup(self, temp_db: SQLiteDB) -> None:
+        """Test that title-based dedup uses the indexed normalized_title column.
+
+        Items from different sources with no external_id should still merge
+        when their normalized titles match.
+        """
+        # Insert an item from source A (no external_id)
+        item_a = ContentItem(
+            title="The Last of Us™ Part I",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            source="steam",
+        )
+        db_id_a = temp_db.save_content_item(item_a)
+
+        # Insert the same game from source B with different formatting
+        item_b = ContentItem(
+            title="The Last of Us Part I",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.COMPLETED,
+            source="gog",
+        )
+        db_id_b = temp_db.save_content_item(item_b)
+
+        # Should merge into the same row
+        assert db_id_a == db_id_b
+
+    def test_title_fallback_different_types_no_merge(self, temp_db: SQLiteDB) -> None:
+        """Test that title-based dedup respects content_type boundaries."""
+        item_book = ContentItem(
+            title="Dune",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+        )
+        item_movie = ContentItem(
+            title="Dune",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.COMPLETED,
+        )
+        db_id_book = temp_db.save_content_item(item_book)
+        db_id_movie = temp_db.save_content_item(item_movie)
+
+        # Different content types — should NOT merge
+        assert db_id_book != db_id_movie
+
+    def test_edition_variants_merge(self, temp_db: SQLiteDB) -> None:
+        """Test that edition variants merge via normalized_title."""
+        item_original = ContentItem(
+            title="Skyrim",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+        )
+        item_special = ContentItem(
+            title="Skyrim Special Edition",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.COMPLETED,
+        )
+        db_id_1 = temp_db.save_content_item(item_original)
+        db_id_2 = temp_db.save_content_item(item_special)
+
+        assert db_id_1 == db_id_2
 
 
 # ---------------------------------------------------------------------------
@@ -1896,3 +2018,33 @@ class TestDetailTableWhitelist:
             pytest.raises(ValueError, match="Unknown detail table"),
         ):
             temp_db._save_detail_table(cursor, db_id, item, "injected")
+
+
+class TestAssertSafeIdentifier:
+    """Tests for _assert_safe_identifier SQL injection guard."""
+
+    def test_valid_lowercase_identifier(self) -> None:
+        _assert_safe_identifier("some_column")
+
+    def test_valid_identifier_with_digits(self) -> None:
+        _assert_safe_identifier("col_2")
+
+    def test_identifier_with_space_raises(self) -> None:
+        with pytest.raises(ValueError, match="Unsafe SQL identifier"):
+            _assert_safe_identifier("bad column")
+
+    def test_sql_injection_pattern_raises(self) -> None:
+        with pytest.raises(ValueError, match="Unsafe SQL identifier"):
+            _assert_safe_identifier("col; DROP TABLE users;--")
+
+    def test_uppercase_raises(self) -> None:
+        with pytest.raises(ValueError, match="Unsafe SQL identifier"):
+            _assert_safe_identifier("BadColumn")
+
+    def test_starting_with_digit_raises(self) -> None:
+        with pytest.raises(ValueError, match="Unsafe SQL identifier"):
+            _assert_safe_identifier("1col")
+
+    def test_empty_string_raises(self) -> None:
+        with pytest.raises(ValueError, match="Unsafe SQL identifier"):
+            _assert_safe_identifier("")

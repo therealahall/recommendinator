@@ -3,6 +3,7 @@
 from unittest.mock import Mock, patch
 
 import pytest
+import requests
 
 from src.ingestion.plugin_base import SourceError, SourcePlugin
 from src.ingestion.sources.sonarr import SonarrPlugin
@@ -136,7 +137,7 @@ class TestSonarrPluginFetch:
         sample_series: list[dict],
     ) -> None:
         """All series should be imported regardless of monitored state."""
-        mock_response = Mock()
+        mock_response = Mock(spec=requests.Response)
         mock_response.json.return_value = sample_series
         mock_response.raise_for_status = Mock()
         mock_get.return_value = mock_response
@@ -159,7 +160,7 @@ class TestSonarrPluginFetch:
         sample_series: list[dict],
     ) -> None:
         """All imported items should have UNREAD status (Sonarr can't track watching)."""
-        mock_response = Mock()
+        mock_response = Mock(spec=requests.Response)
         mock_response.json.return_value = sample_series
         mock_response.raise_for_status = Mock()
         mock_get.return_value = mock_response
@@ -178,7 +179,7 @@ class TestSonarrPluginFetch:
         plugin: SonarrPlugin,
         sample_series: list[dict],
     ) -> None:
-        mock_response = Mock()
+        mock_response = Mock(spec=requests.Response)
         mock_response.json.return_value = sample_series
         mock_response.raise_for_status = Mock()
         mock_get.return_value = mock_response
@@ -198,7 +199,7 @@ class TestSonarrPluginFetch:
         sample_series: list[dict],
     ) -> None:
         """External ID should be tvdb:{tvdbId} for deduplication."""
-        mock_response = Mock()
+        mock_response = Mock(spec=requests.Response)
         mock_response.json.return_value = sample_series
         mock_response.raise_for_status = Mock()
         mock_get.return_value = mock_response
@@ -218,7 +219,7 @@ class TestSonarrPluginFetch:
         sample_series: list[dict],
     ) -> None:
         """Sonarr does not track personal ratings; rating should always be None."""
-        mock_response = Mock()
+        mock_response = Mock(spec=requests.Response)
         mock_response.json.return_value = sample_series
         mock_response.raise_for_status = Mock()
         mock_get.return_value = mock_response
@@ -238,7 +239,7 @@ class TestSonarrPluginFetch:
         sample_series: list[dict],
     ) -> None:
         """Metadata should include genres, network, seasons, etc."""
-        mock_response = Mock()
+        mock_response = Mock(spec=requests.Response)
         mock_response.json.return_value = sample_series
         mock_response.raise_for_status = Mock()
         mock_get.return_value = mock_response
@@ -264,7 +265,7 @@ class TestSonarrPluginFetch:
         plugin: SonarrPlugin,
         sample_series: list[dict],
     ) -> None:
-        mock_response = Mock()
+        mock_response = Mock(spec=requests.Response)
         mock_response.json.return_value = sample_series
         mock_response.raise_for_status = Mock()
         mock_get.return_value = mock_response
@@ -283,7 +284,7 @@ class TestSonarrPluginFetch:
         plugin: SonarrPlugin,
     ) -> None:
         """API key should be sent as X-Api-Key header."""
-        mock_response = Mock()
+        mock_response = Mock(spec=requests.Response)
         mock_response.json.return_value = []
         mock_response.raise_for_status = Mock()
         mock_get.return_value = mock_response
@@ -301,7 +302,7 @@ class TestSonarrPluginFetch:
         plugin: SonarrPlugin,
     ) -> None:
         """Should call /api/v3/series endpoint."""
-        mock_response = Mock()
+        mock_response = Mock(spec=requests.Response)
         mock_response.json.return_value = []
         mock_response.raise_for_status = Mock()
         mock_get.return_value = mock_response
@@ -318,7 +319,7 @@ class TestSonarrPluginFetch:
         plugin: SonarrPlugin,
     ) -> None:
         """Trailing slash in URL should not cause double slash."""
-        mock_response = Mock()
+        mock_response = Mock(spec=requests.Response)
         mock_response.json.return_value = []
         mock_response.raise_for_status = Mock()
         mock_get.return_value = mock_response
@@ -334,7 +335,7 @@ class TestSonarrPluginFetch:
         mock_get: Mock,
         plugin: SonarrPlugin,
     ) -> None:
-        mock_response = Mock()
+        mock_response = Mock(spec=requests.Response)
         mock_response.json.return_value = []
         mock_response.raise_for_status = Mock()
         mock_get.return_value = mock_response
@@ -349,7 +350,7 @@ class TestSonarrPluginFetch:
         mock_get: Mock,
         plugin: SonarrPlugin,
     ) -> None:
-        mock_response = Mock()
+        mock_response = Mock(spec=requests.Response)
         mock_response.json.return_value = [
             {"title": "", "monitored": True, "tvdbId": 123},
             {"title": "Valid Show", "monitored": True, "tvdbId": 456},
@@ -372,9 +373,7 @@ class TestSonarrPluginErrors:
         mock_get: Mock,
         plugin: SonarrPlugin,
     ) -> None:
-        import requests as req
-
-        mock_get.side_effect = req.ConnectionError("Connection refused")
+        mock_get.side_effect = requests.ConnectionError("Connection refused")
 
         with pytest.raises(SourceError, match="Failed to connect to Sonarr"):
             list(plugin.fetch({"url": "http://localhost:8989", "api_key": "key"}))
@@ -385,10 +384,10 @@ class TestSonarrPluginErrors:
         mock_get: Mock,
         plugin: SonarrPlugin,
     ) -> None:
-        import requests as req
-
-        mock_response = Mock()
-        mock_response.raise_for_status.side_effect = req.HTTPError("401 Unauthorized")
+        mock_response = Mock(spec=requests.Response)
+        mock_response.raise_for_status.side_effect = requests.HTTPError(
+            "401 Unauthorized"
+        )
         mock_get.return_value = mock_response
 
         with pytest.raises(SourceError, match="Failed to connect to Sonarr"):

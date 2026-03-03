@@ -2,6 +2,7 @@
 
 import threading
 import time
+from unittest.mock import patch
 
 import pytest
 
@@ -96,29 +97,36 @@ class TestRateLimiter:
 
     def test_token_refill(self) -> None:
         """Test that tokens refill over time."""
-        limiter = RateLimiter(requests_per_second=100.0, burst_size=5)
+        fake_time = [0.0]
+        with patch("src.enrichment.rate_limiter.time") as mock_time:
+            mock_time.monotonic = lambda: fake_time[0]
 
-        # Use all tokens
-        for _ in range(5):
-            limiter.try_acquire()
+            limiter = RateLimiter(requests_per_second=100.0, burst_size=5)
 
-        assert limiter.available_tokens < 1.0
+            # Use all tokens
+            for _ in range(5):
+                limiter.try_acquire()
 
-        # Wait for refill
-        time.sleep(0.05)  # Should refill ~5 tokens at 100/s
+            assert limiter.available_tokens < 1.0
 
-        # Should have some tokens now
-        assert limiter.available_tokens >= 4.0
+            # Advance clock by 0.05s — should refill 5 tokens at 100/s
+            fake_time[0] = 0.05
+
+            assert limiter.available_tokens >= 4.0
 
     def test_tokens_cap_at_burst_size(self) -> None:
         """Test that tokens don't exceed burst size."""
-        limiter = RateLimiter(requests_per_second=100.0, burst_size=5)
+        fake_time = [0.0]
+        with patch("src.enrichment.rate_limiter.time") as mock_time:
+            mock_time.monotonic = lambda: fake_time[0]
 
-        # Wait for a while
-        time.sleep(0.1)
+            limiter = RateLimiter(requests_per_second=100.0, burst_size=5)
 
-        # Tokens should still be capped at burst_size
-        assert limiter.available_tokens == 5.0
+            # Advance clock well past burst refill
+            fake_time[0] = 0.1
+
+            # Tokens should still be capped at burst_size
+            assert limiter.available_tokens == 5.0
 
     def test_reset(self) -> None:
         """Test resetting the rate limiter."""
@@ -155,25 +163,24 @@ class TestRateLimiter:
         for thread in threads:
             thread.join()
 
-        # All threads should complete without error
-        # Exact count depends on timing, but should be at most burst_size
-        assert acquired_count <= 100
+        # All tokens should be acquired (burst_size=100, 10 threads x 10 = 100)
+        assert acquired_count == 100
 
     def test_fractional_tokens(self) -> None:
         """Test that fractional tokens accumulate correctly."""
-        limiter = RateLimiter(requests_per_second=10.0, burst_size=1)
+        fake_time = [0.0]
+        with patch("src.enrichment.rate_limiter.time") as mock_time:
+            mock_time.monotonic = lambda: fake_time[0]
 
-        # Use the token
-        limiter.try_acquire()
+            limiter = RateLimiter(requests_per_second=10.0, burst_size=1)
 
-        # Wait for partial refill
-        time.sleep(0.05)  # Should add ~0.5 tokens
+            # Use the token
+            limiter.try_acquire()
 
-        # Should still not have a full token
-        assert limiter.try_acquire() is False
+            # Advance 0.05s — ~0.5 tokens at 10/s, not enough
+            fake_time[0] = 0.05
+            assert limiter.try_acquire() is False
 
-        # Wait more
-        time.sleep(0.06)  # Total ~0.11s = ~1.1 tokens
-
-        # Should now have a token
-        assert limiter.try_acquire() is True
+            # Advance to 0.11s total — ~1.1 tokens at 10/s
+            fake_time[0] = 0.11
+            assert limiter.try_acquire() is True

@@ -1,6 +1,6 @@
 """Tests for sorting utilities."""
 
-from src.utils.sorting import get_sort_title
+from src.utils.sorting import get_sort_title, titles_similar
 
 
 class TestGetSortTitle:
@@ -148,3 +148,35 @@ class TestSortTitleOrdering:
         # Numbers sort before letters in ASCII
         assert sorted_titles[0] == "1984"
         assert sorted_titles[1] == "2001: A Space Odyssey"
+
+
+class TestTitlesSimilar:
+    """Tests for titles_similar function."""
+
+    def test_identical_titles(self) -> None:
+        assert titles_similar("The Lord of the Rings", "The Lord of the Rings") is True
+
+    def test_article_stripped_match(self) -> None:
+        assert titles_similar("The Matrix", "Matrix") is True
+
+    def test_substring_containment(self) -> None:
+        assert titles_similar("Blade Runner", "Blade Runner 2049") is True
+
+    def test_completely_different_titles(self) -> None:
+        assert titles_similar("Star Wars", "The Godfather") is False
+
+    def test_empty_first_title(self) -> None:
+        assert titles_similar("", "Anything") is False
+
+    def test_empty_second_title(self) -> None:
+        assert titles_similar("Anything", "") is False
+
+    def test_both_empty(self) -> None:
+        assert titles_similar("", "") is False
+
+    def test_case_insensitive(self) -> None:
+        assert titles_similar("DUNE", "dune") is True
+
+    def test_no_false_match_on_short_overlap(self) -> None:
+        """Unrelated titles with no substring relationship should not match."""
+        assert titles_similar("Portal", "Inception") is False

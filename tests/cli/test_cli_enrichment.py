@@ -6,6 +6,10 @@ import pytest
 from click.testing import CliRunner
 
 from src.cli.main import cli
+from src.enrichment.manager import EnrichmentJobStatus, EnrichmentManager
+from src.llm.embeddings import EmbeddingGenerator
+from src.llm.recommendations import RecommendationGenerator
+from src.storage.manager import StorageManager
 
 
 @pytest.fixture
@@ -17,7 +21,7 @@ def cli_runner() -> CliRunner:
 @pytest.fixture
 def mock_context() -> dict:
     """Create mock CLI context objects."""
-    mock_storage = MagicMock()
+    mock_storage = MagicMock(spec=StorageManager)
     mock_config = {
         "enrichment": {
             "enabled": True,
@@ -42,7 +46,11 @@ class TestEnrichmentStart:
             mock_load.return_value = {"enrichment": {"enabled": False}}
             with patch("src.cli.main.create_storage_manager"):
                 with patch("src.cli.main.create_llm_components") as mock_llm:
-                    mock_llm.return_value = (None, MagicMock(), MagicMock())
+                    mock_llm.return_value = (
+                        None,
+                        MagicMock(spec=EmbeddingGenerator),
+                        MagicMock(spec=RecommendationGenerator),
+                    )
                     with patch("src.cli.main.create_recommendation_engine"):
                         result = cli_runner.invoke(cli, ["enrichment", "start"])
 
@@ -51,7 +59,7 @@ class TestEnrichmentStart:
 
     def test_enrichment_start_success(self, cli_runner: CliRunner) -> None:
         """Test successful enrichment start."""
-        mock_status = MagicMock()
+        mock_status = MagicMock(spec=EnrichmentJobStatus)
         mock_status.running = False
         mock_status.completed = True
         mock_status.cancelled = False
@@ -69,12 +77,16 @@ class TestEnrichmentStart:
             }
             with patch("src.cli.main.create_storage_manager"):
                 with patch("src.cli.main.create_llm_components") as mock_llm:
-                    mock_llm.return_value = (None, MagicMock(), MagicMock())
+                    mock_llm.return_value = (
+                        None,
+                        MagicMock(spec=EmbeddingGenerator),
+                        MagicMock(spec=RecommendationGenerator),
+                    )
                     with patch("src.cli.main.create_recommendation_engine"):
                         with patch(
                             "src.cli.commands.EnrichmentManager"
                         ) as mock_manager_cls:
-                            mock_manager = MagicMock()
+                            mock_manager = MagicMock(spec=EnrichmentManager)
                             mock_manager.start_enrichment.return_value = True
                             mock_manager.get_status.return_value = mock_status
                             mock_manager_cls.return_value = mock_manager
@@ -87,7 +99,7 @@ class TestEnrichmentStart:
 
     def test_enrichment_start_with_type(self, cli_runner: CliRunner) -> None:
         """Test enrichment start with content type filter."""
-        mock_status = MagicMock()
+        mock_status = MagicMock(spec=EnrichmentJobStatus)
         mock_status.running = False
         mock_status.completed = True
         mock_status.cancelled = False
@@ -105,12 +117,16 @@ class TestEnrichmentStart:
             }
             with patch("src.cli.main.create_storage_manager"):
                 with patch("src.cli.main.create_llm_components") as mock_llm:
-                    mock_llm.return_value = (None, MagicMock(), MagicMock())
+                    mock_llm.return_value = (
+                        None,
+                        MagicMock(spec=EmbeddingGenerator),
+                        MagicMock(spec=RecommendationGenerator),
+                    )
                     with patch("src.cli.main.create_recommendation_engine"):
                         with patch(
                             "src.cli.commands.EnrichmentManager"
                         ) as mock_manager_cls:
-                            mock_manager = MagicMock()
+                            mock_manager = MagicMock(spec=EnrichmentManager)
                             mock_manager.start_enrichment.return_value = True
                             mock_manager.get_status.return_value = mock_status
                             mock_manager_cls.return_value = mock_manager
@@ -130,12 +146,16 @@ class TestEnrichmentStart:
             }
             with patch("src.cli.main.create_storage_manager"):
                 with patch("src.cli.main.create_llm_components") as mock_llm:
-                    mock_llm.return_value = (None, MagicMock(), MagicMock())
+                    mock_llm.return_value = (
+                        None,
+                        MagicMock(spec=EmbeddingGenerator),
+                        MagicMock(spec=RecommendationGenerator),
+                    )
                     with patch("src.cli.main.create_recommendation_engine"):
                         with patch(
                             "src.cli.commands.EnrichmentManager"
                         ) as mock_manager_cls:
-                            mock_manager = MagicMock()
+                            mock_manager = MagicMock(spec=EnrichmentManager)
                             mock_manager.start_enrichment.return_value = False
                             mock_manager_cls.return_value = mock_manager
 
@@ -163,11 +183,15 @@ class TestEnrichmentStatus:
         with patch("src.cli.main.load_config") as mock_load:
             mock_load.return_value = {}
             with patch("src.cli.main.create_storage_manager") as mock_storage_fn:
-                mock_storage = MagicMock()
+                mock_storage = MagicMock(spec=StorageManager)
                 mock_storage.get_enrichment_stats.return_value = mock_stats
                 mock_storage_fn.return_value = mock_storage
                 with patch("src.cli.main.create_llm_components") as mock_llm:
-                    mock_llm.return_value = (None, MagicMock(), MagicMock())
+                    mock_llm.return_value = (
+                        None,
+                        MagicMock(spec=EmbeddingGenerator),
+                        MagicMock(spec=RecommendationGenerator),
+                    )
                     with patch("src.cli.main.create_recommendation_engine"):
                         result = cli_runner.invoke(cli, ["enrichment", "status"])
 
@@ -192,11 +216,15 @@ class TestEnrichmentStatus:
         with patch("src.cli.main.load_config") as mock_load:
             mock_load.return_value = {}
             with patch("src.cli.main.create_storage_manager") as mock_storage_fn:
-                mock_storage = MagicMock()
+                mock_storage = MagicMock(spec=StorageManager)
                 mock_storage.get_enrichment_stats.return_value = mock_stats
                 mock_storage_fn.return_value = mock_storage
                 with patch("src.cli.main.create_llm_components") as mock_llm:
-                    mock_llm.return_value = (None, MagicMock(), MagicMock())
+                    mock_llm.return_value = (
+                        None,
+                        MagicMock(spec=EmbeddingGenerator),
+                        MagicMock(spec=RecommendationGenerator),
+                    )
                     with patch("src.cli.main.create_recommendation_engine"):
                         result = cli_runner.invoke(
                             cli, ["enrichment", "status", "--format", "json"]
@@ -215,11 +243,15 @@ class TestEnrichmentReset:
         with patch("src.cli.main.load_config") as mock_load:
             mock_load.return_value = {}
             with patch("src.cli.main.create_storage_manager") as mock_storage_fn:
-                mock_storage = MagicMock()
+                mock_storage = MagicMock(spec=StorageManager)
                 mock_storage.reset_enrichment_status.return_value = 50
                 mock_storage_fn.return_value = mock_storage
                 with patch("src.cli.main.create_llm_components") as mock_llm:
-                    mock_llm.return_value = (None, MagicMock(), MagicMock())
+                    mock_llm.return_value = (
+                        None,
+                        MagicMock(spec=EmbeddingGenerator),
+                        MagicMock(spec=RecommendationGenerator),
+                    )
                     with patch("src.cli.main.create_recommendation_engine"):
                         result = cli_runner.invoke(
                             cli, ["enrichment", "reset", "--yes"]
@@ -236,11 +268,15 @@ class TestEnrichmentReset:
         with patch("src.cli.main.load_config") as mock_load:
             mock_load.return_value = {}
             with patch("src.cli.main.create_storage_manager") as mock_storage_fn:
-                mock_storage = MagicMock()
+                mock_storage = MagicMock(spec=StorageManager)
                 mock_storage.reset_enrichment_status.return_value = 20
                 mock_storage_fn.return_value = mock_storage
                 with patch("src.cli.main.create_llm_components") as mock_llm:
-                    mock_llm.return_value = (None, MagicMock(), MagicMock())
+                    mock_llm.return_value = (
+                        None,
+                        MagicMock(spec=EmbeddingGenerator),
+                        MagicMock(spec=RecommendationGenerator),
+                    )
                     with patch("src.cli.main.create_recommendation_engine"):
                         result = cli_runner.invoke(
                             cli,
@@ -255,11 +291,15 @@ class TestEnrichmentReset:
         with patch("src.cli.main.load_config") as mock_load:
             mock_load.return_value = {}
             with patch("src.cli.main.create_storage_manager") as mock_storage_fn:
-                mock_storage = MagicMock()
+                mock_storage = MagicMock(spec=StorageManager)
                 mock_storage.reset_enrichment_status.return_value = 15
                 mock_storage_fn.return_value = mock_storage
                 with patch("src.cli.main.create_llm_components") as mock_llm:
-                    mock_llm.return_value = (None, MagicMock(), MagicMock())
+                    mock_llm.return_value = (
+                        None,
+                        MagicMock(spec=EmbeddingGenerator),
+                        MagicMock(spec=RecommendationGenerator),
+                    )
                     with patch("src.cli.main.create_recommendation_engine"):
                         result = cli_runner.invoke(
                             cli,
@@ -276,10 +316,14 @@ class TestEnrichmentReset:
         with patch("src.cli.main.load_config") as mock_load:
             mock_load.return_value = {}
             with patch("src.cli.main.create_storage_manager") as mock_storage_fn:
-                mock_storage = MagicMock()
+                mock_storage = MagicMock(spec=StorageManager)
                 mock_storage_fn.return_value = mock_storage
                 with patch("src.cli.main.create_llm_components") as mock_llm:
-                    mock_llm.return_value = (None, MagicMock(), MagicMock())
+                    mock_llm.return_value = (
+                        None,
+                        MagicMock(spec=EmbeddingGenerator),
+                        MagicMock(spec=RecommendationGenerator),
+                    )
                     with patch("src.cli.main.create_recommendation_engine"):
                         # Input 'n' to decline
                         result = cli_runner.invoke(

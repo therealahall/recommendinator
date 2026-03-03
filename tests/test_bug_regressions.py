@@ -20,7 +20,6 @@ from src.llm.recommendations import RecommendationGenerator
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.recommendations.engine import RecommendationEngine
 from src.recommendations.preference_interpreter import PatternBasedInterpreter
-from src.storage.manager import StorageManager
 from src.storage.schema import (
     create_schema,
     get_enrichment_stats,
@@ -28,6 +27,7 @@ from src.storage.schema import (
     mark_item_needs_enrichment,
 )
 from src.storage.sqlite_db import SQLiteDB
+from src.utils.sorting import titles_similar
 from tests.factories import make_item
 
 
@@ -47,13 +47,11 @@ class TestArticleStrippingRegression:
         leading-article removal.
         """
 
-        engine = RecommendationEngine(storage_manager=Mock(spec=StorageManager))
-
-        # Test _titles_similar which also strips articles
+        # Test titles_similar which also strips articles
         # "Into the Wild" should NOT have "the" stripped from the middle
-        assert engine._titles_similar("Into the Wild", "Into the Wild") is True
+        assert titles_similar("Into the Wild", "Into the Wild") is True
         # "Cathedral" should not have "a" stripped out of the middle
-        assert engine._titles_similar("Cathedral", "Cathedral") is True
+        assert titles_similar("Cathedral", "Cathedral") is True
 
     def test_title_with_leading_article_still_matches_regression(self) -> None:
         """Regression test: Titles with leading articles should still match.
@@ -61,13 +59,10 @@ class TestArticleStrippingRegression:
         Ensures the fix doesn't break the intended functionality of removing
         leading articles for matching purposes.
         """
-
-        engine = RecommendationEngine(storage_manager=Mock(spec=StorageManager))
-
         # Leading articles should still be stripped for matching
-        assert engine._titles_similar("The Matrix", "Matrix") is True
-        assert engine._titles_similar("A Beautiful Mind", "Beautiful Mind") is True
-        assert engine._titles_similar("An Inspector Calls", "Inspector Calls") is True
+        assert titles_similar("The Matrix", "Matrix") is True
+        assert titles_similar("A Beautiful Mind", "Beautiful Mind") is True
+        assert titles_similar("An Inspector Calls", "Inspector Calls") is True
 
 
 class TestPreferenceInterpreterRegression:

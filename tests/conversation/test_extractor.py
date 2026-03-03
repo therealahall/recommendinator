@@ -8,13 +8,14 @@ from src.conversation.extractor import (
     MEMORY_EXTRACTION_SYSTEM_PROMPT,
     MemoryExtractor,
 )
+from src.llm.client import OllamaClient
 from src.models.conversation import ConversationMessage
 
 
 @pytest.fixture
 def mock_ollama() -> MagicMock:
     """Create a mock Ollama client."""
-    return MagicMock()
+    return MagicMock(spec=OllamaClient)
 
 
 @pytest.fixture

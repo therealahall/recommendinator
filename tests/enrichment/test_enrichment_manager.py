@@ -19,6 +19,7 @@ from src.enrichment.provider_base import (
 )
 from src.enrichment.registry import EnrichmentRegistry
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.storage.manager import StorageManager
 
 
 class MockProvider(EnrichmentProvider):
@@ -224,7 +225,7 @@ class TestEnrichmentManager:
     @pytest.fixture
     def mock_storage(self) -> MagicMock:
         """Create a mock storage manager."""
-        storage = MagicMock()
+        storage = MagicMock(spec=StorageManager)
         storage.get_items_needing_enrichment.return_value = []
         return storage
 
@@ -286,8 +287,7 @@ class TestEnrichmentManager:
 
         manager.stop_enrichment()
 
-        # Wait for thread to stop
-        time.sleep(0.1)
+        manager._wait_for_completion()
         status = manager.get_status()
         assert status.running is False
 
@@ -344,8 +344,7 @@ class TestEnrichmentManager:
         manager = EnrichmentManager(mock_storage, config, mock_registry)
         manager.start_enrichment()
 
-        # Wait for completion
-        time.sleep(0.2)
+        manager._wait_for_completion()
 
         status = manager.get_status()
         assert status.completed is True
@@ -379,7 +378,7 @@ class TestEnrichmentManager:
         manager = EnrichmentManager(mock_storage, config, mock_registry)
         manager.start_enrichment()
 
-        time.sleep(0.2)
+        manager._wait_for_completion()
 
         status = manager.get_status()
         assert status.items_not_found == 1
@@ -411,7 +410,7 @@ class TestEnrichmentManager:
         manager = EnrichmentManager(mock_storage, config, mock_registry)
         manager.start_enrichment()
 
-        time.sleep(0.2)
+        manager._wait_for_completion()
 
         status = manager.get_status()
         assert status.completed is True
@@ -427,7 +426,7 @@ class TestEnrichmentManager:
         manager = EnrichmentManager(mock_storage, config, mock_registry)
         manager.start_enrichment(content_type=ContentType.MOVIE)
 
-        time.sleep(0.1)
+        manager._wait_for_completion()
 
         # Verify storage was called with content_type filter
         mock_storage.get_items_needing_enrichment.assert_called_with(
@@ -461,7 +460,7 @@ class TestEnrichmentManager:
         manager = EnrichmentManager(mock_storage, config, mock_registry)
         manager.start_enrichment()
 
-        time.sleep(0.2)
+        manager._wait_for_completion()
 
         # Verify save was called
         assert mock_storage.save_content_item.called
@@ -501,7 +500,7 @@ class TestEnrichmentManager:
         manager = EnrichmentManager(mock_storage, config, mock_registry)
         manager.start_enrichment()
 
-        time.sleep(0.2)
+        manager._wait_for_completion()
 
         status = manager.get_status()
         assert status.items_not_found == 1

@@ -186,11 +186,10 @@ class TestGoodreadsPluginFetch:
         self, plugin: GoodreadsPlugin
     ) -> None:
         """Test that fetching a nonexistent file raises SourceError."""
-        with pytest.raises(SourceError) as exc_info:
+        with pytest.raises(SourceError, match="CSV file not found") as exc_info:
             list(plugin.fetch({"path": "/nonexistent/books.csv"}))
 
         assert exc_info.value.plugin_name == "goodreads"
-        assert "CSV file not found" in exc_info.value.message
 
     def test_fetch_metadata(self, plugin: GoodreadsPlugin, tmp_path: Path) -> None:
         """Test that metadata fields are populated correctly."""

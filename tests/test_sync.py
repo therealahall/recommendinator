@@ -5,8 +5,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.ingestion.plugin_base import SourceError
+from src.ingestion.plugin_base import SourceError, SourcePlugin
 from src.ingestion.sync import SyncResult, execute_multi_source_sync, execute_sync
+from src.llm.embeddings import EmbeddingGenerator
+from src.storage.manager import StorageManager
 from tests.factories import make_item
 
 
@@ -34,11 +36,11 @@ class TestExecuteSync:
     def test_basic_sync(self) -> None:
         """Items are fetched, saved, and counted."""
         items = [make_item("Book 1"), make_item("Book 2")]
-        plugin = MagicMock()
+        plugin = MagicMock(spec=SourcePlugin)
         plugin.display_name = "TestPlugin"
         plugin.fetch.return_value = iter(items)
 
-        storage = MagicMock()
+        storage = MagicMock(spec=StorageManager)
 
         result = execute_sync(
             plugin=plugin,
@@ -55,13 +57,13 @@ class TestExecuteSync:
     def test_sync_with_embeddings(self) -> None:
         """Embeddings are generated when enabled."""
         items = [make_item("Book 1", item_id="ext_1")]
-        plugin = MagicMock()
+        plugin = MagicMock(spec=SourcePlugin)
         plugin.display_name = "TestPlugin"
         plugin.fetch.return_value = iter(items)
 
-        storage = MagicMock()
+        storage = MagicMock(spec=StorageManager)
         storage.has_embedding.return_value = False
-        embedding_gen = MagicMock()
+        embedding_gen = MagicMock(spec=EmbeddingGenerator)
         embedding_gen.generate_content_embedding.return_value = [0.1, 0.2]
 
         result = execute_sync(
@@ -82,13 +84,13 @@ class TestExecuteSync:
     def test_sync_skips_existing_embeddings(self) -> None:
         """Embeddings are not regenerated for items that already have one."""
         items = [make_item("Book 1", item_id="ext_1")]
-        plugin = MagicMock()
+        plugin = MagicMock(spec=SourcePlugin)
         plugin.display_name = "TestPlugin"
         plugin.fetch.return_value = iter(items)
 
-        storage = MagicMock()
+        storage = MagicMock(spec=StorageManager)
         storage.has_embedding.return_value = True
-        embedding_gen = MagicMock()
+        embedding_gen = MagicMock(spec=EmbeddingGenerator)
 
         result = execute_sync(
             plugin=plugin,
@@ -106,12 +108,12 @@ class TestExecuteSync:
     def test_sync_generates_embedding_for_items_without_external_id(self) -> None:
         """Items without external IDs always get embeddings (can't check existence)."""
         items = [make_item("Book 1")]  # id=None
-        plugin = MagicMock()
+        plugin = MagicMock(spec=SourcePlugin)
         plugin.display_name = "TestPlugin"
         plugin.fetch.return_value = iter(items)
 
-        storage = MagicMock()
-        embedding_gen = MagicMock()
+        storage = MagicMock(spec=StorageManager)
+        embedding_gen = MagicMock(spec=EmbeddingGenerator)
         embedding_gen.generate_content_embedding.return_value = [0.1, 0.2]
 
         result = execute_sync(
@@ -132,12 +134,12 @@ class TestExecuteSync:
     def test_sync_without_embeddings(self) -> None:
         """Embedding generator is not called when use_embeddings is False."""
         items = [make_item("Book 1")]
-        plugin = MagicMock()
+        plugin = MagicMock(spec=SourcePlugin)
         plugin.display_name = "TestPlugin"
         plugin.fetch.return_value = iter(items)
 
-        storage = MagicMock()
-        embedding_gen = MagicMock()
+        storage = MagicMock(spec=StorageManager)
+        embedding_gen = MagicMock(spec=EmbeddingGenerator)
 
         result = execute_sync(
             plugin=plugin,
@@ -154,11 +156,11 @@ class TestExecuteSync:
     def test_sync_records_save_errors(self) -> None:
         """Errors during save are recorded but don't stop the sync."""
         items = [make_item("Good"), make_item("Bad"), make_item("Also Good")]
-        plugin = MagicMock()
+        plugin = MagicMock(spec=SourcePlugin)
         plugin.display_name = "TestPlugin"
         plugin.fetch.return_value = iter(items)
 
-        storage = MagicMock()
+        storage = MagicMock(spec=StorageManager)
         storage.save_content_item.side_effect = [None, ValueError("db error"), None]
 
         result = execute_sync(
@@ -175,11 +177,11 @@ class TestExecuteSync:
     def test_progress_callback_called(self) -> None:
         """Progress callback receives updates during sync."""
         items = [make_item("Book 1")]
-        plugin = MagicMock()
+        plugin = MagicMock(spec=SourcePlugin)
         plugin.display_name = "TestPlugin"
         plugin.fetch.return_value = iter(items)
 
-        storage = MagicMock()
+        storage = MagicMock(spec=StorageManager)
         progress = MagicMock()
 
         execute_sync(
@@ -194,11 +196,11 @@ class TestExecuteSync:
 
     def test_fetch_error_propagates(self) -> None:
         """SourceError from plugin.fetch propagates to caller."""
-        plugin = MagicMock()
+        plugin = MagicMock(spec=SourcePlugin)
         plugin.display_name = "TestPlugin"
         plugin.fetch.side_effect = SourceError("test", "connection failed")
 
-        storage = MagicMock()
+        storage = MagicMock(spec=StorageManager)
 
         with pytest.raises(SourceError, match="connection failed"):
             execute_sync(
@@ -209,11 +211,11 @@ class TestExecuteSync:
 
     def test_empty_source(self) -> None:
         """Sync with no items returns zero counts."""
-        plugin = MagicMock()
+        plugin = MagicMock(spec=SourcePlugin)
         plugin.display_name = "EmptyPlugin"
         plugin.fetch.return_value = iter([])
 
-        storage = MagicMock()
+        storage = MagicMock(spec=StorageManager)
 
         result = execute_sync(
             plugin=plugin,
@@ -228,11 +230,11 @@ class TestExecuteSync:
 
     def test_plugin_config_passed_through(self) -> None:
         """Plugin receives the exact config dict."""
-        plugin = MagicMock()
+        plugin = MagicMock(spec=SourcePlugin)
         plugin.display_name = "TestPlugin"
         plugin.fetch.return_value = iter([])
 
-        storage = MagicMock()
+        storage = MagicMock(spec=StorageManager)
         config = {"url": "http://example.com", "api_key": "secret"}
 
         execute_sync(
@@ -251,17 +253,17 @@ class TestExecuteMultiSourceSync:
 
     def test_multiple_sources(self) -> None:
         """Syncs multiple sources sequentially and returns results."""
-        plugin_a = MagicMock()
+        plugin_a = MagicMock(spec=SourcePlugin)
         plugin_a.name = "source_a"
         plugin_a.display_name = "Source A"
         plugin_a.fetch.return_value = iter([make_item("A1")])
 
-        plugin_b = MagicMock()
+        plugin_b = MagicMock(spec=SourcePlugin)
         plugin_b.name = "source_b"
         plugin_b.display_name = "Source B"
         plugin_b.fetch.return_value = iter([make_item("B1"), make_item("B2")])
 
-        storage = MagicMock()
+        storage = MagicMock(spec=StorageManager)
 
         results = execute_multi_source_sync(
             sources=[(plugin_a, {"k": "v"}), (plugin_b, {"k": "v"})],
@@ -275,17 +277,17 @@ class TestExecuteMultiSourceSync:
 
     def test_source_error_continues(self) -> None:
         """A failing source doesn't block subsequent sources."""
-        plugin_a = MagicMock()
+        plugin_a = MagicMock(spec=SourcePlugin)
         plugin_a.name = "failing"
         plugin_a.display_name = "Failing"
         plugin_a.fetch.side_effect = SourceError("failing", "boom")
 
-        plugin_b = MagicMock()
+        plugin_b = MagicMock(spec=SourcePlugin)
         plugin_b.name = "working"
         plugin_b.display_name = "Working"
         plugin_b.fetch.return_value = iter([make_item("B1")])
 
-        storage = MagicMock()
+        storage = MagicMock(spec=StorageManager)
         error_callback = MagicMock()
 
         results = execute_multi_source_sync(
@@ -302,7 +304,7 @@ class TestExecuteMultiSourceSync:
 
     def test_empty_sources(self) -> None:
         """Empty source list returns empty results."""
-        storage = MagicMock()
+        storage = MagicMock(spec=StorageManager)
 
         results = execute_multi_source_sync(
             sources=[],
@@ -313,12 +315,12 @@ class TestExecuteMultiSourceSync:
 
     def test_mark_for_enrichment_passed_through(self) -> None:
         """mark_for_enrichment flag is passed to execute_sync."""
-        plugin = MagicMock()
+        plugin = MagicMock(spec=SourcePlugin)
         plugin.name = "test"
         plugin.display_name = "Test"
         plugin.fetch.return_value = iter([make_item("Book 1")])
 
-        storage = MagicMock()
+        storage = MagicMock(spec=StorageManager)
         storage.save_content_item.return_value = 1
 
         results = execute_multi_source_sync(
@@ -339,11 +341,11 @@ class TestAutoEnrichmentHook:
     def test_mark_for_enrichment_enabled(self) -> None:
         """Items are marked for enrichment when flag is True."""
         items = [make_item("Book 1"), make_item("Book 2")]
-        plugin = MagicMock()
+        plugin = MagicMock(spec=SourcePlugin)
         plugin.display_name = "TestPlugin"
         plugin.fetch.return_value = iter(items)
 
-        storage = MagicMock()
+        storage = MagicMock(spec=StorageManager)
         storage.save_content_item.side_effect = [1, 2]
 
         result = execute_sync(
@@ -361,11 +363,11 @@ class TestAutoEnrichmentHook:
     def test_mark_for_enrichment_disabled(self) -> None:
         """Items are not marked for enrichment when flag is False."""
         items = [make_item("Book 1")]
-        plugin = MagicMock()
+        plugin = MagicMock(spec=SourcePlugin)
         plugin.display_name = "TestPlugin"
         plugin.fetch.return_value = iter(items)
 
-        storage = MagicMock()
+        storage = MagicMock(spec=StorageManager)
         storage.save_content_item.return_value = 1
 
         result = execute_sync(
@@ -381,11 +383,11 @@ class TestAutoEnrichmentHook:
     def test_mark_for_enrichment_default_disabled(self) -> None:
         """mark_for_enrichment defaults to False."""
         items = [make_item("Book 1")]
-        plugin = MagicMock()
+        plugin = MagicMock(spec=SourcePlugin)
         plugin.display_name = "TestPlugin"
         plugin.fetch.return_value = iter(items)
 
-        storage = MagicMock()
+        storage = MagicMock(spec=StorageManager)
         storage.save_content_item.return_value = 1
 
         # Don't pass mark_for_enrichment - should default to False
@@ -401,11 +403,11 @@ class TestAutoEnrichmentHook:
     def test_mark_for_enrichment_error_does_not_fail_sync(self) -> None:
         """Errors from marking for enrichment don't stop the sync."""
         items = [make_item("Book 1"), make_item("Book 2")]
-        plugin = MagicMock()
+        plugin = MagicMock(spec=SourcePlugin)
         plugin.display_name = "TestPlugin"
         plugin.fetch.return_value = iter(items)
 
-        storage = MagicMock()
+        storage = MagicMock(spec=StorageManager)
         storage.save_content_item.side_effect = [1, 2]
         storage.mark_item_needs_enrichment.side_effect = [
             Exception("enrichment error"),
@@ -426,11 +428,11 @@ class TestAutoEnrichmentHook:
     def test_mark_for_enrichment_skipped_when_no_db_id(self) -> None:
         """Enrichment marking is skipped when save returns None/0."""
         items = [make_item("Book 1")]
-        plugin = MagicMock()
+        plugin = MagicMock(spec=SourcePlugin)
         plugin.display_name = "TestPlugin"
         plugin.fetch.return_value = iter(items)
 
-        storage = MagicMock()
+        storage = MagicMock(spec=StorageManager)
         storage.save_content_item.return_value = None  # No DB ID
 
         result = execute_sync(
@@ -450,13 +452,13 @@ class TestSyncEmbeddingLogging:
     def test_logs_generating_embedding(self, caplog: pytest.LogCaptureFixture) -> None:
         """Generating an embedding logs an INFO message with item title."""
         items = [make_item("The Name of the Wind", item_id="ext_1")]
-        plugin = MagicMock()
+        plugin = MagicMock(spec=SourcePlugin)
         plugin.display_name = "TestPlugin"
         plugin.fetch.return_value = iter(items)
 
-        storage = MagicMock()
+        storage = MagicMock(spec=StorageManager)
         storage.has_embedding.return_value = False
-        embedding_gen = MagicMock()
+        embedding_gen = MagicMock(spec=EmbeddingGenerator)
         embedding_gen.generate_content_embedding.return_value = [0.1, 0.2]
 
         with caplog.at_level(logging.INFO, logger="src.ingestion.sync"):
@@ -480,13 +482,13 @@ class TestSyncEmbeddingLogging:
     ) -> None:
         """Skipping an existing embedding logs a DEBUG message."""
         items = [make_item("Dune", item_id="ext_1")]
-        plugin = MagicMock()
+        plugin = MagicMock(spec=SourcePlugin)
         plugin.display_name = "TestPlugin"
         plugin.fetch.return_value = iter(items)
 
-        storage = MagicMock()
+        storage = MagicMock(spec=StorageManager)
         storage.has_embedding.return_value = True
-        embedding_gen = MagicMock()
+        embedding_gen = MagicMock(spec=EmbeddingGenerator)
 
         with caplog.at_level(logging.DEBUG, logger="src.ingestion.sync"):
             execute_sync(
@@ -511,13 +513,13 @@ class TestSyncEmbeddingLogging:
             make_item("Old Book", item_id="old_1"),
             make_item("Another New", item_id="new_2"),
         ]
-        plugin = MagicMock()
+        plugin = MagicMock(spec=SourcePlugin)
         plugin.display_name = "TestPlugin"
         plugin.fetch.return_value = iter(items)
 
-        storage = MagicMock()
+        storage = MagicMock(spec=StorageManager)
         storage.has_embedding.side_effect = [False, True, False]
-        embedding_gen = MagicMock()
+        embedding_gen = MagicMock(spec=EmbeddingGenerator)
         embedding_gen.generate_content_embedding.return_value = [0.1, 0.2]
 
         with caplog.at_level(logging.INFO, logger="src.ingestion.sync"):
@@ -541,11 +543,11 @@ class TestSyncEmbeddingLogging:
     ) -> None:
         """Completion log has no embedding summary when embeddings are disabled."""
         items = [make_item("Book 1")]
-        plugin = MagicMock()
+        plugin = MagicMock(spec=SourcePlugin)
         plugin.display_name = "TestPlugin"
         plugin.fetch.return_value = iter(items)
 
-        storage = MagicMock()
+        storage = MagicMock(spec=StorageManager)
 
         with caplog.at_level(logging.INFO, logger="src.ingestion.sync"):
             execute_sync(

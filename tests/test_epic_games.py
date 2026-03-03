@@ -3,6 +3,7 @@
 from unittest.mock import Mock, patch
 
 import pytest
+from legendary.api.egs import EPCAPI
 
 from src.ingestion.plugin_base import SourceError, SourcePlugin
 from src.ingestion.sources.epic_games import (
@@ -74,7 +75,7 @@ class TestAuthenticate:
     @patch("src.ingestion.sources.epic_games.EPCAPI")
     def test_authenticate_success(self, mock_epcapi_class: Mock) -> None:
         """Test successful authentication returns an EPCAPI instance."""
-        mock_api = Mock()
+        mock_api = Mock(spec=EPCAPI)
         mock_epcapi_class.return_value = mock_api
 
         result = authenticate("valid_refresh_token")
@@ -89,7 +90,7 @@ class TestAuthenticate:
         """Test that InvalidCredentialsError is wrapped in EpicGamesAPIError."""
         from legendary.models.exceptions import InvalidCredentialsError
 
-        mock_api = Mock()
+        mock_api = Mock(spec=EPCAPI)
         mock_api.start_session.side_effect = InvalidCredentialsError(
             "errors.com.epicgames.oauth.invalid_token"
         )
@@ -101,7 +102,7 @@ class TestAuthenticate:
     @patch("src.ingestion.sources.epic_games.EPCAPI")
     def test_authenticate_generic_error(self, mock_epcapi_class: Mock) -> None:
         """Test that generic exceptions are wrapped in EpicGamesAPIError."""
-        mock_api = Mock()
+        mock_api = Mock(spec=EPCAPI)
         mock_api.start_session.side_effect = ConnectionError("Network down")
         mock_epcapi_class.return_value = mock_api
 
@@ -119,7 +120,7 @@ class TestGetLibraryItems:
 
     def test_success(self) -> None:
         """Test successful library fetch."""
-        mock_api = Mock()
+        mock_api = Mock(spec=EPCAPI)
         mock_api.get_library_items.return_value = [
             _make_library_record(app_name="GameA"),
             _make_library_record(app_name="GameB"),
@@ -134,7 +135,7 @@ class TestGetLibraryItems:
 
     def test_empty_library(self) -> None:
         """Test fetching when the library is empty."""
-        mock_api = Mock()
+        mock_api = Mock(spec=EPCAPI)
         mock_api.get_library_items.return_value = []
 
         result = get_library_items(mock_api)
@@ -143,7 +144,7 @@ class TestGetLibraryItems:
 
     def test_api_error(self) -> None:
         """Test handling API error during fetch."""
-        mock_api = Mock()
+        mock_api = Mock(spec=EPCAPI)
         mock_api.get_library_items.side_effect = Exception("Server error")
 
         with pytest.raises(EpicGamesAPIError, match="Failed to fetch library items"):
@@ -160,7 +161,7 @@ class TestGetGameMetadata:
 
     def test_success(self) -> None:
         """Test successful metadata fetch."""
-        mock_api = Mock()
+        mock_api = Mock(spec=EPCAPI)
         mock_api.get_game_info.return_value = _make_game_metadata(title="The Witcher 3")
 
         result = get_game_metadata(mock_api, "epic", "abc123")
@@ -171,7 +172,7 @@ class TestGetGameMetadata:
 
     def test_not_found_returns_none(self) -> None:
         """Test that None is returned when game is not found."""
-        mock_api = Mock()
+        mock_api = Mock(spec=EPCAPI)
         mock_api.get_game_info.return_value = None
 
         result = get_game_metadata(mock_api, "epic", "missing123")
@@ -180,7 +181,7 @@ class TestGetGameMetadata:
 
     def test_api_error(self) -> None:
         """Test handling of API errors."""
-        mock_api = Mock()
+        mock_api = Mock(spec=EPCAPI)
         mock_api.get_game_info.side_effect = Exception("Server error")
 
         with pytest.raises(EpicGamesAPIError, match="Failed to fetch metadata"):
@@ -429,7 +430,7 @@ class TestEpicGamesPluginFetch:
         mock_get_metadata: Mock,
     ) -> None:
         """Test fetching base games through the plugin interface."""
-        mock_api = Mock()
+        mock_api = Mock(spec=EPCAPI)
         mock_authenticate.return_value = mock_api
         mock_get_library.return_value = [
             _make_library_record(
@@ -466,7 +467,7 @@ class TestEpicGamesPluginFetch:
         mock_get_metadata: Mock,
     ) -> None:
         """Test that DLC items are filtered out."""
-        mock_api = Mock()
+        mock_api = Mock(spec=EPCAPI)
         mock_authenticate.return_value = mock_api
         mock_get_library.return_value = [
             _make_library_record(app_name="BaseGame", catalog_item_id="base1"),
@@ -497,7 +498,7 @@ class TestEpicGamesPluginFetch:
         mock_get_metadata: Mock,
     ) -> None:
         """Test that metadata fields are populated correctly."""
-        mock_api = Mock()
+        mock_api = Mock(spec=EPCAPI)
         mock_authenticate.return_value = mock_api
         mock_get_library.return_value = [
             _make_library_record(
@@ -537,7 +538,7 @@ class TestEpicGamesPluginFetch:
         mock_get_metadata: Mock,
     ) -> None:
         """Test that games without titles are skipped."""
-        mock_api = Mock()
+        mock_api = Mock(spec=EPCAPI)
         mock_authenticate.return_value = mock_api
         mock_get_library.return_value = [
             _make_library_record(app_name="NoTitle", catalog_item_id="nt1"),
@@ -564,7 +565,7 @@ class TestEpicGamesPluginFetch:
         mock_get_metadata: Mock,
     ) -> None:
         """Test that PRIVATE sandbox items are skipped."""
-        mock_api = Mock()
+        mock_api = Mock(spec=EPCAPI)
         mock_authenticate.return_value = mock_api
         mock_get_library.return_value = [
             _make_library_record(
@@ -600,7 +601,7 @@ class TestEpicGamesPluginFetch:
         mock_get_metadata: Mock,
     ) -> None:
         """Test that Unreal Engine marketplace items are skipped."""
-        mock_api = Mock()
+        mock_api = Mock(spec=EPCAPI)
         mock_authenticate.return_value = mock_api
         mock_get_library.return_value = [
             _make_library_record(
@@ -634,7 +635,7 @@ class TestEpicGamesPluginFetch:
         mock_get_metadata: Mock,
     ) -> None:
         """Test that progress callback is invoked during fetch."""
-        mock_api = Mock()
+        mock_api = Mock(spec=EPCAPI)
         mock_authenticate.return_value = mock_api
         mock_get_library.return_value = [
             _make_library_record(app_name="G1", catalog_item_id="c1"),
@@ -660,11 +661,10 @@ class TestEpicGamesPluginFetch:
         mock_authenticate.side_effect = EpicGamesAPIError("Token expired")
 
         plugin = EpicGamesPlugin()
-        with pytest.raises(SourceError) as exc_info:
+        with pytest.raises(SourceError, match="Token expired") as exc_info:
             list(plugin.fetch({"refresh_token": "bad_token"}))
 
         assert exc_info.value.plugin_name == "epic_games"
-        assert "Token expired" in exc_info.value.message
 
     @patch("src.ingestion.sources.epic_games.get_game_metadata")
     @patch("src.ingestion.sources.epic_games.get_library_items")
@@ -676,7 +676,7 @@ class TestEpicGamesPluginFetch:
         mock_get_metadata: Mock,
     ) -> None:
         """Test that individual metadata failures are logged and skipped."""
-        mock_api = Mock()
+        mock_api = Mock(spec=EPCAPI)
         mock_authenticate.return_value = mock_api
         mock_get_library.return_value = [
             _make_library_record(app_name="Fails", catalog_item_id="fail1"),
@@ -703,7 +703,7 @@ class TestEpicGamesPluginFetch:
         mock_get_metadata: Mock,
     ) -> None:
         """Test that all games have UNREAD status (Epic has no playtime data)."""
-        mock_api = Mock()
+        mock_api = Mock(spec=EPCAPI)
         mock_authenticate.return_value = mock_api
         mock_get_library.return_value = [
             _make_library_record(app_name=f"G{index}", catalog_item_id=f"c{index}")
@@ -731,7 +731,7 @@ class TestEpicGamesPluginFetch:
         mock_get_metadata: Mock,
     ) -> None:
         """Test that the broken placeholder appName '1' is skipped."""
-        mock_api = Mock()
+        mock_api = Mock(spec=EPCAPI)
         mock_authenticate.return_value = mock_api
         mock_get_library.return_value = [
             _make_library_record(
@@ -763,7 +763,7 @@ class TestEpicGamesPluginFetch:
         mock_get_metadata: Mock,
     ) -> None:
         """Test that items where get_game_metadata returns None are skipped."""
-        mock_api = Mock()
+        mock_api = Mock(spec=EPCAPI)
         mock_authenticate.return_value = mock_api
         mock_get_library.return_value = [
             _make_library_record(app_name="NoMeta", catalog_item_id="nm1"),

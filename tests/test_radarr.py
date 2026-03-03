@@ -3,6 +3,7 @@
 from unittest.mock import Mock, patch
 
 import pytest
+import requests
 
 from src.ingestion.plugin_base import SourceError, SourcePlugin
 from src.ingestion.sources.radarr import RadarrPlugin
@@ -142,7 +143,7 @@ class TestRadarrPluginFetch:
             collections = []
 
         def side_effect(*args, **kwargs):
-            response = Mock()
+            response = Mock(spec=requests.Response)
             response.raise_for_status = Mock()
             url = args[0] if args else ""
             response.json.return_value = collections if "collection" in url else movies
@@ -350,7 +351,7 @@ class TestRadarrPluginErrors:
     ) -> None:
         import requests as req
 
-        mock_response = Mock()
+        mock_response = Mock(spec=requests.Response)
         mock_response.raise_for_status.side_effect = req.HTTPError("401 Unauthorized")
         self.mock_get.return_value = mock_response
 
@@ -399,7 +400,7 @@ class TestRadarrCollections:
         ]
 
         def side_effect(*args, **kwargs):
-            response = Mock()
+            response = Mock(spec=requests.Response)
             response.raise_for_status = Mock()
             url = args[0] if args else ""
             response.json.return_value = collections if "collection" in url else movies

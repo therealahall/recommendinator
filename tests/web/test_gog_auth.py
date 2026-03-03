@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 
 from src.web.gog_auth import (
     GogAuthError,
@@ -86,7 +87,7 @@ class TestExchangeCodeForTokens:
     @patch("src.web.gog_auth.requests.get")
     def test_successful_exchange(self, mock_get: MagicMock) -> None:
         """Test successful token exchange."""
-        mock_response = MagicMock()
+        mock_response = MagicMock(spec=requests.Response)
         mock_response.ok = True
         mock_response.json.return_value = {
             "access_token": "access123",
@@ -105,7 +106,7 @@ class TestExchangeCodeForTokens:
         self, mock_get: MagicMock, caplog: pytest.LogCaptureFixture
     ) -> None:
         """Test token exchange failure."""
-        mock_response = MagicMock()
+        mock_response = MagicMock(spec=requests.Response)
         mock_response.ok = False
         mock_response.status_code = 400
         mock_response.text = "Invalid code"
@@ -121,7 +122,7 @@ class TestExchangeCodeForTokens:
     @patch("src.web.gog_auth.requests.get")
     def test_missing_refresh_token(self, mock_get: MagicMock) -> None:
         """Test response missing refresh_token."""
-        mock_response = MagicMock()
+        mock_response = MagicMock(spec=requests.Response)
         mock_response.ok = True
         mock_response.json.return_value = {"access_token": "access123"}
         mock_get.return_value = mock_response

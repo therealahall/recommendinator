@@ -126,8 +126,12 @@ class TestOpenLibraryProviderISBNLookup:
 
         with patch("requests.get") as mock_get:
             mock_get.side_effect = [
-                MagicMock(status_code=200, json=lambda: mock_edition),
-                MagicMock(status_code=200, json=lambda: mock_work),
+                MagicMock(
+                    spec=requests.Response, status_code=200, json=lambda: mock_edition
+                ),
+                MagicMock(
+                    spec=requests.Response, status_code=200, json=lambda: mock_work
+                ),
             ]
 
             result = provider.enrich(item, {})
@@ -156,8 +160,10 @@ class TestOpenLibraryProviderISBNLookup:
         with patch("requests.get") as mock_get:
             # ISBN lookup returns 404, then search returns empty
             mock_get.side_effect = [
-                MagicMock(status_code=404),  # ISBN lookup
-                MagicMock(status_code=200, json=lambda: mock_search),  # Search
+                MagicMock(spec=requests.Response, status_code=404),  # ISBN lookup
+                MagicMock(
+                    spec=requests.Response, status_code=200, json=lambda: mock_search
+                ),  # Search
             ]
 
             result = provider.enrich(item, {})
@@ -209,8 +215,12 @@ class TestOpenLibraryProviderSearch:
 
         with patch("requests.get") as mock_get:
             mock_get.side_effect = [
-                MagicMock(status_code=200, json=lambda: mock_search),
-                MagicMock(status_code=200, json=lambda: mock_work),
+                MagicMock(
+                    spec=requests.Response, status_code=200, json=lambda: mock_search
+                ),
+                MagicMock(
+                    spec=requests.Response, status_code=200, json=lambda: mock_work
+                ),
             ]
 
             result = provider.enrich(book_item, {})
@@ -247,9 +257,15 @@ class TestOpenLibraryProviderSearch:
 
         with patch("requests.get") as mock_get:
             mock_get.side_effect = [
-                MagicMock(status_code=200, json=lambda: mock_empty),
-                MagicMock(status_code=200, json=lambda: mock_found),
-                MagicMock(status_code=200, json=lambda: mock_work),
+                MagicMock(
+                    spec=requests.Response, status_code=200, json=lambda: mock_empty
+                ),
+                MagicMock(
+                    spec=requests.Response, status_code=200, json=lambda: mock_found
+                ),
+                MagicMock(
+                    spec=requests.Response, status_code=200, json=lambda: mock_work
+                ),
             ]
 
             result = provider.enrich(item, {})

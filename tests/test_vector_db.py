@@ -1,8 +1,10 @@
 """Tests for ChromaDB vector database manager."""
 
+import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import chromadb
 import pytest
 
 from src.storage.vector_db import VectorDB
@@ -65,7 +67,7 @@ def test_search_similar(temp_vector_db: VectorDB) -> None:
     query_embedding = [0.15, 0.25, 0.35]  # Similar to item_1 and item_2
     results = temp_vector_db.search_similar(query_embedding, n_results=2)
 
-    assert len(results) <= 2
+    assert len(results) == 2
     assert any(result["content_id"] in ["item_1", "item_2"] for result in results)
 
 
@@ -199,7 +201,7 @@ def test_search_similar_distances_none_returns_none_score() -> None:
     returned by ChromaDB (e.g. when include=['metadatas'] is used or
     an unusual configuration).
     """
-    mock_collection = MagicMock()
+    mock_collection = MagicMock(spec=chromadb.Collection)
     mock_collection.query.return_value = {
         "ids": [["item_1", "item_2"]],
         "distances": None,
@@ -207,11 +209,9 @@ def test_search_similar_distances_none_returns_none_score() -> None:
     }
 
     with patch("chromadb.PersistentClient") as mock_client_cls:
-        mock_client = MagicMock()
+        mock_client = MagicMock(spec=chromadb.ClientAPI)
         mock_client.get_or_create_collection.return_value = mock_collection
         mock_client_cls.return_value = mock_client
-
-        import tempfile
 
         with tempfile.TemporaryDirectory() as tmp:
             db = VectorDB(Path(tmp) / "test_db")
@@ -229,7 +229,7 @@ def test_search_similar_distances_none_returns_none_score() -> None:
 
 def test_search_similar_metadatas_none_returns_empty_dict() -> None:
     """Test that when ChromaDB returns metadatas=None, metadata is set to {}."""
-    mock_collection = MagicMock()
+    mock_collection = MagicMock(spec=chromadb.Collection)
     mock_collection.query.return_value = {
         "ids": [["item_1"]],
         "distances": [[0.1]],
@@ -237,11 +237,9 @@ def test_search_similar_metadatas_none_returns_empty_dict() -> None:
     }
 
     with patch("chromadb.PersistentClient") as mock_client_cls:
-        mock_client = MagicMock()
+        mock_client = MagicMock(spec=chromadb.ClientAPI)
         mock_client.get_or_create_collection.return_value = mock_collection
         mock_client_cls.return_value = mock_client
-
-        import tempfile
 
         with tempfile.TemporaryDirectory() as tmp:
             db = VectorDB(Path(tmp) / "test_db")

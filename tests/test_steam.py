@@ -3,6 +3,7 @@
 from unittest.mock import Mock, patch
 
 import pytest
+import requests
 
 from src.ingestion.plugin_base import SourceError, SourcePlugin
 from src.ingestion.sources.steam import (
@@ -22,7 +23,7 @@ class TestGetSteamIdFromVanityUrl:
     @patch("src.ingestion.sources.steam.requests.get")
     def test_resolve_vanity_url_success(self, mock_get):
         """Test successful vanity URL resolution."""
-        mock_response = Mock()
+        mock_response = Mock(spec=requests.Response)
         mock_response.json.return_value = {
             "response": {"success": 1, "steamid": "76561198000000000"}
         }
@@ -41,7 +42,7 @@ class TestGetSteamIdFromVanityUrl:
     @patch("src.ingestion.sources.steam.requests.get")
     def test_resolve_vanity_url_not_found(self, mock_get):
         """Test vanity URL resolution when not found."""
-        mock_response = Mock()
+        mock_response = Mock(spec=requests.Response)
         mock_response.json.return_value = {"response": {"success": 42}}
         mock_response.raise_for_status = Mock()
         mock_get.return_value = mock_response
@@ -53,8 +54,6 @@ class TestGetSteamIdFromVanityUrl:
     @patch("src.ingestion.sources.steam.requests.get")
     def test_resolve_vanity_url_api_error(self, mock_get):
         """Test vanity URL resolution with API error."""
-        import requests
-
         mock_get.side_effect = requests.RequestException("Connection error")
 
         with pytest.raises(SteamAPIError, match="Failed to resolve Steam ID"):
@@ -67,7 +66,7 @@ class TestGetOwnedGames:
     @patch("src.ingestion.sources.steam.requests.get")
     def test_get_owned_games_success(self, mock_get):
         """Test successful game fetch."""
-        mock_response = Mock()
+        mock_response = Mock(spec=requests.Response)
         mock_response.json.return_value = {
             "response": {
                 "game_count": 2,
@@ -103,7 +102,7 @@ class TestGetOwnedGames:
     @patch("src.ingestion.sources.steam.requests.get")
     def test_get_owned_games_empty(self, mock_get):
         """Test game fetch with empty library."""
-        mock_response = Mock()
+        mock_response = Mock(spec=requests.Response)
         mock_response.json.return_value = {"response": {"game_count": 0, "games": []}}
         mock_response.raise_for_status = Mock()
         mock_get.return_value = mock_response
@@ -115,8 +114,6 @@ class TestGetOwnedGames:
     @patch("src.ingestion.sources.steam.requests.get")
     def test_get_owned_games_api_error(self, mock_get):
         """Test game fetch with API error."""
-        import requests
-
         mock_get.side_effect = requests.RequestException("API error")
 
         with pytest.raises(SteamAPIError, match="Failed to fetch Steam games"):
@@ -129,7 +126,8 @@ class TestGetGameDetails:
     @patch("src.ingestion.sources.steam.requests.get")
     def test_get_game_details_success(self, mock_get):
         """Test successful game details fetch."""
-        mock_response = Mock()
+        mock_response = Mock(spec=requests.Response)
+        mock_response.status_code = 200
         mock_response.json.return_value = {
             "12345": {
                 "success": True,
@@ -156,7 +154,8 @@ class TestGetGameDetails:
     @patch("src.ingestion.sources.steam.requests.get")
     def test_get_game_details_batch(self, mock_get):
         """Test game details fetch with multiple games."""
-        mock_response = Mock()
+        mock_response = Mock(spec=requests.Response)
+        mock_response.status_code = 200
         mock_response.json.return_value = {
             "12345": {"success": True, "data": {"name": "Game 1"}},
             "67890": {"success": True, "data": {"name": "Game 2"}},
@@ -173,7 +172,8 @@ class TestGetGameDetails:
     @patch("src.ingestion.sources.steam.requests.get")
     def test_get_game_details_large_batch(self, mock_get):
         """Test game details fetch with large batch (should split)."""
-        mock_response = Mock()
+        mock_response = Mock(spec=requests.Response)
+        mock_response.status_code = 200
         # Create response for single game (batch_size = 1)
         mock_response.json.return_value = {
             "0": {"success": True, "data": {"name": "Game 0"}}
@@ -563,8 +563,7 @@ class TestSteamPluginFetch:
         mock_get_games.side_effect = SteamAPIError("API failure")
 
         plugin = SteamPlugin()
-        with pytest.raises(SourceError) as exc_info:
+        with pytest.raises(SourceError, match="API failure") as exc_info:
             list(plugin.fetch({"api_key": "test_key", "steam_id": "76561198000000000"}))
 
         assert exc_info.value.plugin_name == "steam"
-        assert "API failure" in exc_info.value.message

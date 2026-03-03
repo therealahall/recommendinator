@@ -3,6 +3,8 @@
 from unittest.mock import Mock, patch
 
 import pytest
+from ollama import ChatResponse, Client, ListResponse, ShowResponse
+from ollama._types import Message
 
 from src.llm.client import OllamaClient
 
@@ -11,7 +13,7 @@ from src.llm.client import OllamaClient
 def mock_ollama_client():
     """Create a mock Ollama client for testing."""
     with patch("src.llm.client.Client") as mock_client_class:
-        mock_client = Mock()
+        mock_client = Mock(spec=Client)
         mock_client_class.return_value = mock_client
         yield mock_client
 
@@ -99,7 +101,7 @@ def test_generate_text_with_options(mock_ollama_client):
 
 def test_check_model_available(mock_ollama_client):
     """Test model availability check."""
-    mock_ollama_client.show.return_value = Mock()
+    mock_ollama_client.show.return_value = Mock(spec=ShowResponse)
 
     client = OllamaClient()
     result = client.check_model_available("test-model")
@@ -121,12 +123,12 @@ def test_check_model_available_not_found(mock_ollama_client):
 def test_list_available_models(mock_ollama_client):
     """Test listing available models."""
     # Create mock models with model attribute
-    mock_model1 = Mock()
+    mock_model1 = Mock(spec=ListResponse.Model)
     mock_model1.model = "model1"
-    mock_model2 = Mock()
+    mock_model2 = Mock(spec=ListResponse.Model)
     mock_model2.model = "model2"
 
-    mock_response = Mock()
+    mock_response = Mock(spec=ListResponse)
     mock_response.models = [mock_model1, mock_model2]
     mock_ollama_client.list.return_value = mock_response
 
@@ -233,14 +235,14 @@ class TestGenerateTextStream:
         self, mock_ollama_client: Mock
     ) -> None:
         """generate_text_stream yields text chunks from the Ollama streaming response."""
-        chunk1 = Mock()
-        chunk1.message = Mock()
+        chunk1 = Mock(spec=ChatResponse)
+        chunk1.message = Mock(spec=Message)
         chunk1.message.content = "Hello"
-        chunk2 = Mock()
-        chunk2.message = Mock()
+        chunk2 = Mock(spec=ChatResponse)
+        chunk2.message = Mock(spec=Message)
         chunk2.message.content = " world"
-        chunk3 = Mock()
-        chunk3.message = Mock()
+        chunk3 = Mock(spec=ChatResponse)
+        chunk3.message = Mock(spec=Message)
         chunk3.message.content = "!"
 
         mock_ollama_client.chat.return_value = iter([chunk1, chunk2, chunk3])
@@ -309,15 +311,15 @@ class TestGenerateTextStream:
 
     def test_skips_chunks_with_no_content(self, mock_ollama_client: Mock) -> None:
         """generate_text_stream skips chunks with empty or missing content."""
-        chunk_good = Mock()
-        chunk_good.message = Mock()
+        chunk_good = Mock(spec=ChatResponse)
+        chunk_good.message = Mock(spec=Message)
         chunk_good.message.content = "data"
 
-        chunk_empty = Mock()
-        chunk_empty.message = Mock()
+        chunk_empty = Mock(spec=ChatResponse)
+        chunk_empty.message = Mock(spec=Message)
         chunk_empty.message.content = ""
 
-        chunk_none = Mock()
+        chunk_none = Mock(spec=ChatResponse)
         chunk_none.message = None
 
         mock_ollama_client.chat.return_value = iter(
@@ -344,8 +346,8 @@ class TestGenerateTextStream:
         """generate_text_stream raises RuntimeError when iteration fails mid-stream."""
 
         def _failing_iter():
-            chunk = Mock()
-            chunk.message = Mock()
+            chunk = Mock(spec=ChatResponse)
+            chunk.message = Mock(spec=Message)
             chunk.message.content = "start"
             yield chunk
             raise ConnectionError("Connection lost mid-stream")

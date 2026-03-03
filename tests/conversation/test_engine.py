@@ -13,6 +13,7 @@ from src.conversation.engine import (
     ConversationEngine,
     create_conversation_engine,
 )
+from src.llm.client import OllamaClient
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.manager import StorageManager
 
@@ -28,7 +29,8 @@ def storage_manager() -> Generator[StorageManager, None, None]:
 @pytest.fixture
 def mock_ollama() -> MagicMock:
     """Create a mock Ollama client."""
-    client = MagicMock()
+    client = MagicMock(spec=OllamaClient)
+    client.conversation_model = "test-model"
 
     # Default streaming response
     def mock_chat_stream(*args, **kwargs) -> Iterator[str]:
@@ -197,7 +199,8 @@ class TestConversationEngine:
     ) -> None:
         """Test graceful handling of LLM errors."""
         # Create mock that raises an error
-        mock_ollama = MagicMock()
+        mock_ollama = MagicMock(spec=OllamaClient)
+        mock_ollama.conversation_model = "test-model"
         mock_ollama.chat_stream.side_effect = Exception("Connection failed")
         mock_ollama.generate_text.side_effect = Exception("Connection failed")
 
@@ -230,7 +233,8 @@ class TestToolExecution:
     ) -> None:
         """Test that tool calls in responses are detected and executed."""
         # Mock LLM to return a tool call
-        mock_ollama = MagicMock()
+        mock_ollama = MagicMock(spec=OllamaClient)
+        mock_ollama.conversation_model = "test-model"
 
         def mock_stream(*args, **kwargs) -> Iterator[str]:
             yield '{"tool": "mark_completed", "params": {"item_id": '
@@ -292,7 +296,8 @@ class TestToolExecution:
         )
 
         # Mock LLM to return a clarify_item call
-        mock_ollama = MagicMock()
+        mock_ollama = MagicMock(spec=OllamaClient)
+        mock_ollama.conversation_model = "test-model"
 
         def mock_stream(*args, **kwargs) -> Iterator[str]:
             yield '{"tool": "clarify_item", "params": {"query": "dune", "matches": ['
@@ -520,7 +525,7 @@ class TestCompactMode:
         storage_manager: StorageManager,
     ) -> None:
         """Compact mode should not parse tool calls from LLM response."""
-        mock_ollama = MagicMock()
+        mock_ollama = MagicMock(spec=OllamaClient)
 
         # Mock LLM to return what looks like a tool call
         def mock_stream(*args, **kwargs):
@@ -553,7 +558,7 @@ class TestCompactMode:
         sample_items: list[int],
     ) -> None:
         """Compact mode intent detection should handle 'I finished X'."""
-        mock_ollama = MagicMock()
+        mock_ollama = MagicMock(spec=OllamaClient)
         mock_ollama.conversation_model = "test-model"
 
         engine = ConversationEngine(
@@ -635,7 +640,7 @@ class TestConversationConfig:
         storage_manager: StorageManager,
     ) -> None:
         """Conversation model from OllamaClient is passed to chat calls."""
-        mock_ollama = MagicMock()
+        mock_ollama = MagicMock(spec=OllamaClient)
         mock_ollama.conversation_model = "qwen2.5:3b"
 
         def mock_stream(*args, **kwargs):

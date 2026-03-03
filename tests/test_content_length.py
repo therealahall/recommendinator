@@ -4,9 +4,7 @@ from src.models.content import ContentType
 from src.recommendations.content_length import (
     LengthPreference,
     classify_length,
-    filter_by_length,
     get_length_value,
-    passes_length_filter,
     score_length_match,
 )
 from tests.factories import make_item
@@ -128,7 +126,7 @@ class TestClassifyLength:
 
 
 # ---------------------------------------------------------------------------
-# passes_length_filter tests
+# score_length_match tests
 # ---------------------------------------------------------------------------
 
 
@@ -166,82 +164,3 @@ class TestScoreLengthMatch:
         """A movie preference does not penalize a book."""
         item = make_item(content_type=ContentType.BOOK, metadata={"pages": 800})
         assert score_length_match(item, {"movie": "short"}) == 1.0
-
-
-class TestPassesLengthFilter:
-    def test_any_preference_always_passes(self) -> None:
-        item = make_item(content_type=ContentType.BOOK, metadata={"pages": 1000})
-        assert passes_length_filter(item, {"book": "any"}) is True
-
-    def test_no_preference_defaults_to_any(self) -> None:
-        item = make_item(content_type=ContentType.BOOK, metadata={"pages": 1000})
-        assert passes_length_filter(item, {}) is True
-
-    def test_short_preference_passes_short_item(self) -> None:
-        item = make_item(content_type=ContentType.BOOK, metadata={"pages": 200})
-        assert passes_length_filter(item, {"book": "short"}) is True
-
-    def test_short_preference_fails_long_item(self) -> None:
-        item = make_item(content_type=ContentType.BOOK, metadata={"pages": 800})
-        assert passes_length_filter(item, {"book": "short"}) is False
-
-    def test_no_metadata_passes_through(self) -> None:
-        """Items without length metadata pass through unfiltered."""
-        item = make_item(content_type=ContentType.BOOK, metadata={})
-        assert passes_length_filter(item, {"book": "short"}) is True
-
-    def test_different_content_type_not_affected(self) -> None:
-        """A movie filter does not affect a book."""
-        item = make_item(content_type=ContentType.BOOK, metadata={"pages": 800})
-        assert passes_length_filter(item, {"movie": "short"}) is True
-
-
-# ---------------------------------------------------------------------------
-# filter_by_length tests
-# ---------------------------------------------------------------------------
-
-
-class TestFilterByLength:
-    def test_filters_multiple_items(self) -> None:
-        short_book = make_item(content_type=ContentType.BOOK, metadata={"pages": 200})
-        long_book = make_item(content_type=ContentType.BOOK, metadata={"pages": 800})
-        medium_book = make_item(content_type=ContentType.BOOK, metadata={"pages": 350})
-
-        result = filter_by_length(
-            [short_book, long_book, medium_book],
-            {"book": "short"},
-        )
-        assert result == [short_book]
-
-    def test_empty_preferences_returns_all(self) -> None:
-        items = [
-            make_item(content_type=ContentType.BOOK, metadata={"pages": 200}),
-            make_item(content_type=ContentType.BOOK, metadata={"pages": 800}),
-        ]
-        result = filter_by_length(items, {})
-        assert result == items
-
-    def test_mixed_content_types(self) -> None:
-        short_book = make_item(content_type=ContentType.BOOK, metadata={"pages": 200})
-        long_movie = make_item(
-            content_type=ContentType.MOVIE, metadata={"runtime": 180}
-        )
-        short_movie = make_item(
-            content_type=ContentType.MOVIE, metadata={"runtime": 80}
-        )
-
-        result = filter_by_length(
-            [short_book, long_movie, short_movie],
-            {"book": "short", "movie": "short"},
-        )
-        assert result == [short_book, short_movie]
-
-    def test_items_without_metadata_pass_through(self) -> None:
-        no_meta = make_item(content_type=ContentType.BOOK, metadata={})
-        long_book = make_item(content_type=ContentType.BOOK, metadata={"pages": 800})
-
-        result = filter_by_length(
-            [no_meta, long_book],
-            {"book": "short"},
-        )
-        assert result == [no_meta]

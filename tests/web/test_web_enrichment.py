@@ -5,6 +5,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from src.enrichment.manager import EnrichmentManager
+from src.storage.manager import StorageManager
 from src.web.enrichment_manager import reset_enrichment_manager
 
 
@@ -39,7 +41,7 @@ def client(mock_config: dict) -> TestClient:
 
     with patch("src.web.api.get_storage") as mock_storage:
         with patch("src.web.api.get_config") as mock_get_config:
-            mock_storage.return_value = MagicMock()
+            mock_storage.return_value = MagicMock(spec=StorageManager)
             mock_get_config.return_value = mock_config
 
             from src.web.app import app
@@ -58,13 +60,13 @@ class TestEnrichmentStart:
 
         with patch("src.web.api.get_storage") as mock_storage:
             with patch("src.web.api.get_config") as mock_get_config:
-                mock_storage.return_value = MagicMock()
+                mock_storage.return_value = MagicMock(spec=StorageManager)
                 mock_get_config.return_value = mock_config
 
                 with patch(
                     "src.web.enrichment_manager.EnrichmentManager"
                 ) as mock_manager_cls:
-                    mock_manager = MagicMock()
+                    mock_manager = MagicMock(spec=EnrichmentManager)
                     mock_manager.start_enrichment.return_value = True
                     mock_manager_cls.return_value = mock_manager
 
@@ -85,7 +87,7 @@ class TestEnrichmentStart:
 
         with patch("src.web.api.get_storage") as mock_storage:
             with patch("src.web.api.get_config") as mock_get_config:
-                mock_storage.return_value = MagicMock()
+                mock_storage.return_value = MagicMock(spec=StorageManager)
                 mock_get_config.return_value = mock_config_disabled
 
                 from src.web.app import app
@@ -104,13 +106,13 @@ class TestEnrichmentStart:
 
         with patch("src.web.api.get_storage") as mock_storage:
             with patch("src.web.api.get_config") as mock_get_config:
-                mock_storage.return_value = MagicMock()
+                mock_storage.return_value = MagicMock(spec=StorageManager)
                 mock_get_config.return_value = mock_config
 
                 with patch(
                     "src.web.enrichment_manager.EnrichmentManager"
                 ) as mock_manager_cls:
-                    mock_manager = MagicMock()
+                    mock_manager = MagicMock(spec=EnrichmentManager)
                     mock_manager.start_enrichment.return_value = True
                     mock_manager_cls.return_value = mock_manager
 
@@ -133,7 +135,7 @@ class TestEnrichmentStart:
 
         with patch("src.web.api.get_storage") as mock_storage:
             with patch("src.web.api.get_config") as mock_get_config:
-                mock_storage.return_value = MagicMock()
+                mock_storage.return_value = MagicMock(spec=StorageManager)
                 mock_get_config.return_value = mock_config
 
                 from src.web.app import app
@@ -159,7 +161,7 @@ class TestEnrichmentStatus:
 
         with patch("src.web.api.get_storage") as mock_storage:
             with patch("src.web.api.get_config") as mock_get_config:
-                mock_storage.return_value = MagicMock()
+                mock_storage.return_value = MagicMock(spec=StorageManager)
                 mock_get_config.return_value = {}
 
                 from src.web.app import app
@@ -193,7 +195,7 @@ class TestEnrichmentStats:
 
         with patch("src.web.api.get_storage") as mock_storage:
             with patch("src.web.api.get_config") as mock_get_config:
-                mock_storage_instance = MagicMock()
+                mock_storage_instance = MagicMock(spec=StorageManager)
                 mock_storage_instance.get_enrichment_stats.return_value = mock_stats
                 mock_storage.return_value = mock_storage_instance
                 mock_get_config.return_value = {}
@@ -229,7 +231,7 @@ class TestEnrichmentStats:
 
         with patch("src.web.api.get_storage") as mock_storage:
             with patch("src.web.api.get_config") as mock_get_config:
-                mock_storage_instance = MagicMock()
+                mock_storage_instance = MagicMock(spec=StorageManager)
                 mock_storage_instance.get_enrichment_stats.return_value = mock_stats
                 mock_storage.return_value = mock_storage_instance
                 mock_get_config.return_value = {"enrichment": {"enabled": True}}
@@ -255,7 +257,7 @@ class TestEnrichmentReset:
 
         with patch("src.web.api.get_storage") as mock_storage:
             with patch("src.web.api.get_config") as mock_get_config:
-                mock_storage_instance = MagicMock()
+                mock_storage_instance = MagicMock(spec=StorageManager)
                 mock_storage_instance.reset_enrichment_status.return_value = 50
                 mock_storage.return_value = mock_storage_instance
                 mock_get_config.return_value = {}
@@ -278,7 +280,7 @@ class TestEnrichmentReset:
 
         with patch("src.web.api.get_storage") as mock_storage:
             with patch("src.web.api.get_config") as mock_get_config:
-                mock_storage_instance = MagicMock()
+                mock_storage_instance = MagicMock(spec=StorageManager)
                 mock_storage_instance.reset_enrichment_status.return_value = 20
                 mock_storage.return_value = mock_storage_instance
                 mock_get_config.return_value = {}
@@ -306,7 +308,7 @@ class TestEnrichmentReset:
 
         with patch("src.web.api.get_storage") as mock_storage:
             with patch("src.web.api.get_config") as mock_get_config:
-                mock_storage_instance = MagicMock()
+                mock_storage_instance = MagicMock(spec=StorageManager)
                 mock_storage_instance.reset_enrichment_status.return_value = 15
                 mock_storage.return_value = mock_storage_instance
                 mock_get_config.return_value = {}
@@ -331,7 +333,7 @@ class TestEnrichmentReset:
 
         with patch("src.web.api.get_storage") as mock_storage:
             with patch("src.web.api.get_config") as mock_get_config:
-                mock_storage.return_value = MagicMock()
+                mock_storage.return_value = MagicMock(spec=StorageManager)
                 mock_get_config.return_value = {}
 
                 from src.web.app import app

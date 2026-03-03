@@ -24,12 +24,11 @@ class TestRefreshAccessToken:
     @patch("src.ingestion.sources.gog.requests.get")
     def test_refresh_success(self, mock_get: Mock) -> None:
         """Test successful token refresh."""
-        mock_response = Mock()
+        mock_response = Mock(spec=requests.Response)
         mock_response.json.return_value = {
             "access_token": "new_access_token",
             "refresh_token": "new_refresh_token",
         }
-        mock_response.raise_for_status = Mock()
         mock_get.return_value = mock_response
 
         result = refresh_access_token("old_refresh_token")
@@ -61,9 +60,8 @@ class TestRefreshAccessToken:
     @patch("src.ingestion.sources.gog.requests.get")
     def test_refresh_missing_access_token(self, mock_get: Mock) -> None:
         """Test token refresh when response is missing access_token."""
-        mock_response = Mock()
+        mock_response = Mock(spec=requests.Response)
         mock_response.json.return_value = {"refresh_token": "new_refresh"}
-        mock_response.raise_for_status = Mock()
         mock_get.return_value = mock_response
 
         with pytest.raises(GogAPIError, match="Response missing access_token"):
@@ -74,11 +72,10 @@ class TestRefreshAccessToken:
         self, mock_get: Mock
     ) -> None:
         """Test that old refresh token is kept when response omits it."""
-        mock_response = Mock()
+        mock_response = Mock(spec=requests.Response)
         mock_response.json.return_value = {
             "access_token": "new_access",
         }
-        mock_response.raise_for_status = Mock()
         mock_get.return_value = mock_response
 
         result = refresh_access_token("original_refresh")
@@ -93,7 +90,7 @@ class TestGetOwnedGames:
     @patch("src.ingestion.sources.gog.requests.get")
     def test_single_page(self, mock_get: Mock) -> None:
         """Test fetching owned games when all fit on one page."""
-        mock_response = Mock()
+        mock_response = Mock(spec=requests.Response)
         mock_response.json.return_value = {
             "totalPages": 1,
             "products": [
@@ -101,7 +98,6 @@ class TestGetOwnedGames:
                 {"id": 5678, "title": "Game Two", "slug": "game-two"},
             ],
         }
-        mock_response.raise_for_status = Mock()
         mock_get.return_value = mock_response
 
         result = get_owned_games("test_access_token")
@@ -116,19 +112,17 @@ class TestGetOwnedGames:
     @patch("src.ingestion.sources.gog.requests.get")
     def test_multiple_pages(self, mock_get: Mock) -> None:
         """Test paginating through multiple pages of owned games."""
-        page1_response = Mock()
+        page1_response = Mock(spec=requests.Response)
         page1_response.json.return_value = {
             "totalPages": 2,
             "products": [{"id": 1, "title": "Game 1"}],
         }
-        page1_response.raise_for_status = Mock()
 
-        page2_response = Mock()
+        page2_response = Mock(spec=requests.Response)
         page2_response.json.return_value = {
             "totalPages": 2,
             "products": [{"id": 2, "title": "Game 2"}],
         }
-        page2_response.raise_for_status = Mock()
 
         mock_get.side_effect = [page1_response, page2_response]
 
@@ -142,12 +136,11 @@ class TestGetOwnedGames:
     @patch("src.ingestion.sources.gog.requests.get")
     def test_empty_library(self, mock_get: Mock) -> None:
         """Test fetching when the library is empty."""
-        mock_response = Mock()
+        mock_response = Mock(spec=requests.Response)
         mock_response.json.return_value = {
             "totalPages": 1,
             "products": [],
         }
-        mock_response.raise_for_status = Mock()
         mock_get.return_value = mock_response
 
         result = get_owned_games("test_token")
@@ -165,9 +158,8 @@ class TestGetOwnedGames:
     @patch("src.ingestion.sources.gog.requests.get")
     def test_auth_header_sent(self, mock_get: Mock) -> None:
         """Test that Bearer auth header is sent correctly."""
-        mock_response = Mock()
+        mock_response = Mock(spec=requests.Response)
         mock_response.json.return_value = {"totalPages": 1, "products": []}
-        mock_response.raise_for_status = Mock()
         mock_get.return_value = mock_response
 
         get_owned_games("my_token_123")
@@ -182,11 +174,10 @@ class TestGetWishlistProductIds:
     @patch("src.ingestion.sources.gog.requests.get")
     def test_success(self, mock_get: Mock) -> None:
         """Test successful wishlist fetch."""
-        mock_response = Mock()
+        mock_response = Mock(spec=requests.Response)
         mock_response.json.return_value = {
             "wishlist": {"12345": True, "67890": True, "11111": True}
         }
-        mock_response.raise_for_status = Mock()
         mock_get.return_value = mock_response
 
         result = get_wishlist_product_ids("test_token")
@@ -197,9 +188,8 @@ class TestGetWishlistProductIds:
     @patch("src.ingestion.sources.gog.requests.get")
     def test_empty_wishlist(self, mock_get: Mock) -> None:
         """Test fetching an empty wishlist."""
-        mock_response = Mock()
+        mock_response = Mock(spec=requests.Response)
         mock_response.json.return_value = {"wishlist": {}}
-        mock_response.raise_for_status = Mock()
         mock_get.return_value = mock_response
 
         result = get_wishlist_product_ids("test_token")
@@ -221,7 +211,7 @@ class TestGetProductDetails:
     @patch("src.ingestion.sources.gog.requests.get")
     def test_success(self, mock_get: Mock) -> None:
         """Test successful product detail fetch."""
-        mock_response = Mock()
+        mock_response = Mock(spec=requests.Response)
         mock_response.status_code = 200
         mock_response.json.return_value = {
             "id": 12345,
@@ -231,7 +221,6 @@ class TestGetProductDetails:
             "developers": ["CD Projekt Red"],
             "publishers": ["CD Projekt"],
         }
-        mock_response.raise_for_status = Mock()
         mock_get.return_value = mock_response
 
         result = get_product_details(12345)
@@ -243,7 +232,7 @@ class TestGetProductDetails:
     @patch("src.ingestion.sources.gog.requests.get")
     def test_not_found_returns_none(self, mock_get: Mock) -> None:
         """Test that 404 returns None instead of raising."""
-        mock_response = Mock()
+        mock_response = Mock(spec=requests.Response)
         mock_response.status_code = 404
         mock_get.return_value = mock_response
 

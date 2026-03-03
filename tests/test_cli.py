@@ -6,8 +6,13 @@ import pytest
 from click.testing import CliRunner
 
 from src.cli.main import cli
+from src.llm.client import OllamaClient
+from src.llm.embeddings import EmbeddingGenerator
+from src.llm.recommendations import RecommendationGenerator
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.user_preferences import UserPreferenceConfig
+from src.recommendations.engine import RecommendationEngine
+from src.storage.manager import StorageManager
 
 
 @pytest.fixture
@@ -45,15 +50,15 @@ def mock_components(mock_config):
         patch("src.cli.main.create_recommendation_engine") as mock_engine,
     ):
         # Setup mocks
-        mock_storage_manager = Mock()
+        mock_storage_manager = Mock(spec=StorageManager)
         mock_storage.return_value = mock_storage_manager
 
-        mock_client = Mock()
-        mock_embedding_gen = Mock()
-        mock_rec_gen = Mock()
+        mock_client = Mock(spec=OllamaClient)
+        mock_embedding_gen = Mock(spec=EmbeddingGenerator)
+        mock_rec_gen = Mock(spec=RecommendationGenerator)
         mock_llm.return_value = (mock_client, mock_embedding_gen, mock_rec_gen)
 
-        mock_engine_instance = Mock()
+        mock_engine_instance = Mock(spec=RecommendationEngine)
         mock_engine.return_value = mock_engine_instance
 
         yield {

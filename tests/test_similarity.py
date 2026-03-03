@@ -8,6 +8,7 @@ from src.llm.embeddings import EmbeddingGenerator
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.recommendations.similarity import SimilarityMatcher
 from src.storage.manager import StorageManager
+from src.storage.vector_db import VectorDB
 from tests.factories import make_item
 
 
@@ -15,7 +16,7 @@ from tests.factories import make_item
 def mock_storage() -> Mock:
     """Create a mock storage manager."""
     storage = Mock(spec=StorageManager)
-    storage.vector_db = Mock()
+    storage.vector_db = Mock(spec=VectorDB)
     storage.vector_db.has_embedding = Mock(return_value=False)
     storage.vector_db.get_embedding = Mock(return_value=None)
     return storage

@@ -8,6 +8,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from src.conversation.engine import ConversationEngine
+from src.llm.client import OllamaClient
 from src.web.state import (
     AppState,
     app_state,
@@ -133,7 +135,7 @@ class TestGetConversationEngine:
 
     def test_returns_engine_when_set(self) -> None:
         """get_conversation_engine returns the stored engine."""
-        mock_engine = MagicMock()
+        mock_engine = MagicMock(spec=ConversationEngine)
         app_state.conversation_engine = mock_engine
 
         result = get_conversation_engine()
@@ -157,7 +159,7 @@ class TestGetOllamaClient:
 
     def test_returns_client_when_set(self) -> None:
         """get_ollama_client returns the stored client."""
-        mock_client = MagicMock()
+        mock_client = MagicMock(spec=OllamaClient)
         app_state.ollama_client = mock_client
 
         result = get_ollama_client()
