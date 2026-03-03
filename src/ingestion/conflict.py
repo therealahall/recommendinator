@@ -38,12 +38,15 @@ def resolve_conflict(
     Returns:
         The resolved ContentItem to save.
     """
-    if strategy == ConflictStrategy.LAST_WRITE_WINS:
-        return _last_write_wins(existing, incoming)
-    elif strategy == ConflictStrategy.SOURCE_PRIORITY:
-        return _source_priority(existing, incoming, source_priority or [])
-    else:
-        return _keep_existing(existing, incoming)
+    match strategy:
+        case ConflictStrategy.LAST_WRITE_WINS:
+            return _last_write_wins(existing, incoming)
+        case ConflictStrategy.SOURCE_PRIORITY:
+            return _source_priority(existing, incoming, source_priority or [])
+        case ConflictStrategy.KEEP_EXISTING:
+            return _keep_existing(existing, incoming)
+        case _:
+            raise ValueError(f"Unknown conflict strategy: {strategy!r}")
 
 
 def _last_write_wins(existing: ContentItem, incoming: ContentItem) -> ContentItem:

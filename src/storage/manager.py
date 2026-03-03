@@ -43,6 +43,11 @@ from src.storage.schema import (
     update_core_memory,
     update_user_settings,
 )
+
+# Re-exported so consumers import from storage.manager rather than the
+# internal sqlite_db module.  The `as VALID_SORT_OPTIONS` form marks
+# the name as an intentional public re-export for type checkers.
+from src.storage.sqlite_db import VALID_SORT_OPTIONS as VALID_SORT_OPTIONS
 from src.storage.sqlite_db import SQLiteDB
 
 if TYPE_CHECKING:

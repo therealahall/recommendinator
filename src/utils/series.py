@@ -287,6 +287,20 @@ def get_series_name_from_metadata(metadata: dict | None) -> str | None:
     return None
 
 
+def _get_series_info(
+    item: ContentItem | None = None, *, title: str | None = None
+) -> tuple[str, int] | None:
+    """Extract series info from a ContentItem or title string.
+
+    Shared implementation for get_series_name and get_series_item_number.
+    """
+    if item is not None:
+        return extract_series_info(item.title, item.metadata, item.content_type)
+    if title is not None:
+        return extract_series_info(title)
+    return None
+
+
 def get_series_name(
     item: ContentItem | None = None, *, title: str | None = None
 ) -> str | None:
@@ -299,14 +313,8 @@ def get_series_name(
     Returns:
         Series name if found, None otherwise
     """
-    if item is not None:
-        series_info = extract_series_info(item.title, item.metadata, item.content_type)
-    elif title is not None:
-        series_info = extract_series_info(title)
-    else:
-        return None
-
-    return series_info[0] if series_info else None
+    info = _get_series_info(item, title=title)
+    return info[0] if info else None
 
 
 def get_series_item_number(
@@ -321,14 +329,8 @@ def get_series_item_number(
     Returns:
         Item number if found, None otherwise
     """
-    if item is not None:
-        series_info = extract_series_info(item.title, item.metadata, item.content_type)
-    elif title is not None:
-        series_info = extract_series_info(title)
-    else:
-        return None
-
-    return series_info[1] if series_info else None
+    info = _get_series_info(item, title=title)
+    return info[1] if info else None
 
 
 def inject_seasons_watched_tracking(
@@ -467,19 +469,6 @@ def build_series_tracking(
     return dict(series_tracking)
 
 
-def is_series_started(series_name: str, series_tracking: dict[str, set[int]]) -> bool:
-    """Check if user has started a series.
-
-    Args:
-        series_name: Series name
-        series_tracking: Series tracking dictionary
-
-    Returns:
-        True if user has at least one item from the series
-    """
-    return series_name in series_tracking and len(series_tracking[series_name]) > 0
-
-
 def is_first_item_in_series(
     item: ContentItem | None = None, *, title: str | None = None
 ) -> bool:
@@ -494,14 +483,8 @@ def is_first_item_in_series(
     Returns:
         True if this is item #1 in a series
     """
-    if item is not None:
-        series_info = extract_series_info(item.title, item.metadata, item.content_type)
-    elif title is not None:
-        series_info = extract_series_info(title)
-    else:
-        return False
-
-    return series_info is not None and series_info[1] == 1
+    info = _get_series_info(item, title=title)
+    return info is not None and info[1] == 1
 
 
 def should_recommend_item(
@@ -650,3 +633,19 @@ def find_earliest_recommendable(
             return candidate
 
     return None
+
+
+def strip_series_suffix_from_title(title: str) -> str:
+    """Strip trailing parenthetical series info from a title for display.
+
+    Removes patterns like "(Shannara, #2)", "(Series, Book N)".
+
+    Args:
+        title: Original title string.
+
+    Returns:
+        Title without series suffix.
+    """
+    cleaned = re.sub(r"\s*\([^)]*#\d+[^)]*\)\s*$", "", title)
+    cleaned = re.sub(r"\s*\([^)]*Book\s+\d+[^)]*\)\s*$", "", cleaned, flags=re.I)
+    return cleaned.strip()

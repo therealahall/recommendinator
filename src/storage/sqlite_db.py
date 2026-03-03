@@ -19,6 +19,18 @@ from src.storage.schema import create_schema, get_default_user_id
 from src.utils.list_merge import merge_string_lists
 from src.utils.sorting import get_sort_title
 
+_SAFE_IDENTIFIER_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
+
+
+def _assert_safe_identifier(name: str) -> None:
+    """Validate that *name* is a safe SQL identifier (lowercase, no spaces).
+
+    Raises ValueError if the name does not match ``^[a-z_][a-z0-9_]*$``.
+    """
+    if not _SAFE_IDENTIFIER_RE.match(name):
+        raise ValueError(f"Unsafe SQL identifier: {name!r}")
+
+
 # Whitelist of detail tables allowed in dynamic SQL queries.
 # Defense-in-depth: these names come from _DETAIL_TABLE_CONFIG (a class constant),
 # but validating them prevents accidental injection if the config is ever modified.
@@ -35,7 +47,7 @@ _STATUS_ORDER: dict[str, int] = {
 }
 
 # Whitelist of valid sort_by options for get_content_items().
-_VALID_SORT_OPTIONS: frozenset[str] = frozenset(
+VALID_SORT_OPTIONS: frozenset[str] = frozenset(
     {"title", "updated_at", "rating", "created_at"}
 )
 
@@ -261,19 +273,15 @@ class SQLiteDB:
             if existing_id is None and item.title:
                 normalized_title = normalize_title_for_matching(item.title)
                 if normalized_title:
-                    # Find items with matching normalized title
                     cursor.execute(
-                        """SELECT id, title FROM content_items
-                           WHERE user_id = ? AND content_type = ?""",
-                        (effective_user_id, content_type_value),
+                        """SELECT id FROM content_items
+                           WHERE user_id = ? AND content_type = ?
+                             AND normalized_title = ?""",
+                        (effective_user_id, content_type_value, normalized_title),
                     )
-                    for row in cursor.fetchall():
-                        if (
-                            normalize_title_for_matching(row["title"])
-                            == normalized_title
-                        ):
-                            existing_id = int(row["id"])
-                            break
+                    row = cursor.fetchone()
+                    if row:
+                        existing_id = int(row["id"])
 
             if existing_id:
                 # Update existing item in base table.
@@ -296,6 +304,10 @@ class SQLiteDB:
                 # Title: always update (identity field, always present)
                 set_parts.append("title = ?")
                 params.append(item.title)
+
+                # Keep normalized_title in sync with title
+                set_parts.append("normalized_title = ?")
+                params.append(normalize_title_for_matching(item.title))
 
                 # Source: update if incoming is not None
                 if item.source is not None:
@@ -352,14 +364,15 @@ class SQLiteDB:
                 cursor.execute(
                     """
                     INSERT INTO content_items
-                    (user_id, external_id, title, content_type, status, rating, review,
-                     date_completed, source, ignored)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (user_id, external_id, title, normalized_title, content_type,
+                     status, rating, review, date_completed, source, ignored)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         effective_user_id,
                         item.id,
                         item.title,
+                        normalize_title_for_matching(item.title),
                         content_type_value,
                         get_enum_value(item.status),
                         item.rating,
@@ -671,6 +684,8 @@ class SQLiteDB:
         col_names.append("metadata")
         values.append(metadata_json)
 
+        for name in col_names:
+            _assert_safe_identifier(name)
         placeholders = ", ".join("?" for _ in values)
         col_list = ", ".join(col_names)
         if existing_data:
@@ -871,7 +886,7 @@ class SQLiteDB:
 
             # Apply SQL-level sorting for non-title sorts
             # Title sorting is done in Python to handle article stripping
-            if sort_by not in _VALID_SORT_OPTIONS:
+            if sort_by not in VALID_SORT_OPTIONS:
                 raise ValueError(f"Invalid sort_by: {sort_by!r}")
             if sort_by == "updated_at":
                 query += " ORDER BY ci.updated_at DESC"

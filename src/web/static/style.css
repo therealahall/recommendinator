@@ -1992,6 +1992,12 @@ input[type="checkbox"] {
 .text-error { color: var(--color-error); }
 .text-warning { color: var(--color-warning); }
 .text-muted { color: var(--text-muted); }
+.flex-1 { flex: 1; }
+.mt-2 { margin-top: var(--space-2); }
+.my-2 { margin-top: var(--space-2); margin-bottom: var(--space-2); }
+.hidden { display: none; }
+.d-block { display: block; }
+.profile-pattern { font-size: 0.85em; margin: 4px 0; }
 
 /* Loading spinner */
 .spinner {

@@ -435,10 +435,7 @@ def _fetch_steam_games(
                 }
             )
 
-        # Rating is left as None — playtime does not reliably indicate
-        # enjoyment (e.g. a 100-hour RPG vs a 5-hour indie). Users can
-        # set ratings manually via the UI in a future update.
-        rating = None
+        count += 1
 
         if progress_callback:
             progress_callback(count, len(games), game_name)
@@ -448,11 +445,10 @@ def _fetch_steam_games(
             title=game_name,
             author=None,  # Games don't have authors
             content_type=ContentType.VIDEO_GAME,
-            rating=rating,
+            rating=None,
             review=None,  # Steam API doesn't provide user reviews
             status=status,
             date_completed=None,  # Steam doesn't track completion dates
             metadata=metadata,
             source=source,
         )
-        count += 1

@@ -22,6 +22,7 @@ from src.models.content import (
     get_enum_value,
 )
 from src.models.user_preferences import UserPreferenceConfig
+from src.storage.manager import VALID_SORT_OPTIONS
 from src.utils.text import humanize_source_id
 from src.web.enrichment_manager import get_enrichment_manager
 from src.web.export import export_items_csv, export_items_json
@@ -624,7 +625,7 @@ def _item_to_response(item: "ContentItem") -> ContentItemResponse:
     """
     seasons_watched: list[int] | None = None
     total_seasons: int | None = None
-    metadata = item.metadata or {}
+    metadata = item.metadata
 
     if get_enum_value(item.content_type) == "tv_show":
         seasons_watched = metadata.get("seasons_watched")
@@ -708,8 +709,7 @@ async def list_items(
             ) from None
 
     # Validate sort_by parameter
-    valid_sort_options = {"title", "updated_at", "rating", "created_at"}
-    if sort_by.lower() not in valid_sort_options:
+    if sort_by.lower() not in VALID_SORT_OPTIONS:
         raise HTTPException(
             status_code=400,
             detail="Invalid sort_by. Valid options: created_at, rating, title, updated_at",
@@ -818,11 +818,12 @@ async def set_item_ignored(
     if not success:
         raise HTTPException(status_code=500, detail="Failed to update item")
 
+    safe_title = item.title.replace("\n", " ").replace("\r", " ")
     return {
         "db_id": db_id,
-        "title": item.title,
+        "title": safe_title,
         "ignored": request.ignored,
-        "message": f"Item '{item.title}' {'ignored' if request.ignored else 'unignored'}",
+        "message": f"Item '{safe_title}' {'ignored' if request.ignored else 'unignored'}",
     }
 
 
@@ -1005,7 +1006,8 @@ async def mark_complete(request: CompletionRequest) -> dict[str, Any]:
             embedding = embedding_gen.generate_content_embedding(item)
         db_id = storage.save_content_item(item, embedding=embedding)
 
-        return {"message": f"Marked '{request.title}' as completed", "id": db_id}
+        safe_title = request.title.replace("\n", " ").replace("\r", " ")
+        return {"message": f"Marked '{safe_title}' as completed", "id": db_id}
 
     except Exception as error:
         logger.error("Error marking content as completed: %s", error)

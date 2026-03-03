@@ -509,7 +509,7 @@
                         var percent = Math.round(value * 100);
                         html += '<div class="score-row">';
                         html += '<span class="score-label">' + formatScorerName(key) + '</span>';
-                        html += '<div class="score-bar-bg"><div class="score-bar-fill" style="width:' + percent + '%"></div></div>';
+                        html += '<div class="score-bar-bg"><div class="score-bar-fill" data-width="' + percent + '"></div></div>';
                         html += '<span class="score-value">' + value.toFixed(2) + '</span>';
                         html += '</div>';
                     });
@@ -522,6 +522,7 @@
         });
 
         resultsDiv.innerHTML = html;
+        applyDynamicWidths(resultsDiv);
 
         // Attach ignore button listeners
         resultsDiv.querySelectorAll(".ignore-rec-btn").forEach(function (btn) {
@@ -532,7 +533,8 @@
     }
 
     function formatScorerName(key) {
-        return key.replace(/_/g, " ").replace(/\b\w/g, function (c) { return c.toUpperCase(); });
+        var formatted = key.replace(/_/g, " ").replace(/\b\w/g, function (c) { return c.toUpperCase(); });
+        return escapeHtml(formatted);
     }
 
     // -----------------------------------------------------------------------
@@ -685,7 +687,7 @@
             .catch(function (error) {
                 libraryState.loading = false;
                 if (isReset) {
-                    container.innerHTML = '<div class="status-bar error" style="display:block">Failed to load library: ' + escapeHtml(error.message) + '</div>';
+                    container.innerHTML = '<div class="status-bar error d-block">Failed to load library: ' + escapeHtml(error.message) + '</div>';
                 }
             });
     }
@@ -1211,13 +1213,13 @@
                 html += '<div class="gog-connect-step">';
                 html += '<button class="btn btn-primary" data-action="openGogAuth">Connect GOG Account</button>';
                 html += '</div>';
-                html += '<div class="gog-connect-step gog-code-step" id="gogCodeStep" style="display:none;">';
-                html += '<p class="help-text" style="margin:8px 0;">Paste the redirect URL after logging in:</p>';
+                html += '<div class="gog-connect-step gog-code-step hidden" id="gogCodeStep">';
+                html += '<p class="help-text my-2">Paste the redirect URL after logging in:</p>';
                 html += '<div class="gog-input-row">';
                 html += '<input type="text" id="gogCodeInput" placeholder="Paste URL here...">';
                 html += '<button class="btn btn-primary" data-action="submitGogCode">Connect</button>';
                 html += '</div>';
-                html += '<div id="gogConnectStatus" style="margin-top:8px;"></div>';
+                html += '<div id="gogConnectStatus" class="mt-2"></div>';
                 html += '</div>';
                 html += '</div>';
             } else {
@@ -1545,7 +1547,7 @@
         html += '<span class="enrichment-percent">(' + enrichedPercent + '% enriched)</span>';
         html += '</div>';
         html += '<div class="enrichment-progress-bar">';
-        html += '<div class="enrichment-progress-fill enriched" style="width:' + enrichedPercent + '%"></div>';
+        html += '<div class="enrichment-progress-fill enriched" data-width="' + enrichedPercent + '"></div>';
         html += '</div>';
         html += '</div>';
 
@@ -1596,6 +1598,7 @@
         html += '</div>';
 
         container.innerHTML = html;
+        applyDynamicWidths(container);
     }
 
     // -----------------------------------------------------------------------
@@ -2396,8 +2399,8 @@
     }
 
     function renderMarkdown(text) {
-        if (typeof marked !== "undefined") {
-            return marked.parse(text);
+        if (typeof marked !== "undefined" && typeof DOMPurify !== "undefined") {
+            return DOMPurify.sanitize(marked.parse(text));
         }
         return escapeHtml(text).replace(/\n/g, "<br>");
     }
@@ -2696,7 +2699,7 @@
         if (profile.cross_media_patterns && profile.cross_media_patterns.length > 0) {
             html += '<div class="profile-section"><h5>Patterns</h5>';
             profile.cross_media_patterns.slice(0, 3).forEach(function (p) {
-                html += '<p class="text-muted" style="font-size:0.85em;margin:4px 0;">' + escapeHtml(p) + '</p>';
+                html += '<p class="text-muted profile-pattern">' + escapeHtml(p) + '</p>';
             });
             html += '</div>';
         }
@@ -2736,6 +2739,12 @@
         var div = document.createElement("div");
         div.textContent = text;
         return div.innerHTML;
+    }
+
+    function applyDynamicWidths(container) {
+        container.querySelectorAll("[data-width]").forEach(function (el) {
+            el.style.width = el.getAttribute("data-width") + "%";
+        });
     }
 
     function updateSliderFill(slider) {

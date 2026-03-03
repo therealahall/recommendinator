@@ -78,7 +78,7 @@
                 </div>
                 <div class="card">
                     <div class="rec-controls">
-                        <div class="form-group" style="flex: 1;">
+                        <div class="form-group flex-1">
                             <label for="recType">Content Type</label>
                             <select id="recType">
                                 <option value="book">Book</option>
@@ -184,14 +184,14 @@
                             <div id="memoryList" class="memory-list">
                                 <div class="empty-state">No memories yet</div>
                             </div>
-                            <button id="addMemoryBtn" class="btn btn-small btn-secondary" style="margin-top: 8px;">Add Memory</button>
+                            <button id="addMemoryBtn" class="btn btn-small btn-secondary mt-2">Add Memory</button>
                         </div>
                         <div class="profile-panel">
                             <h4>Your Profile</h4>
                             <div id="profileSummary" class="profile-summary">
                                 <div class="empty-state">No profile generated</div>
                             </div>
-                            <button id="regenerateProfileBtn" class="btn btn-small btn-secondary" style="margin-top: 8px;">Regenerate</button>
+                            <button id="regenerateProfileBtn" class="btn btn-small btn-secondary mt-2">Regenerate</button>
                         </div>
                     </div>
                 </div>
@@ -205,9 +205,9 @@
                 </div>
                 <div class="card">
                     <h2>Sync Sources</h2>
-                    <div id="syncStatusContainer" style="display:none;">
+                    <div id="syncStatusContainer" class="hidden">
                         <div id="syncStatusMessage" class="sync-status-message sync-status-info"></div>
-                        <div id="syncProgressBar" class="sync-progress-bar" style="display:none;">
+                        <div id="syncProgressBar" class="sync-progress-bar hidden">
                             <div class="sync-progress-fill"></div>
                         </div>
                     </div>
@@ -265,7 +265,8 @@
         </main>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/marked@15.0.7/marked.min.js"></script>
+    <script src="/static/vendor/marked.min.js"></script>
+    <script src="/static/vendor/purify.min.js"></script>
     <script src="/static/app.js"></script>
 </body>
 </html>

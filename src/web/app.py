@@ -177,10 +177,16 @@ def create_app(config_path: Path | None = None) -> FastAPI:
             response.headers["X-Frame-Options"] = "DENY"
             response.headers["Content-Security-Policy"] = (
                 "default-src 'self'; "
-                "script-src 'self' https://cdn.jsdelivr.net; "
-                "style-src 'self' 'unsafe-inline'; "
+                "script-src 'self'; "
+                "style-src 'self'; "
+                "font-src 'self' data:; "
                 "img-src 'self' data: https:; "
-                "connect-src 'self'"
+                "connect-src 'self'; "
+                "frame-ancestors 'none'"
+            )
+            response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+            response.headers["Permissions-Policy"] = (
+                "camera=(), microphone=(), geolocation=()"
             )
             return response
 

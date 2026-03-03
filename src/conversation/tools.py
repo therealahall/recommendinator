@@ -488,7 +488,7 @@ class ToolExecutor:
             try:
                 content_type = ContentType.from_string(content_type_str)
             except ValueError:
-                pass
+                logger.warning("Unknown content type: %r", content_type_str)
 
         # Get items and filter by title
         items = self.storage.get_content_items(

@@ -184,6 +184,25 @@ class EnrichmentManager:
             self._stop_requested = True
             logger.info("Requested enrichment job stop")
 
+    def _wait_for_completion(self, timeout: float = 5.0) -> bool:
+        """Wait for the background enrichment thread to finish.
+
+        NOTE: This method exists for test synchronization.  Production code
+        should use :meth:`get_status` to poll running state instead.
+
+        Args:
+            timeout: Maximum time to wait in seconds.
+
+        Returns:
+            True if the thread completed within the timeout, False otherwise.
+        """
+        with self._lock:
+            thread = self._thread
+        if thread is None:
+            return True
+        thread.join(timeout)
+        return not thread.is_alive()
+
     def get_status(self) -> EnrichmentJobStatus:
         """Get current job status.
 

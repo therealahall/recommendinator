@@ -113,6 +113,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
             user_id INTEGER NOT NULL DEFAULT 1 REFERENCES users(id) ON DELETE CASCADE,
             external_id TEXT,
             title TEXT NOT NULL,
+            normalized_title TEXT,
             content_type TEXT NOT NULL,
             status TEXT NOT NULL,
             rating INTEGER CHECK (rating >= 1 AND rating <= 5),
@@ -264,6 +265,19 @@ def create_schema(conn: sqlite3.Connection) -> None:
     # Add ignored column to content_items for filtering from recommendations
     _add_column_if_not_exists(cursor, "content_items", "ignored", "BOOLEAN DEFAULT 0")
 
+    # Add normalized_title column for O(1) title-matching lookups
+    _add_column_if_not_exists(cursor, "content_items", "normalized_title", "TEXT")
+    # Backfill: approximate normalization (full normalization happens on next save)
+    cursor.execute(
+        "UPDATE content_items SET normalized_title = lower(title) "
+        "WHERE normalized_title IS NULL"
+    )
+    # Index must be created *after* the migration adds the column
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_ci_normalized_title "
+        "ON content_items(user_id, content_type, normalized_title)"
+    )
+
     # Core memories: significant preference signals
     cursor.execute(
         """
@@ -337,7 +351,9 @@ _ALLOWED_ALTER_TABLES = frozenset(
         "content_items",
     }
 )
-_ALLOWED_ALTER_COLUMNS = frozenset({"tags", "description", "ignored"})
+_ALLOWED_ALTER_COLUMNS = frozenset(
+    {"tags", "description", "ignored", "normalized_title"}
+)
 _ALLOWED_ALTER_TYPES = frozenset({"TEXT", "BOOLEAN DEFAULT 0"})
 
 
@@ -1030,21 +1046,20 @@ def update_core_memory(
         return False
 
     cursor = conn.cursor()
-    updates = ["updated_at = CURRENT_TIMESTAMP"]
-    params: list[str | int] = []
-
-    if memory_text is not None:
-        updates.append("memory_text = ?")
-        params.append(memory_text)
-
-    if is_active is not None:
-        updates.append("is_active = ?")
-        params.append(1 if is_active else 0)
-
-    params.append(memory_id)
-
-    query = f"UPDATE core_memories SET {', '.join(updates)} WHERE id = ?"
-    cursor.execute(query, params)
+    # COALESCE(?, col) — NULL means "keep existing", non-NULL means "update".
+    # is_active=None → NULL (preserves existing), False → 0, True → 1.
+    cursor.execute(
+        """UPDATE core_memories
+           SET memory_text = COALESCE(?, memory_text),
+               is_active   = COALESCE(?, is_active),
+               updated_at  = CURRENT_TIMESTAMP
+           WHERE id = ?""",
+        (
+            memory_text,
+            int(is_active) if is_active is not None else None,
+            memory_id,
+        ),
+    )
     conn.commit()
     return cursor.rowcount > 0
 

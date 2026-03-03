@@ -2,7 +2,6 @@
 
 import logging
 import random
-import re
 from typing import Any
 
 from src.llm.embeddings import EmbeddingGenerator
@@ -42,10 +41,12 @@ from src.utils.series import (
     get_series_name_from_metadata,
     inject_seasons_watched_tracking,
     should_recommend_item,
+    strip_series_suffix_from_title,
 )
-from src.utils.sorting import get_sort_title
+from src.utils.sorting import get_sort_title, titles_similar
 
 logger = logging.getLogger(__name__)
+
 
 # Human-readable labels for content types used in recommendation reasoning.
 _CONTENT_TYPE_LABEL: dict[str, str] = {
@@ -276,11 +277,11 @@ class RecommendationEngine:
         )
 
         # Score all unconsumed candidates via the pipeline (always runs)
-        content_length_preferences: dict[str, str] = {}
-        if user_preference_config is not None:
-            content_length_preferences = (
-                user_preference_config.content_length_preferences
-            )
+        content_length_preferences = (
+            user_preference_config.content_length_preferences
+            if user_preference_config is not None
+            else {}
+        )
 
         scoring_context = ScoringContext(
             preferences=preferences,
@@ -818,20 +819,16 @@ class RecommendationEngine:
         """
         adaptations = []
 
-        item_title_norm = self._normalize_title_for_comparison(item.title)
-        item_author_norm = (
-            self._normalize_title_for_comparison(item.author) if item.author else None
-        )
+        item_title_norm = get_sort_title(item.title)
+        item_author_norm = get_sort_title(item.author) if item.author else None
 
         for consumed in consumed_items:
             if consumed.content_type == item.content_type:
                 continue
 
-            consumed_title_norm = self._normalize_title_for_comparison(consumed.title)
+            consumed_title_norm = get_sort_title(consumed.title)
             consumed_author_norm = (
-                self._normalize_title_for_comparison(consumed.author)
-                if consumed.author
-                else None
+                get_sort_title(consumed.author) if consumed.author else None
             )
 
             title_match = item_title_norm == consumed_title_norm
@@ -840,42 +837,12 @@ class RecommendationEngine:
                 author_match = item_author_norm == consumed_author_norm
 
             if title_match or (
-                author_match and self._titles_similar(item.title, consumed.title)
+                author_match and titles_similar(item.title, consumed.title)
             ):
                 if consumed.rating is not None and consumed.rating >= 4:
                     adaptations.append(consumed)
 
         return adaptations
-
-    @staticmethod
-    def _normalize_title_for_comparison(title: str) -> str:
-        """Normalize a title for cross-content-type comparison.
-
-        Delegates to get_sort_title which strips leading articles
-        (including non-English), lowercases, and trims whitespace.
-        """
-        return get_sort_title(title)
-
-    def _titles_similar(self, title1: str, title2: str) -> bool:
-        """Check if two titles are similar (fuzzy matching).
-
-        Uses get_sort_title to strip leading articles (including non-English)
-        and normalize case, then checks substring containment.
-
-        Args:
-            title1: First title.
-            title2: Second title.
-
-        Returns:
-            True if titles are similar.
-        """
-        if not title1 or not title2:
-            return False
-
-        t1_norm = get_sort_title(title1)
-        t2_norm = get_sort_title(title2)
-
-        return t1_norm in t2_norm or t2_norm in t1_norm
 
     def _find_contributing_reference_items(
         self,
@@ -1069,7 +1036,7 @@ class RecommendationEngine:
                 )
                 label_key = type_label + "s"  # Pluralize for the header
                 titles = grouped.setdefault(label_key, [])
-                titles.append(self._strip_series_info(ref.title))
+                titles.append(strip_series_suffix_from_title(ref.title))
 
             if len(grouped) == 1 and sum(len(v) for v in grouped.values()) == 1:
                 # Single item — natural language format
@@ -1113,20 +1080,3 @@ class RecommendationEngine:
             return f"Recommended because you enjoy {genre}"
 
         return "Recommended based on your preferences"
-
-    def _strip_series_info(self, title: str) -> str:
-        """Strip series information from a title for cleaner display.
-
-        Removes trailing parenthetical series info like "(Shannara, #2)".
-
-        Args:
-            title: Original title string.
-
-        Returns:
-            Title without series info.
-        """
-        # Remove trailing parenthetical that looks like series info
-        # Matches: (Series Name, #N) or (Series Name #N) or (Series, Book N)
-        cleaned = re.sub(r"\s*\([^)]*#\d+[^)]*\)\s*$", "", title)
-        cleaned = re.sub(r"\s*\([^)]*Book\s+\d+[^)]*\)\s*$", "", cleaned, flags=re.I)
-        return cleaned.strip()

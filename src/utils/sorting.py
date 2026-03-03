@@ -75,3 +75,25 @@ def get_sort_title(title: str) -> str:
         normalized = normalized[match.end() :]
 
     return normalized
+
+
+def titles_similar(title1: str, title2: str) -> bool:
+    """Check if two titles are similar (fuzzy matching).
+
+    Uses get_sort_title to strip leading articles (including non-English)
+    and normalize case, then checks substring containment.
+
+    Args:
+        title1: First title.
+        title2: Second title.
+
+    Returns:
+        True if titles are similar.
+    """
+    if not title1 or not title2:
+        return False
+
+    t1_norm = get_sort_title(title1)
+    t2_norm = get_sort_title(title2)
+
+    return t1_norm in t2_norm or t2_norm in t1_norm
