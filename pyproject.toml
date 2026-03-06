@@ -34,6 +34,7 @@ dev = [
     "ruff>=0.1.6,<1.0.0",
     "types-pyyaml>=6.0.12",
     "types-click>=7.1.0",
+    "python-semantic-release>=9.0.0,<11.0.0",
 ]
 
 [tool.black]
@@ -134,3 +135,22 @@ exclude_lines = [
     "if TYPE_CHECKING:",
     "@abstractmethod",
 ]
+
+[tool.semantic_release]
+# The git tag matching this version must exist before the first workflow run.
+version_toml = ["pyproject.toml:project.version"]
+major_on_zero = false
+tag_format = "v{version}"
+
+[tool.semantic_release.changelog]
+# "init" generates the full changelog from git history on first run.
+# Switch to "update" after the initial changelog is generated.
+mode = "init"
+default_templates = { changelog = "CHANGELOG.md" }
+
+[tool.semantic_release.remote]
+type = "github"
+
+[tool.semantic_release.publish]
+# No PyPI publish; this is a private project.
+upload_to_vcs_release = false
