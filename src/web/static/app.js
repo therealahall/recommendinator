@@ -1,4 +1,4 @@
-/* Personal Recommendations - Web UI */
+/* Recommendinator - Web UI */
 
 (function () {
     "use strict";
