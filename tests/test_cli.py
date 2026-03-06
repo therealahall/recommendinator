@@ -76,7 +76,7 @@ def test_cli_help():
     result = runner.invoke(cli, ["--help"])
 
     assert result.exit_code == 0
-    assert "Personal Recommendations CLI" in result.output
+    assert "Recommendinator CLI" in result.output
     assert "recommend" in result.output
     assert "update" in result.output
     assert "complete" in result.output

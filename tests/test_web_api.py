@@ -107,10 +107,16 @@ def client(mock_components):
 
 
 def test_root_endpoint(client):
-    """Test root endpoint serves HTML."""
+    """Test root endpoint serves HTML with correct branding."""
     response = client.get("/")
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
+    assert "Recommendinator" in response.text
+
+
+def test_app_title(mock_components):
+    """Test that the FastAPI app title reflects the Recommendinator brand."""
+    assert mock_components["app"].title == "Recommendinator API"
 
 
 def test_status_endpoint(client):
