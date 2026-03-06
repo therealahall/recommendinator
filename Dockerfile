@@ -1,4 +1,4 @@
-# Personal Recommendations - Docker Image
+# Recommendinator - Docker Image
 # Multi-stage build for smaller final image
 
 # Build stage

@@ -1,4 +1,4 @@
-# Personal Recommendations - Docker Compose
+# Recommendinator - Docker Compose
 #
 # Usage:
 #   docker compose up              # App only (no AI features)
@@ -10,7 +10,7 @@ services:
   # Main application
   app:
     build: .
-    container_name: personal-recommendations
+    container_name: recommendinator
     ports:
       - "18473:8000"  # External:Internal - external port avoids collisions
     volumes:
@@ -33,14 +33,14 @@ services:
         condition: service_healthy
         required: false  # Only applies when --profile ai is active
     networks:
-      - recommendations-net
+      - recommendinator-net
 
   # Ollama LLM sidecar (only starts with --profile ai)
   # Models are auto-pulled on first start from config/config.yaml (ollama.model
   # and ollama.embedding_model). Falls back to mistral:7b and nomic-embed-text.
   ollama:
     image: ollama/ollama:latest
-    container_name: personal-recommendations-ollama
+    container_name: recommendinator-ollama
     profiles: ["ai"]
     entrypoint: ["/entrypoint.sh"]
     volumes:
@@ -58,7 +58,7 @@ services:
       start_period: 300s
     restart: unless-stopped
     networks:
-      - recommendations-net
+      - recommendinator-net
     # Uncomment for GPU support (NVIDIA)
     # deploy:
     #   resources:
@@ -70,8 +70,8 @@ services:
 
 volumes:
   ollama-data:
-    name: personal-recommendations-ollama-data
+    name: recommendinator-ollama-data
 
 networks:
-  recommendations-net:
-    name: personal-recommendations-network
+  recommendinator-net:
+    name: recommendinator-network
