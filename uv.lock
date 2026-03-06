@@ -1384,64 +1384,6 @@ wheels = [
 ]
 
 [[package]]
-name = "personal-recommendations"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "click" },
-    { name = "fastapi" },
-    { name = "legendary-gl" },
-    { name = "pandas" },
-    { name = "pydantic" },
-    { name = "python-dotenv" },
-    { name = "pyyaml" },
-    { name = "requests" },
-    { name = "tabulate" },
-    { name = "uvicorn", extra = ["standard"] },
-]
-
-[package.optional-dependencies]
-ai = [
-    { name = "chromadb" },
-    { name = "ollama" },
-]
-dev = [
-    { name = "black" },
-    { name = "mypy" },
-    { name = "pytest" },
-    { name = "pytest-cov" },
-    { name = "pytest-mock" },
-    { name = "ruff" },
-    { name = "types-click" },
-    { name = "types-pyyaml" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "black", marker = "extra == 'dev'", specifier = ">=23.11.0,<25.0.0" },
-    { name = "chromadb", marker = "extra == 'ai'", specifier = ">=1.0.0,<2.0.0" },
-    { name = "click", specifier = ">=8.1.0,<9.0.0" },
-    { name = "fastapi", specifier = ">=0.104.0,<1.0.0" },
-    { name = "legendary-gl", specifier = ">=0.20.0,<1.0.0" },
-    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.7.0,<2.0.0" },
-    { name = "ollama", marker = "extra == 'ai'", specifier = ">=0.1.0,<1.0.0" },
-    { name = "pandas", specifier = ">=2.0.0,<3.0.0" },
-    { name = "pydantic", specifier = ">=2.0.0,<3.0.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.4.0,<9.0.0" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.1.0,<6.0.0" },
-    { name = "pytest-mock", marker = "extra == 'dev'", specifier = ">=3.12.0,<4.0.0" },
-    { name = "python-dotenv", specifier = ">=1.0.0,<2.0.0" },
-    { name = "pyyaml", specifier = ">=6.0,<7.0" },
-    { name = "requests", specifier = ">=2.31.0,<3.0.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.6,<1.0.0" },
-    { name = "tabulate", specifier = ">=0.9.0,<1.0.0" },
-    { name = "types-click", marker = "extra == 'dev'", specifier = ">=7.1.0" },
-    { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0.12" },
-    { name = "uvicorn", extras = ["standard"], specifier = ">=0.24.0,<1.0.0" },
-]
-provides-extras = ["ai", "dev"]
-
-[[package]]
 name = "platformdirs"
 version = "4.9.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1902,6 +1844,64 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/f0/7a/1c7270340330e575b92f397352af856a8c06f230aa3e76f86b39d01b416a/pyyaml-6.0.3-cp314-cp314t-win_amd64.whl", hash = "sha256:4ad1906908f2f5ae4e5a8ddfce73c320c2a1429ec52eafd27138b7f1cbe341c9", size = 174062, upload-time = "2025-09-25T21:32:55.767Z" },
     { url = "https://files.pythonhosted.org/packages/f1/12/de94a39c2ef588c7e6455cfbe7343d3b2dc9d6b6b2f40c4c6565744c873d/pyyaml-6.0.3-cp314-cp314t-win_arm64.whl", hash = "sha256:ebc55a14a21cb14062aa4162f906cd962b28e2e9ea38f9b4391244cd8de4ae0b", size = 149341, upload-time = "2025-09-25T21:32:56.828Z" },
 ]
+
+[[package]]
+name = "recommendinator"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "click" },
+    { name = "fastapi" },
+    { name = "legendary-gl" },
+    { name = "pandas" },
+    { name = "pydantic" },
+    { name = "python-dotenv" },
+    { name = "pyyaml" },
+    { name = "requests" },
+    { name = "tabulate" },
+    { name = "uvicorn", extra = ["standard"] },
+]
+
+[package.optional-dependencies]
+ai = [
+    { name = "chromadb" },
+    { name = "ollama" },
+]
+dev = [
+    { name = "black" },
+    { name = "mypy" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "pytest-mock" },
+    { name = "ruff" },
+    { name = "types-click" },
+    { name = "types-pyyaml" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "black", marker = "extra == 'dev'", specifier = ">=23.11.0,<25.0.0" },
+    { name = "chromadb", marker = "extra == 'ai'", specifier = ">=1.0.0,<2.0.0" },
+    { name = "click", specifier = ">=8.1.0,<9.0.0" },
+    { name = "fastapi", specifier = ">=0.104.0,<1.0.0" },
+    { name = "legendary-gl", specifier = ">=0.20.0,<1.0.0" },
+    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.7.0,<2.0.0" },
+    { name = "ollama", marker = "extra == 'ai'", specifier = ">=0.1.0,<1.0.0" },
+    { name = "pandas", specifier = ">=2.0.0,<3.0.0" },
+    { name = "pydantic", specifier = ">=2.0.0,<3.0.0" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.4.0,<9.0.0" },
+    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.1.0,<6.0.0" },
+    { name = "pytest-mock", marker = "extra == 'dev'", specifier = ">=3.12.0,<4.0.0" },
+    { name = "python-dotenv", specifier = ">=1.0.0,<2.0.0" },
+    { name = "pyyaml", specifier = ">=6.0,<7.0" },
+    { name = "requests", specifier = ">=2.31.0,<3.0.0" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.6,<1.0.0" },
+    { name = "tabulate", specifier = ">=0.9.0,<1.0.0" },
+    { name = "types-click", marker = "extra == 'dev'", specifier = ">=7.1.0" },
+    { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0.12" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.24.0,<1.0.0" },
+]
+provides-extras = ["ai", "dev"]
 
 [[package]]
 name = "referencing"

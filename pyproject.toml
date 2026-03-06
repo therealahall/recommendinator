@@ -3,9 +3,9 @@ requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "personal-recommendations"
+name = "recommendinator"
 version = "0.1.0"
-description = "Personal recommendation system that analyzes user ratings/reviews across media types"
+description = "Privacy-focused recommendation engine for books, movies, TV shows, and video games"
 requires-python = ">=3.11"
 dependencies = [
     "pydantic>=2.0.0,<3.0.0",
