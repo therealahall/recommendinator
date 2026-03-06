@@ -143,9 +143,7 @@ major_on_zero = false
 tag_format = "v{version}"
 
 [tool.semantic_release.changelog]
-# "init" generates the full changelog from git history on first run.
-# Switch to "update" after the initial changelog is generated.
-mode = "init"
+mode = "update"
 default_templates = { changelog = "CHANGELOG.md" }
 
 [tool.semantic_release.remote]
