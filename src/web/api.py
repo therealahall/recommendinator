@@ -4,8 +4,6 @@ import json
 import logging
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from importlib.metadata import PackageNotFoundError
-from importlib.metadata import version as _pkg_version
 from pathlib import Path
 from typing import Any, cast
 
@@ -13,6 +11,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
+from src import __version__ as APP_VERSION
 from src.cli.config import get_feature_flags
 from src.ingestion.sync import execute_multi_source_sync
 from src.models.content import (
@@ -51,11 +50,6 @@ from src.web.sync_sources import (
 )
 
 logger = logging.getLogger(__name__)
-
-try:
-    APP_VERSION = _pkg_version("recommendinator")
-except PackageNotFoundError:
-    APP_VERSION = "1.0.0"
 
 router = APIRouter(prefix="/api", tags=["api"])
 

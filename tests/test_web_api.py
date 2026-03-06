@@ -14,7 +14,9 @@ from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.engine import RecommendationEngine
 from src.storage.manager import StorageManager
+from src.web.api import APP_VERSION, _item_to_response
 from src.web.app import create_app
+from src.web.enrichment_manager import WebEnrichmentManager
 from src.web.gog_auth import GogAuthError
 from src.web.state import AppState, app_state
 from src.web.sync_manager import SyncManager, reset_sync_manager
@@ -120,12 +122,12 @@ def test_app_title(mock_components):
 
 
 def test_status_endpoint(client):
-    """Test status endpoint returns expected values."""
+    """Test status endpoint returns version from src.__version__."""
     response = client.get("/api/status")
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "ready"
-    assert isinstance(data["version"], str)
+    assert data["version"] == APP_VERSION
     assert isinstance(data["components"], dict)
 
 
@@ -1743,8 +1745,6 @@ class TestEnrichmentErrorPaths:
 
     def test_stop_enrichment_not_running(self, client, mock_components):
         """Stopping when not running returns 400."""
-        from src.web.enrichment_manager import WebEnrichmentManager
-
         with patch("src.web.api.get_enrichment_manager") as mock_get:
             manager = Mock(spec=WebEnrichmentManager)
             manager.stop_enrichment.return_value = (False, "No enrichment running")
@@ -1788,8 +1788,6 @@ class TestItemToResponseInvalidSeasons:
 
     def test_invalid_seasons_returns_none(self, client, mock_components):
         """Non-numeric seasons metadata should not crash."""
-        from src.web.api import _item_to_response
-
         item = ContentItem(
             id="tv1",
             title="Test Show",
