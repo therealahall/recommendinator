@@ -1,6 +1,6 @@
 # Contributing Guidelines
 
-Thank you for your interest in contributing to Personal Recommendations! This document covers everything you need to get started.
+Thank you for your interest in contributing to Recommendinator! This document covers everything you need to get started.
 
 ## Getting Started
 

@@ -1,6 +1,6 @@
 # Quick Start Guide
 
-Get up and running with Personal Recommendations in under 5 minutes.
+Get up and running with Recommendinator in under 5 minutes.
 
 ## Prerequisites
 
@@ -15,8 +15,8 @@ That's it. No AI, no external services required.
 
 ```bash
 # Clone the repository
-git clone https://github.com/ahall/personal-recommendations.git
-cd personal-recommendations
+git clone https://github.com/ahall/recommendinator.git
+cd recommendinator
 
 # Install uv (if not already installed)
 curl -LsSf https://astral.sh/uv/install.sh | sh

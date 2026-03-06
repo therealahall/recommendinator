@@ -1,6 +1,6 @@
 # Troubleshooting Guide
 
-Common issues and solutions for Personal Recommendations.
+Common issues and solutions for Recommendinator.
 
 ## Installation Issues
 

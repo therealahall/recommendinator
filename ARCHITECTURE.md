@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Personal Recommendations system ingests data from multiple sources and generates personalized recommendations using a smart scoring pipeline. **AI is entirely optional** — the system works fully without it. When enabled, a local LLM (via Ollama) provides semantic similarity, natural language explanations, and a conversational chat interface.
+Recommendinator ingests data from multiple sources and generates personalized recommendations using a smart scoring pipeline. **AI is entirely optional** — the system works fully without it. When enabled, a local LLM (via Ollama) provides semantic similarity, natural language explanations, and a conversational chat interface.
 
 The architecture emphasizes modularity, testability, and extensibility.
 

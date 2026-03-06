@@ -1,6 +1,6 @@
 # Ollama Model Recommendations
 
-This guide helps you choose the best Ollama models for the Personal Recommendations system.
+This guide helps you choose the best Ollama models for Recommendinator.
 
 ## Model Strategy
 

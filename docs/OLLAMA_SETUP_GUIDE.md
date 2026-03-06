@@ -1,6 +1,6 @@
 # Ollama Setup Guide
 
-Model recommendations and setup steps for the Personal Recommendations AI features.
+Model recommendations and setup steps for the Recommendinator AI features.
 
 ## Recommended Models
 

@@ -1,6 +1,6 @@
 # Theme Development Guide
 
-Create custom themes for the Personal Recommendations web interface. Each theme is a folder in `src/web/static/themes/` containing color overrides.
+Create custom themes for the Recommendinator web interface. Each theme is a folder in `src/web/static/themes/` containing color overrides.
 
 ## Theme Directory Structure
 

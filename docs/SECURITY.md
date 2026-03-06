@@ -1,6 +1,6 @@
 # Security Considerations
 
-This document outlines security considerations for Personal Recommendations.
+This document outlines security considerations for Recommendinator.
 
 ## Data Privacy
 
@@ -77,7 +77,7 @@ When using Docker, services communicate over an internal network:
 
 ```yaml
 networks:
-  recommendations-net:
+  recommendinator-net:
     # Isolated from host network by default
 ```
 

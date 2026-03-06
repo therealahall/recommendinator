@@ -1,6 +1,6 @@
 # Plugin Development Guide
 
-This guide explains how to create new data source plugins for Personal Recommendations.
+This guide explains how to create new data source plugins for Recommendinator.
 
 ## Overview
 

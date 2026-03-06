@@ -1,6 +1,6 @@
 # ChromaDB Setup Guide
 
-This guide explains how to set up ChromaDB locally for the Personal Recommendations project.
+This guide explains how to set up ChromaDB locally for Recommendinator.
 
 ## Installation
 

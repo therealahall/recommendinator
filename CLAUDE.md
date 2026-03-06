@@ -1,8 +1,8 @@
-# Claude Code Instructions for Personal Recommendations
+# Claude Code Instructions for Recommendinator
 
 ## Project Overview
 
-Personal recommendation system that analyzes user ratings/reviews across media types (books, movies, TV shows, video games) optionally using a local LLM via Ollama.
+Recommendinator — a privacy-focused recommendation engine for books, movies, TV shows, and video games, optionally using a local LLM via Ollama.
 
 **Key Features:** Multi-source ingestion, cross-content-type recommendations, optional local LLM (privacy-preserving), dual CLI/web interface, vector-based semantic search.
 

@@ -1,6 +1,6 @@
-# Personal Recommendations
+# Recommendinator
 
-A privacy-focused recommendation system that learns from your ratings and reviews across books, movies, TV shows, and video games. Runs entirely on your machine with **no AI required** — AI features are opt-in for users who want them.
+A privacy-focused recommendation engine that learns from your ratings and reviews across books, movies, TV shows, and video games. Runs entirely on your machine with **no AI required** — AI features are opt-in for users who want them.
 
 ## Why This Project?
 
@@ -46,8 +46,8 @@ If you change the host to `0.0.0.0` to allow LAN access, **anyone on your networ
 
 ```bash
 # Clone and install
-git clone https://github.com/ahall/personal-recommendations.git
-cd personal-recommendations
+git clone https://github.com/ahall/recommendinator.git
+cd recommendinator
 curl -LsSf https://astral.sh/uv/install.sh | sh  # install uv if needed
 uv sync --locked --extra ai
 
@@ -291,7 +291,7 @@ See [docs/MODEL_RECOMMENDATIONS.md](docs/MODEL_RECOMMENDATIONS.md) for model sel
 ## Project Structure
 
 ```
-personal-recommendations/
+recommendinator/
 ├── src/
 │   ├── cli/              # Command-line interface
 │   ├── web/              # FastAPI web interface (themes in static/themes/)
