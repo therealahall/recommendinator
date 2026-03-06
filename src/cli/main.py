@@ -23,7 +23,7 @@ from src.cli.config import (
 )
 @click.pass_context
 def cli(ctx: click.Context, config: Path | None) -> None:
-    """Personal Recommendations CLI - Get intelligent recommendations based on your consumption history."""
+    """Recommendinator CLI - Get intelligent recommendations based on your consumption history."""
     ctx.ensure_object(dict)
 
     # Load configuration

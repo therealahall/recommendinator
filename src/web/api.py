@@ -53,7 +53,7 @@ from src.web.sync_sources import (
 logger = logging.getLogger(__name__)
 
 try:
-    APP_VERSION = _pkg_version("personal-recommendations")
+    APP_VERSION = _pkg_version("recommendinator")
 except PackageNotFoundError:
     APP_VERSION = "1.0.0"
 

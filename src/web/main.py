@@ -1,4 +1,4 @@
-"""Web server entry point for personal recommendations."""
+"""Recommendinator web server entry point."""
 
 import argparse
 import logging
@@ -49,9 +49,7 @@ def get_local_ip_addresses() -> list[str]:
 
 def main() -> None:
     """Main entry point for web server."""
-    parser = argparse.ArgumentParser(
-        description="Start Personal Recommendations web server"
-    )
+    parser = argparse.ArgumentParser(description="Start Recommendinator web server")
     parser.add_argument(
         "--config",
         type=Path,
@@ -91,7 +89,7 @@ def main() -> None:
     app = create_app(config_path)
 
     # Log accessible addresses
-    logger.info("Starting Personal Recommendations web server...")
+    logger.info("Starting Recommendinator web server...")
     logger.info("Server will be accessible at:")
     logger.info("  - http://localhost:%s", port)
     if host == "0.0.0.0":

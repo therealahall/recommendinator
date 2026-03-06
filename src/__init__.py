@@ -1,6 +1,6 @@
-"""Personal Recommendations System.
+"""Recommendinator.
 
-A system for generating personalized recommendations using local LLMs.
+A privacy-focused recommendation engine for books, movies, TV shows, and video games.
 """
 
 __version__ = "0.1.0"

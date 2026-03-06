@@ -1,1 +1,1 @@
-"""CLI interface for personal recommendations."""
+"""Recommendinator CLI interface."""

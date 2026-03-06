@@ -146,7 +146,7 @@ def create_app(config_path: Path | None = None) -> FastAPI:
     # Create FastAPI app
     debug_mode = web_config.get("debug", False)
     app = FastAPI(
-        title="Personal Recommendations API",
+        title="Recommendinator API",
         description="API for personalized content recommendations",
         version=APP_VERSION,
         docs_url="/docs" if debug_mode else None,
@@ -208,7 +208,7 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         if html_file.exists():
             return HTMLResponse(content=html_file.read_text())
         return HTMLResponse(
-            content="<h1>Personal Recommendations API</h1><p>API is running. Use /docs for API documentation.</p>"
+            content="<h1>Recommendinator API</h1><p>API is running. Use /docs for API documentation.</p>"
         )
 
     return app
