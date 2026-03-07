@@ -154,7 +154,7 @@ When enabled (recommended for 3B models), the engine uses a condensed system pro
 
 #### Web (`src/web/`)
 - FastAPI web server with REST API
-- Tabbed web UI: Recommendations, Chat, Library, Preferences, Sync
+- Tabbed web UI: Recommendations, Library, Chat, Data, Preferences
 - Chat tab hidden when AI is disabled
 - SSE streaming for chat responses
 - Library export: `GET /api/items/export?type=book&format=csv` (CSV or JSON download)
@@ -242,7 +242,10 @@ inputs:
 - **Pyright LSP Plugin** — Real-time static type analysis via Language Server Protocol, catches type errors and missing annotations
 - **Frontend Design Plugin** — Generates production-grade UI components for the web interface
 - **Security-Review Agent** — Pre-commit security audit agent that checks for credential exposure, injection vulnerabilities, CORS misconfigurations, and project-specific security rules. See `docs/SECURITY.md` for details.
-- **Ruthless Code Reviewer Agent** — Pre-commit code quality agent that performs line-by-line review for dead code, code smells, DRY violations, naming, type safety, over/under-engineering, and project standards compliance. Complements the security-review agent.
+- **Code-Review Agent** — Pre-commit code quality agent that performs line-by-line review for dead code, code smells, DRY violations, naming, type safety, over/under-engineering, and project standards compliance.
+- **Test-Review Agent** — Pre-commit test coverage and quality audit agent that verifies test completeness, mock hygiene, regression test format, and edge case coverage.
+- **Document-Review Agent** — Documentation accuracy and completeness audit agent that checks for staleness, cross-document consistency, and missing documentation.
+- **Commit-Hygiene Agent** — Atomic commit structure and conventional format enforcement agent that plans commit splits and verifies message quality.
 
 Plugin configuration: `.claude/settings.json` | Agent definitions: `.claude/agents/`
 
