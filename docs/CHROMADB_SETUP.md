@@ -86,7 +86,8 @@ from src.storage.manager import StorageManager
 # Initialize storage manager
 storage = StorageManager(
     sqlite_path=Path("data/recommendations.db"),
-    vector_db_path=Path("data/chroma_db")
+    vector_db_path=Path("data/chroma_db"),
+    ai_enabled=True,
 )
 
 # Save content with embedding

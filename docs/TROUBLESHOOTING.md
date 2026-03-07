@@ -9,7 +9,7 @@ Common issues and solutions for Recommendinator.
 **Error:** `Failed to build hnswlib` or similar
 
 **Solution:** ChromaDB requires Python 3.11 or 3.12. If you're using 3.13+, either:
-1. Use Python 3.11: `python3.11 -m pip install ".[ai]"`
+1. Use Python 3.11: `uv sync --locked --extra ai`
 2. Run without AI features (ChromaDB is optional)
 
 ### Missing Dependencies
@@ -18,9 +18,9 @@ Common issues and solutions for Recommendinator.
 
 **Solution:**
 ```bash
-python3.11 -m pip install ".[ai]"
+uv sync --locked --extra ai
 # or for development:
-python3.11 -m pip install -e ".[ai,dev]"
+uv sync --locked --extra ai --extra dev
 ```
 
 ## Ollama Issues
@@ -200,7 +200,7 @@ python3.11 -m src.cli preferences --help
 **Error:** `Container exited with code 1`
 
 **Solutions:**
-1. Check logs: `docker-compose logs app`
+1. Check logs: `docker compose logs app`
 2. Verify config file is mounted
 3. Ensure data directory permissions are correct
 
@@ -210,8 +210,8 @@ python3.11 -m src.cli preferences --help
 
 **Solutions:**
 1. Wait for Ollama to be ready (check health status)
-2. Verify network configuration in docker-compose
-3. Check Ollama logs: `docker-compose logs ollama`
+2. Verify network configuration in docker compose config
+3. Check Ollama logs: `docker compose logs ollama`
 
 ### GPU Not Working
 
