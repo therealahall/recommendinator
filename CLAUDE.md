@@ -92,6 +92,7 @@ Code quality rules (naming, DRY, type safety, dead code, imports, mutation), sec
 - **code-review** — naming, DRY, type safety, dead code, imports, mutation, over/under-engineering
 - **security-review** — credential exposure, injection, CORS, error disclosure, dependencies
 - **test-review** — coverage, mock hygiene, regression test format, edge cases, performance
+- **document-review** — accuracy, completeness, cross-document consistency, staleness
 - **commit-hygiene** — atomic commits, conventional format, message quality, documentation gaps
 
 ## Security
@@ -120,6 +121,18 @@ config = load_config(Path("config/config.yaml"))
 - **Testing**: pytest
 - **Quality**: Black, MyPy (strict), Ruff
 
+## Versioning & Releases
+
+The project uses **python-semantic-release** for automatic semantic versioning driven by conventional commits.
+
+- **Version source of truth**: `pyproject.toml` `[project] version` field — written by python-semantic-release, never edit manually
+- **Runtime version**: `src/__init__.py` reads the version via `importlib.metadata.version("recommendinator")` — never hardcode versions
+- **CHANGELOG.md**: Auto-generated from commit messages — **do not edit manually** (edits will be silently overwritten on the next release)
+- **Version bump rules**: `feat` → minor, `fix`/`perf` → patch, `BREAKING CHANGE` footer → major (but `major_on_zero = false` while pre-1.0)
+- **Release workflow**: GitHub Actions on push to `main` → analyzes commits → bumps version → updates CHANGELOG.md → creates version commit and tag
+
+**Implication for development:** Commit types are not just conventions — they are parsed by tooling. Using the wrong type (e.g., `fix` instead of `feat` for a new feature) causes incorrect version numbers.
+
 ## Claude Code Tooling
 
 The project uses Claude Code plugins and custom agents to maintain code quality and security. Configuration lives in `.claude/settings.json` (plugins) and `.claude/agents/` (agent definitions).
@@ -134,9 +147,10 @@ The project uses Claude Code plugins and custom agents to maintain code quality 
 - **security-review** — Pre-commit security audit. See `.claude/agents/security-review.md`.
 - **code-review** — Pre-commit code quality review. See `.claude/agents/code-review.md`.
 - **test-review** — Pre-commit test coverage and quality audit. See `.claude/agents/test-review.md`.
+- **document-review** — Documentation accuracy and completeness audit. See `.claude/agents/document-review.md`.
 - **commit-hygiene** — Atomic commit structure and conventional format. See `.claude/agents/commit-hygiene.md`.
 
-**All agents must approve changes before marking tasks as complete.** Run security-review, code-review, and test-review before `command make check`. Run commit-hygiene before committing (to plan the split) and before pushing (to verify commit structure).
+**All agents must approve changes before marking tasks as complete.** Run security-review, code-review, test-review, and document-review before `command make check`. Run commit-hygiene before committing (to plan the split) and before pushing (to verify commit structure).
 
 ## Architecture Principles
 
@@ -209,8 +223,9 @@ This ensures every plan step is tracked, has clear acceptance criteria, and noth
 
 ## Pre-commit Workflow
 
-1. Run **security-review**, **code-review**, and **test-review** agents
-2. Run **commit-hygiene** agent to plan commit split
-3. Run `command make check` (pytest, black, mypy, ruff)
-4. Commit following the split plan from commit-hygiene
-5. Run **commit-hygiene** again pre-push to verify commit structure
+1. Run **security-review**, **code-review**, **test-review**, and **document-review** agents (can run in parallel)
+2. Address all agent findings
+3. Run **commit-hygiene** agent to plan commit split
+4. Run `command make check` (pytest, black, mypy, ruff)
+5. Commit following the split plan from commit-hygiene
+6. Run **commit-hygiene** again pre-push to verify commit structure
