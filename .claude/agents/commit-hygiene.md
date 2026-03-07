@@ -135,10 +135,13 @@ The commit message must follow `<type>(<scope>): <subject>`:
 | Severity | Violation |
 |----------|-----------|
 | HIGH | Missing type prefix entirely (e.g., "Update the parser") |
-| HIGH | Invalid type (not one of: feat, fix, docs, style, refactor, test, chore) |
+| HIGH | Invalid type (not one of: feat, fix, docs, style, refactor, test, chore, perf, ci) |
+| HIGH | Wrong type for the change (e.g., `fix` for a new feature, `feat` for a bug fix) — see Semver Impact below |
 | MEDIUM | Missing scope (e.g., `fix: broken query` instead of `fix(storage): broken query`) |
 | MEDIUM | Scope does not match the files changed |
 | LOW | Type/scope capitalized (should be lowercase) |
+
+**Semver Impact:** Commit types are not just labels — they are parsed by python-semantic-release to determine automatic version bumps. `feat` → minor bump, `fix`/`perf` → patch bump, `BREAKING CHANGE` footer → major bump. Misclassifying a commit type causes an incorrect version number in the next release. A new feature labeled `fix` produces a patch bump instead of a minor bump, which violates semantic versioning and breaks dependency resolution for downstream consumers. This is why wrong type assignment is HIGH severity, not just a readability concern.
 
 #### 3. Commit Message Quality
 
