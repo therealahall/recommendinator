@@ -11,7 +11,9 @@ Plugins are Python classes that fetch content items from external sources (APIs,
 All plugins inherit from `SourcePlugin` in `src/ingestion/plugin_base.py`:
 
 ```python
-from src.ingestion.plugin_base import ProgressCallback, SourcePlugin
+from typing import Any, Iterator
+
+from src.ingestion.plugin_base import ConfigField, ProgressCallback, SourcePlugin
 from src.models.content import ContentItem, ContentType, ConsumptionStatus
 
 class MyPlugin(SourcePlugin):
@@ -35,14 +37,13 @@ class MyPlugin(SourcePlugin):
     def requires_network(self) -> bool:
         return True  # Set based on your source
     
-    @property
-    def config_schema(self) -> dict:
-        return {
-            "api_key": {"type": "string", "required": True},
-            "user_id": {"type": "string", "required": True},
-        }
-    
-    def validate_config(self, config: dict) -> list[str]:
+    def get_config_schema(self) -> list[ConfigField]:
+        return [
+            ConfigField(name="api_key", field_type=str, required=True),
+            ConfigField(name="user_id", field_type=str, required=True),
+        ]
+
+    def validate_config(self, config: dict[str, Any]) -> list[str]:
         """Return list of validation error messages."""
         errors = []
         if not config.get("api_key"):
@@ -51,7 +52,7 @@ class MyPlugin(SourcePlugin):
     
     def fetch(
         self,
-        config: dict,
+        config: dict[str, Any],
         progress_callback: ProgressCallback | None = None,
     ) -> Iterator[ContentItem]:
         """Yield ContentItem objects from the source.
@@ -121,9 +122,9 @@ def normalize_rating(source_rating: int, max_rating: int = 10) -> int | None:
 ```python
 import csv
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Iterator
 
-from src.ingestion.plugin_base import SourcePlugin
+from src.ingestion.plugin_base import ConfigField, ProgressCallback, SourcePlugin
 from src.models.content import ContentItem, ContentType, ConsumptionStatus
 
 class CsvBookPlugin(SourcePlugin):
@@ -147,13 +148,12 @@ class CsvBookPlugin(SourcePlugin):
     def requires_network(self) -> bool:
         return False
     
-    @property
-    def config_schema(self) -> dict:
-        return {
-            "path": {"type": "string", "required": True},
-        }
+    def get_config_schema(self) -> list[ConfigField]:
+        return [
+            ConfigField(name="path", field_type=str, required=True),
+        ]
 
-    def validate_config(self, config: dict) -> list[str]:
+    def validate_config(self, config: dict[str, Any]) -> list[str]:
         errors = []
         file_path = config.get("path", "")
         if not file_path:
@@ -162,7 +162,7 @@ class CsvBookPlugin(SourcePlugin):
             errors.append(f"File not found: {file_path}")
         return errors
 
-    def fetch(self, config: dict) -> Iterator[ContentItem]:
+    def fetch(self, config: dict[str, Any], progress_callback: ProgressCallback | None = None) -> Iterator[ContentItem]:
         csv_path = Path(config["path"])
         
         with open(csv_path, newline="", encoding="utf-8") as f:
@@ -205,9 +205,9 @@ class CsvBookPlugin(SourcePlugin):
 
 ```python
 import requests
-from typing import Iterator
+from typing import Any, Iterator
 
-from src.ingestion.plugin_base import SourcePlugin, SourceError
+from src.ingestion.plugin_base import ConfigField, ProgressCallback, SourceError, SourcePlugin
 from src.models.content import ContentItem, ContentType, ConsumptionStatus
 
 class MovieApiPlugin(SourcePlugin):
@@ -233,22 +233,21 @@ class MovieApiPlugin(SourcePlugin):
     def requires_network(self) -> bool:
         return True
     
-    @property
-    def config_schema(self) -> dict:
-        return {
-            "api_key": {"type": "string", "required": True},
-            "username": {"type": "string", "required": True},
-        }
-    
-    def validate_config(self, config: dict) -> list[str]:
+    def get_config_schema(self) -> list[ConfigField]:
+        return [
+            ConfigField(name="api_key", field_type=str, required=True),
+            ConfigField(name="username", field_type=str, required=True),
+        ]
+
+    def validate_config(self, config: dict[str, Any]) -> list[str]:
         errors = []
         if not config.get("api_key"):
             errors.append("API key is required")
         if not config.get("username"):
             errors.append("Username is required")
         return errors
-    
-    def fetch(self, config: dict) -> Iterator[ContentItem]:
+
+    def fetch(self, config: dict[str, Any], progress_callback: ProgressCallback | None = None) -> Iterator[ContentItem]:
         api_key = config["api_key"]
         username = config["username"]
         
@@ -261,7 +260,7 @@ class MovieApiPlugin(SourcePlugin):
             response.raise_for_status()
             data = response.json()
         except requests.RequestException as e:
-            raise SourceError(f"API request failed: {e}") from e
+            raise SourceError("movie_api", f"API request failed: {e}") from e
         
         for movie in data.get("movies", []):
             yield ContentItem(
