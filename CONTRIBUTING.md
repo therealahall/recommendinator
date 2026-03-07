@@ -22,13 +22,14 @@ Thank you for your interest in contributing to Recommendinator! This document co
 3. Ensure all checks pass (see [Quality Checks](#quality-checks))
 4. Submit a pull request
 
-**Automated code review:** When using Claude Code, four review agents run before commits:
+**Automated code review:** When using Claude Code, five review agents run before commits:
 - **code-review** — Reviews code quality, design, naming, DRY compliance, and adherence to project standards.
 - **security-review** — Audits for vulnerabilities, credential leaks, and unsafe patterns. See [docs/SECURITY.md](docs/SECURITY.md) for details.
 - **test-review** — Audits test coverage, correctness, mock hygiene, regression test format, and edge case handling.
+- **document-review** — Verifies documentation accuracy, completeness, and cross-document consistency.
 - **commit-hygiene** — Enforces atomic commit structure and conventional commit format.
 
-All four agents must approve changes before they are committed. Agent definitions live in `.claude/agents/`. Contributors can expect feedback on PRs touching security-sensitive areas (authentication, configuration, network requests) as well as general code quality and test coverage concerns.
+All five agents must approve changes before they are committed. Agent definitions live in `.claude/agents/`. Contributors can expect feedback on PRs touching security-sensitive areas (authentication, configuration, network requests) as well as general code quality, test coverage, and documentation accuracy concerns.
 
 ## Quality Checks
 
@@ -126,7 +127,7 @@ class TestMyFeatureRegression:
 
 Before committing, run the review agents and quality checks:
 
-1. Run **security-review**, **code-review**, and **test-review** agents (can run in parallel)
+1. Run **security-review**, **code-review**, **test-review**, and **document-review** agents (can run in parallel)
 2. Address all agent findings
 3. Run **commit-hygiene** agent to plan atomic commit split
 4. Run all quality checks: `command make check`
@@ -141,9 +142,31 @@ Follow **Conventional Commits**:
 <type>(<scope>): <subject>
 ```
 
-**Types:** `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`
+**Types:** `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`, `perf`, `ci`
 
 **Break changes into logical, atomic commits.** Separate schema changes, implementation, tests, and documentation into individual commits. Tests should pass after each commit.
+
+**Commit types drive automatic version bumps.** This project uses [python-semantic-release](https://python-semantic-release.readthedocs.io/) to parse commit messages and determine version numbers. Using the wrong commit type doesn't just hurt readability — it causes incorrect version numbers:
+
+| Commit pattern | Version bump |
+|----------------|-------------|
+| `feat(...):`   | Minor (0.1.0 → 0.2.0) |
+| `fix(...):`    | Patch (0.1.0 → 0.1.1) |
+| `perf(...):`   | Patch (0.1.0 → 0.1.1) |
+| `BREAKING CHANGE:` in footer | Major (0.1.0 → 1.0.0)* |
+| `docs`, `style`, `refactor`, `test`, `chore`, `ci` | No bump |
+
+*While the project is pre-1.0, `major_on_zero = false` — breaking changes bump minor instead of major.
+
+## Versioning & Releases
+
+The project uses **automatic semantic versioning**:
+
+- **Version source of truth**: `pyproject.toml` `[project] version` field, written by python-semantic-release
+- **Runtime version**: `src/__init__.py` reads the version via `importlib.metadata` — never hardcode versions
+- **CHANGELOG.md**: Auto-generated from commit messages — **do not edit manually** (edits will be overwritten on the next release)
+- **Release workflow**: A GitHub Actions workflow on push to `main` analyzes commits, bumps the version, updates CHANGELOG.md, and creates a version commit and tag
+- **No manual version bumps**: Never edit the version in `pyproject.toml` by hand — let the release workflow handle it
 
 ## Security
 
