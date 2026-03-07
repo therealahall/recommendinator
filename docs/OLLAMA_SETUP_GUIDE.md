@@ -40,7 +40,7 @@ Purpose-built for embeddings. No change needed from the project default.
 |---|---|---|
 | `mistral-nemo:12b` | ~7 GB | Slightly faster, slightly lower quality than Qwen 14B |
 | `qwen2.5:32b` | ~20 GB | Higher quality but ~2-3 tok/sec on CPU (batch only, not chat) |
-| `llama3.2:8b` | ~5 GB | Much faster, lower quality — acceptable for quick iteration |
+| `llama3.1:8b` | ~5 GB | Much faster, lower quality — acceptable for quick iteration |
 
 ## Configuration
 
@@ -89,7 +89,7 @@ Set all three flags to `true` in `config/config.yaml` (see Configuration section
 Existing items in SQLite will not have embeddings in ChromaDB. A re-sync generates an embedding per item during the save loop.
 
 ```bash
-python3.11 -m src.cli.main update --source all
+python3.11 -m src.cli update --source all
 ```
 
 **Time estimate**: With 500-2000 items and `nomic-embed-text` on CPU, each embedding takes ~0.5-2 seconds. Expect **5-60 minutes** depending on item count. The CLI prints progress every 10 items.
@@ -98,10 +98,10 @@ python3.11 -m src.cli.main update --source all
 
 ```bash
 python3.11 -c "
-from src.storage.vector_db import VectorDatabase
-vdb = VectorDatabase('data/chroma_db')
-collection = vdb.collection
-print(f'Embeddings in ChromaDB: {collection.count()}')
+from pathlib import Path
+from src.storage.vector_db import VectorDB
+vdb = VectorDB(Path('data/chroma_db'))
+print(f'Embeddings in ChromaDB: {vdb.collection.count()}')
 "
 ```
 
@@ -112,7 +112,7 @@ The count should roughly match the total item count in the database.
 Start with the CLI recommendation path before trying the conversation feature:
 
 ```bash
-python3.11 -m src.cli.main recommend --content-type video_game --count 3
+python3.11 -m src.cli recommend --type video_game --count 3
 ```
 
 This exercises the full scoring pipeline including `SemanticSimilarityScorer`. With `llm_reasoning_enabled` on, it also calls `qwen2.5:14b` for natural language explanations — expect 30-60 seconds on CPU for the first response (model load + generation).
@@ -138,8 +138,10 @@ The first request after Ollama starts (or after model eviction) includes model l
 If the system runs low on RAM during sync or inference:
 - Close other applications
 - Reduce embedding batch processing (items are processed one at a time by default)
-- Consider `llama3.2:8b` as a lighter text generation model
+- Consider `llama3.1:8b` as a lighter text generation model
 
-## Future Consideration: Dual Text Models
+## Dual Text Models
 
-If `qwen2.5:14b` feels too slow for interactive chat, a potential improvement is using two text models — a smaller one for chat (fast, interactive) and the 14B for recommendation reasoning (quality, batch). The codebase currently uses a single `ollama.model` for all text generation. The conversation config has its own `llm` section that could be extended to support a separate model, but this would require a code change.
+If `qwen2.5:14b` feels too slow for interactive chat, you can configure a separate `conversation_model` — a smaller model for fast chat alongside the 14B for recommendation reasoning. Set `ollama.conversation_model` in your config to a lighter model (e.g., `llama3.1:8b`). When empty, the default `ollama.model` is used for everything.
+
+See [MODEL_RECOMMENDATIONS.md](MODEL_RECOMMENDATIONS.md) for dual-model configuration syntax and compact mode setup. Note that document's model suggestions are general defaults — the model choices in this guide are tuned for higher quality output.
