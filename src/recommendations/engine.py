@@ -6,7 +6,12 @@ from typing import Any
 
 from src.llm.embeddings import EmbeddingGenerator
 from src.llm.recommendations import RecommendationGenerator
-from src.models.content import ContentItem, ContentType, get_enum_value
+from src.models.content import (
+    ConsumptionStatus,
+    ContentItem,
+    ContentType,
+    get_enum_value,
+)
 from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.constants import (
     CROSS_TYPE_MIN_OVERLAP,
@@ -21,6 +26,7 @@ from src.recommendations.preferences import PreferenceAnalyzer, UserPreferences
 from src.recommendations.ranking import RecommendationRanker
 from src.recommendations.scorers import (
     DEFAULT_SCORERS,
+    ContinuationScorer,
     CustomPreferenceScorer,
     Scorer,
     ScoringContext,
@@ -301,6 +307,22 @@ class RecommendationEngine:
             active_pipeline = ScoringPipeline(overridden_scorers)
         else:
             active_pipeline = self.pipeline
+
+        # Exclude ContinuationScorer when no candidates are actively being
+        # consumed — it would produce all-zero scores that clutter the
+        # breakdown display without affecting ranking.
+        has_active = any(
+            item.status == ConsumptionStatus.CURRENTLY_CONSUMING
+            for item in unconsumed_items
+        )
+        if not has_active:
+            active_pipeline = ScoringPipeline(
+                [
+                    s
+                    for s in active_pipeline.scorers
+                    if not isinstance(s, ContinuationScorer)
+                ]
+            )
 
         # Add CustomPreferenceScorer if we have interpreted custom rules
         if interpreted_prefs is not None and not interpreted_prefs.is_empty():
