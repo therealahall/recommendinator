@@ -141,15 +141,28 @@ class TestToneInConversationPrompt:
 
     def test_keeps_conversation_specific_sections(self) -> None:
         assert "Data Accuracy Rules" in FULL_SYSTEM_PROMPT
-        assert "Prediction Rules" in FULL_SYSTEM_PROMPT
+        assert "Expected Rating Rules" in FULL_SYSTEM_PROMPT
         assert "What NOT To Do" in FULL_SYSTEM_PROMPT
-        assert "Pre-Scored Recommendations" in FULL_SYSTEM_PROMPT
+        assert "Recommendation Data" in FULL_SYSTEM_PROMPT
 
     def test_has_anti_misattribution(self) -> None:
         assert "belong to THAT item only" in FULL_SYSTEM_PROMPT
 
     def test_has_author_accuracy(self) -> None:
         assert "Do NOT claim items share the same author" in FULL_SYSTEM_PROMPT
+
+    def test_has_not_consumed_guardrail(self) -> None:
+        assert "NOT been consumed yet" in FULL_SYSTEM_PROMPT
+
+    def test_has_no_score_leak_rule(self) -> None:
+        assert "NEVER show match percentages" in FULL_SYSTEM_PROMPT
+
+    def test_has_title_accuracy_rule(self) -> None:
+        assert "NEVER misspell a title" in FULL_SYSTEM_PROMPT
+
+    def test_has_recently_completed_only_rule(self) -> None:
+        assert "Only reference items from" in FULL_SYSTEM_PROMPT
+        assert "Recently Completed" in FULL_SYSTEM_PROMPT
 
 
 class TestPersonalityCompact:
@@ -173,3 +186,12 @@ class TestCompactSystemPromptGuardrails:
 
     def test_has_anti_spoiler(self) -> None:
         assert "NEVER reveal plot twists" in COMPACT_SYSTEM_PROMPT
+
+    def test_has_not_consumed_guardrail(self) -> None:
+        assert "NOT been consumed" in COMPACT_SYSTEM_PROMPT
+
+    def test_has_no_score_leak_rule(self) -> None:
+        assert "NEVER show match percentages" in COMPACT_SYSTEM_PROMPT
+
+    def test_has_title_accuracy_rule(self) -> None:
+        assert "Copy titles EXACTLY" in COMPACT_SYSTEM_PROMPT
