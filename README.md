@@ -262,7 +262,7 @@ The recommendation engine scores candidates through multiple factors:
 | **Creator Match** | Prefers authors/directors/developers you've enjoyed |
 | **Tag Overlap** | Threshold-based tag matching with semantic cluster bridging |
 | **Series Order** | Prioritizes next items in series you're reading/watching |
-| **Continuation** | Boosts items you're actively consuming (e.g., current TV season) |
+| **Continuation** | Boosts items you're actively consuming (e.g., current TV season). Auto-excluded from pipeline when no in-progress items exist. |
 | **Series Affinity** | Boosts items in franchises you've rated well |
 | **Rating Pattern** | Learns from your rating history within genres |
 | **Content Length** | Matches candidates to your preferred length (short books, long games) |

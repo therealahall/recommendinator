@@ -24,7 +24,7 @@ Responsible for parsing and normalizing data from various sources.
 **Design:**
 - Plugin-based architecture (`SourcePlugin` ABC in `plugin_base.py`)
 - Auto-discovered from `src/ingestion/sources/` via `PluginRegistry`
-- **Named source instances**: Each entry under `inputs:` has a user-defined key name (e.g., `my_books`, `tv_shows`) with a `plugin:` field specifying the plugin type. Multiple instances of the same plugin are supported (e.g., two `json_import` sources with different files). The `resolve_inputs()` function in `sync_sources.py` is the central resolver that maps config entries to `(source_id, plugin, config)` tuples.
+- **Named source instances**: Each entry under `inputs:` has a user-defined key name (e.g., `my_books`, `tv_shows`) with a `plugin:` field specifying the plugin type. Multiple instances of the same plugin are supported (e.g., two `json_import` sources with different files). The `resolve_inputs()` function in `src/web/sync_sources.py` is the central resolver that maps config entries to `(source_id, plugin, config)` tuples.
 - `ContentItem.source` reflects the user-defined key name, not the plugin name, enabling per-instance tracking
 - Each plugin handles config validation, fetching, and rating normalization
 - Shared sync executor (`execute_multi_source_sync`) used by both CLI and web
@@ -55,6 +55,13 @@ Handles communication with Ollama when AI features are enabled. **This entire la
 - Natural language recommendation explanations
 - Advanced preference rule interpretation
 
+**Text Sanitization (`src/utils/text.py`):**
+All user-provided text (memories, messages, metadata) is sanitized before interpolation into LLM prompts to prevent prompt injection:
+- `sanitize_prompt_text(text)` — Strips newlines, control characters, and injection markers; caps at 100 chars
+- `sanitize_prompt_text_long(text, max_length=200)` — Same sanitization with configurable cap, for conversation history where 100 chars is too restrictive
+- `sanitize_prompt_text_with_truncation(text)` — Returns `(sanitized_text, was_truncated)` so callers can append ellipsis only on actual truncation
+- `_sanitize_genre(text)` — Stricter allowlist for genre tags (no parentheses or colons); caps at 50 chars
+
 **Feature Flags:**
 - `features.ai_enabled` — Master toggle for all AI features
 - `features.embeddings_enabled` — Vector similarity (requires ai_enabled)
@@ -75,7 +82,7 @@ RecommendationEngine
   |     |-- SeriesOrderScorer     — next-in-sequence boosting
   |     |-- RatingPatternScorer   — rating history in matching genres
   |     |-- ContentLengthScorer   — soft penalty for length preference mismatch
-  |     |-- ContinuationScorer   — boost items the user is actively consuming
+  |     |-- ContinuationScorer   — boost items the user is actively consuming (automatically excluded from pipeline when no actively-consumed items exist)
   |     |-- SeriesAffinityScorer — boost items in well-rated franchises (avg >= 4)
   |     |-- CustomPreferenceScorer — user natural language rules
   |     |-- [SemanticSimilarityScorer]  (when AI enabled)
@@ -135,7 +142,12 @@ Conversational AI chat interface, requires AI to be enabled.
 
 **Components:**
 - `MemoryManager` — CRUD for core memories (preference signals)
-- `ContextAssembler` — RAG retrieval for relevant items
+- `ContextAssembler` — Builds dynamic context for LLM queries with safeguards:
+  - **Single top-pick pipeline**: When the recommendation engine is available, only the single highest-ranked item is included in context (not a ranked list), keeping the LLM focused on hyping one pick
+  - **Role-differentiated message sanitization**: User messages are sanitized via `sanitize_prompt_text()` / `sanitize_prompt_text_long()` to prevent prompt injection; assistant messages are only length-truncated (preserving LLM output formatting)
+  - **Consumption status tagging**: Backlog items are tagged `[NOT YET CONSUMED]` in context to prevent the LLM from claiming the user enjoyed them
+  - **Contributing items filter**: Only `COMPLETED`-status items appear in "Recently Completed" context, preventing backlog items from being misrepresented
+  - **Qualitative fit labels**: Match scores (0–1) are converted to labels ("Excellent fit", "Strong fit", etc.) via `_score_to_qualitative()` instead of exposing raw percentages
 - `ToolExecutor` — Tool-calling for data updates (mark completed, update rating, save memory)
 - `IntentDetector` (`intent.py`) — Pre-LLM regex-based intent detection for tool actions (mark completed, rate, wishlist, preferences). When a high-confidence match is found, the tool action executes instantly without invoking the LLM
 - `MemoryExtractor` — Extracts preferences from conversations
