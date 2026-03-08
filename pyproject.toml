@@ -139,6 +139,7 @@ exclude_lines = [
 [tool.semantic_release]
 # The git tag matching this version must exist before the first workflow run.
 version_toml = ["pyproject.toml:project.version"]
+allow_zero_version = true
 major_on_zero = false
 tag_format = "v{version}"
 
