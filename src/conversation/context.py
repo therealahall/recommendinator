@@ -18,9 +18,10 @@ from src.models.conversation import (
 )
 from src.utils.series import build_series_tracking, should_recommend_item
 from src.utils.text import (
-    _MAX_PROMPT_TEXT_LENGTH,
     format_genre_tag,
     sanitize_prompt_text,
+    sanitize_prompt_text_long,
+    sanitize_prompt_text_with_truncation,
 )
 
 if TYPE_CHECKING:
@@ -30,6 +31,12 @@ if TYPE_CHECKING:
     from src.storage.manager import StorageManager
 
 logger = logging.getLogger(__name__)
+
+# Max chars for assistant messages in context blocks (token budget control).
+# Assistant messages skip sanitization (LLM-generated output) but are
+# still length-capped. Full mode gets more context than compact mode.
+_ASSISTANT_MSG_MAX_FULL = 200
+_ASSISTANT_MSG_MAX_COMPACT = 100
 
 
 class ContextAssembler:
@@ -86,7 +93,9 @@ class ContextAssembler:
             max_memories: Maximum core memories to include
             max_history_messages: Maximum recent messages to include
             max_relevant_items: Maximum relevant completed items via RAG
-            max_unconsumed_items: Maximum unconsumed items to include
+            max_unconsumed_items: Maximum unconsumed items when falling back
+                to storage (no recommendation engine). Ignored when the
+                pipeline is active — pipeline mode uses limit=1 (single top pick).
 
         Returns:
             ConversationContext with all assembled data
@@ -105,12 +114,15 @@ class ContextAssembler:
         briefs = self._get_recommendation_briefs_from_pipeline(
             user_id=user_id,
             content_type=content_type,
-            limit=max_unconsumed_items,
+            limit=1,  # Single top pick — no need to score extra candidates
         )
 
         if briefs is not None:
-            # Pipeline provided briefs — extract unconsumed + contributing items
-            relevant_unconsumed = [brief.item for brief in briefs]
+            # Pipeline provided briefs — may be [] if no candidates exist.
+            # When non-empty, the single top pick is the LLM's sole job
+            # to hype. This eliminates any risk of the LLM referencing
+            # unplayed backlog items as if they were consumed.
+            relevant_unconsumed = [briefs[0].item] if briefs else []
             relevant_completed = _extract_contributing_items(
                 briefs, limit=max_relevant_items
             )
@@ -386,7 +398,7 @@ class ContextAssembler:
         if user_stated:
             parts.append("User preferences:")
             for memory in user_stated[:5]:
-                parts.append(f"  - {memory.memory_text}")
+                parts.append(f"  - {sanitize_prompt_text(memory.memory_text)}")
 
         if inferred:
             parts.append("\nObserved patterns:")
@@ -396,7 +408,9 @@ class ContextAssembler:
                     if memory.confidence < 1.0
                     else ""
                 )
-                parts.append(f"  - {memory.memory_text}{confidence_text}")
+                parts.append(
+                    f"  - {sanitize_prompt_text(memory.memory_text)}{confidence_text}"
+                )
 
         return "\n".join(parts)
 
@@ -416,21 +430,24 @@ class ContextAssembler:
                 profile.genre_affinities.items(), key=lambda pair: pair[1], reverse=True
             )
             top_genres = [
-                f"{genre} ({score:.1f}\u2605)" for genre, score in sorted_genres[:5]
+                f"{sanitize_prompt_text(genre)} ({score:.1f}\u2605)"
+                for genre, score in sorted_genres[:5]
             ]
             parts.append(f"Top genres: {', '.join(top_genres)}")
 
         if profile.theme_preferences:
             parts.append(
-                f"Preferred themes: {', '.join(profile.theme_preferences[:5])}"
+                f"Preferred themes: {', '.join(sanitize_prompt_text(t) for t in profile.theme_preferences[:5])}"
             )
 
         if profile.anti_preferences:
-            parts.append(f"Dislikes: {', '.join(profile.anti_preferences[:5])}")
+            parts.append(
+                f"Dislikes: {', '.join(sanitize_prompt_text(p) for p in profile.anti_preferences[:5])}"
+            )
 
         if profile.cross_media_patterns:
             parts.append(
-                f"Cross-media patterns: {'; '.join(profile.cross_media_patterns[:3])}"
+                f"Cross-media patterns: {'; '.join(sanitize_prompt_text(p) for p in profile.cross_media_patterns[:3])}"
             )
 
         return "\n".join(parts) if parts else "No detailed profile available."
@@ -458,7 +475,9 @@ def _extract_contributing_items(
 
     for brief in briefs:
         for item in brief.contributing_items:
-            if item.id not in seen_ids:
+            # Only include items the user actually completed — never
+            # backlog/unread items that could be misrepresented as played
+            if item.id not in seen_ids and item.status == ConsumptionStatus.COMPLETED:
                 seen_ids.add(item.id)
                 contributing.append(item)
 
@@ -476,7 +495,7 @@ def _format_content_type(content_type: ContentType) -> str:
     return get_enum_value(content_type).replace("_", " ").title()
 
 
-def _format_item_detail(item: ContentItem) -> str:
+def _format_item_detail(item: ContentItem, *, backlog: bool = False) -> str:
     """Format a content item with rich detail for LLM context.
 
     Includes type, title, author, rating, genres, and review snippet
@@ -484,10 +503,13 @@ def _format_item_detail(item: ContentItem) -> str:
 
     Args:
         item: ContentItem to format
+        backlog: If True, prepend [NOT YET CONSUMED] tag to prevent
+            the LLM from claiming the user enjoyed this item
 
     Returns:
         Formatted detail string
     """
+    backlog_tag = "[NOT YET CONSUMED] " if backlog else ""
     content_type_str = _format_content_type(item.content_type)
     safe_title = sanitize_prompt_text(item.title)
     safe_author = sanitize_prompt_text(item.author) if item.author else ""
@@ -495,23 +517,46 @@ def _format_item_detail(item: ContentItem) -> str:
     rating_str = f" — {item.rating}/5" if item.rating is not None else ""
     genre_str = format_genre_tag(item)
 
-    line = f"- [{content_type_str}] {safe_title}{author_str}{rating_str}{genre_str}"
+    line = f"- {backlog_tag}[{content_type_str}] {safe_title}{author_str}{rating_str}{genre_str}"
 
     # Include review snippet if available (truncated)
     if item.review:
-        safe_review = sanitize_prompt_text(item.review)
-        if len(item.review) > _MAX_PROMPT_TEXT_LENGTH:
+        safe_review, was_truncated = sanitize_prompt_text_with_truncation(item.review)
+        if was_truncated:
             safe_review += "..."
         line += f'\n  Review: "{safe_review}"'
 
     return line
 
 
-def _format_recommendation_brief(brief: RecommendationBrief) -> str:
-    """Format a recommendation brief with match score, reasoning, and connections.
+def _score_to_qualitative(score: float) -> str:
+    """Convert a 0-1 match score to a qualitative label.
 
-    Produces an enriched block so the LLM can present and explain the
-    recommendation rather than independently re-analyzing it.
+    Keeps the LLM informed about match quality without leaking raw
+    percentages that get parroted to the user.
+
+    Args:
+        score: Match score between 0 and 1
+
+    Returns:
+        Qualitative label string
+    """
+    if score >= 0.85:
+        return "Excellent fit"
+    if score >= 0.70:
+        return "Strong fit"
+    if score >= 0.55:
+        return "Good fit"
+    if score >= 0.40:
+        return "Decent fit"
+    return "Worth considering"
+
+
+def _format_recommendation_brief(brief: RecommendationBrief) -> str:
+    """Format a recommendation brief with qualitative match, reasoning, and connections.
+
+    Uses qualitative labels instead of raw percentages to prevent
+    the LLM from parroting scores to the user.
 
     Args:
         brief: Pre-scored recommendation brief from the pipeline
@@ -526,29 +571,20 @@ def _format_recommendation_brief(brief: RecommendationBrief) -> str:
     author_str = f" by {safe_author}" if safe_author else ""
     genre_str = format_genre_tag(item)
 
-    match_percent = round(brief.score * 100)
+    quality_label = _score_to_qualitative(brief.score)
     lines = [
-        f"- [{content_type_str}] {safe_title}{author_str}{genre_str}",
-        f"  Match: {match_percent}%",
+        f"- [NOT YET CONSUMED] [{content_type_str}] {safe_title}{author_str}{genre_str}",
+        f"  Fit: {quality_label}",
     ]
 
     if brief.reasoning:
-        lines.append(f"  Why: {brief.reasoning}")
+        safe_reasoning = sanitize_prompt_text(brief.reasoning)
+        lines.append(f"  Why: {safe_reasoning}")
 
-    # Top scoring dimensions
-    if brief.score_breakdown:
-        top_dimensions = sorted(
-            brief.score_breakdown.items(), key=lambda entry: entry[1], reverse=True
-        )[:3]
-        strengths = ", ".join(
-            f"{name}: {round(value * 100)}%" for name, value in top_dimensions
-        )
-        lines.append(f"  Strengths: {strengths}")
-
-    # Cross-media connections
+    # Cross-media connections (keep — these are useful hooks, not stats)
     if brief.adaptations:
         adaptation_titles = [
-            f"{adaptation.title} ({_format_content_type(adaptation.content_type)})"
+            f"{sanitize_prompt_text(adaptation.title)} ({_format_content_type(adaptation.content_type)})"
             for adaptation in brief.adaptations[:2]
         ]
         lines.append(f"  Cross-media: {', '.join(adaptation_titles)}")
@@ -556,7 +592,7 @@ def _format_recommendation_brief(brief: RecommendationBrief) -> str:
     return "\n".join(lines)
 
 
-def _format_item_compact(item: ContentItem) -> str:
+def _format_item_compact(item: ContentItem, *, backlog: bool = False) -> str:
     """Format a content item in compact form for small-model context.
 
     Includes only type tag, title, author, and rating — no genres or review
@@ -564,23 +600,26 @@ def _format_item_compact(item: ContentItem) -> str:
 
     Args:
         item: ContentItem to format
+        backlog: If True, prepend [NOT YET CONSUMED] tag
 
     Returns:
         Single-line compact string
     """
+    backlog_tag = "[NOT YET CONSUMED] " if backlog else ""
     content_type_str = _format_content_type(item.content_type)
     safe_title = sanitize_prompt_text(item.title)
     safe_author = sanitize_prompt_text(item.author) if item.author else ""
     author_str = f" by {safe_author}" if safe_author else ""
     rating_str = f" — {item.rating}/5" if item.rating is not None else ""
-    return f"- [{content_type_str}] {safe_title}{author_str}{rating_str}"
+    return f"- {backlog_tag}[{content_type_str}] {safe_title}{author_str}{rating_str}"
 
 
 def _format_recommendation_brief_compact(brief: RecommendationBrief) -> str:
     """Format a recommendation brief in compact form for small-model context.
 
-    Includes title, author, match percentage, and one-line reasoning.
-    Omits score breakdowns and cross-media connections.
+    Includes title, author, qualitative fit label, and one-line reasoning.
+    Omits score breakdowns and cross-media connections. Uses qualitative
+    labels instead of raw percentages.
 
     Args:
         brief: Pre-scored recommendation brief from the pipeline
@@ -593,15 +632,12 @@ def _format_recommendation_brief_compact(brief: RecommendationBrief) -> str:
     safe_title = sanitize_prompt_text(item.title)
     safe_author = sanitize_prompt_text(item.author) if item.author else ""
     author_str = f" by {safe_author}" if safe_author else ""
-    match_percent = round(brief.score * 100)
+    quality_label = _score_to_qualitative(brief.score)
 
-    line = f"- [{content_type_str}] {safe_title}{author_str} — {match_percent}% match"
+    line = f"- [NOT YET CONSUMED] [{content_type_str}] {safe_title}{author_str} — {quality_label}"
     if brief.reasoning:
-        # Truncate reasoning to first sentence or 100 chars
-        short_reason = brief.reasoning[:100]
-        if len(brief.reasoning) > 100:
-            short_reason = short_reason.rsplit(" ", 1)[0] + "..."
-        line += f"\n  {short_reason}"
+        safe_reasoning = sanitize_prompt_text(brief.reasoning)
+        line += f"\n  {safe_reasoning}"
     return line
 
 
@@ -619,7 +655,8 @@ def build_user_context_block_compact(context: ConversationContext) -> str:
     """
     parts = []
 
-    # Preference summary (kept as-is — already compact)
+    # Preference summary — individual fields are already sanitized
+    # at construction time by _build_profile_summary / _format_profile
     if context.preference_summary:
         parts.append("## Profile")
         parts.append(context.preference_summary)
@@ -629,7 +666,7 @@ def build_user_context_block_compact(context: ConversationContext) -> str:
     if context.core_memories:
         parts.append("## Preferences")
         for memory in context.core_memories[:5]:
-            parts.append(f"- {memory.memory_text}")
+            parts.append(f"- {sanitize_prompt_text(memory.memory_text)}")
         parts.append("")
 
     # Completed items (max 5, compact format)
@@ -639,27 +676,31 @@ def build_user_context_block_compact(context: ConversationContext) -> str:
             parts.append(_format_item_compact(item))
         parts.append("")
 
-    # Backlog — enriched when briefs available (max 5)
+    # Single top pick only
     if context.recommendation_briefs:
-        parts.append("## Recommended (Pre-Scored)")
-        for brief in context.recommendation_briefs[:5]:
-            parts.append(_format_recommendation_brief_compact(brief))
+        parts.append("## Your Pick (NOT YET CONSUMED)")
+        parts.append(
+            _format_recommendation_brief_compact(context.recommendation_briefs[0])
+        )
         parts.append("")
     elif context.relevant_unconsumed:
-        parts.append("## Backlog")
+        parts.append("## Backlog (NOT YET CONSUMED)")
         for item in context.relevant_unconsumed[:5]:
-            parts.append(_format_item_compact(item))
+            parts.append(_format_item_compact(item, backlog=True))
         parts.append("")
 
-    # Recent conversation (last 3, truncated to 100 chars)
+    # Recent conversation (last 3) — sanitize user messages for injection
+    # prevention; truncate assistant messages for token budget (they are
+    # LLM-generated output that needs no injection sanitization, only length cap)
     if context.recent_messages:
         parts.append("## Recent Chat")
         for message in context.recent_messages[-3:]:
             role_label = "User" if message.role == "user" else "You"
-            content = message.content[:100]
-            if len(message.content) > 100:
-                content += "..."
-            parts.append(f"{role_label}: {content}")
+            if message.role == "user":
+                safe_content = sanitize_prompt_text(message.content)
+            else:
+                safe_content = message.content[:_ASSISTANT_MSG_MAX_COMPACT]
+            parts.append(f"{role_label}: {safe_content}")
         parts.append("")
 
     return "\n".join(parts)
@@ -676,7 +717,8 @@ def build_user_context_block(context: ConversationContext) -> str:
     """
     parts = []
 
-    # Preference summary
+    # Preference summary — individual fields are already sanitized
+    # at construction time by _build_profile_summary / _format_profile
     if context.preference_summary:
         parts.append("## User Profile")
         parts.append(context.preference_summary)
@@ -689,42 +731,59 @@ def build_user_context_block(context: ConversationContext) -> str:
             memory_type_label = (
                 "[stated]" if memory.memory_type == "user_stated" else "[observed]"
             )
-            parts.append(f"- {memory_type_label} {memory.memory_text}")
+            parts.append(
+                f"- {memory_type_label} {sanitize_prompt_text(memory.memory_text)}"
+            )
         parts.append("")
 
     # Relevant completed items (what they loved)
     if context.relevant_completed:
         parts.append("## Recently Completed (High-Rated)")
+        parts.append(
+            "ONLY reference items from THIS list when discussing "
+            "the user's past experience. Do NOT reference any other "
+            "titles from your own knowledge."
+        )
         for item in context.relevant_completed[:10]:
             parts.append(_format_item_detail(item))
         parts.append("")
 
-    # Unconsumed items (backlog) — enriched when briefs available
+    # Single top pick — the LLM's job is to hype THIS item
     if context.recommendation_briefs:
+        parts.append("## YOUR RECOMMENDATION — NOT YET CONSUMED")
         parts.append(
-            "## Recommended From Backlog (Pre-Scored)\n"
-            "Items are ranked by match quality. "
-            "Use the reasoning and scores to explain your picks."
+            "Present THIS as your pick. Hype it up.\n"
+            "The user has NOT played/read/watched this yet — "
+            "do NOT claim they enjoyed it."
         )
-        for brief in context.recommendation_briefs[:10]:
-            parts.append(_format_recommendation_brief(brief))
+        parts.append(_format_recommendation_brief(context.recommendation_briefs[0]))
         parts.append("")
     elif context.relevant_unconsumed:
-        parts.append("## Available in Backlog (Recommend FROM This List)")
+        parts.append(
+            "## Available in Backlog — NOT YET CONSUMED (Recommend FROM This List)"
+        )
+        parts.append(
+            "The user has NOT played/read/watched these yet. "
+            "Do NOT claim they enjoyed or experienced any of these."
+        )
         for item in context.relevant_unconsumed[:15]:
-            parts.append(_format_item_detail(item))
+            parts.append(_format_item_detail(item, backlog=True))
         parts.append("")
 
-    # Recent conversation for continuity
+    # Recent conversation for continuity — sanitize user messages for
+    # injection prevention; truncate assistant messages for token budget
+    # (LLM-generated output needs no sanitization, only a length cap)
     if context.recent_messages:
         parts.append("## Recent Conversation")
         for message in context.recent_messages[-5:]:
             role_label = "User" if message.role == "user" else "Assistant"
-            # Truncate long messages
-            content = message.content
-            if len(content) > 200:
-                content = content[:200] + "..."
-            parts.append(f"{role_label}: {content}")
+            if message.role == "user":
+                safe_content = sanitize_prompt_text_long(
+                    message.content, max_length=200
+                )
+            else:
+                safe_content = message.content[:_ASSISTANT_MSG_MAX_FULL]
+            parts.append(f"{role_label}: {safe_content}")
         parts.append("")
 
     return "\n".join(parts)

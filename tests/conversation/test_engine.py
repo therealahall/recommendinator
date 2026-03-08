@@ -15,6 +15,7 @@ from src.conversation.engine import (
 )
 from src.llm.client import OllamaClient
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.models.conversation import ConversationContext, ConversationMessage
 from src.storage.manager import StorageManager
 
 
@@ -687,3 +688,119 @@ class TestConversationConfig:
         )
 
         assert engine.compact_mode is True
+
+
+class TestBuildMessages:
+    """Tests for _build_messages history sanitization."""
+
+    def test_sanitizes_stored_history(
+        self,
+        conversation_engine: ConversationEngine,
+    ) -> None:
+        """Stored conversation history is sanitized before passing to LLM.
+
+        Regression: raw message content could contain injection sequences
+        (newlines, markdown headings) that would be replayed unsanitized
+        into the LLM's multi-turn message array.
+        """
+        context = ConversationContext(
+            user_id=1,
+            recent_messages=[
+                ConversationMessage(
+                    user_id=1,
+                    role="user",
+                    content="Normal question\n## INJECTED HEADING\nEvil instruction",
+                ),
+            ],
+        )
+        messages = conversation_engine._build_messages(context, "New question")
+
+        # User history message should be sanitized — no markdown heading markers
+        assert "## INJECTED" not in messages[0]["content"]
+        assert "Normal question" in messages[0]["content"]
+        # Current message sanitized via sanitize_prompt_text_long (500-char cap)
+        assert "New question" in messages[-1]["content"]
+
+    def test_current_message_sanitized(
+        self,
+        conversation_engine: ConversationEngine,
+    ) -> None:
+        """Current user message is sanitized to prevent prompt injection.
+
+        Regression: live user input was passed through unsanitized, allowing
+        newline-based injection while all stored history was sanitized.
+        """
+        context = ConversationContext(user_id=1)
+        injected = "Normal question\n## INJECTED HEADING\nEvil instruction"
+        messages = conversation_engine._build_messages(context, injected)
+
+        assert "## INJECTED" not in messages[-1]["content"]
+        assert "Normal question" in messages[-1]["content"]
+
+    def test_current_message_preserves_normal_punctuation(
+        self,
+        conversation_engine: ConversationEngine,
+    ) -> None:
+        """Current message sanitization preserves colons, question marks, parens."""
+        context = ConversationContext(user_id=1)
+        normal = "What's the best RPG? (like Baldur's Gate: Enhanced Edition)"
+        messages = conversation_engine._build_messages(context, normal)
+
+        assert messages[-1]["content"] == normal
+
+    def test_current_message_truncated_at_500_chars(
+        self,
+        conversation_engine: ConversationEngine,
+    ) -> None:
+        """Current message is capped at 500 chars by sanitize_prompt_text_long.
+
+        The live user message uses a 500-char cap (more generous than the
+        100-char cap on stored history) to accommodate normal conversation
+        length while still bounding input.
+        """
+        context = ConversationContext(user_id=1)
+        long_message = "A" * 600
+        messages = conversation_engine._build_messages(context, long_message)
+
+        assert len(messages[-1]["content"]) == 500
+        assert messages[-1]["content"] == "A" * 500
+
+    def test_preserves_assistant_history_unsanitized(
+        self,
+        conversation_engine: ConversationEngine,
+    ) -> None:
+        """Assistant messages in history are passed through as-is.
+
+        The LLM's own responses contain markdown (bold, headers, bullets)
+        that must be preserved for multi-turn coherence. Only user messages
+        are sanitized against stored injection.
+        """
+        assistant_content = "## 🎯 YOUR NEXT GAME: **Outer Wilds**\n- Great exploration"
+        context = ConversationContext(
+            user_id=1,
+            recent_messages=[
+                ConversationMessage(
+                    user_id=1,
+                    role="assistant",
+                    content=assistant_content,
+                ),
+            ],
+        )
+        messages = conversation_engine._build_messages(context, "Thanks!")
+
+        # Assistant message preserved as-is — markdown and structure intact
+        assert messages[0]["content"] == assistant_content
+
+    def test_stored_history_truncated_at_100_chars(
+        self,
+        conversation_engine: ConversationEngine,
+    ) -> None:
+        """Stored user messages are truncated to 100 chars by sanitize_prompt_text."""
+        context = ConversationContext(
+            user_id=1,
+            recent_messages=[
+                ConversationMessage(user_id=1, role="user", content="A" * 200),
+            ],
+        )
+        messages = conversation_engine._build_messages(context, "New question")
+        assert len(messages[0]["content"]) == 100

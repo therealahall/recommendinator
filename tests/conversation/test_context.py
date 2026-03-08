@@ -14,6 +14,7 @@ from src.conversation.context import (
     _format_item_detail,
     _format_recommendation_brief,
     _format_recommendation_brief_compact,
+    _score_to_qualitative,
     build_user_context_block,
     build_user_context_block_compact,
 )
@@ -277,6 +278,41 @@ class TestBuildProfileSummary:
         assert "Loves sci-fi" in summary
         assert "User preferences" in summary
 
+    def test_build_summary_from_inferred_memories_sanitizes(
+        self, context_assembler: ContextAssembler, memory_manager: MemoryManager
+    ) -> None:
+        """Inferred memory text is sanitized in the observed patterns section."""
+        memory_manager.save_core_memory(
+            user_id=1,
+            memory_text="Pattern\n## INJECTED",
+            memory_type="inferred",
+            source="rating_pattern",
+            confidence=0.7,
+        )
+
+        summary = context_assembler._build_profile_summary(user_id=1)
+
+        assert "Pattern" in summary
+        assert "## INJECTED" not in summary
+        assert "Observed patterns" in summary
+
+    def test_build_summary_from_user_stated_memories_sanitizes(
+        self, context_assembler: ContextAssembler, memory_manager: MemoryManager
+    ) -> None:
+        """User-stated memory text is sanitized in the user preferences section."""
+        memory_manager.save_core_memory(
+            user_id=1,
+            memory_text="Loves sci-fi\n## INJECTED",
+            memory_type="user_stated",
+            source="conversation",
+        )
+
+        summary = context_assembler._build_profile_summary(user_id=1)
+
+        assert "Loves sci-fi" in summary
+        assert "## INJECTED" not in summary
+        assert "User preferences" in summary
+
     def test_build_summary_from_profile(
         self, context_assembler: ContextAssembler, memory_manager: MemoryManager
     ) -> None:
@@ -293,6 +329,34 @@ class TestBuildProfileSummary:
 
         assert "sci-fi" in summary
         assert "exploration" in summary
+
+    def test_build_summary_from_profile_sanitizes_fields(
+        self, context_assembler: ContextAssembler, memory_manager: MemoryManager
+    ) -> None:
+        """Profile fields are sanitized to prevent injection.
+
+        Genre keys, themes, anti-preferences, and cross-media patterns
+        all pass through sanitize_prompt_text before prompt injection.
+        """
+        profile = PreferenceProfile(
+            user_id=1,
+            genre_affinities={"sci-fi\n## INJECTED": 0.9},
+            theme_preferences=["exploration\n## EVIL"],
+            anti_preferences=["grinding\n## HACK"],
+            cross_media_patterns=["pattern\n## PAYLOAD"],
+        )
+        memory_manager.save_preference_profile(profile)
+
+        summary = context_assembler._build_profile_summary(user_id=1)
+
+        assert "sci-fi" in summary
+        assert "exploration" in summary
+        assert "grinding" in summary
+        assert "pattern" in summary
+        assert "## INJECTED" not in summary
+        assert "## EVIL" not in summary
+        assert "## HACK" not in summary
+        assert "## PAYLOAD" not in summary
 
 
 class TestBuildUserContextBlock:
@@ -360,8 +424,12 @@ class TestBuildUserContextBlock:
         assert "The Martian" in block
         assert "Andy Weir" in block
         assert "5/5" in block
+        assert "Recently Completed (High-Rated)" in block
+        assert "ONLY reference items from THIS list" in block
         assert "Outer Wilds" in block
-        assert "Backlog" in block
+        assert "Available in Backlog — NOT YET CONSUMED" in block
+        assert "Do NOT claim they enjoyed or experienced any of these" in block
+        assert "[NOT YET CONSUMED]" in block
 
     def test_build_context_block_with_conversation_history(self) -> None:
         """Test building context block with conversation history."""
@@ -395,9 +463,92 @@ class TestBuildUserContextBlock:
 
         block = build_user_context_block(context)
 
-        # Should be truncated to ~200 chars + "..."
-        assert "..." in block
-        assert long_message not in block  # Full message should not be present
+        # Should be truncated (sanitize_prompt_text_long caps at 200 chars)
+        assert long_message not in block  # Full 500-char message should not be present
+        assert "A" * 201 not in block  # Strictly capped — no 201-char run
+        # But 200 chars should be present
+        assert "A" * 200 in block
+
+    def test_build_context_block_sanitizes_conversation_history(self) -> None:
+        """Conversation history is sanitized to prevent prompt injection.
+
+        Regression: message.content was injected verbatim into the system
+        prompt, allowing multi-turn prompt injection via crafted messages.
+        Sanitization strips structural markers (##, newlines) that enable
+        injection.
+        """
+        context = ConversationContext(
+            user_id=1,
+            recent_messages=[
+                ConversationMessage(
+                    user_id=1,
+                    role="user",
+                    content="Normal question\n## INJECTED HEADING",
+                )
+            ],
+        )
+        block = build_user_context_block(context)
+        # Markdown heading markers stripped — no structural injection
+        assert "## INJECTED" not in block
+        assert "Normal question" in block
+
+    def test_build_context_block_does_not_sanitize_assistant_messages(self) -> None:
+        """Assistant messages skip sanitization but are truncated for token budget.
+
+        The LLM's own responses contain markdown that must survive (no
+        character stripping). Length is capped at 200 chars in full mode.
+        """
+        assistant_content = "## 🎯 **Outer Wilds** — great pick!"
+        context = ConversationContext(
+            user_id=1,
+            recent_messages=[
+                ConversationMessage(
+                    user_id=1,
+                    role="assistant",
+                    content=assistant_content,
+                ),
+            ],
+        )
+        block = build_user_context_block(context)
+        assert assistant_content in block
+
+    def test_build_context_block_truncates_long_assistant_messages(self) -> None:
+        """Assistant messages in full block are truncated to 200 chars for token budget."""
+        assistant_content = "## Great pick! " + "A" * 200
+        context = ConversationContext(
+            user_id=1,
+            recent_messages=[
+                ConversationMessage(
+                    user_id=1,
+                    role="assistant",
+                    content=assistant_content,
+                ),
+            ],
+        )
+        block = build_user_context_block(context)
+        assert assistant_content not in block
+        assert assistant_content[:200] in block
+
+    def test_build_context_block_sanitizes_memory_text(self) -> None:
+        """Memory text is sanitized to prevent prompt injection.
+
+        Structural markers like newlines and markdown headings are stripped
+        to prevent injecting new sections into the prompt.
+        """
+        context = ConversationContext(
+            user_id=1,
+            core_memories=[
+                CoreMemory(
+                    user_id=1,
+                    memory_text="Loves sci-fi\n## INJECTED SECTION",
+                    memory_type="user_stated",
+                    source="conversation",
+                ),
+            ],
+        )
+        block = build_user_context_block(context)
+        assert "Loves sci-fi" in block
+        assert "## INJECTED" not in block
 
     def test_build_context_block_with_preference_summary(self) -> None:
         """Test building context block with preference summary."""
@@ -411,6 +562,27 @@ class TestBuildUserContextBlock:
         assert "User Profile" in block
         assert "sci-fi" in block
         assert "grinding" in block
+
+    def test_build_context_block_preserves_long_preference_summary(self) -> None:
+        """Multi-field preference summaries are not truncated by the context block.
+
+        Regression: sanitize_prompt_text (100-char cap) was applied to the
+        assembled preference_summary, silently truncating multi-field profiles.
+        Individual fields are sanitized at construction time; the assembled
+        output must be passed through without re-sanitization.
+        """
+        long_summary = (
+            "Top genres: sci-fi (4.5★), fantasy (4.2★)\n"
+            "Preferred themes: exploration, mystery, survival\n"
+            "Dislikes: grinding, microtransactions\n"
+            "Cross-media patterns: enjoys book-to-game adaptations"
+        )
+        context = ConversationContext(user_id=1, preference_summary=long_summary)
+        block = build_user_context_block(context)
+        # All parts of the summary must survive — no 100-char truncation
+        assert "sci-fi" in block
+        assert "Cross-media patterns" in block
+        assert "microtransactions" in block
 
 
 class TestRAGRetrieval:
@@ -682,6 +854,42 @@ class TestFormatItemDetail:
         assert "..." in result
         assert "A" * 200 not in result
 
+    def test_no_ellipsis_when_sanitizer_strips_to_short(self) -> None:
+        """Ellipsis is based on sanitized length, not raw length.
+
+        Regression: old code compared raw review length, so a review with
+        many stripped characters could show a false ellipsis even though
+        the sanitized text was complete.
+        """
+        # 120 chars raw but ~50 after stripping special chars
+        review = "Great" + "🎮" * 115
+        item = ContentItem(
+            title="Test",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            review=review,
+        )
+        result = _format_item_detail(item)
+
+        # Sanitized text is short, so no ellipsis should appear
+        assert "..." not in result
+
+    def test_no_ellipsis_when_review_is_exactly_100_chars(self) -> None:
+        """A review that is exactly 100 chars after sanitization gets no ellipsis.
+
+        Regression: using >= instead of checking actual truncation would
+        falsely add ellipsis to naturally-100-char reviews.
+        """
+        review = "A" * 100  # Exactly 100 chars, no truncation needed
+        item = ContentItem(
+            title="Test",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            review=review,
+        )
+        result = _format_item_detail(item)
+        assert "..." not in result
+
     def test_omits_missing_optional_fields(self) -> None:
         """No author, rating, genres, or review when not set."""
         item = ContentItem(
@@ -692,6 +900,26 @@ class TestFormatItemDetail:
         result = _format_item_detail(item)
 
         assert result == "- [Movie] Mystery Item"
+
+    def test_backlog_tag_added_when_backlog_true(self) -> None:
+        """[NOT YET CONSUMED] is prepended when backlog=True."""
+        item = ContentItem(
+            title="Mystery Item",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+        )
+        result = _format_item_detail(item, backlog=True)
+        assert result == "- [NOT YET CONSUMED] [Movie] Mystery Item"
+
+    def test_no_backlog_tag_by_default(self) -> None:
+        """[NOT YET CONSUMED] is absent when backlog=False (default)."""
+        item = ContentItem(
+            title="Mystery Item",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+        )
+        result = _format_item_detail(item)
+        assert "[NOT YET CONSUMED]" not in result
 
 
 class TestPipelineBacklogIntegration:
@@ -754,6 +982,87 @@ class TestPipelineBacklogIntegration:
         # Contributing items should populate relevant_completed (skipping RAG)
         completed_titles = [item.title for item in context.relevant_completed]
         assert "Firewatch" in completed_titles
+
+    def test_pipeline_returns_single_top_pick(
+        self,
+        storage_manager: StorageManager,
+        memory_manager: MemoryManager,
+    ) -> None:
+        """Pipeline is called with limit=1 and the single result is used.
+
+        Regression: sending multiple backlog items to the LLM causes it to
+        reference alternatives as if the user consumed them. The fix passes
+        limit=1 to the pipeline so only the top pick is scored and returned.
+        """
+        top_pick = ContentItem(
+            title="Top Pick",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+        )
+
+        mock_engine = MagicMock(spec=RecommendationEngine)
+        mock_engine.generate_recommendations.return_value = [
+            {
+                "item": top_pick,
+                "score": 0.9,
+                "reasoning": "best match",
+                "score_breakdown": {},
+                "contributing_items": [],
+                "adaptations": [],
+                "similarity_score": 0.7,
+                "preference_score": 0.6,
+            },
+        ]
+
+        assembler = ContextAssembler(
+            storage_manager=storage_manager,
+            memory_manager=memory_manager,
+            recommendation_engine=mock_engine,
+        )
+
+        context = assembler.assemble_context(
+            user_id=1,
+            user_query="What game?",
+            content_type=ContentType.VIDEO_GAME,
+        )
+
+        assert context.recommendation_briefs is not None
+        assert len(context.recommendation_briefs) == 1
+        assert context.recommendation_briefs[0].item.title == "Top Pick"
+        assert len(context.relevant_unconsumed) == 1
+
+        # Verify pipeline was called with count=1 (single top pick)
+        mock_engine.generate_recommendations.assert_called_once()
+        assert mock_engine.generate_recommendations.call_args.kwargs["count"] == 1
+
+    def test_pipeline_empty_results_yields_empty_context(
+        self,
+        storage_manager: StorageManager,
+        memory_manager: MemoryManager,
+    ) -> None:
+        """When pipeline returns no candidates, both briefs and unconsumed are empty.
+
+        Regression: ensure no IndexError or fallback to storage when pipeline
+        returns [] (not None) — empty list is valid 'pipeline ran but nothing
+        to recommend'.
+        """
+        mock_engine = MagicMock(spec=RecommendationEngine)
+        mock_engine.generate_recommendations.return_value = []
+
+        assembler = ContextAssembler(
+            storage_manager=storage_manager,
+            memory_manager=memory_manager,
+            recommendation_engine=mock_engine,
+        )
+
+        context = assembler.assemble_context(
+            user_id=1,
+            user_query="What game?",
+            content_type=ContentType.VIDEO_GAME,
+        )
+
+        assert context.recommendation_briefs == []
+        assert context.relevant_unconsumed == []
 
     def test_falls_back_to_storage_when_no_engine(
         self,
@@ -858,6 +1167,29 @@ class TestPipelineBacklogIntegration:
         assert context.recommendation_briefs is None
 
 
+class TestScoreToQualitative:
+    """Tests for _score_to_qualitative threshold boundaries."""
+
+    @pytest.mark.parametrize(
+        ("score", "expected"),
+        [
+            (1.0, "Excellent fit"),
+            (0.85, "Excellent fit"),
+            (0.84, "Strong fit"),
+            (0.70, "Strong fit"),
+            (0.69, "Good fit"),
+            (0.55, "Good fit"),
+            (0.54, "Decent fit"),
+            (0.40, "Decent fit"),
+            (0.39, "Worth considering"),
+            (0.0, "Worth considering"),
+        ],
+    )
+    def test_threshold_boundaries(self, score: float, expected: str) -> None:
+        """Each threshold boundary maps to the correct qualitative label."""
+        assert _score_to_qualitative(score) == expected
+
+
 class TestRecommendationBriefFormatting:
     """Tests for _format_recommendation_brief and enriched context blocks."""
 
@@ -898,20 +1230,22 @@ class TestRecommendationBriefFormatting:
             preference_score=0.75,
         )
 
-    def test_format_brief_includes_match_percent(
+    def test_format_brief_includes_qualitative_fit(
         self, sample_brief: RecommendationBrief
     ) -> None:
-        """Match percentage is rendered from score."""
+        """Qualitative fit label is rendered from score (no raw percentage)."""
         result = _format_recommendation_brief(sample_brief)
-        assert "Match: 87%" in result
+        assert "Fit: Excellent fit" in result
+        assert "87%" not in result
 
     def test_format_brief_includes_title_and_type(
         self, sample_brief: RecommendationBrief
     ) -> None:
-        """Title and content type appear in the output."""
+        """Title, content type tag, and NOT YET CONSUMED prefix are present."""
         result = _format_recommendation_brief(sample_brief)
         assert "[Video Game]" in result
         assert "Outer Wilds" in result
+        assert result.startswith("- [NOT YET CONSUMED]")
 
     def test_format_brief_includes_reasoning(
         self, sample_brief: RecommendationBrief
@@ -920,13 +1254,14 @@ class TestRecommendationBriefFormatting:
         result = _format_recommendation_brief(sample_brief)
         assert "Why: Recommended because you liked Firewatch, Subnautica" in result
 
-    def test_format_brief_includes_top_strengths(
+    def test_format_brief_excludes_raw_scores(
         self, sample_brief: RecommendationBrief
     ) -> None:
-        """Top scoring dimensions are shown."""
+        """Raw score dimensions are NOT shown (replaced by qualitative labels)."""
         result = _format_recommendation_brief(sample_brief)
-        assert "Strengths:" in result
-        assert "genre_match: 92%" in result
+        assert "Strengths:" not in result
+        assert "genre_match" not in result
+        assert "92%" not in result
 
     def test_format_brief_includes_cross_media(
         self, sample_brief: RecommendationBrief
@@ -935,6 +1270,31 @@ class TestRecommendationBriefFormatting:
         result = _format_recommendation_brief(sample_brief)
         assert "Cross-media:" in result
         assert "The Martian" in result
+
+    def test_format_brief_sanitizes_adaptation_title(self) -> None:
+        """Adaptation titles are sanitized to prevent injection."""
+        brief = RecommendationBrief(
+            item=ContentItem(
+                title="Game",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.UNREAD,
+            ),
+            score=0.8,
+            reasoning="",
+            score_breakdown={},
+            contributing_items=[],
+            adaptations=[
+                ContentItem(
+                    title="Adaptation\n## INJECTED",
+                    content_type=ContentType.MOVIE,
+                    status=ConsumptionStatus.UNREAD,
+                )
+            ],
+        )
+        result = _format_recommendation_brief(brief)
+        assert "Cross-media:" in result
+        assert "Adaptation" in result
+        assert "## INJECTED" not in result
 
     def test_format_brief_includes_genres(
         self, sample_brief: RecommendationBrief
@@ -959,11 +1319,52 @@ class TestRecommendationBriefFormatting:
         )
         result = _format_recommendation_brief(brief)
         assert "Minimal Game" in result
-        assert "Match: 50%" in result
-        # No reasoning, strengths, or cross-media sections
+        assert "Fit: Decent fit" in result
+        assert "50%" not in result
+        # No reasoning or cross-media sections
         assert "Why:" not in result
-        assert "Strengths:" not in result
         assert "Cross-media:" not in result
+
+    def test_format_brief_sanitizes_reasoning(self) -> None:
+        """Reasoning text is sanitized before inclusion in prompt.
+
+        Regression: unsanitized reasoning could contain newlines or injection
+        sequences that break the prompt structure.
+        """
+        brief = RecommendationBrief(
+            item=ContentItem(
+                title="Game",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.UNREAD,
+            ),
+            score=0.8,
+            reasoning="Great game\n## INJECTED HEADING\nMore text",
+            score_breakdown={},
+            contributing_items=[],
+            adaptations=[],
+        )
+        result = _format_recommendation_brief(brief)
+        # Structural markers stripped — newlines and markdown headings removed
+        assert "## INJECTED" not in result
+        assert "Great game" in result
+
+    def test_format_brief_compact_sanitizes_reasoning(self) -> None:
+        """Compact reasoning text is sanitized before inclusion in prompt."""
+        brief = RecommendationBrief(
+            item=ContentItem(
+                title="Game",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.UNREAD,
+            ),
+            score=0.8,
+            reasoning="Great game\n## INJECTED HEADING",
+            score_breakdown={},
+            contributing_items=[],
+            adaptations=[],
+        )
+        result = _format_recommendation_brief_compact(brief)
+        assert "## INJECTED" not in result
+        assert "Great game" in result
 
     def test_context_block_renders_enriched_section_with_briefs(
         self, sample_brief: RecommendationBrief
@@ -975,8 +1376,9 @@ class TestRecommendationBriefFormatting:
             relevant_unconsumed=[sample_brief.item],
         )
         block = build_user_context_block(context)
-        assert "Recommended From Backlog (Pre-Scored)" in block
-        assert "Match: 87%" in block
+        assert "YOUR RECOMMENDATION" in block
+        assert "NOT YET CONSUMED" in block
+        assert "Fit: Excellent fit" in block
         # Should NOT show the plain backlog header
         assert "Available in Backlog" not in block
 
@@ -993,7 +1395,9 @@ class TestRecommendationBriefFormatting:
             ],
         )
         block = build_user_context_block(context)
-        assert "Available in Backlog" in block
+        assert "Available in Backlog — NOT YET CONSUMED" in block
+        assert "Do NOT claim they enjoyed or experienced any of these" in block
+        assert "[NOT YET CONSUMED]" in block
         assert "Recommended From Backlog" not in block
 
 
@@ -1081,6 +1485,43 @@ class TestExtractContributingItems:
         """Empty brief list returns empty list."""
         result = _extract_contributing_items([])
         assert result == []
+
+    def test_excludes_non_completed_contributing_items(self) -> None:
+        """Contributing items that are not COMPLETED are excluded.
+
+        Regression: pipeline contributing_items can include backlog/in-progress
+        items. Including them in relevant_completed would let the LLM claim the
+        user enjoyed them — they haven't finished them yet.
+        """
+        completed_item = ContentItem(
+            id="completed1",
+            title="Finished Game",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+        )
+        unread_item = ContentItem(
+            id="unread1",
+            title="Backlog Game",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+        )
+        brief = RecommendationBrief(
+            item=ContentItem(
+                title="Rec",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.UNREAD,
+            ),
+            score=0.9,
+            reasoning="",
+            score_breakdown={},
+            contributing_items=[completed_item, unread_item],
+            adaptations=[],
+        )
+        result = _extract_contributing_items([brief])
+        assert len(result) == 1
+        assert result[0].title == "Finished Game"
+        assert all(item.status == ConsumptionStatus.COMPLETED for item in result)
 
 
 class TestRAGBypassWithPipeline:
@@ -1182,8 +1623,46 @@ class TestCompactFormatting:
 
         assert result == "- [Video Game] Outer Wilds"
 
+    def test_format_item_compact_backlog_tag(self) -> None:
+        """Compact format prepends [NOT YET CONSUMED] when backlog=True."""
+        item = ContentItem(
+            title="Outer Wilds",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+        )
+        result = _format_item_compact(item, backlog=True)
+        assert result == "- [NOT YET CONSUMED] [Video Game] Outer Wilds"
+
+    def test_format_item_compact_no_backlog_tag_by_default(self) -> None:
+        """Compact format omits [NOT YET CONSUMED] by default."""
+        item = ContentItem(
+            title="Outer Wilds",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+        )
+        result = _format_item_compact(item)
+        assert "[NOT YET CONSUMED]" not in result
+
+    def test_format_item_compact_sanitizes_title_and_author(self) -> None:
+        """Compact format sanitizes title and author to prevent injection.
+
+        Regression: title and author were interpolated verbatim into the
+        prompt, allowing injection via crafted metadata fields.
+        """
+        item = ContentItem(
+            title="Good Game\n## INJECTED HEADING",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+            author="Evil Dev\n## MORE INJECTION",
+        )
+        result = _format_item_compact(item)
+        assert "## INJECTED" not in result
+        assert "## MORE INJECTION" not in result
+        assert "Good Game" in result
+        assert "Evil Dev" in result
+
     def test_format_recommendation_brief_compact(self) -> None:
-        """Compact brief includes title, match%, and short reasoning."""
+        """Compact brief includes title, qualitative fit, and short reasoning."""
         brief = RecommendationBrief(
             item=ContentItem(
                 title="Outer Wilds",
@@ -1199,8 +1678,10 @@ class TestCompactFormatting:
         result = _format_recommendation_brief_compact(brief)
 
         assert "Outer Wilds" in result
-        assert "87% match" in result
+        assert "Excellent fit" in result
+        assert "87%" not in result
         assert "Firewatch" in result
+        assert "[NOT YET CONSUMED]" in result
         # Should NOT contain score breakdown
         assert "genre_match" not in result
         assert "92%" not in result
@@ -1222,8 +1703,27 @@ class TestCompactFormatting:
         result = _format_recommendation_brief_compact(brief)
 
         assert "Minimal" in result
-        assert "50% match" in result
+        assert "Decent fit" in result
+        assert "50%" not in result
         assert "\n" not in result
+
+    def test_format_brief_compact_truncates_long_reasoning(self) -> None:
+        """Compact brief reasoning is capped at 100 chars by sanitize_prompt_text."""
+        brief = RecommendationBrief(
+            item=ContentItem(
+                title="Game",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.UNREAD,
+            ),
+            score=0.8,
+            reasoning="A" * 150,
+            score_breakdown={},
+            contributing_items=[],
+            adaptations=[],
+        )
+        result = _format_recommendation_brief_compact(brief)
+        assert "A" * 101 not in result
+        assert "A" * 100 in result
 
 
 class TestBuildUserContextBlockCompact:
@@ -1287,8 +1787,11 @@ class TestBuildUserContextBlockCompact:
         ]
         assert len(message_lines) == 3
 
-        # Messages should be truncated
-        assert "..." in block
+        # User messages: sanitize_prompt_text (100-char cap)
+        # Assistant messages: raw [:100] slice (no sanitization, only length cap)
+        for line in message_lines:
+            # "User: " (6 chars) or "You: " (5 chars) + 100-char content
+            assert len(line) <= 106
 
     def test_compact_block_uses_compact_section_headers(self) -> None:
         """Compact block uses shorter section headers."""
@@ -1340,10 +1843,115 @@ class TestBuildUserContextBlockCompact:
         )
         block = build_user_context_block_compact(context)
 
-        assert "## Recommended (Pre-Scored)" in block
-        assert "85% match" in block
-        # Should NOT contain full-mode section header
-        assert "Recommended From Backlog" not in block
+        assert "## Your Pick (NOT YET CONSUMED)" in block
+        assert "Excellent fit" in block
+        assert "85%" not in block
+
+    def test_compact_block_backlog_without_briefs_uses_not_yet_consumed(
+        self,
+    ) -> None:
+        """Fallback backlog path uses 'NOT YET CONSUMED' header and item tags."""
+        context = ConversationContext(
+            user_id=1,
+            relevant_unconsumed=[
+                ContentItem(
+                    title="Unplayed Game",
+                    content_type=ContentType.VIDEO_GAME,
+                    status=ConsumptionStatus.UNREAD,
+                )
+            ],
+        )
+        block = build_user_context_block_compact(context)
+        assert "## Backlog (NOT YET CONSUMED)" in block
+        assert "[NOT YET CONSUMED]" in block
+        assert "Unplayed Game" in block
+
+    def test_compact_block_sanitizes_conversation_history(self) -> None:
+        """Compact block sanitizes conversation history to prevent injection."""
+        context = ConversationContext(
+            user_id=1,
+            recent_messages=[
+                ConversationMessage(
+                    user_id=1,
+                    role="user",
+                    content="Normal question\n## INJECTED HEADING",
+                )
+            ],
+        )
+        block = build_user_context_block_compact(context)
+        assert "## INJECTED" not in block
+        assert "Normal question" in block
+
+    def test_compact_block_does_not_sanitize_assistant_messages(self) -> None:
+        """Compact block skips sanitization on assistant messages but caps length.
+
+        The LLM's own output contains markdown that must survive character
+        stripping. Length is capped at 100 chars in compact mode.
+        """
+        assistant_content = "## 🎯 **Outer Wilds** — great pick!"
+        context = ConversationContext(
+            user_id=1,
+            recent_messages=[
+                ConversationMessage(
+                    user_id=1,
+                    role="assistant",
+                    content=assistant_content,
+                ),
+            ],
+        )
+        block = build_user_context_block_compact(context)
+        assert assistant_content in block
+
+    def test_compact_block_truncates_long_assistant_messages(self) -> None:
+        """Assistant messages in compact block are truncated to 100 chars for token budget."""
+        assistant_content = "## Great pick! " + "A" * 200
+        context = ConversationContext(
+            user_id=1,
+            recent_messages=[
+                ConversationMessage(
+                    user_id=1,
+                    role="assistant",
+                    content=assistant_content,
+                ),
+            ],
+        )
+        block = build_user_context_block_compact(context)
+        assert assistant_content not in block
+        assert assistant_content[:100] in block
+
+    def test_compact_block_sanitizes_memory_text(self) -> None:
+        """Compact block sanitizes memory text to prevent injection."""
+        context = ConversationContext(
+            user_id=1,
+            core_memories=[
+                CoreMemory(
+                    user_id=1,
+                    memory_text="Loves sci-fi\n## INJECTED SECTION",
+                    memory_type="user_stated",
+                    source="conversation",
+                ),
+            ],
+        )
+        block = build_user_context_block_compact(context)
+        assert "Loves sci-fi" in block
+        assert "## INJECTED" not in block
+
+    def test_compact_block_preserves_long_preference_summary(self) -> None:
+        """Multi-field preference summaries are not truncated in compact block.
+
+        Regression: sanitize_prompt_text (100-char cap) was applied to the
+        assembled summary, silently truncating multi-field profiles. Fields
+        are sanitized at construction time; no re-sanitization needed.
+        """
+        long_summary = (
+            "Top genres: sci-fi (4.5★), fantasy (4.2★)\n"
+            "Preferred themes: exploration, mystery, survival\n"
+            "Dislikes: grinding, microtransactions"
+        )
+        context = ConversationContext(user_id=1, preference_summary=long_summary)
+        block = build_user_context_block_compact(context)
+        assert "sci-fi" in block
+        assert "microtransactions" in block
 
     def test_embedding_call_used_when_no_pipeline(
         self,
