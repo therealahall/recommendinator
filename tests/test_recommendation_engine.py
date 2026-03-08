@@ -1930,6 +1930,129 @@ class TestPipelineOutputKeys:
 
 
 # ---------------------------------------------------------------------------
+# ContinuationScorer exclusion tests
+# ---------------------------------------------------------------------------
+
+
+class TestContinuationScorerExclusion:
+    """ContinuationScorer is excluded when no candidates are actively consumed."""
+
+    def test_no_active_items_excludes_continuation_from_breakdown(
+        self, non_ai_engine, mock_storage
+    ):
+        """When no candidates have CURRENTLY_CONSUMING status, 'continuation'
+        must not appear in score_breakdown (it would be all zeros)."""
+        consumed = ContentItem(
+            id="c1",
+            title="Dune",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            metadata={"genres": ["Science Fiction"]},
+        )
+        unconsumed = ContentItem(
+            id="u1",
+            title="Hyperion",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genres": ["Science Fiction"]},
+        )
+
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: [consumed]
+        )
+        mock_storage.get_unconsumed_items = Mock(return_value=[unconsumed])
+
+        recommendations = non_ai_engine.generate_recommendations(
+            content_type=ContentType.BOOK, count=1
+        )
+
+        assert len(recommendations) == 1
+        assert "continuation" not in recommendations[0]["score_breakdown"]
+
+    def test_active_item_retains_continuation_in_breakdown(
+        self, non_ai_engine, mock_storage
+    ):
+        """When a candidate has CURRENTLY_CONSUMING status, 'continuation'
+        must appear in score_breakdown and the active item must score 1.0."""
+        consumed = ContentItem(
+            id="c1",
+            title="Dune",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            metadata={"genres": ["Science Fiction"]},
+        )
+        active_book = ContentItem(
+            id="u1",
+            title="Hyperion",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.CURRENTLY_CONSUMING,
+            metadata={"genres": ["Science Fiction"]},
+        )
+        idle_book = ContentItem(
+            id="u2",
+            title="Foundation",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genres": ["Science Fiction"]},
+        )
+
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: [consumed]
+        )
+        mock_storage.get_unconsumed_items = Mock(return_value=[active_book, idle_book])
+
+        recommendations = non_ai_engine.generate_recommendations(
+            content_type=ContentType.BOOK, count=5
+        )
+
+        assert len(recommendations) >= 1
+        breakdowns = {
+            rec["item"].title: rec["score_breakdown"] for rec in recommendations
+        }
+        assert "continuation" in breakdowns["Hyperion"]
+        assert breakdowns["Hyperion"]["continuation"] == 1.0
+        assert breakdowns["Foundation"]["continuation"] == 0.0
+
+    def test_tv_show_without_active_excludes_continuation(
+        self, non_ai_engine, mock_storage
+    ):
+        """TV shows also exclude ContinuationScorer when nothing is active."""
+        consumed = ContentItem(
+            id="c1",
+            title="The Wire",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            metadata={
+                "genres": ["Drama"],
+                "total_seasons": 5,
+                "seasons_watched": [1, 2, 3, 4, 5],
+            },
+        )
+        unconsumed = ContentItem(
+            id="u1",
+            title="The Sopranos",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genres": ["Drama"], "total_seasons": 6},
+        )
+
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: [consumed]
+        )
+        mock_storage.get_unconsumed_items = Mock(return_value=[unconsumed])
+
+        recommendations = non_ai_engine.generate_recommendations(
+            content_type=ContentType.TV_SHOW, count=1
+        )
+
+        assert len(recommendations) >= 1
+        assert "continuation" not in recommendations[0]["score_breakdown"]
+
+
+# ---------------------------------------------------------------------------
 # generate_blurb_for_item tests
 # ---------------------------------------------------------------------------
 
