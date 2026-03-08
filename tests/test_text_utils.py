@@ -7,6 +7,8 @@ from src.utils.text import (
     format_genre_tag,
     humanize_source_id,
     sanitize_prompt_text,
+    sanitize_prompt_text_long,
+    sanitize_prompt_text_with_truncation,
 )
 from tests.factories import make_item
 
@@ -321,3 +323,80 @@ class TestFormatGenreTag:
         result = format_genre_tag(item)
         assert result.startswith(" ")
         assert result == " [Horror]"
+
+
+class TestSanitizePromptTextWithTruncation:
+    """Tests for sanitize_prompt_text_with_truncation truncation flag."""
+
+    def test_short_text_not_truncated(self) -> None:
+        """Short text returns was_truncated=False."""
+        text, was_truncated = sanitize_prompt_text_with_truncation("Hello")
+        assert text == "Hello"
+        assert was_truncated is False
+
+    def test_text_over_limit_is_truncated(self) -> None:
+        """Text exceeding 100 chars is capped and flagged as truncated."""
+        text, was_truncated = sanitize_prompt_text_with_truncation("A" * 200)
+        assert len(text) == 100
+        assert was_truncated is True
+
+    def test_text_exactly_at_limit_not_truncated(self) -> None:
+        """Text of exactly 100 chars is not considered truncated."""
+        text, was_truncated = sanitize_prompt_text_with_truncation("A" * 100)
+        assert len(text) == 100
+        assert was_truncated is False
+
+    def test_stripping_brings_under_limit_not_truncated(self) -> None:
+        """Raw text over 100 chars but sanitized result under limit is not truncated."""
+        text, was_truncated = sanitize_prompt_text_with_truncation(
+            "A" * 5 + "\U0001f3ae" * 115
+        )
+        assert was_truncated is False
+        assert text == "A" * 5
+
+    def test_consistent_with_sanitize_prompt_text(self) -> None:
+        """Result text matches sanitize_prompt_text output."""
+        raw = "Test\n## injection\nmore text with special chars: 🎮!"
+        plain = sanitize_prompt_text(raw)
+        with_flag, _ = sanitize_prompt_text_with_truncation(raw)
+        assert plain == with_flag
+
+
+class TestSanitizePromptTextLong:
+    """Tests for sanitize_prompt_text_long with configurable cap."""
+
+    def test_strips_newlines(self) -> None:
+        """Newlines are collapsed to spaces."""
+        result = sanitize_prompt_text_long("Hello\nWorld")
+        assert "\n" not in result
+        assert "Hello" in result
+        assert "World" in result
+
+    def test_strips_carriage_returns(self) -> None:
+        """Carriage return characters are stripped like newlines."""
+        result = sanitize_prompt_text_long("Hello\r\nWorld")
+        assert "\r" not in result
+        assert "\n" not in result
+        assert "Hello" in result
+        assert "World" in result
+
+    def test_caps_at_200_by_default(self) -> None:
+        """Default max_length is 200."""
+        result = sanitize_prompt_text_long("A" * 300)
+        assert len(result) == 200
+
+    def test_custom_max_length(self) -> None:
+        """Custom max_length is respected."""
+        result = sanitize_prompt_text_long("A" * 100, max_length=50)
+        assert len(result) == 50
+
+    def test_exactly_at_limit_not_truncated(self) -> None:
+        """Text of exactly 200 chars is fully preserved."""
+        result = sanitize_prompt_text_long("A" * 200)
+        assert len(result) == 200
+
+    def test_injection_stripped(self) -> None:
+        """Injection markers are stripped from longer text."""
+        result = sanitize_prompt_text_long("Normal text\n## INJECTED HEADING more")
+        assert "## INJECTED" not in result
+        assert "Normal text" in result

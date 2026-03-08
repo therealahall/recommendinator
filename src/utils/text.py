@@ -65,6 +65,26 @@ def _sanitize_genre(raw: str) -> str:
     return cleaned[:_MAX_GENRE_LENGTH]
 
 
+def sanitize_prompt_text_long(raw: str, max_length: int = 200) -> str:
+    """Sanitize free-text with a custom length cap.
+
+    Same structural sanitization as :func:`sanitize_prompt_text` (strips
+    newlines, control characters, injection vectors) but allows a longer
+    cap — suitable for conversation history messages where 100 chars is
+    too restrictive.
+
+    Args:
+        raw: Raw text string.
+        max_length: Maximum output length (default 200).
+
+    Returns:
+        Sanitized string, capped to *max_length*.
+    """
+    cleaned = raw.replace("\n", " ").replace("\r", " ").strip()
+    cleaned = _PROMPT_TEXT_UNSAFE_RE.sub("", cleaned)
+    return cleaned[:max_length]
+
+
 def sanitize_prompt_text(raw: str) -> str:
     """Sanitize free-text metadata before interpolating it into an LLM prompt.
 
@@ -78,9 +98,28 @@ def sanitize_prompt_text(raw: str) -> str:
     Returns:
         Sanitized string, possibly empty.
     """
+    result, _ = sanitize_prompt_text_with_truncation(raw)
+    return result
+
+
+def sanitize_prompt_text_with_truncation(raw: str) -> tuple[str, bool]:
+    """Sanitize free-text and report whether truncation occurred.
+
+    Same sanitization as :func:`sanitize_prompt_text`, but also returns
+    a flag indicating whether the cleaned text exceeded the cap and was
+    truncated. Useful when callers need to append an ellipsis only on
+    actual truncation (not on naturally-at-cap text).
+
+    Args:
+        raw: Raw text string from metadata.
+
+    Returns:
+        Tuple of (sanitized string, was_truncated).
+    """
     cleaned = raw.replace("\n", " ").replace("\r", " ").strip()
     cleaned = _PROMPT_TEXT_UNSAFE_RE.sub("", cleaned)
-    return cleaned[:_MAX_PROMPT_TEXT_LENGTH]
+    was_truncated = len(cleaned) > _MAX_PROMPT_TEXT_LENGTH
+    return cleaned[:_MAX_PROMPT_TEXT_LENGTH], was_truncated
 
 
 def extract_raw_genres(item: ContentItem, limit: int = 4) -> list[str]:
