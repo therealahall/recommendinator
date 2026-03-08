@@ -2545,7 +2545,7 @@
                 // Clear chat messages
                 var messagesEl = document.getElementById("chatMessages");
                 messagesEl.innerHTML = '<div class="chat-welcome">' +
-                    '<h3>Chat with your recommendation advisor</h3>' +
+                    '<h3>Chat with the Recommendinator</h3>' +
                     '<p>Ask for recommendations, mark items as completed, or tell me about your preferences.</p>' +
                     '<div class="chat-suggestions">' +
                     '<button class="suggestion-btn" data-suggestion="What game do you think will be my next obsession?" data-content-type="video_game">What game will be my next obsession?</button>' +
