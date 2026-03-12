@@ -5,14 +5,17 @@ were missing from _SCORER_CONFIG_MAP, so they never ran in production even
 though they were listed in SCORER_NAME_MAP and DEFAULT_SCORERS.
 """
 
+import logging
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
 from src.cli.config import (
     _SCORER_CONFIG_MAP,
     build_scorers_from_config,
+    create_llm_components,
     load_config,
 )
 from src.recommendations.scorers import SCORER_NAME_MAP, Scorer
@@ -105,3 +108,60 @@ class TestBuildScorersFromConfig:
                 f"{type(scorer).__name__} weight {scorer.weight} != "
                 f"default {default_instance.weight}"
             )
+
+
+class TestCreateLlmComponents:
+    """Tests for create_llm_components including graceful degradation."""
+
+    @pytest.fixture()
+    def ai_enabled_config(self) -> dict[str, Any]:
+        """Config with AI features enabled."""
+        return {
+            "features": {"ai_enabled": True},
+            "ollama": {
+                "base_url": "http://localhost:11434",
+                "model": "mistral:7b",
+                "embedding_model": "nomic-embed-text",
+                "conversation_model": "",
+            },
+        }
+
+    def test_returns_none_tuple_when_ai_disabled(self) -> None:
+        """Returns (None, None, None) when ai_enabled is False."""
+        config: dict[str, Any] = {"features": {"ai_enabled": False}}
+        client, embedding_gen, rec_gen = create_llm_components(config)
+        assert client is None
+        assert embedding_gen is None
+        assert rec_gen is None
+
+    def test_returns_none_tuple_when_ollama_not_installed(
+        self, ai_enabled_config: dict[str, Any]
+    ) -> None:
+        """Returns (None, None, None) when ollama package is absent.
+
+        Regression: the non-AI Docker image has no ollama package. If a user's
+        config has ai_enabled: true, create_llm_components must degrade
+        gracefully instead of crashing with ImportError.
+        """
+        with patch("src.llm.client.Client", None):
+            client, embedding_gen, rec_gen = create_llm_components(ai_enabled_config)
+
+        assert client is None
+        assert embedding_gen is None
+        assert rec_gen is None
+
+    def test_logs_warning_when_ollama_not_installed(
+        self,
+        ai_enabled_config: dict[str, Any],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A warning with install instructions is logged when ollama is absent."""
+        with patch("src.llm.client.Client", None):
+            with caplog.at_level(logging.WARNING, logger="src.cli.config"):
+                create_llm_components(ai_enabled_config)
+
+        assert any(
+            "ollama is not installed" in message
+            and "pip install recommendinator[ai]" in message
+            for message in caplog.messages
+        )

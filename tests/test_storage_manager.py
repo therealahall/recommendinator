@@ -1,6 +1,9 @@
 """Tests for unified storage manager."""
 
+import logging
+import sys
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -361,3 +364,64 @@ def test_save_preference_config_does_not_clobber_other_settings(
         assert "preference_config" in user["settings"]
     finally:
         conn.close()
+
+
+def test_chromadb_import_error_disables_ai(tmp_path: Path) -> None:
+    """When chromadb is not installed, ai_enabled is set to False.
+
+    Regression: the non-AI Docker image has no chromadb package. If a user's
+    config has ai_enabled: true, StorageManager must degrade gracefully instead
+    of crashing with ImportError.
+    """
+    sqlite_path = tmp_path / "test.db"
+    vector_db_path = tmp_path / "vector_db"
+
+    with patch.dict(sys.modules, {"src.storage.vector_db": None}):
+        manager = StorageManager(
+            sqlite_path, vector_db_path=vector_db_path, ai_enabled=True
+        )
+
+    assert manager.ai_enabled is False
+    assert manager.vector_db is None
+
+
+def test_chromadb_import_error_logs_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """When chromadb is not installed, a warning with install instructions is logged."""
+    sqlite_path = tmp_path / "test.db"
+    vector_db_path = tmp_path / "vector_db"
+
+    with patch.dict(sys.modules, {"src.storage.vector_db": None}):
+        with caplog.at_level(logging.WARNING, logger="src.storage.manager"):
+            StorageManager(sqlite_path, vector_db_path=vector_db_path, ai_enabled=True)
+
+    assert any(
+        "chromadb is not installed" in message
+        and "pip install recommendinator[ai]" in message
+        for message in caplog.messages
+    )
+
+
+def test_chromadb_import_error_sqlite_still_works(tmp_path: Path) -> None:
+    """SQLite operations continue working after chromadb import failure."""
+    sqlite_path = tmp_path / "test.db"
+    vector_db_path = tmp_path / "vector_db"
+    item = ContentItem(
+        id="import-error-test",
+        title="Test Book",
+        content_type=ContentType.BOOK,
+        status=ConsumptionStatus.UNREAD,
+    )
+
+    with patch.dict(sys.modules, {"src.storage.vector_db": None}):
+        manager = StorageManager(
+            sqlite_path, vector_db_path=vector_db_path, ai_enabled=True
+        )
+
+    db_id = manager.save_content_item(item)
+    assert db_id > 0
+    retrieved = manager.get_content_item(db_id)
+    assert retrieved is not None
+    assert retrieved.title == "Test Book"
+    assert retrieved.content_type == ContentType.BOOK
