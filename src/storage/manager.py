@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from collections.abc import Generator
 from contextlib import contextmanager
@@ -53,6 +54,8 @@ from src.storage.sqlite_db import SQLiteDB
 if TYPE_CHECKING:
     from src.storage.vector_db import VectorDB
 
+logger = logging.getLogger(__name__)
+
 
 class StorageManager:
     """Unified storage manager for SQLite and optionally ChromaDB.
@@ -90,9 +93,16 @@ class StorageManager:
         # Deferred import: chromadb is heavy (~500 MB+) and should not load
         # when AI features are disabled.
         if ai_enabled and vector_db_path:
-            from src.storage.vector_db import VectorDB
+            try:
+                from src.storage.vector_db import VectorDB
 
-            self.vector_db = VectorDB(vector_db_path, vector_collection_name)
+                self.vector_db = VectorDB(vector_db_path, vector_collection_name)
+            except ImportError:
+                logger.warning(
+                    "AI features enabled in config but chromadb is not installed. "
+                    "Vector DB disabled. Install with: pip install recommendinator[ai]"
+                )
+                self.ai_enabled = False
 
     @contextmanager
     def connection(self) -> Generator[sqlite3.Connection, None, None]:

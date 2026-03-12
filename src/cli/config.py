@@ -1,5 +1,6 @@
 """Configuration loading for CLI."""
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,8 @@ from src.recommendations.scorers import (
     TagOverlapScorer,
 )
 from src.storage.manager import StorageManager
+
+logger = logging.getLogger(__name__)
 
 
 def resolve_config_path(config_path: Path | None = None) -> Path:
@@ -140,12 +143,19 @@ def create_llm_components(
     embedding_model = ollama_config.get("embedding_model", "nomic-embed-text")
     conversation_model = ollama_config.get("conversation_model", "")
 
-    client = OllamaClient(
-        base_url=base_url,
-        default_model=model,
-        embedding_model=embedding_model,
-        conversation_model=conversation_model,
-    )
+    try:
+        client = OllamaClient(
+            base_url=base_url,
+            default_model=model,
+            embedding_model=embedding_model,
+            conversation_model=conversation_model,
+        )
+    except ImportError:
+        logger.warning(
+            "AI features enabled in config but ollama is not installed. "
+            "LLM features disabled. Install with: pip install recommendinator[ai]"
+        )
+        return None, None, None
 
     embedding_gen = EmbeddingGenerator(client)
     recommendation_gen = RecommendationGenerator(client)

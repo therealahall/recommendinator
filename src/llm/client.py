@@ -4,7 +4,13 @@ import logging
 from collections.abc import Iterator
 from typing import Any
 
-from ollama import Client
+# Optional dependency: ollama is only installed with the [ai] extra.
+# The non-AI Docker image does not include it. ImportError is caught by
+# create_llm_components() in src/cli/config.py for graceful degradation.
+try:
+    from ollama import Client
+except ImportError:
+    Client = None  # type: ignore[assignment, misc]
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +35,13 @@ class OllamaClient:
             timeout: Request timeout in seconds
             conversation_model: Model for conversation chat (defaults to
                 default_model when empty)
+
+        Raises:
+            ImportError: If the ollama package is not installed.
         """
+        if Client is None:
+            raise ImportError("ollama package is not installed")
+
         self.base_url = base_url
         self.default_model = default_model
         self.embedding_model = embedding_model
