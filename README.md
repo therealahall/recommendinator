@@ -71,7 +71,7 @@ python3.11 -m src.web
 docker compose up
 
 # With AI (Ollama sidecar)
-docker compose --profile ai up
+docker compose --profile ai up app-ai
 ```
 
 Access the web interface at `http://localhost:18473`
@@ -284,7 +284,7 @@ If you want AI-enhanced recommendations:
      embeddings_enabled: true      # For semantic similarity
      llm_reasoning_enabled: true   # For natural language explanations
    ```
-4. **For Docker**: Use `docker compose --profile ai up`
+4. **For Docker**: Use `docker compose --profile ai up app-ai`
 
 See [docs/MODEL_RECOMMENDATIONS.md](docs/MODEL_RECOMMENDATIONS.md) for model selection guidance.
 

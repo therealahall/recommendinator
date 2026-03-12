@@ -200,7 +200,7 @@ python3.11 -m src.cli preferences --help
 **Error:** `Container exited with code 1`
 
 **Solutions:**
-1. Check logs: `docker compose logs app`
+1. Check logs: `docker compose logs app` (or `docker compose logs app-ai` if using `--profile ai`)
 2. Verify config file is mounted
 3. Ensure data directory permissions are correct
 
@@ -213,11 +213,22 @@ python3.11 -m src.cli preferences --help
 2. Verify network configuration in docker compose config
 3. Check Ollama logs: `docker compose logs ollama`
 
+### AI Features Disabled Despite Being Enabled in Config
+
+**Symptom:** `features.ai_enabled: true` is set but AI features don't work
+
+**Solutions:**
+1. Check logs for warnings about missing packages (`chromadb is not installed` or `ollama is not installed`)
+2. Install AI packages: `pip install recommendinator[ai]`
+3. For Docker: use `docker compose --profile ai up app-ai` instead of `docker compose up`
+
+The application gracefully degrades when AI packages are missing — it logs a warning and continues with AI features disabled rather than crashing.
+
 ### GPU Not Working
 
 **Symptom:** Ollama using CPU instead of GPU
 
-**Solution:** Uncomment GPU deployment section in docker-compose.yml:
+**Solution:** Uncomment the `deploy` section under the `ollama` service in docker-compose.yml:
 ```yaml
 deploy:
   resources:

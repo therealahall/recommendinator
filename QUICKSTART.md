@@ -38,7 +38,7 @@ cp config/example.yaml config/config.yaml
 docker compose up
 
 # With AI (Ollama sidecar)
-docker compose --profile ai up
+docker compose --profile ai up app-ai
 ```
 
 Access the web interface at http://localhost:18473.
