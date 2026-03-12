@@ -1,39 +1,53 @@
 # Recommendinator - Docker Compose
 #
 # Usage:
-#   docker compose up              # App only (no AI features)
-#   docker compose --profile ai up # App + Ollama (AI features enabled)
+#   docker compose up                        # App only (no AI features)
+#   docker compose --profile ai up app-ai    # App + Ollama (AI features enabled)
 #
-# Note: Set ai.enabled: true in config/config.yaml when using --profile ai
+# Note: Set features.ai_enabled: true in config/config.yaml when using --profile ai
+
+x-app-common: &app-common
+  ports:
+    - "18473:8000"  # External:Internal - external port avoids collisions
+  volumes:
+    # Persist data between restarts
+    - ./data:/app/data
+    # Mount config file (copy example.yaml to config.yaml first)
+    - ./config:/app/config:ro
+    # Mount input files
+    - ./inputs:/app/inputs:ro
+    # Mount private plugins (user-specific, gitignored)
+    - ./private:/app/private:ro
+    # For additional mounts, use docker-compose.override.yml (gitignored)
+  restart: unless-stopped
+  networks:
+    - recommendinator-net
 
 services:
-  # Main application
+  # Main application (no AI dependencies)
+  # Use app-ai (--profile ai) for AI features including Ollama connectivity.
   app:
-    build: .
+    <<: *app-common
+    build:
+      context: .
+      target: default
     container_name: recommendinator
-    ports:
-      - "18473:8000"  # External:Internal - external port avoids collisions
-    volumes:
-      # Persist data between restarts
-      - ./data:/app/data
-      # Mount config file (copy example.yaml to config.yaml first)
-      - ./config:/app/config:ro
-      # Mount input files
-      - ./inputs:/app/inputs:ro
-      # Mount private plugins (user-specific, gitignored)
-      - ./private:/app/private:ro
-      # For additional mounts, use docker-compose.override.yml (gitignored)
+
+  # Main application with AI dependencies (only starts with --profile ai)
+  app-ai:
+    <<: *app-common
+    build:
+      context: .
+      target: ai
+    container_name: recommendinator-ai
+    profiles: ["ai"]
     environment:
       # Ollama URL - only used when ai.enabled: true in config
       # Points to sidecar when using --profile ai
       - OLLAMA_BASE_URL=http://ollama:11434
-    restart: unless-stopped
     depends_on:
       ollama:
         condition: service_healthy
-        required: false  # Only applies when --profile ai is active
-    networks:
-      - recommendinator-net
 
   # Ollama LLM sidecar (only starts with --profile ai)
   # Models are auto-pulled on first start from config/config.yaml (ollama.model
