@@ -173,6 +173,7 @@ class SyncJobResponse(BaseModel):
     items_processed: int
     total_items: int | None
     current_item: str | None
+    current_source: str | None
     error_message: str | None
     progress_percent: int | None
     error_count: int

@@ -1348,14 +1348,13 @@
             parts.push(job.items_processed + " items so far");
         }
 
-        // Show only the currently active source, not the full "sync all" list
-        parts.push("—");
+        // Show the currently active source (not "All Sources")
+        parts.push("-");
         var displaySource = job.current_source || job.source;
-        parts.push("Syncing " + displaySource);
+        parts.push("Syncing " + displaySource + ":");
 
         // Current activity (e.g. "Fetching game details" or current item name)
         if (job.current_item) {
-            parts.push(":");
             parts.push(truncate(job.current_item, 50));
         } else {
             parts.push("...");

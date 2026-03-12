@@ -66,7 +66,7 @@ def execute_sync(
     result = SyncResult(source_name=source_name)
 
     if progress_callback:
-        progress_callback(0, None, f"Fetching from {source_name}...", source_name)
+        progress_callback(0, None, "Fetching...", source_name)
 
     # Fetch items from plugin
     def fetch_progress(
