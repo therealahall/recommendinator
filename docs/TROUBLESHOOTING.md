@@ -144,10 +144,13 @@ ollama list
 
 **Symptom:** Same items appear multiple times
 
-**Solution:**
-1. Check conflict strategy in config
-2. Use `source_priority` to prefer one source over another
-3. Items are matched by external ID + content type
+**Cause:** The system automatically deduplicates items from different sources using normalized title matching (strips punctuation, articles, edition suffixes, etc.). Duplicates should not occur under normal operation.
+
+**If duplicates still appear:**
+1. The items may have titles that don't match after normalization (try renaming one)
+2. Items from the same source with different external IDs may not be detected as duplicates
+3. Re-run a sync — the cross-source dedup check runs on every save and will merge them
+4. Schema upgrades automatically re-normalize all titles and merge exposed duplicates
 
 ## Web Interface Issues
 

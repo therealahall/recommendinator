@@ -46,6 +46,9 @@ Manages persistent storage of processed data and embeddings.
 - `enrichment_status` for tracking metadata enrichment
 - `core_memories`, `conversation_messages`, `preference_profiles` for chat system
 
+**Cross-Source Deduplication:**
+Items imported from different sources (e.g., Steam and a personal blog) are automatically deduplicated by normalized title. When saving an item, the system checks for existing rows by both external_id and normalized title. If a different row exists with the same `(user_id, content_type, normalized_title)`, they are merged into one. Merge rules: rating/review are filled from the duplicate only if the kept row is null; `date_completed` keeps the later date; genres/tags are merged additively. Schema migrations re-normalize all titles and merge any duplicates exposed by the corrected normalization.
+
 ### 3. LLM Interaction Layer (`src/llm/`) — Optional
 
 Handles communication with Ollama when AI features are enabled. **This entire layer is optional** — the system works fully without it.
@@ -180,7 +183,7 @@ Data Sources (APIs, CSV, JSON, Markdown)
     ↓
 Ingestion Layer (SourcePlugin → parse & normalize)
     ↓
-Storage Layer (persist to SQLite; optionally ChromaDB if AI enabled)
+Storage Layer (persist to SQLite; deduplicate cross-source items; optionally ChromaDB if AI enabled)
     ↓                                      ↓
 Enrichment (background)           Recommendation Engine
   TMDB, OpenLibrary, RAWG           ├── Scoring Pipeline (always runs)
