@@ -185,6 +185,60 @@ def normalize_title_for_matching(title: str) -> str:
     return normalized
 
 
+def _merge_scalar_columns(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -> None:
+    """Merge rating, review, and date_completed from duplicate into kept row.
+
+    Shared by ``SQLiteDB._merge_duplicate_into`` (runtime) and
+    ``schema._merge_duplicate_row`` (migration) to avoid duplicating
+    the merge rules.
+
+    Rules:
+    - rating/review: fill from duplicate only if kept is null
+    - date_completed: keep the later date
+
+    Args:
+        cursor: Database cursor (within an active transaction).
+        keep_id: Database ID of the row to keep.
+        delete_id: Database ID of the duplicate row to delete.
+    """
+    cursor.execute(
+        "SELECT rating, review, date_completed FROM content_items WHERE id = ?",
+        (keep_id,),
+    )
+    keep_row = cursor.fetchone()
+    cursor.execute(
+        "SELECT rating, review, date_completed FROM content_items WHERE id = ?",
+        (delete_id,),
+    )
+    dup_row = cursor.fetchone()
+    if not keep_row or not dup_row:
+        return
+
+    set_parts: list[str] = []
+    params: list[Any] = []
+    if keep_row["rating"] is None and dup_row["rating"] is not None:
+        set_parts.append("rating = ?")
+        params.append(dup_row["rating"])
+    if keep_row["review"] is None and dup_row["review"] is not None:
+        set_parts.append("review = ?")
+        params.append(dup_row["review"])
+    if dup_row["date_completed"] is not None and (
+        keep_row["date_completed"] is None
+        or dup_row["date_completed"] > keep_row["date_completed"]
+    ):
+        set_parts.append("date_completed = ?")
+        params.append(dup_row["date_completed"])
+
+    if set_parts:
+        set_parts.append("updated_at = CURRENT_TIMESTAMP")
+        set_clause = ", ".join(set_parts)
+        params.append(keep_id)
+        cursor.execute(
+            f"UPDATE content_items SET {set_clause} WHERE id = ?",
+            params,
+        )
+
+
 class SQLiteDB:
     """SQLite database manager for content items."""
 
@@ -268,6 +322,31 @@ class SQLiteDB:
                 row = cursor.fetchone()
                 if row:
                     existing_id = int(row["id"])
+
+            # Cross-source dedup: if we found a row by external_id, check
+            # whether a *different* row exists with the same normalized title.
+            # This happens when both sources have already been imported and
+            # each has its own row.  Merge the duplicate into the kept row.
+            if existing_id is not None and item.title:
+                normalized_title = normalize_title_for_matching(item.title)
+                if normalized_title:
+                    cursor.execute(
+                        """SELECT id FROM content_items
+                           WHERE user_id = ? AND content_type = ?
+                             AND normalized_title = ? AND id != ?""",
+                        (
+                            effective_user_id,
+                            content_type_value,
+                            normalized_title,
+                            existing_id,
+                        ),
+                    )
+                    dup_rows = cursor.fetchall()
+                    for dup_row in dup_rows:
+                        dup_id = int(dup_row["id"])
+                        self._merge_duplicate_into(
+                            cursor, keep_id=existing_id, delete_id=dup_id
+                        )
 
             # Fallback: check by normalized title to merge items from different sources
             if existing_id is None and item.title:
@@ -562,7 +641,7 @@ class SQLiteDB:
         return []
 
     # Columns where values should be merged additively instead of replaced.
-    _MERGEABLE_COLUMNS: set[str] = {"genres", "tags"}
+    _MERGEABLE_COLUMNS: frozenset[str] = frozenset({"genres", "tags"})
 
     # Columns that can increase but never decrease during sync.
     # E.g. a TV show gaining new seasons — the count should go up.
@@ -708,6 +787,93 @@ class SQLiteDB:
                 f"INSERT INTO {table} ({col_list}) VALUES ({placeholders})",
                 values,
             )
+
+    def _merge_duplicate_into(
+        self, cursor: sqlite3.Cursor, keep_id: int, delete_id: int
+    ) -> None:
+        """Merge data from a duplicate row into the kept row, then delete it.
+
+        Called when two rows represent the same item (same normalized title,
+        user, and content type) but have different external_ids from different
+        sources.
+
+        Scalar columns (rating, review, date_completed) are merged via
+        the shared ``_merge_scalar_columns`` function.  Detail tables
+        have genres/tags merged additively, and other columns filled from
+        the duplicate only if the kept row is null.
+
+        Args:
+            cursor: Database cursor (within an active transaction).
+            keep_id: Database ID of the row to keep.
+            delete_id: Database ID of the duplicate row to delete.
+        """
+        _merge_scalar_columns(cursor, keep_id, delete_id)
+
+        # Merge detail table genres/tags additively
+        for config in self._DETAIL_TABLE_CONFIG.values():
+            table = config["table"]
+            if table not in _ALLOWED_DETAIL_TABLES:
+                continue
+            cursor.execute(
+                f"SELECT * FROM {table} WHERE content_item_id = ?",
+                (keep_id,),
+            )
+            keep_detail = cursor.fetchone()
+            cursor.execute(
+                f"SELECT * FROM {table} WHERE content_item_id = ?",
+                (delete_id,),
+            )
+            dup_detail = cursor.fetchone()
+            if not dup_detail:
+                continue
+            if not keep_detail:
+                # Move the duplicate's detail row to the kept item
+                cursor.execute(
+                    f"UPDATE {table} SET content_item_id = ? WHERE content_item_id = ?",
+                    (keep_id, delete_id),
+                )
+                continue
+
+            # Both have detail rows — merge genres/tags
+            col_names = list(keep_detail.keys())
+            keep_data = dict(zip(col_names, keep_detail, strict=True))
+            dup_data = dict(zip(col_names, dup_detail, strict=True))
+
+            detail_updates: list[str] = []
+            detail_params: list[Any] = []
+            for col in self._MERGEABLE_COLUMNS:
+                if col not in keep_data:
+                    continue
+                _assert_safe_identifier(col)
+                keep_list = self._parse_json_list(keep_data.get(col))
+                dup_list = self._parse_json_list(dup_data.get(col))
+                if dup_list:
+                    merged = merge_string_lists(keep_list, dup_list)
+                    detail_updates.append(f"{col} = ?")
+                    detail_params.append(json.dumps(merged) if merged else None)
+
+            # Fill-only for other columns: if kept is null, use duplicate's value
+            for col in col_names:
+                if (
+                    col in ("content_item_id", "metadata")
+                    or col in self._MERGEABLE_COLUMNS
+                ):
+                    continue
+                if keep_data.get(col) is None and dup_data.get(col) is not None:
+                    _assert_safe_identifier(col)
+                    detail_updates.append(f"{col} = ?")
+                    detail_params.append(dup_data[col])
+
+            if detail_updates:
+                detail_clause = ", ".join(detail_updates)
+                detail_params.append(keep_id)
+                cursor.execute(
+                    f"UPDATE {table} SET {detail_clause} WHERE content_item_id = ?",
+                    detail_params,
+                )
+
+        # Delete the duplicate row (cascades to detail tables)
+        cursor.execute("DELETE FROM content_items WHERE id = ?", (delete_id,))
 
     def _handle_tv_season_change(self, cursor: sqlite3.Cursor, db_id: int) -> None:
         """Regress TV show status when new seasons arrive during sync.
@@ -1238,6 +1404,66 @@ class SQLiteDB:
                 cursor.execute("DELETE FROM content_items WHERE id = ?", (db_id,))
             conn.commit()
             return cursor.rowcount > 0
+
+    def deduplicate_items(self, user_id: int | None = None) -> int:
+        """Find and merge duplicate items by normalized title.
+
+        Scans for groups of rows sharing the same (user_id, content_type,
+        normalized_title) and merges each group into a single row, keeping
+        the oldest row (lowest id) and merging data from duplicates.
+
+        Args:
+            user_id: If specified, only deduplicate items for this user.
+
+        Returns:
+            Number of duplicate rows removed.
+        """
+        merged_count = 0
+        with self.connection() as conn:
+            cursor = conn.cursor()
+
+            # Find groups with duplicates
+            query = """
+                SELECT user_id, content_type, normalized_title, COUNT(*) as cnt
+                FROM content_items
+                WHERE normalized_title IS NOT NULL AND normalized_title != ''
+            """
+            params: list[Any] = []
+            if user_id is not None:
+                query += " AND user_id = ?"
+                params.append(user_id)
+            query += " GROUP BY user_id, content_type, normalized_title HAVING cnt > 1"
+
+            cursor.execute(query, params)
+            groups = cursor.fetchall()
+
+            for group in groups:
+                g_user_id = group["user_id"]
+                g_content_type = group["content_type"]
+                g_normalized = group["normalized_title"]
+
+                # Get all rows in this group, ordered by id (keep oldest)
+                cursor.execute(
+                    """SELECT id FROM content_items
+                       WHERE user_id = ? AND content_type = ?
+                         AND normalized_title = ?
+                       ORDER BY id""",
+                    (g_user_id, g_content_type, g_normalized),
+                )
+                rows = cursor.fetchall()
+                if len(rows) < 2:
+                    continue
+
+                keep_id = int(rows[0]["id"])
+                for row in rows[1:]:
+                    dup_id = int(row["id"])
+                    self._merge_duplicate_into(
+                        cursor, keep_id=keep_id, delete_id=dup_id
+                    )
+                    merged_count += 1
+
+            conn.commit()
+        return merged_count
 
     def set_item_ignored(
         self, db_id: int, ignored: bool, user_id: int | None = None
