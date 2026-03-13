@@ -148,9 +148,8 @@ ollama list
 
 **If duplicates still appear:**
 1. The items may have titles that don't match after normalization (try renaming one)
-2. Items from the same source with different external IDs may not be detected as duplicates
-3. Re-run a sync — the cross-source dedup check runs on every save and will merge them
-4. Schema upgrades automatically re-normalize all titles and merge exposed duplicates
+2. Items imported before the dedup feature may exist as separate rows — re-running a sync will merge them
+3. Schema upgrades automatically re-normalize all titles and merge exposed duplicates
 
 ## Web Interface Issues
 
