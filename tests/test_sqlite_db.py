@@ -2048,3 +2048,459 @@ class TestAssertSafeIdentifier:
     def test_empty_string_raises(self) -> None:
         with pytest.raises(ValueError, match="Unsafe SQL identifier"):
             _assert_safe_identifier("")
+
+
+class TestCrossSourceDuplicateDetectionRegression:
+    """Regression tests for cross-source duplicate detection and merging.
+
+    Bug reported: When running a full sync, items from different sources
+    (e.g., Steam "Fable Anniversary" with external_id="207170" and personal
+    site "Fable: Anniversary" with external_id="fable-anniversary") created
+    duplicate entries even though they represent the same game.
+
+    Root cause: Two bugs in save_content_item:
+    1. The normalized_title check only ran as a fallback when no external_id
+       match was found.  Once both items existed with different external_ids,
+       each sync found its own row and the title dedup was bypassed.
+    2. The migration backfill used SQL lower(title) instead of the full
+       Python normalize_title_for_matching(), so "fable: anniversary" !=
+       "fable anniversary" and both rows were inserted.
+
+    Fix: Added a cross-source dedup check after the external_id lookup
+    that merges any duplicate row with the same normalized title.
+    """
+
+    def _insert_raw_item(
+        self,
+        temp_db: SQLiteDB,
+        external_id: str,
+        title: str,
+        normalized_title: str,
+        *,
+        rating: int | None = None,
+        review: str | None = None,
+        date_completed: str | None = None,
+        source: str = "test",
+    ) -> int:
+        """Insert a content_items row via raw SQL, bypassing save_content_item.
+
+        Returns the database ID of the inserted row.
+        """
+        with temp_db.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """INSERT INTO content_items
+                   (user_id, external_id, title, normalized_title, content_type,
+                    status, rating, review, date_completed, source)
+                   VALUES (1, ?, ?, ?, 'video_game', 'completed',
+                           ?, ?, ?, ?)""",
+                (
+                    external_id,
+                    title,
+                    normalized_title,
+                    rating,
+                    review,
+                    date_completed,
+                    source,
+                ),
+            )
+            conn.commit()
+            db_id = cursor.lastrowid
+            assert db_id is not None
+            return db_id
+
+    def test_resave_triggers_cross_source_merge_regression(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """Re-saving an item merges a cross-source duplicate found by title.
+
+        Exercises the cross-source dedup check in save_content_item
+        (not the title-fallback path).  Two rows are created with different
+        external_ids and matching normalized titles via raw SQL, then
+        re-saving one triggers _merge_duplicate_into.
+        """
+        steam = ContentItem(
+            id="207170",
+            title="Fable Anniversary",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.COMPLETED,
+            rating=4,
+            source="steam",
+            metadata={"genres": ["RPG", "Action"]},
+        )
+        steam_db_id = temp_db.save_content_item(steam)
+
+        # Insert blog row with correct normalized_title (both rows exist)
+        self._insert_raw_item(
+            temp_db,
+            external_id="fable-anniversary",
+            title="Fable: Anniversary",
+            normalized_title="fable anniversary",
+            source="personal_site_games",
+        )
+
+        # Verify two rows exist
+        all_games = temp_db.get_content_items(content_type=ContentType.VIDEO_GAME)
+        assert len(all_games) == 2
+
+        # Re-save Steam item — triggers cross-source dedup
+        temp_db.save_content_item(steam)
+
+        all_games = temp_db.get_content_items(content_type=ContentType.VIDEO_GAME)
+        assert len(all_games) == 1
+
+        retrieved = temp_db.get_content_item(steam_db_id)
+        assert retrieved is not None
+        assert retrieved.id == "207170"  # Kept row retains its external_id
+        assert retrieved.rating == 4
+
+    def test_merge_preserves_rating_from_duplicate_regression(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """_merge_duplicate_into fills rating from duplicate when kept is null.
+
+        Both rows are created with different external_ids via raw SQL to
+        ensure _merge_duplicate_into is exercised (not the title-fallback).
+        """
+        keep_id = self._insert_raw_item(
+            temp_db,
+            external_id="steam-ds",
+            title="Dark Souls",
+            normalized_title="dark souls",
+            source="steam",
+        )
+        self._insert_raw_item(
+            temp_db,
+            external_id="blog-ds",
+            title="Dark Souls",
+            normalized_title="dark souls",
+            rating=5,
+            review="Masterpiece",
+            source="personal_site",
+        )
+
+        # Trigger cross-source merge via re-save
+        steam = ContentItem(
+            id="steam-ds",
+            title="Dark Souls",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.COMPLETED,
+            source="steam",
+        )
+        temp_db.save_content_item(steam)
+
+        all_games = temp_db.get_content_items(content_type=ContentType.VIDEO_GAME)
+        assert len(all_games) == 1
+
+        retrieved = temp_db.get_content_item(keep_id)
+        assert retrieved is not None
+        assert retrieved.rating == 5
+        assert retrieved.review == "Masterpiece"
+
+    def test_merge_keeps_later_date_completed_regression(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """_merge_duplicate_into keeps the later date_completed."""
+        self._insert_raw_item(
+            temp_db,
+            external_id="steam-hades",
+            title="Hades",
+            normalized_title="hades",
+            date_completed="2024-01-15",
+            source="steam",
+        )
+        self._insert_raw_item(
+            temp_db,
+            external_id="blog-hades",
+            title="Hades",
+            normalized_title="hades",
+            date_completed="2024-06-20",
+            source="personal_site",
+        )
+
+        merged = temp_db.deduplicate_items()
+        assert merged == 1
+
+        all_games = temp_db.get_content_items(content_type=ContentType.VIDEO_GAME)
+        assert len(all_games) == 1
+        assert all_games[0].date_completed == date(2024, 6, 20)
+
+    def test_merge_does_not_overwrite_later_date_with_earlier(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """_merge_duplicate_into does not replace a later date with an earlier one."""
+        self._insert_raw_item(
+            temp_db,
+            external_id="steam-celeste",
+            title="Celeste",
+            normalized_title="celeste",
+            date_completed="2024-12-01",
+            source="steam",
+        )
+        self._insert_raw_item(
+            temp_db,
+            external_id="blog-celeste",
+            title="Celeste",
+            normalized_title="celeste",
+            date_completed="2024-03-15",
+            source="personal_site",
+        )
+
+        temp_db.deduplicate_items()
+
+        all_games = temp_db.get_content_items(content_type=ContentType.VIDEO_GAME)
+        assert len(all_games) == 1
+        assert all_games[0].date_completed == date(2024, 12, 1)
+
+    def test_deduplicate_items_merges_existing_duplicates_regression(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """deduplicate_items finds and merges rows with matching normalized titles.
+
+        Verifies the kept row (lowest id) retains its external_id and
+        receives merged data from the duplicate.
+        """
+        self._insert_raw_item(
+            temp_db,
+            external_id="steam-123",
+            title="Portal 2",
+            normalized_title="portal 2",
+            rating=5,
+            source="steam",
+        )
+        self._insert_raw_item(
+            temp_db,
+            external_id="blog-portal",
+            title="Portal 2",
+            normalized_title="portal 2",
+            review="Amazing game",
+            source="personal_site",
+        )
+
+        all_games = temp_db.get_content_items(content_type=ContentType.VIDEO_GAME)
+        assert len(all_games) == 2
+
+        merged_count = temp_db.deduplicate_items()
+        assert merged_count == 1
+
+        all_games = temp_db.get_content_items(content_type=ContentType.VIDEO_GAME)
+        assert len(all_games) == 1
+        assert all_games[0].id == "steam-123"  # Kept: lowest db id
+        assert all_games[0].rating == 5
+        assert all_games[0].review == "Amazing game"
+
+    def test_deduplicate_items_returns_zero_when_no_duplicates(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """deduplicate_items returns 0 when there are no duplicates."""
+        item = ContentItem(
+            id="unique1",
+            title="Unique Game",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.COMPLETED,
+        )
+        temp_db.save_content_item(item)
+        assert temp_db.deduplicate_items() == 0
+
+    def test_deduplicate_items_respects_user_id_filter(self, temp_db: SQLiteDB) -> None:
+        """deduplicate_items with user_id only deduplicates that user's items."""
+        default_user_id = 1  # From schema: default user always has id=1
+        self._insert_raw_item(
+            temp_db,
+            external_id="a",
+            title="Game X",
+            normalized_title="game x",
+            source="steam",
+        )
+        self._insert_raw_item(
+            temp_db,
+            external_id="b",
+            title="Game X",
+            normalized_title="game x",
+            source="blog",
+        )
+
+        # Dedup for a non-existent user — should find nothing
+        assert temp_db.deduplicate_items(user_id=999) == 0
+
+        # Dedup for default user — should merge
+        assert temp_db.deduplicate_items(user_id=default_user_id) == 1
+
+    def test_merge_genres_additively(self, temp_db: SQLiteDB) -> None:
+        """_merge_duplicate_into combines genres from both detail rows."""
+        item_a = ContentItem(
+            id="a1",
+            title="Elden Ring",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.COMPLETED,
+            source="steam",
+            metadata={"genres": ["RPG", "Action"]},
+        )
+        temp_db.save_content_item(item_a)
+
+        # Insert a duplicate with different genres via raw SQL
+        with temp_db.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """INSERT INTO content_items
+                   (user_id, external_id, title, normalized_title, content_type,
+                    status, source)
+                   VALUES (1, 'blog-elden', 'Elden Ring', 'elden ring',
+                           'video_game', 'completed', 'blog')""",
+            )
+            dup_id = cursor.lastrowid
+            cursor.execute(
+                """INSERT INTO video_game_details
+                   (content_item_id, genres)
+                   VALUES (?, ?)""",
+                (dup_id, '["Souls-like", "Open World"]'),
+            )
+            conn.commit()
+
+        merged_count = temp_db.deduplicate_items()
+        assert merged_count == 1
+
+        all_games = temp_db.get_content_items(content_type=ContentType.VIDEO_GAME)
+        assert len(all_games) == 1
+        item = all_games[0]
+        assert item.metadata is not None
+        genres = item.metadata.get("genres", [])
+        assert set(genres) == {"RPG", "Action", "Souls-like", "Open World"}
+
+    def test_merge_moves_detail_row_when_kept_has_none(self, temp_db: SQLiteDB) -> None:
+        """When kept row has no detail row, duplicate's detail row is moved."""
+        # Insert kept row with no detail row
+        keep_id = self._insert_raw_item(
+            temp_db,
+            external_id="steam-hollow",
+            title="Hollow Knight",
+            normalized_title="hollow knight",
+            source="steam",
+        )
+        # Insert duplicate with a detail row
+        with temp_db.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """INSERT INTO content_items
+                   (user_id, external_id, title, normalized_title, content_type,
+                    status, source)
+                   VALUES (1, 'blog-hollow', 'Hollow Knight', 'hollow knight',
+                           'video_game', 'completed', 'blog')""",
+            )
+            dup_id = cursor.lastrowid
+            cursor.execute(
+                """INSERT INTO video_game_details
+                   (content_item_id, developer, genres)
+                   VALUES (?, 'Team Cherry', '["Metroidvania"]')""",
+                (dup_id,),
+            )
+            conn.commit()
+
+        temp_db.deduplicate_items()
+
+        retrieved = temp_db.get_content_item(keep_id)
+        assert retrieved is not None
+        assert retrieved.metadata is not None
+        assert retrieved.metadata.get("developer") == "Team Cherry"
+        genres = retrieved.metadata.get("genres", [])
+        assert "Metroidvania" in genres
+
+    def test_deduplicate_three_way_merge(self, temp_db: SQLiteDB) -> None:
+        """deduplicate_items correctly merges three rows into one."""
+        self._insert_raw_item(
+            temp_db,
+            external_id="a",
+            title="Disco Elysium",
+            normalized_title="disco elysium",
+            rating=5,
+            source="steam",
+        )
+        self._insert_raw_item(
+            temp_db,
+            external_id="b",
+            title="Disco Elysium",
+            normalized_title="disco elysium",
+            review="Brilliant writing",
+            source="gog",
+        )
+        self._insert_raw_item(
+            temp_db,
+            external_id="c",
+            title="Disco Elysium",
+            normalized_title="disco elysium",
+            date_completed="2024-09-01",
+            source="blog",
+        )
+
+        merged_count = temp_db.deduplicate_items()
+        assert merged_count == 2
+
+        all_games = temp_db.get_content_items(content_type=ContentType.VIDEO_GAME)
+        assert len(all_games) == 1
+        item = all_games[0]
+        assert item.id == "a"  # Kept: lowest db id
+        assert item.rating == 5
+        assert item.review == "Brilliant writing"
+        assert item.date_completed == date(2024, 9, 1)
+
+    def test_schema_migration_renormalizes_and_deduplicates(
+        self, tmp_path: Path
+    ) -> None:
+        """Schema migration re-normalizes titles and merges exposed duplicates.
+
+        Exercises the _renormalize_titles and _deduplicate_inline functions
+        in schema.py by creating a raw database with stale lower(title)
+        normalization, then calling create_schema to trigger the migration.
+        """
+        import sqlite3
+
+        from src.storage.schema import create_schema
+
+        db_path = tmp_path / "migration_test.db"
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+
+        # First call creates the schema
+        create_schema(conn)
+
+        # Insert two rows with different normalized_titles that should match
+        # after full normalization (simulating the lower(title) backfill bug)
+        cursor = conn.cursor()
+        cursor.execute(
+            """INSERT INTO content_items
+               (user_id, external_id, title, normalized_title, content_type,
+                status, rating, source)
+               VALUES (1, 'steam-207170', 'Fable Anniversary',
+                       'fable anniversary', 'video_game', 'completed', 4, 'steam')"""
+        )
+        cursor.execute(
+            """INSERT INTO content_items
+               (user_id, external_id, title, normalized_title, content_type,
+                status, review, source)
+               VALUES (1, 'blog-fable', 'Fable: Anniversary',
+                       'fable: anniversary', 'video_game', 'completed',
+                       'Great game', 'personal_site')"""
+        )
+        conn.commit()
+
+        # Verify two rows exist
+        cursor.execute("SELECT COUNT(*) FROM content_items")
+        assert cursor.fetchone()[0] == 2
+
+        # Re-run create_schema — triggers _renormalize_titles + _deduplicate_inline
+        create_schema(conn)
+
+        # Should now have one row with merged data
+        cursor.execute("SELECT COUNT(*) FROM content_items")
+        assert cursor.fetchone()[0] == 1
+
+        cursor.execute(
+            "SELECT rating, review FROM content_items WHERE external_id = 'steam-207170'"
+        )
+        row = cursor.fetchone()
+        assert row is not None
+        assert row["rating"] == 4
+        assert row["review"] == "Great game"
+
+        conn.close()
