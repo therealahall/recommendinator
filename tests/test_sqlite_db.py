@@ -2198,6 +2198,42 @@ class TestCrossSourceDuplicateDetectionRegression:
         assert retrieved.rating == 5
         assert retrieved.review == "Masterpiece"
 
+    def test_merge_does_not_overwrite_existing_rating_on_kept_row(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """_merge_scalar_columns does not overwrite kept row's rating.
+
+        When both rows have a rating, the kept row's rating must be
+        preserved — the duplicate's rating is discarded.
+        """
+        keep_id = self._insert_raw_item(
+            temp_db,
+            external_id="steam-bg",
+            title="Baldur's Gate 3",
+            normalized_title="baldurs gate 3",
+            rating=4,
+            source="steam",
+        )
+        self._insert_raw_item(
+            temp_db,
+            external_id="blog-bg",
+            title="Baldur's Gate 3",
+            normalized_title="baldurs gate 3",
+            rating=5,
+            review="Amazing RPG",
+            source="personal_site",
+        )
+
+        temp_db.deduplicate_items()
+
+        all_games = temp_db.get_content_items(content_type=ContentType.VIDEO_GAME)
+        assert len(all_games) == 1
+
+        retrieved = temp_db.get_content_item(keep_id)
+        assert retrieved is not None
+        assert retrieved.rating == 4  # Kept row's rating preserved
+        assert retrieved.review == "Amazing RPG"  # Review filled from duplicate
+
     def test_merge_keeps_later_date_completed_regression(
         self, temp_db: SQLiteDB
     ) -> None:
