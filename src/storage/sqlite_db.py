@@ -196,6 +196,10 @@ def _merge_scalar_columns(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) 
     - rating/review: fill from duplicate only if kept is null
     - date_completed: keep the later date
 
+    Note:
+        Requires the connection to use ``row_factory = sqlite3.Row`` so
+        that rows can be accessed by column name.
+
     Args:
         cursor: Database cursor (within an active transaction).
         keep_id: Database ID of the row to keep.
