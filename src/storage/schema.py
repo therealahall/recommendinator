@@ -272,11 +272,17 @@ def create_schema(conn: sqlite3.Connection) -> None:
         "UPDATE content_items SET normalized_title = lower(title) "
         "WHERE normalized_title IS NULL"
     )
+    # Re-normalize all titles with the full Python normalization function.
+    # The initial backfill uses SQL lower(title) which doesn't strip punctuation,
+    # articles, edition suffixes, etc.  This pass corrects all rows.
+    _renormalize_titles(cursor)
     # Index must be created *after* the migration adds the column
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_ci_normalized_title "
         "ON content_items(user_id, content_type, normalized_title)"
     )
+    # Merge any duplicates exposed by the corrected normalization
+    _deduplicate_inline(cursor)
 
     # Core memories: significant preference signals
     cursor.execute(
@@ -340,6 +346,76 @@ def create_schema(conn: sqlite3.Connection) -> None:
     )
 
     conn.commit()
+
+
+def _renormalize_titles(cursor: sqlite3.Cursor) -> None:
+    """Re-normalize all content_items titles using the full Python function.
+
+    The initial migration backfill uses SQL ``lower(title)`` which misses
+    punctuation stripping, article removal, edition suffix removal, etc.
+    This updates every row with a non-NULL title to use the canonical
+    normalization.
+    """
+    # Inline import: sqlite_db imports schema at module level, so we must
+    # defer this import to avoid a circular dependency.
+    from src.storage.sqlite_db import normalize_title_for_matching
+
+    cursor.execute("SELECT id, title FROM content_items WHERE title IS NOT NULL")
+    # fetchall() required: cursor is reused for UPDATEs inside the loop
+    for row in cursor.fetchall():
+        normalized = normalize_title_for_matching(row[1])
+        cursor.execute(
+            "UPDATE content_items SET normalized_title = ? WHERE id = ?",
+            (normalized, row[0]),
+        )
+
+
+def _deduplicate_inline(cursor: sqlite3.Cursor) -> None:
+    """Merge duplicate rows exposed by re-normalization.
+
+    Finds groups sharing (user_id, content_type, normalized_title) and
+    keeps the oldest row (lowest id), merging data from duplicates.
+    Runs inside the schema migration transaction.
+    """
+    cursor.execute(
+        """SELECT user_id, content_type, normalized_title
+           FROM content_items
+           WHERE normalized_title IS NOT NULL AND normalized_title != ''
+           GROUP BY user_id, content_type, normalized_title
+           HAVING COUNT(*) > 1"""
+    )
+    groups = cursor.fetchall()
+    for group in groups:
+        g_user_id, g_content_type, g_normalized = group[0], group[1], group[2]
+        cursor.execute(
+            """SELECT id FROM content_items
+               WHERE user_id = ? AND content_type = ? AND normalized_title = ?
+               ORDER BY id""",
+            (g_user_id, g_content_type, g_normalized),
+        )
+        rows = cursor.fetchall()
+        if len(rows) < 2:
+            continue
+
+        keep_id = rows[0][0]
+        for dup_row in rows[1:]:
+            dup_id = dup_row[0]
+            _merge_duplicate_row(cursor, keep_id=keep_id, delete_id=dup_id)
+
+
+def _merge_duplicate_row(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -> None:
+    """Merge scalar columns from duplicate into kept row, then delete duplicate.
+
+    Uses the shared ``_merge_scalar_columns`` function from ``sqlite_db``
+    for the merge rules, then deletes the duplicate row (ON DELETE CASCADE
+    handles detail tables).
+    """
+    # Inline import: sqlite_db imports schema at module level, so we must
+    # defer this import to avoid a circular dependency.
+    from src.storage.sqlite_db import _merge_scalar_columns
+
+    _merge_scalar_columns(cursor, keep_id, delete_id)
+    cursor.execute("DELETE FROM content_items WHERE id = ?", (delete_id,))
 
 
 _ALLOWED_ALTER_TABLES = frozenset(
