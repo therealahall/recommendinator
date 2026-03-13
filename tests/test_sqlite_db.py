@@ -2194,6 +2194,7 @@ class TestCrossSourceDuplicateDetectionRegression:
 
         retrieved = temp_db.get_content_item(keep_id)
         assert retrieved is not None
+        assert retrieved.id == "steam-ds"  # Kept row retains its external_id
         assert retrieved.rating == 5
         assert retrieved.review == "Masterpiece"
 
@@ -2246,7 +2247,8 @@ class TestCrossSourceDuplicateDetectionRegression:
             source="personal_site",
         )
 
-        temp_db.deduplicate_items()
+        merged = temp_db.deduplicate_items()
+        assert merged == 1
 
         all_games = temp_db.get_content_items(content_type=ContentType.VIDEO_GAME)
         assert len(all_games) == 1
@@ -2303,8 +2305,18 @@ class TestCrossSourceDuplicateDetectionRegression:
         assert temp_db.deduplicate_items() == 0
 
     def test_deduplicate_items_respects_user_id_filter(self, temp_db: SQLiteDB) -> None:
-        """deduplicate_items with user_id only deduplicates that user's items."""
-        default_user_id = 1  # From schema: default user always has id=1
+        """deduplicate_items with user_id only deduplicates that user's items.
+
+        Verifies that deduplicating user A's items does not touch user B's
+        duplicate rows.
+        """
+        # Create a second user
+        with temp_db.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("INSERT INTO users (id, username) VALUES (2, 'user_b')")
+            conn.commit()
+
+        # Insert duplicates for user 1 (default)
         self._insert_raw_item(
             temp_db,
             external_id="a",
@@ -2320,11 +2332,33 @@ class TestCrossSourceDuplicateDetectionRegression:
             source="blog",
         )
 
-        # Dedup for a non-existent user — should find nothing
-        assert temp_db.deduplicate_items(user_id=999) == 0
+        # Insert duplicates for user 2
+        with temp_db.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """INSERT INTO content_items
+                   (user_id, external_id, title, normalized_title, content_type,
+                    status, source)
+                   VALUES (2, 'c', 'Game X', 'game x', 'video_game',
+                           'completed', 'steam')""",
+            )
+            cursor.execute(
+                """INSERT INTO content_items
+                   (user_id, external_id, title, normalized_title, content_type,
+                    status, source)
+                   VALUES (2, 'd', 'Game X', 'game x', 'video_game',
+                           'completed', 'blog')""",
+            )
+            conn.commit()
 
-        # Dedup for default user — should merge
-        assert temp_db.deduplicate_items(user_id=default_user_id) == 1
+        # Dedup only user 1 — should merge user 1's pair only
+        assert temp_db.deduplicate_items(user_id=1) == 1
+
+        # User 2's duplicates should be untouched
+        with temp_db.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM content_items WHERE user_id = 2")
+            assert cursor.fetchone()[0] == 2  # Still 2 rows for user 2
 
     def test_merge_genres_additively(self, temp_db: SQLiteDB) -> None:
         """_merge_duplicate_into combines genres from both detail rows."""
