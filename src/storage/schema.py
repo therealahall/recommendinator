@@ -80,8 +80,11 @@ def create_schema(conn: sqlite3.Connection) -> None:
     - Preference interpretation cache
 
     Args:
-        conn: SQLite database connection
+        conn: SQLite database connection (row_factory will be set to
+              sqlite3.Row if not already set, required by migration dedup)
     """
+    # Required by _merge_scalar_columns which uses named column access
+    conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
 
     # Users table
@@ -363,10 +366,10 @@ def _renormalize_titles(cursor: sqlite3.Cursor) -> None:
     cursor.execute("SELECT id, title FROM content_items WHERE title IS NOT NULL")
     # fetchall() required: cursor is reused for UPDATEs inside the loop
     for row in cursor.fetchall():
-        normalized = normalize_title_for_matching(row[1])
+        normalized = normalize_title_for_matching(row["title"])
         cursor.execute(
             "UPDATE content_items SET normalized_title = ? WHERE id = ?",
-            (normalized, row[0]),
+            (normalized, row["id"]),
         )
 
 
