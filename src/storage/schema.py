@@ -80,8 +80,8 @@ def create_schema(conn: sqlite3.Connection) -> None:
     - Preference interpretation cache
 
     Args:
-        conn: SQLite database connection (row_factory will be set to
-              sqlite3.Row if not already set, required by migration dedup)
+        conn: SQLite database connection. ``row_factory`` is set to
+              ``sqlite3.Row`` unconditionally — required by migration dedup.
     """
     # Required by _merge_scalar_columns which uses named column access
     conn.row_factory = sqlite3.Row
@@ -389,7 +389,9 @@ def _deduplicate_inline(cursor: sqlite3.Cursor) -> None:
     )
     groups = cursor.fetchall()
     for group in groups:
-        g_user_id, g_content_type, g_normalized = group[0], group[1], group[2]
+        g_user_id = group["user_id"]
+        g_content_type = group["content_type"]
+        g_normalized = group["normalized_title"]
         cursor.execute(
             """SELECT id FROM content_items
                WHERE user_id = ? AND content_type = ? AND normalized_title = ?
@@ -400,9 +402,9 @@ def _deduplicate_inline(cursor: sqlite3.Cursor) -> None:
         if len(rows) < 2:
             continue
 
-        keep_id = rows[0][0]
+        keep_id = rows[0]["id"]
         for dup_row in rows[1:]:
-            dup_id = dup_row[0]
+            dup_id = dup_row["id"]
             _merge_duplicate_row(cursor, keep_id=keep_id, delete_id=dup_id)
 
 
