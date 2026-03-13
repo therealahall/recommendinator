@@ -2538,3 +2538,51 @@ class TestCrossSourceDuplicateDetectionRegression:
         assert row["review"] == "Great game"
 
         conn.close()
+
+    def test_schema_migration_deduplicates_with_bare_connection(
+        self, tmp_path: Path
+    ) -> None:
+        """create_schema sets row_factory even on a bare connection.
+
+        Bug: _merge_scalar_columns used named column access (row["rating"])
+        but create_schema did not set row_factory, causing TypeError on
+        bare sqlite3.connect() connections during migration dedup.
+        Fix: create_schema now sets conn.row_factory = sqlite3.Row.
+        """
+        import sqlite3
+
+        from src.storage.schema import create_schema
+
+        db_path = tmp_path / "bare_conn_test.db"
+        conn = sqlite3.connect(db_path)
+        # Intentionally no row_factory — this is the scenario that was broken
+        conn.execute("PRAGMA foreign_keys = ON")
+
+        create_schema(conn)
+
+        # Insert duplicate rows
+        cursor = conn.cursor()
+        cursor.execute(
+            """INSERT INTO content_items
+               (user_id, external_id, title, normalized_title, content_type,
+                status, rating, source)
+               VALUES (1, 'a', 'Test Game', 'test game', 'video_game',
+                       'completed', 5, 'steam')"""
+        )
+        cursor.execute(
+            """INSERT INTO content_items
+               (user_id, external_id, title, normalized_title, content_type,
+                status, source)
+               VALUES (1, 'b', 'Test Game', 'test game', 'video_game',
+                       'completed', 'blog')"""
+        )
+        conn.commit()
+
+        # Re-run create_schema on the SAME connection (no row_factory reset)
+        # This must succeed — create_schema sets row_factory itself
+        create_schema(conn)
+
+        cursor.execute("SELECT COUNT(*) FROM content_items")
+        assert cursor.fetchone()[0] == 1
+
+        conn.close()
