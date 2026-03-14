@@ -72,7 +72,7 @@ class OllamaClient:
             return embedding
         except Exception as error:
             logger.error("Failed to generate embedding: %s", error)
-            raise RuntimeError(f"Embedding generation failed: {error}") from error
+            raise RuntimeError("Embedding generation failed") from error
 
     def generate_embeddings(
         self, texts: list[str], model: str | None = None
@@ -170,7 +170,7 @@ class OllamaClient:
             return content
         except Exception as error:
             logger.error("Failed to generate text: %s", error)
-            raise RuntimeError(f"Text generation failed: {error}") from error
+            raise RuntimeError("Text generation failed") from error
 
     def check_model_available(self, model: str) -> bool:
         """Check if a model is available in Ollama.
@@ -253,7 +253,7 @@ class OllamaClient:
 
         except Exception as error:
             logger.error("Failed to generate streaming text: %s", error)
-            raise RuntimeError(f"Streaming text generation failed: {error}") from error
+            raise RuntimeError("Streaming text generation failed") from error
 
     def chat_stream(
         self,
@@ -299,4 +299,4 @@ class OllamaClient:
 
         except Exception as error:
             logger.error("Failed to stream chat: %s", error)
-            raise RuntimeError(f"Chat streaming failed: {error}") from error
+            raise RuntimeError("Chat streaming failed") from error

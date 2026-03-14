@@ -142,7 +142,7 @@ class RecommendationGenerator:
 
         except Exception as error:
             logger.error("Failed to generate recommendations: %s", error)
-            raise RuntimeError(f"Recommendation generation failed: {error}") from error
+            raise RuntimeError("Recommendation generation failed") from error
 
     def generate_single_blurb(
         self,
