@@ -4,6 +4,12 @@ import json
 import sqlite3
 from typing import Any, TypedDict
 
+from src.storage.merge import (
+    _merge_detail_tables,
+    _merge_scalar_columns,
+    normalize_title_for_matching,
+)
+
 
 class EnrichmentStatusDict(TypedDict):
     """Enrichment status for a content item."""
@@ -359,10 +365,6 @@ def _renormalize_titles(cursor: sqlite3.Cursor) -> None:
     This updates every row with a non-NULL title to use the canonical
     normalization.
     """
-    # Inline import: sqlite_db imports schema at module level, so we must
-    # defer this import to avoid a circular dependency.
-    from .sqlite_db import normalize_title_for_matching
-
     cursor.execute("SELECT id, title FROM content_items WHERE title IS NOT NULL")
     # fetchall() required: cursor is reused for UPDATEs inside the loop
     for row in cursor.fetchall():
@@ -416,10 +418,6 @@ def _merge_duplicate_row(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -
     migration-time dedup preserves detail table data (genres, tags, etc.)
     the same way as the runtime ``_merge_duplicate_into`` method.
     """
-    # Inline import: sqlite_db imports schema at module level, so we must
-    # defer this import to avoid a circular dependency.
-    from .sqlite_db import _merge_detail_tables, _merge_scalar_columns
-
     _merge_scalar_columns(cursor, keep_id, delete_id)
     _merge_detail_tables(cursor, keep_id, delete_id)
     cursor.execute("DELETE FROM content_items WHERE id = ?", (delete_id,))
