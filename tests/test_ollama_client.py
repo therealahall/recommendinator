@@ -188,6 +188,26 @@ def test_generate_text_with_context_window(mock_ollama_client):
     assert call_args.kwargs["options"]["num_ctx"] == 4096
 
 
+def test_generate_text_failure(mock_ollama_client: Mock) -> None:
+    """generate_text raises RuntimeError when Ollama call fails."""
+    mock_ollama_client.chat.side_effect = ConnectionError("Ollama unreachable")
+
+    client = OllamaClient()
+
+    with pytest.raises(RuntimeError, match="Text generation failed"):
+        client.generate_text("test prompt")
+
+
+def test_chat_stream_failure(mock_ollama_client: Mock) -> None:
+    """chat_stream raises RuntimeError when Ollama call fails."""
+    mock_ollama_client.chat.side_effect = ConnectionError("Connection refused")
+
+    client = OllamaClient()
+
+    with pytest.raises(RuntimeError, match="Chat streaming failed"):
+        list(client.chat_stream(messages=[{"role": "user", "content": "hi"}]))
+
+
 def test_chat_stream_with_context_window(mock_ollama_client):
     """chat_stream passes context_window_size to options."""
     mock_response = iter([])

@@ -341,8 +341,6 @@ class TestIgnoredFieldRegression:
 
         Fix: Added ignored to the UPDATE statement.
         """
-        from src.storage.sqlite_db import SQLiteDB
-
         database = SQLiteDB(tmp_path / "test.db")
 
         # First import: item not ignored
@@ -413,8 +411,6 @@ class TestIgnoredFieldRegression:
         means "source didn't specify" and the UPDATE branch only includes
         ignored in the SQL when it is not None.
         """
-        from src.storage.sqlite_db import SQLiteDB
-
         database = SQLiteDB(tmp_path / "test.db")
 
         # Import via JSON with ignored=True (file-based source)

@@ -1,6 +1,7 @@
 """Tests for SQLite database manager."""
 
 import json
+import sqlite3
 from datetime import date
 from pathlib import Path
 from unittest.mock import patch
@@ -8,12 +9,16 @@ from unittest.mock import patch
 import pytest
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
-from src.storage.sqlite_db import (
+from src.storage.merge import (
     _DETAIL_TABLE_COLUMNS,
-    SQLiteDB,
     _assert_safe_identifier,
-    _resolve_status_forward,
+    _parse_json_list,
     normalize_title_for_matching,
+)
+from src.storage.schema import create_schema
+from src.storage.sqlite_db import (
+    SQLiteDB,
+    _resolve_status_forward,
 )
 
 
@@ -440,6 +445,90 @@ def test_get_content_items_with_db_ids(temp_db: SQLiteDB) -> None:
     for item in retrieved:
         assert item.db_id is not None
         assert item.db_id > 0
+
+
+# ---------------------------------------------------------------------------
+# Batch ID Lookup Tests
+# ---------------------------------------------------------------------------
+
+
+class TestGetContentItemsByDbIds:
+    """Tests for SQLiteDB.get_content_items_by_db_ids batch lookup."""
+
+    def test_returns_empty_for_empty_input(self, temp_db: SQLiteDB) -> None:
+        """Empty db_ids list returns empty result without hitting the DB."""
+        assert temp_db.get_content_items_by_db_ids([]) == []
+
+    def test_returns_items_for_valid_ids(self, temp_db: SQLiteDB) -> None:
+        """Returns ContentItem objects for all valid database IDs."""
+        item1 = ContentItem(
+            id="game-1",
+            title="Portal",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.COMPLETED,
+        )
+        item2 = ContentItem(
+            id="game-2",
+            title="Portal 2",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.COMPLETED,
+        )
+        id1 = temp_db.save_content_item(item1)
+        id2 = temp_db.save_content_item(item2)
+
+        results = temp_db.get_content_items_by_db_ids([id1, id2])
+        assert len(results) == 2
+        titles = {r.title for r in results}
+        assert titles == {"Portal", "Portal 2"}
+
+    def test_silently_skips_missing_ids(self, temp_db: SQLiteDB) -> None:
+        """Returns only found items; missing IDs are silently skipped."""
+        item = ContentItem(
+            id="game-1",
+            title="Portal",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.COMPLETED,
+        )
+        db_id = temp_db.save_content_item(item)
+
+        results = temp_db.get_content_items_by_db_ids([db_id, 99999])
+        assert len(results) == 1
+        assert results[0].title == "Portal"
+
+    def test_populates_db_id_on_returned_items(self, temp_db: SQLiteDB) -> None:
+        """Each returned ContentItem has its db_id field set."""
+        item = ContentItem(
+            id="game-1",
+            title="Portal",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.COMPLETED,
+        )
+        db_id = temp_db.save_content_item(item)
+
+        results = temp_db.get_content_items_by_db_ids([db_id])
+        assert len(results) == 1
+        assert results[0].db_id == db_id
+
+    def test_handles_chunk_boundary(self, temp_db: SQLiteDB) -> None:
+        """Items spanning multiple IN-clause chunks are all returned."""
+        # Insert 502 items via raw SQL (crosses the 500-item chunk boundary)
+        db_ids: list[int] = []
+        with temp_db.connection() as conn:
+            cursor = conn.cursor()
+            for i in range(502):
+                cursor.execute(
+                    """INSERT INTO content_items
+                       (user_id, external_id, title, normalized_title,
+                        content_type, status, source)
+                       VALUES (1, ?, ?, ?, 'video_game', 'completed', 'test')""",
+                    (f"chunk-{i}", f"Game {i}", f"game {i}"),
+                )
+                assert cursor.lastrowid is not None
+                db_ids.append(cursor.lastrowid)
+            conn.commit()
+
+        results = temp_db.get_content_items_by_db_ids(db_ids)
+        assert len(results) == 502
 
 
 # ---------------------------------------------------------------------------
@@ -2022,6 +2111,28 @@ class TestDetailTableWhitelist:
             temp_db._save_detail_table(cursor, db_id, item, "injected")
 
 
+class TestParseJsonList:
+    """Tests for merge._parse_json_list helper."""
+
+    def test_none_returns_empty(self) -> None:
+        assert _parse_json_list(None) == []
+
+    def test_empty_string_returns_empty(self) -> None:
+        assert _parse_json_list("") == []
+
+    def test_valid_json_array(self) -> None:
+        assert _parse_json_list('["a", "b", "c"]') == ["a", "b", "c"]
+
+    def test_non_list_json_returns_empty(self) -> None:
+        assert _parse_json_list('{"key": "value"}') == []
+
+    def test_invalid_json_returns_empty(self) -> None:
+        assert _parse_json_list("not json") == []
+
+    def test_converts_elements_to_strings(self) -> None:
+        assert _parse_json_list("[1, 2, 3]") == ["1", "2", "3"]
+
+
 class TestAssertSafeIdentifier:
     """Tests for _assert_safe_identifier SQL injection guard."""
 
@@ -2427,6 +2538,60 @@ class TestCrossSourceDuplicateDetectionRegression:
 
         assert after_updated_at == original_updated_at
 
+    def test_merge_same_data_does_not_bump_updated_at_regression(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """_merge_scalar_columns skips UPDATE when both rows have identical data.
+
+        Bug: The all-null-dup guard tested by
+        test_merge_all_null_dup_does_not_bump_updated_at_regression did not
+        cover the case where both rows have the same non-NULL values.  In that
+        scenario the fill-only rules also produce no change, but the distinct
+        code path (non-NULL comparison) was unexercised.
+        Root cause: Missing test — the will_change guard handles this correctly
+        but the "same non-NULL data" branch was never verified.
+        Fix: Added this test to pin the no-op behaviour for identical data.
+        """
+        keep_id = self._insert_raw_item(
+            temp_db,
+            external_id="steam-portal",
+            title="Portal",
+            normalized_title="portal",
+            rating=5,
+            review="Brilliant",
+            source="steam",
+        )
+
+        with temp_db.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT updated_at FROM content_items WHERE id = ?", (keep_id,)
+            )
+            original_updated_at = cursor.fetchone()["updated_at"]
+
+        # Insert a duplicate with the same rating and review
+        self._insert_raw_item(
+            temp_db,
+            external_id="blog-portal",
+            title="Portal",
+            normalized_title="portal",
+            rating=5,
+            review="Brilliant",
+            source="blog",
+        )
+
+        merged = temp_db.deduplicate_items()
+        assert merged == 1
+
+        with temp_db.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT updated_at FROM content_items WHERE id = ?", (keep_id,)
+            )
+            after_updated_at = cursor.fetchone()["updated_at"]
+
+        assert after_updated_at == original_updated_at
+
     def test_deduplicate_items_merges_existing_duplicates_regression(
         self, temp_db: SQLiteDB
     ) -> None:
@@ -2674,10 +2839,6 @@ class TestCrossSourceDuplicateDetectionRegression:
         in schema.py by creating a raw database with stale lower(title)
         normalization, then calling create_schema to trigger the migration.
         """
-        import sqlite3
-
-        from src.storage.schema import create_schema
-
         db_path = tmp_path / "migration_test.db"
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
@@ -2739,10 +2900,6 @@ class TestCrossSourceDuplicateDetectionRegression:
         bare sqlite3.connect() connections during migration dedup.
         Fix: create_schema now sets conn.row_factory = sqlite3.Row.
         """
-        import sqlite3
-
-        from src.storage.schema import create_schema
-
         db_path = tmp_path / "bare_conn_test.db"
         conn = sqlite3.connect(db_path)
         # Intentionally no row_factory — this is the scenario that was broken
@@ -3308,3 +3465,129 @@ class TestCrossSourceDuplicateDetectionRegression:
         # Source changed from "old_import" to "steam" — proves update ran
         assert retrieved.source == "steam"
         assert retrieved.rating == 5
+
+    def test_schema_migration_dedup_merges_detail_tables_regression(
+        self, tmp_path: Path
+    ) -> None:
+        """Schema migration dedup merges detail table data (genres, tags, metadata).
+
+        Bug: _deduplicate_inline calls _merge_duplicate_row which delegates to
+        _merge_detail_tables, but no test exercised this migration code path
+        with actual detail table rows.  Detail data could be silently lost
+        during migration dedup without any test detecting it.
+        Root cause: Security review flagged the missing coverage — the runtime
+        dedup path (deduplicate_items) was tested but the schema migration
+        path (_deduplicate_inline → _merge_duplicate_row) was not.
+        Fix: Added this integration test that creates duplicate video game items
+        with detail rows (genres, tags, metadata), triggers schema migration,
+        and verifies the merge preserves all data.
+        """
+        db_path = tmp_path / "migration_detail_test.db"
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        create_schema(conn)
+
+        cursor = conn.cursor()
+
+        # Insert kept row with some detail data
+        cursor.execute(
+            """INSERT INTO content_items
+               (user_id, external_id, title, normalized_title, content_type,
+                status, rating, source)
+               VALUES (1, 'steam-dishonored', 'Dishonored',
+                       'dishonored', 'video_game', 'completed', 5, 'steam')"""
+        )
+        keep_id = cursor.lastrowid
+        assert keep_id is not None
+        cursor.execute(
+            """INSERT INTO video_game_details
+               (content_item_id, developer, genres, tags, metadata)
+               VALUES (?, 'Arkane Studios', '["Stealth", "Action"]',
+                       '["immersive-sim"]', ?)""",
+            (keep_id, json.dumps({"playtime_hours": 40})),
+        )
+
+        # Insert duplicate row with complementary detail data
+        cursor.execute(
+            """INSERT INTO content_items
+               (user_id, external_id, title, normalized_title, content_type,
+                status, review, source)
+               VALUES (1, 'blog-dishonored', 'Dishonored',
+                       'dishonored', 'video_game', 'completed',
+                       'Masterpiece of level design', 'blog')"""
+        )
+        dup_id = cursor.lastrowid
+        assert dup_id is not None
+        cursor.execute(
+            """INSERT INTO video_game_details
+               (content_item_id, developer, publisher, genres, tags, metadata)
+               VALUES (?, 'Arkane Lyon', 'Bethesda', '["Action", "RPG"]',
+                       '["steampunk", "immersive-sim"]', ?)""",
+            (dup_id, json.dumps({"award": "GOTY", "playtime_hours": 30})),
+        )
+        conn.commit()
+
+        # Verify two rows exist
+        cursor.execute("SELECT COUNT(*) FROM content_items")
+        assert cursor.fetchone()[0] == 2
+
+        # Re-run create_schema — triggers migration dedup
+        create_schema(conn)
+
+        # Should now have one row
+        cursor.execute("SELECT COUNT(*) FROM content_items")
+        assert cursor.fetchone()[0] == 1
+
+        # Verify scalar merge: kept row's rating preserved, review from dup
+        cursor.execute(
+            "SELECT rating, review FROM content_items WHERE id = ?",
+            (keep_id,),
+        )
+        row = cursor.fetchone()
+        assert row is not None
+        assert row["rating"] == 5
+        assert row["review"] == "Masterpiece of level design"
+
+        # Verify detail table merge
+        cursor.execute(
+            "SELECT * FROM video_game_details WHERE content_item_id = ?",
+            (keep_id,),
+        )
+        detail = cursor.fetchone()
+        assert detail is not None
+
+        # Developer: kept had value, so it's preserved (fill-only)
+        assert detail["developer"] == "Arkane Studios"
+        # Publisher: kept was NULL, filled from dup
+        assert detail["publisher"] == "Bethesda"
+
+        # Genres: additive merge
+        genres = json.loads(detail["genres"])
+        assert "Stealth" in genres
+        assert "Action" in genres
+        assert "RPG" in genres
+
+        # Tags: additive merge
+        tags = json.loads(detail["tags"])
+        assert "immersive-sim" in tags
+        assert "steampunk" in tags
+
+        # Metadata: existing keys take precedence
+        meta = json.loads(detail["metadata"])
+        assert meta["playtime_hours"] == 40  # kept's value wins
+        assert meta["award"] == "GOTY"  # dup's unique key added
+
+        # Verify dup's content_items row is gone
+        cursor.execute(
+            "SELECT COUNT(*) FROM content_items WHERE id = ?",
+            (dup_id,),
+        )
+        assert cursor.fetchone()[0] == 0
+
+        # Verify dup's detail row is gone
+        cursor.execute(
+            "SELECT COUNT(*) FROM video_game_details WHERE content_item_id = ?",
+            (dup_id,),
+        )
+        assert cursor.fetchone()[0] == 0
