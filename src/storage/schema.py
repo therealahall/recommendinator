@@ -361,7 +361,7 @@ def _renormalize_titles(cursor: sqlite3.Cursor) -> None:
     """
     # Inline import: sqlite_db imports schema at module level, so we must
     # defer this import to avoid a circular dependency.
-    from src.storage.sqlite_db import normalize_title_for_matching
+    from .sqlite_db import normalize_title_for_matching
 
     cursor.execute("SELECT id, title FROM content_items WHERE title IS NOT NULL")
     # fetchall() required: cursor is reused for UPDATEs inside the loop
@@ -409,17 +409,19 @@ def _deduplicate_inline(cursor: sqlite3.Cursor) -> None:
 
 
 def _merge_duplicate_row(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -> None:
-    """Merge scalar columns from duplicate into kept row, then delete duplicate.
+    """Merge all data from duplicate into kept row, then delete duplicate.
 
-    Uses the shared ``_merge_scalar_columns`` function from ``sqlite_db``
-    for the merge rules, then deletes the duplicate row (ON DELETE CASCADE
-    handles detail tables).
+    Uses the shared ``_merge_scalar_columns`` and ``_merge_detail_tables``
+    functions from ``sqlite_db`` for the merge rules.  This ensures that
+    migration-time dedup preserves detail table data (genres, tags, etc.)
+    the same way as the runtime ``_merge_duplicate_into`` method.
     """
     # Inline import: sqlite_db imports schema at module level, so we must
     # defer this import to avoid a circular dependency.
-    from src.storage.sqlite_db import _merge_scalar_columns
+    from .sqlite_db import _merge_detail_tables, _merge_scalar_columns
 
     _merge_scalar_columns(cursor, keep_id, delete_id)
+    _merge_detail_tables(cursor, keep_id, delete_id)
     cursor.execute("DELETE FROM content_items WHERE id = ?", (delete_id,))
 
 
@@ -462,7 +464,7 @@ def _add_column_if_not_exists(
     # DDL/PRAGMA cannot use parameterized queries — allowlist above is the
     # sole injection defense.  All values are validated against frozensets.
     cursor.execute(f"PRAGMA table_info({table})")
-    columns = [row[1] for row in cursor.fetchall()]
+    columns = [row["name"] for row in cursor.fetchall()]
 
     if column not in columns:
         cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")

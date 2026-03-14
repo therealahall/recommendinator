@@ -32,11 +32,8 @@ def _assert_safe_identifier(name: str) -> None:
 
 
 # Whitelist of detail tables allowed in dynamic SQL queries.
-# Defense-in-depth: these names come from _DETAIL_TABLE_CONFIG (a class constant),
-# but validating them prevents accidental injection if the config is ever modified.
-_ALLOWED_DETAIL_TABLES: frozenset[str] = frozenset(
-    {"book_details", "movie_details", "tv_show_details", "video_game_details"}
-)
+# _ALLOWED_DETAIL_TABLES is derived below from _DETAIL_TABLE_COLUMNS (after its
+# definition) to avoid maintaining two independent lists of detail table names.
 
 # Status ordering for forward-only progression.
 # A status can only be overwritten by a status later in this sequence.
@@ -185,6 +182,84 @@ def normalize_title_for_matching(title: str) -> str:
     return normalized
 
 
+def _parse_json_list(raw: str | None) -> list[str]:
+    """Parse a JSON array string into a Python list of strings.
+
+    Args:
+        raw: JSON array string, or None.
+
+    Returns:
+        List of strings (empty if *raw* is None or unparseable).
+    """
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, list):
+            return [str(item) for item in parsed]
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return []
+
+
+# Detail table columns for merge operations.  Kept in sync with
+# SQLiteDB._DETAIL_TABLE_CONFIG — enforced by TestDetailTableColumnsConsistency.
+# Used by _merge_detail_tables so that column names are never read from the
+# live database schema at runtime.
+_DETAIL_TABLE_COLUMNS: dict[str, tuple[str, ...]] = {
+    "book_details": (
+        "author",
+        "pages",
+        "isbn",
+        "isbn13",
+        "publisher",
+        "year_published",
+        "genres",
+        "tags",
+        "description",
+    ),
+    "movie_details": (
+        "director",
+        "runtime",
+        "release_year",
+        "genres",
+        "studio",
+        "tags",
+        "description",
+    ),
+    "tv_show_details": (
+        "creators",
+        "seasons",
+        "episodes",
+        "network",
+        "release_year",
+        "genres",
+        "tags",
+        "description",
+    ),
+    "video_game_details": (
+        "developer",
+        "publisher",
+        "platforms",
+        "genres",
+        "release_year",
+        "tags",
+        "description",
+    ),
+}
+
+# Derived from _DETAIL_TABLE_COLUMNS so there is no independent list to keep
+# in sync.  Used by _save_detail_table to validate table names from
+# _DETAIL_TABLE_CONFIG before SQL identifier interpolation.
+_ALLOWED_DETAIL_TABLES: frozenset[str] = frozenset(_DETAIL_TABLE_COLUMNS.keys())
+
+# Columns merged additively (union of both rows' lists) during dedup.
+_MERGEABLE_DETAIL_COLUMNS: frozenset[str] = frozenset({"genres", "tags"})
+
+# Columns that can only increase (e.g. TV show gaining new seasons).
+_MONOTONIC_DETAIL_COLUMNS: frozenset[str] = frozenset({"seasons", "episodes"})
+
+
 def _merge_scalar_columns(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -> None:
     """Merge rating, review, and date_completed from duplicate into kept row.
 
@@ -205,6 +280,9 @@ def _merge_scalar_columns(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) 
         keep_id: Database ID of the row to keep.
         delete_id: Database ID of the duplicate row to delete.
     """
+    # Fetch both rows to determine whether the merge would produce any
+    # actual data change.  We skip the UPDATE entirely when no delta exists
+    # to avoid bumping updated_at (a user-facing sort key) spuriously.
     cursor.execute(
         "SELECT rating, review, date_completed FROM content_items WHERE id = ?",
         (keep_id,),
@@ -215,32 +293,175 @@ def _merge_scalar_columns(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) 
         (delete_id,),
     )
     dup_row = cursor.fetchone()
-    if not keep_row or not dup_row:
+    if keep_row is None or dup_row is None:
         return
 
-    set_parts: list[str] = []
-    params: list[Any] = []
-    if keep_row["rating"] is None and dup_row["rating"] is not None:
-        set_parts.append("rating = ?")
-        params.append(dup_row["rating"])
-    if keep_row["review"] is None and dup_row["review"] is not None:
-        set_parts.append("review = ?")
-        params.append(dup_row["review"])
-    if dup_row["date_completed"] is not None and (
+    will_change_rating = keep_row["rating"] is None and dup_row["rating"] is not None
+    will_change_review = keep_row["review"] is None and dup_row["review"] is not None
+    will_change_date = dup_row["date_completed"] is not None and (
         keep_row["date_completed"] is None
         or dup_row["date_completed"] > keep_row["date_completed"]
-    ):
-        set_parts.append("date_completed = ?")
-        params.append(dup_row["date_completed"])
+    )
+    if not (will_change_rating or will_change_review or will_change_date):
+        return
 
-    if set_parts:
-        set_parts.append("updated_at = CURRENT_TIMESTAMP")
-        set_clause = ", ".join(set_parts)
-        params.append(keep_id)
+    # Fully static parameterized query — no dynamic SQL construction.
+    # The CASE expressions duplicate the will_change guards intentionally:
+    # the Python guard skips the UPDATE to avoid bumping updated_at; the
+    # CASE expressions ensure correct data even if the guard logic has a bug.
+    cursor.execute(
+        """UPDATE content_items
+           SET rating = CASE WHEN rating IS NULL THEN ? ELSE rating END,
+               review = CASE WHEN review IS NULL THEN ? ELSE review END,
+               date_completed = CASE
+                   WHEN date_completed IS NULL THEN ?
+                   WHEN ? IS NOT NULL AND ? > date_completed THEN ?
+                   ELSE date_completed
+               END,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?""",
+        (
+            dup_row["rating"],
+            dup_row["review"],
+            dup_row["date_completed"],
+            dup_row["date_completed"],
+            dup_row["date_completed"],
+            dup_row["date_completed"],
+            keep_id,
+        ),
+    )
+
+
+def _merge_detail_metadata(
+    keep_detail: sqlite3.Row, dup_detail: sqlite3.Row
+) -> str | None:
+    """Merge metadata JSON from duplicate into kept detail row.
+
+    Returns the merged JSON string, or None if the merge should be skipped
+    (e.g. duplicate has no metadata, or either side has unparseable/non-dict
+    metadata — in which case we preserve the kept row's data as-is).
+
+    Merge rule: existing keys take precedence; incoming fills gaps.
+    """
+    dup_meta_raw = dup_detail["metadata"]
+    if dup_meta_raw is None:
+        return None
+    try:
+        dup_meta = json.loads(dup_meta_raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(dup_meta, dict) or not dup_meta:
+        return None
+
+    keep_meta: dict[str, Any] = {}
+    keep_meta_raw = keep_detail["metadata"]
+    if keep_meta_raw is not None:
+        try:
+            parsed = json.loads(keep_meta_raw)
+        except (json.JSONDecodeError, TypeError):
+            return None  # Kept metadata unparseable — skip to avoid data loss
+        if not isinstance(parsed, dict):
+            return None  # Kept metadata non-dict — skip to preserve it
+        keep_meta = parsed
+
+    # Existing keys take precedence; incoming fills gaps
+    merged = {**dup_meta, **keep_meta}
+    return json.dumps(merged)
+
+
+def _merge_detail_tables(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -> None:
+    """Merge detail table rows from duplicate into kept row.
+
+    For each detail table (book_details, movie_details, etc.):
+    - If only the duplicate has a row, move it to the kept item.
+    - If both have rows, merge genres/tags additively and fill nulls.
+    - Metadata JSON is merged additively (existing keys preserved).
+
+    Column names are sourced from the compile-time ``_DETAIL_TABLE_COLUMNS``
+    constant — never from live database schema enumeration.
+
+    Note:
+        This function intentionally does not bump ``updated_at`` on the
+        ``content_items`` row.  Detail-table changes (genres, tags, metadata)
+        are internal bookkeeping from dedup — they are not user-visible edits
+        and should not alter the item's modification timestamp.
+
+    Note:
+        Requires the connection to use ``row_factory = sqlite3.Row``.
+
+    Args:
+        cursor: Database cursor (within an active transaction).
+        keep_id: Database ID of the row to keep.
+        delete_id: Database ID of the duplicate row to delete.
+    """
+    for table, columns in _DETAIL_TABLE_COLUMNS.items():
+        # table comes from _DETAIL_TABLE_COLUMNS.keys() (compile-time constant),
+        # which is the source of _ALLOWED_DETAIL_TABLES — no runtime check needed.
+        # Column names are validated individually below as defense-in-depth.
         cursor.execute(
-            f"UPDATE content_items SET {set_clause} WHERE id = ?",
-            params,
+            f"SELECT * FROM {table} WHERE content_item_id = ?",
+            (keep_id,),
         )
+        keep_detail = cursor.fetchone()
+        cursor.execute(
+            f"SELECT * FROM {table} WHERE content_item_id = ?",
+            (delete_id,),
+        )
+        dup_detail = cursor.fetchone()
+        if dup_detail is None:
+            continue
+        if keep_detail is None:
+            # Move the duplicate's detail row to the kept item
+            cursor.execute(
+                f"UPDATE {table} SET content_item_id = ? WHERE content_item_id = ?",
+                (keep_id, delete_id),
+            )
+            continue
+
+        # Both have detail rows — merge using compile-time column list
+        detail_updates: list[str] = []
+        detail_params: list[Any] = []
+
+        for col in columns:
+            _assert_safe_identifier(col)
+            if col in _MERGEABLE_DETAIL_COLUMNS:
+                # Genres/tags: additive merge
+                keep_list = _parse_json_list(keep_detail[col])
+                dup_list = _parse_json_list(dup_detail[col])
+                if dup_list:
+                    merged = merge_string_lists(keep_list, dup_list)
+                    detail_updates.append(f"{col} = ?")
+                    detail_params.append(json.dumps(merged))
+            elif col in _MONOTONIC_DETAIL_COLUMNS:
+                # Seasons/episodes: take the higher value
+                keep_val = keep_detail[col]
+                dup_val = dup_detail[col]
+                try:
+                    if dup_val is not None and (
+                        keep_val is None or int(dup_val) > int(keep_val)
+                    ):
+                        detail_updates.append(f"{col} = ?")
+                        detail_params.append(int(dup_val))
+                except (ValueError, TypeError):
+                    pass  # Non-integer value — skip monotonic merge
+            elif keep_detail[col] is None and dup_detail[col] is not None:
+                # Fill-only: use duplicate's value if kept is null
+                detail_updates.append(f"{col} = ?")
+                detail_params.append(dup_detail[col])
+
+        # Merge metadata JSON additively (existing keys preserved).
+        merged_meta_json = _merge_detail_metadata(keep_detail, dup_detail)
+        if merged_meta_json is not None:
+            detail_updates.append("metadata = ?")
+            detail_params.append(merged_meta_json)
+
+        if detail_updates:
+            detail_clause = ", ".join(detail_updates)
+            detail_params.append(keep_id)
+            cursor.execute(
+                f"UPDATE {table} SET {detail_clause} WHERE content_item_id = ?",
+                detail_params,
+            )
 
 
 class SQLiteDB:
@@ -327,46 +548,49 @@ class SQLiteDB:
                 if row:
                     existing_id = int(row["id"])
 
+            # Compute normalized title once for both dedup paths below.
+            normalized_title = (
+                normalize_title_for_matching(item.title) if item.title else ""
+            )
+
             # Cross-source dedup: if we found a row by external_id, check
             # whether a *different* row exists with the same normalized title.
             # This happens when both sources have already been imported and
             # each has its own row.  Merge the duplicate into the kept row.
-            if existing_id is not None and item.title:
-                normalized_title = normalize_title_for_matching(item.title)
-                if normalized_title:
-                    cursor.execute(
-                        """SELECT id FROM content_items
-                           WHERE user_id = ? AND content_type = ?
-                             AND normalized_title = ? AND id != ?""",
-                        (
-                            effective_user_id,
-                            content_type_value,
-                            normalized_title,
-                            existing_id,
-                        ),
+            if existing_id is not None and normalized_title:
+                cursor.execute(
+                    """SELECT id FROM content_items
+                       WHERE user_id = ? AND content_type = ?
+                         AND normalized_title = ? AND id != ?""",
+                    (
+                        effective_user_id,
+                        content_type_value,
+                        normalized_title,
+                        existing_id,
+                    ),
+                )
+                # Normally at most one match, but loop defensively in case
+                # prior dedup ran partially and left multiple duplicates.
+                dup_rows = cursor.fetchall()
+                for dup_row in dup_rows:
+                    dup_id = int(dup_row["id"])
+                    self._merge_duplicate_into(
+                        cursor, keep_id=existing_id, delete_id=dup_id
                     )
-                    dup_rows = cursor.fetchall()
-                    for dup_row in dup_rows:
-                        dup_id = int(dup_row["id"])
-                        self._merge_duplicate_into(
-                            cursor, keep_id=existing_id, delete_id=dup_id
-                        )
 
             # Fallback: check by normalized title to merge items from different sources
-            if existing_id is None and item.title:
-                normalized_title = normalize_title_for_matching(item.title)
-                if normalized_title:
-                    cursor.execute(
-                        """SELECT id FROM content_items
+            if existing_id is None and normalized_title:
+                cursor.execute(
+                    """SELECT id FROM content_items
                            WHERE user_id = ? AND content_type = ?
                              AND normalized_title = ?""",
-                        (effective_user_id, content_type_value, normalized_title),
-                    )
-                    row = cursor.fetchone()
-                    if row:
-                        existing_id = int(row["id"])
+                    (effective_user_id, content_type_value, normalized_title),
+                )
+                row = cursor.fetchone()
+                if row:
+                    existing_id = int(row["id"])
 
-            if existing_id:
+            if existing_id is not None:
                 # Update existing item in base table.
                 # Rules:
                 #   - rating/review: set once — never overwrite existing values
@@ -624,33 +848,6 @@ class SQLiteDB:
             return json.dumps(val)
         return json.dumps([val])
 
-    @staticmethod
-    def _parse_json_list(raw: str | None) -> list[str]:
-        """Parse a JSON array string into a Python list of strings.
-
-        Args:
-            raw: JSON array string, or None.
-
-        Returns:
-            List of strings (empty if *raw* is None or unparseable).
-        """
-        if not raw:
-            return []
-        try:
-            parsed = json.loads(raw)
-            if isinstance(parsed, list):
-                return [str(item) for item in parsed]
-        except (json.JSONDecodeError, TypeError):
-            pass
-        return []
-
-    # Columns where values should be merged additively instead of replaced.
-    _MERGEABLE_COLUMNS: frozenset[str] = frozenset({"genres", "tags"})
-
-    # Columns that can increase but never decrease during sync.
-    # E.g. a TV show gaining new seasons — the count should go up.
-    _MONOTONIC_COLUMNS: set[str] = {"seasons", "episodes"}
-
     def _save_detail_table(
         self, cursor: sqlite3.Cursor, db_id: int, item: ContentItem, content_type: str
     ) -> None:
@@ -720,13 +917,13 @@ class SQLiteDB:
                 new_value = metadata.get(meta_key)
 
             # Decide final value based on existing data
-            if col_name in self._MERGEABLE_COLUMNS and existing_data:
+            if col_name in _MERGEABLE_DETAIL_COLUMNS and existing_data:
                 # Genres/tags: additive merge
-                existing_list = self._parse_json_list(existing_data.get(col_name))
-                new_list = self._parse_json_list(new_value)
+                existing_list = _parse_json_list(existing_data.get(col_name))
+                new_list = _parse_json_list(new_value)
                 merged = merge_string_lists(existing_list, new_list)
                 values.append(json.dumps(merged) if merged else new_value)
-            elif col_name in self._MONOTONIC_COLUMNS and existing_data:
+            elif col_name in _MONOTONIC_DETAIL_COLUMNS and existing_data:
                 # Seasons/episodes: take the higher value
                 existing_val = self._safe_int(existing_data.get(col_name))
                 incoming_val = self._safe_int(new_value)
@@ -801,10 +998,9 @@ class SQLiteDB:
         user, and content type) but have different external_ids from different
         sources.
 
-        Scalar columns (rating, review, date_completed) are merged via
-        the shared ``_merge_scalar_columns`` function.  Detail tables
-        have genres/tags merged additively, and other columns filled from
-        the duplicate only if the kept row is null.
+        Delegates to the module-level ``_merge_scalar_columns`` and
+        ``_merge_detail_tables`` functions so that the same merge logic
+        is available to both runtime and migration paths.
 
         Args:
             cursor: Database cursor (within an active transaction).
@@ -812,69 +1008,7 @@ class SQLiteDB:
             delete_id: Database ID of the duplicate row to delete.
         """
         _merge_scalar_columns(cursor, keep_id, delete_id)
-
-        # Merge detail table genres/tags additively
-        for config in self._DETAIL_TABLE_CONFIG.values():
-            table = config["table"]
-            if table not in _ALLOWED_DETAIL_TABLES:
-                continue
-            cursor.execute(
-                f"SELECT * FROM {table} WHERE content_item_id = ?",
-                (keep_id,),
-            )
-            keep_detail = cursor.fetchone()
-            cursor.execute(
-                f"SELECT * FROM {table} WHERE content_item_id = ?",
-                (delete_id,),
-            )
-            dup_detail = cursor.fetchone()
-            if not dup_detail:
-                continue
-            if not keep_detail:
-                # Move the duplicate's detail row to the kept item
-                cursor.execute(
-                    f"UPDATE {table} SET content_item_id = ? WHERE content_item_id = ?",
-                    (keep_id, delete_id),
-                )
-                continue
-
-            # Both have detail rows — merge genres/tags
-            col_names = list(keep_detail.keys())
-            keep_data = dict(zip(col_names, keep_detail, strict=True))
-            dup_data = dict(zip(col_names, dup_detail, strict=True))
-
-            detail_updates: list[str] = []
-            detail_params: list[Any] = []
-            for col in self._MERGEABLE_COLUMNS:
-                if col not in keep_data:
-                    continue
-                _assert_safe_identifier(col)
-                keep_list = self._parse_json_list(keep_data.get(col))
-                dup_list = self._parse_json_list(dup_data.get(col))
-                if dup_list:
-                    merged = merge_string_lists(keep_list, dup_list)
-                    detail_updates.append(f"{col} = ?")
-                    detail_params.append(json.dumps(merged) if merged else None)
-
-            # Fill-only for other columns: if kept is null, use duplicate's value
-            for col in col_names:
-                if (
-                    col in ("content_item_id", "metadata")
-                    or col in self._MERGEABLE_COLUMNS
-                ):
-                    continue
-                if keep_data.get(col) is None and dup_data.get(col) is not None:
-                    _assert_safe_identifier(col)
-                    detail_updates.append(f"{col} = ?")
-                    detail_params.append(dup_data[col])
-
-            if detail_updates:
-                detail_clause = ", ".join(detail_updates)
-                detail_params.append(keep_id)
-                cursor.execute(
-                    f"UPDATE {table} SET {detail_clause} WHERE content_item_id = ?",
-                    detail_params,
-                )
+        _merge_detail_tables(cursor, keep_id, delete_id)
 
         # Delete the duplicate row (cascades to detail tables)
         cursor.execute("DELETE FROM content_items WHERE id = ?", (delete_id,))
@@ -1428,7 +1562,7 @@ class SQLiteDB:
 
             # Find groups with duplicates
             query = """
-                SELECT user_id, content_type, normalized_title, COUNT(*) as cnt
+                SELECT user_id, content_type, normalized_title
                 FROM content_items
                 WHERE normalized_title IS NOT NULL AND normalized_title != ''
             """
@@ -1436,7 +1570,10 @@ class SQLiteDB:
             if user_id is not None:
                 query += " AND user_id = ?"
                 params.append(user_id)
-            query += " GROUP BY user_id, content_type, normalized_title HAVING cnt > 1"
+            query += (
+                " GROUP BY user_id, content_type, normalized_title"
+                " HAVING COUNT(*) > 1"
+            )
 
             cursor.execute(query, params)
             groups = cursor.fetchall()
