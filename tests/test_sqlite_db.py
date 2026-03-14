@@ -1,5 +1,6 @@
 """Tests for SQLite database manager."""
 
+import json
 from datetime import date
 from pathlib import Path
 from unittest.mock import patch
@@ -8,6 +9,7 @@ import pytest
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.sqlite_db import (
+    _DETAIL_TABLE_COLUMNS,
     SQLiteDB,
     _assert_safe_identifier,
     _resolve_status_forward,
@@ -2050,6 +2052,38 @@ class TestAssertSafeIdentifier:
             _assert_safe_identifier("")
 
 
+class TestDetailTableColumnsConsistency:
+    """Ensures _DETAIL_TABLE_COLUMNS stays in sync with _DETAIL_TABLE_CONFIG."""
+
+    def test_detail_table_columns_matches_config(self) -> None:
+        """_DETAIL_TABLE_COLUMNS must list exactly the same columns as _DETAIL_TABLE_CONFIG.
+
+        Both constants describe the detail table schema.  If a column is added
+        to _DETAIL_TABLE_CONFIG but not _DETAIL_TABLE_COLUMNS, the merge logic
+        in _merge_detail_tables silently skips the new column.
+        """
+        for content_type, config in SQLiteDB._DETAIL_TABLE_CONFIG.items():
+            table = config["table"]
+            config_cols = tuple(col_name for col_name, _, _ in config["columns"])
+            assert table in _DETAIL_TABLE_COLUMNS, (
+                f"Table {table!r} (content_type={content_type!r}) "
+                f"missing from _DETAIL_TABLE_COLUMNS"
+            )
+            assert _DETAIL_TABLE_COLUMNS[table] == config_cols, (
+                f"Column mismatch for {table!r}: "
+                f"_DETAIL_TABLE_COLUMNS={_DETAIL_TABLE_COLUMNS[table]!r} "
+                f"vs _DETAIL_TABLE_CONFIG={config_cols!r}"
+            )
+
+        # Reverse check: every table in _DETAIL_TABLE_COLUMNS must exist in config
+        config_tables = {cfg["table"] for cfg in SQLiteDB._DETAIL_TABLE_CONFIG.values()}
+        for table in _DETAIL_TABLE_COLUMNS:
+            assert table in config_tables, (
+                f"Table {table!r} in _DETAIL_TABLE_COLUMNS "
+                f"but not in _DETAIL_TABLE_CONFIG"
+            )
+
+
 class TestCrossSourceDuplicateDetectionRegression:
     """Regression tests for cross-source duplicate detection and merging.
 
@@ -2204,7 +2238,10 @@ class TestCrossSourceDuplicateDetectionRegression:
         """_merge_scalar_columns does not overwrite kept row's rating.
 
         When both rows have a rating, the kept row's rating must be
-        preserved — the duplicate's rating is discarded.
+        preserved — the duplicate's rating is discarded.  This exercises
+        the deduplicate_items path; see
+        test_cross_source_resave_preserves_kept_rating for the
+        save_content_item path.
         """
         keep_id = self._insert_raw_item(
             temp_db,
@@ -2224,7 +2261,8 @@ class TestCrossSourceDuplicateDetectionRegression:
             source="personal_site",
         )
 
-        temp_db.deduplicate_items()
+        merged = temp_db.deduplicate_items()
+        assert merged == 1
 
         all_games = temp_db.get_content_items(content_type=ContentType.VIDEO_GAME)
         assert len(all_games) == 1
@@ -2233,6 +2271,55 @@ class TestCrossSourceDuplicateDetectionRegression:
         assert retrieved is not None
         assert retrieved.rating == 4  # Kept row's rating preserved
         assert retrieved.review == "Amazing RPG"  # Review filled from duplicate
+
+    def test_cross_source_resave_preserves_kept_rating(self, temp_db: SQLiteDB) -> None:
+        """save_content_item cross-source merge does not overwrite existing rating.
+
+        Similar to test_merge_does_not_overwrite_existing_rating_on_kept_row
+        but exercises the save_content_item cross-source path instead of
+        deduplicate_items.
+        """
+        keep_id = self._insert_raw_item(
+            temp_db,
+            external_id="steam-skyrim",
+            title="Skyrim",
+            normalized_title="skyrim",
+            rating=4,
+            source="steam",
+        )
+        self._insert_raw_item(
+            temp_db,
+            external_id="blog-skyrim",
+            title="Skyrim",
+            normalized_title="skyrim",
+            rating=5,
+            review="Classic RPG",
+            source="blog",
+        )
+
+        # Re-save via save_content_item with a conflicting rating —
+        # triggers cross-source merge.  The final rating=4 verifies the
+        # combined outcome of _merge_scalar_columns and save_content_item's
+        # "set once" guards (this test cannot isolate which guard fires).
+        steam = ContentItem(
+            id="steam-skyrim",
+            title="Skyrim",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.COMPLETED,
+            source="steam",
+            rating=5,
+        )
+        temp_db.save_content_item(steam)
+
+        all_games = temp_db.get_content_items(content_type=ContentType.VIDEO_GAME)
+        assert len(all_games) == 1
+
+        retrieved = temp_db.get_content_item(keep_id)
+        assert retrieved is not None
+        assert (
+            retrieved.rating == 4
+        )  # Kept row's rating preserved (not overwritten by 5)
+        assert retrieved.review == "Classic RPG"  # Review filled from duplicate
 
     def test_merge_keeps_later_date_completed_regression(
         self, temp_db: SQLiteDB
@@ -2290,6 +2377,56 @@ class TestCrossSourceDuplicateDetectionRegression:
         assert len(all_games) == 1
         assert all_games[0].date_completed == date(2024, 12, 1)
 
+    def test_merge_all_null_dup_does_not_bump_updated_at_regression(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """_merge_scalar_columns skips UPDATE when duplicate has no scalar data.
+
+        Bug: Merging a duplicate with NULL rating, review, and date_completed
+        still issued an UPDATE that bumped updated_at, corrupting the
+        user-facing sort order.
+        Root cause: No early-exit guard — the UPDATE always fired.
+        Fix: Added will_change guard that compares actual values and skips
+        the UPDATE entirely when no data change would occur.
+        """
+        keep_id = self._insert_raw_item(
+            temp_db,
+            external_id="steam-portal",
+            title="Portal",
+            normalized_title="portal",
+            rating=5,
+            source="steam",
+        )
+
+        # Record the kept row's updated_at before merge
+        with temp_db.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT updated_at FROM content_items WHERE id = ?", (keep_id,)
+            )
+            original_updated_at = cursor.fetchone()["updated_at"]
+
+        # Insert a duplicate with all-null scalars
+        self._insert_raw_item(
+            temp_db,
+            external_id="blog-portal",
+            title="Portal",
+            normalized_title="portal",
+            source="blog",
+        )
+
+        merged = temp_db.deduplicate_items()
+        assert merged == 1
+
+        with temp_db.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT updated_at FROM content_items WHERE id = ?", (keep_id,)
+            )
+            after_updated_at = cursor.fetchone()["updated_at"]
+
+        assert after_updated_at == original_updated_at
+
     def test_deduplicate_items_merges_existing_duplicates_regression(
         self, temp_db: SQLiteDB
     ) -> None:
@@ -2340,6 +2477,12 @@ class TestCrossSourceDuplicateDetectionRegression:
         temp_db.save_content_item(item)
         assert temp_db.deduplicate_items() == 0
 
+    def test_deduplicate_items_nonexistent_user_returns_zero(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """deduplicate_items with a user_id that has no rows returns 0."""
+        assert temp_db.deduplicate_items(user_id=999) == 0
+
     def test_deduplicate_items_respects_user_id_filter(self, temp_db: SQLiteDB) -> None:
         """deduplicate_items with user_id only deduplicates that user's items.
 
@@ -2389,6 +2532,14 @@ class TestCrossSourceDuplicateDetectionRegression:
 
         # Dedup only user 1 — should merge user 1's pair only
         assert temp_db.deduplicate_items(user_id=1) == 1
+
+        # User 1 should now have exactly 1 row — the lowest-id row survived
+        with temp_db.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM content_items WHERE user_id = 1")
+            assert cursor.fetchone()[0] == 1
+            cursor.execute("SELECT external_id FROM content_items WHERE user_id = 1")
+            assert cursor.fetchone()["external_id"] == "a"
 
         # User 2's duplicates should be untouched
         with temp_db.connection() as conn:
@@ -2466,7 +2617,8 @@ class TestCrossSourceDuplicateDetectionRegression:
             )
             conn.commit()
 
-        temp_db.deduplicate_items()
+        merged_count = temp_db.deduplicate_items()
+        assert merged_count == 1
 
         retrieved = temp_db.get_content_item(keep_id)
         assert retrieved is not None
@@ -2566,16 +2718,18 @@ class TestCrossSourceDuplicateDetectionRegression:
         assert cursor.fetchone()[0] == 1
 
         cursor.execute(
-            "SELECT rating, review FROM content_items WHERE external_id = 'steam-207170'"
+            "SELECT rating, review, normalized_title"
+            " FROM content_items WHERE external_id = 'steam-207170'"
         )
         row = cursor.fetchone()
         assert row is not None
         assert row["rating"] == 4
         assert row["review"] == "Great game"
+        assert row["normalized_title"] == "fable anniversary"
 
         conn.close()
 
-    def test_schema_migration_deduplicates_with_bare_connection(
+    def test_schema_migration_deduplicates_with_bare_connection_regression(
         self, tmp_path: Path
     ) -> None:
         """create_schema sets row_factory even on a bare connection.
@@ -2614,11 +2768,543 @@ class TestCrossSourceDuplicateDetectionRegression:
         )
         conn.commit()
 
-        # Re-run create_schema on the SAME connection (no row_factory reset)
-        # This must succeed — create_schema sets row_factory itself
+        # Verify two rows exist before the dedup migration
+        cursor.execute("SELECT COUNT(*) FROM content_items")
+        assert cursor.fetchone()[0] == 2
+
+        # Re-run create_schema — triggers _renormalize_titles + _deduplicate_inline.
+        # The first call already set row_factory; this verifies dedup runs
+        # correctly and is idempotent on the second pass.
         create_schema(conn)
 
         cursor.execute("SELECT COUNT(*) FROM content_items")
         assert cursor.fetchone()[0] == 1
 
+        # Verify the correct row survived (lowest id) with correct data
+        cursor.execute("SELECT external_id, rating FROM content_items")
+        row = cursor.fetchone()
+        assert row["external_id"] == "a"
+        assert row["rating"] == 5
+
         conn.close()
+
+    def test_empty_title_skips_cross_source_dedup(self, temp_db: SQLiteDB) -> None:
+        """Items with empty title skip cross-source dedup without crashing.
+
+        Bug scenario: A ContentItem with title="" from a malformed ingestion
+        source should be saved without triggering the cross-source dedup
+        check (which requires a non-empty normalized title).
+        Verified by inserting two items with the same external_id prefix
+        but empty titles — both must survive (no dedup attempted).
+        """
+        item1 = ContentItem(
+            id="empty-title-1",
+            title="",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+        )
+        item2 = ContentItem(
+            id="empty-title-2",
+            title="",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+        )
+        db_id1 = temp_db.save_content_item(item1)
+        db_id2 = temp_db.save_content_item(item2)
+        assert db_id1 > 0
+        assert db_id2 > 0
+        assert db_id1 != db_id2  # Both rows saved separately — no dedup
+
+    def test_content_type_boundary_prevents_cross_type_merge(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """Items with the same normalized title but different content types are not merged.
+
+        A book named "Dune" and a movie named "Dune" must remain as separate
+        rows — the cross-source dedup only operates within the same content type.
+        """
+        book = ContentItem(
+            id="dune-book",
+            title="Dune",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            source="goodreads",
+        )
+        movie = ContentItem(
+            id="dune-movie",
+            title="Dune",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.COMPLETED,
+            source="letterboxd",
+        )
+        temp_db.save_content_item(book)
+        temp_db.save_content_item(movie)
+
+        books = temp_db.get_content_items(content_type=ContentType.BOOK)
+        movies = temp_db.get_content_items(content_type=ContentType.MOVIE)
+        assert len(books) == 1
+        assert len(movies) == 1
+
+        # deduplicate_items should not merge them either
+        assert temp_db.deduplicate_items() == 0
+
+    def test_merge_monotonic_columns_keeps_higher_value(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """_merge_detail_tables keeps the higher value for monotonic columns.
+
+        TV show seasons/episodes use monotonic merge: the higher value wins.
+        Tests both directions: kept < dup (seasons: 2 vs 4, dup wins) and
+        kept > dup (episodes: 20 vs 15, kept preserved).
+        """
+        with temp_db.connection() as conn:
+            cursor = conn.cursor()
+            # Insert kept row: seasons=2, episodes=20
+            cursor.execute(
+                """INSERT INTO content_items
+                   (user_id, external_id, title, normalized_title, content_type,
+                    status, source)
+                   VALUES (1, 'sonarr-bb', 'Breaking Bad', 'breaking bad',
+                           'tv_show', 'completed', 'sonarr')""",
+            )
+            keep_id = cursor.lastrowid
+            cursor.execute(
+                """INSERT INTO tv_show_details
+                   (content_item_id, seasons, episodes)
+                   VALUES (?, 2, 20)""",
+                (keep_id,),
+            )
+            # Insert duplicate row: seasons=4, episodes=15
+            cursor.execute(
+                """INSERT INTO content_items
+                   (user_id, external_id, title, normalized_title, content_type,
+                    status, source)
+                   VALUES (1, 'blog-bb', 'Breaking Bad', 'breaking bad',
+                           'tv_show', 'completed', 'blog')""",
+            )
+            dup_id = cursor.lastrowid
+            cursor.execute(
+                """INSERT INTO tv_show_details
+                   (content_item_id, seasons, episodes)
+                   VALUES (?, 4, 15)""",
+                (dup_id,),
+            )
+            conn.commit()
+
+        merged_count = temp_db.deduplicate_items()
+        assert merged_count == 1
+
+        retrieved = temp_db.get_content_item(keep_id)
+        assert retrieved is not None
+        # seasons: dup (4) > kept (2), so 4 wins
+        assert retrieved.metadata is not None
+        assert retrieved.metadata.get("seasons") == 4
+        # episodes: kept (20) > dup (15), so 20 is preserved
+        assert retrieved.metadata.get("episodes") == 20
+
+    def test_merge_metadata_additively_in_detail_table(self, temp_db: SQLiteDB) -> None:
+        """_merge_detail_tables merges metadata JSON additively.
+
+        When both rows have metadata in a detail table, the merge should
+        combine them with existing keys taking precedence.
+        """
+        # Insert kept item with metadata via save_content_item
+        kept = ContentItem(
+            id="steam-witcher",
+            title="The Witcher 3",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.COMPLETED,
+            source="steam",
+            metadata={"genres": ["RPG"], "playtime_hours": 120},
+        )
+        keep_id = temp_db.save_content_item(kept)
+
+        # Insert duplicate with different metadata via raw SQL
+        with temp_db.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """INSERT INTO content_items
+                   (user_id, external_id, title, normalized_title, content_type,
+                    status, source)
+                   VALUES (1, 'blog-witcher', 'The Witcher 3', 'witcher 3',
+                           'video_game', 'completed', 'blog')""",
+            )
+            dup_id = cursor.lastrowid
+            cursor.execute(
+                """INSERT INTO video_game_details
+                   (content_item_id, genres, metadata)
+                   VALUES (?, '["Action"]', ?)""",
+                (dup_id, json.dumps({"award": "GOTY 2015", "playtime_hours": 80})),
+            )
+            conn.commit()
+
+        merged_count = temp_db.deduplicate_items()
+        assert merged_count == 1
+
+        retrieved = temp_db.get_content_item(keep_id)
+        assert retrieved is not None
+        assert retrieved.metadata is not None
+        # Genres merged additively
+        genres = retrieved.metadata.get("genres", [])
+        assert "RPG" in genres
+        assert "Action" in genres
+        # Metadata merged: existing key (playtime_hours=120) takes precedence
+        assert retrieved.metadata.get("playtime_hours") == 120
+        # New key from duplicate is added
+        assert retrieved.metadata.get("award") == "GOTY 2015"
+
+    def test_merge_skips_when_dup_has_no_detail_metadata(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """Detail metadata merge is skipped when the duplicate has no metadata.
+
+        _merge_detail_metadata returns None when dup_detail["metadata"]
+        is NULL, preserving the kept row's metadata unchanged.
+        """
+        kept = ContentItem(
+            id="steam-witcher",
+            title="The Witcher 3",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.COMPLETED,
+            source="steam",
+            metadata={"playtime_hours": 120},
+        )
+        keep_id = temp_db.save_content_item(kept)
+
+        with temp_db.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """INSERT INTO content_items
+                   (user_id, external_id, title, normalized_title, content_type,
+                    status, source)
+                   VALUES (1, 'blog-witcher', 'The Witcher 3', 'witcher 3',
+                           'video_game', 'completed', 'blog')""",
+            )
+            dup_id = cursor.lastrowid
+            # Detail row with NULL metadata
+            cursor.execute(
+                """INSERT INTO video_game_details
+                   (content_item_id, genres, metadata)
+                   VALUES (?, '["Action"]', NULL)""",
+                (dup_id,),
+            )
+            conn.commit()
+
+        merged_count = temp_db.deduplicate_items()
+        assert merged_count == 1
+
+        retrieved = temp_db.get_content_item(keep_id)
+        assert retrieved is not None
+        assert retrieved.metadata is not None
+        # Original metadata preserved unchanged
+        assert retrieved.metadata.get("playtime_hours") == 120
+        # Genres still merged additively
+        genres = retrieved.metadata.get("genres", [])
+        assert "Action" in genres
+
+    def test_merge_skips_when_dup_has_corrupt_detail_metadata(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """Detail metadata merge is skipped when the duplicate has non-JSON metadata.
+
+        _merge_detail_metadata returns None when dup metadata cannot
+        be parsed as JSON, preserving the kept row's metadata.
+        """
+        kept = ContentItem(
+            id="steam-witcher",
+            title="The Witcher 3",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.COMPLETED,
+            source="steam",
+            metadata={"playtime_hours": 120},
+        )
+        keep_id = temp_db.save_content_item(kept)
+
+        with temp_db.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """INSERT INTO content_items
+                   (user_id, external_id, title, normalized_title, content_type,
+                    status, source)
+                   VALUES (1, 'blog-witcher', 'The Witcher 3', 'witcher 3',
+                           'video_game', 'completed', 'blog')""",
+            )
+            dup_id = cursor.lastrowid
+            # Detail row with corrupt (non-JSON) metadata
+            cursor.execute(
+                """INSERT INTO video_game_details
+                   (content_item_id, genres, metadata)
+                   VALUES (?, '["Action"]', 'not-valid-json{{{')""",
+                (dup_id,),
+            )
+            conn.commit()
+
+        merged_count = temp_db.deduplicate_items()
+        assert merged_count == 1
+
+        retrieved = temp_db.get_content_item(keep_id)
+        assert retrieved is not None
+        assert retrieved.metadata is not None
+        assert retrieved.metadata.get("playtime_hours") == 120
+
+    def test_merge_skips_when_kept_has_corrupt_detail_metadata(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """Detail metadata merge is skipped when the kept row has non-JSON metadata.
+
+        _merge_detail_metadata returns None when kept metadata cannot
+        be parsed, preserving it as-is rather than overwriting with dup data.
+        """
+        # Insert kept item via raw SQL to set corrupt metadata
+        with temp_db.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """INSERT INTO content_items
+                   (user_id, external_id, title, normalized_title, content_type,
+                    status, source)
+                   VALUES (1, 'steam-witcher', 'The Witcher 3', 'witcher 3',
+                           'video_game', 'completed', 'steam')""",
+            )
+            keep_id = cursor.lastrowid
+            cursor.execute(
+                """INSERT INTO video_game_details
+                   (content_item_id, genres, metadata)
+                   VALUES (?, '["RPG"]', 'corrupt{json')""",
+                (keep_id,),
+            )
+
+            cursor.execute(
+                """INSERT INTO content_items
+                   (user_id, external_id, title, normalized_title, content_type,
+                    status, source)
+                   VALUES (1, 'blog-witcher', 'The Witcher 3', 'witcher 3',
+                           'video_game', 'completed', 'blog')""",
+            )
+            dup_id = cursor.lastrowid
+            cursor.execute(
+                """INSERT INTO video_game_details
+                   (content_item_id, genres, metadata)
+                   VALUES (?, '["Action"]', ?)""",
+                (dup_id, json.dumps({"award": "GOTY 2015"})),
+            )
+            conn.commit()
+
+        merged_count = temp_db.deduplicate_items()
+        assert merged_count == 1
+
+        with temp_db.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT metadata FROM video_game_details WHERE content_item_id = ?",
+                (keep_id,),
+            )
+            row = cursor.fetchone()
+            # Kept row's corrupt metadata is preserved (not overwritten)
+            assert row is not None
+            assert row["metadata"] == "corrupt{json"
+
+    def test_merge_fills_when_kept_has_no_detail_metadata(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """Detail metadata merge fills kept row when it has NULL metadata.
+
+        _merge_detail_metadata correctly fills when keep_meta_raw
+        is NULL (keep_meta starts as empty dict, merged = dup_meta).
+        """
+        with temp_db.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """INSERT INTO content_items
+                   (user_id, external_id, title, normalized_title, content_type,
+                    status, source)
+                   VALUES (1, 'steam-witcher', 'The Witcher 3', 'witcher 3',
+                           'video_game', 'completed', 'steam')""",
+            )
+            keep_id = cursor.lastrowid
+            cursor.execute(
+                """INSERT INTO video_game_details
+                   (content_item_id, genres, metadata)
+                   VALUES (?, '["RPG"]', NULL)""",
+                (keep_id,),
+            )
+
+            cursor.execute(
+                """INSERT INTO content_items
+                   (user_id, external_id, title, normalized_title, content_type,
+                    status, source)
+                   VALUES (1, 'blog-witcher', 'The Witcher 3', 'witcher 3',
+                           'video_game', 'completed', 'blog')""",
+            )
+            dup_id = cursor.lastrowid
+            cursor.execute(
+                """INSERT INTO video_game_details
+                   (content_item_id, genres, metadata)
+                   VALUES (?, '["Action"]', ?)""",
+                (dup_id, json.dumps({"award": "GOTY 2015"})),
+            )
+            conn.commit()
+
+        merged_count = temp_db.deduplicate_items()
+        assert merged_count == 1
+
+        with temp_db.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT metadata FROM video_game_details WHERE content_item_id = ?",
+                (keep_id,),
+            )
+            row = cursor.fetchone()
+            assert row is not None
+            meta = json.loads(row["metadata"])
+            assert meta == {"award": "GOTY 2015"}
+
+    def test_merge_skips_when_dup_has_non_dict_detail_metadata(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """Detail metadata merge is skipped when the duplicate has a JSON array.
+
+        _merge_detail_metadata returns None when dup metadata is
+        valid JSON but not a dict (e.g. a list), preserving kept metadata.
+        """
+        kept = ContentItem(
+            id="steam-witcher",
+            title="The Witcher 3",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.COMPLETED,
+            source="steam",
+            metadata={"playtime_hours": 120},
+        )
+        keep_id = temp_db.save_content_item(kept)
+
+        with temp_db.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """INSERT INTO content_items
+                   (user_id, external_id, title, normalized_title, content_type,
+                    status, source)
+                   VALUES (1, 'blog-witcher', 'The Witcher 3', 'witcher 3',
+                           'video_game', 'completed', 'blog')""",
+            )
+            dup_id = cursor.lastrowid
+            # Valid JSON but not a dict
+            cursor.execute(
+                """INSERT INTO video_game_details
+                   (content_item_id, genres, metadata)
+                   VALUES (?, '["Action"]', '["not", "a", "dict"]')""",
+                (dup_id,),
+            )
+            conn.commit()
+
+        merged_count = temp_db.deduplicate_items()
+        assert merged_count == 1
+
+        retrieved = temp_db.get_content_item(keep_id)
+        assert retrieved is not None
+        assert retrieved.metadata is not None
+        assert retrieved.metadata.get("playtime_hours") == 120
+
+    def test_deduplicate_items_global_merges_all_users(self, temp_db: SQLiteDB) -> None:
+        """deduplicate_items() with no user_id merges duplicates for all users.
+
+        Verifies the global dedup path (user_id=None) handles multiple users.
+        """
+        # Create a second user
+        with temp_db.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("INSERT INTO users (id, username) VALUES (2, 'user_b')")
+            conn.commit()
+
+        # Insert duplicates for user 1
+        self._insert_raw_item(
+            temp_db,
+            external_id="u1-a",
+            title="Hades",
+            normalized_title="hades",
+            source="steam",
+        )
+        self._insert_raw_item(
+            temp_db,
+            external_id="u1-b",
+            title="Hades",
+            normalized_title="hades",
+            source="blog",
+        )
+
+        # Insert duplicates for user 2
+        with temp_db.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """INSERT INTO content_items
+                   (user_id, external_id, title, normalized_title, content_type,
+                    status, source)
+                   VALUES (2, 'u2-a', 'Hades', 'hades', 'video_game',
+                           'completed', 'steam')""",
+            )
+            cursor.execute(
+                """INSERT INTO content_items
+                   (user_id, external_id, title, normalized_title, content_type,
+                    status, source)
+                   VALUES (2, 'u2-b', 'Hades', 'hades', 'video_game',
+                           'completed', 'blog')""",
+            )
+            conn.commit()
+
+        # Global dedup — should merge both users' duplicates
+        merged_count = temp_db.deduplicate_items()
+        assert merged_count == 2
+
+        with temp_db.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM content_items WHERE user_id = 1")
+            assert cursor.fetchone()[0] == 1
+            cursor.execute("SELECT COUNT(*) FROM content_items WHERE user_id = 2")
+            assert cursor.fetchone()[0] == 1
+
+    def test_resave_source_updated_after_cross_source_merge(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """After cross-source merge, the re-saved item's fields are applied.
+
+        Verifies that not only is the duplicate removed, but the kept row
+        is updated with the re-saved item's data (source, title, etc.).
+        The kept row starts with source="old_import" to prove the update
+        path actually ran (if it didn't, source would remain "old_import").
+        """
+        steam_id = self._insert_raw_item(
+            temp_db,
+            external_id="steam-ori",
+            title="Ori and the Blind Forest",
+            normalized_title="ori and the blind forest",
+            rating=5,
+            source="old_import",
+        )
+        self._insert_raw_item(
+            temp_db,
+            external_id="blog-ori",
+            title="Ori and the Blind Forest",
+            normalized_title="ori and the blind forest",
+            source="blog",
+        )
+
+        all_games = temp_db.get_content_items(content_type=ContentType.VIDEO_GAME)
+        assert len(all_games) == 2
+
+        # Re-save Steam item — triggers cross-source merge and UPDATE
+        steam = ContentItem(
+            id="steam-ori",
+            title="Ori and the Blind Forest",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            source="steam",
+        )
+        temp_db.save_content_item(steam)
+
+        all_games = temp_db.get_content_items(content_type=ContentType.VIDEO_GAME)
+        assert len(all_games) == 1
+
+        retrieved = temp_db.get_content_item(steam_id)
+        assert retrieved is not None
+        # Source changed from "old_import" to "steam" — proves update ran
+        assert retrieved.source == "steam"
+        assert retrieved.rating == 5
