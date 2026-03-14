@@ -165,7 +165,7 @@ The project uses **automatic semantic versioning**:
 - **Version source of truth**: `pyproject.toml` `[project] version` field, written by python-semantic-release
 - **Runtime version**: `src/__init__.py` reads the version via `importlib.metadata` — never hardcode versions
 - **CHANGELOG.md**: Auto-generated from commit messages — **do not edit manually** (edits will be overwritten on the next release)
-- **Release workflow**: A GitHub Actions workflow on push to `main` analyzes commits, bumps the version, updates CHANGELOG.md, and creates a version commit and tag
+- **Release workflow**: A GitHub Actions workflow on push to `main` analyzes commits, bumps the version, updates CHANGELOG.md, and creates a version commit and tag. A follow-up step regenerates `uv.lock` and commits it separately
 - **No manual version bumps**: Never edit the version in `pyproject.toml` by hand — let the release workflow handle it
 
 ## Security
