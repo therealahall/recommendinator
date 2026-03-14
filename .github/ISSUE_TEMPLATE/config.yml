@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Troubleshooting Guide
+    url: https://github.com/ahall/recommendinator/blob/main/docs/TROUBLESHOOTING.md
+    about: Check the troubleshooting guide before opening a bug report
+  - name: Documentation
+    url: https://github.com/ahall/recommendinator/blob/main/README.md
+    about: Read the project documentation

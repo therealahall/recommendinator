@@ -1,0 +1,107 @@
+name: Theme Request
+description: Propose a new web UI theme or submit a community theme
+labels: ["theme"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Themes are community-contributed color schemes for the web interface. You can propose a theme idea or submit a ready-to-merge theme.
+
+        See the [Theme Development Guide](https://github.com/ahall/recommendinator/blob/main/docs/THEME_DEVELOPMENT.md) for how themes work.
+
+  - type: dropdown
+    id: type
+    attributes:
+      label: Request Type
+      description: Are you proposing an idea or submitting a ready theme?
+      options:
+        - Idea — I'd like this theme to exist
+        - Submission — I have a working theme ready to contribute
+    validations:
+      required: true
+
+  - type: input
+    id: name
+    attributes:
+      label: Theme Name
+      description: A short, descriptive name for the theme.
+      placeholder: "e.g., Solarized Dark, Catppuccin Mocha, Dracula"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Theme Description
+      description: Describe the visual style, mood, or inspiration for the theme.
+      placeholder: "A warm, low-contrast dark theme inspired by the Catppuccin Mocha palette. Easy on the eyes for long browsing sessions."
+    validations:
+      required: true
+
+  - type: dropdown
+    id: theme-type
+    attributes:
+      label: Theme Type
+      options:
+        - Dark
+        - Light
+    validations:
+      required: true
+
+  - type: textarea
+    id: colors
+    attributes:
+      label: Color Palette
+      description: |
+        List the key colors for your theme. At minimum, provide:
+        - Primary background color
+        - Card/surface background color
+        - Primary text color
+        - Accent color (buttons, links, active states)
+
+        Hex codes preferred. You can reference an existing palette (e.g., "Dracula theme colors").
+      placeholder: |
+        - Background: #1e1e2e
+        - Surface: #313244
+        - Text: #cdd6f4
+        - Accent: #89b4fa
+        - Success: #a6e3a1
+        - Warning: #f9e2af
+        - Error: #f38ba8
+    validations:
+      required: true
+
+  - type: textarea
+    id: preview
+    attributes:
+      label: Preview / Inspiration
+      description: |
+        Attach screenshots, mockups, or links to the color scheme you're basing this on.
+        If submitting a working theme, include a screenshot of the Recommendinator UI with your theme applied.
+
+  - type: textarea
+    id: css
+    attributes:
+      label: colors.css (for submissions)
+      description: |
+        If you're submitting a ready theme, paste your `colors.css` file contents here.
+        See the [Theme Development Guide](https://github.com/ahall/recommendinator/blob/main/docs/THEME_DEVELOPMENT.md) for the full list of CSS variables.
+      render: css
+      placeholder: |
+        :root {
+            --bg-primary: #1e1e2e;
+            --bg-card: #313244;
+            --text-primary: #cdd6f4;
+            --accent: #89b4fa;
+            /* ... */
+        }
+
+  - type: checkboxes
+    id: testing
+    attributes:
+      label: Testing (for submissions)
+      description: If submitting a working theme, confirm you've tested it.
+      options:
+        - label: I tested this theme on all pages (Recommendations, Library, Chat, Data, Preferences)
+        - label: I verified text readability, badge contrast, and button visibility
+        - label: I included a `theme.json` with all required fields (name, description, author, version, type)
