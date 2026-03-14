@@ -137,7 +137,6 @@ exclude_lines = [
 ]
 
 [tool.semantic_release]
-# The git tag matching this version must exist before the first workflow run.
 version_toml = ["pyproject.toml:project.version"]
 allow_zero_version = true
 major_on_zero = false
@@ -150,5 +149,6 @@ mode = "init"
 type = "github"
 
 [tool.semantic_release.publish]
-# No PyPI publish; this is a private project.
-upload_to_vcs_release = false
+# No PyPI publish (upload_to_pypi defaults to false).
+# semantic-release builds and uploads distributions to GitHub Releases.
+upload_to_vcs_release = true
