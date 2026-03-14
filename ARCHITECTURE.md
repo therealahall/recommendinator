@@ -47,7 +47,7 @@ Manages persistent storage of processed data and embeddings.
 - `core_memories`, `conversation_messages`, `preference_profiles` for chat system
 
 **Cross-Source Deduplication:**
-Items imported from different sources (e.g., Steam and a personal blog) are automatically deduplicated by normalized title. When saving an item, the system checks for existing rows by both external_id and normalized title. If a different row exists with the same `(user_id, content_type, normalized_title)`, they are merged into one. Merge rules: rating/review are filled from the duplicate only if the kept row is null; `date_completed` keeps the later date; genres/tags are merged additively. Schema migrations re-normalize all titles and merge any duplicates exposed by the corrected normalization.
+Items imported from different sources (e.g., Steam and a personal blog) are automatically deduplicated by normalized title. When saving an item, the system first looks up an existing row by `(user_id, external_id, content_type)`. If found, it then checks for a *different* row with the same `(user_id, content_type, normalized_title)` and merges any such duplicate into the kept row. If no external_id match exists, it falls back to a direct normalized_title lookup to merge items from different sources. Merge rules: rating/review are filled from the duplicate only if the kept row is null; `date_completed` keeps the later date; genres/tags are merged additively; monotonic columns (seasons/episodes) keep the higher value; detail-table metadata is merged additively (existing keys preserved). Schema migrations re-normalize all titles and merge any duplicates exposed by the corrected normalization.
 
 ### 3. LLM Interaction Layer (`src/llm/`) — Optional
 

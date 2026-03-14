@@ -42,7 +42,17 @@ If you change the host to `0.0.0.0` to allow LAN access, **anyone on your networ
 
 ## Quick Start
 
-### Option 1: Local Installation
+### Option 1: Docker (Recommended)
+
+```bash
+# Without AI (default)
+docker compose up
+
+# With AI (Ollama sidecar)
+docker compose --profile ai up app-ai
+```
+
+### Option 2: Local Installation
 
 ```bash
 # Clone and install
@@ -62,16 +72,6 @@ python3.11 -m src.cli recommend --type book --count 5
 
 # Or start the web interface
 python3.11 -m src.web
-```
-
-### Option 2: Docker
-
-```bash
-# Without AI (default)
-docker compose up
-
-# With AI (Ollama sidecar)
-docker compose --profile ai up app-ai
 ```
 
 Access the web interface at `http://localhost:18473`
@@ -275,6 +275,12 @@ Each scorer has a configurable weight. Set a weight to 0 to disable a scorer ent
 
 If you want AI-enhanced recommendations:
 
+### Docker Users
+
+Use `docker compose --profile ai up app-ai` — Ollama and models are set up automatically.
+
+### Local Installation Users
+
 1. **Install Ollama**: https://ollama.ai
 2. **Pull a model**: `ollama pull mistral:7b`
 3. **Enable in config**:
@@ -284,7 +290,6 @@ If you want AI-enhanced recommendations:
      embeddings_enabled: true      # For semantic similarity
      llm_reasoning_enabled: true   # For natural language explanations
    ```
-4. **For Docker**: Use `docker compose --profile ai up app-ai`
 
 See [docs/MODEL_RECOMMENDATIONS.md](docs/MODEL_RECOMMENDATIONS.md) for model selection guidance.
 
