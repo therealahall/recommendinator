@@ -95,7 +95,7 @@ class StorageManager:
         self.ai_enabled = ai_enabled
         self.conflict_strategy = conflict_strategy
         self.source_priority = source_priority or []
-        self._encryptor = CredentialEncryptor(self._resolve_key_path(sqlite_path))
+        self._encryptor = CredentialEncryptor(self._resolve_key_path())
 
         # Only initialize vector DB if AI is enabled and path provided.
         # Deferred import: chromadb is heavy (~500 MB+) and should not load
@@ -113,16 +113,13 @@ class StorageManager:
                 self.ai_enabled = False
 
     @staticmethod
-    def _resolve_key_path(sqlite_path: Path) -> Path:
+    def _resolve_key_path() -> Path:
         """Determine the credential encryption key file path.
 
         Uses the ``RECOMMENDINATOR_KEY_PATH`` environment variable if set,
         otherwise defaults to ``~/.config/recommendinator/.credential_key``.
         The key is intentionally stored separately from the database so that
         a database backup or volume mount does not also expose the key.
-
-        Args:
-            sqlite_path: Path to the SQLite database (unused when env var is set).
 
         Returns:
             Resolved Path for the key file.
