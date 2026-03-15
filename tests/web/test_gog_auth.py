@@ -1,13 +1,13 @@
 """Tests for GOG OAuth authentication."""
 
 import logging
-import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
 
+from src.storage.manager import StorageManager
 from src.web.gog_auth import (
     GogAuthError,
     exchange_code_for_tokens,
@@ -15,7 +15,7 @@ from src.web.gog_auth import (
     get_gog_auth_url,
     has_gog_token,
     is_gog_enabled,
-    update_config_with_token,
+    save_gog_token,
 )
 
 
@@ -132,75 +132,54 @@ class TestExchangeCodeForTokens:
 
         assert "refresh_token" in str(exc_info.value)
 
+    @patch("src.web.gog_auth.requests.get")
+    def test_network_failure_raises_gog_auth_error(self, mock_get: MagicMock) -> None:
+        """Network error during token exchange raises GogAuthError."""
+        mock_get.side_effect = requests.RequestException("Connection timed out")
 
-class TestUpdateConfigWithToken:
-    """Tests for update_config_with_token function."""
+        with pytest.raises(GogAuthError, match="Failed to connect to GOG servers"):
+            exchange_code_for_tokens("test_code")
 
-    def test_updates_existing_config(self, caplog: pytest.LogCaptureFixture) -> None:
-        """Test updating an existing config file with GOG section."""
-        config_content = """inputs:
-  gog:
-    refresh_token: ""
-    enabled: true
-"""
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".yaml", delete=False
-        ) as temp_file:
-            temp_file.write(config_content)
-            temp_path = Path(temp_file.name)
 
-        try:
-            with caplog.at_level(logging.INFO, logger="src.web.gog_auth"):
-                update_config_with_token(temp_path, "new_refresh_token_123")
+class TestSaveGogToken:
+    """Tests for save_gog_token — DB persistence replaces config file writes."""
 
-            updated_content = temp_path.read_text()
-            assert "new_refresh_token_123" in updated_content
-            assert "Updated GOG refresh_token in config.yaml" in caplog.text
-        finally:
-            temp_path.unlink()
+    @pytest.fixture()
+    def storage(self, tmp_path: Path) -> StorageManager:
+        """Create a StorageManager with a temp DB."""
+        return StorageManager(sqlite_path=tmp_path / "test.db")
 
-    def test_raises_error_for_missing_file(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """GogAuthError propagates with original message when config file is absent.
+    def test_saves_token_to_db(self, storage: StorageManager) -> None:
+        """Token is saved to encrypted DB storage."""
+        save_gog_token(storage, "new_refresh_token")
 
-        The exists check is outside the try block, so the error propagates
-        directly without being caught by the broad except Exception clause.
-        The message must not contain filesystem paths (security).
-        """
-        with caplog.at_level(logging.ERROR, logger="src.web.gog_auth"):
-            with pytest.raises(GogAuthError, match="Config file not found") as exc_info:
-                update_config_with_token(Path("/nonexistent/config.yaml"), "token")
+        result = storage.get_credential(1, "gog", "refresh_token")
+        assert result == "new_refresh_token"
 
-        error_message = str(exc_info.value)
-        # Security: filesystem path must not leak in error message
-        assert "/nonexistent" not in error_message
-        assert "config.yaml" not in error_message
-        assert "Config file not found at expected path" in caplog.text
+    def test_overwrites_existing_token(self, storage: StorageManager) -> None:
+        """Saving a new token overwrites the old one."""
+        save_gog_token(storage, "old_token")
+        save_gog_token(storage, "new_token")
 
-    def test_non_gog_error_is_wrapped(self, caplog: pytest.LogCaptureFixture) -> None:
-        """Test that non-GogAuthError exceptions are wrapped with generic message."""
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".yaml", delete=False
-        ) as temp_file:
-            temp_file.write("inputs:\n  gog:\n    refresh_token: old\n")
-            temp_path = Path(temp_file.name)
+        assert storage.get_credential(1, "gog", "refresh_token") == "new_token"
 
-        try:
-            with caplog.at_level(logging.ERROR, logger="src.web.gog_auth"):
-                with patch.object(
-                    Path,
-                    "read_text",
-                    side_effect=PermissionError("Permission denied"),
-                ):
-                    with pytest.raises(
-                        GogAuthError, match="Failed to update config file"
-                    ):
-                        update_config_with_token(temp_path, "new_token")
+    def test_custom_user_id(self, storage: StorageManager) -> None:
+        """Token can be saved for a specific user."""
+        # Create user 2
+        with storage.connection() as conn:
+            conn.execute("INSERT INTO users (id, username) VALUES (2, 'user2')")
+            conn.commit()
 
-            assert "Failed to update config: Permission denied" in caplog.text
-        finally:
-            temp_path.unlink()
+        save_gog_token(storage, "user2_token", user_id=2)
+
+        assert storage.get_credential(2, "gog", "refresh_token") == "user2_token"
+        assert storage.get_credential(1, "gog", "refresh_token") is None
+
+    def test_db_failure_raises_gog_auth_error(self, storage: StorageManager) -> None:
+        """DB write failure raises GogAuthError, not the underlying exception."""
+        with patch.object(storage, "save_credential", side_effect=OSError("disk full")):
+            with pytest.raises(GogAuthError, match="Failed to save GOG token"):
+                save_gog_token(storage, "some_token")
 
 
 class TestIsGogEnabled:
@@ -234,8 +213,13 @@ class TestIsGogEnabled:
 class TestHasGogToken:
     """Tests for has_gog_token function."""
 
-    def test_returns_true_when_token_present(self) -> None:
-        """Test returns True when refresh token is present."""
+    @pytest.fixture()
+    def storage(self, tmp_path: Path) -> StorageManager:
+        """Create a StorageManager with a temp DB."""
+        return StorageManager(sqlite_path=tmp_path / "test.db")
+
+    def test_returns_true_when_token_in_config(self) -> None:
+        """Config-only token is detected (backwards compat)."""
         config = {"inputs": {"gog": {"refresh_token": "some_token"}}}
 
         assert has_gog_token(config) is True
@@ -257,3 +241,16 @@ class TestHasGogToken:
         config = {"inputs": {"gog": {"refresh_token": "   "}}}
 
         assert has_gog_token(config) is False
+
+    def test_returns_true_when_token_in_db(self, storage: StorageManager) -> None:
+        """DB token detected even when config has no token."""
+        config = {"inputs": {"gog": {"refresh_token": ""}}}
+        storage.save_credential(1, "gog", "refresh_token", "db_token")
+
+        assert has_gog_token(config, storage=storage) is True
+
+    def test_config_fallback_when_no_storage(self) -> None:
+        """Without storage, only config is checked."""
+        config = {"inputs": {"gog": {"refresh_token": "config_token"}}}
+
+        assert has_gog_token(config, storage=None) is True
