@@ -103,10 +103,12 @@ ollama list
 **Symptom:** Recommendations don't match preferences
 
 **Solutions:**
-1. Rate more items (need variety for good preferences)
-2. Adjust scorer weights in preferences
-3. Add custom rules for specific preferences
-4. Check if AI features are enabled for better similarity
+1. **Enable enrichment first** — This is the most common cause. Without enrichment, most items lack the genres, tags, and descriptions the scoring pipeline depends on. See [ENRICHMENT_SETUP.md](ENRICHMENT_SETUP.md) to set up TMDB, OpenLibrary, and RAWG.
+2. **Check enrichment coverage** — In the web UI Data page, check the enrichment percentage. Aim for 90%+ coverage.
+3. Rate more items (need variety for good preferences)
+4. Adjust scorer weights in preferences
+5. Add custom rules for specific preferences
+6. Check if AI features are enabled for better similarity
 
 ### Custom Rules Not Working
 

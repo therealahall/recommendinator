@@ -14,7 +14,7 @@ Before starting work, read the relevant documentation:
 - **ARCHITECTURE.md** - System architecture, components, data flow
 - **CONTRIBUTING.md** - Development standards for open source contributors
 - **QUICKSTART.md** - Getting started guide
-- **docs/** - Additional technical docs (MODEL_RECOMMENDATIONS.md, CHROMADB_SETUP.md, PYTHON_VERSION.md, PLUGIN_DEVELOPMENT.md, CUSTOM_RULES.md, SECURITY.md, TROUBLESHOOTING.md)
+- **docs/** - Additional technical docs (ENRICHMENT_SETUP.md, CONVERSATION_GUIDE.md, MODEL_RECOMMENDATIONS.md, CHROMADB_SETUP.md, PYTHON_VERSION.md, PLUGIN_DEVELOPMENT.md, CUSTOM_RULES.md, SECURITY.md, TROUBLESHOOTING.md)
 
 ## After Conversation Compaction
 

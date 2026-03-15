@@ -4,7 +4,7 @@ Get up and running with Recommendinator in under 5 minutes.
 
 ## Prerequisites
 
-- **Python 3.11+** installed
+- **Python 3.11** installed (see [docs/PYTHON_VERSION.md](docs/PYTHON_VERSION.md) for details)
 - Your data (Goodreads export, Steam account, etc.)
 
 That's it. No AI, no external services required.
@@ -42,6 +42,36 @@ docker compose --profile ai up app-ai
 ```
 
 Access the web interface at http://localhost:18473.
+
+## Set Up Enrichment (Do This First)
+
+**Before importing any data**, set up metadata enrichment. This is the most important step for getting useful recommendations. Enrichment fills in missing genres, tags, and descriptions from external databases — without it, the scoring pipeline has little to work with and recommendations will be poor.
+
+All three providers are **free**:
+
+1. **TMDB** (movies/TV) — Get API key from [themoviedb.org/settings/api](https://www.themoviedb.org/settings/api)
+2. **RAWG** (games) — Get API key from [rawg.io/apidocs](https://rawg.io/apidocs)
+3. **OpenLibrary** (books) — No API key needed
+
+Add this to your `config/config.yaml`:
+
+```yaml
+enrichment:
+  enabled: true
+  auto_enrich_on_sync: true   # Automatically enrich after every data sync
+
+  providers:
+    tmdb:
+      api_key: "your-tmdb-key"
+      enabled: true
+    openlibrary:
+      enabled: true
+    rawg:
+      api_key: "your-rawg-key"
+      enabled: true
+```
+
+With `auto_enrich_on_sync: true`, enrichment runs automatically every time you sync data — no extra step needed. See [docs/ENRICHMENT_SETUP.md](docs/ENRICHMENT_SETUP.md) for the full setup guide.
 
 ## Import Your Data
 
@@ -102,6 +132,13 @@ python3.11 -m src.cli update --source all
 
 # List configured sources
 python3.11 -m src.cli update --source list
+```
+
+If you enabled `auto_enrich_on_sync`, enrichment runs automatically after each sync. Otherwise, run it manually:
+
+```bash
+python3.11 -m src.cli enrichment start
+python3.11 -m src.cli enrichment status
 ```
 
 ## Get Recommendations
@@ -175,7 +212,9 @@ See [docs/MODEL_RECOMMENDATIONS.md](docs/MODEL_RECOMMENDATIONS.md) for model gui
 
 ## Next Steps
 
+- [docs/ENRICHMENT_SETUP.md](docs/ENRICHMENT_SETUP.md) — Metadata enrichment setup (do this first)
 - [README.md](README.md) — Full feature overview, source-specific setup guides
+- [docs/CONVERSATION_GUIDE.md](docs/CONVERSATION_GUIDE.md) — Chat interface setup (AI only)
 - [ARCHITECTURE.md](ARCHITECTURE.md) — How the system works
 - [docs/PLUGIN_DEVELOPMENT.md](docs/PLUGIN_DEVELOPMENT.md) — Creating custom data source plugins
 - [docs/CUSTOM_RULES.md](docs/CUSTOM_RULES.md) — Advanced preference rules
