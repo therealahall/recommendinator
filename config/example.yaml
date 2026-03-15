@@ -73,9 +73,9 @@ inputs:
   # GOG.com integration (PC game store)
   gog:
     plugin: gog
-    # GOG OAuth token is stored in the encrypted credential database.
-    # Connect your GOG account via the web UI or set RECOMMENDINATOR_KEY_PATH
-    # to control where the encryption key is stored.
+    # GOG OAuth refresh token for API access.
+    # See "GOG Setup" section in README.md for step-by-step instructions.
+    refresh_token: ""
     # Import wishlisted games as unread items (default: true)
     include_wishlist: true
     # Fetch detailed metadata for wishlisted games from public API (default: true)
