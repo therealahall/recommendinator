@@ -1,6 +1,33 @@
 # CHANGELOG
 
 
+## v0.1.2 (2026-03-15)
+
+### Bug Fixes
+
+- **web**: Address remaining review findings for config watcher
+  ([`dfd6479`](https://github.com/therealahall/recommendinator/commit/dfd6479b41c8ff02dbc055fed5b0950375872ea7))
+
+- **web**: Address review findings for config hot-reload
+  ([`8c51e0e`](https://github.com/therealahall/recommendinator/commit/8c51e0e846dd88e4a004f39e8c8f2e576c527baa))
+
+- **web**: Hot-reload config file changes without restart (fixes #9)
+  ([`dcff5f4`](https://github.com/therealahall/recommendinator/commit/dcff5f43bd29b62024b6cfc8d6cd6aeec6dbf19c))
+
+### Chores
+
+- **lockfile**: Regenerate uv.lock after adding watchfiles dependency
+  ([`d0c3a5b`](https://github.com/therealahall/recommendinator/commit/d0c3a5b9910a51b6f072f354deea252cca2aa035))
+
+- **lockfile**: Regenerate uv.lock for v0.1.1 [skip ci]
+  ([`cd0b265`](https://github.com/therealahall/recommendinator/commit/cd0b265849177b480a8ff14e1837e37034c35646))
+
+### Refactoring
+
+- **web**: Use module import for watchfiles and extract test helper
+  ([`2c47714`](https://github.com/therealahall/recommendinator/commit/2c47714c07ba56f656ab0bc6a9671727344a61bb))
+
+
 ## v0.1.1 (2026-03-15)
 
 ### Bug Fixes
