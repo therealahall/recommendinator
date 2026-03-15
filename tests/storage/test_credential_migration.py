@@ -121,6 +121,66 @@ class TestMigrateConfigCredentials:
         migrate_config_credentials({"inputs": {}}, storage)
         migrate_config_credentials({}, storage)
 
+    def test_stale_credential_re_encrypted_from_config(
+        self, storage: StorageManager
+    ) -> None:
+        """Stale (unreadable) credential is re-encrypted when config has a value.
+
+        Regression: encryption key change left stale ciphertext in DB.
+        Migration should detect the unreadable row and overwrite it with
+        a freshly encrypted value from config.
+        """
+        # Write a stale (unreadable) row directly to DB
+        with storage.connection() as conn:
+            conn.execute(
+                "INSERT INTO credentials "
+                "(user_id, source_id, credential_key, credential_value) "
+                "VALUES (1, 'gog', 'refresh_token', 'stale_garbage')"
+            )
+            conn.commit()
+
+        config = {
+            "inputs": {
+                "gog": {
+                    "plugin": "gog",
+                    "enabled": True,
+                    "refresh_token": "fresh_token",
+                }
+            }
+        }
+
+        migrate_config_credentials(config, storage)
+
+        assert storage.get_credential(1, "gog", "refresh_token") == "fresh_token"
+
+    def test_stale_credential_purged_when_no_config_value(
+        self, storage: StorageManager
+    ) -> None:
+        """Stale credential with no config fallback is purged from DB."""
+        # Write a stale row
+        with storage.connection() as conn:
+            conn.execute(
+                "INSERT INTO credentials "
+                "(user_id, source_id, credential_key, credential_value) "
+                "VALUES (1, 'gog', 'refresh_token', 'stale_garbage')"
+            )
+            conn.commit()
+
+        # Config has no refresh_token
+        config = {
+            "inputs": {
+                "gog": {
+                    "plugin": "gog",
+                    "enabled": True,
+                }
+            }
+        }
+
+        migrate_config_credentials(config, storage)
+
+        # Row should be gone
+        assert not storage.credential_row_exists(1, "gog", "refresh_token")
+
     def test_multiple_sources_migrated(self, storage: StorageManager) -> None:
         """Multiple sources with sensitive fields are all migrated."""
         config = {

@@ -28,7 +28,9 @@ from src.storage.schema import (
     UserDict,
     clear_cached_preference_interpretations,
     clear_conversation_history,
+    credential_row_exists,
     delete_core_memory,
+    delete_credential,
     get_all_users,
     get_cached_preference_interpretation,
     get_conversation_history,
@@ -997,3 +999,31 @@ class StorageManager:
                     source_id,
                 )
         return result
+
+    def credential_row_exists(self, user_id: int, source_id: str, key: str) -> bool:
+        """Check if a credential row exists in the DB (without decrypting).
+
+        Args:
+            user_id: User ID.
+            source_id: Source identifier.
+            key: Credential field name.
+
+        Returns:
+            True if a row exists in the credentials table.
+        """
+        with self.sqlite_db.connection() as conn:
+            return credential_row_exists(conn, user_id, source_id, key)
+
+    def delete_credential(self, user_id: int, source_id: str, key: str) -> bool:
+        """Delete a credential row.
+
+        Args:
+            user_id: User ID.
+            source_id: Source identifier.
+            key: Credential field name.
+
+        Returns:
+            True if a row was deleted, False if not found.
+        """
+        with self.sqlite_db.connection() as conn:
+            return delete_credential(conn, user_id, source_id, key)
