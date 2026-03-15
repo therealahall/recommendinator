@@ -1,5 +1,6 @@
 """Tests for web application state management functions."""
 
+import asyncio
 import logging
 from dataclasses import fields
 from pathlib import Path
@@ -12,6 +13,7 @@ from src.conversation.engine import ConversationEngine
 from src.llm.client import OllamaClient
 from src.web.state import (
     AppState,
+    ConfigWatcher,
     app_state,
     get_conversation_engine,
     get_ollama_client,
@@ -165,3 +167,134 @@ class TestGetOllamaClient:
         result = get_ollama_client()
 
         assert result is mock_client
+
+
+# ---------------------------------------------------------------------------
+# ConfigWatcher tests
+# ---------------------------------------------------------------------------
+
+
+class TestConfigWatcher:
+    """Tests for ConfigWatcher — automatic config file hot-reload.
+
+    Bug: Config changes required a Docker container restart (issue #9).
+    Root cause: Config was loaded once at startup with no file watching.
+    Fix: Added ConfigWatcher that uses watchfiles to detect changes and
+    automatically calls reload_config().
+    """
+
+    def test_watcher_detects_file_change(self, tmp_path: Path) -> None:
+        """ConfigWatcher calls reload_config when config file changes.
+
+        Regression test for #9: config changes should be hot-reloaded
+        without requiring a container restart.
+        """
+
+        async def _run() -> None:
+            config_file = tmp_path / "config.yaml"
+            config_file.write_text("ollama:\n  model: original\n")
+
+            app_state.config_path = str(config_file)
+            app_state.config = {"ollama": {"model": "original"}}
+
+            watcher = ConfigWatcher()
+            await watcher.start(str(config_file))
+            assert watcher.running
+
+            # Allow watcher to set up inotify watches
+            await asyncio.sleep(0.5)
+
+            # Modify the config file — watcher should pick this up
+            config_file.write_text("ollama:\n  model: updated\n")
+
+            # Give watchfiles time to detect the change
+            for _ in range(50):
+                await asyncio.sleep(0.1)
+                if (
+                    app_state.config
+                    and app_state.config.get("ollama", {}).get("model") == "updated"
+                ):
+                    break
+
+            await watcher.stop()
+            assert not watcher.running
+            assert app_state.config is not None
+            assert app_state.config["ollama"]["model"] == "updated"
+
+        asyncio.run(_run())
+
+    def test_watcher_stop_is_idempotent(self) -> None:
+        """Calling stop() when not started does not raise."""
+
+        async def _run() -> None:
+            watcher = ConfigWatcher()
+            await watcher.stop()  # Should not raise
+
+        asyncio.run(_run())
+
+    def test_watcher_start_is_idempotent(self, tmp_path: Path) -> None:
+        """Calling start() twice does not create duplicate watchers."""
+
+        async def _run() -> None:
+            config_file = tmp_path / "config.yaml"
+            config_file.write_text("key: value\n")
+
+            watcher = ConfigWatcher()
+            await watcher.start(str(config_file))
+            task1 = watcher._task
+            await watcher.start(str(config_file))
+            task2 = watcher._task
+
+            assert task1 is task2
+            await watcher.stop()
+
+        asyncio.run(_run())
+
+    def test_running_property(self, tmp_path: Path) -> None:
+        """running property reflects watcher state."""
+
+        async def _run() -> None:
+            config_file = tmp_path / "config.yaml"
+            config_file.write_text("key: value\n")
+
+            watcher = ConfigWatcher()
+            assert not watcher.running
+
+            await watcher.start(str(config_file))
+            assert watcher.running
+
+            await watcher.stop()
+            assert not watcher.running
+
+        asyncio.run(_run())
+
+    def test_watcher_continues_after_reload_failure(self, tmp_path: Path) -> None:
+        """Watcher keeps running and recovers after an invalid config file."""
+
+        async def _run() -> None:
+            config_file = tmp_path / "config.yaml"
+            config_file.write_text("key: original\n")
+            app_state.config_path = str(config_file)
+            app_state.config = {"key": "original"}
+
+            watcher = ConfigWatcher()
+            await watcher.start(str(config_file))
+            await asyncio.sleep(0.5)
+
+            # Write invalid YAML — reload should fail but watcher continues
+            config_file.write_text("invalid: yaml: content: [broken\n")
+            await asyncio.sleep(1.0)
+            assert watcher.running
+
+            # Write valid YAML — should recover
+            config_file.write_text("key: recovered\n")
+            for _ in range(50):
+                await asyncio.sleep(0.1)
+                if app_state.config and app_state.config.get("key") == "recovered":
+                    break
+
+            await watcher.stop()
+            assert app_state.config is not None
+            assert app_state.config["key"] == "recovered"
+
+        asyncio.run(_run())
