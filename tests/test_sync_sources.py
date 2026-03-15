@@ -14,7 +14,6 @@ from src.web.sync_sources import (
     get_available_sync_sources,
     get_sync_handler,
     resolve_inputs,
-    transform_source_config,
     validate_source_config,
 )
 
@@ -425,47 +424,6 @@ class TestGetSyncHandler:
         handler = get_sync_handler("my_books", config)
 
         assert handler is None
-
-
-@pytest.mark.usefixtures("_registry_with_fakes")
-class TestTransformSourceConfig:
-    """Tests for transform_source_config function."""
-
-    def test_transforms_config(self) -> None:
-        """Test that config is transformed correctly."""
-        config = {
-            "inputs": {
-                "my_books": {
-                    "plugin": "fake_books",
-                    "enabled": True,
-                    "path": "/data/books.csv",
-                },
-            }
-        }
-
-        transformed = transform_source_config("my_books", config)
-
-        assert transformed["path"] == "/data/books.csv"
-        assert transformed["_source_id"] == "my_books"
-        assert "plugin" not in transformed
-        assert "enabled" not in transformed
-
-    def test_unknown_source_returns_raw_entry(self) -> None:
-        """Test that unknown source returns the raw input entry."""
-        config = {
-            "inputs": {
-                "unknown": {
-                    "plugin": "nonexistent",
-                    "enabled": True,
-                    "path": "/data/unknown.csv",
-                },
-            }
-        }
-
-        transformed = transform_source_config("unknown", config)
-
-        # Returns raw entry since plugin is unknown
-        assert transformed["plugin"] == "nonexistent"
 
 
 @pytest.mark.usefixtures("_registry_with_fakes")

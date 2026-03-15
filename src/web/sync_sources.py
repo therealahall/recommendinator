@@ -178,32 +178,6 @@ def get_sync_handler(
     return None
 
 
-def transform_source_config(
-    source_id: str,
-    config: dict[str, Any],
-    storage: StorageManager | None = None,
-) -> dict[str, Any]:
-    """Transform raw YAML config for a source into plugin-ready config.
-
-    Delegates to the plugin's ``transform_config`` classmethod.
-
-    Args:
-        source_id: User-defined source key (e.g. "my_books", "tv_shows").
-        config: Full application config.
-        storage: Optional StorageManager for DB credential injection.
-
-    Returns:
-        Transformed config dict.
-    """
-    resolved = get_sync_handler(source_id, config, storage=storage)
-    if resolved is None:
-        # Fall back to returning the raw input entry
-        inputs_config = config.get("inputs", {})
-        return dict(inputs_config.get(source_id, {}))
-
-    return resolved.config
-
-
 def validate_source_config(
     source_id: str,
     config: dict[str, Any],
