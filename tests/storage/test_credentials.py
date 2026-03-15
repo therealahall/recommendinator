@@ -130,9 +130,7 @@ class TestStorageManagerCredentials:
 
         assert storage.get_credential(1, "gog", "refresh_token") == "new_token"
 
-    def test_decrypt_failure_returns_none(
-        self, storage: StorageManager, tmp_path: Path
-    ) -> None:
+    def test_decrypt_failure_returns_none(self, storage: StorageManager) -> None:
         """Corrupted ciphertext returns None instead of crashing."""
         # Save a credential, then corrupt it directly in the DB
         storage.save_credential(1, "gog", "refresh_token", "good_token")
@@ -145,3 +143,20 @@ class TestStorageManagerCredentials:
 
         # Should return None (logged), not raise InvalidToken
         assert storage.get_credential(1, "gog", "refresh_token") is None
+
+    def test_partial_decrypt_failure_excludes_bad_key(
+        self, storage: StorageManager
+    ) -> None:
+        """A corrupted credential is excluded; valid ones in same source still return."""
+        storage.save_credential(1, "steam", "api_key", "good_key")
+        storage.save_credential(1, "steam", "steam_id", "good_id")
+        with storage.connection() as conn:
+            conn.execute(
+                "UPDATE credentials SET credential_value = 'corrupted' "
+                "WHERE source_id = 'steam' AND credential_key = 'api_key'"
+            )
+            conn.commit()
+
+        result = storage.get_credentials_for_source(1, "steam")
+        assert "api_key" not in result
+        assert result.get("steam_id") == "good_id"
