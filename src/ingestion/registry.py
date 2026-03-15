@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import inspect
 import logging
 import pkgutil
 import sys
@@ -177,11 +178,11 @@ class PluginRegistry:
 
             attr = getattr(module, attr_name)
 
-            # Check if it's a SourcePlugin subclass (not the base class itself)
+            # Check if it's a concrete SourcePlugin subclass
             if (
                 isinstance(attr, type)
                 and issubclass(attr, SourcePlugin)
-                and attr is not SourcePlugin
+                and not inspect.isabstract(attr)
             ):
                 try:
                     plugin_instance = attr()
