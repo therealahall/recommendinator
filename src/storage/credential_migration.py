@@ -30,8 +30,13 @@ def migrate_config_credentials(
 
     This is safe to call on every startup and on config hot-reload.
 
+    **Mutates ``config`` in place:** after a credential is migrated to the
+    database, its plaintext value is removed from the in-memory config dict
+    so it does not linger in ``app_state.config`` for the process lifetime.
+
     Args:
         config: Full application config dict (from ``load_config``).
+            Mutated in place — sensitive fields are removed after migration.
         storage: StorageManager instance (provides encrypted DB access).
         user_id: User ID to associate credentials with (default 1).
     """

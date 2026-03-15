@@ -1511,15 +1511,13 @@ async def exchange_gog_token(request: GogExchangeRequest) -> dict[str, Any]:
     """Exchange GOG authorization code for tokens.
 
     Accepts either the raw authorization code or the full redirect URL.
-    Attempts to update config.yaml, or returns the token for manual setup.
+    Saves the refresh token to the encrypted credential database.
 
     Args:
         request: Request with code or URL.
 
     Returns:
-        Success message. If config could not be updated automatically, instructs
-        the user to add the token manually. The token is never included in the
-        HTTP response.
+        Success message. The token is never included in the HTTP response.
     """
     config = get_config()
     storage = get_storage()
