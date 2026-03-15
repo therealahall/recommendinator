@@ -8,8 +8,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from watchfiles import awatch
-
 from src.cli.config import load_config
 
 if TYPE_CHECKING:
@@ -41,13 +39,15 @@ class ConfigWatcher:
 
     async def stop(self) -> None:
         """Stop watching for config changes."""
-        if self._task is not None:
+        if self._task is None:
+            return
+        if not self._task.done():
             self._task.cancel()
             try:
                 await self._task
             except asyncio.CancelledError:
                 pass
-            self._task = None
+        self._task = None
 
     @property
     def running(self) -> bool:
@@ -56,6 +56,8 @@ class ConfigWatcher:
 
     async def _watch(self, config_path: Path) -> None:
         """Watch loop that detects config file changes."""
+        from watchfiles import awatch
+
         logger.info("Config watcher started for %s", config_path)
         try:
             async for _changes in awatch(config_path):
@@ -153,6 +155,6 @@ def reload_config() -> bool:
         app_state.config = config
         logger.info("Reloaded config from %s", config_path)
         return True
-    except Exception as error:
-        logger.error("Failed to reload config: %s", error)
+    except Exception:
+        logger.exception("Failed to reload config from %s", config_path)
         return False

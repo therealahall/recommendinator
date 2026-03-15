@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator
 from dataclasses import fields
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -20,6 +20,8 @@ from src.web.state import (
     get_ollama_client,
     reload_config,
 )
+
+_AWATCH_PATCH_TARGET = "watchfiles.awatch"
 
 
 @pytest.fixture(autouse=True)
@@ -188,7 +190,6 @@ async def _fake_awatch_no_events(
 ) -> AsyncIterator[set[tuple[str, str]]]:
     """Block forever without yielding — simulates no file changes."""
     await asyncio.Event().wait()
-    # Make this an async generator
     yield set()  # pragma: no cover
 
 
@@ -211,7 +212,7 @@ class TestConfigWatcher:
         async def _run() -> None:
             with (
                 patch(
-                    "src.web.state.awatch",
+                    _AWATCH_PATCH_TARGET,
                     side_effect=_fake_awatch_one_event,
                 ),
                 patch("src.web.state.reload_config", return_value=True) as mock_reload,
@@ -238,7 +239,7 @@ class TestConfigWatcher:
             with (
                 caplog.at_level(logging.WARNING, logger="src.web.state"),
                 patch(
-                    "src.web.state.awatch",
+                    _AWATCH_PATCH_TARGET,
                     side_effect=_fake_awatch_one_event,
                 ),
                 patch("src.web.state.reload_config", return_value=False),
@@ -268,7 +269,7 @@ class TestConfigWatcher:
 
         async def _run() -> None:
             with patch(
-                "src.web.state.awatch",
+                _AWATCH_PATCH_TARGET,
                 side_effect=_fake_awatch_no_events,
             ):
                 watcher = ConfigWatcher()
@@ -288,7 +289,7 @@ class TestConfigWatcher:
 
         async def _run() -> None:
             with patch(
-                "src.web.state.awatch",
+                _AWATCH_PATCH_TARGET,
                 side_effect=_fake_awatch_no_events,
             ):
                 watcher = ConfigWatcher()
@@ -313,7 +314,7 @@ class TestConfigWatcher:
 
         async def _run() -> None:
             with patch(
-                "src.web.state.awatch",
+                _AWATCH_PATCH_TARGET,
                 side_effect=_failing_awatch,
             ):
                 watcher = ConfigWatcher()
@@ -324,11 +325,9 @@ class TestConfigWatcher:
                 assert not watcher.running
 
             # Should be able to restart with a working awatch
-            with (
-                patch(
-                    "src.web.state.awatch",
-                    side_effect=_fake_awatch_no_events,
-                ),
+            with patch(
+                _AWATCH_PATCH_TARGET,
+                side_effect=_fake_awatch_no_events,
             ):
                 await watcher.start(Path("/fake/config.yaml"))
                 assert watcher.running
@@ -349,7 +348,7 @@ class TestConfigWatcher:
             with (
                 caplog.at_level(logging.ERROR, logger="src.web.state"),
                 patch(
-                    "src.web.state.awatch",
+                    _AWATCH_PATCH_TARGET,
                     side_effect=_crashing_awatch,
                 ),
             ):
@@ -361,6 +360,32 @@ class TestConfigWatcher:
 
         asyncio.run(_run())
         assert "Config watcher crashed" in caplog.text
+
+    def test_stop_after_crash_does_not_raise(self) -> None:
+        """stop() on a crashed watcher does not propagate the stored exception."""
+
+        async def _crashing_awatch(
+            path: Path,
+        ) -> AsyncIterator[set[tuple[str, str]]]:
+            raise OSError("inotify limit reached")
+            yield set()  # pragma: no cover
+
+        async def _run() -> None:
+            with patch(
+                _AWATCH_PATCH_TARGET,
+                side_effect=_crashing_awatch,
+            ):
+                watcher = ConfigWatcher()
+                await watcher.start(Path("/fake/config.yaml"))
+                await asyncio.sleep(0)
+                await asyncio.sleep(0)
+                assert not watcher.running
+
+                # stop() should not re-raise the OSError from the crashed task
+                await watcher.stop()
+                assert watcher._task is None
+
+        asyncio.run(_run())
 
 
 # ---------------------------------------------------------------------------
@@ -378,17 +403,15 @@ class TestLifespan:
         async def _run() -> None:
             app_state.config_path = "/fake/config.yaml"
             mock_watcher = MagicMock(spec=ConfigWatcher)
-            mock_watcher.start = MagicMock(return_value=asyncio.Future())
-            mock_watcher.start.return_value.set_result(None)
-            mock_watcher.stop = MagicMock(return_value=asyncio.Future())
-            mock_watcher.stop.return_value.set_result(None)
+            mock_watcher.start = AsyncMock()
+            mock_watcher.stop = AsyncMock()
             app_state.config_watcher = mock_watcher
 
             async with lifespan(MagicMock()):
                 pass
 
-            mock_watcher.start.assert_called_once_with(Path("/fake/config.yaml"))
-            mock_watcher.stop.assert_called_once()
+            mock_watcher.start.assert_awaited_once_with(Path("/fake/config.yaml"))
+            mock_watcher.stop.assert_awaited_once()
 
         asyncio.run(_run())
 
@@ -401,16 +424,16 @@ class TestLifespan:
         async def _run() -> None:
             app_state.config_path = None
             mock_watcher = MagicMock(spec=ConfigWatcher)
-            mock_watcher.stop = MagicMock(return_value=asyncio.Future())
-            mock_watcher.stop.return_value.set_result(None)
+            mock_watcher.start = AsyncMock()
+            mock_watcher.stop = AsyncMock()
             app_state.config_watcher = mock_watcher
 
             with caplog.at_level(logging.WARNING, logger="src.web.app"):
                 async with lifespan(MagicMock()):
                     pass
 
-            mock_watcher.start.assert_not_called()
-            mock_watcher.stop.assert_called_once()
+            mock_watcher.start.assert_not_awaited()
+            mock_watcher.stop.assert_awaited_once()
 
         asyncio.run(_run())
         assert "Config watcher not started" in caplog.text
