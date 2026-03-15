@@ -37,9 +37,10 @@ def _isolate_production_log_handlers() -> None:  # type: ignore[misc]
 
 @pytest.fixture(autouse=True)
 def _isolate_credential_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Isolate credential encryption key to a temp dir.
+    """Isolate credential encryption key to a temp dir for each test.
 
-    Prevents tests from reading/writing ``~/.config/recommendinator/.credential_key``.
+    Overrides RECOMMENDINATOR_KEY_PATH so no test reads from or writes to
+    the real key file alongside the database (default: ``data/.credential_key``).
     """
     monkeypatch.setenv(
         "RECOMMENDINATOR_KEY_PATH",

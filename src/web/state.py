@@ -8,7 +8,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import watchfiles
+
 from src.cli.config import load_config
+from src.storage.credential_migration import migrate_config_credentials
 
 if TYPE_CHECKING:
     from src.conversation.engine import ConversationEngine
@@ -56,8 +59,6 @@ class ConfigWatcher:
 
     async def _watch(self, config_path: Path) -> None:
         """Watch loop that detects config file changes."""
-        import watchfiles
-
         logger.info("Config watcher started for %s", config_path)
         try:
             async for _changes in watchfiles.awatch(config_path):
@@ -126,11 +127,6 @@ def get_ollama_client() -> OllamaClient | None:
     return app_state.ollama_client
 
 
-def get_config_path() -> str | None:
-    """Get configuration file path from app state."""
-    return app_state.config_path
-
-
 def get_memory_manager() -> MemoryManager | None:
     """Get memory manager from app state."""
     return app_state.memory_manager
@@ -152,10 +148,9 @@ def reload_config() -> bool:
 
     try:
         config = load_config(Path(config_path))
-        # Migrate any new sensitive credentials to encrypted DB storage
+        # Migrate any new sensitive credentials to encrypted DB storage.
+        # Mutates config in place: sensitive fields are popped after migration.
         if app_state.storage is not None:
-            from src.storage.credential_migration import migrate_config_credentials
-
             migrate_config_credentials(config, app_state.storage)
         app_state.config = config
         logger.info("Reloaded config from %s", config_path)
