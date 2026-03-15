@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import logging
+import os
 import sqlite3
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from cryptography.fernet import InvalidToken
 
 from src.ingestion.conflict import ConflictStrategy, resolve_conflict
 from src.models.content import (
@@ -17,6 +20,7 @@ from src.models.content import (
     get_enum_value,
 )
 from src.models.user_preferences import UserPreferenceConfig
+from src.storage.encryption import CredentialEncryptor
 from src.storage.schema import (
     ConversationMessageDict,
     CoreMemoryDict,
@@ -29,6 +33,8 @@ from src.storage.schema import (
     get_cached_preference_interpretation,
     get_conversation_history,
     get_core_memories,
+    get_credential,
+    get_credentials_for_source,
     get_enrichment_stats,
     get_enrichment_status,
     get_preference_profile,
@@ -40,6 +46,7 @@ from src.storage.schema import (
     save_cached_preference_interpretation,
     save_conversation_message,
     save_core_memory,
+    save_credential,
     save_preference_profile,
     update_core_memory,
     update_user_settings,
@@ -88,6 +95,7 @@ class StorageManager:
         self.ai_enabled = ai_enabled
         self.conflict_strategy = conflict_strategy
         self.source_priority = source_priority or []
+        self._encryptor = CredentialEncryptor(self._resolve_key_path(sqlite_path))
 
         # Only initialize vector DB if AI is enabled and path provided.
         # Deferred import: chromadb is heavy (~500 MB+) and should not load
@@ -103,6 +111,26 @@ class StorageManager:
                     "Vector DB disabled. Install with: pip install recommendinator[ai]"
                 )
                 self.ai_enabled = False
+
+    @staticmethod
+    def _resolve_key_path(sqlite_path: Path) -> Path:
+        """Determine the credential encryption key file path.
+
+        Uses the ``RECOMMENDINATOR_KEY_PATH`` environment variable if set,
+        otherwise defaults to ``~/.config/recommendinator/.credential_key``.
+        The key is intentionally stored separately from the database so that
+        a database backup or volume mount does not also expose the key.
+
+        Args:
+            sqlite_path: Path to the SQLite database (unused when env var is set).
+
+        Returns:
+            Resolved Path for the key file.
+        """
+        env_path = os.environ.get("RECOMMENDINATOR_KEY_PATH")
+        if env_path:
+            return Path(env_path)
+        return Path.home() / ".config" / "recommendinator" / ".credential_key"
 
     @contextmanager
     def connection(self) -> Generator[sqlite3.Connection, None, None]:
@@ -897,3 +925,72 @@ class StorageManager:
         """
         with self.sqlite_db.connection() as conn:
             return save_preference_profile(conn, user_id, profile_json)
+
+    # Credential methods (encrypted at rest)
+
+    def get_credential(self, user_id: int, source_id: str, key: str) -> str | None:
+        """Get a decrypted credential value.
+
+        Args:
+            user_id: User ID.
+            source_id: Source identifier (e.g. "gog").
+            key: Credential field name (e.g. "refresh_token").
+
+        Returns:
+            Decrypted plaintext value, or None if not found.
+        """
+        with self.sqlite_db.connection() as conn:
+            encrypted = get_credential(conn, user_id, source_id, key)
+        if encrypted is None:
+            return None
+        try:
+            return self._encryptor.decrypt(encrypted)
+        except InvalidToken:
+            logger.error(
+                "Failed to decrypt credential for source=%s key=%s — "
+                "possible key mismatch or data corruption",
+                source_id,
+                key,
+            )
+            return None
+
+    def save_credential(
+        self, user_id: int, source_id: str, key: str, value: str
+    ) -> None:
+        """Encrypt and save a credential value.
+
+        Args:
+            user_id: User ID.
+            source_id: Source identifier.
+            key: Credential field name.
+            value: Plaintext value to encrypt and store.
+        """
+        encrypted = self._encryptor.encrypt(value)
+        with self.sqlite_db.connection() as conn:
+            save_credential(conn, user_id, source_id, key, encrypted)
+
+    def get_credentials_for_source(
+        self, user_id: int, source_id: str
+    ) -> dict[str, str]:
+        """Get all decrypted credentials for a source.
+
+        Args:
+            user_id: User ID.
+            source_id: Source identifier.
+
+        Returns:
+            Dict mapping credential key to decrypted plaintext value.
+        """
+        with self.sqlite_db.connection() as conn:
+            encrypted_map = get_credentials_for_source(conn, user_id, source_id)
+        result: dict[str, str] = {}
+        for k, v in encrypted_map.items():
+            try:
+                result[k] = self._encryptor.decrypt(v)
+            except InvalidToken:
+                logger.error(
+                    "Failed to decrypt credential key=%s for source=%s",
+                    k,
+                    source_id,
+                )
+        return result
