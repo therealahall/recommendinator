@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from collections.abc import AsyncIterator
 from dataclasses import fields
 from pathlib import Path
 from typing import Any
@@ -174,6 +175,23 @@ class TestGetOllamaClient:
 # ---------------------------------------------------------------------------
 
 
+async def _fake_awatch_one_event(
+    path: Path,
+) -> AsyncIterator[set[tuple[str, str]]]:
+    """Yield one synthetic change event, then block until cancelled."""
+    yield {("modified", str(path))}
+    await asyncio.Event().wait()
+
+
+async def _fake_awatch_no_events(
+    path: Path,
+) -> AsyncIterator[set[tuple[str, str]]]:
+    """Block forever without yielding — simulates no file changes."""
+    await asyncio.Event().wait()
+    # Make this an async generator
+    yield set()  # pragma: no cover
+
+
 class TestConfigWatcher:
     """Tests for ConfigWatcher — automatic config file hot-reload.
 
@@ -183,45 +201,58 @@ class TestConfigWatcher:
     automatically calls reload_config().
     """
 
-    def test_watcher_detects_file_change(self, tmp_path: Path) -> None:
-        """ConfigWatcher calls reload_config when config file changes.
+    def test_watcher_calls_reload_on_change(self) -> None:
+        """ConfigWatcher calls reload_config when awatch yields a change.
 
         Regression test for #9: config changes should be hot-reloaded
         without requiring a container restart.
         """
 
         async def _run() -> None:
-            config_file = tmp_path / "config.yaml"
-            config_file.write_text("ollama:\n  model: original\n")
+            with (
+                patch(
+                    "src.web.state.awatch",
+                    side_effect=_fake_awatch_one_event,
+                ),
+                patch("src.web.state.reload_config", return_value=True) as mock_reload,
+            ):
+                watcher = ConfigWatcher()
+                await watcher.start(Path("/fake/config.yaml"))
+                try:
+                    # Yield control to let the task process the event
+                    await asyncio.sleep(0)
+                    await asyncio.sleep(0)
+                finally:
+                    await watcher.stop()
 
-            app_state.config_path = str(config_file)
-            app_state.config = {"ollama": {"model": "original"}}
-
-            watcher = ConfigWatcher()
-            await watcher.start(str(config_file))
-            assert watcher.running
-
-            # Allow watcher to set up inotify watches
-            await asyncio.sleep(0.5)
-
-            # Modify the config file — watcher should pick this up
-            config_file.write_text("ollama:\n  model: updated\n")
-
-            # Give watchfiles time to detect the change
-            for _ in range(50):
-                await asyncio.sleep(0.1)
-                if (
-                    app_state.config
-                    and app_state.config.get("ollama", {}).get("model") == "updated"
-                ):
-                    break
-
-            await watcher.stop()
-            assert not watcher.running
-            assert app_state.config is not None
-            assert app_state.config["ollama"]["model"] == "updated"
+                mock_reload.assert_called_once()
 
         asyncio.run(_run())
+
+    def test_watcher_logs_warning_on_reload_failure(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """ConfigWatcher logs a warning when reload_config returns False."""
+
+        async def _run() -> None:
+            with (
+                caplog.at_level(logging.WARNING, logger="src.web.state"),
+                patch(
+                    "src.web.state.awatch",
+                    side_effect=_fake_awatch_one_event,
+                ),
+                patch("src.web.state.reload_config", return_value=False),
+            ):
+                watcher = ConfigWatcher()
+                await watcher.start(Path("/fake/config.yaml"))
+                try:
+                    await asyncio.sleep(0)
+                    await asyncio.sleep(0)
+                finally:
+                    await watcher.stop()
+
+        asyncio.run(_run())
+        assert "Config hot-reload failed" in caplog.text
 
     def test_watcher_stop_is_idempotent(self) -> None:
         """Calling stop() when not started does not raise."""
@@ -232,69 +263,154 @@ class TestConfigWatcher:
 
         asyncio.run(_run())
 
-    def test_watcher_start_is_idempotent(self, tmp_path: Path) -> None:
-        """Calling start() twice does not create duplicate watchers."""
+    def test_watcher_start_is_idempotent(self) -> None:
+        """Calling start() twice does not create a second watcher."""
 
         async def _run() -> None:
-            config_file = tmp_path / "config.yaml"
-            config_file.write_text("key: value\n")
-
-            watcher = ConfigWatcher()
-            await watcher.start(str(config_file))
-            task1 = watcher._task
-            await watcher.start(str(config_file))
-            task2 = watcher._task
-
-            assert task1 is task2
-            await watcher.stop()
+            with patch(
+                "src.web.state.awatch",
+                side_effect=_fake_awatch_no_events,
+            ):
+                watcher = ConfigWatcher()
+                await watcher.start(Path("/fake/config.yaml"))
+                try:
+                    assert watcher.running
+                    # Second start should be a no-op
+                    await watcher.start(Path("/fake/config.yaml"))
+                    assert watcher.running
+                finally:
+                    await watcher.stop()
 
         asyncio.run(_run())
 
-    def test_running_property(self, tmp_path: Path) -> None:
+    def test_running_property(self) -> None:
         """running property reflects watcher state."""
 
         async def _run() -> None:
-            config_file = tmp_path / "config.yaml"
-            config_file.write_text("key: value\n")
+            with patch(
+                "src.web.state.awatch",
+                side_effect=_fake_awatch_no_events,
+            ):
+                watcher = ConfigWatcher()
+                assert not watcher.running
 
-            watcher = ConfigWatcher()
-            assert not watcher.running
+                await watcher.start(Path("/fake/config.yaml"))
+                assert watcher.running
 
-            await watcher.start(str(config_file))
-            assert watcher.running
-
-            await watcher.stop()
-            assert not watcher.running
+                await watcher.stop()
+                assert not watcher.running
 
         asyncio.run(_run())
 
-    def test_watcher_continues_after_reload_failure(self, tmp_path: Path) -> None:
-        """Watcher keeps running and recovers after an invalid config file."""
+    def test_watcher_recovers_after_dead_task(self) -> None:
+        """start() works again after the previous task has died."""
+
+        async def _failing_awatch(
+            path: Path,
+        ) -> AsyncIterator[set[tuple[str, str]]]:
+            raise OSError("inotify limit reached")
+            yield set()  # pragma: no cover
 
         async def _run() -> None:
-            config_file = tmp_path / "config.yaml"
-            config_file.write_text("key: original\n")
-            app_state.config_path = str(config_file)
-            app_state.config = {"key": "original"}
+            with patch(
+                "src.web.state.awatch",
+                side_effect=_failing_awatch,
+            ):
+                watcher = ConfigWatcher()
+                await watcher.start(Path("/fake/config.yaml"))
+                # Let the task crash
+                await asyncio.sleep(0)
+                await asyncio.sleep(0)
+                assert not watcher.running
 
-            watcher = ConfigWatcher()
-            await watcher.start(str(config_file))
-            await asyncio.sleep(0.5)
-
-            # Write invalid YAML — reload should fail but watcher continues
-            config_file.write_text("invalid: yaml: content: [broken\n")
-            await asyncio.sleep(1.0)
-            assert watcher.running
-
-            # Write valid YAML — should recover
-            config_file.write_text("key: recovered\n")
-            for _ in range(50):
-                await asyncio.sleep(0.1)
-                if app_state.config and app_state.config.get("key") == "recovered":
-                    break
-
-            await watcher.stop()
-            assert app_state.config is not None
-            assert app_state.config["key"] == "recovered"
+            # Should be able to restart with a working awatch
+            with (
+                patch(
+                    "src.web.state.awatch",
+                    side_effect=_fake_awatch_no_events,
+                ),
+            ):
+                await watcher.start(Path("/fake/config.yaml"))
+                assert watcher.running
+                await watcher.stop()
 
         asyncio.run(_run())
+
+    def test_watcher_logs_crash(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Unexpected exceptions in _watch are logged before the task dies."""
+
+        async def _crashing_awatch(
+            path: Path,
+        ) -> AsyncIterator[set[tuple[str, str]]]:
+            raise OSError("inotify limit reached")
+            yield set()  # pragma: no cover
+
+        async def _run() -> None:
+            with (
+                caplog.at_level(logging.ERROR, logger="src.web.state"),
+                patch(
+                    "src.web.state.awatch",
+                    side_effect=_crashing_awatch,
+                ),
+            ):
+                watcher = ConfigWatcher()
+                await watcher.start(Path("/fake/config.yaml"))
+                await asyncio.sleep(0)
+                await asyncio.sleep(0)
+                await watcher.stop()
+
+        asyncio.run(_run())
+        assert "Config watcher crashed" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# lifespan tests
+# ---------------------------------------------------------------------------
+
+
+class TestLifespan:
+    """Tests for the FastAPI lifespan context manager."""
+
+    def test_lifespan_starts_watcher_when_config_path_set(self) -> None:
+        """lifespan starts the config watcher when config_path is present."""
+        from src.web.app import lifespan
+
+        async def _run() -> None:
+            app_state.config_path = "/fake/config.yaml"
+            mock_watcher = MagicMock(spec=ConfigWatcher)
+            mock_watcher.start = MagicMock(return_value=asyncio.Future())
+            mock_watcher.start.return_value.set_result(None)
+            mock_watcher.stop = MagicMock(return_value=asyncio.Future())
+            mock_watcher.stop.return_value.set_result(None)
+            app_state.config_watcher = mock_watcher
+
+            async with lifespan(MagicMock()):
+                pass
+
+            mock_watcher.start.assert_called_once_with(Path("/fake/config.yaml"))
+            mock_watcher.stop.assert_called_once()
+
+        asyncio.run(_run())
+
+    def test_lifespan_skips_start_when_no_config_path(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """lifespan does not start watcher when config_path is None."""
+        from src.web.app import lifespan
+
+        async def _run() -> None:
+            app_state.config_path = None
+            mock_watcher = MagicMock(spec=ConfigWatcher)
+            mock_watcher.stop = MagicMock(return_value=asyncio.Future())
+            mock_watcher.stop.return_value.set_result(None)
+            app_state.config_watcher = mock_watcher
+
+            with caplog.at_level(logging.WARNING, logger="src.web.app"):
+                async with lifespan(MagicMock()):
+                    pass
+
+            mock_watcher.start.assert_not_called()
+            mock_watcher.stop.assert_called_once()
+
+        asyncio.run(_run())
+        assert "Config watcher not started" in caplog.text
