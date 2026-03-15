@@ -2040,6 +2040,7 @@ dependencies = [
     { name = "requests" },
     { name = "tabulate" },
     { name = "uvicorn", extra = ["standard"] },
+    { name = "watchfiles" },
 ]
 
 [package.optional-dependencies]
@@ -2086,6 +2087,7 @@ requires-dist = [
     { name = "types-requests", marker = "extra == 'dev'", specifier = ">=2.31.0" },
     { name = "types-tabulate", marker = "extra == 'dev'", specifier = ">=0.9.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.24.0,<1.0.0" },
+    { name = "watchfiles", specifier = ">=0.21.0,<2.0.0" },
 ]
 provides-extras = ["ai", "dev"]
 
