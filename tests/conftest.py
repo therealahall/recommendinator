@@ -1,6 +1,7 @@
 """Root test configuration — prevents tests from polluting production logs."""
 
 import logging
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -35,14 +36,12 @@ def _isolate_production_log_handlers() -> None:  # type: ignore[misc]
 
 
 @pytest.fixture(autouse=True)
-def _isolate_credential_key(
-    tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def _isolate_credential_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Isolate credential encryption key to a temp dir.
 
     Prevents tests from reading/writing ``~/.config/recommendinator/.credential_key``.
     """
     monkeypatch.setenv(
         "RECOMMENDINATOR_KEY_PATH",
-        str(tmp_path / ".credential_key"),  # type: ignore[operator]
+        str(tmp_path / ".credential_key"),
     )
