@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from watchfiles import awatch
 
 from src.cli.config import load_config
 
@@ -20,6 +23,54 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class ConfigWatcher:
+    """Watches the config file for changes and triggers hot-reload."""
+
+    def __init__(self) -> None:
+        self._task: asyncio.Task[None] | None = None
+
+    async def start(self, config_path: str) -> None:
+        """Start watching the config file for changes.
+
+        Args:
+            config_path: Absolute path to the config file to watch.
+        """
+        if self._task is not None:
+            return
+        self._task = asyncio.create_task(self._watch(config_path))
+
+    async def stop(self) -> None:
+        """Stop watching for config changes."""
+        if self._task is not None:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+            self._task = None
+
+    @property
+    def running(self) -> bool:
+        """Whether the watcher is currently running."""
+        return self._task is not None and not self._task.done()
+
+    async def _watch(self, config_path: str) -> None:
+        """Watch loop that detects config file changes."""
+        path = Path(config_path)
+        logger.info("Config watcher started for %s", config_path)
+        try:
+            async for _changes in awatch(path):
+                logger.info("Config file change detected, reloading...")
+                success = reload_config()
+                if success:
+                    logger.info("Config hot-reloaded successfully")
+                else:
+                    logger.warning("Config hot-reload failed")
+        except asyncio.CancelledError:
+            logger.info("Config watcher stopped")
+            raise
+
+
 @dataclass
 class AppState:
     """Typed application state container."""
@@ -32,6 +83,7 @@ class AppState:
     ollama_client: OllamaClient | None = None
     conversation_engine: ConversationEngine | None = None
     memory_manager: MemoryManager | None = None
+    config_watcher: ConfigWatcher = field(default_factory=ConfigWatcher)
 
 
 # Global app state

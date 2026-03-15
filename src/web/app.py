@@ -3,6 +3,8 @@
 import logging
 import os
 import sys
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request, Response
@@ -80,6 +82,15 @@ def configure_logging(config: dict) -> None:
 _app: FastAPI | None = None
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Manage application lifecycle — start/stop config file watcher."""
+    if app_state.config_path:
+        await app_state.config_watcher.start(app_state.config_path)
+    yield
+    await app_state.config_watcher.stop()
+
+
 def create_app(config_path: Path | None = None) -> FastAPI:
     """Create and configure FastAPI application.
 
@@ -151,6 +162,7 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         version=APP_VERSION,
         docs_url="/docs" if debug_mode else None,
         redoc_url="/redoc" if debug_mode else None,
+        lifespan=lifespan,
     )
 
     # Configure CORS (default to localhost only)
