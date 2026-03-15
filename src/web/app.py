@@ -22,6 +22,7 @@ from src.cli.config import (
 )
 from src.conversation.engine import create_conversation_engine
 from src.conversation.memory import MemoryManager
+from src.storage.credential_migration import migrate_config_credentials
 from src.web.api import APP_VERSION
 from src.web.api import router as api_router
 from src.web.chat_api import router as chat_router
@@ -127,6 +128,9 @@ def create_app(config_path: Path | None = None) -> FastAPI:
             actual_config_path = resolve_config_path(config_path)
         except FileNotFoundError:
             actual_config_path = config_path or Path("config/example.yaml")
+
+        # Migrate sensitive config credentials to encrypted DB storage
+        migrate_config_credentials(config, storage)
 
         # Store in app state
         app_state.config = config
