@@ -29,13 +29,13 @@ class ConfigWatcher:
     def __init__(self) -> None:
         self._task: asyncio.Task[None] | None = None
 
-    async def start(self, config_path: str) -> None:
+    async def start(self, config_path: Path) -> None:
         """Start watching the config file for changes.
 
         Args:
-            config_path: Absolute path to the config file to watch.
+            config_path: Path to the config file to watch.
         """
-        if self._task is not None:
+        if self.running:
             return
         self._task = asyncio.create_task(self._watch(config_path))
 
@@ -54,12 +54,11 @@ class ConfigWatcher:
         """Whether the watcher is currently running."""
         return self._task is not None and not self._task.done()
 
-    async def _watch(self, config_path: str) -> None:
+    async def _watch(self, config_path: Path) -> None:
         """Watch loop that detects config file changes."""
-        path = Path(config_path)
         logger.info("Config watcher started for %s", config_path)
         try:
-            async for _changes in awatch(path):
+            async for _changes in awatch(config_path):
                 logger.info("Config file change detected, reloading...")
                 success = reload_config()
                 if success:
@@ -69,6 +68,11 @@ class ConfigWatcher:
         except asyncio.CancelledError:
             logger.info("Config watcher stopped")
             raise
+        except Exception:
+            logger.exception(
+                "Config watcher crashed for %s — hot-reload disabled",
+                config_path,
+            )
 
 
 @dataclass

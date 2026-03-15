@@ -86,7 +86,12 @@ _app: FastAPI | None = None
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Manage application lifecycle — start/stop config file watcher."""
     if app_state.config_path:
-        await app_state.config_watcher.start(app_state.config_path)
+        await app_state.config_watcher.start(Path(app_state.config_path))
+    else:
+        logger.warning(
+            "Config watcher not started: no config_path in app_state. "
+            "Hot-reload is disabled."
+        )
     yield
     await app_state.config_watcher.stop()
 
