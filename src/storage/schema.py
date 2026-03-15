@@ -337,6 +337,20 @@ def create_schema(conn: sqlite3.Connection) -> None:
     """
     )
 
+    # Credentials table for encrypted source credentials (API keys, tokens)
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS credentials (
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            source_id TEXT NOT NULL,
+            credential_key TEXT NOT NULL,
+            credential_value TEXT NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id, source_id, credential_key)
+        )
+        """
+    )
+
     # Indexes for conversation tables
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_core_memories_user " "ON core_memories(user_id)"
@@ -1331,3 +1345,87 @@ def save_preference_profile(
     )
     conn.commit()
     return cursor.lastrowid  # type: ignore
+
+
+# Credential functions
+
+
+def get_credential(
+    conn: sqlite3.Connection,
+    user_id: int,
+    source_id: str,
+    credential_key: str,
+) -> str | None:
+    """Get a single credential value (raw/encrypted).
+
+    Args:
+        conn: SQLite database connection
+        user_id: User ID
+        source_id: Source identifier (e.g. "gog", "steam")
+        credential_key: Credential field name (e.g. "refresh_token")
+
+    Returns:
+        Raw (encrypted) credential value, or None if not found.
+    """
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT credential_value FROM credentials "
+        "WHERE user_id = ? AND source_id = ? AND credential_key = ?",
+        (user_id, source_id, credential_key),
+    )
+    row = cursor.fetchone()
+    return row[0] if row else None
+
+
+def save_credential(
+    conn: sqlite3.Connection,
+    user_id: int,
+    source_id: str,
+    credential_key: str,
+    credential_value: str,
+) -> None:
+    """Save or update a credential (UPSERT).
+
+    Args:
+        conn: SQLite database connection
+        user_id: User ID
+        source_id: Source identifier
+        credential_key: Credential field name
+        credential_value: Value to store (should be pre-encrypted)
+    """
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO credentials (user_id, source_id, credential_key, credential_value, updated_at)
+        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(user_id, source_id, credential_key) DO UPDATE SET
+            credential_value = excluded.credential_value,
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        (user_id, source_id, credential_key, credential_value),
+    )
+    conn.commit()
+
+
+def get_credentials_for_source(
+    conn: sqlite3.Connection,
+    user_id: int,
+    source_id: str,
+) -> dict[str, str]:
+    """Get all credential key-value pairs for a source (raw/encrypted).
+
+    Args:
+        conn: SQLite database connection
+        user_id: User ID
+        source_id: Source identifier
+
+    Returns:
+        Dict mapping credential_key to raw (encrypted) credential_value.
+    """
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT credential_key, credential_value FROM credentials "
+        "WHERE user_id = ? AND source_id = ?",
+        (user_id, source_id),
+    )
+    return {row[0]: row[1] for row in cursor.fetchall()}
