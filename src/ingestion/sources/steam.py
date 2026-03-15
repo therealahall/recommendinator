@@ -212,9 +212,9 @@ class SteamPlugin(SourcePlugin):
     def transform_config(cls, raw_config: dict[str, Any]) -> dict[str, Any]:
         """Normalise Steam YAML config (strip whitespace, coerce empty to None)."""
         return {
-            "api_key": raw_config.get("api_key", "").strip(),
-            "steam_id": raw_config.get("steam_id", "").strip() or None,
-            "vanity_url": raw_config.get("vanity_url", "").strip() or None,
+            "api_key": (raw_config.get("api_key") or "").strip(),
+            "steam_id": (raw_config.get("steam_id") or "").strip() or None,
+            "vanity_url": (raw_config.get("vanity_url") or "").strip() or None,
             "min_playtime_minutes": raw_config.get("min_playtime_minutes", 0),
         }
 
@@ -279,9 +279,9 @@ class SteamPlugin(SourcePlugin):
         Raises:
             SourceError: If the Steam API returns an error
         """
-        api_key = config.get("api_key", "").strip()
-        steam_id = config.get("steam_id", "").strip() or None
-        vanity_url = config.get("vanity_url", "").strip() or None
+        api_key = (config.get("api_key") or "").strip()
+        steam_id = (config.get("steam_id") or "").strip() or None
+        vanity_url = (config.get("vanity_url") or "").strip() or None
         min_playtime_minutes = config.get("min_playtime_minutes", 0)
 
         # Adapter: Steam internal (current, total, phase) -> plugin (items, total, item)
