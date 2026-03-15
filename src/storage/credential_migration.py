@@ -35,16 +35,30 @@ def migrate_config_credentials(
     registry = get_registry()
     inputs_config = config.get("inputs", {})
 
+    if not inputs_config:
+        logger.debug("No inputs in config, skipping credential migration")
+        return
+
     for source_id, entry in inputs_config.items():
         if not isinstance(entry, dict):
             continue
 
         plugin_name = entry.get("plugin")
         if not plugin_name:
+            logger.debug(
+                "Input '%s' has no 'plugin' field, skipping credential migration",
+                source_id,
+            )
             continue
 
         plugin = registry.get_plugin(plugin_name)
         if plugin is None:
+            logger.debug(
+                "Input '%s' references unknown plugin '%s', "
+                "skipping credential migration",
+                source_id,
+                plugin_name,
+            )
             continue
 
         for field in plugin.get_config_schema():
@@ -53,13 +67,20 @@ def migrate_config_credentials(
 
             config_value = entry.get(field.name)
             if not config_value or not str(config_value).strip():
+                logger.debug("Skipping empty %s.%s credential", source_id, field.name)
                 continue
 
-            # Only migrate if no DB entry exists yet
+            # Check if a readable DB entry already exists
             existing = storage.get_credential(user_id, source_id, field.name)
             if existing is not None:
+                logger.debug(
+                    "DB credential %s.%s already exists, skipping",
+                    source_id,
+                    field.name,
+                )
                 continue
 
+            # Save (or re-encrypt if stale row exists with a lost key)
             storage.save_credential(user_id, source_id, field.name, str(config_value))
             logger.info("Migrated %s.%s credential to database", source_id, field.name)
 
