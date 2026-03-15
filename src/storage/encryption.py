@@ -38,7 +38,7 @@ class CredentialEncryptor:
             key = self._key_path.read_bytes().strip()
         else:
             key = Fernet.generate_key()
-            self._key_path.parent.mkdir(parents=True, exist_ok=True)
+            self._key_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             # Write with restrictive permissions: owner read/write only
             fd = os.open(
                 str(self._key_path),
