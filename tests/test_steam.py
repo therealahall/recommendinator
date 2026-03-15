@@ -534,7 +534,7 @@ class TestSteamPluginValidation:
         assert len(errors) == 2
 
 
-class TestSteamNoneConfigValues:
+class TestSteamNoneConfigValuesRegression:
     """Regression tests for None values in Steam config causing AttributeError.
 
     Bug: When YAML config has keys with no value (e.g., `steam_id:` with no value),
@@ -544,20 +544,22 @@ class TestSteamNoneConfigValues:
     'NoneType' object has no attribute 'strip'.
 
     Root cause: Using .get(key, "") instead of (config.get(key) or "").
-    Fix: Use (value or "") pattern before .strip() in transform_config and fetch.
+    Fix: Use (value or "") pattern before .strip() in transform_config. The fetch()
+    method delegates normalization to transform_config() to avoid duplication.
 
     Reported in: https://github.com/therealahall/recommendinator/issues/2
     """
 
-    def test_transform_config_none_steam_id(self) -> None:
+    def test_transform_config_none_steam_id_regression(self) -> None:
         """transform_config handles None steam_id without raising."""
         result = SteamPlugin.transform_config(
             {"api_key": "test_key", "steam_id": None, "vanity_url": "testuser"}
         )
         assert result["steam_id"] is None
         assert result["vanity_url"] == "testuser"
+        assert result["api_key"] == "test_key"
 
-    def test_transform_config_none_vanity_url(self) -> None:
+    def test_transform_config_none_vanity_url_regression(self) -> None:
         """transform_config handles None vanity_url without raising."""
         result = SteamPlugin.transform_config(
             {"api_key": "test_key", "steam_id": "123", "vanity_url": None}
@@ -565,12 +567,20 @@ class TestSteamNoneConfigValues:
         assert result["steam_id"] == "123"
         assert result["vanity_url"] is None
 
-    def test_transform_config_none_api_key(self) -> None:
-        """transform_config handles None api_key without raising."""
+    def test_transform_config_none_api_key_regression(self) -> None:
+        """transform_config coerces None api_key to "" without raising.
+
+        The resulting config is invalid and will be rejected by validate_config.
+        This tests that the coercion itself does not crash.
+        """
         result = SteamPlugin.transform_config({"api_key": None, "steam_id": "123"})
         assert result["api_key"] == ""
+        # Confirm the transformed config correctly fails validation
+        plugin = SteamPlugin()
+        errors = plugin.validate_config(result)
+        assert any("api_key" in error for error in errors)
 
-    def test_transform_config_all_none(self) -> None:
+    def test_transform_config_all_none_regression(self) -> None:
         """transform_config handles all None values without raising."""
         result = SteamPlugin.transform_config(
             {"api_key": None, "steam_id": None, "vanity_url": None}
@@ -582,34 +592,31 @@ class TestSteamNoneConfigValues:
     @patch("src.ingestion.sources.steam.get_steam_id_from_vanity_url")
     @patch("src.ingestion.sources.steam.get_game_details")
     @patch("src.ingestion.sources.steam.get_owned_games")
-    def test_fetch_none_config_values(
+    def test_fetch_pipeline_none_values_regression(
         self,
         mock_get_games: Mock,
         mock_get_details: Mock,
         mock_resolve_vanity: Mock,
     ) -> None:
-        """fetch() handles None config values without AttributeError.
+        """Full pipeline: None YAML values survive transform_config -> fetch.
 
-        Simulates a first-time sync where YAML has empty values like:
-            steam:
-                api_key: "valid_key"
-                steam_id:
-                vanity_url: testuser
+        Simulates a YAML config with a blank steam_id field (parsed as None
+        by PyYAML). The config is passed through transform_config then fetch,
+        matching the real pipeline path.
         """
         mock_resolve_vanity.return_value = "76561198000000000"
         mock_get_games.return_value = [
             {"appid": 1, "name": "Game", "playtime_forever": 60}
         ]
-        mock_get_details.return_value = {}
+        mock_get_details.return_value = {1: {"name": "Game"}}
 
         plugin = SteamPlugin()
-        # steam_id is None (empty YAML value), vanity_url provided
-        items = list(
-            plugin.fetch(
-                {"api_key": "test_key", "steam_id": None, "vanity_url": "testuser"}
-            )
-        )
+        raw_config = {"api_key": "test_key", "steam_id": None, "vanity_url": "testuser"}
+        transformed = SteamPlugin.transform_config(raw_config)
+        items = list(plugin.fetch(transformed))
+
         assert len(items) == 1
+        mock_resolve_vanity.assert_called_once_with("test_key", "testuser")
 
 
 class TestSteamPluginFetch:
