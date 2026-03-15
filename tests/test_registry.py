@@ -1,5 +1,7 @@
 """Tests for plugin registry."""
 
+import logging
+import types
 from collections.abc import Iterator
 from typing import Any
 
@@ -7,6 +9,7 @@ import pytest
 
 from src.ingestion.plugin_base import ConfigField, SourcePlugin
 from src.ingestion.registry import PluginRegistry
+from src.ingestion.sources.arr_base import ArrPlugin
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 
 
@@ -101,9 +104,7 @@ class TestPluginRegistry:
 
     def test_register_plugin(self, clean_registry: PluginRegistry) -> None:
         """Test registering a plugin."""
-        clean_registry._discovered = (
-            True  # Prevent auto-discovery from clearing plugins
-        )
+        clean_registry._discovered = True  # Prevent auto-discovery
         plugin = FakeBookPlugin()
         clean_registry.register(plugin)
 
@@ -119,14 +120,13 @@ class TestPluginRegistry:
 
     def test_get_plugin_not_found(self, clean_registry: PluginRegistry) -> None:
         """Test getting a non-existent plugin returns None."""
-        # Prevent auto-discovery from finding real plugins
         clean_registry._discovered = True
 
         assert clean_registry.get_plugin("nonexistent") is None
 
     def test_get_all_plugins(self, clean_registry: PluginRegistry) -> None:
         """Test getting all registered plugins."""
-        clean_registry._discovered = True  # Skip auto-discovery
+        clean_registry._discovered = True
 
         clean_registry.register(FakeBookPlugin())
         clean_registry.register(FakeGamePlugin())
@@ -150,9 +150,7 @@ class TestPluginRegistry:
 
     def test_unregister_plugin(self, clean_registry: PluginRegistry) -> None:
         """Test unregistering a plugin."""
-        clean_registry._discovered = (
-            True  # Prevent auto-discovery from clearing plugins
-        )
+        clean_registry._discovered = True  # Prevent auto-discovery
         clean_registry.register(FakeBookPlugin())
         assert clean_registry.get_plugin("fake_books") is not None
 
@@ -336,17 +334,12 @@ class TestPluginRegistryModuleDiscovery:
 
     def test_register_plugins_from_module(self, clean_registry: PluginRegistry) -> None:
         """Test discovering plugins from a module object."""
-        import types
-
-        # Create a fake module with a plugin class
         fake_module = types.ModuleType("fake_module")
         fake_module.FakeBookPlugin = FakeBookPlugin  # type: ignore[attr-defined]
         fake_module.FakeGamePlugin = FakeGamePlugin  # type: ignore[attr-defined]
         fake_module.not_a_plugin = "just a string"  # type: ignore[attr-defined]
 
-        clean_registry._discovered = (
-            True  # Prevent auto-discovery from clearing plugins
-        )
+        clean_registry._discovered = True  # Prevent auto-discovery
         clean_registry._register_plugins_from_module(fake_module, "test")
 
         all_plugins = clean_registry.get_all_plugins()
@@ -357,15 +350,11 @@ class TestPluginRegistryModuleDiscovery:
         self, clean_registry: PluginRegistry
     ) -> None:
         """Test that SourcePlugin base class itself is not registered."""
-        import types
-
         fake_module = types.ModuleType("fake_module")
         fake_module.SourcePlugin = SourcePlugin  # type: ignore[attr-defined]
         fake_module.FakeBookPlugin = FakeBookPlugin  # type: ignore[attr-defined]
 
-        clean_registry._discovered = (
-            True  # Prevent auto-discovery from clearing plugins
-        )
+        clean_registry._discovered = True  # Prevent auto-discovery
         clean_registry._register_plugins_from_module(fake_module, "test")
 
         all_plugins = clean_registry.get_all_plugins()
@@ -376,14 +365,84 @@ class TestPluginRegistryModuleDiscovery:
         self, clean_registry: PluginRegistry
     ) -> None:
         """Test that attributes starting with _ are skipped."""
-        import types
-
         fake_module = types.ModuleType("fake_module")
         fake_module._PrivatePlugin = FakeBookPlugin  # type: ignore[attr-defined]
 
-        clean_registry._discovered = (
-            True  # Prevent auto-discovery from clearing plugins
-        )
+        clean_registry._discovered = True  # Prevent auto-discovery
         clean_registry._register_plugins_from_module(fake_module, "test")
 
         assert len(clean_registry.get_all_plugins()) == 0
+
+
+class TestPluginRegistryAbstractClassRegression:
+    """Regression tests for abstract class handling in plugin discovery.
+
+    Reported in: https://github.com/therealahall/recommendinator/issues/7
+    """
+
+    def test_skips_abstract_intermediate_class_regression(
+        self, clean_registry: PluginRegistry, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Test that abstract intermediate base classes are skipped silently.
+
+        Bug: The registry tried to instantiate ArrPlugin (an abstract base class
+        for Radarr/Sonarr) because it only filtered out SourcePlugin itself.
+        This caused 'Can't instantiate abstract class ArrPlugin' warnings on
+        every module that imported or defined ArrPlugin.
+
+        Root cause: _register_plugins_from_module checked `attr is not SourcePlugin`
+        but didn't check for other abstract classes in the hierarchy.
+
+        Fix: Use inspect.isabstract() to skip any abstract class, not just SourcePlugin.
+
+        Reported in: https://github.com/therealahall/recommendinator/issues/7
+        """
+        fake_module = types.ModuleType("fake_module")
+        fake_module.ArrPlugin = ArrPlugin  # type: ignore[attr-defined]
+        fake_module.FakeBookPlugin = FakeBookPlugin  # type: ignore[attr-defined]
+
+        clean_registry._discovered = True  # Prevent auto-discovery
+
+        with caplog.at_level(logging.WARNING, logger="src.ingestion.registry"):
+            clean_registry._register_plugins_from_module(fake_module, "test")
+
+        all_plugins = clean_registry.get_all_plugins()
+        assert (
+            "fake_books" in all_plugins
+        ), f"Expected fake_books to be registered, got: {list(all_plugins.keys())}"
+        assert (
+            len(all_plugins) == 1
+        ), f"Expected exactly 1 plugin, got {len(all_plugins)}: {list(all_plugins.keys())}"
+        warning_records = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert (
+            warning_records == []
+        ), f"Expected no warnings, got: {[r.message for r in warning_records]}"
+
+    def test_skips_module_with_only_abstract_classes_regression(
+        self, clean_registry: PluginRegistry, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Test that a module containing only abstract classes registers nothing silently.
+
+        Edge case for issue #7: arr_base.py contains only ArrPlugin (abstract)
+        and no concrete plugins. The registry should register zero plugins and
+        emit zero warnings.
+
+        Reported in: https://github.com/therealahall/recommendinator/issues/7
+        """
+        fake_module = types.ModuleType("fake_module")
+        fake_module.ArrPlugin = ArrPlugin  # type: ignore[attr-defined]
+        fake_module.SourcePlugin = SourcePlugin  # type: ignore[attr-defined]
+
+        clean_registry._discovered = True  # Prevent auto-discovery
+
+        with caplog.at_level(logging.WARNING, logger="src.ingestion.registry"):
+            clean_registry._register_plugins_from_module(fake_module, "test")
+
+        all_plugins = clean_registry.get_all_plugins()
+        assert (
+            len(all_plugins) == 0
+        ), f"Expected no plugins, got: {list(all_plugins.keys())}"
+        warning_records = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert (
+            warning_records == []
+        ), f"Expected no warnings, got: {[r.message for r in warning_records]}"
