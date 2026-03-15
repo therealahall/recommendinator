@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import logging
 import os
 import sqlite3
@@ -9,8 +10,6 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-
-from cryptography.fernet import InvalidToken
 
 from src.ingestion.conflict import ConflictStrategy, resolve_conflict
 from src.models.content import (
@@ -20,7 +19,6 @@ from src.models.content import (
     get_enum_value,
 )
 from src.models.user_preferences import UserPreferenceConfig
-from src.storage.encryption import CredentialEncryptor
 from src.storage.schema import (
     ConversationMessageDict,
     CoreMemoryDict,
@@ -61,6 +59,7 @@ from src.storage.sqlite_db import VALID_SORT_OPTIONS as VALID_SORT_OPTIONS
 from src.storage.sqlite_db import SQLiteDB
 
 if TYPE_CHECKING:
+    from src.storage.encryption import CredentialEncryptor
     from src.storage.vector_db import VectorDB
 
 logger = logging.getLogger(__name__)
@@ -97,7 +96,7 @@ class StorageManager:
         self.ai_enabled = ai_enabled
         self.conflict_strategy = conflict_strategy
         self.source_priority = source_priority or []
-        self._encryptor = CredentialEncryptor(self._resolve_key_path(sqlite_path))
+        self._credential_key_path = self._resolve_key_path(sqlite_path)
 
         # Only initialize vector DB if AI is enabled and path provided.
         # Deferred import: chromadb is heavy (~500 MB+) and should not load
@@ -136,6 +135,17 @@ class StorageManager:
         if env_path:
             return Path(env_path)
         return Path(sqlite_path).parent / ".credential_key"
+
+    @functools.cached_property
+    def _encryptor(self) -> CredentialEncryptor:
+        """Lazy-loaded credential encryptor.
+
+        Deferred so that StorageManager construction does not touch the
+        filesystem or import cryptography until credentials are accessed.
+        """
+        from src.storage.encryption import CredentialEncryptor
+
+        return CredentialEncryptor(self._credential_key_path)
 
     @contextmanager
     def connection(self) -> Generator[sqlite3.Connection, None, None]:
@@ -948,6 +958,8 @@ class StorageManager:
             encrypted = get_credential(conn, user_id, source_id, key)
         if encrypted is None:
             return None
+        from cryptography.fernet import InvalidToken
+
         try:
             return self._encryptor.decrypt(encrypted)
         except InvalidToken:
@@ -988,6 +1000,8 @@ class StorageManager:
         """
         with self.sqlite_db.connection() as conn:
             encrypted_map = get_credentials_for_source(conn, user_id, source_id)
+        from cryptography.fernet import InvalidToken
+
         result: dict[str, str] = {}
         for k, v in encrypted_map.items():
             try:
