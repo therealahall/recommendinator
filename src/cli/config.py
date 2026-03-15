@@ -138,7 +138,7 @@ def create_llm_components(
         return None, None, None
 
     ollama_config = config.get("ollama", {})
-    base_url = ollama_config.get("base_url", "http://localhost:11434")
+    base_url = ollama_config.get("base_url", "http://ollama:11434")
     model = ollama_config.get("model", "mistral:7b")
     embedding_model = ollama_config.get("embedding_model", "nomic-embed-text")
     conversation_model = ollama_config.get("conversation_model", "")
