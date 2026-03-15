@@ -74,7 +74,7 @@ inputs/.*.swp
 inputs/.*.swo
 
 # Credential encryption keys (never commit)
-.credential_key
+**/.credential_key
 
 # Config (keep example, ignore actual)
 config/*.yaml
