@@ -193,6 +193,14 @@ async def _fake_awatch_no_events(
     yield set()  # pragma: no cover
 
 
+async def _fake_awatch_raising(
+    path: Path,
+) -> AsyncIterator[set[tuple[str, str]]]:
+    """Immediately raise OSError — simulates inotify limit or permission error."""
+    raise OSError("inotify limit reached")
+    yield set()  # pragma: no cover
+
+
 class TestConfigWatcher:
     """Tests for ConfigWatcher — automatic config file hot-reload.
 
@@ -306,16 +314,10 @@ class TestConfigWatcher:
     def test_watcher_recovers_after_dead_task(self) -> None:
         """start() works again after the previous task has died."""
 
-        async def _failing_awatch(
-            path: Path,
-        ) -> AsyncIterator[set[tuple[str, str]]]:
-            raise OSError("inotify limit reached")
-            yield set()  # pragma: no cover
-
         async def _run() -> None:
             with patch(
                 _AWATCH_PATCH_TARGET,
-                side_effect=_failing_awatch,
+                side_effect=_fake_awatch_raising,
             ):
                 watcher = ConfigWatcher()
                 await watcher.start(Path("/fake/config.yaml"))
@@ -338,18 +340,12 @@ class TestConfigWatcher:
     def test_watcher_logs_crash(self, caplog: pytest.LogCaptureFixture) -> None:
         """Unexpected exceptions in _watch are logged before the task dies."""
 
-        async def _crashing_awatch(
-            path: Path,
-        ) -> AsyncIterator[set[tuple[str, str]]]:
-            raise OSError("inotify limit reached")
-            yield set()  # pragma: no cover
-
         async def _run() -> None:
             with (
                 caplog.at_level(logging.ERROR, logger="src.web.state"),
                 patch(
                     _AWATCH_PATCH_TARGET,
-                    side_effect=_crashing_awatch,
+                    side_effect=_fake_awatch_raising,
                 ),
             ):
                 watcher = ConfigWatcher()
@@ -364,16 +360,10 @@ class TestConfigWatcher:
     def test_stop_after_crash_does_not_raise(self) -> None:
         """stop() on a crashed watcher does not propagate the stored exception."""
 
-        async def _crashing_awatch(
-            path: Path,
-        ) -> AsyncIterator[set[tuple[str, str]]]:
-            raise OSError("inotify limit reached")
-            yield set()  # pragma: no cover
-
         async def _run() -> None:
             with patch(
                 _AWATCH_PATCH_TARGET,
-                side_effect=_crashing_awatch,
+                side_effect=_fake_awatch_raising,
             ):
                 watcher = ConfigWatcher()
                 await watcher.start(Path("/fake/config.yaml"))

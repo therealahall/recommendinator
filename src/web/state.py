@@ -56,11 +56,11 @@ class ConfigWatcher:
 
     async def _watch(self, config_path: Path) -> None:
         """Watch loop that detects config file changes."""
-        from watchfiles import awatch
+        import watchfiles
 
         logger.info("Config watcher started for %s", config_path)
         try:
-            async for _changes in awatch(config_path):
+            async for _changes in watchfiles.awatch(config_path):
                 logger.info("Config file change detected, reloading...")
                 success = reload_config()
                 if success:
