@@ -16,6 +16,7 @@ from src.recommendations.preference_interpreter import (
     PatternBasedInterpreter,
 )
 from src.recommendations.scorers import SCORER_NAME_MAP
+from src.storage.credential_migration import migrate_config_credentials
 from src.web.sync_sources import resolve_inputs, validate_source_config
 
 
@@ -141,7 +142,7 @@ def update(ctx: click.Context, source: str) -> None:
 
     inputs_config = config.get("inputs", {})
 
-    # Handle 'list' to show available sources
+    # Handle 'list' to show available sources (read-only — no migration needed)
     if source == "list":
         if not inputs_config:
             click.echo("No sources configured.")
@@ -157,6 +158,9 @@ def update(ctx: click.Context, source: str) -> None:
             click.echo(f"  {source_id:20s} plugin={plugin_name} [{status}]")
         return
 
+    # Migrate any config-file credentials to encrypted DB storage
+    migrate_config_credentials(config, storage)
+
     # Check if embeddings are enabled
     use_embeddings = get_feature_flags(config)["use_embeddings"]
 
@@ -168,7 +172,7 @@ def update(ctx: click.Context, source: str) -> None:
 
     # Determine which sources to sync
     if source == "all":
-        resolved = resolve_inputs(config)
+        resolved = resolve_inputs(config, storage=storage)
         if not resolved:
             click.echo(
                 "No sources enabled in config. Use --source list to see available sources."
@@ -189,7 +193,7 @@ def update(ctx: click.Context, source: str) -> None:
             click.echo(f"{source} source is disabled in config.")
             return
 
-        validation_errors = validate_source_config(source, config)
+        validation_errors = validate_source_config(source, config, storage=storage)
         if validation_errors:
             for error in validation_errors:
                 click.echo(f"Error: {error}", err=True)
@@ -197,7 +201,7 @@ def update(ctx: click.Context, source: str) -> None:
 
         resolved = [
             resolved_entry
-            for resolved_entry in resolve_inputs(config)
+            for resolved_entry in resolve_inputs(config, storage=storage)
             if resolved_entry.source_id == source
         ]
 
@@ -209,7 +213,9 @@ def update(ctx: click.Context, source: str) -> None:
         total_count = 0
 
         for resolved_entry in resolved:
-            validation_errors = validate_source_config(resolved_entry.source_id, config)
+            validation_errors = validate_source_config(
+                resolved_entry.source_id, config, storage=storage
+            )
             if validation_errors:
                 for error in validation_errors:
                     click.echo(
