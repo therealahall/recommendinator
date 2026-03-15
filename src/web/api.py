@@ -32,11 +32,10 @@ from src.web.gog_auth import (
     get_gog_auth_url,
     has_gog_token,
     is_gog_enabled,
-    update_config_with_token,
+    save_gog_token,
 )
 from src.web.state import (
     get_config,
-    get_config_path,
     get_embedding_gen,
     get_engine,
     get_storage,
@@ -1049,7 +1048,7 @@ async def update_data(request: UpdateRequest) -> dict[str, Any]:
 
     # Resolve which sources to sync (dynamic from config)
     if source == "all":
-        resolved = resolve_inputs(config)
+        resolved = resolve_inputs(config, storage=storage)
     else:
         # Single source - check it exists and is enabled
         source_entry = inputs_config.get(source, {})
@@ -1058,7 +1057,7 @@ async def update_data(request: UpdateRequest) -> dict[str, Any]:
                 "message": f"{source} source is disabled or not configured",
                 "count": 0,
             }
-        validation_errors = validate_source_config(source, config)
+        validation_errors = validate_source_config(source, config, storage=storage)
         if validation_errors:
             logger.warning(
                 "Sync config validation failed for %s: %s",
@@ -1071,7 +1070,9 @@ async def update_data(request: UpdateRequest) -> dict[str, Any]:
                 + "; ".join(validation_errors),
             )
         resolved = [
-            entry for entry in resolve_inputs(config) if entry.source_id == source
+            entry
+            for entry in resolve_inputs(config, storage=storage)
+            if entry.source_id == source
         ]
 
     if not resolved:
@@ -1228,7 +1229,8 @@ async def get_sync_sources() -> list[SyncSourceResponse]:
     if not config:
         return []
 
-    sources = get_available_sync_sources(config)
+    storage = get_storage()
+    sources = get_available_sync_sources(config, storage=storage)
     return [
         SyncSourceResponse(
             id=source.id,
@@ -1494,7 +1496,8 @@ async def get_gog_status() -> dict[str, Any]:
         raise HTTPException(status_code=500, detail="Config not initialized")
 
     enabled = is_gog_enabled(config)
-    connected = has_gog_token(config)
+    storage = get_storage()
+    connected = has_gog_token(config, storage=storage)
 
     return {
         "enabled": enabled,
@@ -1519,10 +1522,13 @@ async def exchange_gog_token(request: GogExchangeRequest) -> dict[str, Any]:
         HTTP response.
     """
     config = get_config()
-    config_path = get_config_path()
+    storage = get_storage()
 
     if not config:
         raise HTTPException(status_code=500, detail="Config not initialized")
+
+    if not storage:
+        raise HTTPException(status_code=500, detail="Storage not initialized")
 
     if not is_gog_enabled(config):
         raise HTTPException(
@@ -1538,37 +1544,14 @@ async def exchange_gog_token(request: GogExchangeRequest) -> dict[str, Any]:
         tokens = exchange_code_for_tokens(code)
         refresh_token = tokens["refresh_token"]
 
-        # Try to update config file with refresh token
-        config_updated = False
-        if config_path:
-            try:
-                update_config_with_token(Path(config_path), refresh_token)
-                config_updated = True
-                logger.info("Successfully connected GOG account and updated config")
-            except GogAuthError:
-                logger.warning(
-                    "Could not update config file automatically; "
-                    "manual setup required"
-                )
+        # Save token to encrypted database storage
+        save_gog_token(storage, refresh_token)
+        logger.info("Successfully connected GOG account")
 
-        if config_updated:
-            return {
-                "success": True,
-                "message": "GOG account connected successfully! You can now sync your GOG library.",
-            }
-        else:
-            logger.warning(
-                "GOG token obtained but config could not be updated automatically. "
-                "Manual setup required: add the refresh_token to config.yaml."
-            )
-            return {
-                "success": True,
-                "manual_setup": True,
-                "message": (
-                    "Token obtained but could not be saved automatically. "
-                    "Check server logs and add the token to config.yaml manually."
-                ),
-            }
+        return {
+            "success": True,
+            "message": "GOG account connected successfully! You can now sync your GOG library.",
+        }
 
     except GogAuthError as error:
         logger.warning("GOG auth error: %s", error)
