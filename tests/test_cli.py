@@ -48,9 +48,11 @@ def mock_components(mock_config):
         patch("src.cli.main.create_storage_manager") as mock_storage,
         patch("src.cli.main.create_llm_components") as mock_llm,
         patch("src.cli.main.create_recommendation_engine") as mock_engine,
+        patch("src.cli.commands.migrate_config_credentials"),
     ):
         # Setup mocks
         mock_storage_manager = Mock(spec=StorageManager)
+        mock_storage_manager.get_credentials_for_source.return_value = {}
         mock_storage.return_value = mock_storage_manager
 
         mock_client = Mock(spec=OllamaClient)

@@ -1,6 +1,7 @@
 """Tests for sync source resolution."""
 
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -8,6 +9,7 @@ import pytest
 from src.ingestion.plugin_base import ConfigField, SourcePlugin
 from src.ingestion.registry import PluginRegistry
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.storage.manager import StorageManager
 from src.web.sync_sources import (
     get_available_sync_sources,
     get_sync_handler,
@@ -508,3 +510,67 @@ class TestValidateSourceConfig:
 
         assert len(errors) == 1
         assert "Unknown or disabled source" in errors[0]
+
+
+@pytest.mark.usefixtures("_registry_with_fakes")
+class TestResolveInputsWithStorage:
+    """Tests for resolve_inputs with DB credential injection."""
+
+    @pytest.fixture()
+    def storage(self, tmp_path: Path) -> StorageManager:
+        """Create a StorageManager with a temp DB."""
+        return StorageManager(sqlite_path=tmp_path / "test.db")
+
+    def test_db_credential_injected_into_config(self, storage: StorageManager) -> None:
+        """DB credentials override config-file values for sensitive fields."""
+        config = {
+            "inputs": {
+                "my_games": {
+                    "plugin": "fake_games",
+                    "enabled": True,
+                    "api_key": "config_key",
+                }
+            }
+        }
+        storage.save_credential(1, "my_games", "api_key", "db_key")
+
+        resolved = resolve_inputs(config, storage=storage)
+
+        assert len(resolved) == 1
+        assert resolved[0].config["api_key"] == "db_key"
+
+    def test_config_only_when_no_storage(self) -> None:
+        """Without storage, only config values are used."""
+        config = {
+            "inputs": {
+                "my_games": {
+                    "plugin": "fake_games",
+                    "enabled": True,
+                    "api_key": "config_key",
+                }
+            }
+        }
+
+        resolved = resolve_inputs(config, storage=None)
+
+        assert len(resolved) == 1
+        assert resolved[0].config["api_key"] == "config_key"
+
+    def test_config_fallback_when_no_db_credential(
+        self, storage: StorageManager
+    ) -> None:
+        """Config value used when no DB credential exists for the field."""
+        config = {
+            "inputs": {
+                "my_games": {
+                    "plugin": "fake_games",
+                    "enabled": True,
+                    "api_key": "config_key",
+                }
+            }
+        }
+        # No DB credential saved for my_games
+
+        resolved = resolve_inputs(config, storage=storage)
+
+        assert resolved[0].config["api_key"] == "config_key"

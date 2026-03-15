@@ -63,9 +63,11 @@ def mock_components(mock_config):
         patch("src.web.app.create_storage_manager") as mock_storage,
         patch("src.web.app.create_llm_components") as mock_llm,
         patch("src.web.app.create_recommendation_engine") as mock_engine,
+        patch("src.web.app.migrate_config_credentials"),
     ):
         # Setup mocks
         mock_storage_manager = Mock(spec=StorageManager)
+        mock_storage_manager.get_credentials_for_source.return_value = {}
         mock_storage.return_value = mock_storage_manager
 
         mock_client = Mock(spec=OllamaClient)
@@ -1098,14 +1100,13 @@ def test_edit_response_includes_tv_metadata(client, mock_components):
 class TestExchangeGogTokenEndpoint:
     """Tests for POST /api/gog/exchange endpoint security behavior."""
 
-    def test_successful_exchange_with_config_update(
+    def test_successful_exchange_saves_to_db(
         self, client: TestClient, mock_components: dict
     ) -> None:
-        """Response contains no token when config is updated successfully."""
+        """Token is saved to DB (not config file) and never returned in response."""
         app_state.config["inputs"]["gog"] = {"enabled": True}
 
         with (
-            patch("src.web.api.get_config_path", return_value="/tmp/fake.yaml"),
             patch("src.web.api.extract_code_from_input", return_value="valid_code"),
             patch(
                 "src.web.api.exchange_code_for_tokens",
@@ -1114,7 +1115,7 @@ class TestExchangeGogTokenEndpoint:
                     "refresh_token": "super_secret_token",
                 },
             ),
-            patch("src.web.api.update_config_with_token"),
+            patch("src.web.api.save_gog_token") as mock_save,
         ):
             response = client.post(
                 "/api/gog/exchange", json={"code_or_url": "valid_code"}
@@ -1125,19 +1126,21 @@ class TestExchangeGogTokenEndpoint:
         assert body["success"] is True
         assert "refresh_token" not in body
         assert "super_secret_token" not in str(body)
+        mock_save.assert_called_once_with(
+            mock_components["storage"], "super_secret_token"
+        )
 
-    def test_manual_setup_branch_returns_no_token(
+    def test_exchange_succeeds_with_readonly_config(
         self, client: TestClient, mock_components: dict
     ) -> None:
-        """Manual setup path must not include refresh_token in HTTP response.
+        """Regression test: GOG exchange succeeds even when config is read-only.
 
-        Security regression test: before ff5e7f7, the token appeared in the
-        HTTP response body in the manual_setup fallback branch.
+        Bug: Docker mounts config read-only, causing OSError when
+        update_config_with_token tried to write. Now tokens go to DB.
         """
         app_state.config["inputs"]["gog"] = {"enabled": True}
 
         with (
-            patch("src.web.api.get_config_path", return_value="/tmp/fake.yaml"),
             patch("src.web.api.extract_code_from_input", return_value="valid_code"),
             patch(
                 "src.web.api.exchange_code_for_tokens",
@@ -1146,20 +1149,17 @@ class TestExchangeGogTokenEndpoint:
                     "refresh_token": "super_secret_token",
                 },
             ),
-            patch(
-                "src.web.api.update_config_with_token",
-                side_effect=GogAuthError("Config file not found"),
-            ),
+            patch("src.web.api.save_gog_token"),
         ):
             response = client.post(
                 "/api/gog/exchange", json={"code_or_url": "valid_code"}
             )
 
+        # No manual_setup fallback — always succeeds via DB
         assert response.status_code == 200
         body = response.json()
-        assert body["manual_setup"] is True
-        assert "refresh_token" not in body
-        assert "super_secret_token" not in str(body)
+        assert body["success"] is True
+        assert "manual_setup" not in body
 
     def test_auth_error_returns_generic_400(
         self, client: TestClient, mock_components: dict
@@ -1194,33 +1194,6 @@ class TestExchangeGogTokenEndpoint:
         body = response.json()
         assert body["detail"] == "Unexpected error during GOG authentication"
         assert "Internal database state" not in str(body)
-
-    def test_manual_setup_when_config_path_is_none(
-        self, client: TestClient, mock_components: dict
-    ) -> None:
-        """Manual setup response when config_path is None must not include token."""
-        app_state.config["inputs"]["gog"] = {"enabled": True}
-
-        with (
-            patch("src.web.api.get_config_path", return_value=None),
-            patch("src.web.api.extract_code_from_input", return_value="valid_code"),
-            patch(
-                "src.web.api.exchange_code_for_tokens",
-                return_value={
-                    "access_token": "access123",
-                    "refresh_token": "super_secret_token",
-                },
-            ),
-        ):
-            response = client.post(
-                "/api/gog/exchange", json={"code_or_url": "valid_code"}
-            )
-
-        assert response.status_code == 200
-        body = response.json()
-        assert body["manual_setup"] is True
-        assert "refresh_token" not in body
-        assert "super_secret_token" not in str(body)
 
     def test_gog_not_enabled_returns_400(
         self, client: TestClient, mock_components: dict
