@@ -152,6 +152,11 @@ def reload_config() -> bool:
 
     try:
         config = load_config(Path(config_path))
+        # Migrate any new sensitive credentials to encrypted DB storage
+        if app_state.storage is not None:
+            from src.storage.credential_migration import migrate_config_credentials
+
+            migrate_config_credentials(config, app_state.storage)
         app_state.config = config
         logger.info("Reloaded config from %s", config_path)
         return True
