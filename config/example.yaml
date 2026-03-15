@@ -17,7 +17,7 @@ features:
 
 # Ollama configuration (only used if features.ai_enabled is true)
 ollama:
-  base_url: "http://localhost:11434"
+  base_url: "http://ollama:11434"
   model: "mistral:7b"  # Model for recommendations (text generation)
   embedding_model: "nomic-embed-text"  # Model for generating embeddings
   # Separate model for conversation chat (defaults to main model when empty).
