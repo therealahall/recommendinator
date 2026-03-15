@@ -279,9 +279,10 @@ class SteamPlugin(SourcePlugin):
         Raises:
             SourceError: If the Steam API returns an error
         """
-        api_key = (config.get("api_key") or "").strip()
-        steam_id = (config.get("steam_id") or "").strip() or None
-        vanity_url = (config.get("vanity_url") or "").strip() or None
+        config = self.__class__.transform_config(config)
+        api_key = config["api_key"]
+        steam_id = config.get("steam_id")
+        vanity_url = config.get("vanity_url")
         min_playtime_minutes = config.get("min_playtime_minutes", 0)
 
         # Adapter: Steam internal (current, total, phase) -> plugin (items, total, item)
