@@ -186,7 +186,15 @@ def has_gog_token(
     if storage is not None:
         db_token = storage.get_credential(user_id, "gog", "refresh_token")
         if db_token is not None and db_token.strip():
+            logger.info("GOG token found in credential database")
             return True
+        logger.info(
+            "No readable GOG token in credential database"
+            " (storage provided, db_token=%s)",
+            "None" if db_token is None else "empty",
+        )
+    else:
+        logger.info("GOG token check: no storage available")
 
     # Fall back to config
     inputs = config.get("inputs", {})
