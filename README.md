@@ -21,7 +21,7 @@ Most recommendation systems are black boxes that harvest your data. This one:
 - **Custom rules** — Natural language preferences like "avoid horror" or "prefer short books"
 - **Content length filtering** — Prefer short books, long games, any movie length
 - **Multi-user support** — Each user gets their own preferences and history
-- **Metadata enrichment** — Automatically fills in missing metadata from TMDB, OpenLibrary, and RAWG
+- **Metadata enrichment** — Automatically fills in missing metadata from TMDB, OpenLibrary, and RAWG. **This is critical for recommendation quality** — see [Enrichment Setup Guide](docs/ENRICHMENT_SETUP.md)
 - **Themeable web UI** — Ships with Nord and Snowstorm themes, or create your own
 - **Dual interface** — CLI for automation, web UI for browsing
 
@@ -45,12 +45,14 @@ If you change the host to `0.0.0.0` to allow LAN access, **anyone on your networ
 ### Option 1: Docker (Recommended)
 
 ```bash
-# Without AI (default)
+# Without AI (default) — runs the app only
 docker compose up
 
-# With AI (Ollama sidecar)
+# With AI — starts the app + Ollama + model auto-pull
 docker compose --profile ai up app-ai
 ```
+
+The `--profile ai` flag adds an Ollama sidecar container that automatically pulls the configured models on first start. Set `features.ai_enabled: true` in your config to use AI features.
 
 ### Option 2: Local Installation
 
@@ -75,6 +77,8 @@ python3.11 -m src.web
 ```
 
 Access the web interface at `http://localhost:18473`
+
+**Important:** [Set up metadata enrichment](docs/ENRICHMENT_SETUP.md) **before importing your data** and enable `auto_enrich_on_sync: true` so items are enriched automatically on every sync. Enrichment is disabled by default but is essential for recommendation quality — without it, many items will lack the genres, tags, and descriptions that the scoring pipeline depends on.
 
 ## Data Sources
 
@@ -155,6 +159,31 @@ If you prefer to set up manually:
 
 **Note:** The refresh token is long-lived but may eventually expire. If GOG sync fails with an authentication error, reconnect via the web UI or repeat the manual steps.
 
+### Sonarr / Radarr Setup
+
+Sonarr (TV shows) and Radarr (movies) import your media library directly from their APIs.
+
+1. **Find your API key** in the Sonarr/Radarr web UI: **Settings > General > Security > API Key**
+2. **Add to your config:**
+   ```yaml
+   inputs:
+     sonarr:
+       plugin: sonarr
+       url: "http://localhost:8989"    # Your Sonarr URL
+       api_key: "your-sonarr-api-key"
+       content_type: "tv_show"
+       enabled: true
+
+     radarr:
+       plugin: radarr
+       url: "http://localhost:7878"    # Your Radarr URL
+       api_key: "your-radarr-api-key"
+       content_type: "movie"
+       enabled: true
+   ```
+
+Radarr also imports movie collection data (e.g., trilogies, franchises), which enables series-aware recommendations across your movie library.
+
 ### Epic Games Setup
 
 Epic Games uses the [Legendary](https://github.com/derrod/legendary) launcher's authentication:
@@ -222,7 +251,14 @@ recommendations:
 
 # Per-user diversity bonus (set in user preferences, not global config)
 # diversity_weight: 0.2  # 0.0 = disabled, higher = more genre variety
+
+# Conflict resolution when items are imported from multiple sources
+ingestion:
+  conflict_strategy: "last_write_wins"  # or "source_priority" or "keep_existing"
+  source_priority: ["goodreads", "steam"]  # highest priority first (source_priority only)
 ```
+
+**Conflict strategies:** When the same item is imported from multiple sources (e.g., a game from both Steam and GOG), the `conflict_strategy` setting controls which data wins. `last_write_wins` (default) uses the most recent import. `source_priority` uses data from the highest-priority source. `keep_existing` never overwrites — only fills in missing fields. Metadata (genres, tags) is always merged additively regardless of strategy.
 
 ## CLI Usage
 
@@ -246,7 +282,7 @@ python3.11 -m src.cli preferences set-length book short
 python3.11 -m src.cli preferences custom-rules add "avoid horror"
 python3.11 -m src.cli preferences custom-rules add "prefer sci-fi"
 
-# Enrich metadata from external APIs
+# Enrich metadata from external APIs (see docs/ENRICHMENT_SETUP.md)
 python3.11 -m src.cli enrichment start
 python3.11 -m src.cli enrichment start --type movie    # specific content type
 python3.11 -m src.cli enrichment status
@@ -261,15 +297,46 @@ The recommendation engine scores candidates through multiple factors:
 | **Genre Match** | Boosts content matching genres you've rated highly |
 | **Creator Match** | Prefers authors/directors/developers you've enjoyed |
 | **Tag Overlap** | Threshold-based tag matching with semantic cluster bridging |
-| **Series Order** | Prioritizes next items in series you're reading/watching |
-| **Continuation** | Boosts items you're actively consuming (e.g., current TV season). Auto-excluded from pipeline when no in-progress items exist. |
+| **Series Order** | Prioritizes next items in series you're reading/watching/playing |
+| **Continuation** | Boosts items you're actively consuming (e.g., in-progress TV show). Automatically removed from the pipeline when you have no in-progress items, so it never produces noise. |
 | **Series Affinity** | Boosts items in franchises you've rated well |
 | **Rating Pattern** | Learns from your rating history within genres |
-| **Content Length** | Matches candidates to your preferred length (short books, long games) |
+| **Content Length** | Soft penalty for items that don't match your preferred length |
 | **Custom Rules** | Applies your explicit preferences ("avoid X", "prefer Y") |
 | **Semantic Similarity** | *(AI only)* Finds conceptually similar content |
 
 Each scorer has a configurable weight. Set a weight to 0 to disable a scorer entirely.
+
+### Series Filtering
+
+When the **"Recommend series in order"** preference is enabled (the default), the engine enforces series ordering. If Book 3 in a series would otherwise be recommended but you haven't consumed Books 1 and 2, the engine automatically substitutes the earliest available entry. This works with numbered titles, Roman numerals, season indicators, and metadata-based series info from enrichment.
+
+### Content Length Preferences
+
+Set length preferences per content type (`short`, `medium`, `long`, or `any`) via the CLI or web UI. Items that don't match your preference still appear but rank lower — it's a soft penalty, not a hard filter.
+
+| Content Type | Short | Medium | Long |
+|---|---|---|---|
+| Book | < 250 pages | 250–500 pages | 500+ pages |
+| Movie | < 90 minutes | 90–150 minutes | 150+ minutes |
+| TV Show | < 3 seasons | 3–6 seasons | 6+ seasons |
+| Video Game | < 10 hours | 10–40 hours | 40+ hours |
+
+Items without length metadata (common before enrichment) receive a small benefit-of-the-doubt score rather than being penalized.
+
+### Diversity Bonus
+
+The diversity bonus encourages genre variety in recommendations. When enabled, items with genres different from your recently completed content get a score boost (calculated via Jaccard distance on genre sets). Configure it per-user:
+
+- **0.0** (default) — Disabled
+- **0.1–0.3** — Subtle variety
+- **0.5+** — Strong genre-hopping
+
+You can also enable the **"Variety after completion"** preference, which applies a default diversity weight of 0.2 automatically.
+
+### Ignored Items
+
+Items can be marked as `ignored` to permanently exclude them from recommendations. Set `ignored: true` when importing via CSV or JSON templates, or use the **Ignore** button in the web UI's Library page. Ignored items remain in your library but are filtered out before recommendations are generated.
 
 ## Enabling AI Features
 
@@ -323,6 +390,8 @@ recommendinator/
 | [QUICKSTART.md](QUICKSTART.md) | Getting started guide |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | System design and components |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Contributing guidelines |
+| [docs/ENRICHMENT_SETUP.md](docs/ENRICHMENT_SETUP.md) | Metadata enrichment setup (critical) |
+| [docs/CONVERSATION_GUIDE.md](docs/CONVERSATION_GUIDE.md) | Chat interface and AI conversation |
 | [docs/CUSTOM_RULES.md](docs/CUSTOM_RULES.md) | Custom preference rules |
 | [docs/PLUGIN_DEVELOPMENT.md](docs/PLUGIN_DEVELOPMENT.md) | Adding new data sources |
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Common issues and solutions |
@@ -335,7 +404,7 @@ recommendinator/
 
 ## Requirements
 
-- Python 3.11+
+- Python 3.11 (recommended; see [docs/PYTHON_VERSION.md](docs/PYTHON_VERSION.md))
 - SQLite (included with Python)
 - Ollama (optional, for AI features)
 

@@ -385,6 +385,104 @@ class TestMyPlugin:
 10. **Respect the `ignored` field** - If your source provides a way to mark items as excluded, set `ignored=True` on the `ContentItem`. Use `parse_boolean_field()` from `generic_csv` for flexible boolean parsing.
 11. **Use list format for `seasons_watched`** - For TV shows, store `seasons_watched` as a list of specific season numbers (e.g., `[1, 2, 5, 6]`) in metadata. Use `parse_seasons_watched()` from `generic_csv` if converting from string input. A single integer is treated as a count for backward compatibility (e.g., `5` → `[1, 2, 3, 4, 5]`).
 
+## Enrichment Providers
+
+In addition to data source plugins, you can create custom **enrichment providers** that fetch metadata from external APIs. Enrichment providers use the same auto-discovery pattern as source plugins — place your provider in `src/enrichment/providers/` (or `plugins/private/enrichment/` for private providers) and it will be discovered automatically.
+
+All enrichment providers inherit from `EnrichmentProvider` in `src/enrichment/provider_base.py`:
+
+```python
+from typing import Any
+
+from src.enrichment.provider_base import (
+    ConfigField,
+    EnrichmentProvider,
+    EnrichmentResult,
+    ProviderError,
+)
+from src.models.content import ContentItem, ContentType
+
+
+class MyEnrichmentProvider(EnrichmentProvider):
+    @property
+    def name(self) -> str:
+        return "my_api"
+
+    @property
+    def display_name(self) -> str:
+        return "My Metadata API"
+
+    @property
+    def content_types(self) -> list[ContentType]:
+        return [ContentType.MOVIE]  # Types this provider enriches
+
+    @property
+    def requires_api_key(self) -> bool:
+        return True
+
+    @property
+    def rate_limit_requests_per_second(self) -> float:
+        return 5.0  # Default is 1.0 (conservative)
+
+    def get_config_schema(self) -> list[ConfigField]:
+        return [
+            ConfigField(
+                name="api_key",
+                field_type=str,
+                required=True,
+                description="API key for My API",
+                sensitive=True,
+            ),
+        ]
+
+    def validate_config(self, config: dict[str, Any]) -> list[str]:
+        errors = []
+        if not config.get("api_key"):
+            errors.append("'api_key' is required")
+        return errors
+
+    def enrich(
+        self, item: ContentItem, config: dict[str, Any]
+    ) -> EnrichmentResult | None:
+        # Search for the item in your API, fetch metadata
+        # Return None if the item can't be found
+        return EnrichmentResult(
+            external_id="myapi:12345",
+            genres=["Action", "Adventure"],
+            tags=["open-world", "rpg"],
+            description="A description from the API",
+            extra_metadata={"runtime": 120, "release_year": 2024},
+            match_quality="high",  # "high", "medium", or "not_found"
+            provider=self.name,
+        )
+```
+
+### Key Differences from Source Plugins
+
+- **Return `EnrichmentResult`** instead of yielding `ContentItem` objects
+- **Gap-filling only** — the enrichment manager only fills in missing metadata, never overwrites existing data
+- **Rate limiting is built-in** — set `rate_limit_requests_per_second` and the manager handles throttling
+- **Configuration** lives under `enrichment.providers.<name>` in config (not under `inputs`)
+
+### Configuration
+
+Add your provider to `config.yaml`:
+
+```yaml
+enrichment:
+  enabled: true
+  providers:
+    my_api:
+      api_key: "your-key"
+      enabled: true
+```
+
+### Existing Enrichment Providers to Reference
+
+- `src/enrichment/providers/tmdb.py` — Movies and TV shows (API key required)
+- `src/enrichment/providers/openlibrary.py` — Books (no API key)
+- `src/enrichment/providers/rawg.py` — Video games (API key required)
+
 ## Existing Plugins to Reference
 
 - `src/ingestion/sources/goodreads.py` - File-based CSV parser
