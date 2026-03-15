@@ -1067,7 +1067,8 @@ async def update_data(request: UpdateRequest) -> dict[str, Any]:
             )
             raise HTTPException(
                 status_code=400,
-                detail=f"Source '{source}' is not properly configured",
+                detail=f"Source '{source}' is not properly configured: "
+                + "; ".join(validation_errors),
             )
         resolved = [
             entry for entry in resolve_inputs(config) if entry.source_id == source

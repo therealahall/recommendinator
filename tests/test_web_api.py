@@ -448,10 +448,8 @@ def test_update_endpoint_steam_missing_api_key(client, mock_components):
 
     assert response.status_code == 400
     data = response.json()
-    # Generic message: validation details are logged server-side, not exposed to callers
     assert "not properly configured" in data["detail"]
-    assert "API key" not in data["detail"]
-    assert "required" not in data["detail"]
+    assert "api_key" in data["detail"].lower()
 
 
 def test_update_endpoint_steam_missing_id(client, mock_components):
@@ -468,10 +466,8 @@ def test_update_endpoint_steam_missing_id(client, mock_components):
 
     assert response.status_code == 400
     data = response.json()
-    # Generic message: validation details are logged server-side, not exposed to callers
     assert "not properly configured" in data["detail"]
-    assert "steam_id" not in data["detail"]
-    assert "vanity_url" not in data["detail"]
+    assert "steam_id" in data["detail"] or "vanity_url" in data["detail"]
 
 
 def test_update_endpoint_steam_api_error(client, mock_components):
