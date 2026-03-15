@@ -53,7 +53,7 @@ features:
   llm_reasoning_enabled: true
 
 ollama:
-  base_url: "http://localhost:11434"  # adjust if Docker networking differs
+  base_url: "http://ollama:11434"  # Docker service name; use localhost:11434 if running Ollama on host
   model: "qwen2.5:14b"
   embedding_model: "nomic-embed-text"
 ```

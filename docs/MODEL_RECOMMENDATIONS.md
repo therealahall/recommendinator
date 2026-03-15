@@ -77,7 +77,7 @@ Edit `config/config.yaml`:
 
 ```yaml
 ollama:
-  base_url: "http://localhost:11434"
+  base_url: "http://ollama:11434"
   model: "mistral:7b"  # or "deepseek-r1:latest"
   embedding_model: "nomic-embed-text"
 ```
