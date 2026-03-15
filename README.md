@@ -108,7 +108,7 @@ Exported files match the import template format, so you can edit them (e.g., mar
 
 ### GOG Setup
 
-GOG requires an OAuth refresh token for API access.
+GOG requires an OAuth refresh token for API access. The token is stored in an encrypted credential database — not in config.yaml.
 
 **Option 1: Web UI (Recommended)**
 
@@ -123,7 +123,7 @@ The easiest way to connect your GOG account:
    ```
 
 2. Start the web server and go to the **Data** tab
-3. Follow the "Connect GOG Account" wizard - it handles the OAuth flow for you
+3. Follow the "Connect GOG Account" wizard — it handles the OAuth flow and stores the token securely
 
 **Option 2: Manual Setup**
 
@@ -142,22 +142,11 @@ If you prefer to set up manually:
    ```
    **Copy the entire URL** (or just the code after `code=`).
 
-4. **Use the Web UI** to paste the URL/code, or manually exchange it:
-   ```
-   https://auth.gog.com/token?client_id=46899977096215655&client_secret=9d85c43b1482497dbbce61f6e4aa173a433796eeae2571571f7c3a315a91b&grant_type=authorization_code&code=YOUR_CODE&redirect_uri=https%3A%2F%2Fembed.gog.com%2Fon_login_success%3Forigin%3Dclient
-   ```
+4. **Paste the URL/code in the Web UI** to complete the connection. The token is encrypted and stored in the database automatically.
 
-5. **Copy the `refresh_token`** from the JSON response and add it to your config:
-   ```yaml
-   inputs:
-     gog:
-       plugin: gog
-       refresh_token: "your-refresh-token-here"
-       include_wishlist: true
-       enabled: true
-   ```
+**Note:** The refresh token is long-lived but may eventually expire. If GOG sync fails with an authentication error, reconnect via the web UI.
 
-**Note:** The refresh token is long-lived but may eventually expire. If GOG sync fails with an authentication error, reconnect via the web UI or repeat the manual steps.
+**Credential storage:** All sensitive credentials (API keys, OAuth tokens) are encrypted at rest using Fernet symmetric encryption. The encryption key is stored at `data/.credential_key` by default, or at the path specified by the `RECOMMENDINATOR_KEY_PATH` environment variable. If you move the database to a new host, copy the key file too.
 
 ### Sonarr / Radarr Setup
 

@@ -17,11 +17,25 @@ The following contain sensitive information:
 
 | File | Contains |
 |------|----------|
-| `config/config.yaml` | API keys, Steam ID |
-| `data/recommendations.db` | Personal consumption history |
+| `config/config.yaml` | API keys (migrated to DB on startup), Steam ID |
+| `data/recommendations.db` | Personal consumption history, encrypted credentials |
+| `data/.credential_key` | Fernet encryption key for stored credentials |
 | `data/chroma_db/` | Vector embeddings of your content (if AI enabled) |
 
 **Never commit these files to version control.**
+
+### Credential Encryption
+
+Sensitive credentials (OAuth tokens, API keys) are encrypted at rest using Fernet symmetric encryption and stored in the `credentials` table of the SQLite database.
+
+- **Encryption key** is stored at `data/.credential_key` (or the path set by `RECOMMENDINATOR_KEY_PATH`)
+- **Key file permissions** are set to `0600` (owner-only) on creation, and verified on every load — the app refuses to start if the key file is group- or world-readable
+- **Key directory permissions** are set to `0700` when created
+- **Auto-migration**: On startup, sensitive fields from `config.yaml` (e.g., `refresh_token`, `api_key`) are automatically migrated to the encrypted database. The plaintext is scrubbed from in-memory config after migration
+- **Stale credential recovery**: If the encryption key changes, stale credentials are automatically re-encrypted from config values or purged if no config fallback exists
+- **Credentials are write-only from the API** — no endpoint returns credential values
+
+If you move the database to a new host, copy `data/.credential_key` along with it. Without the key file, stored credentials cannot be decrypted and will need to be re-entered.
 
 ## API Key Security
 
