@@ -32,3 +32,17 @@ def _isolate_production_log_handlers() -> None:  # type: ignore[misc]
     with patch("src.web.app.configure_logging"):
         yield
     _remove_production_log_handlers()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_credential_key(
+    tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Isolate credential encryption key to a temp dir.
+
+    Prevents tests from reading/writing ``~/.config/recommendinator/.credential_key``.
+    """
+    monkeypatch.setenv(
+        "RECOMMENDINATOR_KEY_PATH",
+        str(tmp_path / ".credential_key"),  # type: ignore[operator]
+    )
