@@ -3,19 +3,21 @@
 Handles the OAuth flow for connecting GOG accounts:
 1. Generate auth URL for user to visit
 2. Exchange authorization code for tokens
-3. Update config.yaml with refresh token
+3. Save refresh token to encrypted DB storage
 """
 
+from __future__ import annotations
+
 import logging
-import re
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlparse
 
 import requests
-import yaml
 
 from src.ingestion.sources.gog import GOG_CLIENT_ID, GOG_CLIENT_SECRET
+
+if TYPE_CHECKING:
+    from src.storage.manager import StorageManager
 
 logger = logging.getLogger(__name__)
 
@@ -127,64 +129,25 @@ def exchange_code_for_tokens(code: str) -> dict[str, Any]:
         raise GogAuthError("Failed to connect to GOG servers") from error
 
 
-def update_config_with_token(config_path: Path, refresh_token: str) -> None:
-    """Update config.yaml with GOG refresh token.
-
-    Preserves existing config structure and comments where possible.
+def save_gog_token(
+    storage: StorageManager, refresh_token: str, user_id: int = 1
+) -> None:
+    """Save GOG refresh token to encrypted database storage.
 
     Args:
-        config_path: Path to config.yaml file.
+        storage: StorageManager instance.
         refresh_token: GOG refresh token to save.
+        user_id: User ID to associate the token with.
 
     Raises:
-        GogAuthError: If config update fails.
+        GogAuthError: If saving fails.
     """
-    if not config_path.exists():
-        logger.error("Config file not found at expected path")
-        raise GogAuthError("Config file not found")
-
     try:
-        content = config_path.read_text()
-
-        # Try to update in-place using regex to preserve formatting
-        # Look for refresh_token under gog section
-        # Use a callable replacement to avoid backslash interpretation of the token
-        pattern = r"(gog:.*?refresh_token:\s*)[\"']?[^\"'\n]*[\"']?"
-
-        def _replace_token(match: re.Match[str]) -> str:
-            return f'{match.group(1)}"{refresh_token}"'
-
-        new_content, count = re.subn(pattern, _replace_token, content, flags=re.DOTALL)
-
-        if count > 0:
-            config_path.write_text(new_content)
-            logger.info("Updated GOG refresh_token in config.yaml")
-            return
-
-        # If regex didn't work, use YAML library
-        with open(config_path) as file:
-            config = yaml.safe_load(file)
-
-        if config is None:
-            config = {}
-
-        if "inputs" not in config:
-            config["inputs"] = {}
-
-        if "gog" not in config["inputs"]:
-            config["inputs"]["gog"] = {}
-
-        config["inputs"]["gog"]["refresh_token"] = refresh_token
-        config["inputs"]["gog"]["enabled"] = True
-
-        with open(config_path, "w") as file:
-            yaml.dump(config, file, default_flow_style=False, sort_keys=False)
-
-        logger.info("Updated GOG configuration in config.yaml")
-
+        storage.save_credential(user_id, "gog", "refresh_token", refresh_token)
+        logger.info("Saved GOG refresh token to database")
     except Exception as error:
-        logger.error("Failed to update config: %s", error, exc_info=True)
-        raise GogAuthError("Failed to update config file") from error
+        logger.error("Failed to save GOG token to database", exc_info=True)
+        raise GogAuthError("Failed to save GOG token") from error
 
 
 def is_gog_enabled(config: dict[str, Any]) -> bool:
@@ -201,15 +164,31 @@ def is_gog_enabled(config: dict[str, Any]) -> bool:
     return bool(gog_config.get("enabled", False))
 
 
-def has_gog_token(config: dict[str, Any]) -> bool:
+def has_gog_token(
+    config: dict[str, Any],
+    storage: StorageManager | None = None,
+    user_id: int = 1,
+) -> bool:
     """Check if GOG has a refresh token configured.
+
+    Checks the database first (if storage provided), then falls back to
+    the config file.
 
     Args:
         config: Application config dict.
+        storage: Optional StorageManager for DB credential lookup.
+        user_id: User ID for credential lookup.
 
     Returns:
-        True if a non-empty refresh_token is configured.
+        True if a non-empty refresh_token is available.
     """
+    # Check DB first
+    if storage is not None:
+        db_token = storage.get_credential(user_id, "gog", "refresh_token")
+        if db_token is not None and db_token.strip():
+            return True
+
+    # Fall back to config
     inputs = config.get("inputs", {})
     gog_config = inputs.get("gog", {})
     token = gog_config.get("refresh_token", "")
