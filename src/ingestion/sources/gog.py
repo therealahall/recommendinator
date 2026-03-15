@@ -303,7 +303,8 @@ class GogPlugin(SourcePlugin):
         if not (config.get("refresh_token") or "").strip():
             errors.append(
                 "'refresh_token' is required. "
-                "See README for instructions on obtaining a GOG refresh token."
+                "Use the web UI (Data tab) to connect your GOG account, "
+                "or see README.md for manual setup instructions."
             )
         return errors
 

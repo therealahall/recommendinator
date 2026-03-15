@@ -43,6 +43,7 @@ Manages persistent storage of processed data and embeddings.
 - `users` table with per-user settings (JSON)
 - `content_items` table scoped by `user_id`
 - Type-specific detail tables (`book_details`, `movie_details`, `tv_show_details`, `video_game_details`)
+- `credentials` table for encrypted OAuth tokens and API keys (auto-migrated from config on startup)
 - `enrichment_status` for tracking metadata enrichment
 - `core_memories`, `conversation_messages`, `preference_profiles` for chat system
 
