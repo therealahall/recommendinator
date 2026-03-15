@@ -1407,6 +1407,59 @@ def save_credential(
     conn.commit()
 
 
+def delete_credential(
+    conn: sqlite3.Connection,
+    user_id: int,
+    source_id: str,
+    credential_key: str,
+) -> bool:
+    """Delete a credential row.
+
+    Args:
+        conn: SQLite database connection
+        user_id: User ID
+        source_id: Source identifier
+        credential_key: Credential field name
+
+    Returns:
+        True if a row was deleted, False if not found.
+    """
+    cursor = conn.cursor()
+    cursor.execute(
+        "DELETE FROM credentials "
+        "WHERE user_id = ? AND source_id = ? AND credential_key = ?",
+        (user_id, source_id, credential_key),
+    )
+    conn.commit()
+    return cursor.rowcount > 0
+
+
+def credential_row_exists(
+    conn: sqlite3.Connection,
+    user_id: int,
+    source_id: str,
+    credential_key: str,
+) -> bool:
+    """Check if a credential row exists (without decrypting).
+
+    Args:
+        conn: SQLite database connection
+        user_id: User ID
+        source_id: Source identifier
+        credential_key: Credential field name
+
+    Returns:
+        True if a row exists in the credentials table.
+    """
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT 1 FROM credentials "
+        "WHERE user_id = ? AND source_id = ? AND credential_key = ?",
+        (user_id, source_id, credential_key),
+    )
+    return cursor.fetchone() is not None
+
+
 def get_credentials_for_source(
     conn: sqlite3.Connection,
     user_id: int,
