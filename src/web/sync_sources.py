@@ -10,11 +10,14 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from src.ingestion.plugin_base import SourcePlugin
 from src.ingestion.registry import get_registry
 from src.utils.text import humanize_source_id
+
+if TYPE_CHECKING:
+    from src.storage.manager import StorageManager
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +47,11 @@ class ResolvedInput:
     config: dict[str, Any]
 
 
-def resolve_inputs(config: dict[str, Any]) -> list[ResolvedInput]:
+def resolve_inputs(
+    config: dict[str, Any],
+    storage: StorageManager | None = None,
+    user_id: int = 1,
+) -> list[ResolvedInput]:
     """Resolve inputs config into (source_id, plugin, config) entries.
 
     Each entry in ``config['inputs']`` must have a ``plugin`` field identifying
@@ -52,8 +59,14 @@ def resolve_inputs(config: dict[str, Any]) -> list[ResolvedInput]:
 
     Only entries with ``enabled: true`` are returned.
 
+    When *storage* is provided, DB credentials are merged into each plugin's
+    config after ``transform_config``, overriding any config-file values for
+    sensitive fields.
+
     Args:
         config: Full application config (from load_config).
+        storage: Optional StorageManager for DB credential injection.
+        user_id: User ID for credential lookup (default 1).
 
     Returns:
         List of ResolvedInput for each enabled, valid source.
@@ -94,6 +107,13 @@ def resolve_inputs(config: dict[str, Any]) -> list[ResolvedInput]:
         # Apply plugin-specific config transformation
         transformed = type(plugin).transform_config(plugin_config)
 
+        # Merge DB credentials (override config-file values for sensitive fields)
+        if storage is not None:
+            db_creds = storage.get_credentials_for_source(user_id, source_id)
+            for cred_key, cred_value in db_creds.items():
+                if cred_value:
+                    transformed[cred_key] = cred_value
+
         resolved.append(
             ResolvedInput(
                 source_id=source_id,
@@ -105,7 +125,11 @@ def resolve_inputs(config: dict[str, Any]) -> list[ResolvedInput]:
     return resolved
 
 
-def get_available_sync_sources(config: dict[str, Any]) -> list[SyncSourceInfo]:
+def get_available_sync_sources(
+    config: dict[str, Any],
+    storage: StorageManager | None = None,
+    user_id: int = 1,
+) -> list[SyncSourceInfo]:
     """Get list of sync sources that are enabled in config.
 
     Returns sources defined in ``config.inputs`` with ``enabled: true``
@@ -113,11 +137,13 @@ def get_available_sync_sources(config: dict[str, Any]) -> list[SyncSourceInfo]:
 
     Args:
         config: Full application config (from load_config)
+        storage: Optional StorageManager for DB credential injection.
+        user_id: User ID for credential lookup (default 1).
 
     Returns:
         List of SyncSourceInfo for each enabled source
     """
-    resolved = resolve_inputs(config)
+    resolved = resolve_inputs(config, storage=storage, user_id=user_id)
 
     return [
         SyncSourceInfo(
@@ -132,23 +158,31 @@ def get_available_sync_sources(config: dict[str, Any]) -> list[SyncSourceInfo]:
 def get_sync_handler(
     source_id: str,
     config: dict[str, Any],
+    storage: StorageManager | None = None,
+    user_id: int = 1,
 ) -> ResolvedInput | None:
     """Get the resolved input for a source by its user-defined key.
 
     Args:
         source_id: User-defined source key (e.g. "my_books", "tv_shows").
         config: Full application config.
+        storage: Optional StorageManager for DB credential injection.
+        user_id: User ID for credential lookup (default 1).
 
     Returns:
         ResolvedInput or None if not found / not enabled.
     """
-    for entry in resolve_inputs(config):
+    for entry in resolve_inputs(config, storage=storage, user_id=user_id):
         if entry.source_id == source_id:
             return entry
     return None
 
 
-def transform_source_config(source_id: str, config: dict[str, Any]) -> dict[str, Any]:
+def transform_source_config(
+    source_id: str,
+    config: dict[str, Any],
+    storage: StorageManager | None = None,
+) -> dict[str, Any]:
     """Transform raw YAML config for a source into plugin-ready config.
 
     Delegates to the plugin's ``transform_config`` classmethod.
@@ -156,11 +190,12 @@ def transform_source_config(source_id: str, config: dict[str, Any]) -> dict[str,
     Args:
         source_id: User-defined source key (e.g. "my_books", "tv_shows").
         config: Full application config.
+        storage: Optional StorageManager for DB credential injection.
 
     Returns:
         Transformed config dict.
     """
-    resolved = get_sync_handler(source_id, config)
+    resolved = get_sync_handler(source_id, config, storage=storage)
     if resolved is None:
         # Fall back to returning the raw input entry
         inputs_config = config.get("inputs", {})
@@ -169,17 +204,22 @@ def transform_source_config(source_id: str, config: dict[str, Any]) -> dict[str,
     return resolved.config
 
 
-def validate_source_config(source_id: str, config: dict[str, Any]) -> list[str]:
+def validate_source_config(
+    source_id: str,
+    config: dict[str, Any],
+    storage: StorageManager | None = None,
+) -> list[str]:
     """Validate config for a sync source.
 
     Args:
         source_id: User-defined source key.
         config: Full application config.
+        storage: Optional StorageManager for DB credential injection.
 
     Returns:
         List of error messages (empty if valid).
     """
-    resolved = get_sync_handler(source_id, config)
+    resolved = get_sync_handler(source_id, config, storage=storage)
     if resolved is None:
         return [f"Unknown or disabled source: {source_id}"]
 
