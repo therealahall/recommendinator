@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.2.3 (2026-03-16)
+
+### Bug Fixes
+
+- **ci**: Gate releases on CI success via workflow_run
+  ([`85610f2`](https://github.com/therealahall/recommendinator/commit/85610f261109328720f6fd1a65e7295350719da6))
+
+
 ## v0.2.2 (2026-03-16)
 
 ### Bug Fixes
