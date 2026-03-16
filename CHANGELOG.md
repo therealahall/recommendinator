@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.2.2 (2026-03-16)
+
+### Bug Fixes
+
+- **ci**: Include uv.lock in semantic-release commit assets
+  ([`a908177`](https://github.com/therealahall/recommendinator/commit/a9081772a4be97e5715623e71e3598da36d1a745))
+
+
 ## v0.2.1 (2026-03-16)
 
 ### Bug Fixes
