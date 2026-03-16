@@ -1,6 +1,22 @@
 # CHANGELOG
 
 
+## v0.2.1 (2026-03-16)
+
+### Bug Fixes
+
+- **ci**: Include uv.lock in semantic-release version commit
+  ([`b867560`](https://github.com/therealahall/recommendinator/commit/b8675602a60fe0fc92da5a51d880a3104d33c4a9))
+
+- **ci**: Use semantic-release CLI and include uv.lock in version commit
+  ([`0d4cbd7`](https://github.com/therealahall/recommendinator/commit/0d4cbd7b2990ef58f4e129621e8afbb94fa6258c))
+
+### Chores
+
+- **lockfile**: Regenerate uv.lock for v0.2.0 [skip ci]
+  ([`27ec981`](https://github.com/therealahall/recommendinator/commit/27ec98134014b1b1c0a1d6272dc6dc1c3ca28792))
+
+
 ## v0.2.0 (2026-03-16)
 
 ### Bug Fixes
