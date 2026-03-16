@@ -147,6 +147,7 @@ allow_zero_version = true
 major_on_zero = false
 tag_format = "v{version}"
 build_command = "uv lock"
+assets = ["uv.lock"]
 
 [tool.semantic_release.changelog]
 mode = "init"
