@@ -24,16 +24,25 @@ from src.models.user_preferences import UserPreferenceConfig
 from src.storage.manager import VALID_SORT_OPTIONS
 from src.utils.text import humanize_source_id
 from src.web.enrichment_manager import get_enrichment_manager
+from src.web.epic_auth import (
+    EpicAuthError,
+    get_epic_auth_url,
+    has_epic_token,
+    is_epic_enabled,
+    save_epic_token,
+)
+from src.web.epic_auth import exchange_code_for_tokens as exchange_epic_tokens
+from src.web.epic_auth import extract_code_from_input as extract_epic_code
 from src.web.export import export_items_csv, export_items_json
 from src.web.gog_auth import (
     GogAuthError,
-    exchange_code_for_tokens,
-    extract_code_from_input,
     get_gog_auth_url,
     has_gog_token,
     is_gog_enabled,
     save_gog_token,
 )
+from src.web.gog_auth import exchange_code_for_tokens as exchange_gog_tokens
+from src.web.gog_auth import extract_code_from_input as extract_gog_code
 from src.web.state import (
     get_config,
     get_embedding_gen,
@@ -242,6 +251,16 @@ class GogExchangeRequest(BaseModel):
         ...,
         max_length=2000,
         description="Authorization code or full redirect URL from GOG",
+    )
+
+
+class EpicExchangeRequest(BaseModel):
+    """Request model for Epic Games token exchange."""
+
+    code_or_json: str = Field(
+        ...,
+        max_length=4000,
+        description="Authorization code or JSON response from Epic Games",
     )
 
 
@@ -1536,10 +1555,10 @@ async def exchange_gog_token(request: GogExchangeRequest) -> dict[str, Any]:
 
     try:
         # Extract code from input (handles both URL and raw code)
-        code = extract_code_from_input(request.code_or_url)
+        code = extract_gog_code(request.code_or_url)
 
         # Exchange code for tokens
-        tokens = exchange_code_for_tokens(code)
+        tokens = exchange_gog_tokens(code)
         refresh_token = tokens["refresh_token"]
 
         # Save token to encrypted database storage
@@ -1557,7 +1576,99 @@ async def exchange_gog_token(request: GogExchangeRequest) -> dict[str, Any]:
             status_code=400, detail="GOG authentication failed"
         ) from error
     except Exception as error:
-        logger.error("Unexpected error during GOG token exchange: %s", error)
+        logger.error("Unexpected error during GOG token exchange", exc_info=True)
         raise HTTPException(
             status_code=500, detail="Unexpected error during GOG authentication"
+        ) from error
+
+
+# ---------------------------------------------------------------------------
+# Epic Games OAuth endpoints
+# ---------------------------------------------------------------------------
+
+
+@router.get("/epic/status")
+async def get_epic_status() -> dict[str, Any]:
+    """Get Epic Games integration status.
+
+    Returns:
+        Status of Epic Games integration (enabled, connected, auth_url).
+    """
+    config = get_config()
+    if not config:
+        raise HTTPException(status_code=500, detail="Config not initialized")
+
+    enabled = is_epic_enabled(config)
+    storage = get_storage()
+    connected = has_epic_token(config, storage=storage)
+
+    auth_url: str | None = None
+    if enabled:
+        try:
+            auth_url = get_epic_auth_url()
+        except Exception:
+            logger.warning("Failed to generate Epic auth URL", exc_info=True)
+
+    return {
+        "enabled": enabled,
+        "connected": connected,
+        "auth_url": auth_url,
+    }
+
+
+@router.post("/epic/exchange")
+async def exchange_epic_token(request: EpicExchangeRequest) -> dict[str, Any]:
+    """Exchange Epic Games authorization code for tokens.
+
+    Accepts either the raw authorization code or JSON containing it.
+    Saves the refresh token to the encrypted credential database.
+
+    Args:
+        request: Request with code or JSON.
+
+    Returns:
+        Success message. The token is never included in the HTTP response.
+    """
+    config = get_config()
+    storage = get_storage()
+
+    if not config:
+        raise HTTPException(status_code=500, detail="Config not initialized")
+
+    if not storage:
+        raise HTTPException(status_code=500, detail="Storage not initialized")
+
+    if not is_epic_enabled(config):
+        raise HTTPException(
+            status_code=400,
+            detail="Epic Games is not enabled in the current configuration.",
+        )
+
+    try:
+        # Extract code from input (handles both JSON and raw code)
+        code = extract_epic_code(request.code_or_json)
+
+        # Exchange code for tokens via EPCAPI
+        tokens = exchange_epic_tokens(code)
+        refresh_token = tokens["refresh_token"]
+
+        # Save token to encrypted database storage
+        save_epic_token(storage, refresh_token)
+        logger.info("Successfully connected Epic Games account")
+
+        return {
+            "success": True,
+            "message": "Epic Games account connected successfully! You can now sync your Epic library.",
+        }
+
+    except EpicAuthError as error:
+        logger.warning("Epic Games auth error: %s", error)
+        raise HTTPException(
+            status_code=400, detail="Epic Games authentication failed"
+        ) from error
+    except Exception as error:
+        logger.error("Unexpected error during Epic Games token exchange", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail="Unexpected error during Epic Games authentication",
         ) from error

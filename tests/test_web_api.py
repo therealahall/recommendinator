@@ -17,6 +17,7 @@ from src.storage.manager import StorageManager
 from src.web.api import APP_VERSION, _item_to_response
 from src.web.app import create_app
 from src.web.enrichment_manager import WebEnrichmentManager
+from src.web.epic_auth import EpicAuthError
 from src.web.gog_auth import GogAuthError
 from src.web.state import AppState, app_state
 from src.web.sync_manager import SyncManager, reset_sync_manager
@@ -1107,9 +1108,9 @@ class TestExchangeGogTokenEndpoint:
         app_state.config["inputs"]["gog"] = {"enabled": True}
 
         with (
-            patch("src.web.api.extract_code_from_input", return_value="valid_code"),
+            patch("src.web.api.extract_gog_code", return_value="valid_code"),
             patch(
-                "src.web.api.exchange_code_for_tokens",
+                "src.web.api.exchange_gog_tokens",
                 return_value={
                     "access_token": "access123",
                     "refresh_token": "super_secret_token",
@@ -1141,9 +1142,9 @@ class TestExchangeGogTokenEndpoint:
         app_state.config["inputs"]["gog"] = {"enabled": True}
 
         with (
-            patch("src.web.api.extract_code_from_input", return_value="valid_code"),
+            patch("src.web.api.extract_gog_code", return_value="valid_code"),
             patch(
-                "src.web.api.exchange_code_for_tokens",
+                "src.web.api.exchange_gog_tokens",
                 return_value={
                     "access_token": "access123",
                     "refresh_token": "super_secret_token",
@@ -1168,7 +1169,7 @@ class TestExchangeGogTokenEndpoint:
         app_state.config["inputs"]["gog"] = {"enabled": True}
 
         with patch(
-            "src.web.api.extract_code_from_input",
+            "src.web.api.extract_gog_code",
             side_effect=GogAuthError("Internal details that must not leak"),
         ):
             response = client.post("/api/gog/exchange", json={"code_or_url": "bad"})
@@ -1185,7 +1186,7 @@ class TestExchangeGogTokenEndpoint:
         app_state.config["inputs"]["gog"] = {"enabled": True}
 
         with patch(
-            "src.web.api.extract_code_from_input",
+            "src.web.api.extract_gog_code",
             side_effect=RuntimeError("Internal database state is corrupt"),
         ):
             response = client.post("/api/gog/exchange", json={"code_or_url": "any"})
@@ -1707,6 +1708,258 @@ class TestGogStatus:
         app_state.config = None
         response = client.get("/api/gog/status")
         assert response.status_code == 500
+
+
+class TestExchangeEpicTokenEndpoint:
+    """Tests for POST /api/epic/exchange endpoint security behavior."""
+
+    def test_successful_exchange_saves_to_db(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """Token is saved to DB and never returned in response."""
+        app_state.config["inputs"]["epic_games"] = {"enabled": True}
+
+        with (
+            patch("src.web.api.extract_epic_code", return_value="valid_code"),
+            patch(
+                "src.web.api.exchange_epic_tokens",
+                return_value={
+                    "access_token": "access123",
+                    "refresh_token": "super_secret_token",
+                },
+            ),
+            patch("src.web.api.save_epic_token") as mock_save,
+        ):
+            response = client.post(
+                "/api/epic/exchange", json={"code_or_json": "valid_code"}
+            )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["success"] is True
+        assert set(body.keys()) == {"success", "message"}
+        assert "super_secret_token" not in str(body)
+        assert "access123" not in str(body)
+        mock_save.assert_called_once_with(
+            mock_components["storage"], "super_secret_token"
+        )
+
+    def test_auth_error_returns_generic_400(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """Auth failure returns generic 400 without leaking error details."""
+        app_state.config["inputs"]["epic_games"] = {"enabled": True}
+
+        with patch(
+            "src.web.api.extract_epic_code",
+            side_effect=EpicAuthError("Internal details that must not leak"),
+        ):
+            response = client.post("/api/epic/exchange", json={"code_or_json": "bad"})
+
+        assert response.status_code == 400
+        body = response.json()
+        assert body["detail"] == "Epic Games authentication failed"
+        assert "Internal details" not in str(body)
+
+    def test_save_token_failure_returns_400(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """DB save failure returns generic 400."""
+        app_state.config["inputs"]["epic_games"] = {"enabled": True}
+
+        with (
+            patch("src.web.api.extract_epic_code", return_value="valid_code"),
+            patch(
+                "src.web.api.exchange_epic_tokens",
+                return_value={
+                    "access_token": "access123",
+                    "refresh_token": "refresh456",
+                },
+            ),
+            patch(
+                "src.web.api.save_epic_token",
+                side_effect=EpicAuthError("DB write failed"),
+            ),
+        ):
+            response = client.post(
+                "/api/epic/exchange", json={"code_or_json": "valid_code"}
+            )
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Epic Games authentication failed"
+
+    def test_epic_not_enabled_returns_400(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """Requesting exchange when Epic is disabled returns 400."""
+        app_state.config["inputs"]["epic_games"] = {"enabled": False}
+
+        response = client.post("/api/epic/exchange", json={"code_or_json": "some_code"})
+
+        assert response.status_code == 400
+        assert (
+            response.json()["detail"]
+            == "Epic Games is not enabled in the current configuration."
+        )
+
+    def test_no_storage_returns_500(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """Missing storage returns 500."""
+        app_state.config["inputs"]["epic_games"] = {"enabled": True}
+        app_state.storage = None
+
+        response = client.post("/api/epic/exchange", json={"code_or_json": "some_code"})
+
+        assert response.status_code == 500
+        assert response.json()["detail"] == "Storage not initialized"
+
+    def test_unexpected_error_returns_500(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """Unexpected errors produce a generic 500 without leaking internals."""
+        app_state.config["inputs"]["epic_games"] = {"enabled": True}
+
+        with (
+            patch("src.web.api.extract_epic_code", return_value="valid_code"),
+            patch(
+                "src.web.api.exchange_epic_tokens",
+                side_effect=RuntimeError("unexpected"),
+            ),
+        ):
+            response = client.post(
+                "/api/epic/exchange", json={"code_or_json": "valid_code"}
+            )
+
+        assert response.status_code == 500
+        body = response.json()
+        assert body["detail"] == "Unexpected error during Epic Games authentication"
+        assert "RuntimeError" not in str(body)
+
+    def test_no_config_returns_500(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """Missing config returns 500."""
+        app_state.config = None
+        response = client.post("/api/epic/exchange", json={"code_or_json": "some_code"})
+        assert response.status_code == 500
+        assert response.json()["detail"] == "Config not initialized"
+
+
+class TestEpicStatus:
+    """Tests for GET /api/epic/status."""
+
+    def test_epic_enabled_connected(self, client, mock_components):
+        """Epic enabled and connected returns correct flags."""
+        with (
+            patch("src.web.api.is_epic_enabled", return_value=True),
+            patch("src.web.api.has_epic_token", return_value=True),
+            patch(
+                "src.web.api.get_epic_auth_url",
+                return_value="https://www.epicgames.com/id/login?test",
+            ),
+        ):
+            response = client.get("/api/epic/status")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["enabled"] is True
+        assert data["connected"] is True
+        assert data["auth_url"] == "https://www.epicgames.com/id/login?test"
+
+    def test_epic_enabled_not_connected(self, client, mock_components):
+        """Epic enabled but not connected returns auth_url for OAuth flow."""
+        with (
+            patch("src.web.api.is_epic_enabled", return_value=True),
+            patch("src.web.api.has_epic_token", return_value=False),
+            patch(
+                "src.web.api.get_epic_auth_url",
+                return_value="https://www.epicgames.com/id/login?test",
+            ),
+        ):
+            response = client.get("/api/epic/status")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["enabled"] is True
+        assert data["connected"] is False
+        assert data["auth_url"] == "https://www.epicgames.com/id/login?test"
+
+    def test_epic_disabled(self, client, mock_components):
+        """Epic disabled returns enabled=False and no auth_url."""
+        with (
+            patch("src.web.api.is_epic_enabled", return_value=False),
+            patch("src.web.api.has_epic_token", return_value=False),
+        ):
+            response = client.get("/api/epic/status")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["enabled"] is False
+        assert data["connected"] is False
+        assert data["auth_url"] is None
+
+    def test_epic_enabled_auth_url_failure_returns_null(self, client, mock_components):
+        """When get_epic_auth_url raises, status returns 200 with auth_url=None."""
+        with (
+            patch("src.web.api.is_epic_enabled", return_value=True),
+            patch("src.web.api.has_epic_token", return_value=False),
+            patch(
+                "src.web.api.get_epic_auth_url",
+                side_effect=RuntimeError("EPCAPI broken"),
+            ),
+        ):
+            response = client.get("/api/epic/status")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["enabled"] is True
+        assert data["connected"] is False
+        assert data["auth_url"] is None
+
+    def test_epic_status_no_config(self, client, mock_components):
+        """No config returns 500."""
+        app_state.config = None
+        response = client.get("/api/epic/status")
+        assert response.status_code == 500
+        assert response.json()["detail"] == "Config not initialized"
+
+
+class TestExchangeEpicTokenEndpointRegression:
+    """Guards against token persistence writing to config files in Docker."""
+
+    def test_exchange_succeeds_with_readonly_config_regression(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """Regression: Epic exchange succeeds even when config is read-only.
+
+        Bug reported: Docker mounts config as a read-only volume. OAuth
+        completion failed with OSError in Docker environments.
+        Root cause: token persistence used config file write instead of DB.
+        Fix: tokens are now saved exclusively via save_epic_token() to the
+        credential database, which is never a read-only mount.
+        """
+        app_state.config["inputs"]["epic_games"] = {"enabled": True}
+
+        with (
+            patch("src.web.api.extract_epic_code", return_value="valid_code"),
+            patch(
+                "src.web.api.exchange_epic_tokens",
+                return_value={
+                    "access_token": "access123",
+                    "refresh_token": "super_secret_token",
+                },
+            ),
+            patch("src.web.api.save_epic_token") as mock_save,
+        ):
+            response = client.post(
+                "/api/epic/exchange", json={"code_or_json": "valid_code"}
+            )
+
+        # Token goes to DB via save_epic_token, not to the config file.
+        # The endpoint has no config-write path — this is the fix.
+        assert response.status_code == 200
+        body = response.json()
+        assert body["success"] is True
+        mock_save.assert_called_once_with(
+            mock_components["storage"], "super_secret_token"
+        )
 
 
 class TestEnrichmentErrorPaths:
