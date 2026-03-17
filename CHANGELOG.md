@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.2.4 (2026-03-17)
+
+### Bug Fixes
+
+- **storage**: Never silently delete unreadable credentials
+  ([`851f76f`](https://github.com/therealahall/recommendinator/commit/851f76fa3ab682ba96fd229179db443d378f77ec))
+
+
 ## v0.2.3 (2026-03-16)
 
 ### Bug Fixes
