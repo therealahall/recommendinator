@@ -1,6 +1,32 @@
 # CHANGELOG
 
 
+## v0.3.0 (2026-03-17)
+
+### Chores
+
+- **dev**: Clarify pre-commit agent re-run workflow
+  ([`2e4a461`](https://github.com/therealahall/recommendinator/commit/2e4a46169905727cb1402ea44fbab3c30f3ea4d1))
+
+### Documentation
+
+- Update Epic Games setup for web UI OAuth flow
+  ([`40dd0bd`](https://github.com/therealahall/recommendinator/commit/40dd0bd349dc4d882d57a0949118675dec4f765f))
+
+### Features
+
+- **web**: Add Epic Games OAuth authentication service
+  ([`8218aa3`](https://github.com/therealahall/recommendinator/commit/8218aa36d8728990f3325d0413aaaa2038e3850a))
+
+- **web**: Add Epic Games OAuth endpoints and UI handlers
+  ([`9552efd`](https://github.com/therealahall/recommendinator/commit/9552efd2596b017215e258c3fd8e7fb071b20842))
+
+### Refactoring
+
+- **epic**: Remove manual CLI setup path
+  ([`c2db2f0`](https://github.com/therealahall/recommendinator/commit/c2db2f0ac38add22c36f5552098143aa59d2324b))
+
+
 ## v0.2.4 (2026-03-17)
 
 ### Bug Fixes
