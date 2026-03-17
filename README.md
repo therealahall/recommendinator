@@ -175,21 +175,41 @@ Radarr also imports movie collection data (e.g., trilogies, franchises), which e
 
 ### Epic Games Setup
 
-Epic Games uses the [Legendary](https://github.com/derrod/legendary) launcher's authentication:
+Epic Games uses OAuth authentication via the [Legendary](https://github.com/derrod/legendary) launcher's API client. The token is stored in an encrypted credential database — not in config.yaml.
 
-1. **Legendary is included** in the base dependencies (`uv sync` installs it automatically).
+**Option 1: Web UI (Recommended)**
 
-2. **Authenticate via browser:**
+Works in both local and Docker installations — no host-side tools needed:
+
+1. Enable Epic Games in your config.yaml:
+   ```yaml
+   inputs:
+     epic_games:
+       plugin: epic_games
+       enabled: true
+   ```
+
+2. Start the web server and go to the **Data** tab
+3. Click **"Connect Epic Games"** — this opens Epic's login page in a new tab
+4. Log in with your Epic account — you'll see a JSON response with an `authorizationCode`
+5. Copy the code (or the entire JSON), paste it into the web UI input, and click **Connect**
+6. The token is encrypted and stored in the database automatically
+
+**Option 2: Manual Setup (CLI)**
+
+If you prefer to authenticate via the command line:
+
+1. **Authenticate via browser:**
    ```bash
    legendary auth
    ```
 
-3. **Extract the refresh token** from Legendary's config:
+2. **Extract the refresh token** from Legendary's config:
    ```bash
    cat ~/.config/legendary/user.json | grep refresh_token
    ```
 
-4. **Add to your config:**
+3. **Add to your config:**
    ```yaml
    inputs:
      epic_games:
@@ -197,6 +217,8 @@ Epic Games uses the [Legendary](https://github.com/derrod/legendary) launcher's 
        refresh_token: "your-refresh-token-here"
        enabled: true
    ```
+
+**Note:** The refresh token is long-lived but may eventually expire. If Epic sync fails with an authentication error, reconnect via the web UI.
 
 ## Configuration
 

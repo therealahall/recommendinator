@@ -243,6 +243,21 @@ deploy:
           capabilities: [gpu]
 ```
 
+### Epic Games Authentication in Docker
+
+**Error:** `legendary auth` returns "unknown command" or can't open a browser inside a Docker container
+
+**Cause:** The `legendary` CLI is not exposed as a container entrypoint, and browser-based OAuth cannot work inside a container.
+
+**Solution:** Use the **web UI OAuth flow** instead — it works in Docker without any host-side tools:
+
+1. Enable Epic Games in your config.yaml (`inputs.epic_games.enabled: true`)
+2. Open the web UI → Data tab → click **"Connect Epic Games"**
+3. Log into Epic in the new tab, copy the authorization code from the JSON response
+4. Paste the code back into the web UI and click **Connect**
+
+See the [Epic Games Setup](../README.md#epic-games-setup) section in the README for full details.
+
 ## Performance Issues
 
 ### Slow Startup
