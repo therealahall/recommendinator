@@ -1173,23 +1173,25 @@
         fetch(API_BASE + "/config/reload", { method: "POST" })
             .catch(function () { /* ignore reload errors */ })
             .then(function () {
-                // Fetch both sync sources and GOG status in parallel
+                // Fetch sync sources, GOG status, and Epic status in parallel
                 return Promise.all([
                     fetch(API_BASE + "/sync/sources").then(function (r) { return r.json(); }),
-                    fetch(API_BASE + "/gog/status").then(function (r) { return r.json(); }).catch(function () { return null; })
+                    fetch(API_BASE + "/gog/status").then(function (r) { return r.json(); }).catch(function () { return null; }),
+                    fetch(API_BASE + "/epic/status").then(function (r) { return r.json(); }).catch(function () { return null; })
                 ]);
             })
             .then(function (results) {
                 var sources = results[0];
                 var gogStatus = results[1];
-                renderSyncSources(grid, sources, gogStatus);
+                var epicStatus = results[2];
+                renderSyncSources(grid, sources, gogStatus, epicStatus);
             })
             .catch(function (error) {
                 grid.innerHTML = '<div class="empty-state"><span class="text-error">Failed to load sync sources: ' + escapeHtml(error.message) + '</span></div>';
             });
     }
 
-    function renderSyncSources(container, sources, gogStatus) {
+    function renderSyncSources(container, sources, gogStatus, epicStatus) {
         if (!sources || sources.length === 0) {
             container.innerHTML = '<div class="empty-state"><p>No sync sources configured. Add sources to config.yaml with enabled: true.</p></div>';
             return;
@@ -1199,6 +1201,12 @@
         if (gogStatus) {
             gogState.authUrl = gogStatus.auth_url;
             gogState.connected = gogStatus.connected;
+        }
+
+        // Store Epic status for use by OAuth functions
+        if (epicStatus) {
+            epicState.authUrl = epicStatus.auth_url;
+            epicState.connected = epicStatus.connected;
         }
 
         var html = "";
@@ -1220,6 +1228,21 @@
                 html += '<button class="btn btn-primary" data-action="submitGogCode">Connect</button>';
                 html += '</div>';
                 html += '<div id="gogConnectStatus" class="mt-2"></div>';
+                html += '</div>';
+                html += '</div>';
+            // Special handling for Epic Games when not connected
+            } else if (source.id === "epic_games" && epicStatus && epicStatus.enabled && !epicStatus.connected) {
+                html += '<div class="epic-connect-flow" id="epicConnectFlow">';
+                html += '<div class="epic-connect-step">';
+                html += '<button class="btn btn-primary" data-action="openEpicAuth">Connect Epic Games</button>';
+                html += '</div>';
+                html += '<div class="epic-connect-step epic-code-step hidden" id="epicCodeStep">';
+                html += '<p class="help-text my-2">Paste the authorization code from the JSON response:</p>';
+                html += '<div class="epic-input-row">';
+                html += '<input type="text" id="epicCodeInput" placeholder="Paste code or JSON here...">';
+                html += '<button class="btn btn-primary" data-action="submitEpicCode">Connect</button>';
+                html += '</div>';
+                html += '<div id="epicConnectStatus" class="mt-2"></div>';
                 html += '</div>';
                 html += '</div>';
             } else {
@@ -1433,6 +1456,15 @@
         connected: false
     };
 
+    // -----------------------------------------------------------------------
+    // Epic Games OAuth
+    // -----------------------------------------------------------------------
+
+    var epicState = {
+        authUrl: null,
+        connected: false
+    };
+
     window.openGogAuth = function() {
         if (gogState.authUrl) {
             window.open(gogState.authUrl, "_blank");
@@ -1493,6 +1525,65 @@
                         loadSyncSources();
                     }, 1500);
                 }
+            })
+            .catch(function (error) {
+                if (statusDiv) {
+                    statusDiv.innerHTML = '<span class="text-error">' + escapeHtml(error.message) + '</span>';
+                }
+            });
+    };
+
+    window.openEpicAuth = function() {
+        if (epicState.authUrl) {
+            window.open(epicState.authUrl, "_blank");
+            // Show the code input step after opening auth
+            var codeStep = document.getElementById("epicCodeStep");
+            if (codeStep) {
+                codeStep.style.display = "block";
+            }
+        } else {
+            alert("Epic Games auth URL not available. Please refresh the page.");
+        }
+    };
+
+    window.submitEpicCode = function() {
+        var input = document.getElementById("epicCodeInput");
+        var statusDiv = document.getElementById("epicConnectStatus");
+        var codeOrJson = input.value.trim();
+
+        if (!codeOrJson) {
+            if (statusDiv) {
+                statusDiv.innerHTML = '<span class="text-error">Please paste the authorization code or JSON response.</span>';
+            }
+            return;
+        }
+
+        if (statusDiv) {
+            statusDiv.innerHTML = '<span class="spinner"></span> Connecting to Epic Games...';
+        }
+
+        fetch(API_BASE + "/epic/exchange", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ code_or_json: codeOrJson })
+        })
+            .then(function (response) {
+                if (!response.ok) {
+                    return response.json().then(function (data) {
+                        throw new Error(data.detail || "Failed to connect Epic Games account");
+                    });
+                }
+                return response.json();
+            })
+            .then(function (data) {
+                input.value = "";
+                if (statusDiv) {
+                    statusDiv.textContent = data.message;
+                }
+                // Refresh sync sources to show the sync button
+                setTimeout(function () {
+                    loadSyncSources();
+                }, 1500);
             })
             .catch(function (error) {
                 if (statusDiv) {
@@ -2766,6 +2857,10 @@
                 window.openGogAuth();
             } else if (action === "submitGogCode" && window.submitGogCode) {
                 window.submitGogCode();
+            } else if (action === "openEpicAuth" && window.openEpicAuth) {
+                window.openEpicAuth();
+            } else if (action === "submitEpicCode" && window.submitEpicCode) {
+                window.submitEpicCode();
             } else if (action === "copyToken") {
                 var token = target.getAttribute("data-token");
                 if (token) {
