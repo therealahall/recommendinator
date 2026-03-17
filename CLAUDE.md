@@ -225,7 +225,8 @@ This ensures every plan step is tracked, has clear acceptance criteria, and noth
 
 1. Run **security-review**, **code-review**, **test-review**, and **document-review** agents (can run in parallel)
 2. Address all agent findings
-3. Run **commit-hygiene** agent to plan commit split
-4. Run `command make check` (pytest, black, mypy, ruff)
-5. Commit following the split plan from commit-hygiene
-6. Run **commit-hygiene** again pre-push to verify commit structure
+3. **Re-run any agent that had findings** — agents must verify fixes are correct. Repeat steps 2–3 until **all agents approve**. Do not proceed until every agent returns APPROVE.
+4. Run **commit-hygiene** agent to plan commit split
+5. Run `command make check` (pytest, black, mypy, ruff)
+6. Commit following the split plan from commit-hygiene
+7. Run **commit-hygiene** again pre-push to verify commit structure
