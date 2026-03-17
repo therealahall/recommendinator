@@ -2,8 +2,7 @@
 
 Uses the legendary launcher's EPCAPI client to interact with Epic's
 reverse-engineered APIs.  Authentication requires an OAuth refresh token
-obtained by running ``legendary auth`` and extracting the token from
-``~/.config/legendary/user.json``.
+obtained via the web UI (Data tab → Connect Epic Games).
 
 Limitations:
 - No wishlist support (legendary doesn't implement it).
@@ -230,7 +229,8 @@ class EpicGamesPlugin(SourcePlugin):
                 sensitive=True,
                 description=(
                     "Epic Games OAuth refresh token. "
-                    "Run `legendary auth` then extract from "
+                    "Connect via the web UI (recommended) or run "
+                    "`legendary auth` and extract from "
                     "~/.config/legendary/user.json"
                 ),
             ),
@@ -241,8 +241,8 @@ class EpicGamesPlugin(SourcePlugin):
         if not (config.get("refresh_token") or "").strip():
             errors.append(
                 "'refresh_token' is required. "
-                "Run `legendary auth` to authenticate, then copy "
-                "the refresh_token from ~/.config/legendary/user.json."
+                "Connect your Epic Games account via the web UI "
+                "(Data tab → Connect Epic Games)."
             )
         return errors
 
