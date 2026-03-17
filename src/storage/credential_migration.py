@@ -86,11 +86,13 @@ def migrate_config_credentials(
                     )
                     entry.pop(field.name, None)
                 else:
-                    # Stale row with no config fallback — purge it
-                    storage.delete_credential(user_id, source_id, field.name)
+                    # Stale row with no config fallback — leave it alone.
+                    # Never silently delete credentials; the user may be able
+                    # to fix the encryption key and recover the value.
                     logger.warning(
-                        "Purged unreadable %s.%s credential from database "
-                        "(encryption key changed, no config value to re-encrypt from)",
+                        "Cannot decrypt %s.%s credential in database "
+                        "(encryption key changed?). Fix the key file or "
+                        "reconnect via the web UI to re-save the credential.",
                         source_id,
                         field.name,
                     )

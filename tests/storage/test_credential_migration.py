@@ -1,6 +1,8 @@
 """Tests for config-to-DB credential migration."""
 
+import logging
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -153,11 +155,18 @@ class TestMigrateConfigCredentials:
 
         assert storage.get_credential(1, "gog", "refresh_token") == "fresh_token"
 
-    def test_stale_credential_purged_when_no_config_value(
-        self, storage: StorageManager
+    def test_stale_credential_preserved_when_no_config_value(
+        self, storage: StorageManager, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """Stale credential with no config fallback is purged from DB."""
-        # Write a stale row
+        """Stale credential with no config fallback is preserved, not purged.
+
+        Bug reported: GOG credential was silently deleted during startup
+        when decryption failed and config had no fallback value.
+        Root cause: migration purged unreadable credentials instead of
+        leaving them for the user to fix (e.g. by restoring the key file).
+        Fix: log a warning but never delete credentials automatically.
+        """
+        # Write a stale row (can't be decrypted — raw garbage, not encrypted)
         with storage.connection() as conn:
             conn.execute(
                 "INSERT INTO credentials "
@@ -167,7 +176,7 @@ class TestMigrateConfigCredentials:
             conn.commit()
 
         # Config has no refresh_token
-        config = {
+        config: dict[str, Any] = {
             "inputs": {
                 "gog": {
                     "plugin": "gog",
@@ -176,10 +185,12 @@ class TestMigrateConfigCredentials:
             }
         }
 
-        migrate_config_credentials(config, storage)
+        with caplog.at_level(logging.WARNING):
+            migrate_config_credentials(config, storage)
 
-        # Row should be gone
-        assert not storage.credential_row_exists(1, "gog", "refresh_token")
+        # Row must still exist — never silently delete credentials
+        assert storage.credential_row_exists(1, "gog", "refresh_token")
+        assert "Cannot decrypt" in caplog.text
 
     def test_multiple_sources_migrated(self, storage: StorageManager) -> None:
         """Multiple sources with sensitive fields are all migrated."""
