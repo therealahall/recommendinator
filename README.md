@@ -177,10 +177,6 @@ Radarr also imports movie collection data (e.g., trilogies, franchises), which e
 
 Epic Games uses OAuth authentication via the [Legendary](https://github.com/derrod/legendary) launcher's API client. The token is stored in an encrypted credential database — not in config.yaml.
 
-**Option 1: Web UI (Recommended)**
-
-Works in both local and Docker installations — no host-side tools needed:
-
 1. Enable Epic Games in your config.yaml:
    ```yaml
    inputs:
@@ -195,28 +191,7 @@ Works in both local and Docker installations — no host-side tools needed:
 5. Copy the code (or the entire JSON), paste it into the web UI input, and click **Connect**
 6. The token is encrypted and stored in the database automatically
 
-**Option 2: Manual Setup (CLI)**
-
-If you prefer to authenticate via the command line:
-
-1. **Authenticate via browser:**
-   ```bash
-   legendary auth
-   ```
-
-2. **Extract the refresh token** from Legendary's config:
-   ```bash
-   cat ~/.config/legendary/user.json | grep refresh_token
-   ```
-
-3. **Add to your config:**
-   ```yaml
-   inputs:
-     epic_games:
-       plugin: epic_games
-       refresh_token: "your-refresh-token-here"
-       enabled: true
-   ```
+Works in both local and Docker installations — no host-side tools needed.
 
 **Note:** The refresh token is long-lived but may eventually expire. If Epic sync fails with an authentication error, reconnect via the web UI.
 

@@ -85,11 +85,11 @@ inputs:
     enabled: false
 
   # Epic Games Store integration
+  # Recommended: connect via web UI (Data tab → Connect Epic Games).
+  # The token is stored in the encrypted credential database automatically.
+  # See "Epic Games Setup" section in README.md for details.
   epic_games:
     plugin: epic_games
-    # Epic Games OAuth refresh token for API access.
-    # See "Epic Games Setup" section in README.md for step-by-step instructions.
-    refresh_token: ""
     content_type: "video_game"
     enabled: false
 
