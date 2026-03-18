@@ -1,6 +1,25 @@
 # CHANGELOG
 
 
+## v0.5.1 (2026-03-18)
+
+### Bug Fixes
+
+- **cli,web**: Clarify that recommendations are based on unconsumed items
+  ([`2e6c3b0`](https://github.com/therealahall/recommendinator/commit/2e6c3b0082a27f290b109800e316b81f6196b97c))
+
+- **conversation**: Prevent LLM hallucination when zero recommendations exist
+  ([`01f57f8`](https://github.com/therealahall/recommendinator/commit/01f57f88e2abcf3a0e0133af50909cb00ecc2fc5))
+
+### Testing
+
+- **cli,web**: Add regression tests for empty-results messaging
+  ([`7fc0a47`](https://github.com/therealahall/recommendinator/commit/7fc0a477bca03a487f135cf20dfa899b677a4e52))
+
+- **conversation**: Add regression tests for LLM hallucination prevention
+  ([`34a38b6`](https://github.com/therealahall/recommendinator/commit/34a38b63482ae39ff096da1bb07e04fe8a868130))
+
+
 ## v0.5.0 (2026-03-18)
 
 ### Bug Fixes
