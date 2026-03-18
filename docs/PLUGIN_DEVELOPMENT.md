@@ -385,6 +385,33 @@ class TestMyPlugin:
 10. **Respect the `ignored` field** - If your source provides a way to mark items as excluded, set `ignored=True` on the `ContentItem`. Use `parse_boolean_field()` from `generic_csv` for flexible boolean parsing.
 11. **Use list format for `seasons_watched`** - For TV shows, store `seasons_watched` as a list of specific season numbers (e.g., `[1, 2, 5, 6]`) in metadata. Use `parse_seasons_watched()` from `generic_csv` if converting from string input. A single integer is treated as a count for backward compatibility (e.g., `5` → `[1, 2, 3, 4, 5]`).
 
+## Handling Token Rotation (OAuth Plugins)
+
+If your plugin uses OAuth refresh tokens, the token may be rotated by the
+server during a sync operation. To persist the new token so the user doesn't
+need to re-authenticate, use the `_on_credential_rotated` callback that
+`execute_sync` injects into the plugin config:
+
+```python
+from src.ingestion.plugin_base import CredentialUpdateCallback
+
+# Inside your internal fetch function:
+on_credential_rotated: CredentialUpdateCallback | None = (
+    config.get("_on_credential_rotated")
+    if callable(config.get("_on_credential_rotated"))
+    else None
+)
+
+# After obtaining new tokens:
+new_refresh_token = token_response.get("refresh_token")
+if new_refresh_token and new_refresh_token != original_refresh_token:
+    if on_credential_rotated:
+        on_credential_rotated("refresh_token", new_refresh_token)
+```
+
+See `src/ingestion/sources/gog.py` and `src/ingestion/sources/epic_games.py`
+for complete examples.
+
 ## Enrichment Providers
 
 In addition to data source plugins, you can create custom **enrichment providers** that fetch metadata from external APIs. Enrichment providers use the same auto-discovery pattern as source plugins — place your provider in `src/enrichment/providers/` (or `plugins/private/enrichment/` for private providers) and it will be discovered automatically.
