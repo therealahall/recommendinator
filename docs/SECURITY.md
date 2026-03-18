@@ -33,6 +33,7 @@ Sensitive credentials (OAuth tokens, API keys) are encrypted at rest using Ferne
 - **Key directory permissions** are set to `0700` when created
 - **Auto-migration**: On startup, sensitive fields from `config.yaml` (e.g., `refresh_token`, `api_key`) are automatically migrated to the encrypted database. The plaintext is scrubbed from in-memory config after migration
 - **Stale credential recovery**: If the encryption key changes, stale credentials are automatically re-encrypted from config values or purged if no config fallback exists
+- **Automatic token rotation**: When OAuth-based sources (GOG, Epic Games) receive a rotated refresh token during sync, the new token is automatically persisted to the encrypted credentials table. Users do not need to manually reconnect when servers rotate tokens
 - **Credentials are write-only from the API** — no endpoint returns credential values
 
 If you move the database to a new host, copy `data/.credential_key` along with it. Without the key file, stored credentials cannot be decrypted and will need to be re-entered.
