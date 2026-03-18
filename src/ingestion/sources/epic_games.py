@@ -18,6 +18,7 @@ from legendary.models.exceptions import InvalidCredentialsError
 
 from src.ingestion.plugin_base import (
     ConfigField,
+    CredentialUpdateCallback,
     ProgressCallback,
     SourceError,
     SourcePlugin,
@@ -56,11 +57,11 @@ def authenticate(refresh_token: str) -> EPCAPI:
         api.start_session(refresh_token=refresh_token)
     except InvalidCredentialsError as error:
         raise EpicGamesAPIError(
-            f"Authentication failed (invalid or expired refresh token): {error}"
+            "Authentication failed (invalid or expired refresh token)"
         ) from error
     except Exception as error:
         raise EpicGamesAPIError(
-            f"Failed to authenticate with Epic Games: {error}"
+            f"Failed to authenticate with Epic Games: {type(error).__name__}"
         ) from error
     return api
 
@@ -83,7 +84,9 @@ def get_library_items(api: EPCAPI) -> list[dict[str, Any]]:
         records: list[dict[str, Any]] = api.get_library_items(include_metadata=True)
         return records
     except Exception as error:
-        raise EpicGamesAPIError(f"Failed to fetch library items: {error}") from error
+        raise EpicGamesAPIError(
+            f"Failed to fetch library items: {type(error).__name__}"
+        ) from error
 
 
 def get_game_metadata(
@@ -107,7 +110,7 @@ def get_game_metadata(
         return result
     except Exception as error:
         raise EpicGamesAPIError(
-            f"Failed to fetch metadata for {catalog_item_id}: {error}"
+            f"Failed to fetch metadata for {catalog_item_id}: {type(error).__name__}"
         ) from error
 
 
@@ -268,6 +271,11 @@ class EpicGamesPlugin(SourcePlugin):
                 refresh_token=config.get("refresh_token", "").strip(),
                 source=self.get_source_identifier(config),
                 progress_callback=progress_callback,
+                on_credential_rotated=(
+                    config.get("_on_credential_rotated")
+                    if callable(config.get("_on_credential_rotated"))
+                    else None
+                ),
             )
         except EpicGamesAPIError as error:
             raise SourceError(self.name, str(error)) from error
@@ -282,6 +290,7 @@ def _fetch_epic_games(
     refresh_token: str,
     source: str = "epic_games",
     progress_callback: ProgressCallback | None = None,
+    on_credential_rotated: CredentialUpdateCallback | None = None,
 ) -> Iterator[ContentItem]:
     """Fetch and parse Epic Games Store library.
 
@@ -289,6 +298,8 @@ def _fetch_epic_games(
         refresh_token: Epic Games OAuth refresh token.
         source: Source identifier for ContentItems.
         progress_callback: Optional callback(current, total, message).
+        on_credential_rotated: Optional callback(key, value) called when the
+            refresh token is rotated by the OAuth server.
 
     Yields:
         ContentItem objects for each base game.
@@ -296,6 +307,16 @@ def _fetch_epic_games(
     # Phase 1: Authenticate
     logger.info("Authenticating with Epic Games Store...")
     api = authenticate(refresh_token)
+
+    # Persist rotated refresh token if it changed
+    user_data = getattr(api, "user", None)
+    new_refresh_token = (
+        user_data.get("refresh_token") if isinstance(user_data, dict) else None
+    )
+    if new_refresh_token and new_refresh_token != refresh_token:
+        if on_credential_rotated:
+            on_credential_rotated("refresh_token", new_refresh_token)
+            logger.info("Epic Games refresh token rotated and persisted")
 
     # Phase 2: Fetch all library records
     logger.info("Fetching Epic Games library...")
