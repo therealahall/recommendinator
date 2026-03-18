@@ -2,6 +2,7 @@
 
 import json
 from dataclasses import fields
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
@@ -111,12 +112,66 @@ def client(mock_components):
     return TestClient(mock_components["app"])
 
 
-def test_root_endpoint(client):
-    """Test root endpoint serves HTML with correct branding."""
-    response = client.get("/")
-    assert response.status_code == 200
-    assert "text/html" in response.headers["content-type"]
-    assert "Recommendinator" in response.text
+class TestRootEndpoint:
+    """Tests for the root HTML endpoint."""
+
+    def test_serves_html_with_branding(self, client):
+        """Test root endpoint serves HTML with correct branding."""
+        response = client.get("/")
+        assert response.status_code == 200
+        assert "text/html" in response.headers["content-type"]
+        assert "Recommendinator" in response.text
+
+    @pytest.mark.parametrize(
+        "asset_path",
+        [
+            "/static/style.css",
+            "/static/app.js",
+            "/static/vendor/marked.min.js",
+            "/static/vendor/purify.min.js",
+        ],
+    )
+    def test_cache_busts_static_assets(self, client, asset_path):
+        """root() appends ?v={APP_VERSION} to all static asset URLs."""
+        response = client.get("/")
+        assert response.status_code == 200
+        versioned = f"{asset_path}?v={APP_VERSION}"
+        assert (
+            response.text.count(versioned) == 1
+        ), f"Expected exactly one occurrence of {versioned!r}"
+        # The bare unversioned URL must not appear in href/src attributes
+        assert f'"{asset_path}"' not in response.text
+
+    def test_version_label_and_update_banner_present(self, client):
+        """Template includes DOM elements for version display and update detection."""
+        response = client.get("/")
+        assert response.status_code == 200
+        assert 'id="versionLabel"' in response.text
+        assert 'id="updateBanner"' in response.text
+        # Banner starts hidden via CSS (not inline style — CSP blocks those).
+        # The "visible" class is only added by JS on version mismatch.
+        assert 'class="update-banner"' in response.text
+
+    def test_fallback_when_template_missing(self, client):
+        """root() returns a fallback page when the HTML template does not exist."""
+        original_exists = Path.exists
+
+        def patched_exists(self: Path) -> bool:
+            if self.name == "index.html":
+                return False
+            return original_exists(self)
+
+        with patch.object(Path, "exists", patched_exists):
+            response = client.get("/")
+        assert response.status_code == 200
+        assert "text/html" in response.headers["content-type"]
+        assert "Recommendinator API" in response.text
+
+    def test_body_has_data_version(self, client):
+        """root() injects the app version into the body data-version attribute."""
+        response = client.get("/")
+        assert response.status_code == 200
+        assert f'data-version="{APP_VERSION}"' in response.text
 
 
 def test_app_title(mock_components):
