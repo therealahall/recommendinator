@@ -9,6 +9,7 @@ import requests
 
 from src.ingestion.plugin_base import (
     ConfigField,
+    CredentialUpdateCallback,
     ProgressCallback,
     SourceError,
     SourcePlugin,
@@ -66,7 +67,9 @@ def refresh_access_token(refresh_token: str) -> dict[str, str]:
         }
     except requests.RequestException as error:
         logger.error("Error refreshing GOG access token: %s", error)
-        raise GogAPIError(f"Failed to refresh access token: {error}") from error
+        raise GogAPIError(
+            f"Failed to refresh access token: {type(error).__name__}"
+        ) from error
 
 
 def get_owned_games(
@@ -117,7 +120,9 @@ def get_owned_games(
 
         except requests.RequestException as error:
             logger.error("Error fetching GOG owned games (page %d): %s", page, error)
-            raise GogAPIError(f"Failed to fetch owned games: {error}") from error
+            raise GogAPIError(
+                f"Failed to fetch owned games: {type(error).__name__}"
+            ) from error
 
     return all_products
 
@@ -145,7 +150,9 @@ def get_wishlist_product_ids(access_token: str) -> list[int]:
         return [int(product_id) for product_id in wishlist.keys()]
     except requests.RequestException as error:
         logger.error("Error fetching GOG wishlist: %s", error)
-        raise GogAPIError(f"Failed to fetch wishlist: {error}") from error
+        raise GogAPIError(
+            f"Failed to fetch wishlist: {type(error).__name__}"
+        ) from error
 
 
 def get_product_details(product_id: int) -> dict[str, Any] | None:
@@ -173,7 +180,7 @@ def get_product_details(product_id: int) -> dict[str, Any] | None:
     except requests.RequestException as error:
         logger.error("Error fetching GOG product %d: %s", product_id, error)
         raise GogAPIError(
-            f"Failed to fetch product details for {product_id}: {error}"
+            f"Failed to fetch product details for {product_id}: {type(error).__name__}"
         ) from error
 
 
@@ -344,6 +351,11 @@ class GogPlugin(SourcePlugin):
                 enrich_wishlist=config.get("enrich_wishlist", True),
                 source=self.get_source_identifier(config),
                 progress_callback=gog_internal_callback,
+                on_credential_rotated=(
+                    config.get("_on_credential_rotated")
+                    if callable(config.get("_on_credential_rotated"))
+                    else None
+                ),
             )
         except GogAPIError as error:
             raise SourceError(self.name, str(error)) from error
@@ -355,6 +367,7 @@ def _fetch_gog_games(
     enrich_wishlist: bool = True,
     source: str = "gog",
     progress_callback: Callable[[int, int, str], None] | None = None,
+    on_credential_rotated: CredentialUpdateCallback | None = None,
 ) -> Iterator[ContentItem]:
     """Fetch and parse GOG game library and wishlist.
 
@@ -364,6 +377,8 @@ def _fetch_gog_games(
         enrich_wishlist: Whether to fetch detailed metadata for wishlist items.
         source: Source identifier for ContentItems.
         progress_callback: Optional callback(current, total, phase).
+        on_credential_rotated: Optional callback(key, value) called when the
+            refresh token is rotated by the OAuth server.
 
     Yields:
         ContentItem objects for each game.
@@ -372,6 +387,13 @@ def _fetch_gog_games(
     logger.info("Refreshing GOG access token...")
     tokens = refresh_access_token(refresh_token)
     access_token = tokens["access_token"]
+
+    # Persist rotated refresh token if it changed
+    new_refresh_token = tokens.get("refresh_token")
+    if new_refresh_token and new_refresh_token != refresh_token:
+        if on_credential_rotated:
+            on_credential_rotated("refresh_token", new_refresh_token)
+            logger.info("GOG refresh token rotated and persisted")
 
     # Phase 2: Fetch owned games
     logger.info("Fetching owned games from GOG...")
