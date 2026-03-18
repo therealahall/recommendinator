@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.5.2 (2026-03-18)
+
+### Bug Fixes
+
+- **release**: Remove uv.lock from GitHub Release assets
+  ([`5a43c0a`](https://github.com/therealahall/recommendinator/commit/5a43c0a92de989dda406a4854b24ed618fda67cb))
+
+
 ## v0.5.1 (2026-03-18)
 
 ### Bug Fixes
