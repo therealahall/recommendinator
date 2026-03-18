@@ -688,6 +688,25 @@ def build_user_context_block_compact(context: ConversationContext) -> str:
         for item in context.relevant_unconsumed[:5]:
             parts.append(_format_item_compact(item, backlog=True))
         parts.append("")
+    else:
+        parts.append("## No Recommendations Available")
+        if context.recommendation_briefs is not None:
+            # Pipeline ran but returned zero candidates — backlog is empty
+            parts.append(
+                "There are NO unconsumed items to recommend. "
+                "Do NOT invent a recommendation from your own knowledge. "
+                "Tell the user their backlog is empty and suggest they add "
+                "new items to their wishlist or library."
+            )
+        else:
+            # Pipeline unavailable and fallback found nothing
+            parts.append(
+                "No items are available to recommend right now. "
+                "Do NOT invent a recommendation from your own knowledge. "
+                "Tell the user you have nothing to recommend and suggest "
+                "they add more items to their library."
+            )
+        parts.append("")
 
     # Recent conversation (last 3) — sanitize user messages for injection
     # prevention; truncate assistant messages for token budget (they are
@@ -768,6 +787,27 @@ def build_user_context_block(context: ConversationContext) -> str:
         )
         for item in context.relevant_unconsumed[:15]:
             parts.append(_format_item_detail(item, backlog=True))
+        parts.append("")
+    else:
+        parts.append("## No Recommendations Available")
+        if context.recommendation_briefs is not None:
+            # Pipeline ran but returned zero candidates — backlog is empty
+            parts.append(
+                "There are NO unconsumed items to recommend for this content type. "
+                "Do NOT invent or suggest any titles from your own knowledge. "
+                "Tell the user their backlog is empty — they may need to add new "
+                "items to their wishlist or library that they haven't consumed yet. "
+                "Recommendations are based on unconsumed content, so if everything "
+                "is marked as completed, there is nothing to recommend."
+            )
+        else:
+            # Pipeline unavailable and fallback found nothing
+            parts.append(
+                "No items are available to recommend right now. "
+                "Do NOT invent or suggest any titles from your own knowledge. "
+                "Tell the user you have nothing to recommend and suggest they "
+                "add more items to their library."
+            )
         parts.append("")
 
     # Recent conversation for continuity — sanitize user messages for
