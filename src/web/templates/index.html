@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="/static/style.css">
     <link rel="stylesheet" id="theme-stylesheet" href="">
 </head>
-<body>
+<body data-version="">
     <!-- Mobile sidebar toggle -->
     <button class="sidebar-toggle" id="sidebarToggle" aria-label="Toggle navigation">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -23,6 +23,7 @@
         <aside class="sidebar" id="sidebar">
             <div class="sidebar-header">
                 <h1>Recommendinator</h1>
+                <span class="version-label" id="versionLabel"></span>
             </div>
             <nav class="sidebar-nav">
                 <button class="nav-item active" data-tab="recommendations">
@@ -68,6 +69,9 @@
 
         <!-- Main Content -->
         <main class="main-content">
+            <div id="updateBanner" class="update-banner">
+                A new version is available. <button class="update-banner-btn" id="updateBannerBtn">Reload</button>
+            </div>
             <div id="statusBar" class="status-bar"></div>
 
             <!-- Recommendations Tab -->

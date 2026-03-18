@@ -1,11 +1,14 @@
 """FastAPI application for web interface."""
 
+import html
 import logging
 import os
+import re
 import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -224,10 +227,25 @@ def create_app(config_path: Path | None = None) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     async def root() -> HTMLResponse:
-        """Serve the main web UI."""
+        """Serve the main web UI with cache-busted static asset URLs."""
         html_file = Path("src/web/templates/index.html")
         if html_file.exists():
-            return HTMLResponse(content=html_file.read_text())
+            content = html_file.read_text()
+            # Escape version for safe injection into HTML and URLs
+            version_attr = html.escape(APP_VERSION, quote=True)
+            version_url = quote(APP_VERSION, safe="")
+            # Inject app version into body data attribute
+            content = content.replace(
+                'data-version=""',
+                f'data-version="{version_attr}"',
+            )
+            # Append version query param to static asset URLs for cache busting
+            content = re.sub(
+                r'(href|src)="(/static/[^"]+)"',
+                lambda m: f'{m.group(1)}="{m.group(2)}?v={version_url}"',
+                content,
+            )
+            return HTMLResponse(content=content)
         return HTMLResponse(
             content="<h1>Recommendinator API</h1><p>API is running. Use /docs for API documentation.</p>"
         )
