@@ -83,7 +83,9 @@ def recommend(
 
         if not recommendations:
             click.echo(
-                "No recommendations available. You may need to add more consumed content."
+                "No recommendations available. Recommendations are based on items "
+                "you haven't consumed yet — try adding new items to your "
+                "wishlist or library."
             )
             return
 

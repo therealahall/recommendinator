@@ -93,9 +93,12 @@ ollama list
 **Symptom:** "No recommendations available"
 
 **Causes & Solutions:**
-1. **No consumed items:** Add some content and mark as completed
-2. **No unconsumed items:** Add items to your wishlist/library
-3. **Wrong content type:** Ensure you have items of the requested type
+
+Recommendations are based on items you **haven't consumed yet**. If all your items are marked as completed, there's nothing left to recommend.
+
+1. **All items completed:** Add new items to your wishlist/library that you haven't consumed yet
+2. **No consumed items:** You need some completed items so the engine can learn your preferences
+3. **Wrong content type:** Ensure you have unconsumed items of the requested type
 4. **Series filtering:** If all items are excluded by series rules, check series order settings
 
 ### Poor Quality Recommendations

@@ -488,7 +488,7 @@
             var empty = document.createElement("div");
             empty.className = "empty-state";
             var p = document.createElement("p");
-            p.textContent = "No recommendations available. Try adding more content to your library.";
+            p.textContent = "No recommendations available. Recommendations are based on items you haven\u2019t consumed yet \u2014 try adding new items to your wishlist or library.";
             empty.appendChild(p);
             resultsDiv.appendChild(empty);
             return;
