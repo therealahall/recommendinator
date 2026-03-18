@@ -998,7 +998,8 @@ async def mark_complete(request: CompletionRequest) -> dict[str, Any]:
         content_type = ContentType.from_string(request.content_type)
     except ValueError:
         raise HTTPException(
-            status_code=400, detail=f"Invalid content type: {request.content_type}"
+            status_code=400,
+            detail="Invalid content type. Valid options: book, movie, tv_show, video_game",
         ) from None
 
     # Create content item
@@ -1132,6 +1133,7 @@ async def update_data(request: UpdateRequest) -> dict[str, Any]:
             progress_callback=progress_callback,
             error_callback=sync_manager.add_error,
             mark_for_enrichment=auto_enrich,
+            user_id=1,
         )
         return sum(result.items_synced for result in results)
 
