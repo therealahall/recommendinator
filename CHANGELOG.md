@@ -1,6 +1,35 @@
 # CHANGELOG
 
 
+## v0.5.0 (2026-03-18)
+
+### Bug Fixes
+
+- **sources**: Persist rotated refresh tokens in GOG and Epic plugins
+  ([`9c61a04`](https://github.com/therealahall/recommendinator/commit/9c61a045db1c0985c2fd504b835ffef1413b63b8))
+
+- **web**: Use static error message for invalid content type
+  ([`c21352c`](https://github.com/therealahall/recommendinator/commit/c21352cb89e16e239e6a3a80f09594bb120828ac))
+
+### Documentation
+
+- Document token rotation handling for OAuth plugins
+  ([`f531a79`](https://github.com/therealahall/recommendinator/commit/f531a796a531c71128ac857fc4cefdd2aba950fa))
+
+### Features
+
+- **plugin_base**: Define CredentialUpdateCallback type
+  ([`e318a88`](https://github.com/therealahall/recommendinator/commit/e318a88113dae5fcb3381809c09c45c45095b473))
+
+- **sync**: Inject credential rotation callback into plugin config
+  ([`3c5121f`](https://github.com/therealahall/recommendinator/commit/3c5121f29986216bdccf21139a2e23794266c314))
+
+### Testing
+
+- **sync**: Add regression tests for token rotation persistence
+  ([`84d50c6`](https://github.com/therealahall/recommendinator/commit/84d50c6acc03835f625d9728925bc051db766477))
+
+
 ## v0.4.0 (2026-03-18)
 
 ### Documentation
