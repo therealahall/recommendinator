@@ -20,6 +20,8 @@
         embeddings_enabled: false,
         llm_reasoning_enabled: false
     };
+    var loadedVersion = document.body.getAttribute("data-version") || null;
+    var versionPollInterval = null;
 
     // Library pagination state
     var libraryState = {
@@ -72,7 +74,11 @@
             if (!known) return;
         }
 
-        link.href = "/static/themes/" + themeId + "/colors.css";
+        var themePath = "/static/themes/" + themeId + "/colors.css";
+        if (loadedVersion) {
+            themePath += "?v=" + encodeURIComponent(loadedVersion);
+        }
+        link.href = themePath;
         localStorage.setItem("theme", themeId);
     }
 
@@ -143,6 +149,18 @@
                     statusBar.textContent = "System initializing...";
                 }
 
+                // Display version in sidebar and start update polling
+                if (data.version) {
+                    var versionLabel = document.getElementById("versionLabel");
+                    if (versionLabel) {
+                        versionLabel.textContent = "v" + data.version;
+                    }
+                    if (!loadedVersion) {
+                        loadedVersion = data.version;
+                    }
+                    startVersionPolling();
+                }
+
                 // Store feature flags
                 if (data.features) {
                     aiFeatures = data.features;
@@ -169,6 +187,30 @@
                 statusBar.className = "status-bar error";
                 statusBar.textContent = "Failed to connect to server";
             });
+    }
+
+    function startVersionPolling() {
+        if (versionPollInterval !== null) return;
+        versionPollInterval = setInterval(function () {
+            fetch(API_BASE + "/status")
+                .then(function (response) { return response.json(); })
+                .then(function (data) {
+                    if (data.version && data.version !== loadedVersion) {
+                        var banner = document.getElementById("updateBanner");
+                        if (banner) {
+                            banner.classList.add("visible");
+                        }
+                        var btn = document.getElementById("updateBannerBtn");
+                        if (btn && !btn.dataset.listenerAttached) {
+                            btn.addEventListener("click", function () { location.reload(); });
+                            btn.dataset.listenerAttached = "true";
+                        }
+                    }
+                })
+                .catch(function () {
+                    // Silently ignore polling errors
+                });
+        }, 300000);
     }
 
     function updateAiButtonVisibility() {
