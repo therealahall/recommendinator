@@ -43,6 +43,7 @@ def execute_sync(
     use_embeddings: bool = False,
     progress_callback: SyncProgressCallback | None = None,
     mark_for_enrichment: bool = False,
+    user_id: int = 1,
 ) -> SyncResult:
     """Execute a sync for a single plugin source.
 
@@ -57,6 +58,7 @@ def execute_sync(
         use_embeddings: Whether to generate embeddings for each item.
         progress_callback: Optional callback(items_processed, total, current_item).
         mark_for_enrichment: Whether to mark items as needing enrichment after save.
+        user_id: User ID for credential storage (default 1).
 
     Returns:
         SyncResult with counts and any errors.
@@ -67,6 +69,23 @@ def execute_sync(
 
     if progress_callback:
         progress_callback(0, None, "Fetching...", source_name)
+
+    # Inject credential rotation callback so plugins can persist rotated tokens
+    def on_credential_rotated(key: str, value: str) -> None:
+        try:
+            storage_manager.save_credential(user_id, plugin.name, key, value)
+            logger.info(
+                "[SYNC] %s: Persisted rotated credential '%s'", source_name, key
+            )
+        except Exception as error:
+            logger.warning(
+                "[SYNC] %s: Failed to persist rotated credential '%s': %s",
+                source_name,
+                key,
+                type(error).__name__,
+            )
+
+    plugin_config = {**plugin_config, "_on_credential_rotated": on_credential_rotated}
 
     # Fetch items from plugin
     def fetch_progress(
@@ -170,6 +189,7 @@ def execute_multi_source_sync(
     progress_callback: SyncProgressCallback | None = None,
     error_callback: Callable[[str], None] | None = None,
     mark_for_enrichment: bool = False,
+    user_id: int = 1,
 ) -> list[SyncResult]:
     """Execute sync for multiple plugin sources sequentially.
 
@@ -181,6 +201,7 @@ def execute_multi_source_sync(
         progress_callback: Optional callback for progress updates.
         error_callback: Optional callback for error reporting.
         mark_for_enrichment: Whether to mark items as needing enrichment after save.
+        user_id: User ID for credential storage (default 1).
 
     Returns:
         List of SyncResult, one per source.
@@ -199,6 +220,7 @@ def execute_multi_source_sync(
                 use_embeddings=use_embeddings,
                 progress_callback=progress_callback,
                 mark_for_enrichment=mark_for_enrichment,
+                user_id=user_id,
             )
             results.append(result)
 
