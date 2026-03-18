@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.5.3 (2026-03-18)
+
+### Bug Fixes
+
+- **release**: Force lockfile update for version bumps
+  ([`30033d3`](https://github.com/therealahall/recommendinator/commit/30033d3ed2d1b8b8df35f59df247efcf29cf2fb5))
+
+
 ## v0.5.2 (2026-03-18)
 
 ### Bug Fixes
