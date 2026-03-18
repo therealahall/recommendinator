@@ -14,6 +14,11 @@ from src.models.content import ContentItem, ContentType
 # - current_item: Title of current item or phase description (e.g. "Fetching...")
 ProgressCallback = Callable[[int, int | None, str | None], None]
 
+# Credential update callback: (key, new_value) -> None
+# Called by plugins when an OAuth token is rotated during a sync operation.
+# Injected into plugin config as "_on_credential_rotated" by execute_sync.
+CredentialUpdateCallback = Callable[[str, str], None]
+
 
 @dataclass
 class PluginInfo:
