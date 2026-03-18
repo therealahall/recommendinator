@@ -756,6 +756,180 @@ class TestEpicGamesPluginFetch:
     @patch("src.ingestion.sources.epic_games.get_game_metadata")
     @patch("src.ingestion.sources.epic_games.get_library_items")
     @patch("src.ingestion.sources.epic_games.authenticate")
+    def test_rotated_refresh_token_triggers_callback(
+        self,
+        mock_authenticate: Mock,
+        mock_get_library: Mock,
+        mock_get_metadata: Mock,
+    ) -> None:
+        """Regression test: rotated Epic refresh tokens must be persisted.
+
+        Bug: When Epic Games returns a new refresh_token during session start
+        (token rotation), the updated token was discarded. If the old token
+        expired before the next sync, the user had to re-authenticate.
+
+        Root cause: authenticate() returned the EPCAPI instance but the new
+        refresh_token from start_session() was never extracted or saved.
+
+        Fix: After authentication, extract the refresh_token from the session
+        data (api.user dict) and call the _on_credential_rotated callback
+        (injected by execute_sync) when it differs from the original.
+        """
+        mock_api = Mock(spec=EPCAPI)
+        mock_api.user = {"refresh_token": "rotated_epic_token"}
+        mock_authenticate.return_value = mock_api
+        mock_get_library.return_value = [
+            _make_library_record(app_name="G1", catalog_item_id="c1"),
+        ]
+        mock_get_metadata.return_value = _make_game_metadata(
+            catalog_item_id="c1", title="Game 1"
+        )
+
+        credential_callback = Mock()
+        plugin = EpicGamesPlugin()
+        list(
+            plugin.fetch(
+                {
+                    "refresh_token": "old_epic_token",
+                    "_on_credential_rotated": credential_callback,
+                }
+            )
+        )
+
+        credential_callback.assert_called_once_with(
+            "refresh_token", "rotated_epic_token"
+        )
+
+    @patch("src.ingestion.sources.epic_games.get_game_metadata")
+    @patch("src.ingestion.sources.epic_games.get_library_items")
+    @patch("src.ingestion.sources.epic_games.authenticate")
+    def test_same_refresh_token_does_not_trigger_callback(
+        self,
+        mock_authenticate: Mock,
+        mock_get_library: Mock,
+        mock_get_metadata: Mock,
+    ) -> None:
+        """No callback when the Epic refresh token hasn't changed."""
+        mock_api = Mock(spec=EPCAPI)
+        mock_api.user = {"refresh_token": "same_token"}
+        mock_authenticate.return_value = mock_api
+        mock_get_library.return_value = [
+            _make_library_record(app_name="G1", catalog_item_id="c1"),
+        ]
+        mock_get_metadata.return_value = _make_game_metadata(
+            catalog_item_id="c1", title="Game 1"
+        )
+
+        credential_callback = Mock()
+        plugin = EpicGamesPlugin()
+        items = list(
+            plugin.fetch(
+                {
+                    "refresh_token": "same_token",
+                    "_on_credential_rotated": credential_callback,
+                }
+            )
+        )
+
+        assert len(items) == 1
+        credential_callback.assert_not_called()
+
+    @patch("src.ingestion.sources.epic_games.get_game_metadata")
+    @patch("src.ingestion.sources.epic_games.get_library_items")
+    @patch("src.ingestion.sources.epic_games.authenticate")
+    def test_rotated_token_without_callback_does_not_raise(
+        self,
+        mock_authenticate: Mock,
+        mock_get_library: Mock,
+        mock_get_metadata: Mock,
+    ) -> None:
+        """Token rotation with no callback injected completes without error."""
+        mock_api = Mock(spec=EPCAPI)
+        mock_api.user = {"refresh_token": "rotated_token"}
+        mock_authenticate.return_value = mock_api
+        mock_get_library.return_value = [
+            _make_library_record(app_name="G1", catalog_item_id="c1"),
+        ]
+        mock_get_metadata.return_value = _make_game_metadata(
+            catalog_item_id="c1", title="Game 1"
+        )
+
+        plugin = EpicGamesPlugin()
+        # No _on_credential_rotated in config
+        items = list(plugin.fetch({"refresh_token": "old_token"}))
+        assert len(items) == 1
+
+    @patch("src.ingestion.sources.epic_games.get_game_metadata")
+    @patch("src.ingestion.sources.epic_games.get_library_items")
+    @patch("src.ingestion.sources.epic_games.authenticate")
+    def test_empty_user_dict_does_not_trigger_callback(
+        self,
+        mock_authenticate: Mock,
+        mock_get_library: Mock,
+        mock_get_metadata: Mock,
+    ) -> None:
+        """No callback when api.user has no refresh_token key."""
+        mock_api = Mock(spec=EPCAPI)
+        mock_api.user = {}  # No refresh_token key
+        mock_authenticate.return_value = mock_api
+        mock_get_library.return_value = [
+            _make_library_record(app_name="G1", catalog_item_id="c1"),
+        ]
+        mock_get_metadata.return_value = _make_game_metadata(
+            catalog_item_id="c1", title="Game 1"
+        )
+
+        credential_callback = Mock()
+        plugin = EpicGamesPlugin()
+        items = list(
+            plugin.fetch(
+                {
+                    "refresh_token": "old_token",
+                    "_on_credential_rotated": credential_callback,
+                }
+            )
+        )
+
+        assert len(items) == 1
+        credential_callback.assert_not_called()
+
+    @patch("src.ingestion.sources.epic_games.get_game_metadata")
+    @patch("src.ingestion.sources.epic_games.get_library_items")
+    @patch("src.ingestion.sources.epic_games.authenticate")
+    def test_none_user_dict_does_not_trigger_callback(
+        self,
+        mock_authenticate: Mock,
+        mock_get_library: Mock,
+        mock_get_metadata: Mock,
+    ) -> None:
+        """No callback when api.user is None (isinstance guard exercised)."""
+        mock_api = Mock(spec=EPCAPI)
+        mock_api.user = None
+        mock_authenticate.return_value = mock_api
+        mock_get_library.return_value = [
+            _make_library_record(app_name="G1", catalog_item_id="c1"),
+        ]
+        mock_get_metadata.return_value = _make_game_metadata(
+            catalog_item_id="c1", title="Game 1"
+        )
+
+        credential_callback = Mock()
+        plugin = EpicGamesPlugin()
+        items = list(
+            plugin.fetch(
+                {
+                    "refresh_token": "old_token",
+                    "_on_credential_rotated": credential_callback,
+                }
+            )
+        )
+
+        assert len(items) == 1
+        credential_callback.assert_not_called()
+
+    @patch("src.ingestion.sources.epic_games.get_game_metadata")
+    @patch("src.ingestion.sources.epic_games.get_library_items")
+    @patch("src.ingestion.sources.epic_games.authenticate")
     def test_metadata_none_skipped(
         self,
         mock_authenticate: Mock,

@@ -1,6 +1,8 @@
 """Tests for the shared sync executor."""
 
 import logging
+from collections.abc import Iterator
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -8,6 +10,7 @@ import pytest
 from src.ingestion.plugin_base import SourceError, SourcePlugin
 from src.ingestion.sync import SyncResult, execute_multi_source_sync, execute_sync
 from src.llm.embeddings import EmbeddingGenerator
+from src.models.content import ContentItem
 from src.storage.manager import StorageManager
 from tests.factories import make_item
 
@@ -229,7 +232,7 @@ class TestExecuteSync:
         storage.save_content_item.assert_not_called()
 
     def test_plugin_config_passed_through(self) -> None:
-        """Plugin receives the exact config dict."""
+        """Plugin receives the config dict (with injected credential callback)."""
         plugin = MagicMock(spec=SourcePlugin)
         plugin.display_name = "TestPlugin"
         plugin.fetch.return_value = iter([])
@@ -245,7 +248,12 @@ class TestExecuteSync:
 
         plugin.fetch.assert_called_once()
         call_args = plugin.fetch.call_args
-        assert call_args[0][0] == config
+        passed_config = call_args[0][0]
+        # Original config keys are preserved
+        assert passed_config["url"] == "http://example.com"
+        assert passed_config["api_key"] == "secret"
+        # Credential rotation callback is injected
+        assert callable(passed_config["_on_credential_rotated"])
 
 
 class TestExecuteMultiSourceSync:
@@ -333,6 +341,195 @@ class TestExecuteMultiSourceSync:
         assert results[0].items_synced == 1
         # Should have called mark_item_needs_enrichment
         storage.mark_item_needs_enrichment.assert_called_once_with(1)
+
+
+class TestCredentialRotationCallback:
+    """Tests for credential rotation callback injection in execute_sync."""
+
+    def test_credential_callback_injected_into_config(self) -> None:
+        """Regression test: execute_sync injects _on_credential_rotated callback.
+
+        Bug: Rotated OAuth refresh tokens from GOG/Epic were discarded during
+        sync because plugins had no way to persist them.
+
+        Fix: execute_sync creates a callback that wraps
+        storage_manager.save_credential and injects it into the plugin_config
+        as _on_credential_rotated. Plugins that rotate tokens call this
+        callback to persist the new value.
+        """
+        plugin = MagicMock(spec=SourcePlugin)
+        plugin.name = "gog"
+        plugin.display_name = "GOG"
+        plugin.fetch.return_value = iter([])
+
+        storage = MagicMock(spec=StorageManager)
+
+        execute_sync(
+            plugin=plugin,
+            plugin_config={"refresh_token": "old"},
+            storage_manager=storage,
+        )
+
+        # Verify the config passed to plugin.fetch has the callback
+        call_args = plugin.fetch.call_args
+        config_passed = call_args[0][0]
+        assert "_on_credential_rotated" in config_passed
+        assert callable(config_passed["_on_credential_rotated"])
+
+    def test_credential_callback_calls_save_credential(self) -> None:
+        """The injected callback persists credentials via storage_manager."""
+        plugin = MagicMock(spec=SourcePlugin)
+        plugin.name = "gog"
+        plugin.display_name = "GOG"
+
+        # Capture the callback by intercepting fetch
+        captured_callback = None
+
+        def capture_fetch(
+            config: dict[str, Any], **kwargs: object
+        ) -> Iterator[ContentItem]:
+            nonlocal captured_callback
+            captured_callback = config.get("_on_credential_rotated")
+            if captured_callback:
+                captured_callback("refresh_token", "new_rotated_value")
+            return iter([])
+
+        plugin.fetch.side_effect = capture_fetch
+
+        storage = MagicMock(spec=StorageManager)
+
+        execute_sync(
+            plugin=plugin,
+            plugin_config={"refresh_token": "old"},
+            storage_manager=storage,
+            user_id=1,
+        )
+
+        assert captured_callback is not None
+        storage.save_credential.assert_called_once_with(
+            1, "gog", "refresh_token", "new_rotated_value"
+        )
+
+    def test_credential_callback_defaults_to_user_id_1(self) -> None:
+        """The callback uses user_id=1 when not explicitly passed."""
+        plugin = MagicMock(spec=SourcePlugin)
+        plugin.name = "gog"
+        plugin.display_name = "GOG"
+
+        def capture_fetch(
+            config: dict[str, Any], **kwargs: object
+        ) -> Iterator[ContentItem]:
+            callback = config.get("_on_credential_rotated")
+            if callback:
+                callback("refresh_token", "new_value")
+            return iter([])
+
+        plugin.fetch.side_effect = capture_fetch
+
+        storage = MagicMock(spec=StorageManager)
+
+        # Do NOT pass user_id — should default to 1
+        execute_sync(
+            plugin=plugin,
+            plugin_config={},
+            storage_manager=storage,
+        )
+
+        storage.save_credential.assert_called_once_with(
+            1, "gog", "refresh_token", "new_value"
+        )
+
+    def test_credential_callback_uses_custom_user_id(self) -> None:
+        """The callback uses the user_id parameter from execute_sync."""
+        plugin = MagicMock(spec=SourcePlugin)
+        plugin.name = "epic_games"
+        plugin.display_name = "Epic Games"
+
+        def capture_fetch(
+            config: dict[str, Any], **kwargs: object
+        ) -> Iterator[ContentItem]:
+            callback = config.get("_on_credential_rotated")
+            if callback:
+                callback("refresh_token", "new_value")
+            return iter([])
+
+        plugin.fetch.side_effect = capture_fetch
+
+        storage = MagicMock(spec=StorageManager)
+
+        execute_sync(
+            plugin=plugin,
+            plugin_config={},
+            storage_manager=storage,
+            user_id=42,
+        )
+
+        storage.save_credential.assert_called_once_with(
+            42, "epic_games", "refresh_token", "new_value"
+        )
+
+    def test_credential_callback_error_logged_not_raised(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Errors in save_credential are logged but don't crash sync."""
+        plugin = MagicMock(spec=SourcePlugin)
+        plugin.name = "gog"
+        plugin.display_name = "GOG"
+
+        def capture_fetch(
+            config: dict[str, Any], **kwargs: object
+        ) -> Iterator[ContentItem]:
+            callback = config.get("_on_credential_rotated")
+            if callback:
+                callback("refresh_token", "new_value")
+            return iter([])
+
+        plugin.fetch.side_effect = capture_fetch
+
+        storage = MagicMock(spec=StorageManager)
+        storage.save_credential.side_effect = Exception("DB locked")
+
+        with caplog.at_level(logging.WARNING, logger="src.ingestion.sync"):
+            result = execute_sync(
+                plugin=plugin,
+                plugin_config={},
+                storage_manager=storage,
+            )
+
+        # Sync should still succeed (0 items, no crash)
+        assert result.items_synced == 0
+        assert any(
+            "Failed to persist rotated credential" in msg and "refresh_token" in msg
+            for msg in caplog.messages
+        )
+
+    def test_multi_source_sync_forwards_user_id(self) -> None:
+        """execute_multi_source_sync forwards user_id to execute_sync."""
+        plugin = MagicMock(spec=SourcePlugin)
+        plugin.name = "gog"
+        plugin.display_name = "GOG"
+
+        def capture_fetch(
+            config: dict[str, Any], **kwargs: object
+        ) -> Iterator[ContentItem]:
+            callback = config.get("_on_credential_rotated")
+            if callback:
+                callback("refresh_token", "rotated_value")
+            return iter([])
+
+        plugin.fetch.side_effect = capture_fetch
+
+        storage = MagicMock(spec=StorageManager)
+
+        execute_multi_source_sync(
+            sources=[(plugin, {"refresh_token": "old"})],
+            storage_manager=storage,
+            user_id=7,
+        )
+
+        storage.save_credential.assert_called_once_with(
+            7, "gog", "refresh_token", "rotated_value"
+        )
 
 
 class TestAutoEnrichmentHook:
