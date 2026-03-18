@@ -363,11 +363,12 @@ class TestBuildUserContextBlock:
     """Tests for the build_user_context_block function."""
 
     def test_build_context_block_empty(self) -> None:
-        """Test building context block with empty context."""
+        """Empty context still emits anti-hallucination warning."""
         context = ConversationContext(user_id=1)
         block = build_user_context_block(context)
-        # Should not crash, may have minimal content
         assert isinstance(block, str)
+        assert "No Recommendations Available" in block
+        assert "Do NOT invent" in block
 
     def test_build_context_block_with_memories(self) -> None:
         """Test building context block with memories."""
@@ -430,6 +431,7 @@ class TestBuildUserContextBlock:
         assert "Available in Backlog — NOT YET CONSUMED" in block
         assert "Do NOT claim they enjoyed or experienced any of these" in block
         assert "[NOT YET CONSUMED]" in block
+        assert "No Recommendations Available" not in block
 
     def test_build_context_block_with_conversation_history(self) -> None:
         """Test building context block with conversation history."""
@@ -1981,3 +1983,71 @@ class TestBuildUserContextBlockCompact:
         )
 
         mock_ollama.generate_embedding.assert_called_once()
+
+
+class TestContextBlockHallucinationRegression:
+    """Regression tests for LLM hallucination when no recommendations exist.
+
+    Bug: when the recommendation pipeline returned zero candidates, the
+    context block had no recommendation section at all. Small models
+    (3B/7B) would then hallucinate recommendations from general knowledge.
+
+    Fix: add an explicit 'No Recommendations Available' section that
+    instructs the LLM not to invent recommendations.
+    """
+
+    def test_pipeline_empty_warns_llm_regression(self) -> None:
+        """Full context block warns LLM when pipeline ran but found nothing."""
+        context = ConversationContext(
+            user_id=1,
+            recommendation_briefs=[],
+            relevant_unconsumed=[],
+        )
+        block = build_user_context_block(context)
+        assert "No Recommendations Available" in block
+        assert "Do NOT invent" in block
+        assert "backlog is empty" in block
+
+    def test_no_pipeline_no_fallback_warns_llm_regression(self) -> None:
+        """Full context block warns LLM when pipeline absent and fallback empty.
+
+        recommendation_briefs=None means the pipeline was not run at all.
+        Message should differ from the pipeline-ran-but-empty case.
+        """
+        context = ConversationContext(
+            user_id=1,
+            recommendation_briefs=None,
+            relevant_unconsumed=[],
+        )
+        block = build_user_context_block(context)
+        assert "No Recommendations Available" in block
+        assert "Do NOT invent" in block
+        assert "backlog is empty" not in block
+
+    def test_compact_pipeline_empty_warns_llm_regression(self) -> None:
+        """Compact context block warns LLM when pipeline ran but found nothing."""
+        context = ConversationContext(
+            user_id=1,
+            recommendation_briefs=[],
+            relevant_unconsumed=[],
+        )
+        block = build_user_context_block_compact(context)
+        assert "No Recommendations Available" in block
+        assert "Do NOT invent" in block
+        assert "backlog is empty" in block
+
+    def test_compact_no_pipeline_no_fallback_warns_llm_regression(self) -> None:
+        """Compact block warns LLM when pipeline absent and fallback empty.
+
+        recommendation_briefs=None means no pipeline was configured.
+        Message should differ from the pipeline-ran-but-empty case.
+        """
+        context = ConversationContext(
+            user_id=1,
+            recommendation_briefs=None,
+            relevant_unconsumed=[],
+        )
+        block = build_user_context_block_compact(context)
+        assert "No Recommendations Available" in block
+        assert "Do NOT invent" in block
+        assert "backlog is empty" not in block
