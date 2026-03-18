@@ -1,6 +1,27 @@
 # CHANGELOG
 
 
+## v0.4.0 (2026-03-18)
+
+### Documentation
+
+- Document version display and update detection feature
+  ([`6c9cc5e`](https://github.com/therealahall/recommendinator/commit/6c9cc5edbedf9c35b172fb2c65e05684f93ca022))
+
+### Features
+
+- **web**: Add version display in sidebar and cache busting for static assets
+  ([`82a9f8a`](https://github.com/therealahall/recommendinator/commit/82a9f8a52183b31f932f9f64fdf07822acbf38fd))
+
+- **web**: Add version polling and stale UI detection
+  ([`0da2697`](https://github.com/therealahall/recommendinator/commit/0da2697595793006f76a302457f7467086538c5a))
+
+### Testing
+
+- **web**: Add tests for version display and cache busting
+  ([`99402a4`](https://github.com/therealahall/recommendinator/commit/99402a400fa6e889ec9d4372d46b862e38c70f87))
+
+
 ## v0.3.0 (2026-03-17)
 
 ### Chores
