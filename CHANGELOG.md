@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v0.5.4 (2026-03-18)
+
+### Bug Fixes
+
+- **release**: Stage uv.lock in build_command for version commit
+  ([`50c3f2e`](https://github.com/therealahall/recommendinator/commit/50c3f2e74fe450c26ad45b01295f739d17f9aee8))
+
+### Chores
+
+- Sync uv.lock with current version
+  ([`32cc839`](https://github.com/therealahall/recommendinator/commit/32cc8395f48781f9332ccb0a6082270d0fcbe2a4))
+
+
 ## v0.5.3 (2026-03-18)
 
 ### Bug Fixes
