@@ -720,3 +720,95 @@ class TestGogPluginFetch:
         for item in items:
             assert item.status == ConsumptionStatus.UNREAD
             assert item.rating is None
+
+    @patch("src.ingestion.sources.gog.get_owned_games")
+    @patch("src.ingestion.sources.gog.refresh_access_token")
+    def test_rotated_refresh_token_triggers_callback(
+        self,
+        mock_refresh: Mock,
+        mock_owned: Mock,
+    ) -> None:
+        """Regression test: rotated GOG refresh tokens must be persisted.
+
+        Bug: When GOG returns a new refresh_token during sync (token rotation),
+        the updated token was discarded. If the old token expired before the
+        next sync, the user had to re-authenticate.
+
+        Root cause: _fetch_gog_games only used the access_token from the
+        refresh response and ignored the new refresh_token.
+
+        Fix: When the refresh_token changes, call the _on_credential_rotated
+        callback (injected by execute_sync) so the new token is saved to the
+        credential database.
+        """
+        mock_refresh.return_value = {
+            "access_token": "new_access",
+            "refresh_token": "rotated_refresh_token",
+        }
+        mock_owned.return_value = [{"id": 1, "title": "Game"}]
+
+        credential_callback = Mock()
+        plugin = GogPlugin()
+        list(
+            plugin.fetch(
+                {
+                    "refresh_token": "old_refresh_token",
+                    "include_wishlist": False,
+                    "_on_credential_rotated": credential_callback,
+                }
+            )
+        )
+
+        credential_callback.assert_called_once_with(
+            "refresh_token", "rotated_refresh_token"
+        )
+
+    @patch("src.ingestion.sources.gog.get_owned_games")
+    @patch("src.ingestion.sources.gog.refresh_access_token")
+    def test_same_refresh_token_does_not_trigger_callback(
+        self,
+        mock_refresh: Mock,
+        mock_owned: Mock,
+    ) -> None:
+        """No callback when the refresh token hasn't changed."""
+        mock_refresh.return_value = {
+            "access_token": "new_access",
+            "refresh_token": "same_token",
+        }
+        mock_owned.return_value = [{"id": 1, "title": "Game"}]
+
+        credential_callback = Mock()
+        plugin = GogPlugin()
+        items = list(
+            plugin.fetch(
+                {
+                    "refresh_token": "same_token",
+                    "include_wishlist": False,
+                    "_on_credential_rotated": credential_callback,
+                }
+            )
+        )
+
+        assert len(items) == 1
+        credential_callback.assert_not_called()
+
+    @patch("src.ingestion.sources.gog.get_owned_games")
+    @patch("src.ingestion.sources.gog.refresh_access_token")
+    def test_rotated_token_without_callback_does_not_raise(
+        self,
+        mock_refresh: Mock,
+        mock_owned: Mock,
+    ) -> None:
+        """Token rotation with no callback injected completes without error."""
+        mock_refresh.return_value = {
+            "access_token": "new_access",
+            "refresh_token": "rotated_token",
+        }
+        mock_owned.return_value = [{"id": 1, "title": "Game"}]
+
+        plugin = GogPlugin()
+        # No _on_credential_rotated in config
+        items = list(
+            plugin.fetch({"refresh_token": "old_token", "include_wishlist": False})
+        )
+        assert len(items) == 1
