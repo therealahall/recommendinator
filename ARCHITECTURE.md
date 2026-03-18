@@ -175,6 +175,8 @@ When enabled (recommended for 3B models), the engine uses a condensed system pro
 - SSE streaming for chat responses
 - Library export: `GET /api/items/export?type=book&format=csv` (CSV or JSON download)
 - **Themeable UI**: Folder-per-theme system in `src/web/static/themes/`. Each theme provides a `theme.json` metadata file and a `colors.css` override. Theme selection persisted via localStorage with server-configured default (`web.theme` in config). CSS uses `color-mix()` so themes only need to define core color variables. See `docs/THEME_DEVELOPMENT.md`.
+- **Version display and update detection**: Version shown in sidebar; UI polls `/api/status` every 5 minutes and displays a banner when a newer server version is detected, prompting the user to reload
+- **Static asset cache busting**: Version query parameters (`?v=`) appended to all static asset URLs at serve time to ensure browsers fetch fresh assets after upgrades
 - Internal network only (no external exposure)
 
 ## Data Flow

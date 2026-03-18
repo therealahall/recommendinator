@@ -23,6 +23,7 @@ Most recommendation systems are black boxes that harvest your data. This one:
 - **Multi-user support** — Each user gets their own preferences and history
 - **Metadata enrichment** — Automatically fills in missing metadata from TMDB, OpenLibrary, and RAWG. **This is critical for recommendation quality** — see [Enrichment Setup Guide](docs/ENRICHMENT_SETUP.md)
 - **Themeable web UI** — Ships with Nord and Snowstorm themes, or create your own
+- **Version display and update detection** — Version shown in sidebar; automatically detects when a new version is available and prompts you to reload
 - **Dual interface** — CLI for automation, web UI for browsing
 
 ### Optional AI Features (Opt-In)

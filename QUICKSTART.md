@@ -163,7 +163,7 @@ python3.11 -m src.cli recommend --type tv_show --count 5
 python3.11 -m src.web
 ```
 
-Open http://localhost:18473 in your browser. The web UI provides browsing, syncing, recommendations, and (with AI enabled) a conversational chat interface.
+Open http://localhost:18473 in your browser. The web UI provides browsing, syncing, recommendations, and (with AI enabled) a conversational chat interface. The version number in the sidebar (e.g., "v0.3.0") shows the running application version. If a new version becomes available while you have the page open, a banner will prompt you to reload.
 
 ## Customize Your Preferences
 
