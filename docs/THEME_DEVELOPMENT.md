@@ -2,6 +2,17 @@
 
 Create custom themes for the Recommendinator web interface. Each theme is a folder in `src/web/static/themes/` containing color overrides.
 
+## Architecture Overview
+
+The frontend uses **Vue 3 + Tailwind CSS v4** with a CSS custom property theming system:
+
+- **`:root` variables** are defined in `resources/css/base.css` (source of truth)
+- **Tailwind `@theme`** mappings in `resources/css/tailwind.css` bridge CSS vars into Tailwind's utility class system (e.g., `bg-bg-primary`, `text-text-primary`)
+- **Theme `colors.css`** files override `:root` variables via a dynamically loaded `<link>` element
+- Themes are **not part of the Vite build** — they're served separately from `/static/themes/` and loaded at runtime
+
+This means your theme overrides work identically whether the UI is rendered by Tailwind utility classes or raw CSS — both read from the same CSS custom properties.
+
 ## Theme Directory Structure
 
 ```
@@ -107,7 +118,7 @@ Override these variables in `colors.css` using a `:root` selector. You only need
 The stylesheet uses `color-mix()` to auto-derive transparent variants from your theme colors. For example:
 
 ```css
-/* In style.css */
+/* In resources/css/base.css */
 .badge-status {
     background: color-mix(in srgb, var(--color-success) 10%, transparent);
     border-color: color-mix(in srgb, var(--color-success) 30%, transparent);
@@ -163,6 +174,23 @@ Themes only affect **color** variables. The following are not theme-overridable:
 - Border radius (`--radius-*`)
 - Transitions (`--transition-*`)
 - Layout dimensions (`--sidebar-width`, etc.)
+
+## Tailwind CSS Integration
+
+Tailwind v4 maps CSS custom properties to its utility classes via `@theme` in `resources/css/tailwind.css`. Theme developers don't need to touch this file — it's a bridge layer.
+
+Example mappings:
+```css
+@theme {
+  --color-bg-primary: var(--bg-primary);
+  --color-text-primary: var(--text-primary);
+  --color-accent: var(--accent);
+}
+```
+
+Vue components can then use classes like `bg-bg-primary`, `text-text-primary`, or `border-accent` — and these respond automatically to theme changes because they read the underlying CSS variables.
+
+**Key point:** When you override `--bg-primary` in your theme's `colors.css`, both the Tailwind utility `bg-bg-primary` and any raw CSS using `var(--bg-primary)` update simultaneously. No Tailwind rebuild is needed.
 
 ## Theme Persistence
 

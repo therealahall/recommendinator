@@ -169,6 +169,7 @@ class UserPreferenceResponse(BaseModel):
     variety_after_completion: bool
     custom_rules: list[str]
     content_length_preferences: dict[str, str] = Field(default_factory=dict)
+    theme: str = ""
 
 
 class SyncJobResponse(BaseModel):
@@ -202,6 +203,7 @@ class UserPreferenceUpdateRequest(BaseModel):
     variety_after_completion: bool | None = None
     custom_rules: list[str] | None = None
     content_length_preferences: dict[str, str] | None = None
+    theme: str | None = None
 
 
 class IgnoreItemRequest(BaseModel):
@@ -968,6 +970,8 @@ async def update_user_preferences(
         existing.custom_rules = request.custom_rules
     if request.content_length_preferences is not None:
         existing.content_length_preferences.update(request.content_length_preferences)
+    if request.theme is not None:
+        existing.theme = request.theme
 
     storage.save_user_preference_config(user_id, existing)
 
@@ -1485,19 +1489,15 @@ async def list_themes() -> list[ThemeResponse]:
 
 @router.get("/themes/default")
 async def get_default_theme() -> dict[str, str]:
-    """Get the server-configured default theme.
+    """Get the default theme for new users.
 
-    Reads the web.theme setting from config. Falls back to "nord"
-    if not configured. The frontend uses this when no localStorage
-    preference is set.
+    Returns "nord" as the built-in default. Per-user theme preferences
+    are stored via the user preferences API and take priority.
 
     Returns:
         Dictionary with the default theme ID.
     """
-    config = get_config()
-    web_config = config.get("web", {}) if config else {}
-    default_theme = web_config.get("theme", "nord")
-    return {"theme": default_theme}
+    return {"theme": "nord"}
 
 
 # ---------------------------------------------------------------------------
