@@ -66,6 +66,7 @@ export interface UserPreferenceResponse {
   variety_after_completion: boolean
   custom_rules: string[]
   content_length_preferences: Record<string, string>
+  theme: string
 }
 
 export interface UserPreferenceUpdateRequest {
@@ -74,6 +75,7 @@ export interface UserPreferenceUpdateRequest {
   variety_after_completion?: boolean
   custom_rules?: string[]
   content_length_preferences?: Record<string, string>
+  theme?: string
 }
 
 // --- Sync ---

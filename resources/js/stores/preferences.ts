@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { useApi } from '@/composables/useApi'
 import { useAppStore } from '@/stores/app'
+import { useThemeStore } from '@/stores/theme'
 import type { UserPreferenceResponse, UserPreferenceUpdateRequest } from '@/types/api'
 
 export const SCORER_KEYS = [
@@ -70,6 +71,12 @@ export const usePreferencesStore = defineStore('preferences', () => {
       varietyAfterCompletion.value = prefs.variety_after_completion
       contentLengthPreferences.value = prefs.content_length_preferences || {}
       customRules.value = prefs.custom_rules || []
+
+      // Apply saved theme preference if the user has one
+      if (prefs.theme) {
+        const theme = useThemeStore()
+        theme.applyTheme(prefs.theme)
+      }
     } catch {
       // Use defaults on error
       scorerWeights.value = {}
@@ -87,12 +94,14 @@ export const usePreferencesStore = defineStore('preferences', () => {
     saving.value = true
     saveStatus.value = 'saving'
     try {
+      const theme = useThemeStore()
       const payload: UserPreferenceUpdateRequest = {
         scorer_weights: scorerWeights.value,
         series_in_order: seriesInOrder.value,
         variety_after_completion: varietyAfterCompletion.value,
         content_length_preferences: contentLengthPreferences.value,
         custom_rules: customRules.value,
+        theme: theme.currentThemeId || '',
       }
       await api.put(`/users/${app.currentUserId}/preferences`, payload)
       saveStatus.value = 'saved'

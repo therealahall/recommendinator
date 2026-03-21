@@ -51,6 +51,7 @@ class TestUserPreferenceConfig:
             "custom_rules",
             "content_length_preferences",
             "diversity_weight",
+            "theme",
         }
         assert set(data.keys()) == expected_keys
 
