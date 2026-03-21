@@ -45,7 +45,7 @@ const retryNotFound = ref(false)
         :disabled="data.enrichmentJob?.running"
         @click="data.resetEnrichment(enrichType || undefined)"
       >Reset & Re-enrich</button>
-      <select v-model="enrichType">
+      <select v-model="enrichType" class="length-select">
         <option value="">All Types</option>
         <option value="book">Books</option>
         <option value="movie">Movies</option>
