@@ -91,6 +91,7 @@ private/
 # Frontend
 node_modules/
 src/web/static/dist/
+tsconfig.tsbuildinfo
 
 # Docker Compose overrides (user-specific mounts)
 docker-compose.override.yml
