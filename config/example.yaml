@@ -145,10 +145,6 @@ web:
   host: "127.0.0.1"
   port: 18473  # Non-standard port to avoid collisions with other services
   debug: false  # Set to true for development (enables auto-reload on file changes)
-  # UI theme — set the default theme for the web interface.
-  # Ships with: "nord" (dark) and "snowstorm" (light). Custom themes go in src/web/static/themes/.
-  # Users can override this per-browser via the theme switcher in Preferences.
-  theme: "nord"
   # CORS allowed origins — defaults to localhost only for security.
   # Set to ["*"] to allow all origins (not recommended for production).
   allowed_origins:
