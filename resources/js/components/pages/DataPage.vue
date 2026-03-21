@@ -56,6 +56,7 @@ function needsEpicConnect(sourceId: string): boolean {
           :key="source.id"
           :source="source"
           :syncing="data.syncStatus === 'running'"
+          :show-sync-button="!needsGogConnect(source.id) && !needsEpicConnect(source.id)"
           @sync="data.triggerSync($event)"
         >
           <OAuthConnectFlow

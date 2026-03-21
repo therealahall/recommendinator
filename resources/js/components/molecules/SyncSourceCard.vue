@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import type { SyncSourceResponse } from '@/types/api'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   source: SyncSourceResponse
   syncing: boolean
-}>()
+  showSyncButton?: boolean
+}>(), {
+  showSyncButton: true,
+})
 
 const emit = defineEmits<{
   sync: [sourceId: string]
@@ -17,7 +20,7 @@ const emit = defineEmits<{
     <p class="sync-plugin-name">Plugin: {{ source.plugin_display_name }}</p>
     <slot />
     <button
-      v-if="!$slots.default"
+      v-if="showSyncButton"
       class="btn btn-primary sync-btn"
       :disabled="syncing"
       @click="emit('sync', source.id)"
