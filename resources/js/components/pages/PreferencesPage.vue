@@ -29,7 +29,7 @@ watch(() => app.currentUserId, () => {
     <div class="card">
       <div v-if="prefs.loading" class="empty-state">Loading preferences...</div>
       <template v-else>
-        <ThemeSelector />
+        <ThemeSelector v-model="prefs.pendingTheme" />
         <ScorerWeights />
         <TogglePrefs />
         <LengthPrefs />

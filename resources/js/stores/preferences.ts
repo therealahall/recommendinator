@@ -53,6 +53,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
   const varietyAfterCompletion = ref(false)
   const contentLengthPreferences = ref<Record<string, string>>({})
   const customRules = ref<string[]>([])
+  const pendingTheme = ref('')
   const loading = ref(false)
   const saving = ref(false)
   const saveStatus = ref<'idle' | 'saving' | 'saved' | 'error'>('idle')
@@ -72,10 +73,13 @@ export const usePreferencesStore = defineStore('preferences', () => {
       contentLengthPreferences.value = prefs.content_length_preferences || {}
       customRules.value = prefs.custom_rules || []
 
-      // Apply saved theme preference if the user has one
+      // Apply saved theme and set it as the pending selection
+      const theme = useThemeStore()
       if (prefs.theme) {
-        const theme = useThemeStore()
         theme.applyTheme(prefs.theme)
+        pendingTheme.value = prefs.theme
+      } else {
+        pendingTheme.value = theme.currentThemeId || theme.defaultThemeId
       }
     } catch {
       // Use defaults on error
@@ -84,6 +88,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
       varietyAfterCompletion.value = false
       contentLengthPreferences.value = {}
       customRules.value = []
+      pendingTheme.value = ''
     } finally {
       loading.value = false
     }
@@ -94,16 +99,22 @@ export const usePreferencesStore = defineStore('preferences', () => {
     saving.value = true
     saveStatus.value = 'saving'
     try {
-      const theme = useThemeStore()
       const payload: UserPreferenceUpdateRequest = {
         scorer_weights: scorerWeights.value,
         series_in_order: seriesInOrder.value,
         variety_after_completion: varietyAfterCompletion.value,
         content_length_preferences: contentLengthPreferences.value,
         custom_rules: customRules.value,
-        theme: theme.currentThemeId || '',
+        theme: pendingTheme.value,
       }
       await api.put(`/users/${app.currentUserId}/preferences`, payload)
+
+      // Apply theme only after successful save
+      if (pendingTheme.value) {
+        const theme = useThemeStore()
+        theme.applyTheme(pendingTheme.value)
+      }
+
       saveStatus.value = 'saved'
       setTimeout(() => {
         saveStatus.value = 'idle'
@@ -143,6 +154,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
     varietyAfterCompletion,
     contentLengthPreferences,
     customRules,
+    pendingTheme,
     loading,
     saving,
     saveStatus,

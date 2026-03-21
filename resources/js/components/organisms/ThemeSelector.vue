@@ -3,9 +3,17 @@ import { useThemeStore } from '@/stores/theme'
 
 const theme = useThemeStore()
 
+const props = defineProps<{
+  modelValue: string
+}>()
+
+const emit = defineEmits<{
+  'update:modelValue': [value: string]
+}>()
+
 function onChange(event: Event) {
   const select = event.target as HTMLSelectElement
-  theme.applyTheme(select.value)
+  emit('update:modelValue', select.value)
 }
 </script>
 
@@ -16,7 +24,7 @@ function onChange(event: Event) {
       <span class="dropdown-label">Theme</span>
       <select
         class="theme-select"
-        :value="theme.currentThemeId || theme.defaultThemeId"
+        :value="modelValue"
         @change="onChange"
       >
         <option v-for="t in theme.themes" :key="t.id" :value="t.id">
