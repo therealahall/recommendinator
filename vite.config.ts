@@ -10,6 +10,7 @@ export default defineConfig({
       '@': resolve(__dirname, 'resources/js'),
     },
   },
+  base: '/static/dist/',
   build: {
     outDir: resolve(__dirname, 'src/web/static/dist'),
     emptyOutDir: true,
