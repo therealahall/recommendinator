@@ -1,18 +1,22 @@
 .PHONY: help install install-ai install-dev lock test lint format type-check clean run
+.PHONY: install-frontend build-frontend check-frontend
 
 help:
 	@echo "Available commands:"
-	@echo "  make install       - Install base dependencies (no AI)"
-	@echo "  make install-ai    - Install base + AI dependencies (ollama, chromadb)"
-	@echo "  make install-dev   - Install all dependencies (AI + dev tools)"
-	@echo "  make lock          - Regenerate uv.lock from pyproject.toml"
-	@echo "  make test          - Run tests"
-	@echo "  make lint          - Run linters"
-	@echo "  make format        - Format code with black"
-	@echo "  make type-check    - Run type checker (mypy)"
-	@echo "  make check         - Run all checks (lint, format-check, type-check, test)"
-	@echo "  make clean         - Clean build artifacts"
-	@echo "  make run           - Run the application"
+	@echo "  make install           - Install base dependencies (no AI)"
+	@echo "  make install-ai        - Install base + AI dependencies (ollama, chromadb)"
+	@echo "  make install-dev       - Install all dependencies (AI + dev tools)"
+	@echo "  make install-frontend  - Install frontend dependencies (Node.js 18+ required)"
+	@echo "  make lock              - Regenerate uv.lock from pyproject.toml"
+	@echo "  make test              - Run Python tests"
+	@echo "  make lint              - Run linters"
+	@echo "  make format            - Format code with black"
+	@echo "  make type-check        - Run type checker (mypy)"
+	@echo "  make build-frontend    - Build Vue frontend (Vite + vue-tsc)"
+	@echo "  make check-frontend    - Run frontend type-check and tests (requires install-frontend)"
+	@echo "  make check             - Run all checks (Python + frontend; requires install-frontend)"
+	@echo "  make clean             - Clean build artifacts"
+	@echo "  make run               - Run the application"
 
 install:
 	uv sync --locked
@@ -22,6 +26,9 @@ install-ai:
 
 install-dev:
 	uv sync --locked --extra ai --extra dev
+
+install-frontend:
+	npm install
 
 lock:
 	uv lock
@@ -41,7 +48,14 @@ format-check:
 type-check:
 	python3.11 -m mypy src/
 
-check: format-check lint type-check test
+build-frontend:
+	npx vue-tsc -b && npx vite build
+
+check-frontend:
+	npx vue-tsc --noEmit
+	npx vitest run
+
+check: format-check lint type-check test check-frontend
 
 clean:
 	find . -type d -name __pycache__ -exec rm -r {} +
@@ -49,7 +63,7 @@ clean:
 	find . -type d -name "*.egg-info" -exec rm -r {} +
 	find . -type d -name ".pytest_cache" -exec rm -r {} +
 	find . -type d -name ".mypy_cache" -exec rm -r {} +
-	rm -rf build/ dist/ .coverage htmlcov/
+	rm -rf build/ dist/ .coverage htmlcov/ src/web/static/dist/
 
 run:
 	@echo "Application not yet implemented"
