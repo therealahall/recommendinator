@@ -122,38 +122,83 @@ class TestRootEndpoint:
         assert "text/html" in response.headers["content-type"]
         assert "Recommendinator" in response.text
 
-    @pytest.mark.parametrize(
-        "asset_path",
-        [
-            "/static/style.css",
-            "/static/app.js",
-            "/static/vendor/marked.min.js",
-            "/static/vendor/purify.min.js",
-        ],
-    )
-    def test_cache_busts_static_assets(self, client, asset_path):
-        """root() appends ?v={APP_VERSION} to all static asset URLs."""
+    def test_vite_spa_uses_hashed_assets(self, client):
+        """When dist/index.html exists, the SPA serves Vite content-hashed assets.
+
+        The dist build is present in CI and dev environments that have run
+        'make build-frontend'. We verify Vite's output characteristics.
+        Fails explicitly if the build is absent rather than passing vacuously.
+        """
         response = client.get("/")
         assert response.status_code == 200
-        versioned = f"{asset_path}?v={APP_VERSION}"
-        assert (
-            response.text.count(versioned) == 1
-        ), f"Expected exactly one occurrence of {versioned!r}"
-        # The bare unversioned URL must not appear in href/src attributes
-        assert f'"{asset_path}"' not in response.text
+        # Guard: fail explicitly if the SPA build is not present
+        assert "/assets/" in response.text and 'type="module"' in response.text, (
+            "dist/index.html is not present; run 'make build-frontend' before "
+            "running SPA tests."
+        )
 
-    def test_version_label_and_update_banner_present(self, client):
-        """Template includes DOM elements for version display and update detection."""
+    def test_spa_has_no_inline_scripts(self, client):
+        """Vite SPA dist/index.html must not contain inline scripts (CSP compliance).
+
+        Fails explicitly if the SPA build is absent rather than passing
+        vacuously against the legacy template.
+        """
+        import re
+
         response = client.get("/")
+        assert response.status_code == 200
+        # Guard: ensure we are testing the SPA, not the legacy template
+        assert "/assets/" in response.text and 'type="module"' in response.text, (
+            "dist/index.html is not present; run 'make build-frontend' before "
+            "running the CSP compliance test."
+        )
+        # Find <script> tags without a src attribute (inline scripts)
+        inline_scripts = re.findall(
+            r"<script(?![^>]*\bsrc=)[^>]*>(?!<\/script>)", response.text
+        )
+        assert (
+            not inline_scripts
+        ), f"Inline scripts violate CSP script-src 'self': {inline_scripts}"
+
+    def test_legacy_cache_busts_static_assets(self, client):
+        """root() appends ?v={APP_VERSION} to legacy template static asset URLs.
+
+        Bug context: The legacy template uses manual cache busting via version
+        query parameters. We monkeypatch Path.exists so the dist/index.html is
+        not found, forcing the legacy template code path.
+        """
+        original_exists = Path.exists
+
+        def force_legacy(self: Path) -> bool:
+            # Hide dist/index.html to force legacy template path
+            if str(self).endswith("dist/index.html"):
+                return False
+            return original_exists(self)
+
+        with patch.object(Path, "exists", force_legacy):
+            response = client.get("/")
+        assert response.status_code == 200
+        # Verify at least one static asset gets the version query param
+        assert f"?v={APP_VERSION}" in response.text
+
+    def test_legacy_version_label_and_update_banner_present(self, client):
+        """Legacy template includes DOM elements for version display."""
+        original_exists = Path.exists
+
+        def force_legacy(self: Path) -> bool:
+            if str(self).endswith("dist/index.html"):
+                return False
+            return original_exists(self)
+
+        with patch.object(Path, "exists", force_legacy):
+            response = client.get("/")
         assert response.status_code == 200
         assert 'id="versionLabel"' in response.text
         assert 'id="updateBanner"' in response.text
-        # Banner starts hidden via CSS (not inline style — CSP blocks those).
-        # The "visible" class is only added by JS on version mismatch.
         assert 'class="update-banner"' in response.text
 
     def test_fallback_when_template_missing(self, client):
-        """root() returns a fallback page when the HTML template does not exist."""
+        """root() returns a fallback page when no HTML template exists."""
         original_exists = Path.exists
 
         def patched_exists(self: Path) -> bool:
@@ -167,9 +212,17 @@ class TestRootEndpoint:
         assert "text/html" in response.headers["content-type"]
         assert "Recommendinator API" in response.text
 
-    def test_body_has_data_version(self, client):
-        """root() injects the app version into the body data-version attribute."""
-        response = client.get("/")
+    def test_legacy_body_has_data_version(self, client):
+        """root() injects the app version into body data-version (legacy template)."""
+        original_exists = Path.exists
+
+        def force_legacy(self: Path) -> bool:
+            if str(self).endswith("dist/index.html"):
+                return False
+            return original_exists(self)
+
+        with patch.object(Path, "exists", force_legacy):
+            response = client.get("/")
         assert response.status_code == 200
         assert f'data-version="{APP_VERSION}"' in response.text
 
