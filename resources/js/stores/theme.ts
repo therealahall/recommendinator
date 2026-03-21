@@ -45,6 +45,18 @@ export const useThemeStore = defineStore('theme', () => {
     }
   }
 
+  function getOrCreateThemeLink(): HTMLLinkElement {
+    let link = document.getElementById('theme-stylesheet') as HTMLLinkElement | null
+    if (!link) {
+      link = document.createElement('link')
+      link.id = 'theme-stylesheet'
+      link.rel = 'stylesheet'
+      // Append last in <head> so it overrides the Vite-bundled :root vars
+      document.head.appendChild(link)
+    }
+    return link
+  }
+
   function applyTheme(themeId: string) {
     if (!themeId || !THEME_ID_RE.test(themeId)) return
 
@@ -54,9 +66,7 @@ export const useThemeStore = defineStore('theme', () => {
       if (!known) return
     }
 
-    const link = document.getElementById('theme-stylesheet') as HTMLLinkElement | null
-    if (!link) return
-
+    const link = getOrCreateThemeLink()
     link.href = `/static/themes/${themeId}/colors.css`
     localStorage.setItem(STORAGE_KEY, themeId)
     currentThemeId.value = themeId

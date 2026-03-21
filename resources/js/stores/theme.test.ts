@@ -20,12 +20,9 @@ describe('useThemeStore', () => {
     setActivePinia(createPinia())
     localStorage.clear()
     mockGet.mockReset()
-    // Ensure a fresh theme-stylesheet element
+    // Remove any leftover theme-stylesheet from previous tests
     const existing = document.getElementById('theme-stylesheet')
     if (existing) existing.remove()
-    const link = document.createElement('link')
-    link.id = 'theme-stylesheet'
-    document.head.appendChild(link)
   })
 
   afterEach(() => {
