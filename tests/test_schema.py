@@ -184,38 +184,30 @@ def test_content_items_unique_constraint(temp_db: sqlite3.Connection) -> None:
     cursor = temp_db.cursor()
 
     # Insert a content item
-    cursor.execute(
-        """
+    cursor.execute("""
         INSERT INTO content_items (user_id, external_id, title, content_type, status)
         VALUES (1, 'ext123', 'Test Book', 'book', 'unread')
-        """
-    )
+        """)
 
     # Same external_id for same user and type should fail
     with pytest.raises(sqlite3.IntegrityError):
-        cursor.execute(
-            """
+        cursor.execute("""
             INSERT INTO content_items (user_id, external_id, title, content_type, status)
             VALUES (1, 'ext123', 'Another Book', 'book', 'unread')
-            """
-        )
+            """)
 
     # Same external_id for different user should work
     create_user(temp_db, "user2")
-    cursor.execute(
-        """
+    cursor.execute("""
         INSERT INTO content_items (user_id, external_id, title, content_type, status)
         VALUES (2, 'ext123', 'Test Book', 'book', 'unread')
-        """
-    )
+        """)
 
     # Same external_id for different content type should work
-    cursor.execute(
-        """
+    cursor.execute("""
         INSERT INTO content_items (user_id, external_id, title, content_type, status)
         VALUES (1, 'ext123', 'Test Movie', 'movie', 'unread')
-        """
-    )
+        """)
 
     temp_db.commit()
 

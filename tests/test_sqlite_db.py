@@ -2850,21 +2850,17 @@ class TestCrossSourceDuplicateDetectionRegression:
         # Insert two rows with different normalized_titles that should match
         # after full normalization (simulating the lower(title) backfill bug)
         cursor = conn.cursor()
-        cursor.execute(
-            """INSERT INTO content_items
+        cursor.execute("""INSERT INTO content_items
                (user_id, external_id, title, normalized_title, content_type,
                 status, rating, source)
                VALUES (1, 'steam-207170', 'Fable Anniversary',
-                       'fable anniversary', 'video_game', 'completed', 4, 'steam')"""
-        )
-        cursor.execute(
-            """INSERT INTO content_items
+                       'fable anniversary', 'video_game', 'completed', 4, 'steam')""")
+        cursor.execute("""INSERT INTO content_items
                (user_id, external_id, title, normalized_title, content_type,
                 status, review, source)
                VALUES (1, 'blog-fable', 'Fable: Anniversary',
                        'fable: anniversary', 'video_game', 'completed',
-                       'Great game', 'personal_site')"""
-        )
+                       'Great game', 'personal_site')""")
         conn.commit()
 
         # Verify two rows exist
@@ -2909,20 +2905,16 @@ class TestCrossSourceDuplicateDetectionRegression:
 
         # Insert duplicate rows
         cursor = conn.cursor()
-        cursor.execute(
-            """INSERT INTO content_items
+        cursor.execute("""INSERT INTO content_items
                (user_id, external_id, title, normalized_title, content_type,
                 status, rating, source)
                VALUES (1, 'a', 'Test Game', 'test game', 'video_game',
-                       'completed', 5, 'steam')"""
-        )
-        cursor.execute(
-            """INSERT INTO content_items
+                       'completed', 5, 'steam')""")
+        cursor.execute("""INSERT INTO content_items
                (user_id, external_id, title, normalized_title, content_type,
                 status, source)
                VALUES (1, 'b', 'Test Game', 'test game', 'video_game',
-                       'completed', 'blog')"""
-        )
+                       'completed', 'blog')""")
         conn.commit()
 
         # Verify two rows exist before the dedup migration
@@ -3491,13 +3483,11 @@ class TestCrossSourceDuplicateDetectionRegression:
         cursor = conn.cursor()
 
         # Insert kept row with some detail data
-        cursor.execute(
-            """INSERT INTO content_items
+        cursor.execute("""INSERT INTO content_items
                (user_id, external_id, title, normalized_title, content_type,
                 status, rating, source)
                VALUES (1, 'steam-dishonored', 'Dishonored',
-                       'dishonored', 'video_game', 'completed', 5, 'steam')"""
-        )
+                       'dishonored', 'video_game', 'completed', 5, 'steam')""")
         keep_id = cursor.lastrowid
         assert keep_id is not None
         cursor.execute(
@@ -3509,14 +3499,12 @@ class TestCrossSourceDuplicateDetectionRegression:
         )
 
         # Insert duplicate row with complementary detail data
-        cursor.execute(
-            """INSERT INTO content_items
+        cursor.execute("""INSERT INTO content_items
                (user_id, external_id, title, normalized_title, content_type,
                 status, review, source)
                VALUES (1, 'blog-dishonored', 'Dishonored',
                        'dishonored', 'video_game', 'completed',
-                       'Masterpiece of level design', 'blog')"""
-        )
+                       'Masterpiece of level design', 'blog')""")
         dup_id = cursor.lastrowid
         assert dup_id is not None
         cursor.execute(
