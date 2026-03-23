@@ -27,8 +27,18 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      - name: Install Python dependencies
         run: uv sync --locked --extra ai --extra dev
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
 
       - name: Check formatting
         run: uv run black --check src/ tests/
@@ -36,8 +46,14 @@ jobs:
       - name: Lint
         run: uv run ruff check src/ tests/
 
-      - name: Type check
+      - name: Type check (Python)
         run: uv run mypy src/
 
-      - name: Test
+      - name: Type check (frontend)
+        run: pnpm vue-tsc --noEmit
+
+      - name: Test (Python)
         run: uv run pytest
+
+      - name: Test (frontend)
+        run: pnpm vitest run
