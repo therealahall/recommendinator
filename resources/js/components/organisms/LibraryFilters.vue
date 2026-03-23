@@ -93,6 +93,6 @@ function getUnreadLabel(): string {
   font-size: var(--text-sm);
   color: var(--text-secondary);
   cursor: pointer;
-  padding-top: var(--space-5);
+  padding: var(--space-2) 0;
 }
 </style>
