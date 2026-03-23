@@ -28,8 +28,9 @@ uv sync --locked
 uv sync --locked --extra ai
 
 # Install and build the frontend (Node.js 18+ required for web UI)
-npm install
-npm run build
+corepack enable    # enables pnpm via Node.js corepack
+pnpm install --frozen-lockfile
+pnpm build
 
 # Set up configuration
 cp config/example.yaml config/config.yaml

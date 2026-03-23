@@ -10,7 +10,7 @@
 # =============================================================================
 FROM node:20-slim AS frontend-builder
 
-RUN corepack enable && corepack prepare pnpm@9 --activate
+RUN corepack enable && corepack prepare pnpm@9.7.0 --activate
 
 WORKDIR /app
 
