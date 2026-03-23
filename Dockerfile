@@ -6,6 +6,28 @@
 #   ai      - Full app with AI dependencies (ollama, chromadb)
 
 # =============================================================================
+# Frontend builder (Vue 3 + Vite)
+# =============================================================================
+FROM node:20-slim AS frontend-builder
+
+RUN corepack enable && corepack prepare pnpm@9 --activate
+
+WORKDIR /app
+
+# Copy dependency files first for layer caching
+COPY package.json pnpm-lock.yaml ./
+
+# Install dependencies using locked versions
+RUN pnpm install --frozen-lockfile
+
+# Copy frontend source files
+COPY index.html vite.config.ts tsconfig.json env.d.ts ./
+COPY resources/ ./resources/
+
+# Build the frontend (vue-tsc + vite build -> src/web/static/dist/)
+RUN pnpm build
+
+# =============================================================================
 # Shared build base
 # =============================================================================
 FROM python:3.11-slim AS builder-base
@@ -56,6 +78,9 @@ RUN useradd --create-home --shell /bin/bash appuser
 COPY --chown=appuser:appuser src/ ./src/
 COPY --chown=appuser:appuser templates/ ./templates/
 COPY --chown=appuser:appuser config/example.yaml ./config/example.yaml
+
+# Copy built frontend assets from frontend builder
+COPY --from=frontend-builder --chown=appuser:appuser /app/src/web/static/dist/ ./src/web/static/dist/
 
 # Create directories for data and inputs
 RUN mkdir -p data inputs config logs && \
