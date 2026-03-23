@@ -28,7 +28,7 @@ install-dev:
 	uv sync --locked --extra ai --extra dev
 
 install-frontend:
-	npm install
+	pnpm install --frozen-lockfile
 
 lock:
 	uv lock
@@ -49,11 +49,11 @@ type-check:
 	python3.11 -m mypy src/
 
 build-frontend:
-	npx vue-tsc -b && npx vite build
+	pnpm build
 
 check-frontend:
-	npx vue-tsc --noEmit
-	npx vitest run
+	pnpm vue-tsc --noEmit
+	pnpm vitest run
 
 check: format-check lint type-check test check-frontend
 
