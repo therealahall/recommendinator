@@ -8,6 +8,15 @@ import ToggleSwitch from '@/components/atoms/ToggleSwitch.vue'
 const data = useDataStore()
 const enrichType = ref('')
 const retryNotFound = ref(false)
+const resetMode = ref(false)
+
+function runEnrichment() {
+  if (resetMode.value) {
+    data.resetEnrichment(enrichType.value || undefined)
+  } else {
+    data.startEnrichment(enrichType.value || undefined, retryNotFound.value)
+  }
+}
 </script>
 
 <template>
@@ -42,21 +51,20 @@ const retryNotFound = ref(false)
 
       <div class="toolbar-divider" />
 
-      <ToggleSwitch v-model="retryNotFound" label="Retry Not Found" />
+      <div class="toolbar-zone">
+        <ToggleSwitch v-model="retryNotFound" label="Retry Not Found" />
+        <ToggleSwitch v-model="resetMode" label="Reset & Re-enrich" />
+      </div>
 
       <div class="toolbar-divider" />
 
-      <div class="toolbar-zone toolbar-right">
+      <div class="toolbar-right">
         <button
-          class="btn btn-primary"
+          class="btn"
+          :class="resetMode ? 'btn-warning' : 'btn-primary'"
           :disabled="data.enrichmentJob?.running"
-          @click="data.startEnrichment(enrichType || undefined, retryNotFound)"
-        >Enrich</button>
-        <button
-          class="btn btn-warning"
-          :disabled="data.enrichmentJob?.running"
-          @click="data.resetEnrichment(enrichType || undefined)"
-        >Reset & Re-enrich</button>
+          @click="runEnrichment"
+        >{{ resetMode ? 'Reset & Re-enrich' : 'Enrich' }}</button>
       </div>
     </div>
   </div>
