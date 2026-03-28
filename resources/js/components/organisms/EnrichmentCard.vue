@@ -37,10 +37,16 @@ const retryNotFound = ref(false)
       - {{ Math.round(data.enrichmentJob.progress_percent) }}%)
     </div>
 
-    <div class="enrichment-actions">
+    <div class="enrichment-toolbar">
       <TypePills v-model="enrichType" />
+
+      <div class="toolbar-divider" />
+
       <ToggleSwitch v-model="retryNotFound" label="Retry Not Found" />
-      <div class="enrichment-buttons">
+
+      <div class="toolbar-divider" />
+
+      <div class="toolbar-zone toolbar-right">
         <button
           class="btn btn-primary"
           :disabled="data.enrichmentJob?.running"
@@ -57,17 +63,21 @@ const retryNotFound = ref(false)
 </template>
 
 <style scoped>
-.enrichment-actions {
+.enrichment-toolbar {
   display: flex;
+  align-items: center;
   gap: var(--space-3);
   flex-wrap: wrap;
-  align-items: center;
   margin-top: var(--space-4);
 }
 
-.enrichment-buttons {
+.toolbar-zone {
   display: flex;
+  align-items: center;
   gap: var(--space-2);
+}
+
+.toolbar-right {
   margin-left: auto;
 }
 
