@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { useApi, ApiError } from '@/composables/useApi'
 import { useAppStore } from '@/stores/app'
+import { truncate } from '@/utils/format'
 import type {
   SyncSourceResponse,
   SyncStatusResponse,
@@ -276,6 +277,3 @@ export const useDataStore = defineStore('data', () => {
   }
 })
 
-function truncate(str: string, maxLen: number): string {
-  return str.length <= maxLen ? str : str.substring(0, maxLen - 3) + '...'
-}
