@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useDataStore } from '@/stores/data'
+import { truncate } from '@/utils/format'
+import TypePills from '@/components/atoms/TypePills.vue'
+import ToggleSwitch from '@/components/atoms/ToggleSwitch.vue'
 
 const data = useDataStore()
 const enrichType = ref('')
@@ -29,32 +32,26 @@ const retryNotFound = ref(false)
     <!-- Job progress -->
     <div v-if="data.enrichmentJob?.running" class="enrichment-status">
       <span class="spinner" />
-      {{ data.enrichmentJob.current_item || 'Processing...' }}
+      {{ data.enrichmentJob.current_item ? truncate(data.enrichmentJob.current_item, 50) : 'Processing...' }}
       ({{ data.enrichmentJob.items_processed }}/{{ data.enrichmentJob.total_items }}
       - {{ Math.round(data.enrichmentJob.progress_percent) }}%)
     </div>
 
     <div class="enrichment-actions">
-      <button
-        class="btn btn-primary"
-        :disabled="data.enrichmentJob?.running"
-        @click="data.startEnrichment(enrichType || undefined, retryNotFound)"
-      >Enrich</button>
-      <button
-        class="btn btn-warning"
-        :disabled="data.enrichmentJob?.running"
-        @click="data.resetEnrichment(enrichType || undefined)"
-      >Reset & Re-enrich</button>
-      <select v-model="enrichType" class="length-select">
-        <option value="">All Types</option>
-        <option value="book">Books</option>
-        <option value="movie">Movies</option>
-        <option value="tv_show">TV Shows</option>
-        <option value="video_game">Video Games</option>
-      </select>
-      <label class="checkbox-label">
-        <input type="checkbox" v-model="retryNotFound"> Retry Not Found
-      </label>
+      <TypePills v-model="enrichType" />
+      <ToggleSwitch v-model="retryNotFound" label="Retry Not Found" />
+      <div class="enrichment-buttons">
+        <button
+          class="btn btn-primary"
+          :disabled="data.enrichmentJob?.running"
+          @click="data.startEnrichment(enrichType || undefined, retryNotFound)"
+        >Enrich</button>
+        <button
+          class="btn btn-warning"
+          :disabled="data.enrichmentJob?.running"
+          @click="data.resetEnrichment(enrichType || undefined)"
+        >Reset & Re-enrich</button>
+      </div>
     </div>
   </div>
 </template>
@@ -62,10 +59,16 @@ const retryNotFound = ref(false)
 <style scoped>
 .enrichment-actions {
   display: flex;
-  gap: var(--space-2);
+  gap: var(--space-3);
   flex-wrap: wrap;
   align-items: center;
   margin-top: var(--space-4);
+}
+
+.enrichment-buttons {
+  display: flex;
+  gap: var(--space-2);
+  margin-left: auto;
 }
 
 .enrichment-status {
@@ -76,14 +79,5 @@ const retryNotFound = ref(false)
 
 .enrichment-summary {
   margin-bottom: var(--space-3);
-}
-
-.checkbox-label {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  font-size: var(--text-sm);
-  color: var(--text-secondary);
-  cursor: pointer;
 }
 </style>
