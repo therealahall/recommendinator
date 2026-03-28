@@ -10,17 +10,21 @@ const app = useAppStore()
 
 <template>
   <div class="card">
-    <div class="rec-controls">
-      <div class="rec-controls-left">
-        <TypePills v-model="recs.contentType" :include-all="false" />
-        <NumberStepper
-          v-model="recs.count"
-          :min="1"
-          :max="app.recommendationsConfig.max_count"
-          aria-label="Number of recommendations"
-        />
-      </div>
-      <div class="rec-controls-right">
+    <div class="rec-toolbar">
+      <TypePills v-model="recs.contentType" :include-all="false" />
+
+      <div class="toolbar-divider" />
+
+      <NumberStepper
+        v-model="recs.count"
+        :min="1"
+        :max="app.recommendationsConfig.max_count"
+        aria-label="Number of recommendations"
+      />
+
+      <div class="toolbar-divider" />
+
+      <div class="toolbar-zone toolbar-right">
         <button
           class="btn btn-secondary"
           :disabled="recs.loading"
@@ -38,23 +42,20 @@ const app = useAppStore()
 </template>
 
 <style scoped>
-.rec-controls {
+.rec-toolbar {
   display: flex;
-  justify-content: space-between;
   align-items: center;
   gap: var(--space-3);
   flex-wrap: wrap;
 }
 
-.rec-controls-left {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-}
-
-.rec-controls-right {
+.toolbar-zone {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+}
+
+.toolbar-right {
+  margin-left: auto;
 }
 </style>
