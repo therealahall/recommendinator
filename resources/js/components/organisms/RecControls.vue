@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useRecommendationsStore } from '@/stores/recommendations'
 import { useAppStore } from '@/stores/app'
+import TypePills from '@/components/atoms/TypePills.vue'
 
 const recs = useRecommendationsStore()
 const app = useAppStore()
@@ -9,15 +10,7 @@ const app = useAppStore()
 <template>
   <div class="card">
     <div class="rec-controls">
-      <div class="form-group flex-1">
-        <label for="recType">Content Type</label>
-        <select id="recType" v-model="recs.contentType">
-          <option value="book">Book</option>
-          <option value="movie">Movie</option>
-          <option value="tv_show">TV Show</option>
-          <option value="video_game">Video Game</option>
-        </select>
-      </div>
+      <TypePills v-model="recs.contentType" :include-all="false" />
       <div class="form-group">
         <label for="recCount">Count</label>
         <input
@@ -47,12 +40,8 @@ const app = useAppStore()
 .rec-controls {
   display: flex;
   gap: var(--space-3);
-  align-items: flex-end;
+  align-items: center;
   flex-wrap: wrap;
-}
-
-.flex-1 {
-  flex: 1;
 }
 
 .form-group input[type="number"] {
