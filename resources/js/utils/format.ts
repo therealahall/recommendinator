@@ -59,3 +59,8 @@ export function formatScorerName(key: string): string {
 export function capitalize(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1)
 }
+
+/** Truncate a string to a max length, appending ellipsis if needed */
+export function truncate(str: string, maxLen: number): string {
+  return str.length <= maxLen ? str : str.substring(0, maxLen - 3) + '...'
+}
