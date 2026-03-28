@@ -65,15 +65,12 @@ onUnmounted(() => {
 
       <!-- Zone 2: Status + Ignored toggle -->
       <div class="toolbar-zone">
-        <div class="form-group">
-          <label for="libStatus">Status</label>
-          <select id="libStatus" :value="statusFilter" @change="emit('filterChange', 'status', ($event.target as HTMLSelectElement).value)">
-            <option value="">All Statuses</option>
-            <option value="unread">{{ unreadLabel }}</option>
-            <option value="currently_consuming">In Progress</option>
-            <option value="completed">Completed</option>
-          </select>
-        </div>
+        <select class="toolbar-select" id="libStatus" :value="statusFilter" @change="emit('filterChange', 'status', ($event.target as HTMLSelectElement).value)">
+          <option value="">All Statuses</option>
+          <option value="unread">{{ unreadLabel }}</option>
+          <option value="currently_consuming">In Progress</option>
+          <option value="completed">Completed</option>
+        </select>
         <ToggleSwitch
           :model-value="showIgnored"
           label="Show ignored"
@@ -109,6 +106,22 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: var(--space-3);
+}
+
+.toolbar-select {
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-input);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.toolbar-select:focus {
+  outline: none;
+  border-color: var(--border-focus);
 }
 
 .toolbar-right {

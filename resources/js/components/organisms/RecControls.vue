@@ -11,16 +11,15 @@ const app = useAppStore()
   <div class="card">
     <div class="rec-controls">
       <TypePills v-model="recs.contentType" :include-all="false" />
-      <div class="form-group">
-        <label for="recCount">Count</label>
-        <input
-          type="number"
-          id="recCount"
-          v-model.number="recs.count"
-          min="1"
-          :max="app.recommendationsConfig.max_count"
-        >
-      </div>
+      <input
+        type="number"
+        id="recCount"
+        class="count-input"
+        v-model.number="recs.count"
+        min="1"
+        :max="app.recommendationsConfig.max_count"
+        title="Number of recommendations"
+      >
       <button
         class="btn btn-secondary"
         :disabled="recs.loading"
@@ -44,7 +43,20 @@ const app = useAppStore()
   flex-wrap: wrap;
 }
 
-.form-group input[type="number"] {
-  width: 70px;
+.count-input {
+  width: 60px;
+  padding: var(--space-2) var(--space-2);
+  background: var(--bg-input);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-family: inherit;
+  text-align: center;
+}
+
+.count-input:focus {
+  outline: none;
+  border-color: var(--border-focus);
 }
 </style>
