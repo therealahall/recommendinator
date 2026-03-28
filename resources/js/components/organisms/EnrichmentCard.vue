@@ -53,7 +53,7 @@ function runEnrichment() {
 
       <div class="toolbar-zone">
         <ToggleSwitch v-model="retryNotFound" label="Retry Not Found" />
-        <ToggleSwitch v-model="resetMode" label="Reset & Re-enrich" />
+        <ToggleSwitch v-model="resetMode" label="Reset Enrichment" />
       </div>
 
       <div class="toolbar-divider" />
@@ -64,7 +64,7 @@ function runEnrichment() {
           :class="resetMode ? 'btn-warning' : 'btn-primary'"
           :disabled="data.enrichmentJob?.running"
           @click="runEnrichment"
-        >{{ resetMode ? 'Reset & Re-enrich' : 'Enrich' }}</button>
+        >{{ resetMode ? 'Reset Enrichment' : 'Enrich' }}</button>
       </div>
     </div>
   </div>
