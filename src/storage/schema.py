@@ -75,6 +75,32 @@ _ALLOWED_ENRICHMENT_COLUMNS: frozenset[str] = frozenset(
 # Whitelist of SQL table aliases allowed in enrichment queries.
 _ALLOWED_ENRICHMENT_ALIASES: frozenset[str] = frozenset({"es"})
 
+# Whitelist of SQL WHERE clauses allowed in enrichment count queries.
+# Defense-in-depth: all current call sites in get_enrichment_stats pass
+# hardcoded literals, but validating prevents SQL injection if a future
+# call site passes untrusted input.
+_ALLOWED_ENRICHMENT_WHERE: frozenset[str] = frozenset(
+    {
+        "1=1",
+        "needs_enrichment = 1",
+        "es.needs_enrichment = 1",
+        "needs_enrichment = 0 AND enrichment_error IS NULL"
+        " AND enrichment_provider != 'none'",
+        "es.needs_enrichment = 0 AND es.enrichment_error IS NULL"
+        " AND es.enrichment_provider != 'none'",
+        "enrichment_error IS NOT NULL",
+        "es.enrichment_error IS NOT NULL",
+    }
+)
+
+# Whitelist of SQL JOIN clauses allowed in enrichment queries.
+_ALLOWED_ENRICHMENT_JOINS: frozenset[str] = frozenset(
+    {"", " JOIN content_items ci ON es.content_item_id = ci.id"}
+)
+
+# Whitelist of SQL filter suffixes allowed in enrichment queries.
+_ALLOWED_ENRICHMENT_FILTERS: frozenset[str] = frozenset({"", " AND ci.user_id = ?"})
+
 
 def create_schema(conn: sqlite3.Connection) -> None:
     """Create the database schema.
@@ -872,6 +898,12 @@ def _enrichment_count_query(
         raise ValueError(f"Unknown SQL table: {table_name!r}")
     if table_alias is not None and table_alias not in _ALLOWED_ENRICHMENT_ALIASES:
         raise ValueError(f"Unknown SQL table alias: {table_alias!r}")
+    if where_clause not in _ALLOWED_ENRICHMENT_WHERE:
+        raise ValueError(f"Unknown SQL WHERE clause: {where_clause!r}")
+    if user_join not in _ALLOWED_ENRICHMENT_JOINS:
+        raise ValueError(f"Unknown SQL JOIN clause: {user_join!r}")
+    if user_filter not in _ALLOWED_ENRICHMENT_FILTERS:
+        raise ValueError(f"Unknown SQL filter: {user_filter!r}")
     from_clause = f"{table_name} {table_alias}" if table_alias else table_name
     query = f"SELECT COUNT(*) FROM {from_clause}{user_join} WHERE {where_clause}{user_filter}"
     cursor.execute(query, user_params)
@@ -895,6 +927,10 @@ def _enrichment_group_query(
         raise ValueError(f"Unknown SQL table alias: {table_alias!r}")
     if select_col not in _ALLOWED_ENRICHMENT_COLUMNS:
         raise ValueError(f"Unknown enrichment column: {select_col!r}")
+    if user_join not in _ALLOWED_ENRICHMENT_JOINS:
+        raise ValueError(f"Unknown SQL JOIN clause: {user_join!r}")
+    if user_filter not in _ALLOWED_ENRICHMENT_FILTERS:
+        raise ValueError(f"Unknown SQL filter: {user_filter!r}")
     from_clause = f"{table_name} {table_alias}" if table_alias else table_name
     col_prefix = f"{table_alias}.{select_col}" if table_alias else select_col
     query = (
