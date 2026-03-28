@@ -123,7 +123,7 @@ describe('EnrichmentCard', () => {
 
     const buttons = wrapper.findAll('.btn')
     expect(buttons.map(b => b.text())).toContain('Enrich')
-    expect(wrapper.text()).toContain('Reset & Re-enrich')
+    expect(wrapper.text()).toContain('Reset Enrichment')
   })
 
   it('disables enrich button when job is running', () => {
@@ -212,7 +212,7 @@ describe('EnrichmentCard', () => {
     const resetToggle = toggles[toggles.length - 1]
     await resetToggle.trigger('click')
 
-    const actionBtn = wrapper.findAll('.btn').find(b => b.text() === 'Reset & Re-enrich')!
+    const actionBtn = wrapper.findAll('.btn').find(b => b.text() === 'Reset Enrichment')!
     await actionBtn.trigger('click')
 
     expect(data.resetEnrichment).toHaveBeenCalledWith('movie')
@@ -228,7 +228,7 @@ describe('EnrichmentCard', () => {
     const resetToggle = toggles[toggles.length - 1]
     await resetToggle.trigger('click')
 
-    const actionBtn = wrapper.findAll('.btn').find(b => b.text() === 'Reset & Re-enrich')!
+    const actionBtn = wrapper.findAll('.btn').find(b => b.text() === 'Reset Enrichment')!
     await actionBtn.trigger('click')
 
     expect(data.resetEnrichment).toHaveBeenCalledWith(undefined)
