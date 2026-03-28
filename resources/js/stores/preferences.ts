@@ -79,7 +79,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
         theme.applyTheme(prefs.theme)
         pendingTheme.value = prefs.theme
       } else {
-        pendingTheme.value = theme.currentThemeId || theme.defaultThemeId
+        pendingTheme.value = theme.currentThemeId ?? theme.defaultThemeId
       }
     } catch {
       // Use defaults on error
