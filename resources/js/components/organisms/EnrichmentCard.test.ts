@@ -118,21 +118,19 @@ describe('EnrichmentCard', () => {
     expect(wrapper.text()).toContain('Retry Not Found')
   })
 
-  it('renders Enrich and Reset buttons', () => {
+  it('renders Enrich button and Reset toggle', () => {
     const wrapper = mountWithEnrichment()
 
     const buttons = wrapper.findAll('.btn')
     expect(buttons.map(b => b.text())).toContain('Enrich')
-    expect(buttons.map(b => b.text())).toContain('Reset & Re-enrich')
+    expect(wrapper.text()).toContain('Reset & Re-enrich')
   })
 
-  it('disables buttons when job is running', () => {
+  it('disables enrich button when job is running', () => {
     const wrapper = mountWithEnrichment({ enrichmentJob: makeRunningJob() })
 
     const enrichBtn = wrapper.findAll('.btn').find(b => b.text() === 'Enrich')!
-    const resetBtn = wrapper.findAll('.btn').find(b => b.text() === 'Reset & Re-enrich')!
     expect(enrichBtn.attributes('disabled')).toBeDefined()
-    expect(resetBtn.attributes('disabled')).toBeDefined()
   })
 
   it('shows Processing... fallback when current_item is empty', () => {
@@ -201,7 +199,7 @@ describe('EnrichmentCard', () => {
     expect(data.startEnrichment).toHaveBeenCalledWith(undefined, false)
   })
 
-  it('calls resetEnrichment with selected type on Reset button click', async () => {
+  it('calls resetEnrichment when reset toggle is on and button clicked', async () => {
     const wrapper = mountWithEnrichment()
     const data = useDataStore()
     data.resetEnrichment = vi.fn()
@@ -209,19 +207,29 @@ describe('EnrichmentCard', () => {
     const moviePill = wrapper.findAll('.pill').find(p => p.text() === 'Movie')!
     await moviePill.trigger('click')
 
-    const resetBtn = wrapper.findAll('.btn').find(b => b.text() === 'Reset & Re-enrich')!
-    await resetBtn.trigger('click')
+    // Toggle reset mode on (second toggle switch — first is Retry Not Found)
+    const toggles = wrapper.findAll('.toggle-switch')
+    const resetToggle = toggles[toggles.length - 1]
+    await resetToggle.trigger('click')
+
+    const actionBtn = wrapper.findAll('.btn').find(b => b.text() === 'Reset & Re-enrich')!
+    await actionBtn.trigger('click')
 
     expect(data.resetEnrichment).toHaveBeenCalledWith('movie')
   })
 
-  it('calls resetEnrichment with undefined when All type is selected', async () => {
+  it('calls resetEnrichment with undefined when All type and reset mode', async () => {
     const wrapper = mountWithEnrichment()
     const data = useDataStore()
     data.resetEnrichment = vi.fn()
 
-    const resetBtn = wrapper.findAll('.btn').find(b => b.text() === 'Reset & Re-enrich')!
-    await resetBtn.trigger('click')
+    // Toggle reset mode on
+    const toggles = wrapper.findAll('.toggle-switch')
+    const resetToggle = toggles[toggles.length - 1]
+    await resetToggle.trigger('click')
+
+    const actionBtn = wrapper.findAll('.btn').find(b => b.text() === 'Reset & Re-enrich')!
+    await actionBtn.trigger('click')
 
     expect(data.resetEnrichment).toHaveBeenCalledWith(undefined)
   })

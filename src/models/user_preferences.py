@@ -29,7 +29,7 @@ class UserPreferenceConfig:
             Default 0.0 (disabled).
         theme: User's preferred UI theme ID. Persisted to the backend so
             it syncs across browsers/devices. Empty string means "use
-            server default" (from ``web.theme`` in config).
+            system default (nord)".
     """
 
     scorer_weights: dict[str, float] = field(default_factory=dict)
