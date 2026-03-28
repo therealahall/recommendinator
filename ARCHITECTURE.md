@@ -177,7 +177,7 @@ When enabled (recommended for 3B models), the engine uses a condensed system pro
 - Tabbed UI: Recommendations, Library, Chat, Data, Preferences (Chat hidden when AI is disabled)
 - SSE streaming for chat responses and AI recommendation blurbs
 - Library export: `GET /api/items/export?type=book&format=csv` (CSV or JSON download)
-- **Themeable UI**: CSS custom properties system with folder-per-theme in `src/web/static/themes/`. Each theme provides a `theme.json` metadata file and a `colors.css` override. Tailwind `@theme` maps CSS vars to utility classes. Theme selection persisted via localStorage with server-configured default (`web.theme` in config). CSS uses `color-mix()` so themes only need to define core color variables. See `docs/THEME_DEVELOPMENT.md`.
+- **Themeable UI**: CSS custom properties system with folder-per-theme in `src/web/static/themes/`. Each theme provides a `theme.json` metadata file and a `colors.css` override. Tailwind `@theme` maps CSS vars to utility classes. Theme selection persisted per user via backend preferences (system default: `nord`). CSS uses `color-mix()` so themes only need to define core color variables. See `docs/THEME_DEVELOPMENT.md`.
 - **Version display and update detection**: Version fetched from `GET /api/status`; UI polls every 5 minutes and displays a banner when a newer server version is detected
 - **Asset cache busting**: Vite content-hashed filenames (e.g., `index-i5AIV_mm.js`)
 - Internal network only (no external exposure)

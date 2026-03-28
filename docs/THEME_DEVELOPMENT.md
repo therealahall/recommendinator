@@ -194,7 +194,7 @@ Vue components can then use classes like `bg-bg-primary`, `text-text-primary`, o
 
 ## Theme Persistence
 
-- Users select a theme via the Preferences tab
-- The selection is saved to `localStorage` per browser
-- Server admins can set a default theme via `web.theme` in `config.yaml`
-- `localStorage` takes priority over the config default
+- Users select a theme via the Preferences tab and click Save
+- The selection is persisted to the backend per user (syncs across browsers/devices)
+- `localStorage` caches the theme for fast initial paint before preferences load
+- The system default is `nord` for all new users until they explicitly change it
