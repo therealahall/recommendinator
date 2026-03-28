@@ -109,7 +109,7 @@ onUnmounted(() => {
 }
 
 .toolbar-select {
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-2) var(--space-6) var(--space-2) var(--space-3);
   background: var(--bg-input);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
@@ -117,6 +117,7 @@ onUnmounted(() => {
   font-size: var(--text-sm);
   font-family: inherit;
   cursor: pointer;
+  appearance: auto;
 }
 
 .toolbar-select:focus {
