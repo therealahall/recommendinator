@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import TypePills from '@/components/atoms/TypePills.vue'
+import ToggleSwitch from '@/components/atoms/ToggleSwitch.vue'
 
 const props = defineProps<{
   typeFilter: string
@@ -12,87 +14,104 @@ const emit = defineEmits<{
   export: [format: 'csv' | 'json']
 }>()
 
-const exportFormat = ref('csv')
+const exportOpen = ref(false)
+const dropdownRef = ref<HTMLElement | null>(null)
 
 const statusLabels: Record<string, Record<string, string>> = {
   unread: { book: 'Unread', movie: 'Unwatched', tv_show: 'Unwatched', video_game: 'Unplayed', default: 'Not Started' },
 }
 
-function getUnreadLabel(): string {
-  if (props.typeFilter && statusLabels.unread[props.typeFilter]) return statusLabels.unread[props.typeFilter]
-  return statusLabels.unread.default
+const unreadLabel = computed(() =>
+  statusLabels.unread[props.typeFilter] ?? statusLabels.unread.default
+)
+
+function doExport(format: 'csv' | 'json') {
+  exportOpen.value = false
+  emit('export', format)
 }
+
+function onClickOutside(e: MouseEvent) {
+  if (e.target === null) return
+  if (dropdownRef.value && !dropdownRef.value.contains(e.target as Node)) {
+    exportOpen.value = false
+  }
+}
+
+function onKeyDown(e: KeyboardEvent) {
+  if (e.key === 'Escape') exportOpen.value = false
+}
+
+onMounted(() => {
+  document.addEventListener('click', onClickOutside)
+  document.addEventListener('keydown', onKeyDown)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('click', onClickOutside)
+  document.removeEventListener('keydown', onKeyDown)
+})
 </script>
 
 <template>
   <div class="card">
-    <div class="library-filters">
-      <div class="form-group">
-        <label for="libType">Type</label>
-        <select id="libType" :value="typeFilter" @change="emit('filterChange', 'type', ($event.target as HTMLSelectElement).value)">
-          <option value="">All Types</option>
-          <option value="book">Book</option>
-          <option value="movie">Movie</option>
-          <option value="tv_show">TV Show</option>
-          <option value="video_game">Video Game</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label for="libStatus">Status</label>
-        <select id="libStatus" :value="statusFilter" @change="emit('filterChange', 'status', ($event.target as HTMLSelectElement).value)">
-          <option value="">All Statuses</option>
-          <option value="unread">{{ getUnreadLabel() }}</option>
-          <option value="currently_consuming">In Progress</option>
-          <option value="completed">Completed</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label class="checkbox-label">
-          <input type="checkbox" :checked="showIgnored" @change="emit('filterChange', 'showIgnored', ($event.target as HTMLInputElement).checked)">
-          Show ignored
-        </label>
-      </div>
-      <div class="library-export-group">
+    <div class="library-toolbar">
+      <!-- Zone 1: Type pills -->
+      <TypePills
+        :model-value="typeFilter"
+        @update:model-value="emit('filterChange', 'type', $event)"
+      />
+
+      <div class="toolbar-divider" />
+
+      <!-- Zone 2: Status + Ignored toggle -->
+      <div class="toolbar-zone">
         <div class="form-group">
-          <label for="exportFormat">Format</label>
-          <select id="exportFormat" v-model="exportFormat">
-            <option value="csv">CSV</option>
-            <option value="json">JSON</option>
+          <label for="libStatus">Status</label>
+          <select id="libStatus" :value="statusFilter" @change="emit('filterChange', 'status', ($event.target as HTMLSelectElement).value)">
+            <option value="">All Statuses</option>
+            <option value="unread">{{ unreadLabel }}</option>
+            <option value="currently_consuming">In Progress</option>
+            <option value="completed">Completed</option>
           </select>
         </div>
-        <button
-          class="btn btn-secondary"
-          :disabled="!typeFilter"
-          :title="typeFilter ? 'Export library items' : 'Select a content type to export'"
-          @click="emit('export', exportFormat as 'csv' | 'json')"
-        >Export</button>
+        <ToggleSwitch
+          :model-value="showIgnored"
+          label="Show ignored"
+          @update:model-value="emit('filterChange', 'showIgnored', $event)"
+        />
+      </div>
+
+      <div class="toolbar-divider" />
+
+      <!-- Zone 3: Export dropdown -->
+      <div ref="dropdownRef" class="dropdown-wrap toolbar-right">
+        <button class="btn btn-secondary" title="Export library items" @click="exportOpen = !exportOpen">
+          Export
+        </button>
+        <div v-if="exportOpen" class="dropdown-menu">
+          <button class="dropdown-menu-item" @click="doExport('csv')">CSV</button>
+          <button class="dropdown-menu-item" @click="doExport('json')">JSON</button>
+        </div>
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-.library-filters {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-4);
-  align-items: flex-end;
-}
-
-.library-export-group {
-  display: flex;
-  gap: var(--space-2);
-  align-items: flex-end;
-  margin-left: auto;
-}
-
-.checkbox-label {
+.library-toolbar {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  font-size: var(--text-sm);
-  color: var(--text-secondary);
-  cursor: pointer;
-  padding: var(--space-2) 0;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.toolbar-zone {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.toolbar-right {
+  margin-left: auto;
 }
 </style>
