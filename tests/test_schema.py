@@ -407,3 +407,93 @@ class TestEnrichmentSQLWhitelist:
         )
 
         assert isinstance(result, int)
+
+    def test_count_query_rejects_unknown_where_clause(
+        self, temp_db: sqlite3.Connection
+    ) -> None:
+        """_enrichment_count_query raises ValueError for unknown WHERE clause."""
+        create_schema(temp_db)
+        cursor = temp_db.cursor()
+
+        with pytest.raises(ValueError, match="Unknown SQL WHERE clause"):
+            _enrichment_count_query(
+                cursor=cursor,
+                table_name="enrichment_status",
+                table_alias=None,
+                where_clause="1=1; DROP TABLE users; --",
+                user_join="",
+                user_filter="",
+                user_params=(),
+            )
+
+    def test_count_query_rejects_unknown_join(
+        self, temp_db: sqlite3.Connection
+    ) -> None:
+        """_enrichment_count_query raises ValueError for unknown JOIN clause."""
+        create_schema(temp_db)
+        cursor = temp_db.cursor()
+
+        with pytest.raises(ValueError, match="Unknown SQL JOIN clause"):
+            _enrichment_count_query(
+                cursor=cursor,
+                table_name="enrichment_status",
+                table_alias=None,
+                where_clause="1=1",
+                user_join=" JOIN secrets ON 1=1",
+                user_filter="",
+                user_params=(),
+            )
+
+    def test_count_query_rejects_unknown_filter(
+        self, temp_db: sqlite3.Connection
+    ) -> None:
+        """_enrichment_count_query raises ValueError for unknown filter."""
+        create_schema(temp_db)
+        cursor = temp_db.cursor()
+
+        with pytest.raises(ValueError, match="Unknown SQL filter"):
+            _enrichment_count_query(
+                cursor=cursor,
+                table_name="enrichment_status",
+                table_alias=None,
+                where_clause="1=1",
+                user_join="",
+                user_filter=" OR 1=1",
+                user_params=(),
+            )
+
+    def test_group_query_rejects_unknown_join(
+        self, temp_db: sqlite3.Connection
+    ) -> None:
+        """_enrichment_group_query raises ValueError for unknown JOIN clause."""
+        create_schema(temp_db)
+        cursor = temp_db.cursor()
+
+        with pytest.raises(ValueError, match="Unknown SQL JOIN clause"):
+            _enrichment_group_query(
+                cursor=cursor,
+                select_col="enrichment_provider",
+                table_name="enrichment_status",
+                table_alias=None,
+                user_join=" JOIN secrets ON 1=1",
+                user_filter="",
+                user_params=(),
+            )
+
+    def test_group_query_rejects_unknown_filter(
+        self, temp_db: sqlite3.Connection
+    ) -> None:
+        """_enrichment_group_query raises ValueError for unknown filter."""
+        create_schema(temp_db)
+        cursor = temp_db.cursor()
+
+        with pytest.raises(ValueError, match="Unknown SQL filter"):
+            _enrichment_group_query(
+                cursor=cursor,
+                select_col="enrichment_provider",
+                table_name="enrichment_status",
+                table_alias=None,
+                user_join="",
+                user_filter=" OR 1=1",
+                user_params=(),
+            )
