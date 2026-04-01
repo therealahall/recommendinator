@@ -101,6 +101,7 @@ Code quality rules (naming, DRY, type safety, dead code, imports, mutation), sec
 - **test-review** — coverage, mock hygiene, regression test format, edge cases, performance
 - **document-review** — accuracy, completeness, cross-document consistency, staleness
 - **commit-hygiene** — atomic commits, conventional format, message quality, documentation gaps
+- **accessibility-review** — WCAG 2.1 AA, semantic HTML, keyboard navigation, ARIA, color/contrast, focus management
 
 ## Security
 
@@ -157,8 +158,9 @@ The project uses Claude Code plugins and custom agents to maintain code quality 
 - **test-review** — Pre-commit test coverage and quality audit. See `.claude/agents/test-review.md`.
 - **document-review** — Documentation accuracy and completeness audit. See `.claude/agents/document-review.md`.
 - **commit-hygiene** — Atomic commit structure and conventional format. See `.claude/agents/commit-hygiene.md`.
+- **accessibility-review** — WCAG 2.1 AA compliance for frontend code. See `.claude/agents/accessibility-review.md`.
 
-**All agents must approve changes before marking tasks as complete.** Run security-review, code-review, test-review, and document-review before `command make check`. Run commit-hygiene before committing (to plan the split) and before pushing (to verify commit structure).
+**All agents must approve changes before marking tasks as complete.** Run security-review, code-review, test-review, document-review, and accessibility-review before `command make check`. Run commit-hygiene before committing (to plan the split) and before pushing (to verify commit structure). The accessibility-review agent self-gates on frontend file presence — it immediately approves when no frontend files are in the diff.
 
 ## Architecture Principles
 
@@ -231,7 +233,7 @@ This ensures every plan step is tracked, has clear acceptance criteria, and noth
 
 ## Pre-commit Workflow
 
-1. Run **security-review**, **code-review**, **test-review**, and **document-review** agents (can run in parallel)
+1. Run **security-review**, **code-review**, **test-review**, **document-review**, and **accessibility-review** agents (can run in parallel)
 2. Address all agent findings
 3. **Re-run any agent that had findings** — agents must verify fixes are correct. Repeat steps 2–3 until **all agents approve**. Do not proceed until every agent returns APPROVE.
 4. Run **commit-hygiene** agent to plan commit split
