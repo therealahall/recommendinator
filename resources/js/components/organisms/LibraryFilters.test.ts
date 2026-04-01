@@ -37,7 +37,7 @@ describe('LibraryFilters', () => {
   it('emits filterChange for status on select change', async () => {
     const wrapper = mount(LibraryFilters, { props: defaultProps })
 
-    const select = wrapper.find('#libStatus')
+    const select = wrapper.find('select[aria-label="Status"]')
     await select.setValue('completed')
 
     expect(wrapper.emitted('filterChange')).toEqual([['status', 'completed']])
@@ -48,7 +48,7 @@ describe('LibraryFilters', () => {
       props: { ...defaultProps, typeFilter: 'movie' },
     })
 
-    const options = wrapper.find('#libStatus').findAll('option')
+    const options = wrapper.find('select[aria-label="Status"]').findAll('option')
     const unreadOption = options.find(o => o.attributes('value') === 'unread')!
     expect(unreadOption.text()).toBe('Unwatched')
   })
@@ -58,7 +58,7 @@ describe('LibraryFilters', () => {
       props: { ...defaultProps, typeFilter: 'book' },
     })
 
-    const options = wrapper.find('#libStatus').findAll('option')
+    const options = wrapper.find('select[aria-label="Status"]').findAll('option')
     const unreadOption = options.find(o => o.attributes('value') === 'unread')!
     expect(unreadOption.text()).toBe('Unread')
   })
@@ -68,7 +68,7 @@ describe('LibraryFilters', () => {
       props: { ...defaultProps, typeFilter: 'tv_show' },
     })
 
-    const options = wrapper.find('#libStatus').findAll('option')
+    const options = wrapper.find('select[aria-label="Status"]').findAll('option')
     const unreadOption = options.find(o => o.attributes('value') === 'unread')!
     expect(unreadOption.text()).toBe('Unwatched')
   })
@@ -78,7 +78,7 @@ describe('LibraryFilters', () => {
       props: { ...defaultProps, typeFilter: 'video_game' },
     })
 
-    const options = wrapper.find('#libStatus').findAll('option')
+    const options = wrapper.find('select[aria-label="Status"]').findAll('option')
     const unreadOption = options.find(o => o.attributes('value') === 'unread')!
     expect(unreadOption.text()).toBe('Unplayed')
   })
@@ -86,7 +86,7 @@ describe('LibraryFilters', () => {
   it('renders default Not Started label when no type selected', () => {
     const wrapper = mount(LibraryFilters, { props: defaultProps })
 
-    const options = wrapper.find('#libStatus').findAll('option')
+    const options = wrapper.find('select[aria-label="Status"]').findAll('option')
     const unreadOption = options.find(o => o.attributes('value') === 'unread')!
     expect(unreadOption.text()).toBe('Not Started')
   })
@@ -208,10 +208,40 @@ describe('LibraryFilters', () => {
     expect(wrapper.find('.dropdown-menu').exists()).toBe(false)
   })
 
-  it('renders toolbar dividers between zones', () => {
+  it('renders toolbar dividers', () => {
     const wrapper = mount(LibraryFilters, { props: defaultProps })
 
     const dividers = wrapper.findAll('.toolbar-divider')
     expect(dividers.length).toBe(2)
+  })
+
+  it('renders TypeSelect for mobile with all options', () => {
+    const wrapper = mount(LibraryFilters, { props: defaultProps })
+
+    const select = wrapper.find('.lib-type-select')
+    expect(select.exists()).toBe(true)
+
+    const options = select.findAll('option')
+    expect(options.map(o => o.text().trim())).toEqual(['All', 'Book', 'Movie', 'TV Show', 'Game'])
+  })
+
+  it('emits filterChange for type from TypeSelect', async () => {
+    const wrapper = mount(LibraryFilters, { props: defaultProps })
+
+    const select = wrapper.find('.lib-type-select')
+    const el = select.element as HTMLSelectElement
+    el.value = 'movie'
+    await select.trigger('change')
+
+    expect(wrapper.emitted('filterChange')).toEqual([['type', 'movie']])
+  })
+
+  it('reflects typeFilter prop in TypeSelect value', async () => {
+    const wrapper = mount(LibraryFilters, { props: defaultProps })
+
+    await wrapper.setProps({ typeFilter: 'book' })
+
+    const el = wrapper.find('.lib-type-select').element as HTMLSelectElement
+    expect(el.value).toBe('book')
   })
 })

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import TypePills from '@/components/atoms/TypePills.vue'
+import TypeSelect from '@/components/atoms/TypeSelect.vue'
 import ToggleSwitch from '@/components/atoms/ToggleSwitch.vue'
 
 const props = defineProps<{
@@ -55,39 +56,47 @@ onUnmounted(() => {
 <template>
   <div class="card">
     <div class="library-toolbar">
-      <!-- Zone 1: Type pills -->
+      <!-- Desktop: Type pills -->
       <TypePills
+        class="lib-pills"
         :model-value="typeFilter"
         @update:model-value="emit('filterChange', 'type', $event)"
       />
 
       <div class="toolbar-divider" />
 
-      <!-- Zone 2: Status + Ignored toggle -->
-      <div class="toolbar-zone">
-        <select class="toolbar-select" id="libStatus" :value="statusFilter" @change="emit('filterChange', 'status', ($event.target as HTMLSelectElement).value)">
+      <!-- Type select + Status select (mobile: row 1; desktop: inline in toolbar) -->
+      <div class="lib-filter-row">
+        <TypeSelect
+          class="toolbar-select lib-type-select"
+          :model-value="typeFilter"
+          @update:model-value="emit('filterChange', 'type', $event)"
+        />
+        <select class="toolbar-select" aria-label="Status" :value="statusFilter" @change="emit('filterChange', 'status', ($event.target as HTMLSelectElement).value)">
           <option value="">All Statuses</option>
           <option value="unread">{{ unreadLabel }}</option>
           <option value="currently_consuming">In Progress</option>
           <option value="completed">Completed</option>
         </select>
+      </div>
+
+      <div class="toolbar-divider" />
+
+      <!-- Ignored toggle + Export (mobile: row 2; desktop: inline in toolbar) -->
+      <div class="lib-actions-row">
         <ToggleSwitch
           :model-value="showIgnored"
           label="Show ignored"
           @update:model-value="emit('filterChange', 'showIgnored', $event)"
         />
-      </div>
-
-      <div class="toolbar-divider" />
-
-      <!-- Zone 3: Export dropdown -->
-      <div ref="dropdownRef" class="dropdown-wrap toolbar-right">
-        <button class="btn btn-secondary" title="Export library items" @click="exportOpen = !exportOpen">
-          Export
-        </button>
-        <div v-if="exportOpen" class="dropdown-menu">
-          <button class="dropdown-menu-item" @click="doExport('csv')">CSV</button>
-          <button class="dropdown-menu-item" @click="doExport('json')">JSON</button>
+        <div ref="dropdownRef" class="dropdown-wrap toolbar-right">
+          <button class="btn btn-secondary" title="Export library items" @click="exportOpen = !exportOpen">
+            Export
+          </button>
+          <div v-if="exportOpen" class="dropdown-menu">
+            <button class="dropdown-menu-item" @click="doExport('csv')">CSV</button>
+            <button class="dropdown-menu-item" @click="doExport('json')">JSON</button>
+          </div>
         </div>
       </div>
     </div>
@@ -102,30 +111,39 @@ onUnmounted(() => {
   flex-wrap: wrap;
 }
 
-.toolbar-zone {
+.lib-filter-row,
+.lib-actions-row {
   display: flex;
   align-items: center;
   gap: var(--space-3);
 }
 
-.toolbar-select {
-  padding: var(--space-2) var(--space-6) var(--space-2) var(--space-3);
-  background: var(--bg-input);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
-  color: var(--text-primary);
-  font-size: var(--text-sm);
-  font-family: inherit;
-  cursor: pointer;
-  appearance: auto;
-}
-
-.toolbar-select:focus {
-  outline: none;
-  border-color: var(--border-focus);
+.lib-type-select {
+  display: none;
 }
 
 .toolbar-right {
   margin-left: auto;
+}
+
+@media (max-width: 640px) {
+  .lib-pills,
+  .toolbar-divider {
+    display: none;
+  }
+
+  .lib-filter-row,
+  .lib-actions-row {
+    width: 100%;
+    gap: var(--space-2);
+  }
+
+  .lib-type-select {
+    display: block;
+  }
+
+  .toolbar-right {
+    margin-left: 0;
+  }
 }
 </style>
