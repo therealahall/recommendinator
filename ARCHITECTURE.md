@@ -266,6 +266,7 @@ inputs:
 - **Code-Review Agent** — Pre-commit code quality agent that performs line-by-line review for dead code, code smells, DRY violations, naming, type safety, over/under-engineering, and project standards compliance.
 - **Test-Review Agent** — Pre-commit test coverage and quality audit agent that verifies test completeness, mock hygiene, regression test format, and edge case coverage.
 - **Document-Review Agent** — Documentation accuracy and completeness audit agent that checks for staleness, cross-document consistency, and missing documentation.
+- **Accessibility-Review Agent** — Pre-commit accessibility audit agent that verifies WCAG 2.1 Level AA compliance for frontend code (semantic HTML, ARIA attributes, keyboard navigation, focus management, color contrast). Self-gates on frontend file presence — immediately approves backend-only changes.
 - **Commit-Hygiene Agent** — Atomic commit structure and conventional format enforcement agent that plans commit splits and verifies message quality.
 
 Plugin configuration: `.claude/settings.json` | Agent definitions: `.claude/agents/`
