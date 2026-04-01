@@ -651,6 +651,23 @@ input[type="checkbox"] {
   margin: 0 var(--space-2);
 }
 
+/* Toolbar Select */
+.toolbar-select {
+  padding: var(--space-2) var(--space-6) var(--space-2) var(--space-3);
+  background: var(--bg-input);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.toolbar-select:focus {
+  outline: none;
+  border-color: var(--border-focus);
+}
+
 /* Preferences */
 .pref-section {
   margin-bottom: var(--space-6);
