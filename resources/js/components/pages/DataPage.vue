@@ -36,11 +36,16 @@ function needsEpicConnect(sourceId: string): boolean {
 
     <div class="card">
       <h2>Sync Sources</h2>
-      <div v-if="data.syncMessage" class="sync-status-message" :class="{
-        'sync-status-error': data.syncStatus === 'failed',
-        'sync-status-success': data.syncStatus === 'completed',
-        'sync-status-info': data.syncStatus === 'running' || data.syncStatus === 'idle',
-      }">{{ data.syncMessage }}</div>
+      <div
+        class="sync-status-message"
+        :role="data.syncStatus === 'failed' ? 'alert' : 'status'"
+        :aria-live="data.syncStatus === 'failed' ? 'assertive' : 'polite'"
+        :class="{
+          'sync-status-error': data.syncStatus === 'failed',
+          'sync-status-success': data.syncStatus === 'completed',
+          'sync-status-info': data.syncStatus === 'running' || data.syncStatus === 'idle',
+        }"
+      >{{ data.syncMessage }}</div>
       <div v-if="data.syncJob?.progress_percent && data.syncStatus === 'running'" class="sync-progress-bar">
         <div class="sync-progress-fill" :style="{ width: `${data.syncJob.progress_percent}%` }" />
       </div>

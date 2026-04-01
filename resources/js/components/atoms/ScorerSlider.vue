@@ -13,6 +13,10 @@ const emit = defineEmits<{
 
 const displayValue = computed(() => props.modelValue.toFixed(1))
 const fillPercent = computed(() => `${(props.modelValue / 5) * 100}%`)
+const labelId = computed(() => {
+  const slug = props.label.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
+  return `slider-label-${slug}`
+})
 
 function onInput(event: Event) {
   const input = event.target as HTMLInputElement
@@ -22,10 +26,10 @@ function onInput(event: Event) {
 
 <template>
   <div class="slider-row">
-    <span class="slider-label">
+    <span :id="labelId" class="slider-label">
       {{ label }}
       <span v-if="tooltip" class="scorer-tooltip-wrap" tabindex="0">
-        <span class="scorer-tooltip-icon" aria-label="Info">?</span>
+        <span class="scorer-tooltip-icon" :aria-label="`${label} info`">?</span>
         <span class="scorer-tooltip-text">{{ tooltip }}</span>
       </span>
     </span>
@@ -37,8 +41,10 @@ function onInput(event: Event) {
       :value="modelValue"
       class="pref-slider"
       :style="{ '--value-percent': fillPercent }"
+      :aria-labelledby="labelId"
+      :aria-valuetext="displayValue"
       @input="onInput"
     >
-    <span class="slider-value">{{ displayValue }}</span>
+    <span class="slider-value" aria-hidden="true">{{ displayValue }}</span>
   </div>
 </template>

@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, watch, onMounted, onUnmounted, computed } from 'vue'
+import { ref, watch, computed } from 'vue'
 import type { ContentItemResponse, ItemEditRequest } from '@/types/api'
 import { formatContentType, formatStatusForContentType } from '@/utils/format'
+import { useFocusTrap } from '@/composables/useFocusTrap'
 import StarRating from '@/components/atoms/StarRating.vue'
 import SeasonChecklist from '@/components/molecules/SeasonChecklist.vue'
 
@@ -14,6 +15,9 @@ const emit = defineEmits<{
   save: [dbId: number, data: ItemEditRequest]
   close: []
 }>()
+
+const modalContent = ref<HTMLElement | null>(null)
+useFocusTrap(modalContent, () => emit('close'))
 
 const status = ref(props.item.status)
 const rating = ref<number | null>(props.item.rating)
@@ -53,31 +57,20 @@ function onBackdropClick(event: MouseEvent) {
   }
 }
 
-function onEscape(event: KeyboardEvent) {
-  if (event.key === 'Escape') emit('close')
-}
-
-onMounted(() => {
-  document.addEventListener('keydown', onEscape)
-})
-
-onUnmounted(() => {
-  document.removeEventListener('keydown', onEscape)
-})
 </script>
 
 <template>
   <div class="edit-modal" @click="onBackdropClick">
-    <div class="edit-modal-content">
-      <h3>{{ item.title }}</h3>
+    <div ref="modalContent" class="edit-modal-content" role="dialog" aria-modal="true" aria-labelledby="edit-modal-title" tabindex="-1">
+      <h3 id="edit-modal-title">{{ item.title }}</h3>
       <div class="edit-modal-subtitle">
         <span v-if="item.author">{{ item.author }} </span>
         <span class="badge badge-type">{{ formatContentType(item.content_type) }}</span>
       </div>
 
       <div class="edit-field">
-        <label>Status</label>
-        <select v-model="status">
+        <label for="edit-status">Status</label>
+        <select id="edit-status" v-model="status">
           <option value="unread">{{ formatStatusForContentType('unread', item.content_type) }}</option>
           <option value="currently_consuming">In Progress</option>
           <option value="completed">Completed</option>
@@ -85,17 +78,16 @@ onUnmounted(() => {
       </div>
 
       <div class="edit-field">
-        <label>Rating</label>
-        <StarRating v-model="rating" />
+        <label id="edit-rating-label">Rating</label>
+        <StarRating v-model="rating" aria-labelledby="edit-rating-label" />
       </div>
 
       <div class="edit-field">
-        <label>Review</label>
-        <textarea v-model="review" placeholder="Write a review..." />
+        <label for="edit-review">Review</label>
+        <textarea id="edit-review" v-model="review" placeholder="Write a review..." />
       </div>
 
       <div v-if="isTvShow" class="edit-field">
-        <label>Seasons Watched</label>
         <SeasonChecklist
           v-model="seasonsWatched"
           :total-seasons="item.total_seasons!"

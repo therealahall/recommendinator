@@ -31,7 +31,9 @@ function onKeypress(event: KeyboardEvent) {
       </div>
     </div>
     <div class="add-rule-form">
+      <label for="new-rule-input" class="sr-only">New custom rule</label>
       <input
+        id="new-rule-input"
         type="text"
         v-model="newRule"
         placeholder='e.g., avoid horror, prefer sci-fi'

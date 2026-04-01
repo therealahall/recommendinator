@@ -45,7 +45,7 @@ function onReset() {
 <template>
   <div class="chat-container">
     <div class="chat-main">
-      <div ref="messagesEl" class="chat-messages">
+      <div ref="messagesEl" class="chat-messages" aria-live="polite" aria-atomic="false" aria-relevant="additions">
         <ChatWelcome v-if="chat.showWelcome" @suggest="onSuggest" />
         <ChatMessage
           v-for="message in chat.messages"
@@ -53,7 +53,8 @@ function onReset() {
           :message="message"
         />
         <div v-if="chat.isStreaming" class="chat-message assistant typing">
-          <div class="typing-dot" /><div class="typing-dot" /><div class="typing-dot" />
+          <span class="sr-only">Assistant is typing</span>
+          <div class="typing-dot" aria-hidden="true" /><div class="typing-dot" aria-hidden="true" /><div class="typing-dot" aria-hidden="true" />
         </div>
       </div>
       <ChatInput :disabled="chat.isStreaming" @send="onSend" />

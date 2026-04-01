@@ -244,4 +244,29 @@ describe('LibraryFilters', () => {
     const el = wrapper.find('.lib-type-select').element as HTMLSelectElement
     expect(el.value).toBe('book')
   })
+
+  it('export button has aria-expanded', async () => {
+    const wrapper = mount(LibraryFilters, { props: defaultProps })
+
+    const exportBtn = wrapper.findAll('.btn').find(b => b.text() === 'Export')!
+    expect(exportBtn.attributes('aria-expanded')).toBe('false')
+
+    await exportBtn.trigger('click')
+    expect(exportBtn.attributes('aria-expanded')).toBe('true')
+  })
+
+  it('dropdown menu contains export buttons without ARIA menu roles', async () => {
+    const wrapper = mount(LibraryFilters, { props: defaultProps })
+
+    const exportBtn = wrapper.findAll('.btn').find(b => b.text() === 'Export')!
+    await exportBtn.trigger('click')
+
+    const menu = wrapper.find('.dropdown-menu')
+    expect(menu.attributes('role')).toBeUndefined()
+
+    const items = menu.findAll('button')
+    expect(items).toHaveLength(2)
+    expect(items[0].text()).toBe('CSV')
+    expect(items[1].text()).toBe('JSON')
+  })
 })
