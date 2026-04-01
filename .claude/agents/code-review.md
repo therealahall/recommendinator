@@ -253,6 +253,13 @@ This project has a Vue 3 + Tailwind CSS v4 frontend in `resources/js/` and `reso
 - **CSS custom properties (`:root` vars in `base.css`) are the theming source of truth.** Components must use these vars (directly or via Tailwind `@theme` mappings), never hardcode colors.
 - **Tailwind `@theme` mappings must not be self-referential.** `--color-foo: var(--color-foo)` is a no-op that creates a circular reference. If the `:root` var already uses the Tailwind naming convention, no mapping is needed.
 
+### Frontend Performance
+
+- **Full-library imports are banned.** `import _ from 'lodash'` or `import * as _ from 'lodash'` pulls the entire library into the bundle when you need one function. `import debounce from 'lodash/debounce'` is the correct import. This applies to every library — if you can import the specific function or submodule, you must. Every unnecessary kilobyte in the bundle is paid for by every user on every page load. **Severity: HIGH.**
+- **Page routes must be lazy loaded.** `import FooPage from './FooPage.vue'` in the router is a static import that defeats code splitting entirely. Every page-level route must use `() => import('./FooPage.vue')`. Static imports of page components in the router are an automatic finding. **Severity: HIGH.**
+- **No function calls in `v-for` templates.** `{{ formatDate(item.date) }}` inside a `v-for` re-executes on every render cycle. If the result depends only on the item data, pre-compute it (map the list to include the formatted value) or use a computed property. Functions called in templates are invisible performance drains that compound with list size. **Severity: MEDIUM.**
+- **Stale reactive captures are bugs, not style issues.** The existing rule about `const x = props.foo.bar` capturing once extends to: `watch` sources that destructure props outside the callback (stale closure), missing `toRefs` when destructuring props in composables, and `ref` values captured in closures registered during `onMounted` that will never see updates. If a value comes from a reactive source and is used in a context that expects reactivity, it must remain reactive. **Severity: HIGH.**
+
 ## Output Format
 
 Structure your review as follows:
