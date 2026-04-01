@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 
 const props = defineProps<{
   authUrl: string | null
@@ -15,6 +15,9 @@ const emit = defineEmits<{
 
 const codeInput = ref('')
 const showCodeStep = ref(false)
+const sanitizedId = computed(() =>
+  `oauth-code-${props.serviceName.toLowerCase().replace(/[^a-z0-9-]/g, '-')}`
+)
 
 function openAuth() {
   if (!props.authUrl) return
@@ -51,7 +54,8 @@ function submitCode() {
     <div v-if="showCodeStep">
       <p class="help-text my-2">{{ helpText }}</p>
       <div class="oauth-input-row">
-        <input type="text" v-model="codeInput" placeholder="Paste here...">
+        <label :for="sanitizedId" class="sr-only">{{ serviceName }} authorization code</label>
+        <input :id="sanitizedId" type="text" v-model="codeInput" placeholder="Paste authorization code...">
         <button class="btn btn-primary" @click="submitCode">Connect</button>
       </div>
       <div v-if="connectMessage" class="mt-2">{{ connectMessage }}</div>

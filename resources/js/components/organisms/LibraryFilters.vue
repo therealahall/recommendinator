@@ -90,7 +90,12 @@ onUnmounted(() => {
           @update:model-value="emit('filterChange', 'showIgnored', $event)"
         />
         <div ref="dropdownRef" class="dropdown-wrap toolbar-right">
-          <button class="btn btn-secondary" title="Export library items" @click="exportOpen = !exportOpen">
+          <button
+            class="btn btn-secondary"
+            title="Export library items"
+            :aria-expanded="exportOpen"
+            @click="exportOpen = !exportOpen"
+          >
             Export
           </button>
           <div v-if="exportOpen" class="dropdown-menu">

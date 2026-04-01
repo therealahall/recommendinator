@@ -41,14 +41,15 @@ function submit() {
       <textarea
         ref="textarea"
         v-model="text"
+        aria-label="Message to assistant"
         placeholder="Ask for recommendations, mark items as completed..."
         rows="1"
         :disabled="disabled"
         @keydown="onKeydown"
         @input="onInput"
       />
-      <button class="btn btn-primary chat-send-btn" :disabled="disabled" @click="submit" title="Send message">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <button class="btn btn-primary chat-send-btn" :disabled="disabled" @click="submit" aria-label="Send message">
+        <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <line x1="22" y1="2" x2="11" y2="13" />
           <polygon points="22 2 15 22 11 13 2 9 22 2" />
         </svg>

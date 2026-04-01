@@ -21,8 +21,9 @@ function onChange(event: Event) {
   <div v-if="theme.themes.length > 0" class="pref-section">
     <h3>Appearance</h3>
     <div class="dropdown-row">
-      <span class="dropdown-label">Theme</span>
+      <label for="theme-select" class="dropdown-label">Theme</label>
       <select
+        id="theme-select"
         class="theme-select"
         :value="modelValue"
         @change="onChange"

@@ -9,6 +9,19 @@ import EditModal from '@/components/molecules/EditModal.vue'
 const lib = useLibraryStore()
 const app = useAppStore()
 const sentinel = ref<HTMLDivElement | null>(null)
+const editTrigger = ref<HTMLElement | null>(null)
+
+function onEdit(dbId: number) {
+  const active = document.activeElement
+  editTrigger.value = active instanceof HTMLElement && active !== document.body ? active : null
+  lib.openEdit(dbId)
+}
+
+function onCloseEdit() {
+  lib.closeEdit()
+  editTrigger.value?.focus()
+}
+
 let observer: IntersectionObserver | null = null
 
 onMounted(() => {
@@ -56,7 +69,7 @@ onUnmounted(() => {
       @export="lib.exportLibrary"
     />
 
-    <div v-if="lib.error" class="status-bar error" style="display: block">
+    <div v-if="lib.error" class="status-bar error" role="alert" style="display: block">
       Failed to load library: {{ lib.error }}
     </div>
 
@@ -69,7 +82,7 @@ onUnmounted(() => {
         v-for="(item, index) in lib.items"
         :key="item.db_id ?? item.id ?? index"
         :item="item"
-        @edit="(dbId: number) => lib.openEdit(dbId)"
+        @edit="onEdit"
         @toggle-ignore="(dbId: number, ignored: boolean) => lib.toggleIgnore(dbId, ignored)"
       />
     </div>
@@ -91,7 +104,7 @@ onUnmounted(() => {
       :item="lib.editingItem"
       :saving="lib.editSaving"
       @save="lib.saveEdit"
-      @close="lib.closeEdit()"
+      @close="onCloseEdit"
     />
   </div>
 </template>

@@ -26,8 +26,11 @@ onUnmounted(() => {
 
 <template>
   <div
-    v-if="visible && app.statusMessage"
+    v-show="visible && app.statusMessage"
     class="status-bar"
+    :role="app.status === 'error' ? 'alert' : 'status'"
+    :aria-live="app.status === 'error' ? 'assertive' : 'polite'"
+    aria-atomic="true"
     :class="{
       success: app.status === 'ready',
       error: app.status === 'error',

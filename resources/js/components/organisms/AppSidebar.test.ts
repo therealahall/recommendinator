@@ -57,10 +57,9 @@ describe('AppSidebar', () => {
       global: { plugins: [router] },
     })
 
-    // Chat should be hidden (v-show renders but display: none)
+    // Chat should not be in the DOM (v-if removes it)
     const chatBtn = wrapper.findAll('.nav-item').find((n) => n.text().includes('Chat'))
-    expect(chatBtn).toBeDefined()
-    expect(chatBtn!.attributes('style')).toContain('display: none')
+    expect(chatBtn).toBeUndefined()
   })
 
   it('highlights active route', async () => {
@@ -74,6 +73,38 @@ describe('AppSidebar', () => {
 
     const libraryBtn = wrapper.findAll('.nav-item').find((n) => n.text().includes('Library'))
     expect(libraryBtn!.classes()).toContain('active')
+  })
+
+  it('sets aria-current="page" on active nav item only', async () => {
+    const router = createTestRouter()
+    await router.push('/library')
+    await router.isReady()
+
+    const wrapper = mount(AppSidebar, {
+      global: { plugins: [router] },
+    })
+
+    const navItems = wrapper.findAll('.nav-item')
+    const libraryBtn = navItems.find((n) => n.text().includes('Library'))
+    const recsBtn = navItems.find((n) => n.text().includes('Recommendations'))
+    expect(libraryBtn!.attributes('aria-current')).toBe('page')
+    expect(recsBtn!.attributes('aria-current')).toBeUndefined()
+  })
+
+  it('decorative SVGs have aria-hidden', async () => {
+    const router = createTestRouter()
+    await router.push('/recommendations')
+    await router.isReady()
+
+    const wrapper = mount(AppSidebar, {
+      global: { plugins: [router] },
+    })
+
+    const svgs = wrapper.findAll('.nav-item svg')
+    expect(svgs.length).toBeGreaterThan(0)
+    svgs.forEach((svg) => {
+      expect(svg.attributes('aria-hidden')).toBe('true')
+    })
   })
 
   it('renders version when available', async () => {

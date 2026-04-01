@@ -46,7 +46,7 @@ function onInput(event: Event) {
       :aria-label="`Decrease ${ariaLabel}`"
       @click="decrement"
     >
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+      <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
         <line x1="5" y1="12" x2="19" y2="12" />
       </svg>
     </button>
@@ -67,7 +67,7 @@ function onInput(event: Event) {
       :aria-label="`Increase ${ariaLabel}`"
       @click="increment"
     >
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+      <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
         <line x1="12" y1="5" x2="12" y2="19" />
         <line x1="5" y1="12" x2="19" y2="12" />
       </svg>
@@ -135,8 +135,8 @@ function onInput(event: Event) {
   margin: 0;
 }
 
-.stepper-input:focus {
-  outline: none;
-  box-shadow: inset 0 0 0 1px var(--border-focus);
+.stepper-input:focus-visible {
+  outline: 2px solid var(--accent-light);
+  outline-offset: -2px;
 }
 </style>

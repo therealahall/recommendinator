@@ -40,7 +40,7 @@ function deselectAll() {
       <button class="btn btn-small btn-secondary" type="button" @click="deselectAll">Deselect All</button>
       <span class="season-counter">{{ watchedCount }} / {{ totalSeasons }}</span>
     </div>
-    <div class="season-grid">
+    <div class="season-grid" role="group" aria-label="Seasons watched">
       <label
         v-for="season in totalSeasons"
         :key="season"
@@ -49,6 +49,7 @@ function deselectAll() {
       >
         <input
           type="checkbox"
+          class="sr-only"
           :checked="watchedSet.has(season)"
           @change="toggle(season)"
         >
@@ -98,7 +99,4 @@ function deselectAll() {
   color: var(--accent-light);
 }
 
-.season-checkbox input {
-  display: none;
-}
 </style>

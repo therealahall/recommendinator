@@ -1,14 +1,27 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useChatStore } from '@/stores/chat'
+import { truncate } from '@/utils/format'
 import AddMemoryModal from '@/components/molecules/AddMemoryModal.vue'
 
 const chat = useChatStore()
 const showAddModal = ref(false)
+const addTrigger = ref<HTMLElement | null>(null)
+
+function openAddModal() {
+  const active = document.activeElement
+  addTrigger.value = active instanceof HTMLElement && active !== document.body ? active : null
+  showAddModal.value = true
+}
+
+function closeAddModal() {
+  showAddModal.value = false
+  addTrigger.value?.focus()
+}
 
 function onSaveMemory(text: string) {
   chat.addMemory(text)
-  showAddModal.value = false
+  closeAddModal()
 }
 </script>
 
@@ -28,19 +41,26 @@ function onSaveMemory(text: string) {
         <div class="memory-meta">
           <span class="memory-type">{{ m.memory_type === 'user_stated' ? 'Stated' : 'Inferred' }}</span>
           <div class="memory-actions">
-            <button @click="chat.toggleMemory(m.id, m.is_active)">
+            <button
+              :aria-label="`${m.is_active ? 'Disable' : 'Enable'} memory: ${truncate(m.memory_text, 50)}`"
+              @click="chat.toggleMemory(m.id, m.is_active)"
+            >
               {{ m.is_active ? 'Disable' : 'Enable' }}
             </button>
-            <button class="delete" @click="chat.deleteMemory(m.id)">Delete</button>
+            <button
+              class="delete"
+              :aria-label="`Delete memory: ${truncate(m.memory_text, 50)}`"
+              @click="chat.deleteMemory(m.id)"
+            >Delete</button>
           </div>
         </div>
       </div>
     </div>
-    <button class="btn btn-small btn-secondary mt-2" @click="showAddModal = true">Add Memory</button>
+    <button class="btn btn-small btn-secondary mt-2" @click="openAddModal">Add Memory</button>
     <AddMemoryModal
       v-if="showAddModal"
       @save="onSaveMemory"
-      @close="showAddModal = false"
+      @close="closeAddModal"
     />
   </div>
 </template>

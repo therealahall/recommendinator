@@ -38,14 +38,16 @@ watch(() => app.currentUserId, () => {
           <button class="btn btn-primary" :disabled="prefs.saving" @click="prefs.save()">
             {{ prefs.saving ? 'Saving...' : 'Save Preferences' }}
           </button>
-          <span
-            v-if="prefs.saveStatus === 'saved'"
-            class="save-status text-success"
-          >Saved!</span>
-          <span
-            v-else-if="prefs.saveStatus === 'error'"
-            class="save-status text-error"
-          >Error: {{ prefs.saveError }}</span>
+          <div aria-live="polite" aria-atomic="true">
+            <span
+              v-if="prefs.saveStatus === 'saved'"
+              class="save-status text-success"
+            >Saved!</span>
+            <span
+              v-else-if="prefs.saveStatus === 'error'"
+              class="save-status text-error"
+            >Error: {{ prefs.saveError }}</span>
+          </div>
         </div>
       </template>
     </div>

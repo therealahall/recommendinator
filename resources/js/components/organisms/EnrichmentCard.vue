@@ -39,8 +39,9 @@ function runEnrichment() {
     </div>
 
     <!-- Job progress -->
-    <div v-if="data.enrichmentJob?.running" class="enrichment-status">
-      <span class="spinner" />
+    <div v-if="data.enrichmentJob?.running" class="enrichment-status" aria-live="polite" aria-atomic="true">
+      <span class="spinner" aria-hidden="true" />
+      <span class="sr-only">Enriching: </span>
       {{ data.enrichmentJob.current_item ? truncate(data.enrichmentJob.current_item, 50) : 'Processing...' }}
       ({{ data.enrichmentJob.items_processed }}/{{ data.enrichmentJob.total_items }}
       - {{ Math.round(data.enrichmentJob.progress_percent) }}%)

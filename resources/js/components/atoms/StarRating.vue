@@ -1,6 +1,7 @@
 <script setup lang="ts">
 const props = defineProps<{
   modelValue: number | null
+  ariaLabelledby?: string
 }>()
 
 const emit = defineEmits<{
@@ -17,15 +18,18 @@ function clear() {
 </script>
 
 <template>
-  <div class="star-rating">
+  <div class="star-rating" role="group" :aria-labelledby="ariaLabelledby || undefined" :aria-label="ariaLabelledby ? undefined : 'Rating'">
     <div class="star-rating-stars">
-      <span
+      <button
         v-for="star in 5"
         :key="star"
+        type="button"
         class="star-rating-star"
         :class="{ active: props.modelValue !== null && star <= props.modelValue }"
+        :aria-label="`${star} star${star !== 1 ? 's' : ''}`"
+        :aria-pressed="props.modelValue !== null && star <= props.modelValue"
         @click="setRating(star)"
-      >&#9733;</span>
+      >&#9733;</button>
     </div>
     <button class="btn btn-small btn-clear-rating" type="button" @click="clear">Clear</button>
   </div>
@@ -47,6 +51,10 @@ function clear() {
   font-size: 1.25rem;
   color: var(--border-default);
   cursor: pointer;
+  background: none;
+  border: none;
+  padding: 2px;
+  line-height: 1;
   transition: color var(--transition-fast);
 }
 

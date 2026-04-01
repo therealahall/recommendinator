@@ -18,8 +18,9 @@ function setLength(type: string, value: string) {
     <h3>Length Preferences</h3>
     <p class="help-text">Prefer short, medium, or long content per type.</p>
     <div v-for="type in CONTENT_TYPES" :key="type" class="dropdown-row">
-      <span class="dropdown-label">{{ formatContentType(type) }}</span>
+      <label :for="`length-pref-${type}`" class="dropdown-label">{{ formatContentType(type) }}</label>
       <select
+        :id="`length-pref-${type}`"
         class="length-select"
         :value="getLength(type)"
         @change="setLength(type, ($event.target as HTMLSelectElement).value)"
