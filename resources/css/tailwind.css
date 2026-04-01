@@ -1,0 +1,31 @@
+@import "tailwindcss";
+
+@theme {
+  /* Accent colors */
+  --color-accent: var(--accent);
+  --color-accent-light: var(--accent-light);
+  --color-accent-teal: var(--accent-teal);
+
+  /* Background colors */
+  --color-bg-primary: var(--bg-primary);
+  --color-bg-card: var(--bg-card);
+  --color-bg-sidebar: var(--bg-sidebar);
+  --color-bg-elevated: var(--bg-elevated);
+  --color-bg-input: var(--bg-input);
+  --color-bg-hover: var(--bg-hover);
+  --color-bg-secondary: var(--bg-secondary);
+
+  /* Text colors */
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-muted: var(--text-muted);
+  --color-text-inverse: var(--text-inverse);
+
+  /* Border colors */
+  --color-border-default: var(--border-default);
+  --color-border-subtle: var(--border-subtle);
+  --color-border-focus: var(--border-focus);
+
+  /* Semantic colors — these already use the --color- prefix in :root,
+     so Tailwind v4 picks them up automatically. No mapping needed. */
+}

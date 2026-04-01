@@ -22,14 +22,15 @@ Thank you for your interest in contributing to Recommendinator! This document co
 3. Ensure all checks pass (see [Quality Checks](#quality-checks))
 4. Submit a pull request
 
-**Automated code review:** When using Claude Code, five review agents run before commits:
+**Automated code review:** When using Claude Code, six review agents run before commits:
 - **code-review** — Reviews code quality, design, naming, DRY compliance, and adherence to project standards.
 - **security-review** — Audits for vulnerabilities, credential leaks, and unsafe patterns. See [docs/SECURITY.md](docs/SECURITY.md) for details.
 - **test-review** — Audits test coverage, correctness, mock hygiene, regression test format, and edge case handling.
 - **document-review** — Verifies documentation accuracy, completeness, and cross-document consistency.
+- **accessibility-review** — Verifies WCAG 2.1 AA compliance for frontend components (semantic HTML, ARIA attributes, keyboard navigation, focus management, color contrast). Self-gates on frontend file presence.
 - **commit-hygiene** — Enforces atomic commit structure and conventional commit format.
 
-All five agents must approve changes before they are committed. Agent definitions live in `.claude/agents/`. Contributors can expect feedback on PRs touching security-sensitive areas (authentication, configuration, network requests) as well as general code quality, test coverage, and documentation accuracy concerns.
+All six agents must approve changes before they are committed. Agent definitions live in `.claude/agents/`. Contributors can expect feedback on PRs touching security-sensitive areas (authentication, configuration, network requests) as well as general code quality, test coverage, and documentation accuracy concerns.
 
 ## Quality Checks
 
@@ -127,7 +128,7 @@ class TestMyFeatureRegression:
 
 Before committing, run the review agents and quality checks:
 
-1. Run **security-review**, **code-review**, **test-review**, and **document-review** agents (can run in parallel)
+1. Run **security-review**, **code-review**, **test-review**, **document-review**, and **accessibility-review** agents (can run in parallel)
 2. Address all agent findings
 3. Run **commit-hygiene** agent to plan atomic commit split
 4. Run all quality checks: `command make check`

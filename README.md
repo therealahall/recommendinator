@@ -64,6 +64,11 @@ cd recommendinator
 curl -LsSf https://astral.sh/uv/install.sh | sh  # install uv if needed
 uv sync --locked --extra ai
 
+# Install and build frontend (Node.js 18+ required for web UI)
+corepack enable    # enables pnpm via Node.js corepack
+pnpm install --frozen-lockfile
+pnpm build
+
 # Set up config
 cp config/example.yaml config/config.yaml
 

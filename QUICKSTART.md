@@ -27,9 +27,16 @@ uv sync --locked
 # Or install with AI features (ollama, chromadb)
 uv sync --locked --extra ai
 
+# Install and build the frontend (Node.js 18+ required for web UI)
+corepack enable    # enables pnpm via Node.js corepack
+pnpm install --frozen-lockfile
+pnpm build
+
 # Set up configuration
 cp config/example.yaml config/config.yaml
 ```
+
+> **Note:** The web UI requires Node.js 18+ to build. If you only use the CLI, Node.js is not required.
 
 ### Option 2: Docker
 

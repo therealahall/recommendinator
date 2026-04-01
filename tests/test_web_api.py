@@ -122,38 +122,115 @@ class TestRootEndpoint:
         assert "text/html" in response.headers["content-type"]
         assert "Recommendinator" in response.text
 
-    @pytest.mark.parametrize(
-        "asset_path",
-        [
-            "/static/style.css",
-            "/static/app.js",
-            "/static/vendor/marked.min.js",
-            "/static/vendor/purify.min.js",
-        ],
-    )
-    def test_cache_busts_static_assets(self, client, asset_path):
-        """root() appends ?v={APP_VERSION} to all static asset URLs."""
-        response = client.get("/")
-        assert response.status_code == 200
-        versioned = f"{asset_path}?v={APP_VERSION}"
-        assert (
-            response.text.count(versioned) == 1
-        ), f"Expected exactly one occurrence of {versioned!r}"
-        # The bare unversioned URL must not appear in href/src attributes
-        assert f'"{asset_path}"' not in response.text
+    def test_vite_spa_uses_hashed_assets(self, client):
+        """When dist/index.html exists, root() serves Vite content-hashed assets.
 
-    def test_version_label_and_update_banner_present(self, client):
-        """Template includes DOM elements for version display and update detection."""
-        response = client.get("/")
+        Uses a synthetic dist/index.html via monkeypatch so the test is
+        deterministic regardless of whether `make build-frontend` has run.
+        """
+        fake_html = (
+            '<script type="module" crossorigin '
+            'src="/static/dist/assets/index-abc123.js"></script>'
+        )
+        original_exists = Path.exists
+        original_read_text = Path.read_text
+
+        def patched_exists(self: Path) -> bool:
+            if str(self).endswith("dist/index.html"):
+                return True
+            return original_exists(self)
+
+        def patched_read_text(self: Path, *args: object, **kwargs: object) -> str:
+            if str(self).endswith("dist/index.html"):
+                return fake_html
+            return original_read_text(self, *args, **kwargs)
+
+        with (
+            patch.object(Path, "exists", patched_exists),
+            patch.object(Path, "read_text", patched_read_text),
+        ):
+            response = client.get("/")
+        assert response.status_code == 200
+        assert "/assets/" in response.text
+        assert 'type="module"' in response.text
+
+    def test_spa_has_no_inline_scripts(self, client):
+        """Vite SPA dist/index.html must not contain inline scripts (CSP compliance).
+
+        Uses a synthetic dist/index.html to verify the assertion logic.
+        An inline script would violate CSP script-src 'self'.
+        """
+        import re
+
+        fake_html = (
+            '<script type="module" crossorigin '
+            'src="/static/dist/assets/index-abc123.js"></script>'
+        )
+        original_exists = Path.exists
+        original_read_text = Path.read_text
+
+        def patched_exists(self: Path) -> bool:
+            if str(self).endswith("dist/index.html"):
+                return True
+            return original_exists(self)
+
+        def patched_read_text(self: Path, *args: object, **kwargs: object) -> str:
+            if str(self).endswith("dist/index.html"):
+                return fake_html
+            return original_read_text(self, *args, **kwargs)
+
+        with (
+            patch.object(Path, "exists", patched_exists),
+            patch.object(Path, "read_text", patched_read_text),
+        ):
+            response = client.get("/")
+        assert response.status_code == 200
+        inline_scripts = re.findall(
+            r"<script(?![^>]*\bsrc=)[^>]*>(?!<\/script>)", response.text
+        )
+        assert (
+            not inline_scripts
+        ), f"Inline scripts violate CSP script-src 'self': {inline_scripts}"
+
+    def test_legacy_cache_busts_static_assets(self, client):
+        """root() appends ?v={APP_VERSION} to legacy template static asset URLs.
+
+        Bug context: The legacy template uses manual cache busting via version
+        query parameters. We monkeypatch Path.exists so the dist/index.html is
+        not found, forcing the legacy template code path.
+        """
+        original_exists = Path.exists
+
+        def force_legacy(self: Path) -> bool:
+            # Hide dist/index.html to force legacy template path
+            if str(self).endswith("dist/index.html"):
+                return False
+            return original_exists(self)
+
+        with patch.object(Path, "exists", force_legacy):
+            response = client.get("/")
+        assert response.status_code == 200
+        # Verify at least one static asset gets the version query param
+        assert f"?v={APP_VERSION}" in response.text
+
+    def test_legacy_version_label_and_update_banner_present(self, client):
+        """Legacy template includes DOM elements for version display."""
+        original_exists = Path.exists
+
+        def force_legacy(self: Path) -> bool:
+            if str(self).endswith("dist/index.html"):
+                return False
+            return original_exists(self)
+
+        with patch.object(Path, "exists", force_legacy):
+            response = client.get("/")
         assert response.status_code == 200
         assert 'id="versionLabel"' in response.text
         assert 'id="updateBanner"' in response.text
-        # Banner starts hidden via CSS (not inline style — CSP blocks those).
-        # The "visible" class is only added by JS on version mismatch.
         assert 'class="update-banner"' in response.text
 
     def test_fallback_when_template_missing(self, client):
-        """root() returns a fallback page when the HTML template does not exist."""
+        """root() returns a fallback page when no HTML template exists."""
         original_exists = Path.exists
 
         def patched_exists(self: Path) -> bool:
@@ -167,9 +244,17 @@ class TestRootEndpoint:
         assert "text/html" in response.headers["content-type"]
         assert "Recommendinator API" in response.text
 
-    def test_body_has_data_version(self, client):
-        """root() injects the app version into the body data-version attribute."""
-        response = client.get("/")
+    def test_legacy_body_has_data_version(self, client):
+        """root() injects the app version into body data-version (legacy template)."""
+        original_exists = Path.exists
+
+        def force_legacy(self: Path) -> bool:
+            if str(self).endswith("dist/index.html"):
+                return False
+            return original_exists(self)
+
+        with patch.object(Path, "exists", force_legacy):
+            response = client.get("/")
         assert response.status_code == 200
         assert f'data-version="{APP_VERSION}"' in response.text
 

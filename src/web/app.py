@@ -225,12 +225,24 @@ def create_app(config_path: Path | None = None) -> FastAPI:
     if static_dir.exists():
         app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
+    # Serve Vue SPA from Vite build output, falling back to legacy template
+    dist_dir = Path("src/web/static/dist")
+    dist_index = dist_dir / "index.html"
+    legacy_template = Path("src/web/templates/index.html")
+
     @app.get("/", response_class=HTMLResponse)
     async def root() -> HTMLResponse:
-        """Serve the main web UI with cache-busted static asset URLs."""
-        html_file = Path("src/web/templates/index.html")
-        if html_file.exists():
-            content = html_file.read_text()
+        """Serve the main web UI.
+
+        Prefers the Vite-built SPA (dist/index.html) when available.
+        Vite uses content-hashed filenames so no manual cache-busting
+        is needed.  Falls back to the legacy template for backwards
+        compatibility during the migration period.
+        """
+        if dist_index.exists():
+            return HTMLResponse(content=dist_index.read_text())
+        if legacy_template.exists():
+            content = legacy_template.read_text()
             # Escape version for safe injection into HTML and URLs
             version_attr = html.escape(APP_VERSION, quote=True)
             version_url = quote(APP_VERSION, safe="")

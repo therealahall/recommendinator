@@ -27,6 +27,9 @@ class UserPreferenceConfig:
             When > 0, candidates whose genres differ from recently completed
             items receive a score boost, encouraging genre-hopping.
             Default 0.0 (disabled).
+        theme: User's preferred UI theme ID. Persisted to the backend so
+            it syncs across browsers/devices. Empty string means "use
+            system default (nord)".
     """
 
     scorer_weights: dict[str, float] = field(default_factory=dict)
@@ -35,6 +38,7 @@ class UserPreferenceConfig:
     custom_rules: list[str] = field(default_factory=list)
     content_length_preferences: dict[str, str] = field(default_factory=dict)
     diversity_weight: float = 0.0
+    theme: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a dictionary for JSON storage.
@@ -61,4 +65,5 @@ class UserPreferenceConfig:
             custom_rules=data.get("custom_rules", []),
             content_length_preferences=data.get("content_length_preferences", {}),
             diversity_weight=data.get("diversity_weight", 0.0),
+            theme=data.get("theme", ""),
         )

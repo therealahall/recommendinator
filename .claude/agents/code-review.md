@@ -190,6 +190,76 @@ Performance is not an afterthought. It is a first-class engineering requirement.
 - Misleading or stale docstrings.
 - Missing docstrings on public APIs.
 
+## Vue 3 / TypeScript Frontend
+
+This project has a Vue 3 + Tailwind CSS v4 frontend in `resources/js/` and `resources/css/`. The same code quality standards apply — no exceptions because "it's frontend." Apply all the rules above (DRY, naming, dead code, type safety, simplicity, over/under-engineering) to TypeScript and Vue code equally.
+
+### Vue-Specific Concerns
+
+- **Component organization follows strict Atomic Design** (Brad Frost's methodology). This is not optional — it is how the component hierarchy is structured and enforced:
+
+  **Directory structure:**
+  ```
+  components/
+  ├── atoms/        # Smallest indivisible UI elements
+  ├── molecules/    # Simple groups of atoms working together
+  ├── organisms/    # Complex, distinct UI sections
+  ├── templates/    # Page-level layout compositions (optional — Views can serve this role)
+  └── pages/        # Route-level views wired to Vue Router
+  ```
+
+  **Atoms** (`components/atoms/`): The smallest UI building blocks. No business logic. No store access. Pure props in, events out. Examples: `ChatInput`, `ChatMessage`, `ScorerSlider`, `StarRating`, `ToggleSwitch`, `TypePills`, `NumberStepper`. An atom renders a single visual element with styling variants via props. If you can't describe what it renders in 3 words ("a styled button"), it's not an atom.
+
+  **Molecules** (`components/molecules/`): Simple, focused combinations of atoms that form a single functional unit. Minimal or no store access — prefer props/events. Examples: `RecCard` (atoms: title + badges + score details), `EditModal` (atoms: star rating + season checklist + form fields), `LibraryCard` (atoms: title + badges + action buttons), `OAuthConnectFlow` (atoms: button + input). A molecule answers one user question ("what's the rating?" / "what weight?").
+
+  **Organisms** (`components/organisms/`): Complex, self-contained UI sections composed of molecules and atoms. Organisms MAY access stores directly — they are the integration layer between the data layer and the presentational atoms/molecules. Examples: `AppSidebar`, `RecCard`, `LibraryCard`, `EditModal`, `ChatMessage`, `LibraryFilters`, `EnrichmentCard`, `MemoryPanel`, `ProfilePanel`. An organism represents a distinct section of the UI that could be described as a "region" of the page.
+
+  **Pages** (`components/pages/`): Route-level views wired to Vue Router via `router/index.ts`. Pages compose organisms, handle route-level lifecycle (`onMounted`, `watch` on route params/user changes), and wire stores to organisms. They should NOT contain complex rendering logic — they are orchestrators. Examples: `RecommendationsPage`, `LibraryPage`, `ChatPage`, `DataPage`, `PreferencesPage`. Named with `*Page.vue` suffix (not `*View.vue` — "View" is ambiguous in Vue).
+
+  **Rules:**
+  - Atoms NEVER import molecules, organisms, or pages. Molecules NEVER import organisms or pages. The dependency arrow only points downward.
+  - Atoms and molecules NEVER access Pinia stores directly. They receive data via props and communicate via events. This makes them testable in isolation and reusable across features.
+  - If a component is used in only one organism and has no reuse potential, it can live alongside that organism. But the moment it's used in two places, it must be extracted to the correct atomic level.
+  - An organism that grows beyond ~150 lines of `<script setup>` likely needs decomposition into smaller organisms or extraction of molecules.
+  - **Violations of the atomic hierarchy are CRITICAL findings.** An atom that imports a store, a molecule that renders an entire page section, or a page with 300 lines of template — these are structural problems that compound over time.
+
+- **`v-html` is a security boundary.** Every `v-html` usage must route through DOMPurify with an explicit allowlist. `v-html` on static/hardcoded content is the wrong pattern — use inline template markup instead. Flag any `v-html` that does not go through sanitization as CRITICAL.
+- **Reactive values must be reactive.** A `const x = props.foo.bar` captures the value once at component creation. If the prop changes (e.g., during SSE streaming), the const goes stale. Use `computed(() => props.foo.bar)` for any derived value from props that can change. This is a functional bug, not a style issue.
+- **`defineProps` and `defineEmits` must use TypeScript generics** (`defineProps<{ ... }>()`, `defineEmits<{ ... }>()`), not the runtime declaration syntax. This is the project convention.
+- **Component decomposition**: Each `.vue` file should do one thing. If a component has more than ~150 lines of `<script setup>`, it probably needs splitting. But don't over-split — a component used in exactly one place with no reuse potential should stay inline.
+- **Scoped styles vs global CSS**: Utility/shared styles go in `resources/css/base.css`. If the same CSS class appears in `<style scoped>` blocks of two or more components, it belongs in `base.css`. Duplicated scoped styles are a DRY violation.
+
+### Pinia Store Patterns
+
+- **Setup function syntax only** (`defineStore('name', () => { ... })`). Options API stores are not used in this project.
+- **Stores must not leak timers.** Any `setInterval` or `setTimeout` in a store must have a corresponding cleanup function that is called from the consuming component's `onUnmounted`. A timer that runs forever is a resource leak.
+- **Stores should not import other stores at module level** if it creates circular dependencies. Import inside the action that needs it.
+- **Return statement format**: One property per line, grouped by state/getters/actions. Follow the pattern established by existing stores.
+
+### Composable Patterns
+
+- **Composables are for reusable stateful logic.** A composable that wraps a single function call adds indirection without value — just export the function directly.
+- **`onUnmounted` cleanup**: Any composable that registers event listeners, observers, or timers must clean them up in `onUnmounted`.
+
+### TypeScript Specifics
+
+- **No `as` type assertions to bypass the type system.** `as unknown as Foo` is a code smell — it means the types are wrong. Fix the types, don't cast around them. Exception: test mocks where the full interface is intentionally partial.
+- **Use `unknown` over `any`.** `any` disables type checking. `unknown` forces you to narrow before use. This is not optional.
+- **Template type safety**: Use typed event handlers (`($event.target as HTMLSelectElement).value` is acceptable in templates where TS cannot infer the element type).
+- **No unused imports** — TypeScript's `isolatedModules` catches some of these, but not all. Watch for Vue imports (`ref`, `computed`, `watch`, `onMounted`, etc.) that are imported but not used.
+
+### CSS / Tailwind
+
+- **CSS custom properties (`:root` vars in `base.css`) are the theming source of truth.** Components must use these vars (directly or via Tailwind `@theme` mappings), never hardcode colors.
+- **Tailwind `@theme` mappings must not be self-referential.** `--color-foo: var(--color-foo)` is a no-op that creates a circular reference. If the `:root` var already uses the Tailwind naming convention, no mapping is needed.
+
+### Frontend Performance
+
+- **Full-library imports are banned.** `import _ from 'lodash'` or `import * as _ from 'lodash'` pulls the entire library into the bundle when you need one function. `import debounce from 'lodash/debounce'` is the correct import. This applies to every library — if you can import the specific function or submodule, you must. Every unnecessary kilobyte in the bundle is paid for by every user on every page load. **Severity: HIGH.**
+- **Page routes must be lazy loaded.** `import FooPage from './FooPage.vue'` in the router is a static import that defeats code splitting entirely. Every page-level route must use `() => import('./FooPage.vue')`. Static imports of page components in the router are an automatic finding. **Severity: HIGH.**
+- **No function calls in `v-for` templates.** `{{ formatDate(item.date) }}` inside a `v-for` re-executes on every render cycle. If the result depends only on the item data, pre-compute it (map the list to include the formatted value) or use a computed property. Functions called in templates are invisible performance drains that compound with list size. **Severity: MEDIUM.**
+- **Stale reactive captures are bugs, not style issues.** The existing rule about `const x = props.foo.bar` capturing once extends to: `watch` sources that destructure props outside the callback (stale closure), missing `toRefs` when destructuring props in composables, and `ref` values captured in closures registered during `onMounted` that will never see updates. If a value comes from a reactive source and is used in a context that expects reactivity, it must remain reactive. **Severity: HIGH.**
+
 ## Output Format
 
 Structure your review as follows:
