@@ -92,6 +92,33 @@
   padding: 0;
 }
 
+/* Global focus indicator — required for WCAG 2.4.7 */
+:focus-visible {
+  outline: 2px solid var(--accent-light);
+  outline-offset: 2px;
+}
+
+/* Suppress outline for mouse clicks on interactive elements */
+button:focus:not(:focus-visible),
+input:focus:not(:focus-visible),
+select:focus:not(:focus-visible),
+textarea:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* Visually hidden — accessible to screen readers */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
 /* Base */
 body {
   font-family: var(--font-sans);
@@ -135,7 +162,12 @@ input[type="range"] {
   height: 6px;
   background: linear-gradient(90deg, var(--accent) 0%, var(--accent-light) var(--value-percent), var(--border-default) var(--value-percent));
   border-radius: 3px;
-  outline: none;
+}
+
+input[type="range"]:focus-visible {
+  outline: 2px solid var(--accent-light);
+  outline-offset: 4px;
+  border-radius: 3px;
 }
 
 input[type="range"]::-webkit-slider-thumb {
@@ -197,6 +229,10 @@ input[type="checkbox"] {
   max-width: 1200px;
   width: 100%;
   overflow-y: auto;
+}
+
+.main-content:focus:not(:focus-visible) {
+  outline: none;
 }
 
 /* Sidebar */
@@ -445,7 +481,6 @@ input[type="checkbox"] {
 .form-group select:focus,
 .form-group input:focus,
 .form-group textarea:focus {
-  outline: none;
   border-color: var(--border-focus);
 }
 
@@ -664,7 +699,6 @@ input[type="checkbox"] {
 }
 
 .toolbar-select:focus {
-  outline: none;
   border-color: var(--border-focus);
 }
 
@@ -814,7 +848,6 @@ input[type="checkbox"] {
 
 .length-select:focus,
 .theme-select:focus {
-  outline: none;
   border-color: var(--accent);
 }
 
@@ -865,7 +898,6 @@ input[type="checkbox"] {
 }
 
 .add-rule-form input[type="text"]:focus {
-  outline: none;
   border-color: var(--border-focus);
 }
 
@@ -1246,7 +1278,6 @@ input[type="checkbox"] {
 
 .edit-field select:focus,
 .edit-field textarea:focus {
-  outline: none;
   border-color: var(--border-focus);
 }
 
@@ -1307,7 +1338,7 @@ input[type="checkbox"] {
 .chat-input-container { padding: var(--space-3) var(--space-4); border-top: 1px solid var(--border-default); }
 .chat-input-wrapper { display: flex; gap: var(--space-2); align-items: flex-end; }
 .chat-input-wrapper textarea { flex: 1; resize: none; min-height: 52px; max-height: 120px; line-height: 1.4; padding: var(--space-2) var(--space-3); background: var(--bg-input); border: 1px solid var(--border-default); border-radius: var(--radius-md); color: var(--text-primary); font-size: var(--text-sm); font-family: inherit; }
-.chat-input-wrapper textarea:focus { outline: none; border-color: var(--border-focus); }
+.chat-input-wrapper textarea:focus { border-color: var(--border-focus); }
 .chat-send-btn { padding: var(--space-2) var(--space-3); }
 .chat-send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .chat-actions { display: flex; justify-content: flex-end; padding: 0 var(--space-4) var(--space-2); }

@@ -118,3 +118,4 @@ describe('truncate', () => {
     expect(truncate('12345', 5)).toBe('12345')
   })
 })
+

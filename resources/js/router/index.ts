@@ -1,3 +1,4 @@
+import { nextTick } from 'vue'
 import { createRouter, createWebHashHistory } from 'vue-router'
 
 const router = createRouter({
@@ -33,6 +34,12 @@ const router = createRouter({
       component: () => import('@/components/pages/PreferencesPage.vue'),
     },
   ],
+})
+
+router.afterEach(() => {
+  nextTick(() => {
+    document.getElementById('main-content')?.focus()
+  })
 })
 
 export default router
