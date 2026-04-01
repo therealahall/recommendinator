@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { CONTENT_TYPE_OPTIONS } from '@/constants/contentTypes'
 
 const props = withDefaults(defineProps<{
   modelValue: string
@@ -14,16 +15,8 @@ const emit = defineEmits<{
   'update:modelValue': [value: string]
 }>()
 
-const options = [
-  { value: '', label: 'All' },
-  { value: 'book', label: 'Book' },
-  { value: 'movie', label: 'Movie' },
-  { value: 'tv_show', label: 'TV Show' },
-  { value: 'video_game', label: 'Game' },
-]
-
 const visibleOptions = computed(() =>
-  props.includeAll ? options : options.filter(o => o.value !== '')
+  props.includeAll ? CONTENT_TYPE_OPTIONS : CONTENT_TYPE_OPTIONS.filter(o => o.value !== '')
 )
 </script>
 
