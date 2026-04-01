@@ -141,4 +141,47 @@ describe('RecControls', () => {
 
     expect(recs.fetch).toHaveBeenCalledWith(true)
   })
+
+  it('renders TypeSelect for mobile with no All option', () => {
+    const wrapper = mount(RecControls)
+
+    const select = wrapper.find('.rec-type-select')
+    expect(select.exists()).toBe(true)
+
+    const options = select.findAll('option')
+    expect(options.map(o => o.text().trim())).toEqual(['Book', 'Movie', 'TV Show', 'Game'])
+  })
+
+  it('updates content type from TypeSelect', async () => {
+    const recs = useRecommendationsStore()
+    const wrapper = mount(RecControls)
+
+    const select = wrapper.find('.rec-type-select')
+    const el = select.element as HTMLSelectElement
+    el.value = 'movie'
+    await select.trigger('change')
+
+    expect(recs.contentType).toBe('movie')
+  })
+
+  it('TypeSelect reflects contentType after pill click', async () => {
+    const wrapper = mount(RecControls)
+
+    const moviePill = wrapper.findAll('.pill').find(p => p.text() === 'Movie')!
+    await moviePill.trigger('click')
+
+    const el = wrapper.find('.rec-type-select').element as HTMLSelectElement
+    expect(el.value).toBe('movie')
+  })
+
+  it('reflects store contentType changes in TypeSelect', async () => {
+    const recs = useRecommendationsStore()
+    const wrapper = mount(RecControls)
+
+    recs.contentType = 'tv_show'
+    await wrapper.vm.$nextTick()
+
+    const el = wrapper.find('.rec-type-select').element as HTMLSelectElement
+    expect(el.value).toBe('tv_show')
+  })
 })
