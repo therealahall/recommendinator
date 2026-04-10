@@ -29,6 +29,7 @@ describe('useAppStore', () => {
   it('has correct initial state', () => {
     const store = useAppStore()
     expect(store.status).toBe('loading')
+    expect(store.statusMessage).toBe('')
     expect(store.currentUserId).toBe(1)
     expect(store.users).toEqual([])
     expect(store.version).toBe('')
@@ -49,9 +50,43 @@ describe('useAppStore', () => {
     await store.fetchStatus()
 
     expect(store.status).toBe('ready')
+    expect(store.statusMessage).toBe('')
     expect(store.version).toBe('1.2.3')
     expect(store.features.ai_enabled).toBe(true)
     expect(store.recommendationsConfig.default_count).toBe(10)
+  })
+
+  it('fetchStatus sets initializing message when not ready', async () => {
+    mockGet.mockResolvedValue({
+      status: 'loading',
+      version: '',
+      components: {},
+      features: { ai_enabled: false, embeddings_enabled: false, llm_reasoning_enabled: false },
+      recommendations_config: { max_count: 20, default_count: 5 },
+    })
+
+    const store = useAppStore()
+    await store.fetchStatus()
+
+    expect(store.status).toBe('loading')
+    expect(store.statusMessage).toBe('System initializing...')
+  })
+
+  it('dismissStatus clears statusMessage', async () => {
+    mockGet.mockResolvedValue({
+      status: 'loading',
+      version: '',
+      components: {},
+      features: { ai_enabled: false, embeddings_enabled: false, llm_reasoning_enabled: false },
+      recommendations_config: { max_count: 20, default_count: 5 },
+    })
+
+    const store = useAppStore()
+    await store.fetchStatus()
+    expect(store.statusMessage).toBe('System initializing...')
+
+    store.dismissStatus()
+    expect(store.statusMessage).toBe('')
   })
 
   it('fetchStatus sets error on failure', async () => {
