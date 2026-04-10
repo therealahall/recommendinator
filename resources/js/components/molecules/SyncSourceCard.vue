@@ -4,8 +4,10 @@ import type { SyncSourceResponse } from '@/types/api'
 const props = withDefaults(defineProps<{
   source: SyncSourceResponse
   syncing: boolean
+  disabled?: boolean
   showSyncButton?: boolean
 }>(), {
+  disabled: false,
   showSyncButton: true,
 })
 
@@ -22,7 +24,8 @@ const emit = defineEmits<{
     <button
       v-if="showSyncButton"
       class="btn btn-primary sync-btn"
-      :disabled="syncing"
+      :disabled="syncing || disabled"
+      :aria-label="disabled ? 'Sync (another sync is in progress)' : undefined"
       @click="emit('sync', source.id)"
     >{{ syncing ? 'Syncing...' : 'Sync' }}</button>
   </div>
