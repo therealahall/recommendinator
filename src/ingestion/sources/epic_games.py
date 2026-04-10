@@ -26,10 +26,10 @@ from src.ingestion.plugin_base import (
     SourcePlugin,
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.utils.progress import log_progress
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
-from src.utils.progress import log_progress
 
 logger = logging.getLogger(__name__)
 

@@ -98,6 +98,72 @@ class FakeGamePlugin(SourcePlugin):
         )
 
 
+class FakeCredentialPlugin(SourcePlugin):
+    """Fake plugin that performs DB credential lookup in validate_config.
+
+    Mimics the pattern used by Epic Games and GOG plugins: when a required
+    sensitive field is missing from config, the plugin checks the DB for
+    stored credentials before reporting an error.
+    """
+
+    @property
+    def name(self) -> str:
+        return "fake_credential"
+
+    @property
+    def display_name(self) -> str:
+        return "Fake Credential"
+
+    @property
+    def content_types(self) -> list[ContentType]:
+        return [ContentType.VIDEO_GAME]
+
+    @property
+    def requires_api_key(self) -> bool:
+        return True
+
+    def get_config_schema(self) -> list[ConfigField]:
+        return [
+            ConfigField(
+                name="refresh_token",
+                field_type=str,
+                required=True,
+                sensitive=True,
+            ),
+        ]
+
+    def validate_config(
+        self,
+        config: dict[str, Any],
+        storage: StorageManager | None = None,
+        user_id: int = 1,
+    ) -> list[str]:
+        errors: list[str] = []
+        if not (config.get("refresh_token") or "").strip():
+            source_id = config.get("_source_id", self.name)
+            if storage is not None:
+                db_creds = storage.get_credentials_for_source(user_id, source_id)
+                if (db_creds.get("refresh_token") or "").strip():
+                    return errors
+            errors.append("'refresh_token' is required")
+        return errors
+
+    @classmethod
+    def transform_config(cls, raw_config: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "refresh_token": raw_config.get("refresh_token", "").strip(),
+        }
+
+    def fetch(self, config: dict[str, Any]) -> Iterator[ContentItem]:
+        yield ContentItem(
+            id="cred_1",
+            title="Fake Credential Game",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+            source=self.get_source_identifier(config),
+        )
+
+
 @pytest.fixture()
 def _registry_with_fakes() -> Iterator[None]:
     """Set up a registry with fake plugins for testing."""
@@ -106,6 +172,7 @@ def _registry_with_fakes() -> Iterator[None]:
     registry._plugins.clear()
     registry.register(FakeBookPlugin())
     registry.register(FakeGamePlugin())
+    registry.register(FakeCredentialPlugin())
     yield
     PluginRegistry.reset_instance()
 
@@ -532,3 +599,73 @@ class TestResolveInputsWithStorage:
         resolved = resolve_inputs(config, storage=storage)
 
         assert resolved[0].config["api_key"] == "config_key"
+
+
+@pytest.mark.usefixtures("_registry_with_fakes")
+class TestValidateSourceConfigWithStorage:
+    """Integration tests: validate_source_config forwards storage to plugins.
+
+    Regression test for a bug where validate_source_config did not pass
+    storage and user_id through to plugin.validate_config(), preventing
+    DB credential lookup from being reached through the normal code path.
+    """
+
+    @pytest.fixture()
+    def storage(self, tmp_path: Path) -> StorageManager:
+        """Create a StorageManager with a temp DB."""
+        return StorageManager(sqlite_path=tmp_path / "test.db")
+
+    def test_db_credential_satisfies_validation(self, storage: StorageManager) -> None:
+        """validate_source_config returns no errors when credential is in DB.
+
+        The plugin's config has no refresh_token, but the DB has one stored.
+        validate_source_config must forward storage and user_id so the plugin
+        can find the credential and pass validation.
+        """
+        config = {
+            "inputs": {
+                "my_epic": {
+                    "plugin": "fake_credential",
+                    "enabled": True,
+                    # No refresh_token in config
+                },
+            }
+        }
+        storage.save_credential(1, "my_epic", "refresh_token", "db_token_value")
+
+        errors = validate_source_config("my_epic", config, storage=storage, user_id=1)
+
+        assert errors == []
+
+    def test_missing_credential_everywhere_fails(self, storage: StorageManager) -> None:
+        """validate_source_config returns errors when credential is missing from both."""
+        config = {
+            "inputs": {
+                "my_epic": {
+                    "plugin": "fake_credential",
+                    "enabled": True,
+                },
+            }
+        }
+        # No credential in DB either
+
+        errors = validate_source_config("my_epic", config, storage=storage, user_id=1)
+
+        assert len(errors) == 1
+        assert "'refresh_token' is required" in errors[0]
+
+    def test_config_credential_still_validates(self, storage: StorageManager) -> None:
+        """validate_source_config passes when credential is in config (not DB)."""
+        config = {
+            "inputs": {
+                "my_epic": {
+                    "plugin": "fake_credential",
+                    "enabled": True,
+                    "refresh_token": "config_token",
+                },
+            }
+        }
+
+        errors = validate_source_config("my_epic", config, storage=storage, user_id=1)
+
+        assert errors == []
