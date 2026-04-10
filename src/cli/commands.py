@@ -3,6 +3,7 @@
 import importlib.metadata
 import json
 import time
+from pathlib import Path
 
 import click
 from tabulate import tabulate
@@ -10,7 +11,12 @@ from tabulate import tabulate
 from src.cli.config import get_feature_flags
 from src.enrichment.manager import EnrichmentManager
 from src.ingestion.sync import execute_sync
-from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.models.content import (
+    ConsumptionStatus,
+    ContentItem,
+    ContentType,
+    get_enum_value,
+)
 from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.preference_interpreter import (
     LLMPreferenceInterpreter,
@@ -18,6 +24,7 @@ from src.recommendations.preference_interpreter import (
 )
 from src.recommendations.scorers import SCORER_NAME_MAP
 from src.storage.credential_migration import migrate_config_credentials
+from src.web.export import export_items_csv, export_items_json
 from src.web.sync_sources import resolve_inputs, validate_source_config
 
 
@@ -933,3 +940,359 @@ def enrichment_reset(
     )
 
     click.echo(f"Reset enrichment status for {count} item(s).")
+
+
+# ---------------------------------------------------------------------------
+# Library command group
+# ---------------------------------------------------------------------------
+
+
+@click.group()
+def library() -> None:
+    """Manage your content library."""
+
+
+@library.command("list")
+@click.option(
+    "--type",
+    "content_type_str",
+    type=click.Choice(["book", "movie", "tv_show", "video_game"], case_sensitive=False),
+    default=None,
+    help="Filter by content type",
+)
+@click.option(
+    "--status",
+    "status_str",
+    type=click.Choice(
+        ["unread", "currently_consuming", "completed", "abandoned"],
+        case_sensitive=False,
+    ),
+    default=None,
+    help="Filter by consumption status",
+)
+@click.option(
+    "--sort",
+    "sort_by",
+    type=click.Choice(
+        ["title", "updated_at", "rating", "created_at"], case_sensitive=False
+    ),
+    default="title",
+    help="Sort order (default: title)",
+)
+@click.option(
+    "--show-ignored",
+    is_flag=True,
+    help="Include ignored items",
+)
+@click.option("--limit", type=int, default=None, help="Max items to return")
+@click.option("--offset", type=int, default=0, help="Items to skip")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    default="table",
+    help="Output format",
+)
+@click.option(
+    "--user",
+    "user_id",
+    type=int,
+    default=1,
+    help="User ID",
+)
+@click.pass_context
+def library_list(
+    ctx: click.Context,
+    content_type_str: str | None,
+    status_str: str | None,
+    sort_by: str,
+    show_ignored: bool,
+    limit: int | None,
+    offset: int,
+    output_format: str,
+    user_id: int,
+) -> None:
+    """List library items with filters."""
+    storage = ctx.obj["storage"]
+
+    content_type = (
+        ContentType.from_string(content_type_str) if content_type_str else None
+    )
+    consumption_status = ConsumptionStatus(status_str) if status_str else None
+
+    items: list[ContentItem] = storage.get_content_items(
+        user_id=user_id,
+        content_type=content_type,
+        status=consumption_status,
+        sort_by=sort_by,
+        include_ignored=show_ignored,
+        limit=limit,
+        offset=offset,
+    )
+
+    if not items:
+        click.echo("No items found.")
+        return
+
+    if output_format == "json":
+        output = [
+            {
+                "db_id": item.db_id,
+                "title": item.title,
+                "author": item.author,
+                "content_type": get_enum_value(item.content_type),
+                "status": get_enum_value(item.status),
+                "rating": item.rating,
+                "ignored": bool(item.ignored),
+            }
+            for item in items
+        ]
+        click.echo(json.dumps(output, indent=2))
+    else:
+        table_data = []
+        for item in items:
+            table_data.append(
+                [
+                    item.db_id,
+                    item.title,
+                    item.author or "N/A",
+                    get_enum_value(item.content_type),
+                    get_enum_value(item.status),
+                    item.rating or "N/A",
+                ]
+            )
+        headers = ["ID", "Title", "Author", "Type", "Status", "Rating"]
+        click.echo(tabulate(table_data, headers=headers, tablefmt="grid"))
+
+
+@library.command("show")
+@click.option("--id", "item_id", type=int, required=True, help="Item database ID")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    default="table",
+    help="Output format",
+)
+@click.option(
+    "--user",
+    "user_id",
+    type=int,
+    default=1,
+    help="User ID",
+)
+@click.pass_context
+def library_show(
+    ctx: click.Context, item_id: int, output_format: str, user_id: int
+) -> None:
+    """Show details of a single library item."""
+    storage = ctx.obj["storage"]
+
+    item = storage.get_content_item(item_id, user_id=user_id)
+    if item is None:
+        click.echo(f"Error: Item {item_id} not found.", err=True)
+        raise click.Abort()
+
+    if output_format == "json":
+        output = {
+            "db_id": item.db_id,
+            "title": item.title,
+            "author": item.author,
+            "content_type": get_enum_value(item.content_type),
+            "status": get_enum_value(item.status),
+            "rating": item.rating,
+            "review": item.review,
+            "date_completed": (
+                item.date_completed.isoformat() if item.date_completed else None
+            ),
+            "ignored": bool(item.ignored),
+        }
+        click.echo(json.dumps(output, indent=2))
+    else:
+        table_data = [
+            ["Title", item.title],
+            ["Author", item.author or "N/A"],
+            ["Type", get_enum_value(item.content_type)],
+            ["Status", get_enum_value(item.status)],
+            ["Rating", item.rating or "N/A"],
+            ["Review", item.review or "N/A"],
+            [
+                "Date Completed",
+                item.date_completed.isoformat() if item.date_completed else "N/A",
+            ],
+            ["Ignored", "Yes" if item.ignored else "No"],
+        ]
+        click.echo(tabulate(table_data, tablefmt="grid"))
+
+
+@library.command("edit")
+@click.option("--id", "item_id", type=int, required=True, help="Item database ID")
+@click.option(
+    "--status",
+    "status_str",
+    type=click.Choice(
+        ["unread", "currently_consuming", "completed", "abandoned"],
+        case_sensitive=False,
+    ),
+    default=None,
+    help="New status",
+)
+@click.option(
+    "--rating",
+    type=click.IntRange(min=1, max=5),
+    default=None,
+    help="New rating (1-5)",
+)
+@click.option("--review", default=None, help="New review text")
+@click.option(
+    "--seasons-watched",
+    default=None,
+    help="Comma-separated list of watched season numbers",
+)
+@click.option(
+    "--user",
+    "user_id",
+    type=int,
+    default=1,
+    help="User ID",
+)
+@click.pass_context
+def library_edit(
+    ctx: click.Context,
+    item_id: int,
+    status_str: str | None,
+    rating: int | None,
+    review: str | None,
+    seasons_watched: str | None,
+    user_id: int,
+) -> None:
+    """Edit an item's status, rating, or review."""
+    storage = ctx.obj["storage"]
+
+    # Look up the item to get current status if not provided
+    item = storage.get_content_item(item_id, user_id=user_id)
+    if item is None:
+        click.echo(f"Error: Item {item_id} not found.", err=True)
+        raise click.Abort()
+
+    effective_status = status_str if status_str else get_enum_value(item.status)
+
+    parsed_seasons: list[int] | None = None
+    if seasons_watched is not None:
+        parsed_seasons = [int(s.strip()) for s in seasons_watched.split(",")]
+
+    updated = storage.update_item_from_ui(
+        db_id=item_id,
+        status=effective_status,
+        rating=rating,
+        review=review,
+        seasons_watched=parsed_seasons,
+        user_id=user_id,
+    )
+
+    if updated:
+        click.echo(f"Updated item {item_id} ({item.title}).")
+    else:
+        click.echo(f"Error: Failed to update item {item_id}.", err=True)
+        raise click.Abort()
+
+
+@library.command("ignore")
+@click.option("--id", "item_id", type=int, required=True, help="Item database ID")
+@click.option(
+    "--user",
+    "user_id",
+    type=int,
+    default=1,
+    help="User ID",
+)
+@click.pass_context
+def library_ignore(ctx: click.Context, item_id: int, user_id: int) -> None:
+    """Ignore an item (exclude from recommendations)."""
+    storage = ctx.obj["storage"]
+
+    if storage.set_item_ignored(db_id=item_id, ignored=True, user_id=user_id):
+        click.echo(f"Ignored item {item_id}.")
+    else:
+        click.echo(f"Error: Item {item_id} not found.", err=True)
+        raise click.Abort()
+
+
+@library.command("unignore")
+@click.option("--id", "item_id", type=int, required=True, help="Item database ID")
+@click.option(
+    "--user",
+    "user_id",
+    type=int,
+    default=1,
+    help="User ID",
+)
+@click.pass_context
+def library_unignore(ctx: click.Context, item_id: int, user_id: int) -> None:
+    """Unignore an item (include in recommendations again)."""
+    storage = ctx.obj["storage"]
+
+    if storage.set_item_ignored(db_id=item_id, ignored=False, user_id=user_id):
+        click.echo(f"Unignored item {item_id}.")
+    else:
+        click.echo(f"Error: Item {item_id} not found.", err=True)
+        raise click.Abort()
+
+
+@library.command("export")
+@click.option(
+    "--type",
+    "content_type_str",
+    type=click.Choice(["book", "movie", "tv_show", "video_game"], case_sensitive=False),
+    required=True,
+    help="Content type to export",
+)
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["csv", "json"], case_sensitive=False),
+    default="csv",
+    help="Export format (default: csv)",
+)
+@click.option(
+    "--output",
+    "output_path",
+    type=click.Path(path_type=Path),  # type: ignore[type-var]
+    default=None,
+    help="Output file path (default: stdout)",
+)
+@click.option(
+    "--user",
+    "user_id",
+    type=int,
+    default=1,
+    help="User ID",
+)
+@click.pass_context
+def library_export(
+    ctx: click.Context,
+    content_type_str: str,
+    output_format: str,
+    output_path: Path | None,
+    user_id: int,
+) -> None:
+    """Export library items as CSV or JSON."""
+    storage = ctx.obj["storage"]
+    content_type = ContentType.from_string(content_type_str)
+
+    items: list[ContentItem] = storage.get_content_items(
+        user_id=user_id,
+        content_type=content_type,
+        include_ignored=True,
+    )
+
+    if output_format == "json":
+        data = export_items_json(items, content_type)
+    else:
+        data = export_items_csv(items, content_type)
+
+    if output_path:
+        output_path.write_text(data, encoding="utf-8")
+        click.echo(f"Exported {len(items)} items to {output_path}")
+    else:
+        click.echo(data, nl=False)
