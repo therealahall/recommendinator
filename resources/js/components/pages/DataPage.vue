@@ -43,6 +43,7 @@ const syncAllLabel = computed(() => {
     <div class="card">
       <h2>Sync Sources</h2>
       <div
+        v-if="data.syncMessage"
         class="sync-status-message"
         :role="data.syncStatus === 'failed' ? 'alert' : 'status'"
         :aria-live="data.syncStatus === 'failed' ? 'assertive' : 'polite'"
