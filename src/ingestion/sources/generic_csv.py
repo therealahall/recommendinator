@@ -1,11 +1,13 @@
 """Generic CSV import plugin with prescriptive templates per content type."""
 
+from __future__ import annotations
+
 import csv
 import logging
 from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from src.ingestion.plugin_base import (
     ConfigField,
@@ -14,6 +16,9 @@ from src.ingestion.plugin_base import (
     SourcePlugin,
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+
+if TYPE_CHECKING:
+    from src.storage.manager import StorageManager
 
 logger = logging.getLogger(__name__)
 
@@ -219,7 +224,7 @@ class CsvImportPlugin(SourcePlugin):
     def validate_config(
         self,
         config: dict[str, Any],
-        storage: Any = None,
+        storage: StorageManager | None = None,
         user_id: int = 1,
     ) -> list[str]:
         errors = []
