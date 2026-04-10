@@ -18,7 +18,9 @@ export const useDataStore = defineStore('data', () => {
   // Sync state
   const syncSources = ref<SyncSourceResponse[]>([])
   const syncStatus = ref<'idle' | 'running' | 'completed' | 'failed'>('idle')
+  const syncingSource = ref<string | null>(null)
   const syncJob = ref<SyncJobResponse | null>(null)
+  // syncMessage may contain server-supplied source IDs — render with {{ }} only, never v-html
   const syncMessage = ref('')
   const syncLoading = ref(false)
 
@@ -65,6 +67,7 @@ export const useDataStore = defineStore('data', () => {
   async function triggerSync(source: string) {
     syncMessage.value = `Starting sync for ${source}...`
     syncStatus.value = 'running'
+    syncingSource.value = source
     try {
       const data = await api.post<{ message: string }>('/update', { source })
       syncMessage.value = data.message
@@ -75,6 +78,7 @@ export const useDataStore = defineStore('data', () => {
         ? `Error: server returned ${err.status}`
         : 'Error: unexpected failure — check the console'
       syncStatus.value = 'failed'
+      syncingSource.value = null
     }
   }
 
@@ -85,10 +89,17 @@ export const useDataStore = defineStore('data', () => {
 
       if (data.status === 'running' && data.job) {
         syncStatus.value = 'running'
+        // Restore syncingSource from server state (e.g. page reload mid-sync).
+        // Use job.source (the original trigger, e.g. "all"), NOT job.current_source
+        // (which tracks the individual source currently processing within an "all" sync).
+        if (!syncingSource.value) {
+          syncingSource.value = data.job.source
+        }
         syncMessage.value = buildProgressMessage(data.job)
         if (!syncPollTimer) startSyncPolling()
       } else if (data.status === 'completed' && data.job) {
         syncStatus.value = 'completed'
+        syncingSource.value = null
         let msg = `Completed: ${data.job.items_processed} items synced`
         if (data.job.error_count > 0) msg += ` (${data.job.error_count} errors)`
         syncMessage.value = msg
@@ -96,10 +107,12 @@ export const useDataStore = defineStore('data', () => {
         loadEnrichmentStats()
       } else if (data.status === 'failed' && data.job) {
         syncStatus.value = 'failed'
+        syncingSource.value = null
         syncMessage.value = `Failed: ${data.job.error_message || 'Unknown error'}`
         stopSyncPolling()
       } else {
         syncStatus.value = 'idle'
+        syncingSource.value = null
         syncMessage.value = ''
         stopSyncPolling()
       }
@@ -123,14 +136,15 @@ export const useDataStore = defineStore('data', () => {
   function buildProgressMessage(job: SyncJobResponse): string {
     const parts: string[] = []
     if (job.total_items != null && job.total_items > 0) {
-      parts.push(`${job.items_processed}/${job.total_items}`)
-      if (job.progress_percent != null) parts.push(`(${job.progress_percent}%)`)
-    } else if (job.items_processed > 0) {
+      let progress = `${job.items_processed}/${job.total_items}`
+      if (job.progress_percent != null) progress += ` (${job.progress_percent}%)`
+      parts.push(progress)
+    } else {
       parts.push(`${job.items_processed} items so far`)
     }
-    parts.push('-')
-    parts.push(`Syncing ${job.current_source || job.source}:`)
-    parts.push(job.current_item ? truncate(job.current_item, 50) : '...')
+    const source = job.current_source || job.source
+    const item = job.current_item ? truncate(job.current_item, 50) : '...'
+    parts.push(`- Syncing ${source}: ${item}`)
     return parts.join(' ')
   }
 
@@ -252,6 +266,7 @@ export const useDataStore = defineStore('data', () => {
     // State
     syncSources,
     syncStatus,
+    syncingSource,
     syncJob,
     syncMessage,
     syncLoading,
