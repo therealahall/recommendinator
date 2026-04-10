@@ -14,11 +14,13 @@ const app = useAppStore()
     <div class="rec-toolbar">
       <!-- Desktop: Type pills; Mobile: Type dropdown -->
       <TypePills v-model="recs.contentType" :include-all="false" class="rec-pills" />
+
+      <!-- Mobile: dropdown replaces pills -->
       <TypeSelect v-model="recs.contentType" :include-all="false" class="toolbar-select rec-type-select" />
 
       <div class="toolbar-divider" />
 
-      <!-- Stepper + action buttons (mobile: row 2; desktop: inline in toolbar) -->
+      <!-- Stepper + action buttons (mobile: reflows to full-width row) -->
       <div class="rec-actions-row">
         <NumberStepper
           v-model="recs.count"
@@ -75,11 +77,16 @@ const app = useAppStore()
   display: none;
 }
 
-/* Mobile: dropdown replaces pills, dividers hidden */
+/* Mobile: dropdown replaces pills, stepper stays in actions row */
 @media (max-width: 640px) {
   .rec-pills,
   .rec-toolbar > .toolbar-divider {
     display: none;
+  }
+
+  .rec-type-select {
+    display: block;
+    width: 100%;
   }
 
   .rec-actions-row {
@@ -89,11 +96,6 @@ const app = useAppStore()
 
   .rec-actions-row > .toolbar-divider {
     display: none;
-  }
-
-  .rec-type-select {
-    display: block;
-    width: 100%;
   }
 
   .toolbar-right {
