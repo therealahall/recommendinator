@@ -42,7 +42,7 @@ class FakeBookPlugin(SourcePlugin):
             ConfigField(name="path", field_type=str, required=True),
         ]
 
-    def validate_config(self, config: dict[str, Any]) -> list[str]:
+    def validate_config(self, config: dict[str, Any], **kwargs: Any) -> list[str]:
         errors = []
         if not config.get("path"):
             errors.append("'path' is required")
@@ -82,7 +82,7 @@ class FakeGamePlugin(SourcePlugin):
             ConfigField(name="api_key", field_type=str, required=True, sensitive=True),
         ]
 
-    def validate_config(self, config: dict[str, Any]) -> list[str]:
+    def validate_config(self, config: dict[str, Any], **kwargs: Any) -> list[str]:
         errors = []
         if not config.get("api_key"):
             errors.append("'api_key' is required")

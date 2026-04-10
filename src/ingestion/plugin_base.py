@@ -1,12 +1,17 @@
 """Abstract base class for source plugins."""
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from src.models.config_field import ConfigField
 from src.models.content import ContentItem, ContentType
+
+if TYPE_CHECKING:
+    from src.storage.manager import StorageManager
 
 # Progress callback: (items_processed, total_items, current_item) -> None
 # - items_processed: Number of items fetched/processed so far
@@ -91,7 +96,12 @@ class SourcePlugin(ABC):
                     ),
                 ]
 
-            def validate_config(self, config: dict[str, Any]) -> list[str]:
+            def validate_config(
+                self,
+                config: dict[str, Any],
+                storage: StorageManager | None = None,
+                user_id: int = 1,
+            ) -> list[str]:
                 errors = []
                 if not config.get("path"):
                     errors.append("'path' is required")
@@ -191,14 +201,26 @@ class SourcePlugin(ABC):
         ...
 
     @abstractmethod
-    def validate_config(self, config: dict[str, Any]) -> list[str]:
+    def validate_config(
+        self,
+        config: dict[str, Any],
+        storage: StorageManager | None = None,
+        user_id: int = 1,
+    ) -> list[str]:
         """Validate plugin configuration.
 
         Checks that all required fields are present and valid.
         Called before fetch() to catch configuration errors early.
 
+        When *storage* is provided, sensitive fields (e.g. OAuth tokens)
+        that are missing from *config* are looked up in the encrypted
+        credential database.  If the credential exists there, the field
+        is treated as satisfied.
+
         Args:
             config: Plugin-specific configuration dict from inputs.<name>
+            storage: Optional StorageManager for DB credential lookup.
+            user_id: User ID for credential lookup (default 1).
 
         Returns:
             List of validation error messages (empty list if valid)

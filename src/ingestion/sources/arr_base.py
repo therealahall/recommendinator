@@ -92,7 +92,12 @@ class ArrPlugin(SourcePlugin):
             ),
         ]
 
-    def validate_config(self, config: dict[str, Any]) -> list[str]:
+    def validate_config(
+        self,
+        config: dict[str, Any],
+        storage: Any = None,
+        user_id: int = 1,
+    ) -> list[str]:
         errors = []
         if not config.get("api_key", "").strip():
             errors.append(
