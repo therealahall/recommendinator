@@ -5,7 +5,14 @@ from pathlib import Path
 
 import click
 
-from src.cli.commands import complete, enrichment, preferences, recommend, update
+from src.cli.commands import (
+    complete,
+    enrichment,
+    preferences,
+    recommend,
+    status,
+    update,
+)
 from src.cli.config import (
     create_llm_components,
     create_recommendation_engine,
@@ -51,6 +58,7 @@ def cli(ctx: click.Context, config: Path | None) -> None:
 
 
 # Register commands
+cli.add_command(status)
 cli.add_command(recommend)
 cli.add_command(update)
 cli.add_command(complete)

@@ -1,5 +1,6 @@
 """CLI commands."""
 
+import importlib.metadata
 import json
 import time
 
@@ -18,6 +19,59 @@ from src.recommendations.preference_interpreter import (
 from src.recommendations.scorers import SCORER_NAME_MAP
 from src.storage.credential_migration import migrate_config_credentials
 from src.web.sync_sources import resolve_inputs, validate_source_config
+
+
+@click.command()
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    default="table",
+    help="Output format",
+)
+@click.pass_context
+def status(ctx: click.Context, output_format: str) -> None:
+    """Show system health, component readiness, and feature flags."""
+    version = importlib.metadata.version("recommendinator")
+    config = ctx.obj["config"]
+
+    # Component readiness
+    components = {
+        "engine": ctx.obj.get("engine") is not None,
+        "storage": ctx.obj.get("storage") is not None,
+        "embedding_gen": ctx.obj.get("embedding_gen") is not None,
+        "llm_client": ctx.obj.get("llm_client") is not None,
+    }
+
+    # Feature flags
+    flags = get_feature_flags(config)
+
+    # Max recommendation count
+    rec_config = config.get("recommendations", {})
+    max_count = rec_config.get("max_count", 20)
+
+    if output_format == "json":
+        output = {
+            "version": version,
+            "components": components,
+            "features": flags,
+            "recommendations": {"max_count": max_count},
+        }
+        click.echo(json.dumps(output, indent=2))
+    else:
+        click.echo(f"\nRecommendinator v{version}\n")
+
+        click.echo("Components:")
+        for name, ready in components.items():
+            label = "ready" if ready else "not available"
+            click.echo(f"  {name}: {label}")
+
+        click.echo("\nFeatures:")
+        for name, enabled in flags.items():
+            label = "enabled" if enabled else "disabled"
+            click.echo(f"  {name}: {label}")
+
+        click.echo(f"\nMax recommendations: {max_count}")
 
 
 @click.command()
