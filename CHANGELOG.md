@@ -1,6 +1,226 @@
 # CHANGELOG
 
 
+## v0.6.0 (2026-04-10)
+
+### Bug Fixes
+
+- **data-page**: Hide sync status banner when no message is present
+  ([`944f649`](https://github.com/therealahall/recommendinator/commit/944f649589b4427d1846a99d4dd2d5f25e59eaeb))
+
+- **docker**: Increase Ollama healthcheck start period to 600s
+  ([`46b4e9c`](https://github.com/therealahall/recommendinator/commit/46b4e9cf63d6d2100586e682d974a74b173c6cff))
+
+- **frontend**: Add themed range slider and checkbox styles
+  ([`c40b09a`](https://github.com/therealahall/recommendinator/commit/c40b09ac46160862b1b6d534eb0c12d0ffdbf556))
+
+- **frontend**: Align show-ignored checkbox with filter dropdowns
+  ([`165eb81`](https://github.com/therealahall/recommendinator/commit/165eb814f6fd2a257950cc95f590d793130b2302))
+
+- **frontend**: Dynamically append theme stylesheet after Vite CSS bundle
+  ([`a2b9724`](https://github.com/therealahall/recommendinator/commit/a2b97248cef20ed2400005edf8d2eaf08e5d43d2))
+
+- **frontend**: Inline toolbar controls instead of stacked form-group layout
+  ([`90a96ec`](https://github.com/therealahall/recommendinator/commit/90a96ec6fb1caa8d555e3eba411c283733ecc504))
+
+- **frontend**: Pad library status dropdown and simplify enrichment actions
+  ([`39bc9d8`](https://github.com/therealahall/recommendinator/commit/39bc9d880d70337d0b6887458b25bfde9451249b))
+
+- **frontend**: Rename enrichment reset toggle to 'Reset Enrichment'
+  ([`1657693`](https://github.com/therealahall/recommendinator/commit/165769363d64289b089f9d728fd988949b963b5b))
+
+- **frontend**: Set Vite base to /static/dist/ so assets are served by FastAPI
+  ([`12a08cd`](https://github.com/therealahall/recommendinator/commit/12a08cdb6c22e97489ba9853ceb969e9b65ec8ac))
+
+- **frontend**: Show sync button on source cards without OAuth flows
+  ([`5466c84`](https://github.com/therealahall/recommendinator/commit/5466c84ed80c51891d76e48ddbd4756191760e7c))
+
+- **frontend**: Space recommendations toolbar with pills left, buttons right
+  ([`6e9d23c`](https://github.com/therealahall/recommendinator/commit/6e9d23c0d3c793c1ce13d5e90805bdcd88b5418b))
+
+- **frontend**: Style enrichment type dropdown to match other selects
+  ([`2a947f6`](https://github.com/therealahall/recommendinator/commit/2a947f6c5ee39e6b39b2807efc983598d33ce77f))
+
+- **frontend**: Unify toolbar pattern across all pages with dividers
+  ([`4428fe5`](https://github.com/therealahall/recommendinator/commit/4428fe538b5fa0eb0f40ed6f65c2f0a115f7b3ea))
+
+- **preferences**: Apply theme only on save, not on dropdown change
+  ([`453829f`](https://github.com/therealahall/recommendinator/commit/453829fe5a1ae0a548ba86a439fc0535e03fce06))
+
+- **release**: Skip CI on semantic-release version commits
+  ([`e3d07d3`](https://github.com/therealahall/recommendinator/commit/e3d07d3470d03306b8cc8d3838d557adb62c42dd))
+
+- **release**: Use inline commit_message string for semantic-release
+  ([`ada5e41`](https://github.com/therealahall/recommendinator/commit/ada5e41b6eb823b27c0a7fd5cc67ef071bb98872))
+
+- **security**: Add allowlists for where_clause, user_join, and user_filter in enrichment queries
+  ([`5e4a171`](https://github.com/therealahall/recommendinator/commit/5e4a1710776b7effe0ca6272ba3d6e36fda65dfa))
+
+- **status-bar**: Remove System ready banner and simplify component
+  ([`f5d3898`](https://github.com/therealahall/recommendinator/commit/f5d38985e0eb1721983efd855b8447e8c4f222ab))
+
+- **test**: Make SPA tests deterministic with synthetic dist/index.html
+  ([`f7f4a19`](https://github.com/therealahall/recommendinator/commit/f7f4a195400148dafff0c2a792246de896955fc8))
+
+### Chores
+
+- Apply Black formatting to Python files
+  ([`3fad80c`](https://github.com/therealahall/recommendinator/commit/3fad80ce633533f603aa1fbacdc33ec36e1c1f05))
+
+- Standardize on pnpm for frontend package management
+  ([`2ac1991`](https://github.com/therealahall/recommendinator/commit/2ac199167e77f008a6930b28c1005466d9578194))
+
+- **agents**: Add accessibility-review agent and update CLAUDE.md
+  ([`48d4731`](https://github.com/therealahall/recommendinator/commit/48d47317a56528fd15bfff69daa20a5c8f1b7928))
+
+- **agents**: Add Vue 3/TypeScript and atomic design standards to code-review agent
+  ([`291ede3`](https://github.com/therealahall/recommendinator/commit/291ede352aa8e50ab6dad6ad7eda4f40ca558c49))
+
+- **build**: Add frontend build targets and gitignore entries
+  ([`0b88740`](https://github.com/therealahall/recommendinator/commit/0b887404a0f00f3c75397c4f8b710d0c91069940))
+
+### Code Style
+
+- Format files flagged by black
+  ([`9648f9e`](https://github.com/therealahall/recommendinator/commit/9648f9e81aebcd44561d7301622cb719f8ea85d4))
+
+- **frontend**: Promote toolbar-select styles to global base.css
+  ([`70a27ff`](https://github.com/therealahall/recommendinator/commit/70a27ff1ceb23d01dab601aed2a44ef19c3837cc))
+
+- **rec-controls**: Simplify mobile layout CSS and remove duplicate stepper
+  ([`2034e4e`](https://github.com/therealahall/recommendinator/commit/2034e4e021fa39d707cba6d07c510313722670d7))
+
+### Continuous Integration
+
+- Add frontend type-check and test steps to CI workflow
+  ([`d30a39b`](https://github.com/therealahall/recommendinator/commit/d30a39b2e7610b8d1eda63c0c3b90a254689e3ac))
+
+### Documentation
+
+- Add accessibility-review agent to ARCHITECTURE.md and update CONTRIBUTING.md
+  ([`4dd3782`](https://github.com/therealahall/recommendinator/commit/4dd37827e56a0048944398a57ea9d2794d7e8603))
+
+- Remove stale web.theme references, fix agent component examples
+  ([`135414e`](https://github.com/therealahall/recommendinator/commit/135414e962f874ec749f3f485b497e4b1ab03585))
+
+- Update project documentation for Vue 3 frontend migration
+  ([`5fcc910`](https://github.com/therealahall/recommendinator/commit/5fcc910dd7022c65bc69099ae8883c9011a4d6c5))
+
+- **agents**: Add frontend performance rules to code-review agent
+  ([`44875d0`](https://github.com/therealahall/recommendinator/commit/44875d018fd5bef5c2063232eec26df932555362))
+
+### Features
+
+- **components**: Add ToggleSwitch toggle control component
+  ([`daf1b93`](https://github.com/therealahall/recommendinator/commit/daf1b938bffff8e52bf97440cada3975158b03b2))
+
+- **components**: Add TypePills pill-based content type selector
+  ([`126493f`](https://github.com/therealahall/recommendinator/commit/126493f8d711332bda22f09bf6dbd50cff675190))
+
+- **components**: Rewrite LibraryFilters with pill toolbar layout
+  ([`7388021`](https://github.com/therealahall/recommendinator/commit/73880216df4defee99c8d78a804c47aa01e4e58c))
+
+- **components**: Update EnrichmentCard with TypePills and ToggleSwitch
+  ([`bfd4878`](https://github.com/therealahall/recommendinator/commit/bfd487826b62d721b0912a8b9d49d4bbbb9210a8))
+
+- **components**: Update RecControls with TypePills selector
+  ([`5cbf2e8`](https://github.com/therealahall/recommendinator/commit/5cbf2e890bbe3adefd1f330f76d9251c4ee9f972))
+
+- **data-page**: Wire per-source sync status and add progress bar ARIA
+  ([`d50dfc5`](https://github.com/therealahall/recommendinator/commit/d50dfc5547b61a20362658dcd318a2bcc88d96b8))
+
+- **data-store**: Track syncing source for per-source sync UI
+  ([`55a1323`](https://github.com/therealahall/recommendinator/commit/55a13233fc1c3d3fb5f1809c6427bd0d7134e4ca))
+
+- **docker**: Add frontend build stage with pnpm locked dependencies
+  ([`532b49a`](https://github.com/therealahall/recommendinator/commit/532b49a17f025cf388c2a5a3989064c77728ac9f))
+
+- **frontend**: Add accessibility infrastructure (focus trap, global styles, route focus)
+  ([`9d23c6f`](https://github.com/therealahall/recommendinator/commit/9d23c6fe905ee17b08163dbfe5aae7547c5d40ff))
+
+- **frontend**: Add atomic design atoms (ChatMessage, ChatInput, StarRating, ScorerSlider)
+  ([`3f57bc1`](https://github.com/therealahall/recommendinator/commit/3f57bc101578352c837ed50e4f801b7091b6014c))
+
+- **frontend**: Add atomic design molecules (9 components)
+  ([`6c89a97`](https://github.com/therealahall/recommendinator/commit/6c89a976424d6b37429c6301812b042b1e733f1f))
+
+- **frontend**: Add atomic design organisms (13 components)
+  ([`e46d364`](https://github.com/therealahall/recommendinator/commit/e46d36462098aaf2a131c259ae319d8ba940daed))
+
+- **frontend**: Add composables, types, constants, and format utilities
+  ([`60a99ed`](https://github.com/therealahall/recommendinator/commit/60a99ed67c0c9b137a866de14f84b2d6f0871ede))
+
+- **frontend**: Add CSS design system with Tailwind v4 theme mappings
+  ([`5431a76`](https://github.com/therealahall/recommendinator/commit/5431a7692f7b009ffeb2a1a30e56081985428f40))
+
+- **frontend**: Add mobile-responsive layout to LibraryFilters
+  ([`bf0c9e7`](https://github.com/therealahall/recommendinator/commit/bf0c9e721846f847a7858282fa08f0a6d196622b))
+
+- **frontend**: Add mobile-responsive layout to RecControls
+  ([`dda2241`](https://github.com/therealahall/recommendinator/commit/dda2241b651184c87682ec4371e8dbb3b9ab1b4f))
+
+- **frontend**: Add NumberStepper atom for recommendation count
+  ([`fc08237`](https://github.com/therealahall/recommendinator/commit/fc082378de9e2cdcd901b6ef6d4bd8f09af1d807))
+
+- **frontend**: Add page-level views for all 5 routes
+  ([`5b3f53e`](https://github.com/therealahall/recommendinator/commit/5b3f53e0c10093e2713a9d9bc94a5c4f224a1ac7))
+
+- **frontend**: Add TypeSelect atom component for mobile content type filtering
+  ([`60dc0a1`](https://github.com/therealahall/recommendinator/commit/60dc0a1179283d7894d355d5bf97831a6327c516))
+
+- **frontend**: Add Vite build tooling and TypeScript configuration
+  ([`4fadf6b`](https://github.com/therealahall/recommendinator/commit/4fadf6b3dfaa61721015a81355f0d811e7e0c146))
+
+- **frontend**: Add WCAG 2.1 AA accessibility to all Vue components
+  ([`ccad9ce`](https://github.com/therealahall/recommendinator/commit/ccad9ce048fd65034261ec1696a61814a6feb921))
+
+- **frontend**: Bootstrap Vue 3 app with router and Pinia stores
+  ([`50f217e`](https://github.com/therealahall/recommendinator/commit/50f217e73475de8cbe34c720cc28ec572c43f40e))
+
+- **frontend**: Extract CONTENT_TYPE_OPTIONS constant to shared module
+  ([`ad2c1fd`](https://github.com/therealahall/recommendinator/commit/ad2c1fd11c0624ed841f39343523ff2c7320db50))
+
+- **preferences**: Persist theme selection to backend per user
+  ([`6c561ea`](https://github.com/therealahall/recommendinator/commit/6c561ea795c4e9e0422c48e290448519702566d4))
+
+- **sync-card**: Add disabled prop with accessible label for per-source control
+  ([`384325b`](https://github.com/therealahall/recommendinator/commit/384325bd7b4e333e183b35e97c5e37a297a1c234))
+
+- **ui**: Add pill group, toggle switch, and dropdown menu styles
+  ([`9e7f6c1`](https://github.com/therealahall/recommendinator/commit/9e7f6c10c82ed071c35b86961e45dcdcba7afc91))
+
+- **web**: Serve Vue SPA from Vite build output at root endpoint
+  ([`52db024`](https://github.com/therealahall/recommendinator/commit/52db024e4256822b28d9545a37abfa839f9104e1))
+
+### Refactoring
+
+- **format**: Extract truncate utility to shared format module
+  ([`83ce8d6`](https://github.com/therealahall/recommendinator/commit/83ce8d6f1aadfe61507643f41dea468cb81f6a6d))
+
+- **frontend**: Update TypePills to use shared CONTENT_TYPE_OPTIONS
+  ([`604949c`](https://github.com/therealahall/recommendinator/commit/604949c274ac2e514c6b2da2951d6db7fbbf3bbf))
+
+- **number-stepper**: Use aria-label attribute instead of custom prop
+  ([`4fc012f`](https://github.com/therealahall/recommendinator/commit/4fc012fb48cdadda551e4c63f0220a0e1c73d0a5))
+
+### Testing
+
+- **format**: Add comprehensive coverage for all format utilities
+  ([`2ec30e1`](https://github.com/therealahall/recommendinator/commit/2ec30e179c54386ab41b3ded44d75815fe94f7c3))
+
+- **frontend**: Add NumberStepper tests and theme preference coverage
+  ([`bf43691`](https://github.com/therealahall/recommendinator/commit/bf43691508e8715ede90bdfbf899a802bea0a096))
+
+- **rec-controls**: Verify single stepper instance and aria-label propagation
+  ([`8564b4b`](https://github.com/therealahall/recommendinator/commit/8564b4b7a2531275f0837f3e13e4078a6cc89980))
+
+- **status-bar**: Add StatusBar component tests and statusMessage assertions
+  ([`65c91a2`](https://github.com/therealahall/recommendinator/commit/65c91a2d915e7c442241f0619f0cb3ddf65f3580))
+
+- **web**: Add SPA-aware root endpoint tests with deterministic paths
+  ([`eacc137`](https://github.com/therealahall/recommendinator/commit/eacc1373833bcb4ebe38ebb204905509dc5ac7e7))
+
+
 ## v0.5.4 (2026-03-18)
 
 ### Bug Fixes
