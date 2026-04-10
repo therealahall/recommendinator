@@ -77,10 +77,20 @@ describe('NumberStepper', () => {
     expect(wrapper.emitted('update:modelValue')).toBeUndefined()
   })
 
-  it('applies aria-label to input and buttons', () => {
-    const wrapper = mountStepper({ ariaLabel: 'Recommendation count' })
+  it('applies aria-label to input and buttons via attribute', () => {
+    const wrapper = mount(NumberStepper, {
+      props: { modelValue: 5, min: 1, max: 20, step: 1 },
+      attrs: { 'aria-label': 'Recommendation count' },
+    })
     expect(wrapper.find('input').attributes('aria-label')).toBe('Recommendation count')
     expect(wrapper.find('.stepper-decrement').attributes('aria-label')).toBe('Decrease Recommendation count')
     expect(wrapper.find('.stepper-increment').attributes('aria-label')).toBe('Increase Recommendation count')
+  })
+
+  it('uses default aria-label when none provided', () => {
+    const wrapper = mountStepper()
+    expect(wrapper.find('input').attributes('aria-label')).toBe('Number')
+    expect(wrapper.find('.stepper-decrement').attributes('aria-label')).toBe('Decrease Number')
+    expect(wrapper.find('.stepper-increment').attributes('aria-label')).toBe('Increase Number')
   })
 })
