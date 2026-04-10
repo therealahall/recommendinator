@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted } from 'vue'
+import { computed, onMounted, onUnmounted } from 'vue'
 import { useDataStore } from '@/stores/data'
 import SyncSourceCard from '@/components/molecules/SyncSourceCard.vue'
 import OAuthConnectFlow from '@/components/molecules/OAuthConnectFlow.vue'
@@ -25,6 +25,12 @@ function needsGogConnect(sourceId: string): boolean {
 function needsEpicConnect(sourceId: string): boolean {
   return sourceId === 'epic_games' && !data.epicStatus.connected && !!data.epicStatus.authUrl
 }
+
+const syncAllLabel = computed(() => {
+  if (data.syncStatus === 'running' && data.syncingSource === 'all') return 'Syncing...'
+  if (data.syncStatus === 'running') return 'Sync in Progress'
+  return 'Sync All Sources'
+})
 </script>
 
 <template>
@@ -46,7 +52,15 @@ function needsEpicConnect(sourceId: string): boolean {
           'sync-status-info': data.syncStatus === 'running' || data.syncStatus === 'idle',
         }"
       >{{ data.syncMessage }}</div>
-      <div v-if="data.syncJob?.progress_percent && data.syncStatus === 'running'" class="sync-progress-bar">
+      <div
+        v-if="data.syncJob?.progress_percent != null && data.syncStatus === 'running'"
+        class="sync-progress-bar"
+        role="progressbar"
+        :aria-valuenow="data.syncJob.progress_percent"
+        aria-valuemin="0"
+        aria-valuemax="100"
+        :aria-label="`Sync progress: ${data.syncJob.progress_percent}%`"
+      >
         <div class="sync-progress-fill" :style="{ width: `${data.syncJob.progress_percent}%` }" />
       </div>
       <p class="help-text">Sync data from your configured sources. Only one sync can run at a time.</p>
@@ -60,7 +74,8 @@ function needsEpicConnect(sourceId: string): boolean {
           v-for="source in data.syncSources"
           :key="source.id"
           :source="source"
-          :syncing="data.syncStatus === 'running'"
+          :syncing="data.syncingSource === source.id || data.syncingSource === 'all'"
+          :disabled="data.syncStatus === 'running' && data.syncingSource !== source.id && data.syncingSource !== 'all'"
           :show-sync-button="!needsGogConnect(source.id) && !needsEpicConnect(source.id)"
           @sync="data.triggerSync($event)"
         >
@@ -90,7 +105,7 @@ function needsEpicConnect(sourceId: string): boolean {
             class="btn btn-secondary sync-btn"
             :disabled="data.syncStatus === 'running'"
             @click="data.triggerSync('all')"
-          >{{ data.syncStatus === 'running' ? 'Syncing...' : 'Sync All Sources' }}</button>
+          >{{ syncAllLabel }}</button>
         </div>
       </div>
     </div>
