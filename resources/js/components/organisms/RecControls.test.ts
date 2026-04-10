@@ -45,12 +45,12 @@ describe('RecControls', () => {
     expect(recs.contentType).toBe('movie')
   })
 
-  it('renders count input with default value', () => {
+  it('renders a single count input with default value', () => {
     const wrapper = mount(RecControls)
 
-    const input = wrapper.find('input[type="number"]')
-    expect(input.exists()).toBe(true)
-    expect((input.element as HTMLInputElement).value).toBe('5')
+    const inputs = wrapper.findAll('input[type="number"]')
+    expect(inputs).toHaveLength(1)
+    expect((inputs[0].element as HTMLInputElement).value).toBe('5')
   })
 
   it('sets max attribute on count input from recommendationsConfig', () => {
@@ -71,6 +71,19 @@ describe('RecControls', () => {
     await input.setValue('10')
 
     expect(recs.count).toBe(10)
+  })
+
+  it('NumberStepper receives aria-label for accessible name', () => {
+    const wrapper = mount(RecControls)
+
+    const input = wrapper.find('input[type="number"]')
+    expect(input.attributes('aria-label')).toBe('Number of recommendations')
+
+    const decBtn = wrapper.find('.stepper-decrement')
+    expect(decBtn.attributes('aria-label')).toBe('Decrease Number of recommendations')
+
+    const incBtn = wrapper.find('.stepper-increment')
+    expect(incBtn.attributes('aria-label')).toBe('Increase Number of recommendations')
   })
 
   it('renders Generate button', () => {
