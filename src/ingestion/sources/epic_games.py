@@ -9,9 +9,11 @@ Limitations:
 - No playtime data (Epic doesn't expose it).
 """
 
+from __future__ import annotations
+
 import logging
 from collections.abc import Iterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from legendary.api.egs import EPCAPI
 from legendary.models.exceptions import InvalidCredentialsError
@@ -24,6 +26,9 @@ from src.ingestion.plugin_base import (
     SourcePlugin,
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+
+if TYPE_CHECKING:
+    from src.storage.manager import StorageManager
 from src.utils.progress import log_progress
 
 logger = logging.getLogger(__name__)
@@ -239,9 +244,20 @@ class EpicGamesPlugin(SourcePlugin):
             ),
         ]
 
-    def validate_config(self, config: dict[str, Any]) -> list[str]:
+    def validate_config(
+        self,
+        config: dict[str, Any],
+        storage: StorageManager | None = None,
+        user_id: int = 1,
+    ) -> list[str]:
         errors: list[str] = []
         if not (config.get("refresh_token") or "").strip():
+            # Check DB credentials before rejecting
+            source_id = config.get("_source_id", self.name)
+            if storage is not None:
+                db_creds = storage.get_credentials_for_source(user_id, source_id)
+                if (db_creds.get("refresh_token") or "").strip():
+                    return errors
             errors.append(
                 "'refresh_token' is required. "
                 "Connect your Epic Games account via the web UI "

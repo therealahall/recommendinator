@@ -51,7 +51,7 @@ class MockPlugin(SourcePlugin):
             ),
         ]
 
-    def validate_config(self, config: dict[str, Any]) -> list[str]:
+    def validate_config(self, config: dict[str, Any], **kwargs: Any) -> list[str]:
         errors = []
         if not config.get("path"):
             errors.append("'path' is required")
@@ -100,7 +100,7 @@ class MockAPIPlugin(SourcePlugin):
             ),
         ]
 
-    def validate_config(self, config: dict[str, Any]) -> list[str]:
+    def validate_config(self, config: dict[str, Any], **kwargs: Any) -> list[str]:
         errors = []
         if not config.get("api_key"):
             errors.append("'api_key' is required")

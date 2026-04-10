@@ -1,9 +1,11 @@
 """GOG.com integration plugin for fetching user game library and wishlist."""
 
+from __future__ import annotations
+
 import logging
 import time
 from collections.abc import Callable, Iterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import requests
 
@@ -15,6 +17,9 @@ from src.ingestion.plugin_base import (
     SourcePlugin,
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+
+if TYPE_CHECKING:
+    from src.storage.manager import StorageManager
 from src.utils.progress import log_progress
 
 logger = logging.getLogger(__name__)
@@ -305,9 +310,20 @@ class GogPlugin(SourcePlugin):
             ),
         ]
 
-    def validate_config(self, config: dict[str, Any]) -> list[str]:
-        errors = []
+    def validate_config(
+        self,
+        config: dict[str, Any],
+        storage: StorageManager | None = None,
+        user_id: int = 1,
+    ) -> list[str]:
+        errors: list[str] = []
         if not (config.get("refresh_token") or "").strip():
+            # Check DB credentials before rejecting
+            source_id = config.get("_source_id", self.name)
+            if storage is not None:
+                db_creds = storage.get_credentials_for_source(user_id, source_id)
+                if (db_creds.get("refresh_token") or "").strip():
+                    return errors
             errors.append(
                 "'refresh_token' is required. "
                 "Use the web UI (Data tab) to connect your GOG account, "

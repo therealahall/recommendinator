@@ -392,6 +392,59 @@ class TestGogPluginValidation:
         assert len(errors) == 1
         assert "'refresh_token' is required" in errors[0]
 
+    def test_validate_missing_token_passes_when_in_db(self) -> None:
+        """Regression: CLI sync fails when refresh_token is in DB but not config.
+
+        Bug: validate_config() checked for refresh_token in the config dict
+        without considering that the token might be stored in the encrypted
+        credential database (used by the web UI's OAuth flow). This caused
+        CLI sync to fail with "'refresh_token' is required" even though
+        resolve_inputs() would inject the DB credential before fetch().
+
+        Root cause: validate_config() had no awareness of DB-stored
+        credentials, so it rejected configs where sensitive fields were
+        absent from the YAML but present in the credential store.
+
+        Fix: validate_config() now accepts optional storage and user_id
+        parameters. When a required sensitive field is missing from config
+        but a credential exists in DB for that source, validation passes.
+        """
+        plugin = GogPlugin()
+        mock_storage = Mock()
+        mock_storage.get_credentials_for_source.return_value = {
+            "refresh_token": "db_stored_token"
+        }
+
+        # Config has no refresh_token, but DB does — should pass
+        errors = plugin.validate_config(
+            {"_source_id": "my_gog"},
+            storage=mock_storage,
+            user_id=1,
+        )
+        assert errors == []
+        mock_storage.get_credentials_for_source.assert_called_once_with(1, "my_gog")
+
+    def test_validate_missing_token_fails_when_not_in_db(self) -> None:
+        """Validation still fails when token is absent from both config and DB."""
+        plugin = GogPlugin()
+        mock_storage = Mock()
+        mock_storage.get_credentials_for_source.return_value = {}
+
+        errors = plugin.validate_config(
+            {"_source_id": "my_gog"},
+            storage=mock_storage,
+            user_id=1,
+        )
+        assert len(errors) == 1
+        assert "'refresh_token' is required" in errors[0]
+
+    def test_validate_missing_token_fails_without_storage(self) -> None:
+        """Validation fails when no storage is provided and token is missing."""
+        plugin = GogPlugin()
+        errors = plugin.validate_config({})
+        assert len(errors) == 1
+        assert "'refresh_token' is required" in errors[0]
+
 
 class TestGogPluginTransformConfig:
     """Tests for GogPlugin.transform_config."""
