@@ -1,9 +1,11 @@
 """Steam Web API integration plugin for fetching user game library."""
 
+from __future__ import annotations
+
 import logging
 import time
 from collections.abc import Callable, Iterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import requests
 
@@ -15,6 +17,9 @@ from src.ingestion.plugin_base import (
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.utils.progress import log_progress
+
+if TYPE_CHECKING:
+    from src.storage.manager import StorageManager
 
 logger = logging.getLogger(__name__)
 
@@ -251,7 +256,7 @@ class SteamPlugin(SourcePlugin):
     def validate_config(
         self,
         config: dict[str, Any],
-        storage: Any = None,
+        storage: StorageManager | None = None,
         user_id: int = 1,
     ) -> list[str]:
         errors = []
