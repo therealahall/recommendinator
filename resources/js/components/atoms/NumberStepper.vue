@@ -1,15 +1,26 @@
 <script setup lang="ts">
+import { computed, useAttrs } from 'vue'
+
+defineOptions({ inheritAttrs: false })
+
 const props = withDefaults(defineProps<{
   modelValue: number
   min?: number
   max?: number
   step?: number
-  ariaLabel?: string
 }>(), {
   min: 1,
   max: 100,
   step: 1,
-  ariaLabel: 'Number',
+})
+
+const attrs = useAttrs()
+const resolvedLabel = computed(() =>
+  (attrs['aria-label'] as string | undefined) ?? 'Number'
+)
+const filteredAttrs = computed(() => {
+  const { 'aria-label': _, ...rest } = attrs
+  return rest
 })
 
 const emit = defineEmits<{
@@ -38,12 +49,12 @@ function onInput(event: Event) {
 </script>
 
 <template>
-  <div class="number-stepper">
+  <div class="number-stepper" v-bind="filteredAttrs">
     <button
       type="button"
       class="stepper-btn stepper-decrement"
       :disabled="modelValue <= min"
-      :aria-label="`Decrease ${ariaLabel}`"
+      :aria-label="`Decrease ${resolvedLabel}`"
       @click="decrement"
     >
       <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
@@ -57,14 +68,14 @@ function onInput(event: Event) {
       :min="min"
       :max="max"
       :step="step"
-      :aria-label="ariaLabel"
+      :aria-label="resolvedLabel"
       @input="onInput"
     >
     <button
       type="button"
       class="stepper-btn stepper-increment"
       :disabled="modelValue >= max"
-      :aria-label="`Increase ${ariaLabel}`"
+      :aria-label="`Increase ${resolvedLabel}`"
       @click="increment"
     >
       <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
