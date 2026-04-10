@@ -8,6 +8,7 @@ import click
 from src.cli.commands import (
     complete,
     enrichment,
+    library,
     preferences,
     recommend,
     status,
@@ -64,6 +65,7 @@ cli.add_command(update)
 cli.add_command(complete)
 cli.add_command(preferences)
 cli.add_command(enrichment)
+cli.add_command(library)
 
 
 if __name__ == "__main__":
