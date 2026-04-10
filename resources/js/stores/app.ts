@@ -40,7 +40,7 @@ export const useAppStore = defineStore('app', () => {
     try {
       const data = await api.get<StatusResponse>('/status')
       status.value = data.status === 'ready' ? 'ready' : 'loading'
-      statusMessage.value = data.status === 'ready' ? 'System ready' : 'System initializing...'
+      statusMessage.value = data.status === 'ready' ? '' : 'System initializing...'
 
       if (data.version) {
         version.value = data.version
