@@ -182,6 +182,7 @@ def validate_source_config(
     source_id: str,
     config: dict[str, Any],
     storage: StorageManager | None = None,
+    user_id: int = 1,
 ) -> list[str]:
     """Validate config for a sync source.
 
@@ -189,12 +190,15 @@ def validate_source_config(
         source_id: User-defined source key.
         config: Full application config.
         storage: Optional StorageManager for DB credential injection.
+        user_id: User ID for credential lookup (default 1).
 
     Returns:
         List of error messages (empty if valid).
     """
-    resolved = get_sync_handler(source_id, config, storage=storage)
+    resolved = get_sync_handler(source_id, config, storage=storage, user_id=user_id)
     if resolved is None:
         return [f"Unknown or disabled source: {source_id}"]
 
-    return resolved.plugin.validate_config(resolved.config)
+    return resolved.plugin.validate_config(
+        resolved.config, storage=storage, user_id=user_id
+    )
