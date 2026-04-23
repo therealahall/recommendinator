@@ -22,6 +22,7 @@ from src.models.content import (
 )
 from src.models.user_preferences import UserPreferenceConfig
 from src.storage.manager import VALID_SORT_OPTIONS
+from src.utils.item_serialization import item_to_dict
 from src.utils.text import humanize_source_id
 from src.web.enrichment_manager import get_enrichment_manager
 from src.web.epic_auth import (
@@ -112,6 +113,7 @@ class ContentItemResponse(BaseModel):
     rating: int | None
     review: str | None
     source: str | None
+    date_completed: str | None = None
     ignored: bool = False
     seasons_watched: list[int] | None = None
     total_seasons: int | None = None
@@ -628,43 +630,8 @@ async def list_users() -> list[UserResponse]:
 
 
 def _item_to_response(item: "ContentItem") -> ContentItemResponse:
-    """Convert a ContentItem to a ContentItemResponse.
-
-    Extracts seasons_watched and total_seasons from TV show metadata.
-
-    Args:
-        item: ContentItem to convert.
-
-    Returns:
-        ContentItemResponse with all fields populated.
-    """
-    seasons_watched: list[int] | None = None
-    total_seasons: int | None = None
-    metadata = item.metadata
-
-    if get_enum_value(item.content_type) == "tv_show":
-        seasons_watched = metadata.get("seasons_watched")
-        seasons_raw = metadata.get("seasons")
-        if seasons_raw is not None:
-            try:
-                total_seasons = int(seasons_raw)
-            except (ValueError, TypeError):
-                pass
-
-    return ContentItemResponse(
-        id=item.id,
-        db_id=item.db_id,
-        title=item.title,
-        author=item.author,
-        content_type=get_enum_value(item.content_type),
-        status=get_enum_value(item.status),
-        rating=item.rating,
-        review=item.review,
-        source=item.source,
-        ignored=bool(item.ignored),
-        seasons_watched=seasons_watched,
-        total_seasons=total_seasons,
-    )
+    """Convert a ContentItem to a ContentItemResponse via the shared dict."""
+    return ContentItemResponse.model_validate(item_to_dict(item))
 
 
 @router.get("/items", response_model=list[ContentItemResponse])
@@ -1584,6 +1551,23 @@ async def exchange_gog_token(request: GogExchangeRequest) -> dict[str, Any]:
         ) from error
 
 
+@router.delete("/gog/token")
+async def disconnect_gog(user_id: int = Query(1, ge=1)) -> dict[str, Any]:
+    """Disconnect GOG by deleting the stored refresh token.
+
+    Mirrors the CLI `auth disconnect --source gog` command.
+    """
+    storage = get_storage()
+    if not storage:
+        raise HTTPException(status_code=500, detail="Storage not initialized")
+
+    deleted = storage.delete_credential(user_id, "gog", "refresh_token")
+    if not deleted:
+        raise HTTPException(status_code=404, detail="No active GOG connection found")
+    logger.info("Disconnected GOG account for user %s", user_id)
+    return {"success": True, "message": "GOG disconnected."}
+
+
 # ---------------------------------------------------------------------------
 # Epic Games OAuth endpoints
 # ---------------------------------------------------------------------------
@@ -1674,3 +1658,22 @@ async def exchange_epic_token(request: EpicExchangeRequest) -> dict[str, Any]:
             status_code=500,
             detail="Unexpected error during Epic Games authentication",
         ) from error
+
+
+@router.delete("/epic/token")
+async def disconnect_epic(user_id: int = Query(1, ge=1)) -> dict[str, Any]:
+    """Disconnect Epic Games by deleting the stored refresh token.
+
+    Mirrors the CLI `auth disconnect --source epic` command.
+    """
+    storage = get_storage()
+    if not storage:
+        raise HTTPException(status_code=500, detail="Storage not initialized")
+
+    deleted = storage.delete_credential(user_id, "epic_games", "refresh_token")
+    if not deleted:
+        raise HTTPException(
+            status_code=404, detail="No active Epic Games connection found"
+        )
+    logger.info("Disconnected Epic Games account for user %s", user_id)
+    return {"success": True, "message": "Epic Games disconnected."}
