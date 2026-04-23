@@ -1,6 +1,66 @@
 # CHANGELOG
 
 
+## v0.7.0 (2026-04-23)
+
+### Bug Fixes
+
+- **plugins**: Use consistent StorageManager type in validate_config signatures
+  ([`03236bd`](https://github.com/therealahall/recommendinator/commit/03236bd7cb0f6aba6e886c0ad9b5cda541b4023c))
+
+- **sync**: Forward storage param through validate_source_config to plugins
+  ([`a7c7ffb`](https://github.com/therealahall/recommendinator/commit/a7c7ffb670a0121a2dd745728267d878543eb7ad))
+
+- **validation**: Allow validate_config to check DB credentials for sensitive fields
+  ([`9743eee`](https://github.com/therealahall/recommendinator/commit/9743eee2898201ba1cb4e6d01fa42bda18f1e6e1))
+
+- **web**: Add disconnect button for connected OAuth sources
+  ([`51f67cc`](https://github.com/therealahall/recommendinator/commit/51f67cc8536cc5f59ac0877ef3cf9e46d992bb8b))
+
+- **web**: Mark sync as failed when plugin reports errors with no items
+  ([`f25f0fd`](https://github.com/therealahall/recommendinator/commit/f25f0fde680e56d269d7eaea9b8538d91889bdb1))
+
+### Chores
+
+- Ignore .claude/worktrees/ local agent scratch directory
+  ([`08269d0`](https://github.com/therealahall/recommendinator/commit/08269d038888424fe2c8b189356c679b973838fc))
+
+- **agents**: Add parity-review agent for CLI/UI drift enforcement
+  ([`da73345`](https://github.com/therealahall/recommendinator/commit/da733452e002a3280cd8ac3f3857683353a5b604))
+
+### Documentation
+
+- Document CLI command groups and anti-churn guidelines
+  ([`045bd0b`](https://github.com/therealahall/recommendinator/commit/045bd0be8574c73a2504792bd984e163fa2f3700))
+
+### Features
+
+- **cli**: Add auth, chat, memory, profile groups for web parity
+  ([`c23ff83`](https://github.com/therealahall/recommendinator/commit/c23ff83455480e4b26ef155cae9158f1b3e4e83c))
+
+- **cli**: Add library command group (list, show, edit, ignore, export)
+  ([`c772ecd`](https://github.com/therealahall/recommendinator/commit/c772ecd307dae2fd830c876e6cc411e59a2fbfeb))
+
+- **cli**: Add status command for system health and feature flags
+  ([`cc3f218`](https://github.com/therealahall/recommendinator/commit/cc3f2188540b5e64ed588ca87da8ec0746212459))
+
+- **utils**: Add shared item_to_dict serialization helper
+  ([`f9dc735`](https://github.com/therealahall/recommendinator/commit/f9dc7357c793b3a42b3b6f0d3f64d177da9789d6))
+
+- **web**: Add OAuth disconnect endpoints and use shared serialization
+  ([`6c357a5`](https://github.com/therealahall/recommendinator/commit/6c357a5354657a2231c5ffd45fda9a5adc30ed9a))
+
+### Refactoring
+
+- **web**: Polish disconnect button styling and tighten tests
+  ([`04780ff`](https://github.com/therealahall/recommendinator/commit/04780ff9f45a8e48edb2bc0ed4a4ab60d850eff8))
+
+### Testing
+
+- Cover new CLI command groups and OAuth disconnect endpoints
+  ([`e115ed3`](https://github.com/therealahall/recommendinator/commit/e115ed3e16c90d1b3a90e536f179814c320a9ab5))
+
+
 ## v0.6.0 (2026-04-10)
 
 ### Bug Fixes
