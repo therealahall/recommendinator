@@ -177,6 +177,38 @@ export const useDataStore = defineStore('data', () => {
     }
   }
 
+  async function disconnectGog() {
+    gogConnectMessage.value = 'Disconnecting GOG...'
+    try {
+      // DELETE /api/gog/token runs the credential delete synchronously and
+      // only returns 200 once the row is gone, so loadSyncSources reads
+      // the post-delete state immediately — no setTimeout needed.
+      await api.delete('/gog/token')
+      gogConnectMessage.value = 'Disconnected. You can reconnect below.'
+      await loadSyncSources()
+    } catch (err) {
+      console.error('GOG disconnect failed:', err)
+      gogConnectMessage.value = err instanceof ApiError
+        ? `Error: server returned ${err.status}`
+        : 'Error: disconnect failed'
+    }
+  }
+
+  async function disconnectEpic() {
+    epicConnectMessage.value = 'Disconnecting Epic Games...'
+    try {
+      // DELETE /api/epic/token is synchronous (see disconnectGog comment).
+      await api.delete('/epic/token')
+      epicConnectMessage.value = 'Disconnected. You can reconnect below.'
+      await loadSyncSources()
+    } catch (err) {
+      console.error('Epic disconnect failed:', err)
+      epicConnectMessage.value = err instanceof ApiError
+        ? `Error: server returned ${err.status}`
+        : 'Error: disconnect failed'
+    }
+  }
+
   // Enrichment actions
   async function loadEnrichmentStats() {
     const app = useAppStore()
@@ -283,6 +315,8 @@ export const useDataStore = defineStore('data', () => {
     checkSyncStatus,
     submitGogCode,
     submitEpicCode,
+    disconnectGog,
+    disconnectEpic,
     loadEnrichmentStats,
     startEnrichment,
     stopEnrichment,

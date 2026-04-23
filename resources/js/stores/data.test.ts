@@ -5,6 +5,7 @@ import { ApiError } from '@/composables/useApi'
 
 const mockGet = vi.fn()
 const mockPost = vi.fn()
+const mockDelete = vi.fn()
 
 vi.mock('@/composables/useApi', () => ({
   ApiError: class ApiError extends Error {
@@ -18,7 +19,7 @@ vi.mock('@/composables/useApi', () => ({
     post: (...args: unknown[]) => mockPost(...args),
     put: vi.fn(),
     patch: vi.fn(),
-    delete: vi.fn(),
+    delete: (...args: unknown[]) => mockDelete(...args),
     raw: vi.fn(),
   }),
 }))
@@ -29,6 +30,7 @@ describe('useDataStore', () => {
     vi.useFakeTimers()
     mockGet.mockReset()
     mockPost.mockReset()
+    mockDelete.mockReset()
   })
 
   afterEach(() => {
@@ -272,5 +274,55 @@ describe('useDataStore', () => {
 
     expect(store.enrichmentStats).toEqual(stats)
     expect(store.enrichmentEnabled).toBe(true)
+  })
+
+  it('disconnectGog calls DELETE /gog/token and reloads sync sources', async () => {
+    mockDelete.mockResolvedValue({})
+    mockPost.mockResolvedValue({})
+    mockGet
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce({ enabled: true, connected: false, auth_url: 'https://gog.com/auth' })
+      .mockResolvedValueOnce({ enabled: false, connected: false })
+
+    const store = useDataStore()
+    await store.disconnectGog()
+
+    expect(mockDelete).toHaveBeenCalledWith('/gog/token')
+    expect(store.gogConnectMessage).toContain('Disconnected')
+    expect(store.gogStatus.connected).toBe(false)
+  })
+
+  it('disconnectEpic calls DELETE /epic/token and reloads sync sources', async () => {
+    mockDelete.mockResolvedValue({})
+    mockPost.mockResolvedValue({})
+    mockGet
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce({ enabled: false, connected: false })
+      .mockResolvedValueOnce({ enabled: true, connected: false, auth_url: 'https://epicgames.com/auth' })
+
+    const store = useDataStore()
+    await store.disconnectEpic()
+
+    expect(mockDelete).toHaveBeenCalledWith('/epic/token')
+    expect(store.epicConnectMessage).toContain('Disconnected')
+    expect(store.epicStatus.connected).toBe(false)
+  })
+
+  it('disconnectGog surfaces API error in the connect message', async () => {
+    mockDelete.mockRejectedValue(new ApiError(500, 'Internal Server Error'))
+
+    const store = useDataStore()
+    await store.disconnectGog()
+
+    expect(store.gogConnectMessage).toBe('Error: server returned 500')
+  })
+
+  it('disconnectEpic surfaces API error in the connect message', async () => {
+    mockDelete.mockRejectedValue(new ApiError(500, 'Internal Server Error'))
+
+    const store = useDataStore()
+    await store.disconnectEpic()
+
+    expect(store.epicConnectMessage).toBe('Error: server returned 500')
   })
 })

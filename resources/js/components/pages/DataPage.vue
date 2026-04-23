@@ -26,6 +26,14 @@ function needsEpicConnect(sourceId: string): boolean {
   return sourceId === 'epic_games' && !data.epicStatus.connected && !!data.epicStatus.authUrl
 }
 
+function showGogDisconnect(sourceId: string): boolean {
+  return sourceId === 'gog' && data.gogStatus.connected
+}
+
+function showEpicDisconnect(sourceId: string): boolean {
+  return sourceId === 'epic_games' && data.epicStatus.connected
+}
+
 const syncAllLabel = computed(() => {
   if (data.syncStatus === 'running' && data.syncingSource === 'all') return 'Syncing...'
   if (data.syncStatus === 'running') return 'Sync in Progress'
@@ -98,6 +106,32 @@ const syncAllLabel = computed(() => {
             service-name="Epic Games"
             @submit="data.submitEpicCode($event)"
           />
+          <template v-else-if="showGogDisconnect(source.id)">
+            <p
+              v-if="data.gogConnectMessage"
+              class="sr-only"
+              aria-live="polite"
+            >{{ data.gogConnectMessage }}</p>
+            <button
+              type="button"
+              class="btn btn-ghost btn-small"
+              :disabled="data.syncStatus === 'running'"
+              @click="data.disconnectGog()"
+            >Disconnect GOG</button>
+          </template>
+          <template v-else-if="showEpicDisconnect(source.id)">
+            <p
+              v-if="data.epicConnectMessage"
+              class="sr-only"
+              aria-live="polite"
+            >{{ data.epicConnectMessage }}</p>
+            <button
+              type="button"
+              class="btn btn-ghost btn-small"
+              :disabled="data.syncStatus === 'running'"
+              @click="data.disconnectEpic()"
+            >Disconnect Epic Games</button>
+          </template>
         </SyncSourceCard>
         <div v-if="data.syncSources.length > 1" class="sync-card">
           <h3>All Sources</h3>
