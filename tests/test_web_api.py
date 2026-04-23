@@ -2159,3 +2159,60 @@ class TestItemToResponseInvalidSeasons:
         )
         result = _item_to_response(item)
         assert result.total_seasons is None
+
+
+class TestAuthDisconnectEndpoints:
+    """Tests for DELETE /api/gog/token and /api/epic/token (matches CLI auth disconnect)."""
+
+    def test_gog_disconnect_success(self, client, mock_components):
+        """DELETE /api/gog/token removes stored refresh token."""
+        storage = mock_components["storage"]
+        storage.delete_credential.return_value = True
+
+        response = client.delete("/api/gog/token")
+
+        assert response.status_code == 200
+        assert response.json() == {"success": True, "message": "GOG disconnected."}
+        storage.delete_credential.assert_called_once_with(1, "gog", "refresh_token")
+
+    def test_gog_disconnect_not_connected(self, client, mock_components):
+        """DELETE /api/gog/token returns 404 when no credential exists."""
+        mock_components["storage"].delete_credential.return_value = False
+
+        response = client.delete("/api/gog/token")
+
+        assert response.status_code == 404
+
+    def test_gog_disconnect_custom_user_id(self, client, mock_components):
+        """user_id query parameter is forwarded to storage."""
+        storage = mock_components["storage"]
+        storage.delete_credential.return_value = True
+
+        response = client.delete("/api/gog/token?user_id=5")
+
+        assert response.status_code == 200
+        storage.delete_credential.assert_called_once_with(5, "gog", "refresh_token")
+
+    def test_epic_disconnect_success(self, client, mock_components):
+        """DELETE /api/epic/token removes stored Epic refresh token."""
+        storage = mock_components["storage"]
+        storage.delete_credential.return_value = True
+
+        response = client.delete("/api/epic/token")
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "success": True,
+            "message": "Epic Games disconnected.",
+        }
+        storage.delete_credential.assert_called_once_with(
+            1, "epic_games", "refresh_token"
+        )
+
+    def test_epic_disconnect_not_connected(self, client, mock_components):
+        """DELETE /api/epic/token returns 404 when no credential exists."""
+        mock_components["storage"].delete_credential.return_value = False
+
+        response = client.delete("/api/epic/token")
+
+        assert response.status_code == 404
