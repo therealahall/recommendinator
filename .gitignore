@@ -33,6 +33,7 @@ ENV/
 .vscode/
 .idea/
 .claude/settings.local.json
+.claude/worktrees/
 .beads/
 *.swp
 *.swo
