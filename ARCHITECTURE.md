@@ -165,7 +165,7 @@ When enabled (recommended for 3B models), the engine uses a condensed system pro
 
 #### CLI (`src/cli/`)
 - Click-based command structure
-- Commands: `recommend`, `update`, `complete`, `preferences`, `enrichment`
+- Commands: `status`, `recommend`, `update`, `complete`, `preferences`, `enrichment`, `library`, `auth`, `memory`, `profile`, `chat`
 - Supports batch operations and multiple output formats
 
 #### Web (`src/web/` + `resources/`)

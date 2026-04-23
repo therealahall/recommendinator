@@ -254,6 +254,10 @@ ingestion:
 
 ## CLI Usage
 
+The CLI provides full access to all Recommendinator features. Commands are organized into groups:
+
+### Import & Recommend
+
 ```bash
 # Import data
 python3.11 -m src.cli update --source goodreads
@@ -266,18 +270,125 @@ python3.11 -m src.cli recommend --type video_game --count 5
 
 # Mark content as completed
 python3.11 -m src.cli complete --type book --title "Project Hail Mary" --rating 5
+```
 
-# Manage preferences
+### System Status
+
+```bash
+# Check system health, component readiness, and feature flags
+python3.11 -m src.cli status
+python3.11 -m src.cli status --format json
+```
+
+### Library Management
+
+```bash
+# List items with filtering and sorting
+python3.11 -m src.cli library list --type book --status completed --sort rating --limit 20
+python3.11 -m src.cli library list --format json
+
+# Show item details
+python3.11 -m src.cli library show --id 42
+
+# Edit item metadata
+python3.11 -m src.cli library edit --id 42 --rating 5 --status completed
+
+# Ignore/unignore items (excluded from recommendations)
+python3.11 -m src.cli library ignore --id 42
+python3.11 -m src.cli library unignore --id 42
+
+# Export library data
+python3.11 -m src.cli library export --type book --format csv --output books.csv
+python3.11 -m src.cli library export --type video_game --format json
+```
+
+### Preferences
+
+```bash
+# View current preferences (table or JSON)
 python3.11 -m src.cli preferences get
+python3.11 -m src.cli preferences get --format json
+
+# Adjust scorer weights and content length preferences
 python3.11 -m src.cli preferences set-weight genre_match 3.0
 python3.11 -m src.cli preferences set-length book short
-python3.11 -m src.cli preferences custom-rules add "avoid horror"
-python3.11 -m src.cli preferences custom-rules add "prefer sci-fi"
 
-# Enrich metadata from external APIs (see docs/ENRICHMENT_SETUP.md)
+# Reset all preferences to defaults
+python3.11 -m src.cli preferences reset
+
+# Custom rules (natural-language preferences interpreted by the LLM)
+python3.11 -m src.cli preferences custom-rules add "avoid horror"
+python3.11 -m src.cli preferences custom-rules list
+python3.11 -m src.cli preferences custom-rules interpret "avoid horror" --use-llm
+python3.11 -m src.cli preferences custom-rules remove 0
+python3.11 -m src.cli preferences custom-rules clear --yes
+```
+
+### Enrichment
+
+```bash
+# Run enrichment (all items or filtered by content type)
 python3.11 -m src.cli enrichment start
-python3.11 -m src.cli enrichment start --type movie    # specific content type
+python3.11 -m src.cli enrichment start --type movie
+
+# Re-process items previously marked as not_found (providers can drift over time)
+python3.11 -m src.cli enrichment start --retry-not-found
+python3.11 -m src.cli enrichment start --type movie --retry-not-found
+
+# Check enrichment statistics
 python3.11 -m src.cli enrichment status
+
+# Reset enrichment status so items are re-processed on the next run
+python3.11 -m src.cli enrichment reset
+```
+
+### Authentication (GOG/Epic)
+
+```bash
+# Check OAuth connection status
+python3.11 -m src.cli auth status
+
+# Connect via browser OAuth flow
+python3.11 -m src.cli auth connect --source gog
+python3.11 -m src.cli auth connect --source epic
+
+# Disconnect stored credentials
+python3.11 -m src.cli auth disconnect --source gog
+```
+
+### Conversation & Memories (requires AI)
+
+```bash
+# Interactive chat session
+python3.11 -m src.cli chat start
+python3.11 -m src.cli chat start --type book    # filter to books only
+
+# Single-shot message
+python3.11 -m src.cli chat send --message "What should I read next?"
+
+# Conversation history
+python3.11 -m src.cli chat history --limit 20
+python3.11 -m src.cli chat reset
+
+# Manage memories (persistent preference signals)
+python3.11 -m src.cli memory list
+python3.11 -m src.cli memory add --text "I love hard sci-fi"
+python3.11 -m src.cli memory edit --id 3 --text "I love hard sci-fi and space opera"
+python3.11 -m src.cli memory edit --id 3 --inactive          # Set explicit active state
+python3.11 -m src.cli memory edit --id 3 --text "..." --inactive  # Text + state in one call
+python3.11 -m src.cli memory toggle --id 3                   # Flip active/inactive
+python3.11 -m src.cli memory delete --id 3
+```
+
+### User Profile
+
+```bash
+# View your computed preference profile
+python3.11 -m src.cli profile show
+python3.11 -m src.cli profile show --format json
+
+# Regenerate profile from current library data
+python3.11 -m src.cli profile regenerate
 ```
 
 ## How Scoring Works

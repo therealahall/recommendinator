@@ -146,6 +146,9 @@ If you enabled `auto_enrich_on_sync`, enrichment runs automatically after each s
 ```bash
 python3.11 -m src.cli enrichment start
 python3.11 -m src.cli enrichment status
+
+# Retry items that providers couldn't find previously
+python3.11 -m src.cli enrichment start --retry-not-found
 ```
 
 ## Get Recommendations
@@ -164,6 +167,50 @@ python3.11 -m src.cli recommend --type video_game --count 5
 python3.11 -m src.cli recommend --type tv_show --count 5
 ```
 
+## Check System Status
+
+```bash
+# See component health, database stats, and feature flags
+python3.11 -m src.cli status
+```
+
+## Browse & Edit Your Library
+
+```bash
+# List your completed books, sorted by rating
+python3.11 -m src.cli library list --type book --status completed --sort rating
+
+# Show full details for a single item
+python3.11 -m src.cli library show --id 42
+
+# Edit an item's rating or status
+python3.11 -m src.cli library edit --id 42 --rating 5 --status completed
+
+# Exclude an item from recommendations (or reverse it)
+python3.11 -m src.cli library ignore --id 42
+python3.11 -m src.cli library unignore --id 42
+```
+
+## Authenticate Game Sources (GOG/Epic)
+
+```bash
+# Connect your GOG account via browser OAuth
+python3.11 -m src.cli auth connect --source gog
+
+# Check connection status
+python3.11 -m src.cli auth status
+```
+
+## Chat with Your Library (requires AI)
+
+```bash
+# Start an interactive chat session
+python3.11 -m src.cli chat start
+
+# Or send a single question
+python3.11 -m src.cli chat send --message "What should I read next?"
+```
+
 ## Use the Web Interface
 
 ```bash
@@ -173,6 +220,13 @@ python3.11 -m src.web
 Open http://localhost:18473 in your browser. The web UI provides browsing, syncing, recommendations, and (with AI enabled) a conversational chat interface. The version number in the sidebar (e.g., "v0.3.0") shows the running application version. If a new version becomes available while you have the page open, a banner will prompt you to reload.
 
 ## Customize Your Preferences
+
+### View current preferences
+
+```bash
+# Show current weights, length preferences, and custom rules
+python3.11 -m src.cli preferences get
+```
 
 ### Set scoring weights
 
