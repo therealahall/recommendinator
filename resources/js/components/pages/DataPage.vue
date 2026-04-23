@@ -18,21 +18,15 @@ onUnmounted(() => {
   data.cleanup()
 })
 
-function needsGogConnect(sourceId: string): boolean {
-  return sourceId === 'gog' && !data.gogStatus.connected && !!data.gogStatus.authUrl
-}
+const gogState = computed(() => ({
+  needsConnect: !data.gogStatus.connected && !!data.gogStatus.authUrl,
+  showDisconnect: data.gogStatus.connected,
+}))
 
-function needsEpicConnect(sourceId: string): boolean {
-  return sourceId === 'epic_games' && !data.epicStatus.connected && !!data.epicStatus.authUrl
-}
-
-function showGogDisconnect(sourceId: string): boolean {
-  return sourceId === 'gog' && data.gogStatus.connected
-}
-
-function showEpicDisconnect(sourceId: string): boolean {
-  return sourceId === 'epic_games' && data.epicStatus.connected
-}
+const epicState = computed(() => ({
+  needsConnect: !data.epicStatus.connected && !!data.epicStatus.authUrl,
+  showDisconnect: data.epicStatus.connected,
+}))
 
 const syncAllLabel = computed(() => {
   if (data.syncStatus === 'running' && data.syncingSource === 'all') return 'Syncing...'
@@ -85,28 +79,33 @@ const syncAllLabel = computed(() => {
           :source="source"
           :syncing="data.syncingSource === source.id || data.syncingSource === 'all'"
           :disabled="data.syncStatus === 'running' && data.syncingSource !== source.id && data.syncingSource !== 'all'"
-          :show-sync-button="!needsGogConnect(source.id) && !needsEpicConnect(source.id)"
+          :show-sync-button="
+            !(source.id === 'gog' && gogState.needsConnect) &&
+            !(source.id === 'epic_games' && epicState.needsConnect)
+          "
           @sync="data.triggerSync($event)"
         >
-          <OAuthConnectFlow
-            v-if="needsGogConnect(source.id)"
-            :auth-url="data.gogStatus.authUrl"
-            expected-origin="https://login.gog.com"
-            :connect-message="data.gogConnectMessage"
-            help-text="Paste the redirect URL after logging in:"
-            service-name="GOG Account"
-            @submit="data.submitGogCode($event)"
-          />
-          <OAuthConnectFlow
-            v-else-if="needsEpicConnect(source.id)"
-            :auth-url="data.epicStatus.authUrl"
-            expected-origin="https://www.epicgames.com"
-            :connect-message="data.epicConnectMessage"
-            help-text="Paste the authorization code from the JSON response:"
-            service-name="Epic Games"
-            @submit="data.submitEpicCode($event)"
-          />
-          <template v-else-if="showGogDisconnect(source.id)">
+          <template v-if="source.id === 'gog' && gogState.needsConnect">
+            <OAuthConnectFlow
+              :auth-url="data.gogStatus.authUrl"
+              expected-origin="https://login.gog.com"
+              :connect-message="data.gogConnectMessage"
+              help-text="Paste the redirect URL after logging in:"
+              service-name="GOG Account"
+              @submit="data.submitGogCode($event)"
+            />
+          </template>
+          <template v-else-if="source.id === 'epic_games' && epicState.needsConnect">
+            <OAuthConnectFlow
+              :auth-url="data.epicStatus.authUrl"
+              expected-origin="https://www.epicgames.com"
+              :connect-message="data.epicConnectMessage"
+              help-text="Paste the authorization code from the JSON response:"
+              service-name="Epic Games"
+              @submit="data.submitEpicCode($event)"
+            />
+          </template>
+          <template v-else-if="source.id === 'gog' && gogState.showDisconnect">
             <p
               v-if="data.gogConnectMessage"
               class="sr-only"
@@ -114,12 +113,13 @@ const syncAllLabel = computed(() => {
             >{{ data.gogConnectMessage }}</p>
             <button
               type="button"
-              class="btn btn-ghost btn-small"
+              class="btn btn-danger disconnect-btn"
               :disabled="data.syncStatus === 'running'"
+              aria-label="Disconnect GOG"
               @click="data.disconnectGog()"
-            >Disconnect GOG</button>
+            >Disconnect</button>
           </template>
-          <template v-else-if="showEpicDisconnect(source.id)">
+          <template v-else-if="source.id === 'epic_games' && epicState.showDisconnect">
             <p
               v-if="data.epicConnectMessage"
               class="sr-only"
@@ -127,10 +127,11 @@ const syncAllLabel = computed(() => {
             >{{ data.epicConnectMessage }}</p>
             <button
               type="button"
-              class="btn btn-ghost btn-small"
+              class="btn btn-danger disconnect-btn"
               :disabled="data.syncStatus === 'running'"
+              aria-label="Disconnect Epic Games"
               @click="data.disconnectEpic()"
-            >Disconnect Epic Games</button>
+            >Disconnect</button>
           </template>
         </SyncSourceCard>
         <div v-if="data.syncSources.length > 1" class="sync-card">
@@ -148,3 +149,14 @@ const syncAllLabel = computed(() => {
     <EnrichmentCard />
   </div>
 </template>
+
+<style scoped>
+/* .btn is display:inline-flex, so the Sync button would otherwise sit next
+   to the Disconnect button on the same line. Force a block break so they
+   stack with spacing — separating the destructive action from Sync also
+   makes misclicks less likely. */
+.disconnect-btn {
+  display: flex;
+  margin: 0 auto var(--space-3);
+}
+</style>

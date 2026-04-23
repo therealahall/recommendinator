@@ -288,7 +288,7 @@ describe('useDataStore', () => {
     await store.disconnectGog()
 
     expect(mockDelete).toHaveBeenCalledWith('/gog/token')
-    expect(store.gogConnectMessage).toContain('Disconnected')
+    expect(store.gogConnectMessage).toBe('Disconnected. You can reconnect below.')
     expect(store.gogStatus.connected).toBe(false)
   })
 
@@ -304,24 +304,86 @@ describe('useDataStore', () => {
     await store.disconnectEpic()
 
     expect(mockDelete).toHaveBeenCalledWith('/epic/token')
-    expect(store.epicConnectMessage).toContain('Disconnected')
+    expect(store.epicConnectMessage).toBe('Disconnected. You can reconnect below.')
     expect(store.epicStatus.connected).toBe(false)
   })
 
-  it('disconnectGog surfaces API error in the connect message', async () => {
+  it('disconnectGog surfaces API error and does not reload sync sources', async () => {
     mockDelete.mockRejectedValue(new ApiError(500, 'Internal Server Error'))
 
     const store = useDataStore()
     await store.disconnectGog()
 
     expect(store.gogConnectMessage).toBe('Error: server returned 500')
+    // Reload must only run on success — otherwise a failed disconnect
+    // triggers a spurious status fetch that itself may error.
+    expect(mockGet).not.toHaveBeenCalled()
+    expect(mockPost).not.toHaveBeenCalled()
   })
 
-  it('disconnectEpic surfaces API error in the connect message', async () => {
+  it('disconnectEpic surfaces API error and does not reload sync sources', async () => {
     mockDelete.mockRejectedValue(new ApiError(500, 'Internal Server Error'))
 
     const store = useDataStore()
     await store.disconnectEpic()
+
+    expect(store.epicConnectMessage).toBe('Error: server returned 500')
+    expect(mockGet).not.toHaveBeenCalled()
+    expect(mockPost).not.toHaveBeenCalled()
+  })
+
+  it('disconnectGog surfaces generic error with fallback message', async () => {
+    mockDelete.mockRejectedValue(new Error('network timeout'))
+
+    const store = useDataStore()
+    await store.disconnectGog()
+
+    expect(store.gogConnectMessage).toBe('Error: disconnect failed')
+    expect(mockGet).not.toHaveBeenCalled()
+    expect(mockPost).not.toHaveBeenCalled()
+  })
+
+  it('disconnectEpic surfaces generic error with fallback message', async () => {
+    mockDelete.mockRejectedValue(new Error('network timeout'))
+
+    const store = useDataStore()
+    await store.disconnectEpic()
+
+    expect(store.epicConnectMessage).toBe('Error: disconnect failed')
+    expect(mockGet).not.toHaveBeenCalled()
+    expect(mockPost).not.toHaveBeenCalled()
+  })
+
+  it('disconnectGog sets in-progress message before awaiting DELETE', async () => {
+    let rejectDelete: (err: Error) => void = () => {}
+    mockDelete.mockImplementation(
+      () => new Promise((_, reject) => { rejectDelete = reject })
+    )
+
+    const store = useDataStore()
+    const pending = store.disconnectGog()
+    // Synchronous assignment must land before the promise resolves so the
+    // aria-live region announces activity immediately.
+    expect(store.gogConnectMessage).toBe('Disconnecting GOG...')
+
+    rejectDelete(new ApiError(500, 'Internal Server Error'))
+    await pending
+
+    expect(store.gogConnectMessage).toBe('Error: server returned 500')
+  })
+
+  it('disconnectEpic sets in-progress message before awaiting DELETE', async () => {
+    let rejectDelete: (err: Error) => void = () => {}
+    mockDelete.mockImplementation(
+      () => new Promise((_, reject) => { rejectDelete = reject })
+    )
+
+    const store = useDataStore()
+    const pending = store.disconnectEpic()
+    expect(store.epicConnectMessage).toBe('Disconnecting Epic Games...')
+
+    rejectDelete(new ApiError(500, 'Internal Server Error'))
+    await pending
 
     expect(store.epicConnectMessage).toBe('Error: server returned 500')
   })
