@@ -1,14 +1,20 @@
 """CLI commands."""
 
+from __future__ import annotations  # noqa: I001
+
 import importlib.metadata
 import json
+import logging
 import time
+import webbrowser
 from pathlib import Path
 
 import click
 from tabulate import tabulate
 
 from src.cli.config import get_feature_flags
+from src.conversation.engine import ConversationEngine
+from src.conversation.profile import ProfileGenerator
 from src.enrichment.manager import EnrichmentManager
 from src.ingestion.sync import execute_sync
 from src.models.content import (
@@ -24,8 +30,27 @@ from src.recommendations.preference_interpreter import (
 )
 from src.recommendations.scorers import SCORER_NAME_MAP
 from src.storage.credential_migration import migrate_config_credentials
+from src.utils.item_serialization import item_to_dict
+from src.web.epic_auth import (
+    exchange_code_for_tokens as exchange_epic_code,
+    extract_code_from_input as extract_epic_code,
+    get_epic_auth_url,
+    has_epic_token,
+    is_epic_enabled,
+    save_epic_token,
+)
 from src.web.export import export_items_csv, export_items_json
+from src.web.gog_auth import (
+    exchange_code_for_tokens as exchange_gog_code,
+    extract_code_from_input as extract_gog_code,
+    get_gog_auth_url,
+    has_gog_token,
+    is_gog_enabled,
+    save_gog_token,
+)
 from src.web.sync_sources import resolve_inputs, validate_source_config
+
+logger = logging.getLogger(__name__)
 
 
 @click.command()
@@ -38,35 +63,51 @@ from src.web.sync_sources import resolve_inputs, validate_source_config
 )
 @click.pass_context
 def status(ctx: click.Context, output_format: str) -> None:
-    """Show system health, component readiness, and feature flags."""
+    """Show system health, component readiness, and feature flags.
+
+    Mirrors the web API GET /api/status StatusResponse shape.
+    """
     version = importlib.metadata.version("recommendinator")
     config = ctx.obj["config"]
+    flags = get_feature_flags(config)
+    ai_enabled = flags["ai_enabled"]
 
-    # Component readiness
+    # Component readiness (keys and AI-gating match web API)
     components = {
         "engine": ctx.obj.get("engine") is not None,
         "storage": ctx.obj.get("storage") is not None,
-        "embedding_gen": ctx.obj.get("embedding_gen") is not None,
-        "llm_client": ctx.obj.get("llm_client") is not None,
+        "embedding_generator": (
+            ctx.obj.get("embedding_gen") is not None if ai_enabled else True
+        ),
     }
 
-    # Feature flags
-    flags = get_feature_flags(config)
+    # Features (key set matches web FeaturesStatus exactly)
+    features = {
+        "ai_enabled": ai_enabled,
+        "embeddings_enabled": flags["embeddings_enabled"],
+        "llm_reasoning_enabled": flags["llm_reasoning_enabled"],
+    }
 
-    # Max recommendation count
     rec_config = config.get("recommendations", {})
-    max_count = rec_config.get("max_count", 20)
+    recommendations_config = {
+        "max_count": rec_config.get("max_count", 20),
+        "default_count": rec_config.get("default_count", 5),
+    }
+
+    all_ready = all(components.values())
+    status_str = "ready" if all_ready else "initializing"
 
     if output_format == "json":
         output = {
+            "status": status_str,
             "version": version,
             "components": components,
-            "features": flags,
-            "recommendations": {"max_count": max_count},
+            "features": features,
+            "recommendations_config": recommendations_config,
         }
         click.echo(json.dumps(output, indent=2))
     else:
-        click.echo(f"\nRecommendinator v{version}\n")
+        click.echo(f"\nRecommendinator v{version} ({status_str})\n")
 
         click.echo("Components:")
         for name, ready in components.items():
@@ -74,11 +115,14 @@ def status(ctx: click.Context, output_format: str) -> None:
             click.echo(f"  {name}: {label}")
 
         click.echo("\nFeatures:")
-        for name, enabled in flags.items():
+        for name, enabled in features.items():
             label = "enabled" if enabled else "disabled"
             click.echo(f"  {name}: {label}")
 
-        click.echo(f"\nMax recommendations: {max_count}")
+        click.echo(
+            f"\nRecommendations: max={recommendations_config['max_count']}, "
+            f"default={recommendations_config['default_count']}"
+        )
 
 
 @click.command()
@@ -91,9 +135,9 @@ def status(ctx: click.Context, output_format: str) -> None:
 )
 @click.option(
     "--count",
-    type=click.IntRange(min=1, max=20),
+    type=click.IntRange(min=1),
     default=5,
-    help="Number of recommendations to generate (1-20)",
+    help="Number of recommendations to generate (capped by config 'recommendations.max_count').",
 )
 @click.option(
     "--format",
@@ -103,9 +147,9 @@ def status(ctx: click.Context, output_format: str) -> None:
     help="Output format",
 )
 @click.option(
-    "--use-llm",
-    is_flag=True,
-    help="Use LLM for enhanced recommendation reasoning",
+    "--use-llm/--no-use-llm",
+    default=True,
+    help="Use LLM for enhanced recommendation reasoning (default: enabled).",
 )
 @click.option(
     "--user",
@@ -126,6 +170,15 @@ def recommend(
     """Get personalized recommendations."""
     content_type = ContentType.from_string(content_type_str)
 
+    # Enforce config-driven max_count (matches web API /api/recommendations).
+    max_count = ctx.obj["config"].get("recommendations", {}).get("max_count", 20)
+    if count > max_count:
+        click.echo(
+            f"Error: --count {count} exceeds configured max_count={max_count}.",
+            err=True,
+        )
+        raise click.Abort()
+
     engine = ctx.obj["engine"]
     storage = ctx.obj["storage"]
 
@@ -143,26 +196,33 @@ def recommend(
         )
 
         if not recommendations:
-            click.echo(
-                "No recommendations available. Recommendations are based on items "
-                "you haven't consumed yet — try adding new items to your "
-                "wishlist or library."
-            )
+            if output_format == "json":
+                # Emit an empty JSON array (matches web GET /api/recommendations).
+                click.echo(json.dumps([]))
+            else:
+                click.echo(
+                    "No recommendations available. Recommendations are based "
+                    "on items you haven't consumed yet — try adding new items "
+                    "to your wishlist or library."
+                )
             return
 
         if output_format == "json":
-            # JSON output
+            # JSON output matches web API RecommendationResponse shape
             output = []
             for rec in recommendations:
                 item = rec["item"]
                 output.append(
                     {
+                        "db_id": item.db_id,
                         "title": item.title,
                         "author": item.author,
                         "score": rec["score"],
                         "similarity_score": rec["similarity_score"],
                         "preference_score": rec["preference_score"],
                         "reasoning": rec["reasoning"],
+                        "llm_reasoning": rec.get("llm_reasoning"),
+                        "score_breakdown": rec.get("score_breakdown", {}),
                     }
                 )
             click.echo(json.dumps(output, indent=2))
@@ -745,6 +805,11 @@ def enrichment() -> None:
     help="Content type to enrich (default: all types)",
 )
 @click.option(
+    "--retry-not-found",
+    is_flag=True,
+    help="Re-process items previously marked as not_found (matches web API).",
+)
+@click.option(
     "--user",
     "user_id",
     type=int,
@@ -753,7 +818,10 @@ def enrichment() -> None:
 )
 @click.pass_context
 def enrichment_start(
-    ctx: click.Context, content_type_str: str | None, user_id: int
+    ctx: click.Context,
+    content_type_str: str | None,
+    retry_not_found: bool,
+    user_id: int,
 ) -> None:
     """Start background metadata enrichment.
 
@@ -780,7 +848,11 @@ def enrichment_start(
 
     manager = EnrichmentManager(storage, config)
 
-    if not manager.start_enrichment(content_type=content_type, user_id=user_id):
+    if not manager.start_enrichment(
+        content_type=content_type,
+        user_id=user_id,
+        include_not_found=retry_not_found,
+    ):
         click.echo("Enrichment job is already running.", err=True)
         raise click.Abort()
 
@@ -847,14 +919,19 @@ def enrichment_start(
 @click.pass_context
 def enrichment_status(ctx: click.Context, user_id: int, output_format: str) -> None:
     """Show enrichment statistics."""
+    config = ctx.obj["config"]
     storage = ctx.obj["storage"]
 
-    stats = storage.get_enrichment_stats(user_id=user_id)
+    raw_stats = storage.get_enrichment_stats(user_id=user_id)
+    enrichment_enabled = config.get("enrichment", {}).get("enabled", False)
+    # Shape matches web API EnrichmentStatsResponse
+    stats = {"enabled": enrichment_enabled, **raw_stats}
 
     if output_format == "json":
         click.echo(json.dumps(stats, indent=2))
     else:
-        click.echo("Enrichment Statistics:")
+        enabled_label = "enabled" if stats["enabled"] else "disabled"
+        click.echo(f"Enrichment Statistics ({enabled_label}):")
         click.echo(f"  Total items: {stats['total']}")
         click.echo(f"  Enriched: {stats['enriched']}")
         click.echo(f"  Pending: {stats['pending']}")
@@ -964,7 +1041,7 @@ def library() -> None:
     "--status",
     "status_str",
     type=click.Choice(
-        ["unread", "currently_consuming", "completed", "abandoned"],
+        ["unread", "currently_consuming", "completed"],
         case_sensitive=False,
     ),
     default=None,
@@ -984,8 +1061,18 @@ def library() -> None:
     is_flag=True,
     help="Include ignored items",
 )
-@click.option("--limit", type=int, default=None, help="Max items to return")
-@click.option("--offset", type=int, default=0, help="Items to skip")
+@click.option(
+    "--limit",
+    type=click.IntRange(min=1, max=200),
+    default=50,
+    help="Max items to return (1-200, default 50, matches web API)",
+)
+@click.option(
+    "--offset",
+    type=click.IntRange(min=0),
+    default=0,
+    help="Items to skip (for pagination)",
+)
 @click.option(
     "--format",
     "output_format",
@@ -1030,39 +1117,30 @@ def library_list(
         offset=offset,
     )
 
+    if output_format == "json":
+        # Always emit a JSON array, even when empty (matches web GET /api/items).
+        output = [item_to_dict(item) for item in items]
+        click.echo(json.dumps(output, indent=2))
+        return
+
     if not items:
         click.echo("No items found.")
         return
 
-    if output_format == "json":
-        output = [
-            {
-                "db_id": item.db_id,
-                "title": item.title,
-                "author": item.author,
-                "content_type": get_enum_value(item.content_type),
-                "status": get_enum_value(item.status),
-                "rating": item.rating,
-                "ignored": bool(item.ignored),
-            }
-            for item in items
-        ]
-        click.echo(json.dumps(output, indent=2))
-    else:
-        table_data = []
-        for item in items:
-            table_data.append(
-                [
-                    item.db_id,
-                    item.title,
-                    item.author or "N/A",
-                    get_enum_value(item.content_type),
-                    get_enum_value(item.status),
-                    item.rating or "N/A",
-                ]
-            )
-        headers = ["ID", "Title", "Author", "Type", "Status", "Rating"]
-        click.echo(tabulate(table_data, headers=headers, tablefmt="grid"))
+    table_data = []
+    for item in items:
+        table_data.append(
+            [
+                item.db_id,
+                item.title,
+                item.author or "N/A",
+                get_enum_value(item.content_type),
+                get_enum_value(item.status),
+                "N/A" if item.rating is None else item.rating,
+            ]
+        )
+    headers = ["ID", "Title", "Author", "Type", "Status", "Rating"]
+    click.echo(tabulate(table_data, headers=headers, tablefmt="grid"))
 
 
 @library.command("show")
@@ -1094,27 +1172,14 @@ def library_show(
         raise click.Abort()
 
     if output_format == "json":
-        output = {
-            "db_id": item.db_id,
-            "title": item.title,
-            "author": item.author,
-            "content_type": get_enum_value(item.content_type),
-            "status": get_enum_value(item.status),
-            "rating": item.rating,
-            "review": item.review,
-            "date_completed": (
-                item.date_completed.isoformat() if item.date_completed else None
-            ),
-            "ignored": bool(item.ignored),
-        }
-        click.echo(json.dumps(output, indent=2))
+        click.echo(json.dumps(item_to_dict(item), indent=2))
     else:
         table_data = [
             ["Title", item.title],
             ["Author", item.author or "N/A"],
             ["Type", get_enum_value(item.content_type)],
             ["Status", get_enum_value(item.status)],
-            ["Rating", item.rating or "N/A"],
+            ["Rating", "N/A" if item.rating is None else item.rating],
             ["Review", item.review or "N/A"],
             [
                 "Date Completed",
@@ -1131,7 +1196,7 @@ def library_show(
     "--status",
     "status_str",
     type=click.Choice(
-        ["unread", "currently_consuming", "completed", "abandoned"],
+        ["unread", "currently_consuming", "completed"],
         case_sensitive=False,
     ),
     default=None,
@@ -1167,6 +1232,19 @@ def library_edit(
     user_id: int,
 ) -> None:
     """Edit an item's status, rating, or review."""
+    if (
+        status_str is None
+        and rating is None
+        and review is None
+        and seasons_watched is None
+    ):
+        click.echo(
+            "Error: Provide at least one of --status, --rating, --review, "
+            "--seasons-watched.",
+            err=True,
+        )
+        raise click.Abort()
+
     storage = ctx.obj["storage"]
 
     # Look up the item to get current status if not provided
@@ -1179,7 +1257,14 @@ def library_edit(
 
     parsed_seasons: list[int] | None = None
     if seasons_watched is not None:
-        parsed_seasons = [int(s.strip()) for s in seasons_watched.split(",")]
+        try:
+            parsed_seasons = [int(s.strip()) for s in seasons_watched.split(",")]
+        except ValueError:
+            click.echo(
+                "Error: --seasons-watched must be comma-separated integers (e.g. 1,2,3).",
+                err=True,
+            )
+            raise click.Abort() from None
 
     updated = storage.update_item_from_ui(
         db_id=item_id,
@@ -1296,3 +1381,558 @@ def library_export(
         click.echo(f"Exported {len(items)} items to {output_path}")
     else:
         click.echo(data, nl=False)
+
+
+# ---------------------------------------------------------------------------
+# Auth command group
+# ---------------------------------------------------------------------------
+
+# Maps CLI --source name to the internal storage source_id. The CLI accepts
+# "epic" for brevity but credentials are stored under "epic_games" to match
+# the plugin source identifier used across ingestion and storage.
+_SOURCE_ID_MAP = {"gog": "gog", "epic": "epic_games"}
+
+
+@click.group()
+def auth() -> None:
+    """Manage authentication for data sources."""
+
+
+@auth.command("status")
+@click.option("--user", "user_id", type=int, default=1, help="User ID")
+@click.pass_context
+def auth_status(ctx: click.Context, user_id: int) -> None:
+    """Show authentication status for OAuth sources."""
+    config = ctx.obj["config"]
+    storage = ctx.obj["storage"]
+
+    found = False
+    if is_gog_enabled(config):
+        found = True
+        connected = has_gog_token(config, storage=storage, user_id=user_id)
+        click.echo(f"  gog: {'connected' if connected else 'not connected'}")
+    if is_epic_enabled(config):
+        found = True
+        connected = has_epic_token(config, storage=storage, user_id=user_id)
+        click.echo(f"  epic: {'connected' if connected else 'not connected'}")
+
+    if not found:
+        click.echo("No OAuth sources are enabled in config.")
+
+
+@auth.command("connect")
+@click.option(
+    "--source",
+    type=click.Choice(["gog", "epic"], case_sensitive=False),
+    required=True,
+    help="Source to authenticate",
+)
+@click.option("--no-browser", is_flag=True, help="Don't open browser automatically")
+@click.option("--user", "user_id", type=int, default=1, help="User ID")
+@click.pass_context
+def auth_connect(
+    ctx: click.Context, source: str, no_browser: bool, user_id: int
+) -> None:
+    """Connect an OAuth source by authenticating in browser."""
+    config = ctx.obj["config"]
+    storage = ctx.obj["storage"]
+
+    if source == "gog":
+        is_enabled_fn, get_auth_url_fn = is_gog_enabled, get_gog_auth_url
+        extract_code_fn = extract_gog_code
+        exchange_fn, save_fn = exchange_gog_code, save_gog_token
+    else:
+        is_enabled_fn, get_auth_url_fn = is_epic_enabled, get_epic_auth_url
+        extract_code_fn = extract_epic_code
+        exchange_fn, save_fn = exchange_epic_code, save_epic_token
+
+    if not is_enabled_fn(config):
+        click.echo(f"Error: {source} is not enabled in config.", err=True)
+        raise click.Abort()
+
+    auth_url = get_auth_url_fn()
+    click.echo(f"\nAuthorize {source} at:\n  {auth_url}\n")
+
+    if not no_browser:
+        try:
+            webbrowser.open(auth_url)
+            click.echo("(Browser opened automatically)")
+        except Exception:
+            logger.debug("Failed to open browser", exc_info=True)
+            click.echo("(Could not open browser — copy the URL above)")
+
+    code = click.prompt("Paste the authorization code or redirect URL")
+
+    try:
+        extracted_code = extract_code_fn(code.strip())
+        tokens = exchange_fn(extracted_code)
+        refresh_token = tokens.get("refresh_token")
+        if not (refresh_token and refresh_token.strip()):
+            click.echo("Error: No refresh token received.", err=True)
+            raise click.Abort()
+        save_fn(storage, refresh_token.strip(), user_id=user_id)
+        click.echo(f"\n{source} connected successfully.")
+    except click.Abort:
+        raise
+    except Exception:
+        logger.error("Failed to connect %s", source, exc_info=True)
+        click.echo(
+            f"Error: Failed to connect {source}. Check logs for details.", err=True
+        )
+        raise click.Abort() from None
+
+
+@auth.command("disconnect")
+@click.option(
+    "--source",
+    type=click.Choice(["gog", "epic"], case_sensitive=False),
+    required=True,
+    help="Source to disconnect",
+)
+@click.option("--yes", is_flag=True, help="Skip confirmation")
+@click.option("--user", "user_id", type=int, default=1, help="User ID")
+@click.pass_context
+def auth_disconnect(ctx: click.Context, source: str, yes: bool, user_id: int) -> None:
+    """Disconnect an OAuth source by removing stored credentials."""
+    storage = ctx.obj["storage"]
+
+    if not yes:
+        if not click.confirm(f"Disconnect {source} for user {user_id}?"):
+            click.echo("Aborted.")
+            return
+
+    source_id = _SOURCE_ID_MAP[source]
+
+    deleted = storage.delete_credential(user_id, source_id, "refresh_token")
+    if deleted:
+        click.echo(f"{source} disconnected.")
+    else:
+        # Mirror DELETE /api/{source}/token which returns 404 when missing.
+        click.echo(f"No active {source} connection found.", err=True)
+        raise click.Abort()
+
+
+# ---------------------------------------------------------------------------
+# Memory command group
+# ---------------------------------------------------------------------------
+
+
+@click.group()
+def memory() -> None:
+    """Manage core memories for personalization."""
+
+
+@memory.command("list")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"]),
+    default="table",
+    help="Output format",
+)
+@click.option(
+    "--include-inactive",
+    is_flag=True,
+    help="Include inactive memories (default shows active only, matches web API)",
+)
+@click.option("--user", "user_id", type=int, default=1, help="User ID")
+@click.pass_context
+def memory_list(
+    ctx: click.Context, output_format: str, include_inactive: bool, user_id: int
+) -> None:
+    """List core memories."""
+    storage = ctx.obj["storage"]
+    memories = storage.get_core_memories(user_id, active_only=not include_inactive)
+
+    if output_format == "json":
+        # JSON output matches web API MemoryResponse shape
+        output = [
+            {
+                "id": mem["id"],
+                "memory_text": mem["memory_text"],
+                "memory_type": mem["memory_type"],
+                "confidence": mem["confidence"],
+                "is_active": mem["is_active"],
+                "source": mem["source"],
+                "created_at": mem["created_at"],
+            }
+            for mem in memories
+        ]
+        click.echo(json.dumps(output, indent=2, default=str))
+    else:
+        if not memories:
+            click.echo("No memories found.")
+            return
+        table_data = []
+        for mem in memories:
+            text = mem["memory_text"]
+            table_data.append(
+                [
+                    mem["id"],
+                    text[:60] + ("..." if len(text) > 60 else ""),
+                    mem["memory_type"],
+                    "active" if mem["is_active"] else "inactive",
+                ]
+            )
+        headers = ["ID", "Text", "Type", "Status"]
+        click.echo(tabulate(table_data, headers=headers, tablefmt="grid"))
+
+
+@memory.command("add")
+@click.option("--text", required=True, help="Memory text")
+@click.option("--user", "user_id", type=int, default=1, help="User ID")
+@click.pass_context
+def memory_add(ctx: click.Context, text: str, user_id: int) -> None:
+    """Add a new core memory."""
+    storage = ctx.obj["storage"]
+    memory_id = storage.save_core_memory(
+        user_id=user_id,
+        memory_text=text,
+        memory_type="user_stated",
+        source="manual",
+        confidence=1.0,
+    )
+    click.echo(f"Memory {memory_id} created.")
+
+
+@memory.command("edit")
+@click.option("--id", "memory_id", type=int, required=True, help="Memory ID")
+@click.option("--text", default=None, help="New memory text")
+@click.option(
+    "--active/--inactive",
+    "is_active",
+    default=None,
+    help="Set active status (matches web API PUT /api/memories/{id})",
+)
+@click.pass_context
+def memory_edit(
+    ctx: click.Context, memory_id: int, text: str | None, is_active: bool | None
+) -> None:
+    """Edit a core memory's text and/or active status."""
+    if text is None and is_active is None:
+        click.echo("Error: specify --text and/or --active/--inactive.", err=True)
+        raise click.Abort()
+    storage = ctx.obj["storage"]
+    updated = storage.update_core_memory(
+        memory_id=memory_id, memory_text=text, is_active=is_active
+    )
+    if updated:
+        click.echo(f"Memory {memory_id} updated.")
+    else:
+        click.echo(f"Error: Memory {memory_id} not found.", err=True)
+        raise click.Abort()
+
+
+@memory.command("toggle")
+@click.option("--id", "memory_id", type=int, required=True, help="Memory ID")
+@click.option("--user", "user_id", type=int, default=1, help="User ID")
+@click.pass_context
+def memory_toggle(ctx: click.Context, memory_id: int, user_id: int) -> None:
+    """Toggle a memory between active and inactive."""
+    storage = ctx.obj["storage"]
+    all_memories = storage.get_core_memories(user_id, active_only=False)
+    target = next((m for m in all_memories if m["id"] == memory_id), None)
+    if target is None:
+        click.echo(f"Error: Memory {memory_id} not found.", err=True)
+        raise click.Abort()
+
+    new_active = not target["is_active"]
+    storage.update_core_memory(memory_id=memory_id, is_active=new_active)
+    state = "active" if new_active else "inactive"
+    click.echo(f"Memory {memory_id} is now {state}.")
+
+
+@memory.command("delete")
+@click.option("--id", "memory_id", type=int, required=True, help="Memory ID")
+@click.option("--yes", is_flag=True, help="Skip confirmation")
+@click.pass_context
+def memory_delete(ctx: click.Context, memory_id: int, yes: bool) -> None:
+    """Delete a core memory."""
+    if not yes:
+        if not click.confirm(f"Delete memory {memory_id}?"):
+            click.echo("Aborted.")
+            return
+
+    storage = ctx.obj["storage"]
+    deleted = storage.delete_core_memory(memory_id=memory_id)
+    if deleted:
+        click.echo(f"Memory {memory_id} deleted.")
+    else:
+        click.echo(f"Error: Memory {memory_id} not found.", err=True)
+        raise click.Abort()
+
+
+# ---------------------------------------------------------------------------
+# Profile command group
+# ---------------------------------------------------------------------------
+
+
+@click.group()
+def profile() -> None:
+    """View and manage your preference profile."""
+
+
+@profile.command("show")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    default="table",
+    help="Output format",
+)
+@click.option("--user", "user_id", type=int, default=1, help="User ID")
+@click.pass_context
+def profile_show(ctx: click.Context, output_format: str, user_id: int) -> None:
+    """Show your preference profile."""
+    storage = ctx.obj["storage"]
+    profile_record = storage.get_preference_profile(user_id)
+
+    if profile_record is None:
+        if output_format == "json":
+            # Emit an empty ProfileResponse (matches web GET /api/profile).
+            click.echo(
+                json.dumps(
+                    {
+                        "user_id": user_id,
+                        "genre_affinities": {},
+                        "theme_preferences": [],
+                        "anti_preferences": [],
+                        "cross_media_patterns": [],
+                        "generated_at": None,
+                    },
+                    indent=2,
+                )
+            )
+        else:
+            click.echo(
+                "No profile generated yet. Run 'profile regenerate' to create one."
+            )
+        return
+
+    # StorageManager.get_preference_profile wraps the profile in a record:
+    # {"id", "user_id", "profile": {...actual data...}, "generated_at"}.
+    # Unwrap to match the web API's ProfileResponse shape.
+    profile = profile_record.get("profile", {})
+    generated_at = profile_record.get("generated_at")
+
+    if output_format == "json":
+        # Explicit field extraction matches web ProfileResponse exactly,
+        # immune to any extra keys the stored profile blob may contain.
+        output = {
+            "user_id": profile_record.get("user_id"),
+            "genre_affinities": profile.get("genre_affinities", {}),
+            "theme_preferences": profile.get("theme_preferences", []),
+            "anti_preferences": profile.get("anti_preferences", []),
+            "cross_media_patterns": profile.get("cross_media_patterns", []),
+            "generated_at": generated_at,
+        }
+        click.echo(json.dumps(output, indent=2, default=str))
+    else:
+        affinities = profile.get("genre_affinities", {})
+        if affinities:
+            click.echo("Genre Affinities:")
+            for genre, score in sorted(
+                affinities.items(), key=lambda pair: pair[1], reverse=True
+            ):
+                click.echo(f"  {genre}: {score:.1f}")
+
+        themes = profile.get("theme_preferences", [])
+        if themes:
+            click.echo("\nTheme Preferences:")
+            for theme in themes:
+                click.echo(f"  - {theme}")
+
+        anti_preferences = profile.get("anti_preferences", [])
+        if anti_preferences:
+            click.echo("\nAnti-Preferences:")
+            for preference in anti_preferences:
+                click.echo(f"  - {preference}")
+
+        patterns = profile.get("cross_media_patterns", [])
+        if patterns:
+            click.echo("\nCross-Media Patterns:")
+            for pattern in patterns:
+                click.echo(f"  - {pattern}")
+
+        if generated_at:
+            click.echo(f"\nGenerated: {generated_at}")
+
+
+@profile.command("regenerate")
+@click.option("--user", "user_id", type=int, default=1, help="User ID")
+@click.pass_context
+def profile_regenerate(ctx: click.Context, user_id: int) -> None:
+    """Regenerate your preference profile from library data."""
+    storage = ctx.obj["storage"]
+
+    click.echo("Analyzing your library...")
+    generator = ProfileGenerator(storage)
+    profile_result = generator.regenerate_and_save(user_id)
+    click.echo(
+        f"Profile regenerated with {len(profile_result.genre_affinities)} genre affinities."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Chat command group
+# ---------------------------------------------------------------------------
+
+
+@click.group()
+def chat() -> None:
+    """Chat with the recommendation AI."""
+
+
+def _require_ai(ctx: click.Context) -> None:
+    """Check that AI features are enabled."""
+    if not get_feature_flags(ctx.obj["config"])["ai_enabled"]:
+        click.echo(
+            "Error: AI features are not enabled. "
+            "Set features.ai_enabled: true in config.",
+            err=True,
+        )
+        raise click.Abort()
+
+
+def _create_conversation_engine(ctx: click.Context) -> ConversationEngine:
+    """Create a ConversationEngine from CLI context."""
+    storage = ctx.obj["storage"]
+    ollama_client = ctx.obj["llm_client"]
+    engine = ctx.obj["engine"]
+    return ConversationEngine(
+        storage_manager=storage,
+        ollama_client=ollama_client,
+        recommendation_engine=engine,
+    )
+
+
+@chat.command("start")
+@click.option(
+    "--type",
+    "content_type_str",
+    type=click.Choice(["book", "movie", "tv_show", "video_game"], case_sensitive=False),
+    default=None,
+    help="Filter suggestions to a content type",
+)
+@click.option("--user", "user_id", type=int, default=1, help="User ID")
+@click.pass_context
+def chat_start(ctx: click.Context, content_type_str: str | None, user_id: int) -> None:
+    """Start an interactive chat session."""
+    _require_ai(ctx)
+    conv_engine = _create_conversation_engine(ctx)
+    content_type = (
+        ContentType.from_string(content_type_str) if content_type_str else None
+    )
+
+    click.echo("Chat session started. Type your message, or Ctrl+D to exit.\n")
+
+    while True:
+        try:
+            click.echo("You> ", nl=False)
+            message = input()
+        except (EOFError, KeyboardInterrupt):
+            click.echo("\nChat session ended.")
+            break
+
+        if not message.strip():
+            continue
+
+        try:
+            response = conv_engine.process_message_sync(
+                user_id=user_id, message=message, content_type=content_type
+            )
+            click.echo(f"\nAssistant: {response}\n")
+        except Exception:
+            logger.error("Chat message processing failed", exc_info=True)
+            click.echo(
+                "\nError: Could not process message. Please try again.\n",
+                err=True,
+            )
+
+
+@chat.command("send")
+@click.option("--message", required=True, help="Message to send")
+@click.option(
+    "--type",
+    "content_type_str",
+    type=click.Choice(["book", "movie", "tv_show", "video_game"], case_sensitive=False),
+    default=None,
+    help="Filter suggestions to a content type",
+)
+@click.option("--user", "user_id", type=int, default=1, help="User ID")
+@click.pass_context
+def chat_send(
+    ctx: click.Context, message: str, content_type_str: str | None, user_id: int
+) -> None:
+    """Send a single message and get a response."""
+    _require_ai(ctx)
+    conv_engine = _create_conversation_engine(ctx)
+    content_type = (
+        ContentType.from_string(content_type_str) if content_type_str else None
+    )
+
+    try:
+        response = conv_engine.process_message_sync(
+            user_id=user_id, message=message, content_type=content_type
+        )
+        click.echo(response)
+    except Exception:
+        logger.error("Chat send failed", exc_info=True)
+        click.echo("Error: Failed to get a response. Check logs for details.", err=True)
+        raise click.Abort() from None
+
+
+@chat.command("history")
+@click.option(
+    "--limit",
+    type=click.IntRange(min=1, max=200),
+    default=50,
+    help="Number of messages to show (1-200, matches web API)",
+)
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"]),
+    default="table",
+    help="Output format",
+)
+@click.option("--user", "user_id", type=int, default=1, help="User ID")
+@click.pass_context
+def chat_history(
+    ctx: click.Context, limit: int, output_format: str, user_id: int
+) -> None:
+    """Show recent conversation history."""
+    storage = ctx.obj["storage"]
+    messages = storage.get_conversation_history(user_id, limit=limit)
+
+    if output_format == "json":
+        # JSON output matches web API MessageResponse shape
+        output = [
+            {
+                "id": msg["id"],
+                "role": msg["role"],
+                "content": msg["content"],
+                "tool_calls": msg.get("tool_calls"),
+                "created_at": msg["created_at"],
+            }
+            for msg in messages
+        ]
+        click.echo(json.dumps(output, indent=2, default=str))
+    else:
+        if not messages:
+            click.echo("No conversation history.")
+            return
+        for msg in messages:
+            role = msg["role"].capitalize()
+            content = msg["content"]
+            click.echo(f"{role}: {content}\n")
+
+
+@chat.command("reset")
+@click.option("--user", "user_id", type=int, default=1, help="User ID")
+@click.pass_context
+def chat_reset(ctx: click.Context, user_id: int) -> None:
+    """Clear conversation history (preserves memories)."""
+    storage = ctx.obj["storage"]
+    count = storage.clear_conversation_history(user_id)
+    click.echo(f"Cleared {count} message(s). Core memories preserved.")

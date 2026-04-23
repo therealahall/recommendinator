@@ -6,10 +6,14 @@ from pathlib import Path
 import click
 
 from src.cli.commands import (
+    auth,
+    chat,
     complete,
     enrichment,
     library,
+    memory,
     preferences,
+    profile,
     recommend,
     status,
     update,
@@ -59,6 +63,8 @@ def cli(ctx: click.Context, config: Path | None) -> None:
 
 
 # Register commands
+cli.add_command(auth)
+cli.add_command(chat)
 cli.add_command(status)
 cli.add_command(recommend)
 cli.add_command(update)
@@ -66,6 +72,8 @@ cli.add_command(complete)
 cli.add_command(preferences)
 cli.add_command(enrichment)
 cli.add_command(library)
+cli.add_command(memory)
+cli.add_command(profile)
 
 
 if __name__ == "__main__":
