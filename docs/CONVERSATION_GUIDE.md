@@ -65,7 +65,7 @@ Compact mode uses:
 
 ## Using the Chat
 
-Chat is available through the **web interface** — there is no CLI chat command. Start the web server and navigate to the Chat tab.
+Chat is available through both the **web interface** and the **CLI**. In the web UI, navigate to the Chat tab. From the command line, use the `chat` command group (see below).
 
 ### What You Can Do
 
@@ -111,7 +111,7 @@ Memories are persistent preference signals that carry across conversations. They
 
 ### Managing Memories
 
-In the web UI, the chat interface shows a **Memories** panel where you can:
+In the web UI, the chat interface shows a **Memories** panel. You can also manage memories via the `memory` CLI commands (see [CLI Commands](#cli-commands) below). Both interfaces let you:
 - View all active memories
 - Add new memories manually
 - Edit existing memories
@@ -136,6 +136,50 @@ The profile system analyzes your completed and rated items to build a preference
 **Profile regeneration** happens automatically on a configurable interval (default: every 24 hours). You can also manually regenerate your profile from the web UI if you've added a lot of new ratings and want the profile to update immediately.
 
 The profile is not always perfect — it's derived from your data and may occasionally mischaracterize your preferences (e.g., reporting you dislike a genre when you actually just haven't rated enough items in it). As you rate more content, the profile becomes more accurate.
+
+## CLI Commands
+
+The `chat` and `memory` CLI command groups provide terminal-based alternatives to the web UI.
+
+### Chat Commands
+
+```bash
+# Start an interactive REPL session
+python3.11 -m src.cli chat start
+
+# Filter to a specific content type
+python3.11 -m src.cli chat start --type book
+
+# Send a single message without entering the REPL
+python3.11 -m src.cli chat send --message "Recommend a sci-fi book"
+
+# View recent conversation history
+python3.11 -m src.cli chat history --limit 10
+
+# Clear conversation history
+python3.11 -m src.cli chat reset
+```
+
+### Memory Commands
+
+```bash
+# List all memories
+python3.11 -m src.cli memory list
+
+# Add a memory manually
+python3.11 -m src.cli memory add --text "I love hard sci-fi"
+
+# Edit a memory's text and/or active state (matches web API PUT /api/memories/{id})
+python3.11 -m src.cli memory edit --id 3 --text "I love hard sci-fi and space opera"
+python3.11 -m src.cli memory edit --id 3 --inactive
+python3.11 -m src.cli memory edit --id 3 --text "..." --inactive
+
+# Flip a memory's active state (convenience shortcut)
+python3.11 -m src.cli memory toggle --id 3
+
+# Delete a memory
+python3.11 -m src.cli memory delete --id 3
+```
 
 ## Troubleshooting
 
