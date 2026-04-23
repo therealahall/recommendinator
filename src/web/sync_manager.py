@@ -159,17 +159,38 @@ class SyncManager:
         try:
             count = sync_function(job)
             with self._lock:
-                job.status = SyncStatus.COMPLETED
                 job.completed_at = datetime.now()
                 job.items_processed = count
-            logger.info("Sync completed for %s: %d items processed", job.source, count)
+                # A sync that produced zero items but logged errors is a
+                # failure, not a success — plugins like Epic Games catch
+                # their own exceptions and report them via add_error, and
+                # the UI banner branches on the status field.
+                if count == 0 and job.errors:
+                    job.status = SyncStatus.FAILED
+                    job.error_message = job.errors[0]
+                else:
+                    job.status = SyncStatus.COMPLETED
+                final_status = job.status
+                error_count = len(job.errors)
 
-            # Run completion callback if provided
-            if on_complete is not None:
-                try:
-                    on_complete()
-                except Exception as callback_error:
-                    logger.error("Sync on_complete callback failed: %s", callback_error)
+            if final_status == SyncStatus.COMPLETED:
+                logger.info(
+                    "Sync completed for %s: %d items processed", job.source, count
+                )
+                # Run completion callback only on true success
+                if on_complete is not None:
+                    try:
+                        on_complete()
+                    except Exception as callback_error:
+                        logger.error(
+                            "Sync on_complete callback failed: %s", callback_error
+                        )
+            else:
+                logger.warning(
+                    "Sync for %s produced no items; marking failed (%d errors)",
+                    job.source,
+                    error_count,
+                )
         except Exception:
             with self._lock:
                 job.status = SyncStatus.FAILED

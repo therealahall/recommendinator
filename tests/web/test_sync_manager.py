@@ -769,3 +769,83 @@ class TestSyncJobDefaults:
         assert job.current_item is None
         assert job.current_source is None
         assert job.error_message is None
+
+
+class TestSyncManagerZeroItemsWithErrorsRegression:
+    """Regression tests for sync status when a plugin catches all errors.
+
+    Bug: plugins like the Epic Games source catch their own exceptions and
+    report them via the sync manager's add_error callback, then return 0.
+    _run_sync used to mark the job COMPLETED, so the UI rendered a green
+    "Completed: 0 items synced (1 errors)" banner for what was clearly a
+    failed sync. Fix: when zero items were produced and errors
+    accumulated, surface the sync as FAILED so the UI renders the correct
+    error banner, seed error_message from the first recorded error, and
+    skip the on_complete callback so downstream enrichment isn't kicked
+    off for a failed sync.
+    """
+
+    @patch("src.web.sync_manager.threading.Thread")
+    def test_zero_items_with_errors_marks_failed(
+        self, mock_thread_class: MagicMock
+    ) -> None:
+        manager = SyncManager()
+
+        def sync_function(job: SyncJob) -> int:
+            manager.add_error("Epic Games API returned 401")
+            return 0
+
+        manager.start_sync(source="Epic Games", sync_function=sync_function)
+        manager._run_sync(sync_function)
+
+        status = manager.get_status()
+        assert status["status"] == "failed"
+        assert status["job"]["items_processed"] == 0
+        assert status["job"]["error_count"] == 1
+        assert status["job"]["error_message"] == "Epic Games API returned 401"
+
+    @patch("src.web.sync_manager.threading.Thread")
+    def test_partial_success_with_errors_stays_completed(
+        self, mock_thread_class: MagicMock
+    ) -> None:
+        """Partial success keeps COMPLETED — the banner honestly reports errors."""
+        manager = SyncManager()
+
+        def sync_function(job: SyncJob) -> int:
+            manager.add_error("Item 3 failed to parse")
+            return 5
+
+        manager.start_sync(source="steam", sync_function=sync_function)
+        manager._run_sync(sync_function)
+
+        status = manager.get_status()
+        assert status["status"] == "completed"
+        assert status["job"]["items_processed"] == 5
+        assert status["job"]["error_count"] == 1
+
+    @patch("src.web.sync_manager.threading.Thread")
+    def test_on_complete_not_called_when_zero_items_with_errors(
+        self, mock_thread_class: MagicMock
+    ) -> None:
+        """The on_complete callback must be skipped for the FAILED path.
+
+        Downstream work like enrichment triggering should not fire when a
+        sync produced nothing and reported errors — otherwise the UI shows
+        a failure banner while side effects still run as if it succeeded.
+        """
+        manager = SyncManager()
+        on_complete = MagicMock()
+
+        def sync_function(job: SyncJob) -> int:
+            manager.add_error("Epic Games API returned 401")
+            return 0
+
+        manager.start_sync(
+            source="Epic Games",
+            sync_function=sync_function,
+            on_complete=on_complete,
+        )
+        manager._run_sync(sync_function, on_complete=on_complete)
+
+        assert manager.get_status()["status"] == "failed"
+        on_complete.assert_not_called()
