@@ -68,6 +68,11 @@ def main() -> None:
         default=None,
         help="Port to bind to (overrides config)",
     )
+    parser.add_argument(
+        "--reload",
+        action="store_true",
+        help="Enable uvicorn auto-reload (watches src/ and templates/); for development only",
+    )
 
     args = parser.parse_args()
 
@@ -104,25 +109,25 @@ def main() -> None:
         port,
     )
 
-    # Start server
-    # Enable auto-reload in debug mode (watches for file changes)
-    debug_mode = web_config.get("debug", False)
+    # Reload is enabled either by the explicit --reload flag (dev compose) or by web.debug
+    # in config. uvicorn requires an import string when reload is enabled.
+    reload_enabled = args.reload or web_config.get("debug", False)
 
-    # When reload is enabled, uvicorn requires an import string instead of app object
-    if debug_mode:
-        # Set config path in environment for the imported app to use
+    if reload_enabled:
         if config_path:
             os.environ["CONFIG_PATH"] = str(config_path.resolve())
-        # Use import string format for reload support
+        # Resolve reload_dirs relative to the project root so --reload works
+        # from any cwd (uvicorn would otherwise resolve them against $PWD).
+        project_root = Path(__file__).resolve().parents[2]
         uvicorn.run(
-            "src.web.app:app",  # Import string format
+            "src.web.app:app",
             host=host,
             port=port,
             log_level="info",
             reload=True,
+            reload_dirs=[str(project_root / "src"), str(project_root / "templates")],
         )
     else:
-        # When reload is disabled, we can pass the app object directly
         uvicorn.run(
             app,
             host=host,
