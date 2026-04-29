@@ -1,0 +1,13 @@
+# Recommendinator — Ollama sidecar image.
+#
+# Thin layer on top of ollama/ollama that bakes in the entrypoint script
+# responsible for pulling the configured generation and embedding models on
+# first start. Published so end-users don't need to download a second file
+# alongside docker-compose.yml.
+
+FROM ollama/ollama:0.22.0
+
+COPY ollama-entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
