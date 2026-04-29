@@ -79,6 +79,10 @@ COPY --chown=appuser:appuser src/ ./src/
 COPY --chown=appuser:appuser templates/ ./templates/
 COPY --chown=appuser:appuser config/example.yaml ./config/example.yaml
 
+# Copy entrypoint that bootstraps config.yaml on first run
+COPY --chown=appuser:appuser docker/entrypoint.sh /app/docker/entrypoint.sh
+RUN chmod +x /app/docker/entrypoint.sh
+
 # Copy built frontend assets from frontend builder
 COPY --from=frontend-builder --chown=appuser:appuser /app/src/web/static/dist/ ./src/web/static/dist/
 
@@ -98,6 +102,7 @@ USER appuser
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/status')" || exit 1
+ENTRYPOINT ["/app/docker/entrypoint.sh"]
 CMD ["python", "-m", "src.web", "--host", "0.0.0.0", "--port", "8000"]
 
 # =============================================================================
@@ -112,4 +117,5 @@ USER appuser
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/status')" || exit 1
+ENTRYPOINT ["/app/docker/entrypoint.sh"]
 CMD ["python", "-m", "src.web", "--host", "0.0.0.0", "--port", "8000"]

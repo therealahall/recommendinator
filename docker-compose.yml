@@ -1,69 +1,73 @@
-# Recommendinator - Docker Compose
+# Recommendinator — Docker Compose
+#
+# This file pulls pre-built images from GitHub Container Registry and is the
+# same compose file used by maintainers locally. For end users it is the
+# canonical deployment manifest; download it via:
+#
+#   curl -L https://github.com/therealahall/recommendinator/releases/latest/download/docker-compose.yml \
+#     -o docker-compose.yml
 #
 # Usage:
-#   docker compose up                        # App only (no AI features)
-#   docker compose --profile ai up app-ai    # App + Ollama (AI features enabled)
+#   docker compose up -d                    # default variant (no AI)
+#   COMPOSE_PROFILES=ai docker compose up   # with Ollama sidecar (AI features)
 #
-# Note: Set features.ai_enabled: true in config/config.yaml when using --profile ai
+# Environment overrides (set in your shell or a .env file next to this file):
+#   IMAGE_TAG  — image tag to pull (default: latest)
+#   APP_PORT   — host port to expose the web UI on (default: 18473)
+#
+# For local development with hot reload, layer docker-compose.dev.yml on top:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 
 x-app-common: &app-common
   ports:
-    - "18473:8000"  # External:Internal - external port avoids collisions
+    - "${APP_PORT:-18473}:8000"
   volumes:
-    # Persist data between restarts
+    # config is mounted read-write so the entrypoint can copy example.yaml
+    # to config.yaml on first run. Edit ./config/config.yaml on the host.
+    # Once config.yaml exists, you can switch this to `./config:/app/config:ro`
+    # for a tighter security posture (the app never needs to write to it
+    # at steady state).
+    - ./config:/app/config
+    # persistent application data (SQLite DB, ChromaDB, credential keys)
     - ./data:/app/data
-    # Mount config file (copy example.yaml to config.yaml first)
-    - ./config:/app/config:ro
-    # Mount input files
+    # input files for ingestion sources
     - ./inputs:/app/inputs:ro
-    # Mount private plugins (user-specific, gitignored)
+    # optional private plugin directory; leave empty if you don't have any
     - ./private:/app/private:ro
-    # For additional mounts, use docker-compose.override.yml (gitignored)
   restart: unless-stopped
   networks:
     - recommendinator-net
 
 services:
-  # Main application (no AI dependencies)
-  # Use app-ai (--profile ai) for AI features including Ollama connectivity.
+  # Default variant — no AI dependencies. Smallest image.
   app:
     <<: *app-common
-    build:
-      context: .
-      target: default
+    image: ghcr.io/therealahall/recommendinator:${IMAGE_TAG:-latest}
     container_name: recommendinator
 
-  # Main application with AI dependencies (only starts with --profile ai)
+  # AI variant — includes Ollama client and ChromaDB. Requires the ollama
+  # sidecar below; only starts under the `ai` profile.
   app-ai:
     <<: *app-common
-    build:
-      context: .
-      target: ai
+    image: ghcr.io/therealahall/recommendinator:${IMAGE_TAG:-latest}-ai
     container_name: recommendinator-ai
     profiles: ["ai"]
     environment:
-      # Ollama URL - only used when ai.enabled: true in config
-      # Points to sidecar when using --profile ai
       - OLLAMA_BASE_URL=http://ollama:11434
     depends_on:
       ollama:
         condition: service_healthy
 
-  # Ollama LLM sidecar (only starts with --profile ai)
+  # Ollama LLM sidecar (only starts with --profile ai).
   # Models are auto-pulled on first start from config/config.yaml (ollama.model
   # and ollama.embedding_model). Falls back to mistral:7b and nomic-embed-text.
   ollama:
-    image: ollama/ollama:latest
+    image: ghcr.io/therealahall/recommendinator-ollama:${IMAGE_TAG:-latest}
     container_name: recommendinator-ollama
     profiles: ["ai"]
-    entrypoint: ["/entrypoint.sh"]
     volumes:
-      # Persist downloaded models
       - ollama-data:/root/.ollama
-      # Config for reading model names
       - ./config:/config:ro
-      # Custom entrypoint that pulls models on first start
-      - ./docker/ollama-entrypoint.sh:/entrypoint.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "ollama list > /dev/null 2>&1 && test -f /tmp/models-ready"]
       interval: 10s

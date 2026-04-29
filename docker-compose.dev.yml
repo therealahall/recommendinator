@@ -1,0 +1,57 @@
+# Recommendinator — Local development override.
+#
+# Layer this on top of docker-compose.yml when iterating on app code:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+#
+# What it does (vs. the production compose):
+#   - Builds the image locally instead of pulling from GHCR (so your changes
+#     to dependencies, the Dockerfile, or the frontend build are reflected).
+#   - Bind-mounts ./src and ./templates into the container so Python edits
+#     are visible immediately. Combined with --reload, uvicorn restarts in
+#     ~1s on file save — no rebuild needed.
+#   - Renames the local images so they don't shadow the GHCR cache when you
+#     switch back to the production compose.
+#
+# Frontend hot reload is run on the host with `pnpm dev` (port 5173) — see
+# CONTRIBUTING.md.
+#
+# Your gitignored docker-compose.override.yml (private plugin mounts, etc.)
+# still merges automatically, so all three files compose cleanly.
+
+x-dev-common: &dev-common
+  volumes:
+    - ./src:/app/src
+    - ./templates:/app/templates
+  command:
+    - python
+    - -m
+    - src.web
+    - --host
+    - "0.0.0.0"
+    - --port
+    - "8000"
+    - --reload
+  environment:
+    - PYTHONUNBUFFERED=1
+
+services:
+  app:
+    <<: *dev-common
+    build:
+      context: .
+      target: default
+    image: recommendinator:dev
+
+  app-ai:
+    <<: *dev-common
+    build:
+      context: .
+      target: ai
+    image: recommendinator-ai:dev
+
+  ollama:
+    build:
+      context: ./docker
+      dockerfile: Dockerfile.ollama
+    image: recommendinator-ollama:dev
