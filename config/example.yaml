@@ -1,5 +1,9 @@
-# Example configuration file
-# Copy this to config.yaml and modify as needed
+# Example configuration file.
+#
+# Copy this to config.yaml and modify as needed. When running via Docker
+# (docker compose up), the container's entrypoint copies this file to
+# config.yaml automatically on first run if config.yaml is missing — so
+# edit ./config/config.yaml on the host directly, not example.yaml.
 
 # Feature flags - control optional functionality
 features:

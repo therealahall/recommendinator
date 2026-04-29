@@ -4,14 +4,47 @@ Get up and running with Recommendinator in under 5 minutes.
 
 ## Prerequisites
 
-- **Python 3.11** installed (see [docs/PYTHON_VERSION.md](docs/PYTHON_VERSION.md) for details)
+- **Docker** (recommended) — or Python 3.11 if you'd rather run from source
 - Your data (Goodreads export, Steam account, etc.)
 
 That's it. No AI, no external services required.
 
 ## Installation
 
-### Option 1: Local Installation
+### Option 1: Docker (recommended)
+
+No git clone needed. Pull a published image and mount your data directories:
+
+```bash
+mkdir -p recommendinator/{config,data,inputs} && cd recommendinator
+
+docker run -d \
+  --name recommendinator \
+  -p 18473:8000 \
+  -v "$(pwd)/config:/app/config" \
+  -v "$(pwd)/data:/app/data" \
+  -v "$(pwd)/inputs:/app/inputs:ro" \
+  --restart unless-stopped \
+  ghcr.io/therealahall/recommendinator:latest
+```
+
+The container generates a starter `config/config.yaml` from the bundled example
+on first run — edit it on the host with your API keys and run `docker restart recommendinator`.
+
+For AI features (Ollama sidecar with auto model download), use Docker Compose:
+
+```bash
+curl -L https://github.com/therealahall/recommendinator/releases/latest/download/docker-compose.yml \
+  -o docker-compose.yml
+COMPOSE_PROFILES=ai docker compose up -d
+```
+
+See [docs/DOCKER.md](docs/DOCKER.md) for parameters, GPU setup, reverse proxy
+notes, and troubleshooting.
+
+### Option 2: Local Installation (for contributors)
+
+If you're contributing to Recommendinator or prefer running from source:
 
 ```bash
 # Clone the repository
@@ -37,16 +70,6 @@ cp config/example.yaml config/config.yaml
 ```
 
 > **Note:** The web UI requires Node.js 18+ to build. If you only use the CLI, Node.js is not required.
-
-### Option 2: Docker
-
-```bash
-# Without AI (default)
-docker compose up
-
-# With AI (Ollama sidecar)
-docker compose --profile ai up app-ai
-```
 
 Access the web interface at http://localhost:18473.
 

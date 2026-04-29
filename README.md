@@ -45,17 +45,42 @@ If you change the host to `0.0.0.0` to allow LAN access, **anyone on your networ
 
 ### Option 1: Docker (Recommended)
 
-```bash
-# Without AI (default) — runs the app only
-docker compose up
+No git clone required. Pull a published image, mount your config and data
+directories, and run.
 
-# With AI — starts the app + Ollama + model auto-pull
-docker compose --profile ai up app-ai
+```bash
+mkdir -p recommendinator/{config,data,inputs} && cd recommendinator
+
+docker run -d \
+  --name recommendinator \
+  -p 18473:8000 \
+  -v "$(pwd)/config:/app/config" \
+  -v "$(pwd)/data:/app/data" \
+  -v "$(pwd)/inputs:/app/inputs:ro" \
+  --restart unless-stopped \
+  ghcr.io/therealahall/recommendinator:latest
 ```
 
-The `--profile ai` flag adds an Ollama sidecar container that automatically pulls the configured models on first start. Set `features.ai_enabled: true` in your config to use AI features.
+The container generates a starter `config/config.yaml` from the bundled example
+on first run. Edit it with your API keys and run `docker restart recommendinator`.
 
-### Option 2: Local Installation
+For the AI variant (with semantic search and LLM-powered explanations) and the
+required Ollama sidecar, use Docker Compose:
+
+```bash
+curl -L https://github.com/therealahall/recommendinator/releases/latest/download/docker-compose.yml \
+  -o docker-compose.yml
+COMPOSE_PROFILES=ai docker compose up -d
+```
+
+Both variants are published as multi-arch images for `linux/amd64` and
+`linux/arm64`, so they run on x86 servers, Apple Silicon, and modern NAS
+hardware. See **[docs/DOCKER.md](docs/DOCKER.md)** for the full deployment
+guide — parameter reference, AI mode, GPU support, reverse proxy, troubleshooting.
+
+### Option 2: Local Installation (for contributors)
+
+If you're developing Recommendinator or prefer to run it from source:
 
 ```bash
 # Clone and install
@@ -82,7 +107,9 @@ python3.11 -m src.cli recommend --type book --count 5
 python3.11 -m src.web
 ```
 
-Access the web interface at `http://localhost:18473`
+Access the web interface at `http://localhost:18473`. See [CONTRIBUTING.md](CONTRIBUTING.md)
+for the full development workflow including the Docker dev override that gives
+you hot reload without rebuilding.
 
 **Important:** [Set up metadata enrichment](docs/ENRICHMENT_SETUP.md) **before importing your data** and enable `auto_enrich_on_sync: true` so items are enriched automatically on every sync. Enrichment is disabled by default but is essential for recommendation quality — without it, many items will lack the genres, tags, and descriptions that the scoring pipeline depends on.
 
@@ -447,7 +474,7 @@ If you want AI-enhanced recommendations:
 
 ### Docker Users
 
-Use `docker compose --profile ai up app-ai` — Ollama and models are set up automatically.
+Run `COMPOSE_PROFILES=ai docker compose up -d` — Ollama and models are set up automatically.
 
 ### Local Installation Users
 

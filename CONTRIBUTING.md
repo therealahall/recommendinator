@@ -22,6 +22,36 @@ Thank you for your interest in contributing to Recommendinator! This document co
 3. Ensure all checks pass (see [Quality Checks](#quality-checks))
 4. Submit a pull request
 
+### Local development with Docker (hot reload)
+
+If you'd rather not maintain a local Python + Node toolchain, you can run the
+full stack in containers with hot reload by layering `docker-compose.dev.yml`
+on top of the production compose file:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+```
+
+What the override does:
+- **Builds locally** instead of pulling from GHCR, so changes to `Dockerfile`,
+  `pyproject.toml`, or the frontend build are reflected.
+- **Bind-mounts `./src` and `./templates`** into the container so Python edits
+  are visible immediately without a rebuild.
+- **Starts uvicorn with `--reload`**, watching `src/` and `templates/` — backend
+  changes restart in ~1 second.
+
+Frontend hot reload runs on the host (Vite's HMR works best natively):
+
+```bash
+pnpm dev
+```
+
+Vite serves on port 5173 and proxies API calls to the container on port 18473.
+
+Your gitignored `docker-compose.override.yml` (for personal mounts like private
+plugin directories) merges automatically alongside both files, so all three
+compose cleanly with one command.
+
 **Automated code review:** When using Claude Code, six review agents run before commits:
 - **code-review** — Reviews code quality, design, naming, DRY compliance, and adherence to project standards.
 - **security-review** — Audits for vulnerabilities, credential leaks, and unsafe patterns. See [docs/SECURITY.md](docs/SECURITY.md) for details.

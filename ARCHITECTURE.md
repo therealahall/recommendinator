@@ -271,6 +271,60 @@ inputs:
 
 Plugin configuration: `.claude/settings.json` | Agent definitions: `.claude/agents/`
 
+## Container Artifacts
+
+Recommendinator publishes Docker images for end-user deployment. The full
+deployment guide is [docs/DOCKER.md](docs/DOCKER.md); this section captures
+the architecture-level shape.
+
+### Variants
+
+| Variant | Image | Contents |
+|---------|-------|----------|
+| Default | `ghcr.io/therealahall/recommendinator:VERSION` | Application, frontend build, base Python deps. Smaller image. |
+| AI | `ghcr.io/therealahall/recommendinator:VERSION-ai` | Default + `ai` extras (`ollama` and `chromadb` Python clients). |
+| Ollama sidecar | `ghcr.io/therealahall/recommendinator-ollama:VERSION` | Thin layer on `ollama/ollama` that bakes in the model-pull entrypoint script. Required by the AI variant; not used by the default variant. |
+
+All three images publish multi-arch manifests for `linux/amd64` and `linux/arm64`.
+`linux/arm/v7` is intentionally unsupported because the Python 3.11 wheel
+ecosystem (notably ChromaDB) is too thin there.
+
+### Image structure
+
+The application images are built by `Dockerfile` (multi-stage, two targets):
+
+1. **frontend-builder** — `node:20-slim` running `pnpm build` to produce the
+   Vue 3 / Vite output in `src/web/static/dist/`.
+2. **builder-base** → **builder-default** / **builder-ai** — `python:3.11-slim`
+   running `uv sync --locked` (with `--extra ai` for the AI variant) into a
+   `/app/.venv` virtualenv.
+3. **runtime-base** — `python:3.11-slim` with the `appuser` non-root account,
+   application source, frontend dist, and the entrypoint script.
+4. **default** / **ai** — copy the appropriate venv, set `ENTRYPOINT` to
+   `/app/docker/entrypoint.sh` (which bootstraps `config.yaml` from `example.yaml`
+   on first run), and start uvicorn via the `CMD`.
+
+The Ollama sidecar is built by `docker/Dockerfile.ollama`, which is a four-line
+extension of `ollama/ollama` adding the model-pull entrypoint.
+
+### Publish pipeline
+
+`.github/workflows/docker.yml` has two jobs:
+
+- **PR build** — on `pull_request`, builds all three images on `linux/amd64`
+  only (no push) so a broken Dockerfile fails before merge. The default variant
+  is smoke-tested by hitting `/api/status` after `docker run`.
+- **Tag publish** — on `push` to a `v*` tag, builds all three images
+  multi-arch with `docker/build-push-action`, generates semver tags
+  (`X.Y.Z`, `X.Y`, `X`, `latest`) via `docker/metadata-action`, attaches
+  build provenance and SBOM attestations, and pushes to GHCR.
+
+The tag is created automatically by `.github/workflows/release.yml` (which
+runs python-semantic-release on every push to `main`), so `feat:` and `fix:`
+commits flow through to a published image without manual intervention. The
+release workflow also uploads `docker-compose.yml` as a release asset, enabling
+the `curl -L .../latest/download/docker-compose.yml` flow for end users.
+
 ## Security & Privacy
 
 - All processing happens locally
