@@ -1,9 +1,11 @@
 """Tests for web server entry point utilities."""
 
+import os
 import socket
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from src.web.main import get_local_ip_addresses
+from src.web.main import get_local_ip_addresses, main
 
 
 class TestGetLocalIpAddresses:
@@ -225,3 +227,115 @@ class TestGetLocalIpAddresses:
         get_local_ip_addresses()
 
         mock_udp_socket.close.assert_called_once()
+
+
+class TestMainReloadBehavior:
+    """Verify how main() decides between reload mode and production mode.
+
+    Two inputs activate reload: the --reload CLI flag (used by the dev compose
+    override) or web.debug=true in config (legacy behavior). The branches call
+    uvicorn.run with structurally different first arguments — an import string
+    for reload, the app object for production — so a regression in this logic
+    silently breaks either dev hot-reload or production startup.
+    """
+
+    @patch("src.web.main.uvicorn.run")
+    @patch("src.web.main.create_app")
+    @patch("src.web.main.load_config")
+    def test_reload_flag_uses_import_string_and_dirs(
+        self,
+        mock_load_config: MagicMock,
+        mock_create_app: MagicMock,
+        mock_uvicorn_run: MagicMock,
+    ) -> None:
+        mock_load_config.return_value = {}
+        with patch("sys.argv", ["src.web", "--reload"]):
+            main()
+
+        mock_uvicorn_run.assert_called_once()
+        args, kwargs = mock_uvicorn_run.call_args
+        assert args[0] == "src.web.app:app"
+        assert kwargs["reload"] is True
+        # reload_dirs must be absolute paths to the project's src and templates
+        # so --reload works regardless of cwd.
+        reload_dirs = kwargs["reload_dirs"]
+        assert len(reload_dirs) == 2
+        assert all(Path(d).is_absolute() for d in reload_dirs)
+        assert reload_dirs[0].endswith("/src")
+        assert reload_dirs[1].endswith("/templates")
+
+    @patch("src.web.main.uvicorn.run")
+    @patch("src.web.main.create_app")
+    @patch("src.web.main.load_config")
+    def test_web_debug_config_activates_reload_without_flag(
+        self,
+        mock_load_config: MagicMock,
+        mock_create_app: MagicMock,
+        mock_uvicorn_run: MagicMock,
+    ) -> None:
+        mock_load_config.return_value = {"web": {"debug": True}}
+        with patch("sys.argv", ["src.web"]):
+            main()
+
+        args, kwargs = mock_uvicorn_run.call_args
+        assert args[0] == "src.web.app:app"
+        assert kwargs["reload"] is True
+        # reload_dirs must apply on every reload-enabled path, not just --reload
+        assert len(kwargs["reload_dirs"]) == 2
+
+    @patch("src.web.main.uvicorn.run")
+    @patch("src.web.main.create_app")
+    @patch("src.web.main.load_config")
+    def test_no_flag_no_debug_uses_app_object(
+        self,
+        mock_load_config: MagicMock,
+        mock_create_app: MagicMock,
+        mock_uvicorn_run: MagicMock,
+    ) -> None:
+        mock_load_config.return_value = {}
+        sentinel_app = MagicMock(name="created_app")
+        mock_create_app.return_value = sentinel_app
+        with patch("sys.argv", ["src.web"]):
+            main()
+
+        args, kwargs = mock_uvicorn_run.call_args
+        # First positional arg must be the app object, not an import string
+        assert args[0] is sentinel_app
+        assert kwargs["reload"] is False
+        assert "reload_dirs" not in kwargs
+
+    @patch.dict(os.environ, {}, clear=True)
+    @patch("src.web.main.uvicorn.run")
+    @patch("src.web.main.create_app")
+    @patch("src.web.main.load_config")
+    def test_reload_with_config_path_sets_env_var(
+        self,
+        mock_load_config: MagicMock,
+        mock_create_app: MagicMock,
+        mock_uvicorn_run: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        config_file = tmp_path / "myconfig.yaml"
+        config_file.write_text("web:\n  debug: false\n")
+        mock_load_config.return_value = {}
+        with patch("sys.argv", ["src.web", "--reload", "--config", str(config_file)]):
+            main()
+
+        assert os.environ["CONFIG_PATH"] == str(config_file.resolve())
+
+    @patch.dict(os.environ, {}, clear=True)
+    @patch("src.web.main.uvicorn.run")
+    @patch("src.web.main.create_app")
+    @patch("src.web.main.load_config")
+    def test_reload_without_config_path_leaves_env_unchanged(
+        self,
+        mock_load_config: MagicMock,
+        mock_create_app: MagicMock,
+        mock_uvicorn_run: MagicMock,
+    ) -> None:
+        mock_load_config.return_value = {}
+        with patch("sys.argv", ["src.web", "--reload"]):
+            main()
+
+        # No --config supplied: CONFIG_PATH must not be injected into env.
+        assert "CONFIG_PATH" not in os.environ
