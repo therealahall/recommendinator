@@ -27,9 +27,9 @@ jobs:
         with:
           python-version: "3.11"
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@7088e561eb65bb68695d245aa206f005ef30921d # v4.1.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "20"
           cache: "pnpm"
@@ -57,3 +57,24 @@ jobs:
 
       - name: Test (frontend)
         run: pnpm vitest run
+
+      - name: Lint Dockerfile
+        uses: hadolint/hadolint-action@54c9adbab1582c2ef04b2016b760714a4bfde3cf # v3.1.0
+        with:
+          dockerfile: Dockerfile
+
+      - name: Lint Dockerfile (ollama sidecar)
+        uses: hadolint/hadolint-action@54c9adbab1582c2ef04b2016b760714a4bfde3cf # v3.1.0
+        with:
+          dockerfile: docker/Dockerfile.ollama
+
+      - name: Lint shell scripts
+        uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38 # 2.0.0
+        with:
+          scandir: docker
+
+      - name: Validate docker-compose.yml
+        run: docker compose -f docker-compose.yml config --quiet
+
+      - name: Validate docker-compose.yml + dev override
+        run: docker compose -f docker-compose.yml -f docker-compose.dev.yml config --quiet
