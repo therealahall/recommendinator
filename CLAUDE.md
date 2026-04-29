@@ -51,6 +51,13 @@ index.html            # Vite SPA entry point
 vite.config.ts        # Vite build configuration
 tests/                # Mirrors src/ structure
 config/               # Configuration files (example.yaml for tests)
+docker/               # Container helpers
+├── entrypoint.sh         # First-run config.yaml bootstrap (recommendinator image)
+├── ollama-entrypoint.sh  # Ollama model-pull entrypoint (recommendinator-ollama image)
+└── Dockerfile.ollama     # Sidecar image with the entrypoint baked in
+docker-compose.yml         # Production: pulls from GHCR
+docker-compose.dev.yml     # Dev override: bind-mount + --reload (committed)
+docker-compose.override.yml  # Personal mounts (gitignored)
 private/              # Gitignored — private plugins NOT in the open source repo
 └── plugins/          # Private source plugins (personal_site_games.py, etc.)
 ```
@@ -129,6 +136,7 @@ config = load_config(Path("config/config.yaml"))
 - **CLI**: Click
 - **Testing**: pytest (Python), Vitest (frontend)
 - **Quality**: Black, MyPy (strict), Ruff, vue-tsc
+- **Container**: Docker — production deployment pulls from GHCR via `docker-compose.yml`; local dev layers `docker-compose.dev.yml` for hot reload (bind-mount `src/` + uvicorn `--reload`). Both `recommendinator` (default + `-ai`) and `recommendinator-ollama` images are published multi-arch (`linux/amd64`, `linux/arm64`). See [docs/DOCKER.md](docs/DOCKER.md).
 
 ## Versioning & Releases
 
