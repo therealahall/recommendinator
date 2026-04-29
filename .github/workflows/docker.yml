@@ -1,0 +1,173 @@
+name: Docker
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    tags: ["v*"]
+
+concurrency:
+  group: docker-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # On PRs: build each image (amd64 only, no push) so a broken Dockerfile
+  # fails before merge. Smoke-test the default variant by hitting /api/status.
+  build-pr:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: default
+            dockerfile: Dockerfile
+            target: default
+            context: .
+            smoke_test: true
+          - name: ai
+            dockerfile: Dockerfile
+            target: ai
+            context: .
+            smoke_test: false
+          - name: ollama
+            dockerfile: docker/Dockerfile.ollama
+            target: ""
+            context: docker
+            smoke_test: false
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0
+
+      - name: Build ${{ matrix.name }}
+        uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4 # v6.15.0
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          target: ${{ matrix.target }}
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: recommendinator-${{ matrix.name }}:pr-${{ github.event.pull_request.number }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,scope=${{ matrix.name }},mode=max
+
+      - name: Smoke test (default variant only)
+        if: matrix.smoke_test
+        env:
+          IMAGE: recommendinator-${{ matrix.name }}:pr-${{ github.event.pull_request.number }}
+        run: |
+          docker run -d --name smoke -p 8000:8000 "$IMAGE"
+          for i in $(seq 1 30); do
+            if curl -fsS --max-time 3 http://localhost:8000/api/status > /dev/null; then
+              echo "App started after ${i}s"
+              docker rm -f smoke
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "App failed to start within 30s"
+          docker logs smoke
+          docker rm -f smoke
+          exit 1
+
+  # On version tags: build each image multi-arch and push to GHCR with semver
+  # tags (X.Y.Z, X.Y, X, latest) plus the AI variant suffix where applicable.
+  publish:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: default
+            image: ghcr.io/${{ github.repository_owner }}/recommendinator
+            dockerfile: Dockerfile
+            target: default
+            context: .
+            tag_suffix: ""
+          - name: ai
+            image: ghcr.io/${{ github.repository_owner }}/recommendinator
+            dockerfile: Dockerfile
+            target: ai
+            context: .
+            tag_suffix: "-ai"
+          - name: ollama
+            image: ghcr.io/${{ github.repository_owner }}/recommendinator-ollama
+            dockerfile: docker/Dockerfile.ollama
+            target: ""
+            context: docker
+            tag_suffix: ""
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      # Defence-in-depth: even though the workflow's `on.push.tags` filter is `v*`,
+      # accept only proper semver tags here so a stray `vtest` tag can never push
+      # to GHCR or move `latest` to a garbage build.
+      - name: Validate semver tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          echo "$TAG" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$' || {
+            echo "Tag '$TAG' is not a semver release tag (vMAJOR.MINOR.PATCH); aborting publish."
+            exit 1
+          }
+
+      - uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
+
+      - uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate image metadata
+        id: meta
+        uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v5.7.0
+        with:
+          images: ${{ matrix.image }}
+          flavor: |
+            suffix=${{ matrix.tag_suffix }},onlatest=true
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest
+
+      - name: Build and push ${{ matrix.name }}
+        id: build
+        uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4 # v6.15.0
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          target: ${{ matrix.target }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.name }}-publish
+          cache-to: type=gha,scope=${{ matrix.name }}-publish,mode=max
+          provenance: true
+          sbom: true
+
+      - name: Verify multi-arch manifest
+        env:
+          IMAGE: ${{ matrix.image }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          docker buildx imagetools inspect "${IMAGE}@${DIGEST}" \
+            | grep -E 'linux/(amd64|arm64)' \
+            | tee /tmp/platforms.txt
+          grep -q 'linux/amd64' /tmp/platforms.txt
+          grep -q 'linux/arm64' /tmp/platforms.txt
