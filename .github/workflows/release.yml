@@ -43,3 +43,23 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: uv run python -m semantic_release version --push --commit --tag --vcs-release
+
+      - name: Attach docker-compose.yml to release
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          # Only upload to a real semver tag (defense-in-depth: ignores any
+          # non-version tags that may exist at HEAD, and validates the tag
+          # name before passing it to gh).
+          TAGS=$(git tag --points-at HEAD | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true)
+          TAG_COUNT=$(printf '%s\n' "$TAGS" | grep -c .)
+          if [ -z "$TAGS" ]; then
+            echo "No semver tag at HEAD; skipping asset upload."
+            exit 0
+          fi
+          if [ "$TAG_COUNT" -gt 1 ]; then
+            echo "WARNING: multiple semver tags at HEAD: $TAGS — uploading to the first."
+          fi
+          NEW_TAG=$(printf '%s\n' "$TAGS" | head -1)
+          gh release upload "$NEW_TAG" docker-compose.yml --clobber
+          echo "Uploaded docker-compose.yml to release $NEW_TAG"
