@@ -109,9 +109,14 @@ EMBEDDING_MODEL=$(parse_config_value "embedding_model" "$DEFAULT_EMBEDDING_MODEL
 log "Generation model: $MODEL"
 log "Embedding model:  $EMBEDDING_MODEL"
 
-# Pull models if not already present
+# Pull models if not already present.
+# Escape the only regex metacharacter that appears in real model names ('.')
+# so "llama3.2" doesn't false-match "llama3a2", while still anchoring to the
+# start of the line — `ollama list` prints the model name as the first column,
+# so anchoring prevents short names from substring-matching longer ones
+# (e.g., MODEL=text incorrectly matching "nomic-embed-text").
 for model_name in "$MODEL" "$EMBEDDING_MODEL"; do
-    if ollama list | grep -q "^${model_name}"; then
+    if ollama list | grep -q "^${model_name//./\\.}"; then
         log "Model $model_name is already downloaded."
     else
         pull_model "$model_name"
