@@ -128,10 +128,22 @@ class TestCleanDisplayTitleUnderscores:
             ("Some___Game", "Some Game"),  # multiple underscores collapse
             ("Some_Game_(USA)_(Beta)", "Some Game"),  # underscores expose tail parens
             ("Foo_Bar.Baz_Qux", "Foo Bar.Baz Qux"),  # dots preserved
+            # Leading and trailing underscores get swept by the surrounding strip
+            # (underscore→space then final .strip()).
+            ("_Leading_Game", "Leading Game"),
+            ("Trailing_Game_", "Trailing Game"),
+            # Inline-noise + underscore interaction: nsw2u stripped first
+            # (replaced with space), then underscores become spaces, then
+            # whitespace collapses.
+            ("Some_Game_(nsw2u.com)_Edition", "Some Game Edition"),
         ],
     )
     def test_underscores_become_spaces(self, raw: str, expected: str) -> None:
         assert clean_display_title(raw) == expected
+
+    @pytest.mark.parametrize("raw", ["_", "___"])
+    def test_underscore_only_input_returns_empty(self, raw: str) -> None:
+        assert clean_display_title(raw) == ""
 
 
 class TestCleanDisplayTitleStatusTags:
