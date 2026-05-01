@@ -2,136 +2,53 @@ name: Bug Report
 description: Report a bug or unexpected behavior
 labels: ["bug"]
 body:
-  - type: markdown
-    attributes:
-      value: |
-        Thanks for reporting a bug! Please fill out the sections below so we can reproduce and fix the issue.
-
   - type: textarea
     id: description
     attributes:
-      label: Bug Description
-      description: A clear, concise description of what went wrong.
-      placeholder: "When I try to sync my Goodreads library, the import fails with a KeyError."
-    validations:
-      required: true
-
-  - type: textarea
-    id: steps
-    attributes:
-      label: Steps to Reproduce
+      label: What happened?
       description: |
-        Exact steps to reproduce the behavior. The more specific, the faster we can fix it.
+        Describe the bug: what you did, what you expected, what happened instead.
+        Include reproduction steps and any error output (remove secrets first).
       placeholder: |
-        1. Set up config with Goodreads source pointing to `inputs/goodreads_export.csv`
+        Syncing my Goodreads library fails after ~50 items.
+        Expected all items to import; instead got a KeyError.
+
+        Repro:
+        1. Configure goodreads source in config.yaml
         2. Run `python3.11 -m src.cli update --source goodreads`
-        3. See error after ~50 items processed
-    validations:
-      required: true
 
-  - type: textarea
-    id: expected
-    attributes:
-      label: Expected Behavior
-      description: What you expected to happen.
-      placeholder: "All items from my Goodreads export should be imported successfully."
-    validations:
-      required: true
-
-  - type: textarea
-    id: actual
-    attributes:
-      label: Actual Behavior
-      description: What actually happened instead.
-      placeholder: "Import stops midway with an error traceback."
-    validations:
-      required: true
-
-  - type: textarea
-    id: error-logs
-    attributes:
-      label: Error Logs / Traceback
-      description: |
-        Paste the full error output or traceback. This is critical for diagnosis.
-        **Remove any secrets** (API keys, Steam IDs, file paths with usernames) before pasting.
-      render: shell
-      placeholder: |
         Traceback (most recent call last):
           File "src/ingestion/sources/goodreads.py", line 42, in fetch
             ...
         KeyError: 'Date Read'
-
-  - type: dropdown
-    id: interface
-    attributes:
-      label: Interface
-      description: Where did you encounter the bug?
-      options:
-        - CLI
-        - Web UI
-        - Docker
-        - Both CLI and Web UI
-        - N/A
     validations:
       required: true
-
-  - type: dropdown
-    id: content-type
-    attributes:
-      label: Content Type (if applicable)
-      description: Which content type is affected?
-      options:
-        - Books
-        - Movies
-        - TV Shows
-        - Video Games
-        - All types
-        - N/A
-      default: 5
-
-  - type: input
-    id: data-source
-    attributes:
-      label: Data Source (if applicable)
-      description: Which ingestion source is involved?
-      placeholder: "e.g., Goodreads, Steam, GOG, Epic Games, Sonarr, Radarr, CSV, JSON, Markdown"
-
-  - type: textarea
-    id: config
-    attributes:
-      label: Relevant Config (secrets removed)
-      description: |
-        Paste the relevant section of your `config.yaml`. **Remove all secrets** (API keys, tokens, Steam IDs).
-      render: yaml
-      placeholder: |
-        inputs:
-          goodreads:
-            plugin: goodreads
-            path: "inputs/goodreads_export.csv"
-            enabled: true
 
   - type: textarea
     id: environment
     attributes:
       label: Environment
-      description: Please provide your environment details.
+      description: How are you running Recommendinator?
       value: |
-        - **OS**: [e.g., Ubuntu 24.04, macOS 15, Windows 11]
-        - **Python version**: [output of `python3.11 --version`]
-        - **Installation method**: [uv / Docker / pip]
-        - **AI features enabled**: [yes / no]
-        - **Ollama model** (if applicable): [e.g., mistral:7b, llama3.2]
-    validations:
-      required: true
+        - Install method: [Docker / uv / pip]
+        - OS: [e.g., Fedora 43, macOS 15]
+        - AI features enabled: [yes / no]
+
+  - type: dropdown
+    id: interface
+    attributes:
+      label: Interface
+      description: Where did you hit the bug?
+      options:
+        - CLI
+        - Web UI
+        - Docker
+        - Other / N/A
 
   - type: checkboxes
     id: checklist
     attributes:
-      label: Pre-submission Checklist
+      label: Before submitting
       options:
-        - label: I checked the [Troubleshooting Guide](https://github.com/ahall/recommendinator/blob/main/docs/TROUBLESHOOTING.md) for known solutions
-          required: true
-        - label: I searched existing issues to confirm this hasn't been reported
-          required: true
-        - label: I removed all secrets (API keys, tokens, personal IDs) from this report
+        - label: I removed any secrets (API keys, tokens, personal IDs) from this report
           required: true

@@ -5,15 +5,15 @@ body:
   - type: markdown
     attributes:
       value: |
-        Plugins add new data sources to Recommendinator. You can request support for a service or submit a working plugin.
+        Plugins add new data sources to Recommendinator. Use this form to request
+        a source or submit a working plugin.
 
-        See the [Plugin Development Guide](https://github.com/ahall/recommendinator/blob/main/docs/PLUGIN_DEVELOPMENT.md) for how plugins work.
+        See the [Plugin Development Guide](https://github.com/therealahall/recommendinator/blob/main/docs/PLUGIN_DEVELOPMENT.md) for the plugin contract.
 
   - type: dropdown
     id: type
     attributes:
-      label: Request Type
-      description: Are you requesting a new source or submitting a working plugin?
+      label: Request or submission?
       options:
         - Request — I'd like this data source supported
         - Submission — I have a working plugin ready to contribute
@@ -23,105 +23,35 @@ body:
   - type: input
     id: source-name
     attributes:
-      label: Data Source Name
-      description: The name of the service or platform.
-      placeholder: "e.g., Letterboxd, IMDB, Trakt, IGDB, StoryGraph"
-    validations:
-      required: true
-
-  - type: dropdown
-    id: content-types
-    attributes:
-      label: Content Types
-      description: What type(s) of content does this source provide?
-      multiple: true
-      options:
-        - Books
-        - Movies
-        - TV Shows
-        - Video Games
-    validations:
-      required: true
-
-  - type: dropdown
-    id: data-access
-    attributes:
-      label: Data Access Method
-      description: How does data get into Recommendinator from this source?
-      options:
-        - Public API (with API key)
-        - Public API (no key needed)
-        - OAuth / Token-based API
-        - File export (CSV, JSON, etc.)
-        - Web scraping (no API available)
-        - Other / Unknown
+      label: Data source name
+      placeholder: "e.g., Letterboxd, Trakt, IGDB, StoryGraph"
     validations:
       required: true
 
   - type: textarea
     id: description
     attributes:
-      label: Description
+      label: Details
       description: |
-        Why is this source valuable? What data does it provide?
-        For requests: include links to the API documentation or export format if available.
-        For submissions: describe your implementation approach.
+        What content does this source provide, and how does data get out of it
+        (API, CSV export, OAuth, scraping, etc.)? Include links to API docs or
+        export format if you have them. For submissions, summarize your approach.
       placeholder: |
-        Letterboxd lets users track movies with ratings, reviews, and watchlists.
-        They offer a CSV export: https://letterboxd.com/settings/data/
-        The export includes: Date, Name, Year, Rating, Review, etc.
+        Letterboxd is a movie tracking site. Users can export their data as CSV
+        from https://letterboxd.com/settings/data/ — fields include Date, Name,
+        Year, Rating (1-10), and Review.
+
+        Access method: file export (no API key required).
     validations:
       required: true
-
-  - type: textarea
-    id: data-fields
-    attributes:
-      label: Available Data Fields
-      description: |
-        What fields does this source provide? At minimum, plugins need a title and content type.
-        Mark which fields map to ContentItem properties (title, rating, review, author, status, metadata).
-      placeholder: |
-        - Title → ContentItem.title
-        - Rating (1-10 scale) → ContentItem.rating (normalized to 1-5)
-        - Review text → ContentItem.review
-        - Watch date → metadata
-        - Year → metadata
-        - Directors → ContentItem.author
-        - Genres → metadata.genres
-
-  - type: textarea
-    id: api-docs
-    attributes:
-      label: API / Export Documentation
-      description: Links to API docs, export format descriptions, or example data files.
-      placeholder: |
-        - API docs: https://api.example.com/docs
-        - Export guide: https://example.com/help/export
-        - Rate limits: 100 requests/minute
-
-  - type: textarea
-    id: config-example
-    attributes:
-      label: Proposed Config Format
-      description: How would this source look in `config.yaml`?
-      render: yaml
-      placeholder: |
-        inputs:
-          letterboxd:
-            plugin: letterboxd
-            path: "inputs/letterboxd-export.csv"
-            enabled: true
 
   - type: checkboxes
     id: submission-checklist
     attributes:
-      label: Submission Checklist (for plugin submissions)
-      description: If submitting a working plugin, confirm you've followed the development guide.
+      label: Submission checklist (skip if this is a request)
+      description: For working plugins, confirm you've followed the development guide.
       options:
-        - label: Plugin implements the `SourcePlugin` ABC from `src/ingestion/plugin_base.py`
-        - label: All network calls are mocked in tests (no real API requests)
-        - label: Config validation covers all required fields
-        - label: Ratings are normalized to 1-5 scale
-        - label: Statuses map to `ConsumptionStatus` (COMPLETED, CURRENTLY_CONSUMING, UNREAD)
-        - label: I added the source to `config/example.yaml`
-        - label: Tests pass with `python3.11 -m pytest`
+        - label: Implements the `SourcePlugin` ABC from `src/ingestion/plugin_base.py`
+        - label: All network calls are mocked in tests
+        - label: Ratings normalized to 1-5 and statuses mapped to `ConsumptionStatus`
+        - label: Added the source to `config/example.yaml`

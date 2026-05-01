@@ -2,44 +2,32 @@ name: Feature Request
 description: Suggest a new feature or enhancement
 labels: ["enhancement"]
 body:
-  - type: markdown
-    attributes:
-      value: |
-        Have an idea for Recommendinator? We'd love to hear it. Please describe the problem you're solving and your proposed solution.
-
   - type: textarea
-    id: problem
+    id: description
     attributes:
-      label: Problem Statement
-      description: What problem does this feature solve? What's frustrating or missing today?
-      placeholder: "I have a large library and there's no way to filter recommendations by content length, so I keep getting 1000-page books when I only want short reads."
-    validations:
-      required: true
-
-  - type: textarea
-    id: solution
-    attributes:
-      label: Proposed Solution
-      description: How do you envision this working? Be as specific as you like.
+      label: What would you like to see?
+      description: |
+        Describe the feature: the problem it solves, how you envision it working,
+        and any alternatives you've considered.
       placeholder: |
-        Add a "content length" preference that lets users specify preferred length per content type:
-        - Books: short (<300 pages), medium (300-500), long (500+)
-        - Games: short (<10h), medium (10-30h), long (30h+)
+        Filtering recommendations by content length.
+
+        Today there's no way to ask for short reads — I keep getting 1000-page
+        books when I want something I can finish in a weekend.
+
+        A "preferred length" setting per content type would solve this:
+        - Books: short / medium / long (by page count)
+        - Games: short / medium / long (by hours-to-beat)
+
+        I tried custom rules but the scoring doesn't expose page count directly.
     validations:
       required: true
-
-  - type: textarea
-    id: alternatives
-    attributes:
-      label: Alternatives Considered
-      description: Have you considered other approaches? What are the trade-offs?
-      placeholder: "I tried using custom rules like 'prefer short books' but the scoring doesn't account for page count directly."
 
   - type: dropdown
     id: area
     attributes:
-      label: Feature Area
-      description: Which part of the system does this affect?
+      label: Area (optional)
+      description: Which part of the system does this touch? Pick the closest match.
       options:
         - Ingestion / Data Sources
         - Recommendations / Scoring
@@ -51,35 +39,4 @@ body:
         - Conversation / Chat
         - Storage / Database
         - Documentation
-        - Other
-    validations:
-      required: true
-
-  - type: dropdown
-    id: content-type
-    attributes:
-      label: Content Type (if applicable)
-      description: Does this feature target specific content types?
-      options:
-        - Books
-        - Movies
-        - TV Shows
-        - Video Games
-        - All types
-        - N/A
-      default: 5
-
-  - type: checkboxes
-    id: ai-required
-    attributes:
-      label: AI Dependency
-      description: Does this feature require AI/Ollama?
-      options:
-        - label: This feature requires AI/Ollama to work
-        - label: This feature works without AI but could be enhanced by it
-
-  - type: textarea
-    id: context
-    attributes:
-      label: Additional Context
-      description: Any other context, screenshots, mockups, or examples that help explain the feature.
+        - Other / Not sure
