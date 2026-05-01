@@ -32,6 +32,11 @@ _INLINE_NOISE = [
     re.compile(r"\s*\(nsw2u\.com\)\s*", re.IGNORECASE),
 ]
 
+# Filesystem-safe naming substitutes underscores for spaces. Applied before
+# the trailing-strip loop so chains like "Some_Game_(USA)_(Beta)" become
+# "Some Game (USA) (Beta)" and the trailing-paren regex can match.
+_UNDERSCORE_RUN = re.compile(r"_+")
+
 # Cap on user-supplied regex string length. A bound on the input regex is the
 # pragmatic mitigation for ReDoS in a single-user tool: Python's re engine
 # has no timeout, but pathological backtracking patterns are typically much
@@ -75,6 +80,8 @@ def clean_display_title(
 
     for pattern in _INLINE_NOISE:
         title = pattern.sub(" ", title)
+
+    title = _UNDERSCORE_RUN.sub(" ", title)
 
     title = _strip_trailing_groups(title)
 
