@@ -1,6 +1,55 @@
 # CHANGELOG
 
 
+## v0.8.0 (2026-05-01)
+
+### Bug Fixes
+
+- **docker**: Anchor and escape ollama model-name regex
+  ([`45467c8`](https://github.com/therealahall/recommendinator/commit/45467c8b83ebdda2304ee5a99c1288f7fdef0842))
+
+- **docker**: Silence hadolint DL3008 on intentionally-unpinned build-essential
+  ([`f908365`](https://github.com/therealahall/recommendinator/commit/f9083653a1b5f2b835f251c0e4341f09e48a9712))
+
+### Continuous Integration
+
+- Lint Dockerfiles, shell scripts, and compose manifests in PR builds
+  ([`f107829`](https://github.com/therealahall/recommendinator/commit/f1078294adae68265c42cbbec1e8ab1324a703de))
+
+- **docker**: Build images on PRs and publish multi-arch to GHCR on tags
+  ([`c0562aa`](https://github.com/therealahall/recommendinator/commit/c0562aac4c0fd233ba4967b9708f11cba23c986e))
+
+- **release**: Attach docker-compose.yml to release assets
+  ([`076ff9d`](https://github.com/therealahall/recommendinator/commit/076ff9df021ab3f073b659e93f3a3061b6524296))
+
+### Documentation
+
+- Lead install instructions with Docker across project documentation
+  ([`16280b0`](https://github.com/therealahall/recommendinator/commit/16280b0d7ad19f48c951c51826d10b3abda3fcac))
+
+- **docker**: Add deployment guide for default and AI image variants
+  ([`75f3715`](https://github.com/therealahall/recommendinator/commit/75f3715ec7432a71ac859fd9ec75afdd1ea484e3))
+
+- **docker**: Require explicit app-ai service name for AI compose invocation
+  ([`ada011a`](https://github.com/therealahall/recommendinator/commit/ada011a2b2386a5a1bef9542f955d16dfc3b759d))
+
+### Features
+
+- **docker**: Bootstrap containerized deployment with compose manifests
+  ([`7de112b`](https://github.com/therealahall/recommendinator/commit/7de112b0c2c70809f2ada333e6439b3394aa7477))
+
+- **web**: Add --reload CLI flag for development hot reload
+  ([`e7d6a2b`](https://github.com/therealahall/recommendinator/commit/e7d6a2b4b140e3d25b45d151aa4aaae646ba496d))
+
+### Testing
+
+- **docker**: Cover entrypoint bootstrap and CONFIG_DIR validation
+  ([`9065567`](https://github.com/therealahall/recommendinator/commit/906556729c7570785d7ddf09ce90c39577d59148))
+
+- **web**: Cover reload-vs-production branching in main()
+  ([`8677588`](https://github.com/therealahall/recommendinator/commit/867758889a545eb5fa34a8e4740564940dd114e1))
+
+
 ## v0.7.0 (2026-04-23)
 
 ### Bug Fixes
