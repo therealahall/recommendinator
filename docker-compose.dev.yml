@@ -2,7 +2,11 @@
 #
 # Layer this on top of docker-compose.yml when iterating on app code:
 #
-#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile ai up -d app-ai
+#
+# As with the production compose, the AI invocation must name `app-ai`
+# explicitly so the default `app` service (no profile, always-on) is skipped.
 #
 # What it does (vs. the production compose):
 #   - Builds the image locally instead of pulling from GHCR (so your changes

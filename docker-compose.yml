@@ -8,15 +8,20 @@
 #     -o docker-compose.yml
 #
 # Usage:
-#   docker compose up -d                    # default variant (no AI)
-#   COMPOSE_PROFILES=ai docker compose up   # with Ollama sidecar (AI features)
+#   docker compose up -d                            # default variant (no AI)
+#   docker compose --profile ai up -d app-ai        # AI variant + Ollama sidecar
+#
+# The AI invocation must name `app-ai` explicitly. The default `app` service
+# has no profile so it always starts unless excluded by service-name selection;
+# omitting `app-ai` leaves both variants competing for the same host port.
 #
 # Environment overrides (set in your shell or a .env file next to this file):
 #   IMAGE_TAG  — image tag to pull (default: latest)
 #   APP_PORT   — host port to expose the web UI on (default: 18473)
 #
 # For local development with hot reload, layer docker-compose.dev.yml on top:
-#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile ai up -d app-ai
 
 x-app-common: &app-common
   ports:

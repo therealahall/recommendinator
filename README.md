@@ -70,8 +70,11 @@ required Ollama sidecar, use Docker Compose:
 ```bash
 curl -L https://github.com/therealahall/recommendinator/releases/latest/download/docker-compose.yml \
   -o docker-compose.yml
-COMPOSE_PROFILES=ai docker compose up -d
+docker compose --profile ai up -d app-ai
 ```
+
+The `app-ai` service name is required so the default `app` service (no profile,
+always-on) is skipped — otherwise both variants race for the same host port.
 
 Both variants are published as multi-arch images for `linux/amd64` and
 `linux/arm64`, so they run on x86 servers, Apple Silicon, and modern NAS
@@ -474,7 +477,7 @@ If you want AI-enhanced recommendations:
 
 ### Docker Users
 
-Run `COMPOSE_PROFILES=ai docker compose up -d` — Ollama and models are set up automatically.
+Run `docker compose --profile ai up -d app-ai` — Ollama and models are set up automatically. The `app-ai` service name keeps the default no-AI service from starting on the same port.
 
 ### Local Installation Users
 
