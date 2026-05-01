@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v0.8.1 (2026-05-01)
+
+### Bug Fixes
+
+- **recommendations**: Exclude in-progress items from displayed reasoning
+  ([`38b7ace`](https://github.com/therealahall/recommendinator/commit/38b7ace6c18e88937f84539e77147dfd2582bbb0))
+
+### Chores
+
+- **github**: Simplify issue templates (fixes #48)
+  ([`4a4a0a8`](https://github.com/therealahall/recommendinator/commit/4a4a0a8b3483649c63380b8d20a9a6d0fa72a678))
+
+
 ## v0.8.0 (2026-05-01)
 
 ### Bug Fixes
