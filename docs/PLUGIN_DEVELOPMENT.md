@@ -521,3 +521,4 @@ enrichment:
 - `src/ingestion/sources/generic_csv.py` - Flexible CSV importer
 - `src/ingestion/sources/generic_json.py` - Flexible JSON importer
 - `src/ingestion/sources/markdown.py` - Flexible Markdown importer
+- `src/ingestion/sources/roms.py` - ROM Library scanner with curated extension defaults and built-in No-Intro/Redump/TOSEC title cleaner (`_rom_title.py`)
