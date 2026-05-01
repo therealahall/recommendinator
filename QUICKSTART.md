@@ -36,8 +36,11 @@ For AI features (Ollama sidecar with auto model download), use Docker Compose:
 ```bash
 curl -L https://github.com/therealahall/recommendinator/releases/latest/download/docker-compose.yml \
   -o docker-compose.yml
-COMPOSE_PROFILES=ai docker compose up -d
+docker compose --profile ai up -d app-ai
 ```
+
+Naming `app-ai` is required — the default `app` service has no profile and
+would otherwise start alongside the AI variant, colliding on the same host port.
 
 See [docs/DOCKER.md](docs/DOCKER.md) for parameters, GPU setup, reverse proxy
 notes, and troubleshooting.

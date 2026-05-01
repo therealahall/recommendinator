@@ -227,7 +227,7 @@ python3.11 -m src.cli preferences --help
 **Solutions:**
 1. Check logs for warnings about missing packages (`chromadb is not installed` or `ollama is not installed`)
 2. Install AI packages: `pip install recommendinator[ai]`
-3. For Docker: set `COMPOSE_PROFILES=ai` and run `docker compose up -d` instead of `docker compose up`
+3. For Docker: run the AI variant with `docker compose --profile ai up -d app-ai` (the explicit `app-ai` service name is required so the default no-AI `app` service does not also start)
 
 The application gracefully degrades when AI packages are missing — it logs a warning and continues with AI features disabled rather than crashing.
 

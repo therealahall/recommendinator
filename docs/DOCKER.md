@@ -59,8 +59,13 @@ docker compose up -d
 For the AI variant:
 
 ```bash
-COMPOSE_PROFILES=ai docker compose up -d
+docker compose --profile ai up -d app-ai
 ```
+
+Naming `app-ai` explicitly is required: the default `app` service has no profile
+and would otherwise start alongside `app-ai`, with both fighting for the same
+host port. Specifying the service name limits the up command to `app-ai` and its
+declared dependencies (the Ollama sidecar).
 
 To switch to a pinned version instead of `latest`, set `IMAGE_TAG` in your shell or in a
 `.env` file next to the compose file:
@@ -117,7 +122,7 @@ exposed to the host by default — only `app-ai` talks to it.
 |----------|---------|--------|
 | `IMAGE_TAG` | `latest` | Which image tag the compose file pulls. Set to a semver like `0.7.0` for pinned deployments. The `-ai` suffix is appended automatically for the AI service. |
 | `APP_PORT` | `18473` | Host-side port for the web UI. |
-| `COMPOSE_PROFILES` | (unset) | Set to `ai` to enable the AI variant and the Ollama sidecar. |
+| `COMPOSE_PROFILES` | (unset) | Optional fallback for `--profile ai`. If you set this instead of using the flag, you still need to name `app-ai` on the up command (`docker compose up -d app-ai`) to skip the default `app` service. |
 | `OLLAMA_BASE_URL` | `http://ollama:11434` | Set inside the AI service automatically. Override only if you're pointing at a remote Ollama instance. |
 
 ## First run
@@ -148,11 +153,13 @@ The entrypoint never overwrites an existing `config.yaml`, so restarts are safe.
 ## AI mode
 
 ```bash
-COMPOSE_PROFILES=ai docker compose up -d
+docker compose --profile ai up -d app-ai
 ```
 
-This starts two extra containers: `recommendinator-ai` (the app with AI extras) and
-`recommendinator-ollama` (the LLM server). The Ollama sidecar pulls the models named
+This starts two containers: `recommendinator-ai` (the app with AI extras) and
+`recommendinator-ollama` (the LLM server, pulled in via `depends_on`).
+Naming `app-ai` explicitly is required so the default `app` service does not
+also start and grab the host port. The Ollama sidecar pulls the models named
 in your `config.yaml` (`ollama.model` and `ollama.embedding_model`) on first start —
 this can take 5–15 minutes for a 4 GB model on a typical home connection.
 
@@ -298,7 +305,11 @@ If you're contributing to Recommendinator and want hot reload instead of rebuild
 the image on every change, layer the dev override on top of the production compose:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+# default variant
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+
+# AI variant — name app-ai so the default app service is skipped
+docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile ai up -d app-ai
 ```
 
 This builds the image locally instead of pulling, bind-mounts `./src` and `./templates`
