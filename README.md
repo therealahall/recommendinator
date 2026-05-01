@@ -15,7 +15,7 @@ Most recommendation systems are black boxes that harvest your data. This one:
 
 ### Core Features (No AI Required)
 
-- **Multi-source ingestion** — Import from Goodreads, Steam, GOG, Epic Games, Sonarr, Radarr, or generic CSV/JSON/Markdown files
+- **Multi-source ingestion** — Import from Goodreads, Steam, GOG, Epic Games, Sonarr, Radarr, a local ROM library, or generic CSV/JSON/Markdown files
 - **Cross-content recommendations** — Your love of sci-fi books influences game and movie suggestions via semantic genre clusters that bridge different vocabularies
 - **Smart scoring pipeline** — Genre matching, creator preferences, series order, cluster-aware tag overlap, rating patterns
 - **Custom rules** — Natural language preferences like "avoid horror" or "prefer short books"
@@ -126,6 +126,7 @@ you hot reload without rebuilding.
 | **Epic Games** | Games | Import from your Epic Games library |
 | **Sonarr** | TV Shows | Import from your Sonarr library |
 | **Radarr** | Movies | Import from your Radarr library |
+| **ROM Library** | Games | Scan filesystem directories for emulator ROMs (No-Intro/Redump/TOSEC title cleaning, multi-disc collapse) |
 | **CSV** | Any | Generic CSV with customizable mapping |
 | **JSON** | Any | Generic JSON/JSONL import |
 | **Markdown** | Any | Human-readable markdown lists |

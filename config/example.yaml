@@ -134,6 +134,33 @@ inputs:
     content_type: "movie"  # Content type for enrichment
     enabled: false
 
+  # ROM Library — scan local directories for emulator ROMs and game files.
+  # Files are filtered by a curated default ROM extension list (.nes, .smc,
+  # .iso, .chd, .nsp, .xci, .zip, .7z, .m3u, etc.). Folders are always
+  # included so disc-image dirs (e.g. "Final Fantasy VII (Disc 1)/") count
+  # as one game. Titles are run through a built-in cleaner that strips
+  # No-Intro / Redump / TOSEC tags (region, language, year, revision, disc,
+  # bracket dump-codes). Multi-disc games collapse to one item.
+  my_roms:
+    plugin: roms
+    paths:
+      - "/path/to/your/roms/snes"  # One scan root per system directory.
+      - "/path/to/your/roms/n64"
+    # Optional: ADD extensions to the default list (case-insensitive).
+    # Example: include .exe to also pick up Windows installers.
+    include_extensions: []
+    # Optional: REMOVE extensions from the default list.
+    # Example: exclude .tgz if your stash has tgz archives that aren't games.
+    exclude_extensions: []
+    # Optional: glob patterns matched against entry names to skip — useful
+    # for emulator junk folders (e.g. "scripts", "mlc01", "model2"). Hidden
+    # dotfiles are always skipped.
+    exclude_names: []
+    # Optional: extra Python regex patterns appended to the built-in title
+    # cleaner via re.sub. Useful for site-specific tags the defaults miss.
+    extra_strip_patterns: []
+    enabled: false
+
   # You can add multiple instances of the same plugin. For example:
   # tv_shows_json:
   #   plugin: json_import

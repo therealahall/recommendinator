@@ -19,6 +19,7 @@ Responsible for parsing and normalizing data from various sources.
 - Epic Games via Legendary (video games)
 - Sonarr API (TV shows)
 - Radarr API (movies)
+- ROM Library — local filesystem scanner with curated ROM extensions, built-in No-Intro/Redump/TOSEC title cleaner, and multi-disc collapse
 - Generic CSV, JSON, Markdown (any content type)
 
 **Design:**
