@@ -132,7 +132,7 @@ For each finding, report:
 
 **Description**: What the vulnerability is and why it matters. Be blunt. Don't soften the impact.
 
-**Evidence**: The specific code snippet that is problematic. Quote it exactly.
+**Evidence**: Cite the file path and line numbers of the problematic code. A short single-line quote is acceptable for clarity, but do NOT paste large blocks.
 
 **Impact**: What an attacker could achieve by exploiting this. Be concrete — "an attacker could read arbitrary files from the server" not "this could potentially be a security concern."
 

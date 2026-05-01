@@ -116,10 +116,10 @@ Everything else is fair game. "It's a CLI, it doesn't need a web equivalent" is 
 One paragraph. What changed, what you found, whether parity holds. No hedging. No "mostly good." It either holds or it doesn't.
 
 ### Critical Issues
-Numbered list with **exact file locations** (file:line) and what's missing. For each: what exists on side A, what's absent on side B, and what the user loses.
+Numbered list with **exact file locations** (file:line) and what's missing. For each: what exists on side A, what's absent on side B, and what the user loses. Describe in prose — do NOT write code blocks or example endpoint/command implementations.
 
 ### Major Issues
-Numbered list with specific parameter or capability differences. Show the API signature and the CLI signature side by side so the gap is undeniable.
+Numbered list with specific parameter or capability differences. Cite the API signature and the CLI signature by file:line so the gap is undeniable; describe the divergence in prose. Do NOT paste implementations or rewrite the code — that is the implementing agent's job.
 
 ### Minor Issues
 Numbered list. An empty section is fine and welcome.
