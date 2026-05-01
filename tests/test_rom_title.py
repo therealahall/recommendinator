@@ -119,6 +119,21 @@ class TestCleanDisplayTitleMixed:
         assert clean_display_title("Game (nsw2u.com) Title") == "Game Title"
 
 
+class TestCleanDisplayTitleUnderscores:
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            ("Mortal_Kombat", "Mortal Kombat"),
+            ("Final_Fantasy_VII", "Final Fantasy VII"),
+            ("Some___Game", "Some Game"),  # multiple underscores collapse
+            ("Some_Game_(USA)_(Beta)", "Some Game"),  # underscores expose tail parens
+            ("Foo_Bar.Baz_Qux", "Foo Bar.Baz Qux"),  # dots preserved
+        ],
+    )
+    def test_underscores_become_spaces(self, raw: str, expected: str) -> None:
+        assert clean_display_title(raw) == expected
+
+
 class TestCleanDisplayTitleStatusTags:
     @pytest.mark.parametrize(
         "raw,expected",
