@@ -684,6 +684,15 @@ class RecommendationEngine:
         if not self.llm_generator:
             return
 
+        # LLM blurbs and fallback recs cite consumed items as taste context;
+        # in-progress items must not appear there for the same reason they
+        # are filtered from contributing references and adaptations.
+        completed_consumed_items = [
+            item
+            for item in all_consumed_items
+            if item.status != ConsumptionStatus.CURRENTLY_CONSUMING
+        ]
+
         try:
             if recommendations:
                 # Build (item, references) pairs for per-item blurb generation
@@ -698,7 +707,7 @@ class RecommendationEngine:
                 blurbs = self.llm_generator.generate_blurbs_per_item(
                     content_type=content_type,
                     items_with_refs=items_with_refs,
-                    consumed_items=all_consumed_items,
+                    consumed_items=completed_consumed_items,
                 )
                 # Direct assignment by item ID — no title matching needed
                 enhanced_count = 0
@@ -716,7 +725,7 @@ class RecommendationEngine:
                 logger.info("Using LLM-only recommendations")
                 llm_recs = self.llm_generator.generate_recommendations(
                     content_type=content_type,
-                    consumed_items=all_consumed_items,
+                    consumed_items=completed_consumed_items,
                     unconsumed_items=unconsumed_items,
                     count=count,
                 )
@@ -845,6 +854,12 @@ class RecommendationEngine:
         item_author_norm = get_sort_title(item.author) if item.author else None
 
         for consumed in consumed_items:
+            # Only completed items belong in displayed reasoning — items
+            # the user is actively consuming should not be cited as a
+            # basis for the recommendation.
+            if consumed.status == ConsumptionStatus.CURRENTLY_CONSUMING:
+                continue
+
             if consumed.content_type == item.content_type:
                 continue
 
@@ -912,6 +927,12 @@ class RecommendationEngine:
 
         scored: list[tuple[ContentItem, float]] = []
         for consumed in all_consumed_items:
+            # Only completed items belong in displayed reasoning — items
+            # the user is actively consuming should not be cited as a
+            # basis for the recommendation.
+            if consumed.status == ConsumptionStatus.CURRENTLY_CONSUMING:
+                continue
+
             # Skip items the user actively disliked — they should never
             # appear as "recommended because you liked".  Unrated items
             # (rating is None) are kept.

@@ -2483,3 +2483,184 @@ class TestSameSeriesReferenceExclusionRegression:
             f"Consumed item with {metadata_key!r} metadata key must be "
             f"excluded from contributing references"
         )
+
+
+class TestInProgressItemsExcludedFromBasisRegression:
+    """Regression tests for in-progress items appearing in recommendation basis.
+
+    Bug reported: items with status CURRENTLY_CONSUMING were showing up in
+    the "based on" / contributing items list displayed alongside each
+    recommendation, even though only completed items should influence the
+    displayed reasoning.
+
+    Root cause: `get_completed_items()` correctly includes CURRENTLY_CONSUMING
+    so in-progress media still informs preference scoring, but the display
+    helpers (_find_contributing_reference_items, _find_direct_adaptations)
+    and the LLM-prompt callsites in _enhance_with_llm had no secondary
+    status filter, so the in-progress items leaked into the user-visible
+    reasoning.
+
+    Fix: the display helpers and the LLM-prompt callsites now skip
+    CURRENTLY_CONSUMING items so the "recommended because you liked X"
+    surface only cites completed media.
+    """
+
+    def test_contributing_excludes_currently_consuming(self) -> None:
+        """In-progress items must not appear as contributing references."""
+        engine = RecommendationEngine.__new__(RecommendationEngine)
+
+        candidate = ContentItem(
+            id="breaking_bad",
+            title="Breaking Bad",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genres": ["Drama", "Crime", "Thriller"]},
+        )
+
+        in_progress = ContentItem(
+            id="the_wire",
+            title="The Wire",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.CURRENTLY_CONSUMING,
+            rating=5,
+            metadata={"genres": ["Drama", "Crime"]},
+        )
+        completed = ContentItem(
+            id="sopranos",
+            title="The Sopranos",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            metadata={"genres": ["Drama", "Crime"]},
+        )
+
+        result = engine._find_contributing_reference_items(
+            candidate, [in_progress, completed]
+        )
+
+        result_ids = {item.id for item in result}
+        assert result_ids == {"sopranos"}, (
+            "CURRENTLY_CONSUMING items must be excluded from contributing "
+            "references while completed items must remain"
+        )
+
+    def test_adaptations_exclude_currently_consuming(self) -> None:
+        """In-progress items must not appear as cross-type adaptations."""
+        engine = RecommendationEngine.__new__(RecommendationEngine)
+
+        candidate = ContentItem(
+            id="lotr_movie",
+            title="The Fellowship of the Ring",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+            author="J.R.R. Tolkien",
+        )
+
+        in_progress_book = ContentItem(
+            id="lotr_book_in_progress",
+            title="The Fellowship of the Ring",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.CURRENTLY_CONSUMING,
+            rating=5,
+            author="J.R.R. Tolkien",
+        )
+        completed_book = ContentItem(
+            id="lotr_book_done",
+            title="The Fellowship of the Ring",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            author="J.R.R. Tolkien",
+        )
+
+        result = engine._find_direct_adaptations(
+            candidate, [in_progress_book, completed_book]
+        )
+
+        result_ids = {item.id for item in result}
+        assert result_ids == {"lotr_book_done"}, (
+            "CURRENTLY_CONSUMING items must be excluded from adaptations "
+            "while completed adaptations must still appear"
+        )
+
+    def test_llm_blurb_call_excludes_currently_consuming(self) -> None:
+        """LLM blurb context must not include CURRENTLY_CONSUMING items."""
+        engine = RecommendationEngine.__new__(RecommendationEngine)
+        engine.llm_generator = Mock(spec=RecommendationGenerator)
+        engine.llm_generator.generate_blurbs_per_item.return_value = {}
+
+        completed = ContentItem(
+            id="sopranos",
+            title="The Sopranos",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+        )
+        in_progress = ContentItem(
+            id="the_wire",
+            title="The Wire",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.CURRENTLY_CONSUMING,
+            rating=5,
+        )
+        candidate = ContentItem(
+            id="breaking_bad",
+            title="Breaking Bad",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+        )
+
+        engine._enhance_with_llm(
+            recommendations=[{"item": candidate, "contributing_items": []}],
+            content_type=ContentType.TV_SHOW,
+            all_consumed_items=[completed, in_progress],
+            unconsumed_items=[],
+            count=1,
+            series_tracking={},
+        )
+
+        call_kwargs = engine.llm_generator.generate_blurbs_per_item.call_args.kwargs
+        consumed_passed = call_kwargs["consumed_items"]
+        passed_ids = {item.id for item in consumed_passed}
+        assert passed_ids == {"sopranos"}, (
+            "LLM blurb call must receive only completed items as taste "
+            "context — in-progress items must be filtered out"
+        )
+
+    def test_llm_only_fallback_excludes_currently_consuming(self) -> None:
+        """LLM-only fallback recs must not see CURRENTLY_CONSUMING items."""
+        engine = RecommendationEngine.__new__(RecommendationEngine)
+        engine.llm_generator = Mock(spec=RecommendationGenerator)
+        engine.llm_generator.generate_recommendations.return_value = []
+
+        completed = ContentItem(
+            id="sopranos",
+            title="The Sopranos",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+        )
+        in_progress = ContentItem(
+            id="the_wire",
+            title="The Wire",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.CURRENTLY_CONSUMING,
+            rating=5,
+        )
+
+        engine._enhance_with_llm(
+            recommendations=[],
+            content_type=ContentType.TV_SHOW,
+            all_consumed_items=[completed, in_progress],
+            unconsumed_items=[],
+            count=5,
+            series_tracking={},
+        )
+
+        call_kwargs = engine.llm_generator.generate_recommendations.call_args.kwargs
+        consumed_passed = call_kwargs["consumed_items"]
+        passed_ids = {item.id for item in consumed_passed}
+        assert passed_ids == {"sopranos"}, (
+            "LLM-only fallback must receive only completed items as taste "
+            "context — in-progress items must be filtered out"
+        )
