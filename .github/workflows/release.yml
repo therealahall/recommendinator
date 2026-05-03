@@ -39,27 +39,47 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+      # Bumps version, regenerates CHANGELOG.md and uv.lock, commits, tags,
+      # and pushes — but does NOT create the GitHub release. Release creation
+      # is done in the next step so docker-compose.yml can be attached at
+      # creation time (required: the repo has immutable releases enabled,
+      # which forbids adding assets to an existing release).
       - name: Run semantic-release
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
-        run: uv run python -m semantic_release version --push --commit --tag --vcs-release
+        run: uv run python -m semantic_release version --push --commit --tag
 
-      - name: Attach docker-compose.yml to release
+      - name: Create GitHub release with docker-compose.yml asset
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
-          # Only upload to a real semver tag (defense-in-depth: ignores any
-          # non-version tags that may exist at HEAD, and validates the tag
-          # name before passing it to gh).
+          # Defense-in-depth: only proceed when HEAD is at a real semver tag,
+          # and validate the tag name before passing it to gh.
           TAGS=$(git tag --points-at HEAD | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true)
           TAG_COUNT=$(printf '%s\n' "$TAGS" | grep -c .)
           if [ -z "$TAGS" ]; then
-            echo "No semver tag at HEAD; skipping asset upload."
+            echo "No semver tag at HEAD; skipping release creation."
             exit 0
           fi
           if [ "$TAG_COUNT" -gt 1 ]; then
-            echo "WARNING: multiple semver tags at HEAD: $TAGS — uploading to the first."
+            echo "WARNING: multiple semver tags at HEAD: $TAGS — creating release for the first."
           fi
           NEW_TAG=$(printf '%s\n' "$TAGS" | head -1)
-          gh release upload "$NEW_TAG" docker-compose.yml --clobber
-          echo "Uploaded docker-compose.yml to release $NEW_TAG"
+          VERSION="${NEW_TAG#v}"
+
+          # Extract the section for this version from CHANGELOG.md
+          # (everything between "## vX.Y.Z " and the next "## v" heading).
+          NOTES_FILE=$(mktemp)
+          awk -v v="$VERSION" '
+            $0 ~ "^## v"v"( |$)" {found=1; next}
+            found && /^## v/ {exit}
+            found {print}
+          ' CHANGELOG.md > "$NOTES_FILE"
+
+          if [ ! -s "$NOTES_FILE" ]; then
+            echo "Could not extract changelog section for $VERSION; falling back to auto-generated notes."
+            gh release create "$NEW_TAG" --title "$NEW_TAG" --generate-notes docker-compose.yml
+          else
+            gh release create "$NEW_TAG" --title "$NEW_TAG" --notes-file "$NOTES_FILE" docker-compose.yml
+          fi
+          echo "Created release $NEW_TAG with docker-compose.yml asset"

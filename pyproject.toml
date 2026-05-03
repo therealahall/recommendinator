@@ -157,5 +157,7 @@ type = "github"
 
 [tool.semantic_release.publish]
 # No PyPI publish (upload_to_pypi defaults to false).
-# semantic-release builds and uploads distributions to GitHub Releases.
-upload_to_vcs_release = true
+# Release creation is handled by the workflow (not psr) so that release assets
+# can be attached at creation time — required because the repository has
+# immutable releases enabled, which forbids adding assets after creation.
+upload_to_vcs_release = false
