@@ -52,7 +52,7 @@ Manages persistent storage of processed data and embeddings.
 **Source configuration precedence:**
 Each ingestion source can live in one of two places:
 1. The YAML config file (`config/config.yaml`, the bootstrap default).
-2. The `source_configs` table (after the user clicks "Migrate to DB" in the data accordion or runs `recommendinator source migrate <id>`).
+2. The `source_configs` table (after the user clicks "Migrate to DB" in the data accordion or runs `python3.11 -m src.cli source migrate <id>`).
 When a `source_configs` row exists for a given source ID, it is authoritative — the YAML entry is ignored. Sensitive fields (any `ConfigField` with `sensitive=True`) always live in the encrypted `credentials` table, regardless of which side owns the rest of the config. `resolve_inputs` merges the two: DB or YAML for the non-secret fields, then encrypted credentials on top. The migration endpoint (`POST /api/sync/sources/<id>/migrate`) splits a YAML entry into both tables on first call and is idempotent on subsequent calls.
 
 **Cross-Source Deduplication:**
@@ -237,9 +237,9 @@ inputs:
 
 **YAML is the bootstrap; the database is the long-term source of truth.**
 Once a source is migrated to the database (via the "Migrate to DB" button in
-the data accordion or `recommendinator source migrate <id>`), its YAML entry
-is ignored. Subsequent edits to the source — including enabling/disabling
-it — happen through the web UI or `recommendinator source` CLI commands,
+the data accordion or `python3.11 -m src.cli source migrate <id>`), its YAML
+entry is ignored. Subsequent edits to the source — including enabling/disabling
+it — happen through the web UI or `python3.11 -m src.cli source` CLI commands,
 which write back to `source_configs` (non-sensitive fields) and `credentials`
 (sensitive fields). See [Source configuration precedence](#source-configuration-precedence).
 

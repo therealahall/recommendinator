@@ -17,150 +17,13 @@ from unittest.mock import Mock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from src.ingestion.plugin_base import ConfigField, SourcePlugin
-from src.ingestion.registry import PluginRegistry
 from src.llm.client import OllamaClient
 from src.llm.embeddings import EmbeddingGenerator
 from src.llm.recommendations import RecommendationGenerator
-from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.recommendations.engine import RecommendationEngine
 from src.storage.manager import StorageManager
 from src.web.app import create_app
 from src.web.state import AppState, app_state
-
-
-class FakeFilePlugin(SourcePlugin):
-    """File-based fake plugin: one path field, no secrets."""
-
-    @property
-    def name(self) -> str:
-        return "fake_file"
-
-    @property
-    def display_name(self) -> str:
-        return "Fake File"
-
-    @property
-    def content_types(self) -> list[ContentType]:
-        return [ContentType.BOOK]
-
-    @property
-    def requires_api_key(self) -> bool:
-        return False
-
-    def get_config_schema(self) -> list[ConfigField]:
-        return [
-            ConfigField(
-                name="path",
-                field_type=str,
-                required=True,
-                description="Path to data file",
-            ),
-            ConfigField(
-                name="content_type",
-                field_type=str,
-                required=False,
-                default="book",
-                description="Content type for items",
-            ),
-        ]
-
-    def validate_config(self, config: dict[str, Any], **kwargs: Any) -> list[str]:
-        if not config.get("path"):
-            return ["'path' is required"]
-        return []
-
-    def fetch(self, config: dict[str, Any]) -> Iterator[ContentItem]:
-        yield ContentItem(
-            id="x",
-            title="Stub",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-            source=self.get_source_identifier(config),
-        )
-
-
-class FakeApiPlugin(SourcePlugin):
-    """API-based fake plugin: api_key (sensitive) + non-sensitive fields."""
-
-    @property
-    def name(self) -> str:
-        return "fake_api"
-
-    @property
-    def display_name(self) -> str:
-        return "Fake API"
-
-    @property
-    def content_types(self) -> list[ContentType]:
-        return [ContentType.VIDEO_GAME]
-
-    @property
-    def requires_api_key(self) -> bool:
-        return True
-
-    def get_config_schema(self) -> list[ConfigField]:
-        return [
-            ConfigField(
-                name="api_key",
-                field_type=str,
-                required=True,
-                sensitive=True,
-                description="API key",
-            ),
-            ConfigField(
-                name="user_id",
-                field_type=str,
-                required=False,
-                default="",
-                description="User identifier",
-            ),
-            ConfigField(
-                name="min_minutes",
-                field_type=int,
-                required=False,
-                default=0,
-                description="Minimum minutes",
-            ),
-            ConfigField(
-                name="include_categories",
-                field_type=list,
-                required=False,
-                default=[],
-                description="Category filters",
-            ),
-            ConfigField(
-                name="enabled_filter",
-                field_type=bool,
-                required=False,
-                default=False,
-                description="Toggle",
-            ),
-        ]
-
-    def validate_config(self, config: dict[str, Any], **kwargs: Any) -> list[str]:
-        return []
-
-    def fetch(self, config: dict[str, Any]) -> Iterator[ContentItem]:
-        yield ContentItem(
-            id="g",
-            title="Stub",
-            content_type=ContentType.VIDEO_GAME,
-            status=ConsumptionStatus.UNREAD,
-            source=self.get_source_identifier(config),
-        )
-
-
-@pytest.fixture()
-def _registry_with_fakes() -> Iterator[None]:
-    """Replace the plugin registry with two fake plugins for the test."""
-    registry = PluginRegistry.get_instance()
-    registry._discovered = True
-    registry._plugins.clear()
-    registry.register(FakeFilePlugin())
-    registry.register(FakeApiPlugin())
-    yield
-    PluginRegistry.reset_instance()
 
 
 @pytest.fixture()
@@ -187,8 +50,8 @@ def base_config() -> dict[str, Any]:
                 "api_key": "yaml_api_key",
                 "user_id": "yaml_user",
                 "min_minutes": 30,
-                "include_categories": ["rpg", "indie"],
-                "enabled_filter": True,
+                "tags": ["rpg", "indie"],
+                "active": True,
             },
         },
     }
@@ -196,7 +59,7 @@ def base_config() -> dict[str, Any]:
 
 @pytest.fixture()
 def client(
-    _registry_with_fakes: None,
+    registry_with_source_fakes: None,
     storage: StorageManager,
     base_config: dict[str, Any],
 ) -> Iterator[TestClient]:
@@ -261,8 +124,8 @@ class TestSchemaEndpoint:
             "api_key": "str",
             "user_id": "str",
             "min_minutes": "int",
-            "include_categories": "list",
-            "enabled_filter": "bool",
+            "tags": "list",
+            "active": "bool",
         }
 
     def test_marks_sensitive_fields(self, client: TestClient) -> None:
@@ -272,8 +135,8 @@ class TestSchemaEndpoint:
             "api_key": True,
             "user_id": False,
             "min_minutes": False,
-            "include_categories": False,
-            "enabled_filter": False,
+            "tags": False,
+            "active": False,
         }
 
     def test_returns_404_for_unknown_source(self, client: TestClient) -> None:
@@ -304,8 +167,8 @@ class TestConfigEndpoint:
         assert body["secret_status"] == {"api_key": True}
         assert body["field_values"]["user_id"] == "yaml_user"
         assert body["field_values"]["min_minutes"] == 30
-        assert body["field_values"]["include_categories"] == ["rpg", "indie"]
-        assert body["field_values"]["enabled_filter"] is True
+        assert body["field_values"]["tags"] == ["rpg", "indie"]
+        assert body["field_values"]["active"] is True
 
     def test_post_migration_returns_db_values(
         self, client: TestClient, storage: StorageManager
@@ -382,8 +245,8 @@ class TestMigrateEndpoint:
         assert set(body["fields_migrated"]) == {
             "user_id",
             "min_minutes",
-            "include_categories",
-            "enabled_filter",
+            "tags",
+            "active",
         }
         assert body["secrets_migrated"] == ["api_key"]
 
@@ -430,8 +293,8 @@ class TestUpdateConfigEndpoint:
                 "values": {
                     "user_id": "new_user",
                     "min_minutes": 60,
-                    "include_categories": ["rpg"],
-                    "enabled_filter": False,
+                    "tags": ["rpg"],
+                    "active": False,
                 }
             },
         )
@@ -440,8 +303,8 @@ class TestUpdateConfigEndpoint:
         assert row is not None
         assert row["config"]["user_id"] == "new_user"
         assert row["config"]["min_minutes"] == 60
-        assert row["config"]["include_categories"] == ["rpg"]
-        assert row["config"]["enabled_filter"] is False
+        assert row["config"]["tags"] == ["rpg"]
+        assert row["config"]["active"] is False
 
     def test_rejects_attempt_to_set_sensitive_field_through_config(
         self, client: TestClient, storage: StorageManager
@@ -503,6 +366,31 @@ class TestSecretEndpoints:
             "/api/sync/sources/none/secret/api_key", json={"value": "x"}
         )
         assert response.status_code == 404
+
+    def test_put_secret_404_for_unknown_field_name(
+        self, client: TestClient, storage: StorageManager
+    ) -> None:
+        """A field not declared in the plugin schema returns 404."""
+        client.post("/api/sync/sources/my_games/migrate")
+        response = client.put(
+            "/api/sync/sources/my_games/secret/no_such_field",
+            json={"value": "x"},
+        )
+        assert response.status_code == 404
+        # Guard fired before any DB write — no credential row created.
+        assert storage.get_credential(1, "my_games", "no_such_field") is None
+
+    def test_delete_secret_404_for_unknown_field_name(
+        self, client: TestClient, storage: StorageManager
+    ) -> None:
+        """A field not declared in the plugin schema returns 404."""
+        client.post("/api/sync/sources/my_games/migrate")
+        # Pre-populate a real credential to confirm the rejected delete
+        # leaves unrelated stored secrets untouched.
+        storage.save_credential(1, "my_games", "api_key", "real_key")
+        response = client.delete("/api/sync/sources/my_games/secret/no_such_field")
+        assert response.status_code == 404
+        assert storage.get_credential(1, "my_games", "api_key") == "real_key"
 
     def test_put_secret_400_for_non_sensitive_field(
         self, client: TestClient, storage: StorageManager

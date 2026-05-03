@@ -6,6 +6,10 @@ from unittest.mock import patch
 
 import pytest
 
+# Make shared fakes / fixtures available to every test file without an import
+# (which otherwise collides with pytest's fixture-name-as-parameter idiom).
+pytest_plugins = ["tests.fakes.source_plugins"]
+
 
 def _remove_production_log_handlers() -> None:
     """Remove FileHandlers targeting ``recommendations.log`` from the root logger."""

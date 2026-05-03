@@ -192,6 +192,18 @@ python3.11 -m src.cli source show goodreads --format json
 python3.11 -m src.cli source migrate goodreads --format json
 ```
 
+For atomic multi-field updates (the CLI equivalent of the web
+`PUT /api/sync/sources/<id>/config` bulk endpoint), use `source apply` with
+a JSON dict of values from a file or stdin. The example below uses
+`generic_csv` because it has both `path` and `content_type` in its schema —
+plugin-specific sources like `goodreads` only expose the fields their
+schema declares (run `python3.11 -m src.cli source schema <id>` to see them):
+
+```bash
+echo '{"path": "inputs/new.csv", "content_type": "book"}' \
+  | python3.11 -m src.cli source apply my_csv --from-json -
+```
+
 For non-interactive secret rotation (Docker entrypoints, CI), set
 `RECOMMENDINATOR_SECRET_VALUE` instead of typing at the prompt:
 

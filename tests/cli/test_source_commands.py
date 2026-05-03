@@ -8,124 +8,14 @@ stay in lockstep.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
 from click.testing import CliRunner
 
-from src.ingestion.plugin_base import ConfigField, SourcePlugin
-from src.ingestion.registry import PluginRegistry
-from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.manager import StorageManager
 from tests.cli.conftest import _invoke_with_mocks
-
-
-class FakeFilePlugin(SourcePlugin):
-    @property
-    def name(self) -> str:
-        return "fake_file"
-
-    @property
-    def display_name(self) -> str:
-        return "Fake File"
-
-    @property
-    def content_types(self) -> list[ContentType]:
-        return [ContentType.BOOK]
-
-    @property
-    def requires_api_key(self) -> bool:
-        return False
-
-    def get_config_schema(self) -> list[ConfigField]:
-        return [
-            ConfigField(name="path", field_type=str, required=True),
-            ConfigField(
-                name="content_type",
-                field_type=str,
-                required=False,
-                default="book",
-            ),
-        ]
-
-    def validate_config(self, config: dict[str, Any], **kwargs: Any) -> list[str]:
-        return [] if config.get("path") else ["'path' is required"]
-
-    def fetch(self, config: dict[str, Any]) -> Iterator[ContentItem]:
-        yield ContentItem(
-            id="x",
-            title="Stub",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-            source=self.get_source_identifier(config),
-        )
-
-
-class FakeApiPlugin(SourcePlugin):
-    @property
-    def name(self) -> str:
-        return "fake_api"
-
-    @property
-    def display_name(self) -> str:
-        return "Fake API"
-
-    @property
-    def content_types(self) -> list[ContentType]:
-        return [ContentType.VIDEO_GAME]
-
-    @property
-    def requires_api_key(self) -> bool:
-        return True
-
-    def get_config_schema(self) -> list[ConfigField]:
-        return [
-            ConfigField(name="api_key", field_type=str, required=True, sensitive=True),
-            ConfigField(name="user_id", field_type=str, required=False),
-            ConfigField(
-                name="min_minutes",
-                field_type=int,
-                required=False,
-                default=0,
-            ),
-            ConfigField(
-                name="tags",
-                field_type=list,
-                required=False,
-                default=[],
-            ),
-            ConfigField(
-                name="active",
-                field_type=bool,
-                required=False,
-                default=False,
-            ),
-        ]
-
-    def validate_config(self, config: dict[str, Any], **kwargs: Any) -> list[str]:
-        return []
-
-    def fetch(self, config: dict[str, Any]) -> Iterator[ContentItem]:
-        yield ContentItem(
-            id="g",
-            title="Stub",
-            content_type=ContentType.VIDEO_GAME,
-            status=ConsumptionStatus.UNREAD,
-            source=self.get_source_identifier(config),
-        )
-
-
-@pytest.fixture()
-def _registry_with_fakes() -> Iterator[None]:
-    registry = PluginRegistry.get_instance()
-    registry._discovered = True
-    registry._plugins.clear()
-    registry.register(FakeFilePlugin())
-    registry.register(FakeApiPlugin())
-    yield
-    PluginRegistry.reset_instance()
 
 
 @pytest.fixture()
@@ -156,7 +46,7 @@ def base_config() -> dict[str, Any]:
     }
 
 
-@pytest.mark.usefixtures("_registry_with_fakes")
+@pytest.mark.usefixtures("registry_with_source_fakes")
 class TestSourceList:
     def test_list_table_format_contains_source_ids(
         self,
@@ -204,7 +94,7 @@ class TestSourceList:
         assert json.loads(result.output) == []
 
 
-@pytest.mark.usefixtures("_registry_with_fakes")
+@pytest.mark.usefixtures("registry_with_source_fakes")
 class TestSourceShow:
     def test_show_json_matches_api_response(
         self,
@@ -244,7 +134,7 @@ class TestSourceShow:
         assert result.exit_code != 0
 
 
-@pytest.mark.usefixtures("_registry_with_fakes")
+@pytest.mark.usefixtures("registry_with_source_fakes")
 class TestSourceSchema:
     def test_schema_json_matches_api_response(
         self,
@@ -271,7 +161,7 @@ class TestSourceSchema:
         assert {f["name"]: f["sensitive"] for f in body["fields"]}["api_key"] is True
 
 
-@pytest.mark.usefixtures("_registry_with_fakes")
+@pytest.mark.usefixtures("registry_with_source_fakes")
 class TestSourceMigrate:
     def test_migrate_moves_yaml_into_db(
         self,
@@ -337,7 +227,7 @@ class TestSourceMigrate:
         assert body["secrets_migrated"] == ["api_key"]
 
 
-@pytest.mark.usefixtures("_registry_with_fakes")
+@pytest.mark.usefixtures("registry_with_source_fakes")
 class TestSourceEnableDisable:
     def test_disable_after_migrate_flips_flag(
         self,
@@ -364,6 +254,7 @@ class TestSourceEnableDisable:
         storage: StorageManager,
         base_config: dict[str, Any],
     ) -> None:
+        """Enabling a not-yet-migrated source aborts (no DB row to flip)."""
         result = _invoke_with_mocks(
             cli_runner,
             ["source", "enable", "my_books"],
@@ -408,7 +299,7 @@ class TestSourceEnableDisable:
         assert row is not None and row["enabled"] is True
 
 
-@pytest.mark.usefixtures("_registry_with_fakes")
+@pytest.mark.usefixtures("registry_with_source_fakes")
 class TestSourceSet:
     def test_set_coerces_list_value_from_comma_separated_string(
         self,
@@ -466,6 +357,41 @@ class TestSourceSet:
         row = storage.get_source_config(1, "my_games")
         assert row is not None and row["config"]["min_minutes"] == 60
 
+    def test_set_when_not_migrated_returns_error(
+        self,
+        cli_runner: CliRunner,
+        storage: StorageManager,
+        base_config: dict[str, Any],
+    ) -> None:
+        """``source set`` on a YAML-only source aborts (no DB row to update)."""
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["source", "set", "my_games", "min_minutes", "5"],
+            mock_storage=storage,
+            config=base_config,
+        )
+        assert result.exit_code != 0
+        assert storage.get_source_config(1, "my_games") is None
+
+    def test_set_rejects_unknown_field(
+        self,
+        cli_runner: CliRunner,
+        storage: StorageManager,
+        base_config: dict[str, Any],
+    ) -> None:
+        """A field not in the plugin schema aborts before any DB write."""
+        storage.upsert_source_config(1, "my_games", "fake_api", {}, enabled=True)
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["source", "set", "my_games", "no_such_field", "x"],
+            mock_storage=storage,
+            config=base_config,
+        )
+        assert result.exit_code != 0
+        row = storage.get_source_config(1, "my_games")
+        assert row is not None
+        assert "no_such_field" not in row["config"]
+
     def test_set_rejects_sensitive_field(
         self,
         cli_runner: CliRunner,
@@ -517,7 +443,177 @@ class TestSourceSet:
         assert result.exit_code != 0
 
 
-@pytest.mark.usefixtures("_registry_with_fakes")
+@pytest.mark.usefixtures("registry_with_source_fakes")
+class TestSourceApply:
+    """Bulk-update parity with web ``PUT /api/sync/sources/<id>/config``."""
+
+    def test_apply_updates_multiple_fields_atomically_from_stdin(
+        self,
+        cli_runner: CliRunner,
+        storage: StorageManager,
+        base_config: dict[str, Any],
+    ) -> None:
+        storage.upsert_source_config(1, "my_games", "fake_api", {}, enabled=True)
+        payload = json.dumps(
+            {"user_id": "new", "min_minutes": 90, "tags": ["rpg"], "active": False}
+        )
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["source", "apply", "my_games", "--from-json", "-"],
+            mock_storage=storage,
+            config=base_config,
+            input_text=payload,
+        )
+        assert result.exit_code == 0
+        assert "Applied" in result.output
+        row = storage.get_source_config(1, "my_games")
+        assert row is not None
+        assert row["config"] == {
+            "user_id": "new",
+            "min_minutes": 90,
+            "tags": ["rpg"],
+            "active": False,
+        }
+
+    def test_apply_returns_error_when_not_migrated(
+        self,
+        cli_runner: CliRunner,
+        storage: StorageManager,
+        base_config: dict[str, Any],
+    ) -> None:
+        """Apply on a YAML-only (not-yet-migrated) source aborts with non-zero exit."""
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["source", "apply", "my_books", "--from-json", "-"],
+            mock_storage=storage,
+            config=base_config,
+            input_text=json.dumps({"path": "/x"}),
+        )
+        assert result.exit_code != 0
+        # Guard fired before any DB write — no source_configs row created.
+        assert storage.get_source_config(1, "my_books") is None
+
+    def test_apply_json_format_matches_api_response(
+        self,
+        cli_runner: CliRunner,
+        storage: StorageManager,
+        base_config: dict[str, Any],
+    ) -> None:
+        """``--format json`` emits the SourceConfigResponse-shaped view."""
+        storage.upsert_source_config(1, "my_games", "fake_api", {}, enabled=True)
+        result = _invoke_with_mocks(
+            cli_runner,
+            [
+                "source",
+                "apply",
+                "my_games",
+                "--from-json",
+                "-",
+                "--format",
+                "json",
+            ],
+            mock_storage=storage,
+            config=base_config,
+            input_text=json.dumps({"user_id": "via_json"}),
+        )
+        assert result.exit_code == 0
+        body = json.loads(result.output)
+        assert body["source_id"] == "my_games"
+        assert body["plugin"] == "fake_api"
+        assert body["field_values"]["user_id"] == "via_json"
+        assert "api_key" not in body["field_values"]
+
+    def test_apply_from_file(
+        self,
+        cli_runner: CliRunner,
+        storage: StorageManager,
+        base_config: dict[str, Any],
+        tmp_path: Path,
+    ) -> None:
+        storage.upsert_source_config(1, "my_games", "fake_api", {}, enabled=True)
+        payload_file = tmp_path / "values.json"
+        payload_file.write_text(json.dumps({"user_id": "from_file"}))
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["source", "apply", "my_games", "--from-json", str(payload_file)],
+            mock_storage=storage,
+            config=base_config,
+        )
+        assert result.exit_code == 0
+        row = storage.get_source_config(1, "my_games")
+        assert row is not None and row["config"]["user_id"] == "from_file"
+
+    def test_apply_rejects_unknown_field(
+        self,
+        cli_runner: CliRunner,
+        storage: StorageManager,
+        base_config: dict[str, Any],
+    ) -> None:
+        """A field name not in the plugin schema must abort the bulk apply."""
+        storage.upsert_source_config(1, "my_games", "fake_api", {}, enabled=True)
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["source", "apply", "my_games", "--from-json", "-"],
+            mock_storage=storage,
+            config=base_config,
+            input_text=json.dumps({"no_such_field": "x"}),
+        )
+        assert result.exit_code != 0
+        row = storage.get_source_config(1, "my_games")
+        assert row is not None
+        assert "no_such_field" not in row["config"]
+
+    def test_apply_rejects_sensitive_field(
+        self,
+        cli_runner: CliRunner,
+        storage: StorageManager,
+        base_config: dict[str, Any],
+    ) -> None:
+        storage.upsert_source_config(1, "my_games", "fake_api", {}, enabled=True)
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["source", "apply", "my_games", "--from-json", "-"],
+            mock_storage=storage,
+            config=base_config,
+            input_text=json.dumps({"api_key": "leaked"}),
+        )
+        assert result.exit_code != 0
+        assert storage.get_credential(1, "my_games", "api_key") is None
+
+    def test_apply_rejects_invalid_json(
+        self,
+        cli_runner: CliRunner,
+        storage: StorageManager,
+        base_config: dict[str, Any],
+    ) -> None:
+        storage.upsert_source_config(1, "my_games", "fake_api", {}, enabled=True)
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["source", "apply", "my_games", "--from-json", "-"],
+            mock_storage=storage,
+            config=base_config,
+            input_text="{not json",
+        )
+        assert result.exit_code != 0
+
+    def test_apply_rejects_non_object_payload(
+        self,
+        cli_runner: CliRunner,
+        storage: StorageManager,
+        base_config: dict[str, Any],
+    ) -> None:
+        storage.upsert_source_config(1, "my_games", "fake_api", {}, enabled=True)
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["source", "apply", "my_games", "--from-json", "-"],
+            mock_storage=storage,
+            config=base_config,
+            input_text="[1, 2, 3]",
+        )
+        assert result.exit_code != 0
+
+
+@pytest.mark.usefixtures("registry_with_source_fakes")
 class TestSourceSecrets:
     def test_set_secret_stores_via_hidden_prompt(
         self,
@@ -587,6 +683,39 @@ class TestSourceSecrets:
         result = _invoke_with_mocks(
             cli_runner,
             ["source", "clear-secret", "my_games", "user_id"],
+            mock_storage=storage,
+            config=base_config,
+        )
+        assert result.exit_code != 0
+
+    def test_set_secret_rejects_unknown_field_name(
+        self,
+        cli_runner: CliRunner,
+        storage: StorageManager,
+        base_config: dict[str, Any],
+    ) -> None:
+        """A field not declared in the plugin schema aborts the prompt path."""
+        storage.upsert_source_config(1, "my_games", "fake_api", {}, enabled=True)
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["source", "set-secret", "my_games", "no_such_field"],
+            mock_storage=storage,
+            config=base_config,
+            input_text="x\n",
+        )
+        assert result.exit_code != 0
+
+    def test_clear_secret_rejects_unknown_field_name(
+        self,
+        cli_runner: CliRunner,
+        storage: StorageManager,
+        base_config: dict[str, Any],
+    ) -> None:
+        """A field not declared in the plugin schema aborts the clear path."""
+        storage.upsert_source_config(1, "my_games", "fake_api", {}, enabled=True)
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["source", "clear-secret", "my_games", "no_such_field"],
             mock_storage=storage,
             config=base_config,
         )
