@@ -293,10 +293,10 @@ When a review agent flags an issue, search the rest of the diff for the same pat
 
 ## Pre-commit Workflow
 
-1. Run **security-review**, **code-review**, **test-review**, **document-review**, and **accessibility-review** agents (can run in parallel)
-2. Address all agent findings
-3. **Re-run any agent that had findings** — agents must verify fixes are correct. Repeat steps 2–3 until **all agents approve**. Do not proceed until every agent returns APPROVE.
-4. Run **commit-hygiene** agent to plan commit split
-5. Run `command make check` (pytest, black, mypy, ruff)
-6. Commit following the split plan from commit-hygiene
-7. Run **commit-hygiene** again pre-push to verify commit structure
+1. Run **security-review**, **code-review**, **test-review**, **document-review**, **parity-review**, and **accessibility-review** agents in parallel.
+2. Address all agent findings.
+3. **Re-run ALL six agents** — not just the ones that had findings. A fix that satisfies one agent can introduce a new issue in another agent's domain (e.g., a security fix that changes test mock setup, or a test refactor that adds a new file requiring documentation). Approval is on the *final state*, not the delta. Repeat steps 2–3 until every agent returns APPROVE on the **same** tree. Never skip an agent because it approved on an earlier round — that approval is invalidated by every subsequent edit.
+4. Run **commit-hygiene** agent to plan commit split.
+5. Run `command make check` (pytest, black, mypy, ruff).
+6. Commit following the split plan from commit-hygiene. If staging triggers a formatter or any other code edit, the loop restarts at step 3 — agents must approve the exact tree that gets committed.
+7. Run **commit-hygiene** again pre-push to verify commit structure.
