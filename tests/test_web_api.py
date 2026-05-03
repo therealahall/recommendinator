@@ -70,6 +70,7 @@ def mock_components(mock_config):
         # Setup mocks
         mock_storage_manager = Mock(spec=StorageManager)
         mock_storage_manager.get_credentials_for_source.return_value = {}
+        mock_storage_manager.list_source_configs.return_value = []
         mock_storage.return_value = mock_storage_manager
 
         mock_client = Mock(spec=OllamaClient)

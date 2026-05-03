@@ -15,6 +15,7 @@ from src.cli.commands import (
     preferences,
     profile,
     recommend,
+    source,
     status,
     update,
 )
@@ -74,6 +75,7 @@ cli.add_command(enrichment)
 cli.add_command(library)
 cli.add_command(memory)
 cli.add_command(profile)
+cli.add_command(source)
 
 
 if __name__ == "__main__":

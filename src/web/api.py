@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from src import __version__ as APP_VERSION
 from src.cli.config import get_feature_flags
+from src.ingestion.plugin_base import SourcePlugin
 from src.ingestion.sync import execute_multi_source_sync
 from src.models.content import (
     ConsumptionStatus,
@@ -21,7 +22,7 @@ from src.models.content import (
     get_enum_value,
 )
 from src.models.user_preferences import UserPreferenceConfig
-from src.storage.manager import VALID_SORT_OPTIONS
+from src.storage.manager import VALID_SORT_OPTIONS, StorageManager
 from src.utils.item_serialization import item_to_dict
 from src.utils.text import humanize_source_id
 from src.web.enrichment_manager import get_enrichment_manager
@@ -53,8 +54,17 @@ from src.web.state import (
 )
 from src.web.sync_manager import SyncJob, get_sync_manager
 from src.web.sync_sources import (
+    SourceConfigError,
+    build_config_view,
+    build_schema_view,
+    clear_source_secret_value,
     get_available_sync_sources,
+    migrate_source,
     resolve_inputs,
+    resolve_source_plugin,
+    set_source_enabled_state,
+    set_source_secret_value,
+    update_source_config_values,
     validate_source_config,
 )
 
@@ -308,6 +318,66 @@ class ThemeResponse(BaseModel):
     author: str
     version: str
     theme_type: str
+
+
+class SourceFieldSchema(BaseModel):
+    """One field in a source plugin's config schema."""
+
+    name: str
+    field_type: str
+    required: bool
+    default: Any = None
+    description: str = ""
+    sensitive: bool = False
+
+
+class SourceSchemaResponse(BaseModel):
+    """Plugin config schema for a single source (drives autogen UI/CLI)."""
+
+    source_id: str
+    plugin: str
+    plugin_display_name: str
+    fields: list[SourceFieldSchema]
+
+
+class SourceConfigResponse(BaseModel):
+    """Current config values for a source. Sensitive fields are never returned."""
+
+    source_id: str
+    plugin: str
+    plugin_display_name: str
+    enabled: bool
+    migrated: bool
+    migrated_at: str | None
+    field_values: dict[str, Any]
+    secret_status: dict[str, bool]
+
+
+class SourceConfigUpdateRequest(BaseModel):
+    """Bulk update of non-sensitive fields for a migrated source."""
+
+    values: dict[str, Any]
+
+
+class SourceSecretUpdateRequest(BaseModel):
+    """Set or rotate a single sensitive field."""
+
+    value: str
+
+
+class SourceEnabledUpdateRequest(BaseModel):
+    """Toggle the enabled flag for a migrated source."""
+
+    enabled: bool
+
+
+class SourceMigrationResponse(BaseModel):
+    """Result of migrating a YAML source entry into the database."""
+
+    source_id: str
+    migrated_at: str
+    fields_migrated: list[str]
+    secrets_migrated: list[str]
 
 
 def discover_themes(themes_dir: Path) -> list[ThemeResponse]:
@@ -1231,6 +1301,152 @@ async def get_sync_sources() -> list[SyncSourceResponse]:
         )
         for source in sources
     ]
+
+
+# Per-source configuration endpoints. Business logic lives in
+# ``src.web.sync_sources``; the endpoints below adapt those helpers to
+# FastAPI / Pydantic so the CLI ``source`` group can share them.
+
+
+_ERROR_KIND_TO_STATUS: dict[str, int] = {
+    "not_found": 404,
+    "not_migrated": 404,
+    "invalid_field": 400,
+    "not_sensitive": 400,
+    "sensitive_in_config": 400,
+}
+
+# Fixed user-facing strings keyed by error kind so HTTP responses never
+# echo back caller-controlled identifiers (path params would otherwise
+# end up in JSON `detail` fields).
+_ERROR_KIND_TO_DETAIL: dict[str, str] = {
+    "not_found": "Field or source not found.",
+    "not_migrated": "Source has not been migrated to the database.",
+    "invalid_field": "Request references an unknown field.",
+    "not_sensitive": "Field is not sensitive — use the config endpoint instead.",
+    "sensitive_in_config": "Sensitive fields must be set via the secret endpoint.",
+}
+
+
+def _sanitize_for_log(value: str) -> str:
+    """Strip CR/LF/NUL from a string before logging.
+
+    Path parameters are user-controlled. Without sanitization an attacker
+    could inject newlines and forge structured log lines (CWE-117).
+    """
+    return value.replace("\n", "\\n").replace("\r", "\\r").replace("\0", "\\0")
+
+
+def _require_plugin(source_id: str) -> SourcePlugin:
+    plugin = resolve_source_plugin(source_id, get_config(), get_storage())
+    if plugin is None:
+        # Server-side log carries the identifier; the wire response stays generic.
+        logger.info("Source lookup miss for source_id=%s", _sanitize_for_log(source_id))
+        raise HTTPException(status_code=404, detail="Source not found.")
+    return plugin
+
+
+def _require_storage() -> StorageManager:
+    storage = get_storage()
+    if storage is None:
+        raise HTTPException(status_code=503, detail="Storage unavailable")
+    return storage
+
+
+def _config_error_to_http(error: SourceConfigError) -> HTTPException:
+    # error.kind is controlled internally; error.message embeds caller-supplied
+    # values so it stays out of the log to prevent log injection.
+    logger.info("Source config error kind=%s", error.kind)
+    return HTTPException(
+        status_code=_ERROR_KIND_TO_STATUS.get(error.kind, 400),
+        detail=_ERROR_KIND_TO_DETAIL.get(error.kind, "Invalid request."),
+    )
+
+
+@router.get("/sync/sources/{source_id}/schema", response_model=SourceSchemaResponse)
+async def get_source_schema(source_id: str) -> SourceSchemaResponse:
+    """Return the plugin config schema for a source (drives autogen forms)."""
+    plugin = _require_plugin(source_id)
+    return SourceSchemaResponse(**build_schema_view(source_id, plugin))
+
+
+@router.get("/sync/sources/{source_id}/config", response_model=SourceConfigResponse)
+async def get_source_config_endpoint(source_id: str) -> SourceConfigResponse:
+    """Return current config values for a source. Sensitive fields are stripped."""
+    plugin = _require_plugin(source_id)
+    return SourceConfigResponse(
+        **build_config_view(source_id, plugin, get_config(), get_storage())
+    )
+
+
+@router.post(
+    "/sync/sources/{source_id}/migrate", response_model=SourceMigrationResponse
+)
+async def migrate_source_to_db(source_id: str) -> SourceMigrationResponse:
+    """Copy a YAML source entry into the database (idempotent)."""
+    plugin = _require_plugin(source_id)
+    storage = _require_storage()
+    return SourceMigrationResponse(
+        **migrate_source(source_id, plugin, get_config(), storage)
+    )
+
+
+@router.put("/sync/sources/{source_id}/config", response_model=SourceConfigResponse)
+async def update_source_config_endpoint(
+    source_id: str, payload: SourceConfigUpdateRequest
+) -> SourceConfigResponse:
+    """Update non-sensitive fields on a migrated source."""
+    plugin = _require_plugin(source_id)
+    storage = _require_storage()
+    try:
+        update_source_config_values(source_id, plugin, storage, payload.values)
+    except SourceConfigError as error:
+        raise _config_error_to_http(error) from error
+    return SourceConfigResponse(
+        **build_config_view(source_id, plugin, get_config(), storage)
+    )
+
+
+@router.put("/sync/sources/{source_id}/secret/{key}", status_code=204)
+async def set_source_secret_endpoint(
+    source_id: str, key: str, payload: SourceSecretUpdateRequest
+) -> Response:
+    """Encrypt and store a sensitive field for a source."""
+    plugin = _require_plugin(source_id)
+    storage = _require_storage()
+    try:
+        set_source_secret_value(source_id, plugin, storage, key, payload.value)
+    except SourceConfigError as error:
+        raise _config_error_to_http(error) from error
+    return Response(status_code=204)
+
+
+@router.delete("/sync/sources/{source_id}/secret/{key}", status_code=204)
+async def clear_source_secret_endpoint(source_id: str, key: str) -> Response:
+    """Delete a sensitive field's stored value for a source."""
+    plugin = _require_plugin(source_id)
+    storage = _require_storage()
+    try:
+        clear_source_secret_value(source_id, plugin, storage, key)
+    except SourceConfigError as error:
+        raise _config_error_to_http(error) from error
+    return Response(status_code=204)
+
+
+@router.put("/sync/sources/{source_id}/enabled", response_model=SourceConfigResponse)
+async def set_source_enabled_endpoint(
+    source_id: str, payload: SourceEnabledUpdateRequest
+) -> SourceConfigResponse:
+    """Toggle the enabled flag on a migrated source."""
+    plugin = _require_plugin(source_id)
+    storage = _require_storage()
+    try:
+        set_source_enabled_state(source_id, storage, payload.enabled)
+    except SourceConfigError as error:
+        raise _config_error_to_http(error) from error
+    return SourceConfigResponse(
+        **build_config_view(source_id, plugin, get_config(), storage)
+    )
 
 
 @router.get("/sync/status", response_model=SyncStatusResponse)

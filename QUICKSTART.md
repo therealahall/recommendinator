@@ -167,6 +167,42 @@ python3.11 -m src.cli update --source all
 python3.11 -m src.cli update --source list
 ```
 
+### Edit a source's configuration
+
+Once you've started up the app you can manage each source from the web
+**Data** tab (each source is an accordion that expands to reveal settings) or
+from the CLI:
+
+```bash
+# Move a YAML source into the database (one-time, idempotent)
+python3.11 -m src.cli source migrate goodreads
+
+# Inspect / edit fields after migration
+python3.11 -m src.cli source show goodreads
+python3.11 -m src.cli source set goodreads path inputs/new_export.csv
+python3.11 -m src.cli source disable goodreads
+python3.11 -m src.cli source set-secret steam api_key   # hidden prompt
+```
+
+All `source` subcommands except `set-secret` and `clear-secret` accept
+`--format json` for scripting parity with the web API:
+
+```bash
+python3.11 -m src.cli source show goodreads --format json
+python3.11 -m src.cli source migrate goodreads --format json
+```
+
+For non-interactive secret rotation (Docker entrypoints, CI), set
+`RECOMMENDINATOR_SECRET_VALUE` instead of typing at the prompt:
+
+```bash
+RECOMMENDINATOR_SECRET_VALUE="$STEAM_API_KEY" \
+  python3.11 -m src.cli source set-secret steam api_key
+```
+
+The env-var path keeps the secret out of shell history and the visible
+process list (unlike a `--value` flag would).
+
 If you enabled `auto_enrich_on_sync`, enrichment runs automatically after each sync. Otherwise, run it manually:
 
 ```bash

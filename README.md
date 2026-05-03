@@ -133,6 +133,12 @@ you hot reload without rebuilding.
 
 See the `templates/` directory for import file examples. Templates support the `ignored` field for excluding items from recommendations, and TV show templates use a `seasons_watched` list (e.g., `1,2,5,6` in CSV or `[1,2,5,6]` in JSON) to track specific seasons watched.
 
+### Editing source configuration in the UI
+
+Each data source in the **Data** tab is shown as an accordion that expands to reveal its settings. The first time you expand a source, click **Migrate to DB** to copy the YAML entry into the database — once migrated, every field defined in that plugin's config schema is editable inline from the web UI or via the `recommendinator source` CLI commands. The exact set of fields differs per plugin (e.g. Steam exposes `api_key` and `vanity_url`; Goodreads exposes `path`); the generic CSV / JSON / Markdown plugins also expose `content_type`. Run `recommendinator source schema <id>` to see what is editable for a given source. The accordion's enabled/disabled toggle is always available post-migration.
+
+Sensitive fields (API keys, OAuth tokens) are stored encrypted and never returned by the API; the UI shows a "set" / "unset" badge with **Replace** and **Clear** actions.
+
 ### Library Export
 
 Export your library data from the web UI:

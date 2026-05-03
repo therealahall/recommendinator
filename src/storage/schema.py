@@ -57,6 +57,33 @@ class UserDict(TypedDict):
     settings: dict[str, Any] | None
 
 
+class SourceConfigRow(TypedDict):
+    """Raw row from the source_configs table."""
+
+    source_id: str
+    plugin: str
+    config_json: str
+    enabled: int
+    migrated_at: str
+    updated_at: str
+
+
+class SourceConfigDict(TypedDict):
+    """Parsed source config record returned by StorageManager.
+
+    ``config`` is the deserialised non-sensitive config dict; sensitive
+    values stay in the encrypted ``credentials`` table and must be merged in
+    by ``resolve_inputs`` at sync time.
+    """
+
+    source_id: str
+    plugin: str
+    config: dict[str, Any]
+    enabled: bool
+    migrated_at: str
+    updated_at: str
+
+
 # Whitelist of table names allowed in dynamic SQL queries.
 # Defense-in-depth: these names come from hardcoded strings in
 # get_enrichment_stats, but validating prevents accidental injection.
@@ -373,6 +400,27 @@ def create_schema(conn: sqlite3.Connection) -> None:
             credential_value TEXT NOT NULL,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (user_id, source_id, credential_key)
+        )
+        """
+    )
+
+    # Source configs table: per-source non-sensitive config that has been
+    # migrated from config.yaml into the database. Once a row exists for
+    # (user_id, source_id), the YAML entry for that source is no longer
+    # consulted by resolve_inputs — the database is the source of truth.
+    # Sensitive fields (API keys, tokens) keep going through the encrypted
+    # ``credentials`` table above; this table holds the rest.
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS source_configs (
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            source_id TEXT NOT NULL,
+            plugin TEXT NOT NULL,
+            config_json TEXT NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            migrated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id, source_id)
         )
         """
     )
@@ -1518,3 +1566,130 @@ def get_credentials_for_source(
         (user_id, source_id),
     )
     return {row[0]: row[1] for row in cursor.fetchall()}
+
+
+# Source config functions
+
+
+def _row_to_source_config(row: sqlite3.Row) -> SourceConfigRow:
+    """Map a ``source_configs`` row to a typed dict.
+
+    ``conn.row_factory`` is set to ``sqlite3.Row`` by ``create_schema``, so
+    every connection coming through this module supports column-name access.
+    Using names instead of positional indexes keeps mappings safe if the
+    SELECT column order ever drifts.
+    """
+    return SourceConfigRow(
+        source_id=row["source_id"],
+        plugin=row["plugin"],
+        config_json=row["config_json"],
+        enabled=row["enabled"],
+        migrated_at=row["migrated_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def get_source_config(
+    conn: sqlite3.Connection,
+    user_id: int,
+    source_id: str,
+) -> SourceConfigRow | None:
+    """Get the migrated source config row for a (user, source).
+
+    Returns ``None`` when the source has not been migrated to the database
+    yet — callers should fall back to the YAML config in that case.
+    """
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT source_id, plugin, config_json, enabled, migrated_at, updated_at "
+        "FROM source_configs WHERE user_id = ? AND source_id = ?",
+        (user_id, source_id),
+    )
+    row = cursor.fetchone()
+    return _row_to_source_config(row) if row else None
+
+
+def upsert_source_config(
+    conn: sqlite3.Connection,
+    user_id: int,
+    source_id: str,
+    plugin: str,
+    config_json: str,
+    enabled: bool,
+) -> None:
+    """Insert or update a migrated source config (UPSERT).
+
+    On insert ``migrated_at`` is set to ``CURRENT_TIMESTAMP``. On update only
+    ``updated_at`` advances — ``migrated_at`` is preserved as the original
+    migration moment.
+    """
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO source_configs (
+            user_id, source_id, plugin, config_json, enabled,
+            migrated_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ON CONFLICT(user_id, source_id) DO UPDATE SET
+            plugin = excluded.plugin,
+            config_json = excluded.config_json,
+            enabled = excluded.enabled,
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        (user_id, source_id, plugin, config_json, 1 if enabled else 0),
+    )
+    conn.commit()
+
+
+def set_source_config_enabled(
+    conn: sqlite3.Connection,
+    user_id: int,
+    source_id: str,
+    enabled: bool,
+) -> bool:
+    """Toggle the enabled flag for a migrated source.
+
+    Returns ``True`` if a row was updated, ``False`` if the source has not
+    been migrated yet (caller should ignore or surface a 404).
+    """
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE source_configs SET enabled = ?, updated_at = CURRENT_TIMESTAMP "
+        "WHERE user_id = ? AND source_id = ?",
+        (1 if enabled else 0, user_id, source_id),
+    )
+    conn.commit()
+    return cursor.rowcount > 0
+
+
+def delete_source_config(
+    conn: sqlite3.Connection,
+    user_id: int,
+    source_id: str,
+) -> bool:
+    """Delete a migrated source config row.
+
+    Returns ``True`` if a row was deleted, ``False`` if not found.
+    """
+    cursor = conn.cursor()
+    cursor.execute(
+        "DELETE FROM source_configs WHERE user_id = ? AND source_id = ?",
+        (user_id, source_id),
+    )
+    conn.commit()
+    return cursor.rowcount > 0
+
+
+def list_source_configs(
+    conn: sqlite3.Connection,
+    user_id: int,
+) -> list[SourceConfigRow]:
+    """List every migrated source config for a user."""
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT source_id, plugin, config_json, enabled, migrated_at, updated_at "
+        "FROM source_configs WHERE user_id = ? ORDER BY source_id",
+        (user_id,),
+    )
+    return [_row_to_source_config(row) for row in cursor.fetchall()]

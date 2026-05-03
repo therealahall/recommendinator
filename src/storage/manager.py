@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import functools
+import json
 import logging
 import os
 import sqlite3
@@ -23,12 +24,14 @@ from src.storage.schema import (
     ConversationMessageDict,
     CoreMemoryDict,
     EnrichmentStatusDict,
+    SourceConfigDict,
     UserDict,
     clear_cached_preference_interpretations,
     clear_conversation_history,
     credential_row_exists,
     delete_core_memory,
     delete_credential,
+    delete_source_config,
     get_all_users,
     get_cached_preference_interpretation,
     get_conversation_history,
@@ -38,7 +41,9 @@ from src.storage.schema import (
     get_enrichment_stats,
     get_enrichment_status,
     get_preference_profile,
+    get_source_config,
     get_user_by_id,
+    list_source_configs,
     mark_enrichment_complete,
     mark_enrichment_failed,
     mark_item_needs_enrichment,
@@ -48,8 +53,10 @@ from src.storage.schema import (
     save_core_memory,
     save_credential,
     save_preference_profile,
+    set_source_config_enabled,
     update_core_memory,
     update_user_settings,
+    upsert_source_config,
 )
 
 # Re-exported so consumers import from storage.manager rather than the
@@ -1060,3 +1067,63 @@ class StorageManager:
         """
         with self.sqlite_db.connection() as conn:
             return delete_credential(conn, user_id, source_id, key)
+
+    # Source config methods (DB-backed per-source config after migration)
+
+    @staticmethod
+    def _row_to_source_config_dict(row: Any) -> SourceConfigDict:
+        return SourceConfigDict(
+            source_id=row["source_id"],
+            plugin=row["plugin"],
+            config=json.loads(row["config_json"]),
+            enabled=bool(row["enabled"]),
+            migrated_at=row["migrated_at"],
+            updated_at=row["updated_at"],
+        )
+
+    def get_source_config(
+        self, user_id: int, source_id: str
+    ) -> SourceConfigDict | None:
+        """Return the migrated source config dict, or ``None`` if not migrated."""
+        with self.sqlite_db.connection() as conn:
+            row = get_source_config(conn, user_id, source_id)
+        return self._row_to_source_config_dict(row) if row else None
+
+    def upsert_source_config(
+        self,
+        user_id: int,
+        source_id: str,
+        plugin: str,
+        config: dict[str, Any],
+        enabled: bool = True,
+    ) -> None:
+        """Insert or update a migrated source config.
+
+        Serialises *config* to JSON. Sensitive values must NOT be passed in
+        *config* — they live in the encrypted ``credentials`` table.
+        """
+        config_json = json.dumps(config, sort_keys=True)
+        with self.sqlite_db.connection() as conn:
+            upsert_source_config(conn, user_id, source_id, plugin, config_json, enabled)
+
+    def set_source_config_enabled(
+        self, user_id: int, source_id: str, enabled: bool
+    ) -> bool:
+        """Toggle enabled flag on an already-migrated source.
+
+        Returns ``True`` when a row was updated, ``False`` when the source
+        has not been migrated yet.
+        """
+        with self.sqlite_db.connection() as conn:
+            return set_source_config_enabled(conn, user_id, source_id, enabled)
+
+    def delete_source_config(self, user_id: int, source_id: str) -> bool:
+        """Remove a migrated source config row. Returns True when deleted."""
+        with self.sqlite_db.connection() as conn:
+            return delete_source_config(conn, user_id, source_id)
+
+    def list_source_configs(self, user_id: int) -> list[SourceConfigDict]:
+        """Return every migrated source config for a user."""
+        with self.sqlite_db.connection() as conn:
+            rows = list_source_configs(conn, user_id)
+        return [self._row_to_source_config_dict(row) for row in rows]

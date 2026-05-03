@@ -54,6 +54,13 @@ ingestion:
 # Input sources configuration
 # Each entry is a user-defined name with a 'plugin' field specifying the plugin type.
 # This allows multiple instances of the same plugin (e.g., two json_import sources).
+#
+# YAML is the bootstrap; the database is the long-term source of truth. Once a
+# source is migrated via the data accordion ("Migrate to DB" button) or
+# `recommendinator source migrate <id>`, its YAML entry below is ignored —
+# subsequent edits happen through the web UI or `source` CLI commands and
+# write to the source_configs / credentials tables. See the "Source
+# configuration precedence" section in ARCHITECTURE.md.
 inputs:
   goodreads:
     plugin: goodreads

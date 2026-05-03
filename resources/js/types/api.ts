@@ -86,6 +86,42 @@ export interface SyncSourceResponse {
   plugin_display_name: string
 }
 
+export type SourceFieldType = 'str' | 'int' | 'float' | 'bool' | 'list'
+
+export interface SourceFieldSchema {
+  name: string
+  field_type: SourceFieldType
+  required: boolean
+  default: unknown
+  description: string
+  sensitive: boolean
+}
+
+export interface SourceSchemaResponse {
+  source_id: string
+  plugin: string
+  plugin_display_name: string
+  fields: SourceFieldSchema[]
+}
+
+export interface SourceConfigResponse {
+  source_id: string
+  plugin: string
+  plugin_display_name: string
+  enabled: boolean
+  migrated: boolean
+  migrated_at: string | null
+  field_values: Record<string, unknown>
+  secret_status: Record<string, boolean>
+}
+
+export interface SourceMigrationResponse {
+  source_id: string
+  migrated_at: string
+  fields_migrated: string[]
+  secrets_migrated: string[]
+}
+
 export interface SyncJobResponse {
   source: string
   status: string

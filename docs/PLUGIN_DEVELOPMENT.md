@@ -39,8 +39,25 @@ class MyPlugin(SourcePlugin):
     
     def get_config_schema(self) -> list[ConfigField]:
         return [
-            ConfigField(name="api_key", field_type=str, required=True),
-            ConfigField(name="user_id", field_type=str, required=True),
+            # Mark API keys / OAuth tokens with sensitive=True so they get
+            # stored encrypted and stripped from web/CLI responses. The web
+            # UI's data accordion and the `recommendinator source` CLI
+            # commands auto-generate forms from this schema, so accurate
+            # `field_type`, `required`, `description`, and `sensitive` flags
+            # directly drive the user-facing UI.
+            ConfigField(
+                name="api_key",
+                field_type=str,
+                required=True,
+                sensitive=True,
+                description="API key (kept in the encrypted credentials table)",
+            ),
+            ConfigField(
+                name="user_id",
+                field_type=str,
+                required=True,
+                description="User identifier (visible in the UI)",
+            ),
         ]
 
     def validate_config(self, config: dict[str, Any]) -> list[str]:
