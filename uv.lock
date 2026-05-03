@@ -2147,7 +2147,7 @@ wheels = [
 
 [[package]]
 name = "recommendinator"
-version = "0.9.5"
+version = "0.10.0"
 source = { editable = "." }
 dependencies = [
     { name = "click" },

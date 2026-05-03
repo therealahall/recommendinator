@@ -1,6 +1,38 @@
 # CHANGELOG
 
 
+## v0.10.0 (2026-05-03)
+
+### Chores
+
+- **sources**: Final review round-trip fixups
+  ([`42d2c50`](https://github.com/therealahall/recommendinator/commit/42d2c5085d0ad3a984b9f8dfa1bc636267892bc8))
+
+- **tests**: Rename TestEnrichmentProgressRegression to singular form
+  ([`4b36766`](https://github.com/therealahall/recommendinator/commit/4b367668eb5a13dd67cb02384138acd50e3d7236))
+
+### Documentation
+
+- **claude**: Require all six review agents to re-run on every round
+  ([`9638e59`](https://github.com/therealahall/recommendinator/commit/9638e596d0eec3d84f67ddbd499a06b786f65ec0))
+
+### Features
+
+- **sources**: Add/remove source flows + visual & a11y polish (closes #40)
+  ([`5100122`](https://github.com/therealahall/recommendinator/commit/5100122311ee092ffeea99c9153081cf14835d4e))
+
+- **sources**: Bulk-update CLI parity + DRY shared fakes + review fixups
+  ([`1caec86`](https://github.com/therealahall/recommendinator/commit/1caec866bb4920f0ff1e0c2375d6559241431697))
+
+- **sources**: Per-source DB-backed configuration with accordion UI (closes #39)
+  ([`632e37b`](https://github.com/therealahall/recommendinator/commit/632e37bb0e6773b4d68690b8ee446be79aac464a))
+
+### Refactoring
+
+- **plugins**: Adopt folder-per-plugin layout (closes #36)
+  ([`cda6044`](https://github.com/therealahall/recommendinator/commit/cda604439e7dca7255a4c2e3b79ec33fdbc91c37))
+
+
 ## v0.9.5 (2026-05-03)
 
 ### Bug Fixes
