@@ -76,6 +76,10 @@ warn_unused_ignores = true
 warn_no_return = true
 warn_unreachable = true
 strict_equality = true
+# Plugin and provider tests live next to their implementations under src/, but
+# they follow the loose typing conventions of the tests/ tree (no return
+# annotations on test methods, etc.). Exclude them from strict src/ checks.
+exclude = "(^|/)test_[^/]*\\.py$"
 
 [[tool.mypy.overrides]]
 module = [
@@ -109,7 +113,7 @@ ignore = [
 known-first-party = ["src"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "src"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]

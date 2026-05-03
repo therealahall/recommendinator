@@ -231,16 +231,16 @@ inputs:
 ## Extension Points
 
 ### Adding New Data Sources
-1. Create plugin in `src/ingestion/sources/` implementing `SourcePlugin` ABC
+1. Create a plugin folder `src/ingestion/sources/<name>/` containing `<name>.py` (the `SourcePlugin` subclass), `__init__.py` (one-line re-export), and `README.md`
 2. Plugin is auto-discovered by `PluginRegistry`
-3. Add tests with mocked APIs
+3. Add `test_<name>.py` next to the implementation with mocked APIs
 4. See `docs/PLUGIN_DEVELOPMENT.md` for details
 
 ### Adding New Enrichment Providers
-1. Create provider in `src/enrichment/providers/` implementing `EnrichmentProvider` ABC
+1. Create a provider folder `src/enrichment/providers/<name>/` with the same layout (`<name>.py`, `__init__.py`, `README.md`)
 2. Provider is auto-discovered by `EnrichmentRegistry`
-3. Add rate limiting configuration
-4. Add tests
+3. Add rate limiting configuration in the provider class
+4. Add `test_<name>.py` next to the implementation
 
 ### Adding New Content Types
 1. Extend `ContentType` enum

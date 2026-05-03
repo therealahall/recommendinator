@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from src.ingestion.plugin_base import SourceError, SourcePlugin
-from src.ingestion.sources.generic_csv import (
+from src.ingestion.sources.generic_csv.generic_csv import (
     CsvImportPlugin,
     parse_boolean_field,
     parse_seasons_watched,

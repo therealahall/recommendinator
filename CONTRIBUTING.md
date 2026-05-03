@@ -207,9 +207,9 @@ The project uses **automatic semantic versioning**:
 
 See [docs/PLUGIN_DEVELOPMENT.md](docs/PLUGIN_DEVELOPMENT.md) for a complete guide. The short version:
 
-1. Create a plugin in `src/ingestion/sources/` implementing `SourcePlugin` ABC
+1. Create a plugin folder `src/ingestion/sources/<name>/` containing `<name>.py` (the `SourcePlugin` subclass), `__init__.py` (one-line re-export), `README.md`, and `test_<name>.py`
 2. Plugins are auto-discovered — no manual registration needed
-3. Add comprehensive tests with mocked APIs
+3. Tests live alongside the implementation, with mocked APIs
 4. Update `config/example.yaml` with the new source's configuration
 
 ## Project Structure
@@ -220,15 +220,17 @@ src/
 ├── web/              # FastAPI web interface
 │   └── static/themes/  # UI themes (folder-per-theme, auto-discovered)
 ├── ingestion/        # Data ingestion
-│   └── sources/      # Source plugins (auto-discovered)
+│   └── sources/      # Source plugins (folder-per-plugin: <name>/<name>.py + README.md + test_<name>.py)
 ├── llm/              # Ollama interaction (optional)
 ├── storage/          # SQLite + ChromaDB
 ├── recommendations/  # Scoring pipeline and engine
 ├── enrichment/       # Background metadata enrichment
+│   └── providers/    # Enrichment providers (folder-per-provider, same layout as sources)
 ├── conversation/     # Conversational AI chat system
 ├── models/           # Data models
 └── utils/            # Utility functions
-tests/                # Mirrors src/ structure
+tests/                # Cross-cutting tests (CLI, web, storage, recommendations, conversation).
+                      # Plugin-local tests live next to the plugin: src/.../<plugin>/test_<plugin>.py.
 config/               # Configuration files
 templates/            # Import file templates (CSV, JSON, Markdown)
 docs/                 # Additional documentation

@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from src.ingestion.plugin_base import SourceError, SourcePlugin
-from src.ingestion.sources.markdown import MarkdownImportPlugin
+from src.ingestion.sources.markdown.markdown import MarkdownImportPlugin
 from src.models.content import ConsumptionStatus, ContentType
 
 

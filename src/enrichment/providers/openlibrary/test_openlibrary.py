@@ -6,7 +6,7 @@ import pytest
 import requests
 
 from src.enrichment.provider_base import ProviderError
-from src.enrichment.providers.openlibrary import (
+from src.enrichment.providers.openlibrary.openlibrary import (
     OpenLibraryProvider,
     clean_title_for_search,
 )
@@ -124,7 +124,9 @@ class TestOpenLibraryProviderISBNLookup:
             "first_publish_date": "1949",
         }
 
-        with patch("requests.get") as mock_get:
+        with patch(
+            "src.enrichment.providers.openlibrary.openlibrary.requests.get"
+        ) as mock_get:
             mock_get.side_effect = [
                 MagicMock(
                     spec=requests.Response, status_code=200, json=lambda: mock_edition
@@ -157,7 +159,9 @@ class TestOpenLibraryProviderISBNLookup:
 
         mock_search = {"docs": []}
 
-        with patch("requests.get") as mock_get:
+        with patch(
+            "src.enrichment.providers.openlibrary.openlibrary.requests.get"
+        ) as mock_get:
             # ISBN lookup returns 404, then search returns empty
             mock_get.side_effect = [
                 MagicMock(spec=requests.Response, status_code=404),  # ISBN lookup
@@ -213,7 +217,9 @@ class TestOpenLibraryProviderSearch:
             "description": "A classic romance novel.",
         }
 
-        with patch("requests.get") as mock_get:
+        with patch(
+            "src.enrichment.providers.openlibrary.openlibrary.requests.get"
+        ) as mock_get:
             mock_get.side_effect = [
                 MagicMock(
                     spec=requests.Response, status_code=200, json=lambda: mock_search
@@ -255,7 +261,9 @@ class TestOpenLibraryProviderSearch:
             "subjects": ["Fiction"],
         }
 
-        with patch("requests.get") as mock_get:
+        with patch(
+            "src.enrichment.providers.openlibrary.openlibrary.requests.get"
+        ) as mock_get:
             mock_get.side_effect = [
                 MagicMock(
                     spec=requests.Response, status_code=200, json=lambda: mock_empty
@@ -277,7 +285,9 @@ class TestOpenLibraryProviderSearch:
         self, provider: OpenLibraryProvider, book_item: ContentItem
     ) -> None:
         """Test that API errors raise ProviderError."""
-        with patch("requests.get") as mock_get:
+        with patch(
+            "src.enrichment.providers.openlibrary.openlibrary.requests.get"
+        ) as mock_get:
             mock_get.side_effect = requests.RequestException("Connection failed")
 
             with pytest.raises(ProviderError) as exc_info:

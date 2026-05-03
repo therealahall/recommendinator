@@ -44,7 +44,7 @@ from src.ingestion.plugin_base import (
     SourceError,
     SourcePlugin,
 )
-from src.ingestion.sources._rom_title import (
+from src.ingestion.sources.roms._rom_title import (
     clean_display_title,
     compile_extra_patterns,
     normalize_title_key,

@@ -6,7 +6,7 @@ import pytest
 from legendary.api.egs import EPCAPI
 
 from src.ingestion.plugin_base import SourceError, SourcePlugin
-from src.ingestion.sources.epic_games import (
+from src.ingestion.sources.epic_games.epic_games import (
     EpicGamesAPIError,
     EpicGamesPlugin,
     authenticate,
@@ -72,7 +72,7 @@ def _make_game_metadata(
 class TestAuthenticate:
     """Tests for Epic Games OAuth authentication."""
 
-    @patch("src.ingestion.sources.epic_games.EPCAPI")
+    @patch("src.ingestion.sources.epic_games.epic_games.EPCAPI")
     def test_authenticate_success(self, mock_epcapi_class: Mock) -> None:
         """Test successful authentication returns an EPCAPI instance."""
         mock_api = Mock(spec=EPCAPI)
@@ -85,7 +85,7 @@ class TestAuthenticate:
             refresh_token="valid_refresh_token"
         )
 
-    @patch("src.ingestion.sources.epic_games.EPCAPI")
+    @patch("src.ingestion.sources.epic_games.epic_games.EPCAPI")
     def test_authenticate_invalid_credentials(self, mock_epcapi_class: Mock) -> None:
         """Test that InvalidCredentialsError is wrapped in EpicGamesAPIError."""
         from legendary.models.exceptions import InvalidCredentialsError
@@ -99,7 +99,7 @@ class TestAuthenticate:
         with pytest.raises(EpicGamesAPIError, match="invalid or expired"):
             authenticate("bad_token")
 
-    @patch("src.ingestion.sources.epic_games.EPCAPI")
+    @patch("src.ingestion.sources.epic_games.epic_games.EPCAPI")
     def test_authenticate_generic_error(self, mock_epcapi_class: Mock) -> None:
         """Test that generic exceptions are wrapped in EpicGamesAPIError."""
         mock_api = Mock(spec=EPCAPI)
@@ -473,9 +473,9 @@ class TestEpicGamesPluginTransformConfig:
 class TestEpicGamesPluginFetch:
     """Tests for EpicGamesPlugin.fetch()."""
 
-    @patch("src.ingestion.sources.epic_games.get_game_metadata")
-    @patch("src.ingestion.sources.epic_games.get_library_items")
-    @patch("src.ingestion.sources.epic_games.authenticate")
+    @patch("src.ingestion.sources.epic_games.epic_games.get_game_metadata")
+    @patch("src.ingestion.sources.epic_games.epic_games.get_library_items")
+    @patch("src.ingestion.sources.epic_games.epic_games.authenticate")
     def test_fetch_base_games(
         self,
         mock_authenticate: Mock,
@@ -510,9 +510,9 @@ class TestEpicGamesPluginFetch:
         assert items[0].rating is None
         assert items[0].author is None
 
-    @patch("src.ingestion.sources.epic_games.get_game_metadata")
-    @patch("src.ingestion.sources.epic_games.get_library_items")
-    @patch("src.ingestion.sources.epic_games.authenticate")
+    @patch("src.ingestion.sources.epic_games.epic_games.get_game_metadata")
+    @patch("src.ingestion.sources.epic_games.epic_games.get_library_items")
+    @patch("src.ingestion.sources.epic_games.epic_games.authenticate")
     def test_dlc_filtered_out(
         self,
         mock_authenticate: Mock,
@@ -541,9 +541,9 @@ class TestEpicGamesPluginFetch:
         assert len(items) == 1
         assert items[0].title == "Base Game"
 
-    @patch("src.ingestion.sources.epic_games.get_game_metadata")
-    @patch("src.ingestion.sources.epic_games.get_library_items")
-    @patch("src.ingestion.sources.epic_games.authenticate")
+    @patch("src.ingestion.sources.epic_games.epic_games.get_game_metadata")
+    @patch("src.ingestion.sources.epic_games.epic_games.get_library_items")
+    @patch("src.ingestion.sources.epic_games.epic_games.authenticate")
     def test_metadata_fields_populated(
         self,
         mock_authenticate: Mock,
@@ -581,9 +581,9 @@ class TestEpicGamesPluginFetch:
         assert metadata["categories"] == ["games"]
         assert metadata["release_date"] == "2024-01-15T00:00:00.000Z"
 
-    @patch("src.ingestion.sources.epic_games.get_game_metadata")
-    @patch("src.ingestion.sources.epic_games.get_library_items")
-    @patch("src.ingestion.sources.epic_games.authenticate")
+    @patch("src.ingestion.sources.epic_games.epic_games.get_game_metadata")
+    @patch("src.ingestion.sources.epic_games.epic_games.get_library_items")
+    @patch("src.ingestion.sources.epic_games.epic_games.authenticate")
     def test_titleless_items_skipped(
         self,
         mock_authenticate: Mock,
@@ -608,9 +608,9 @@ class TestEpicGamesPluginFetch:
         assert len(items) == 1
         assert items[0].title == "Has Title"
 
-    @patch("src.ingestion.sources.epic_games.get_game_metadata")
-    @patch("src.ingestion.sources.epic_games.get_library_items")
-    @patch("src.ingestion.sources.epic_games.authenticate")
+    @patch("src.ingestion.sources.epic_games.epic_games.get_game_metadata")
+    @patch("src.ingestion.sources.epic_games.epic_games.get_library_items")
+    @patch("src.ingestion.sources.epic_games.epic_games.authenticate")
     def test_private_sandbox_skipped(
         self,
         mock_authenticate: Mock,
@@ -644,9 +644,9 @@ class TestEpicGamesPluginFetch:
         # get_game_metadata should only have been called once (for the public item)
         mock_get_metadata.assert_called_once()
 
-    @patch("src.ingestion.sources.epic_games.get_game_metadata")
-    @patch("src.ingestion.sources.epic_games.get_library_items")
-    @patch("src.ingestion.sources.epic_games.authenticate")
+    @patch("src.ingestion.sources.epic_games.epic_games.get_game_metadata")
+    @patch("src.ingestion.sources.epic_games.epic_games.get_library_items")
+    @patch("src.ingestion.sources.epic_games.epic_games.authenticate")
     def test_ue_namespace_skipped(
         self,
         mock_authenticate: Mock,
@@ -678,9 +678,9 @@ class TestEpicGamesPluginFetch:
         assert len(items) == 1
         assert items[0].title == "Real Game"
 
-    @patch("src.ingestion.sources.epic_games.get_game_metadata")
-    @patch("src.ingestion.sources.epic_games.get_library_items")
-    @patch("src.ingestion.sources.epic_games.authenticate")
+    @patch("src.ingestion.sources.epic_games.epic_games.get_game_metadata")
+    @patch("src.ingestion.sources.epic_games.epic_games.get_library_items")
+    @patch("src.ingestion.sources.epic_games.epic_games.authenticate")
     def test_progress_callback(
         self,
         mock_authenticate: Mock,
@@ -708,7 +708,7 @@ class TestEpicGamesPluginFetch:
         assert len(items) == 2
         assert callback.call_count > 0
 
-    @patch("src.ingestion.sources.epic_games.authenticate")
+    @patch("src.ingestion.sources.epic_games.epic_games.authenticate")
     def test_error_wrapping(self, mock_authenticate: Mock) -> None:
         """Test that EpicGamesAPIError is wrapped in SourceError."""
         mock_authenticate.side_effect = EpicGamesAPIError("Token expired")
@@ -719,9 +719,9 @@ class TestEpicGamesPluginFetch:
 
         assert exc_info.value.plugin_name == "epic_games"
 
-    @patch("src.ingestion.sources.epic_games.get_game_metadata")
-    @patch("src.ingestion.sources.epic_games.get_library_items")
-    @patch("src.ingestion.sources.epic_games.authenticate")
+    @patch("src.ingestion.sources.epic_games.epic_games.get_game_metadata")
+    @patch("src.ingestion.sources.epic_games.epic_games.get_library_items")
+    @patch("src.ingestion.sources.epic_games.epic_games.authenticate")
     def test_metadata_fetch_failure_graceful_skip(
         self,
         mock_authenticate: Mock,
@@ -746,9 +746,9 @@ class TestEpicGamesPluginFetch:
         assert len(items) == 1
         assert items[0].title == "Working Game"
 
-    @patch("src.ingestion.sources.epic_games.get_game_metadata")
-    @patch("src.ingestion.sources.epic_games.get_library_items")
-    @patch("src.ingestion.sources.epic_games.authenticate")
+    @patch("src.ingestion.sources.epic_games.epic_games.get_game_metadata")
+    @patch("src.ingestion.sources.epic_games.epic_games.get_library_items")
+    @patch("src.ingestion.sources.epic_games.epic_games.authenticate")
     def test_all_games_are_unread(
         self,
         mock_authenticate: Mock,
@@ -774,9 +774,9 @@ class TestEpicGamesPluginFetch:
             assert item.status == ConsumptionStatus.UNREAD
             assert item.rating is None
 
-    @patch("src.ingestion.sources.epic_games.get_game_metadata")
-    @patch("src.ingestion.sources.epic_games.get_library_items")
-    @patch("src.ingestion.sources.epic_games.authenticate")
+    @patch("src.ingestion.sources.epic_games.epic_games.get_game_metadata")
+    @patch("src.ingestion.sources.epic_games.epic_games.get_library_items")
+    @patch("src.ingestion.sources.epic_games.epic_games.authenticate")
     def test_broken_app_name_1_skipped(
         self,
         mock_authenticate: Mock,
@@ -806,9 +806,9 @@ class TestEpicGamesPluginFetch:
         assert len(items) == 1
         assert items[0].title == "Real Game"
 
-    @patch("src.ingestion.sources.epic_games.get_game_metadata")
-    @patch("src.ingestion.sources.epic_games.get_library_items")
-    @patch("src.ingestion.sources.epic_games.authenticate")
+    @patch("src.ingestion.sources.epic_games.epic_games.get_game_metadata")
+    @patch("src.ingestion.sources.epic_games.epic_games.get_library_items")
+    @patch("src.ingestion.sources.epic_games.epic_games.authenticate")
     def test_rotated_refresh_token_triggers_callback(
         self,
         mock_authenticate: Mock,
@@ -853,9 +853,9 @@ class TestEpicGamesPluginFetch:
             "refresh_token", "rotated_epic_token"
         )
 
-    @patch("src.ingestion.sources.epic_games.get_game_metadata")
-    @patch("src.ingestion.sources.epic_games.get_library_items")
-    @patch("src.ingestion.sources.epic_games.authenticate")
+    @patch("src.ingestion.sources.epic_games.epic_games.get_game_metadata")
+    @patch("src.ingestion.sources.epic_games.epic_games.get_library_items")
+    @patch("src.ingestion.sources.epic_games.epic_games.authenticate")
     def test_same_refresh_token_does_not_trigger_callback(
         self,
         mock_authenticate: Mock,
@@ -887,9 +887,9 @@ class TestEpicGamesPluginFetch:
         assert len(items) == 1
         credential_callback.assert_not_called()
 
-    @patch("src.ingestion.sources.epic_games.get_game_metadata")
-    @patch("src.ingestion.sources.epic_games.get_library_items")
-    @patch("src.ingestion.sources.epic_games.authenticate")
+    @patch("src.ingestion.sources.epic_games.epic_games.get_game_metadata")
+    @patch("src.ingestion.sources.epic_games.epic_games.get_library_items")
+    @patch("src.ingestion.sources.epic_games.epic_games.authenticate")
     def test_rotated_token_without_callback_does_not_raise(
         self,
         mock_authenticate: Mock,
@@ -912,9 +912,9 @@ class TestEpicGamesPluginFetch:
         items = list(plugin.fetch({"refresh_token": "old_token"}))
         assert len(items) == 1
 
-    @patch("src.ingestion.sources.epic_games.get_game_metadata")
-    @patch("src.ingestion.sources.epic_games.get_library_items")
-    @patch("src.ingestion.sources.epic_games.authenticate")
+    @patch("src.ingestion.sources.epic_games.epic_games.get_game_metadata")
+    @patch("src.ingestion.sources.epic_games.epic_games.get_library_items")
+    @patch("src.ingestion.sources.epic_games.epic_games.authenticate")
     def test_empty_user_dict_does_not_trigger_callback(
         self,
         mock_authenticate: Mock,
@@ -946,9 +946,9 @@ class TestEpicGamesPluginFetch:
         assert len(items) == 1
         credential_callback.assert_not_called()
 
-    @patch("src.ingestion.sources.epic_games.get_game_metadata")
-    @patch("src.ingestion.sources.epic_games.get_library_items")
-    @patch("src.ingestion.sources.epic_games.authenticate")
+    @patch("src.ingestion.sources.epic_games.epic_games.get_game_metadata")
+    @patch("src.ingestion.sources.epic_games.epic_games.get_library_items")
+    @patch("src.ingestion.sources.epic_games.epic_games.authenticate")
     def test_none_user_dict_does_not_trigger_callback(
         self,
         mock_authenticate: Mock,
@@ -980,9 +980,9 @@ class TestEpicGamesPluginFetch:
         assert len(items) == 1
         credential_callback.assert_not_called()
 
-    @patch("src.ingestion.sources.epic_games.get_game_metadata")
-    @patch("src.ingestion.sources.epic_games.get_library_items")
-    @patch("src.ingestion.sources.epic_games.authenticate")
+    @patch("src.ingestion.sources.epic_games.epic_games.get_game_metadata")
+    @patch("src.ingestion.sources.epic_games.epic_games.get_library_items")
+    @patch("src.ingestion.sources.epic_games.epic_games.authenticate")
     def test_metadata_none_skipped(
         self,
         mock_authenticate: Mock,

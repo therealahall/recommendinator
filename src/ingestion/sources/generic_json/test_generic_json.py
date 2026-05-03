@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from src.ingestion.plugin_base import SourceError, SourcePlugin
-from src.ingestion.sources.generic_json import JsonImportPlugin
+from src.ingestion.sources.generic_json.generic_json import JsonImportPlugin
 from src.models.content import ConsumptionStatus, ContentType
 
 

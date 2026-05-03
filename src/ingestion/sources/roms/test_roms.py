@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from src.ingestion.plugin_base import SourceError, SourcePlugin
-from src.ingestion.sources.roms import (
+from src.ingestion.sources.roms.roms import (
     DEFAULT_EXTENSIONS,
     RomScannerPlugin,
     _safe_size_bytes,
@@ -660,7 +660,7 @@ class TestRomScannerErrors:
         (root / "Tetris.zip").write_bytes(b"x")
 
         monkeypatch.setattr(
-            "src.ingestion.sources.roms._safe_size_bytes", lambda path: None
+            "src.ingestion.sources.roms.roms._safe_size_bytes", lambda path: None
         )
 
         items = list(plugin.fetch({"paths": [str(root)]}))

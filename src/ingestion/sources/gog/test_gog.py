@@ -6,7 +6,7 @@ import pytest
 import requests
 
 from src.ingestion.plugin_base import SourceError, SourcePlugin
-from src.ingestion.sources.gog import (
+from src.ingestion.sources.gog.gog import (
     GogAPIError,
     GogPlugin,
     get_multiple_product_details,
@@ -21,7 +21,7 @@ from src.models.content import ConsumptionStatus, ContentType
 class TestRefreshAccessToken:
     """Tests for GOG OAuth token refresh."""
 
-    @patch("src.ingestion.sources.gog.requests.get")
+    @patch("src.ingestion.sources.gog.gog.requests.get")
     def test_refresh_success(self, mock_get: Mock) -> None:
         """Test successful token refresh."""
         mock_response = Mock(spec=requests.Response)
@@ -41,7 +41,7 @@ class TestRefreshAccessToken:
         assert call_args[1]["params"]["grant_type"] == "refresh_token"
         assert call_args[1]["params"]["refresh_token"] == "old_refresh_token"
 
-    @patch("src.ingestion.sources.gog.requests.get")
+    @patch("src.ingestion.sources.gog.gog.requests.get")
     def test_refresh_expired_token(self, mock_get: Mock) -> None:
         """Test token refresh with expired/invalid token."""
         mock_get.side_effect = requests.RequestException("401 Unauthorized")
@@ -49,7 +49,7 @@ class TestRefreshAccessToken:
         with pytest.raises(GogAPIError, match="Failed to refresh access token"):
             refresh_access_token("expired_token")
 
-    @patch("src.ingestion.sources.gog.requests.get")
+    @patch("src.ingestion.sources.gog.gog.requests.get")
     def test_refresh_network_error(self, mock_get: Mock) -> None:
         """Test token refresh with network error."""
         mock_get.side_effect = requests.RequestException("Connection refused")
@@ -57,7 +57,7 @@ class TestRefreshAccessToken:
         with pytest.raises(GogAPIError, match="Failed to refresh access token"):
             refresh_access_token("some_token")
 
-    @patch("src.ingestion.sources.gog.requests.get")
+    @patch("src.ingestion.sources.gog.gog.requests.get")
     def test_refresh_missing_access_token(self, mock_get: Mock) -> None:
         """Test token refresh when response is missing access_token."""
         mock_response = Mock(spec=requests.Response)
@@ -67,7 +67,7 @@ class TestRefreshAccessToken:
         with pytest.raises(GogAPIError, match="Response missing access_token"):
             refresh_access_token("some_token")
 
-    @patch("src.ingestion.sources.gog.requests.get")
+    @patch("src.ingestion.sources.gog.gog.requests.get")
     def test_refresh_preserves_old_refresh_token_when_not_returned(
         self, mock_get: Mock
     ) -> None:
@@ -87,7 +87,7 @@ class TestRefreshAccessToken:
 class TestGetOwnedGames:
     """Tests for fetching owned games from GOG."""
 
-    @patch("src.ingestion.sources.gog.requests.get")
+    @patch("src.ingestion.sources.gog.gog.requests.get")
     def test_single_page(self, mock_get: Mock) -> None:
         """Test fetching owned games when all fit on one page."""
         mock_response = Mock(spec=requests.Response)
@@ -109,7 +109,7 @@ class TestGetOwnedGames:
         call_args = mock_get.call_args
         assert call_args[1]["headers"]["Authorization"] == "Bearer test_access_token"
 
-    @patch("src.ingestion.sources.gog.requests.get")
+    @patch("src.ingestion.sources.gog.gog.requests.get")
     def test_multiple_pages(self, mock_get: Mock) -> None:
         """Test paginating through multiple pages of owned games."""
         page1_response = Mock(spec=requests.Response)
@@ -133,7 +133,7 @@ class TestGetOwnedGames:
         assert result[1]["id"] == 2
         assert mock_get.call_count == 2
 
-    @patch("src.ingestion.sources.gog.requests.get")
+    @patch("src.ingestion.sources.gog.gog.requests.get")
     def test_empty_library(self, mock_get: Mock) -> None:
         """Test fetching when the library is empty."""
         mock_response = Mock(spec=requests.Response)
@@ -147,7 +147,7 @@ class TestGetOwnedGames:
 
         assert result == []
 
-    @patch("src.ingestion.sources.gog.requests.get")
+    @patch("src.ingestion.sources.gog.gog.requests.get")
     def test_api_error(self, mock_get: Mock) -> None:
         """Test handling API error during fetch."""
         mock_get.side_effect = requests.RequestException("Server error")
@@ -155,7 +155,7 @@ class TestGetOwnedGames:
         with pytest.raises(GogAPIError, match="Failed to fetch owned games"):
             get_owned_games("test_token")
 
-    @patch("src.ingestion.sources.gog.requests.get")
+    @patch("src.ingestion.sources.gog.gog.requests.get")
     def test_auth_header_sent(self, mock_get: Mock) -> None:
         """Test that Bearer auth header is sent correctly."""
         mock_response = Mock(spec=requests.Response)
@@ -171,7 +171,7 @@ class TestGetOwnedGames:
 class TestGetWishlistProductIds:
     """Tests for fetching wishlist product IDs."""
 
-    @patch("src.ingestion.sources.gog.requests.get")
+    @patch("src.ingestion.sources.gog.gog.requests.get")
     def test_success(self, mock_get: Mock) -> None:
         """Test successful wishlist fetch."""
         mock_response = Mock(spec=requests.Response)
@@ -185,7 +185,7 @@ class TestGetWishlistProductIds:
         assert len(result) == 3
         assert set(result) == {12345, 67890, 11111}
 
-    @patch("src.ingestion.sources.gog.requests.get")
+    @patch("src.ingestion.sources.gog.gog.requests.get")
     def test_empty_wishlist(self, mock_get: Mock) -> None:
         """Test fetching an empty wishlist."""
         mock_response = Mock(spec=requests.Response)
@@ -196,7 +196,7 @@ class TestGetWishlistProductIds:
 
         assert result == []
 
-    @patch("src.ingestion.sources.gog.requests.get")
+    @patch("src.ingestion.sources.gog.gog.requests.get")
     def test_api_error(self, mock_get: Mock) -> None:
         """Test handling API error."""
         mock_get.side_effect = requests.RequestException("Forbidden")
@@ -208,7 +208,7 @@ class TestGetWishlistProductIds:
 class TestGetProductDetails:
     """Tests for fetching individual product details."""
 
-    @patch("src.ingestion.sources.gog.requests.get")
+    @patch("src.ingestion.sources.gog.gog.requests.get")
     def test_success(self, mock_get: Mock) -> None:
         """Test successful product detail fetch."""
         mock_response = Mock(spec=requests.Response)
@@ -229,7 +229,7 @@ class TestGetProductDetails:
         assert result["title"] == "The Witcher 3"
         assert result["developers"] == ["CD Projekt Red"]
 
-    @patch("src.ingestion.sources.gog.requests.get")
+    @patch("src.ingestion.sources.gog.gog.requests.get")
     def test_not_found_returns_none(self, mock_get: Mock) -> None:
         """Test that 404 returns None instead of raising."""
         mock_response = Mock(spec=requests.Response)
@@ -240,7 +240,7 @@ class TestGetProductDetails:
 
         assert result is None
 
-    @patch("src.ingestion.sources.gog.requests.get")
+    @patch("src.ingestion.sources.gog.gog.requests.get")
     def test_api_error(self, mock_get: Mock) -> None:
         """Test handling of non-404 API errors."""
         mock_get.side_effect = requests.RequestException("Server error")
@@ -252,7 +252,7 @@ class TestGetProductDetails:
 class TestGetMultipleProductDetails:
     """Tests for batch product detail fetching."""
 
-    @patch("src.ingestion.sources.gog.get_product_details")
+    @patch("src.ingestion.sources.gog.gog.get_product_details")
     def test_fetches_all_products(self, mock_get_details: Mock) -> None:
         """Test that all products are fetched."""
         mock_get_details.side_effect = [
@@ -266,7 +266,7 @@ class TestGetMultipleProductDetails:
         assert result[1]["title"] == "Game 1"
         assert result[2]["title"] == "Game 2"
 
-    @patch("src.ingestion.sources.gog.get_product_details")
+    @patch("src.ingestion.sources.gog.gog.get_product_details")
     def test_skips_none_results(self, mock_get_details: Mock) -> None:
         """Test that None results (404s) are excluded."""
         mock_get_details.side_effect = [
@@ -280,7 +280,7 @@ class TestGetMultipleProductDetails:
         assert len(result) == 2
         assert 2 not in result
 
-    @patch("src.ingestion.sources.gog.get_product_details")
+    @patch("src.ingestion.sources.gog.gog.get_product_details")
     def test_progress_callback(self, mock_get_details: Mock) -> None:
         """Test that progress callback is called."""
         mock_get_details.return_value = {"id": 1, "title": "Game"}
@@ -480,9 +480,9 @@ class TestGogPluginTransformConfig:
 class TestGogPluginFetch:
     """Tests for GogPlugin.fetch()."""
 
-    @patch("src.ingestion.sources.gog.get_wishlist_product_ids")
-    @patch("src.ingestion.sources.gog.get_owned_games")
-    @patch("src.ingestion.sources.gog.refresh_access_token")
+    @patch("src.ingestion.sources.gog.gog.get_wishlist_product_ids")
+    @patch("src.ingestion.sources.gog.gog.get_owned_games")
+    @patch("src.ingestion.sources.gog.gog.refresh_access_token")
     def test_fetch_owned_games(
         self,
         mock_refresh: Mock,
@@ -513,10 +513,10 @@ class TestGogPluginFetch:
         assert items[0].rating is None
         assert items[0].author is None
 
-    @patch("src.ingestion.sources.gog.get_multiple_product_details")
-    @patch("src.ingestion.sources.gog.get_wishlist_product_ids")
-    @patch("src.ingestion.sources.gog.get_owned_games")
-    @patch("src.ingestion.sources.gog.refresh_access_token")
+    @patch("src.ingestion.sources.gog.gog.get_multiple_product_details")
+    @patch("src.ingestion.sources.gog.gog.get_wishlist_product_ids")
+    @patch("src.ingestion.sources.gog.gog.get_owned_games")
+    @patch("src.ingestion.sources.gog.gog.refresh_access_token")
     def test_fetch_with_wishlist(
         self,
         mock_refresh: Mock,
@@ -570,9 +570,9 @@ class TestGogPluginFetch:
         assert wishlist_item.metadata["genres"] == ["RPG", "Adventure"]
         assert wishlist_item.metadata["developers"] == ["Dev Studio"]
 
-    @patch("src.ingestion.sources.gog.get_wishlist_product_ids")
-    @patch("src.ingestion.sources.gog.get_owned_games")
-    @patch("src.ingestion.sources.gog.refresh_access_token")
+    @patch("src.ingestion.sources.gog.gog.get_wishlist_product_ids")
+    @patch("src.ingestion.sources.gog.gog.get_owned_games")
+    @patch("src.ingestion.sources.gog.gog.refresh_access_token")
     def test_fetch_wishlist_excluded(
         self,
         mock_refresh: Mock,
@@ -597,9 +597,9 @@ class TestGogPluginFetch:
         assert items[0].title == "Owned Game"
         mock_wishlist.assert_not_called()
 
-    @patch("src.ingestion.sources.gog.get_wishlist_product_ids")
-    @patch("src.ingestion.sources.gog.get_owned_games")
-    @patch("src.ingestion.sources.gog.refresh_access_token")
+    @patch("src.ingestion.sources.gog.gog.get_wishlist_product_ids")
+    @patch("src.ingestion.sources.gog.gog.get_owned_games")
+    @patch("src.ingestion.sources.gog.gog.refresh_access_token")
     def test_deduplication_owned_and_wishlisted(
         self,
         mock_refresh: Mock,
@@ -634,8 +634,8 @@ class TestGogPluginFetch:
         assert len(items) == 1
         assert items[0].metadata["gog_owned"] is True
 
-    @patch("src.ingestion.sources.gog.get_owned_games")
-    @patch("src.ingestion.sources.gog.refresh_access_token")
+    @patch("src.ingestion.sources.gog.gog.get_owned_games")
+    @patch("src.ingestion.sources.gog.gog.refresh_access_token")
     def test_skip_titleless_games(
         self,
         mock_refresh: Mock,
@@ -660,8 +660,8 @@ class TestGogPluginFetch:
         assert len(items) == 1
         assert items[0].title == "Valid Game"
 
-    @patch("src.ingestion.sources.gog.get_owned_games")
-    @patch("src.ingestion.sources.gog.refresh_access_token")
+    @patch("src.ingestion.sources.gog.gog.get_owned_games")
+    @patch("src.ingestion.sources.gog.gog.refresh_access_token")
     def test_metadata_fields(
         self,
         mock_refresh: Mock,
@@ -706,8 +706,8 @@ class TestGogPluginFetch:
         assert metadata["platforms"]["mac"] is False
         assert metadata["platforms"]["linux"] is True
 
-    @patch("src.ingestion.sources.gog.get_owned_games")
-    @patch("src.ingestion.sources.gog.refresh_access_token")
+    @patch("src.ingestion.sources.gog.gog.get_owned_games")
+    @patch("src.ingestion.sources.gog.gog.refresh_access_token")
     def test_progress_callback(
         self,
         mock_refresh: Mock,
@@ -735,7 +735,7 @@ class TestGogPluginFetch:
         assert len(items) == 2
         assert callback.call_count > 0
 
-    @patch("src.ingestion.sources.gog.refresh_access_token")
+    @patch("src.ingestion.sources.gog.gog.refresh_access_token")
     def test_api_error_raises_source_error(self, mock_refresh: Mock) -> None:
         """Test that GOG API errors are wrapped in SourceError."""
         mock_refresh.side_effect = GogAPIError("Token expired")
@@ -747,8 +747,8 @@ class TestGogPluginFetch:
         assert exc_info.value.plugin_name == "gog"
         assert "Token expired" in exc_info.value.message
 
-    @patch("src.ingestion.sources.gog.get_owned_games")
-    @patch("src.ingestion.sources.gog.refresh_access_token")
+    @patch("src.ingestion.sources.gog.gog.get_owned_games")
+    @patch("src.ingestion.sources.gog.gog.refresh_access_token")
     def test_all_owned_games_are_unread(
         self,
         mock_refresh: Mock,
@@ -774,8 +774,8 @@ class TestGogPluginFetch:
             assert item.status == ConsumptionStatus.UNREAD
             assert item.rating is None
 
-    @patch("src.ingestion.sources.gog.get_owned_games")
-    @patch("src.ingestion.sources.gog.refresh_access_token")
+    @patch("src.ingestion.sources.gog.gog.get_owned_games")
+    @patch("src.ingestion.sources.gog.gog.refresh_access_token")
     def test_rotated_refresh_token_triggers_callback(
         self,
         mock_refresh: Mock,
@@ -816,8 +816,8 @@ class TestGogPluginFetch:
             "refresh_token", "rotated_refresh_token"
         )
 
-    @patch("src.ingestion.sources.gog.get_owned_games")
-    @patch("src.ingestion.sources.gog.refresh_access_token")
+    @patch("src.ingestion.sources.gog.gog.get_owned_games")
+    @patch("src.ingestion.sources.gog.gog.refresh_access_token")
     def test_same_refresh_token_does_not_trigger_callback(
         self,
         mock_refresh: Mock,
@@ -845,8 +845,8 @@ class TestGogPluginFetch:
         assert len(items) == 1
         credential_callback.assert_not_called()
 
-    @patch("src.ingestion.sources.gog.get_owned_games")
-    @patch("src.ingestion.sources.gog.refresh_access_token")
+    @patch("src.ingestion.sources.gog.gog.get_owned_games")
+    @patch("src.ingestion.sources.gog.gog.refresh_access_token")
     def test_rotated_token_without_callback_does_not_raise(
         self,
         mock_refresh: Mock,

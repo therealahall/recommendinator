@@ -7,7 +7,10 @@ import pytest
 import requests
 
 from src.enrichment.provider_base import ProviderError
-from src.enrichment.providers.tmdb import TMDBProvider, clean_media_title_for_search
+from src.enrichment.providers.tmdb.tmdb import (
+    TMDBProvider,
+    clean_media_title_for_search,
+)
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 
 
@@ -160,7 +163,7 @@ class TestTMDBProviderMovieEnrichment:
             ]
         }
 
-        with patch("requests.get") as mock_get:
+        with patch("src.enrichment.providers.tmdb.tmdb.requests.get") as mock_get:
             mock_get.side_effect = [
                 MagicMock(
                     spec=requests.Response,
@@ -203,7 +206,7 @@ class TestTMDBProviderMovieEnrichment:
 
         mock_keywords_response = {"keywords": []}
 
-        with patch("requests.get") as mock_get:
+        with patch("src.enrichment.providers.tmdb.tmdb.requests.get") as mock_get:
             mock_get.side_effect = [
                 MagicMock(
                     spec=requests.Response,
@@ -234,7 +237,7 @@ class TestTMDBProviderMovieEnrichment:
         """Test enriching movie that doesn't exist in TMDB."""
         mock_search_response = {"results": []}
 
-        with patch("requests.get") as mock_get:
+        with patch("src.enrichment.providers.tmdb.tmdb.requests.get") as mock_get:
             mock_get.return_value = MagicMock(
                 status_code=200, json=lambda: mock_search_response
             )
@@ -249,7 +252,7 @@ class TestTMDBProviderMovieEnrichment:
         self, provider: TMDBProvider, movie_item: ContentItem, config: dict[str, Any]
     ) -> None:
         """Test that API errors raise ProviderError."""
-        with patch("requests.get") as mock_get:
+        with patch("src.enrichment.providers.tmdb.tmdb.requests.get") as mock_get:
             mock_get.side_effect = requests.RequestException("Connection failed")
 
             with pytest.raises(ProviderError) as exc_info:
@@ -281,7 +284,7 @@ class TestTMDBProviderMovieEnrichment:
         }
         mock_keywords_response = {"keywords": []}
 
-        with patch("requests.get") as mock_get:
+        with patch("src.enrichment.providers.tmdb.tmdb.requests.get") as mock_get:
             mock_get.side_effect = [
                 MagicMock(
                     spec=requests.Response,
@@ -329,7 +332,7 @@ class TestTMDBProviderMovieEnrichment:
         }
         mock_keywords_response = {"keywords": []}
 
-        with patch("requests.get") as mock_get:
+        with patch("src.enrichment.providers.tmdb.tmdb.requests.get") as mock_get:
             mock_get.side_effect = [
                 MagicMock(
                     spec=requests.Response,
@@ -400,7 +403,7 @@ class TestTMDBProviderTVShowEnrichment:
             ]
         }
 
-        with patch("requests.get") as mock_get:
+        with patch("src.enrichment.providers.tmdb.tmdb.requests.get") as mock_get:
             mock_get.side_effect = [
                 MagicMock(
                     spec=requests.Response,
@@ -438,7 +441,7 @@ class TestTMDBProviderTVShowEnrichment:
         """Test enriching TV show that doesn't exist."""
         mock_search_response = {"results": []}
 
-        with patch("requests.get") as mock_get:
+        with patch("src.enrichment.providers.tmdb.tmdb.requests.get") as mock_get:
             mock_get.return_value = MagicMock(
                 status_code=200, json=lambda: mock_search_response
             )
@@ -468,7 +471,7 @@ class TestTMDBProviderTVShowEnrichment:
         }
         mock_keywords_response = {"results": []}
 
-        with patch("requests.get") as mock_get:
+        with patch("src.enrichment.providers.tmdb.tmdb.requests.get") as mock_get:
             mock_get.side_effect = [
                 MagicMock(
                     spec=requests.Response,
@@ -520,7 +523,7 @@ class TestTMDBProviderKeywords:
             "genres": [{"id": 28, "name": "Action"}],
         }
 
-        with patch("requests.get") as mock_get:
+        with patch("src.enrichment.providers.tmdb.tmdb.requests.get") as mock_get:
             # Movie details succeeds, keywords fails
             mock_get.side_effect = [
                 MagicMock(
@@ -555,7 +558,7 @@ class TestTMDBProviderKeywords:
             "genres": [{"id": 28, "name": "Action"}],
         }
 
-        with patch("requests.get") as mock_get:
+        with patch("src.enrichment.providers.tmdb.tmdb.requests.get") as mock_get:
             mock_get.return_value = MagicMock(
                 status_code=200, json=lambda: mock_movie_response
             )

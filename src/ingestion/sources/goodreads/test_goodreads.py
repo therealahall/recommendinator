@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from src.ingestion.plugin_base import SourceError, SourcePlugin
-from src.ingestion.sources.goodreads import GoodreadsPlugin
+from src.ingestion.sources.goodreads.goodreads import GoodreadsPlugin
 from src.models.content import ConsumptionStatus, ContentType
 
 
