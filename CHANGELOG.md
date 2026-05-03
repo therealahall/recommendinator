@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v0.9.4 (2026-05-03)
+
+### Bug Fixes
+
+- **ingestion**: Drop Steam Store appdetails pass during sync (closes #34)
+  ([`9e13d61`](https://github.com/therealahall/recommendinator/commit/9e13d610ad9a57d4785a9eeffac0289a1d4fb6c4))
+
+- **ingestion**: Scrub Steam API key from request error messages
+  ([`46027fb`](https://github.com/therealahall/recommendinator/commit/46027fbf526fc484426453bc102f76ea53bf862f))
+
+
 ## v0.9.3 (2026-05-03)
 
 ### Bug Fixes
