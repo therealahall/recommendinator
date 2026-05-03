@@ -220,48 +220,11 @@ class TestParseSteamGames:
         assert item.content_type == ContentType.VIDEO_GAME
         assert item.id == "12345"
         assert item.author is None
-        # Games with playtime are marked as "currently consuming" since Steam
-        # doesn't provide completion data and playtime is unreliable
-        assert item.status == ConsumptionStatus.CURRENTLY_CONSUMING
+        # Steam imports always default to UNREAD; user marks progress in the UI.
+        assert item.status == ConsumptionStatus.UNREAD
         assert item.rating is None  # Ratings are user-provided, not inferred
         assert item.metadata["playtime_hours"] == 2.0
         assert item.metadata["playtime_minutes"] == 120
-
-    @patch("src.ingestion.sources.steam.get_game_details")
-    @patch("src.ingestion.sources.steam.get_owned_games")
-    def test__fetch_steam_games_status_mapping(self, mock_get_games, mock_get_details):
-        """Test status mapping based on playtime.
-
-        Steam doesn't provide completion data, and playtime is unreliable for
-        determining completion (a 5-hour indie game vs a 100-hour RPG). We only
-        distinguish between "never played" (UNREAD) and "has been played"
-        (CURRENTLY_CONSUMING). Users can manually mark games as completed.
-        """
-        mock_get_details.return_value = {}
-
-        # Test unread (0 minutes playtime = never played)
-        mock_get_games.return_value = [
-            {"appid": 1, "name": "Unread Game", "playtime_forever": 0}
-        ]
-        items = list(_fetch_steam_games("test_key", steam_id="76561198000000000"))
-        assert items[0].status == ConsumptionStatus.UNREAD
-        assert items[0].rating is None
-
-        # Test currently consuming (any playtime = has been played)
-        mock_get_games.return_value = [
-            {"appid": 2, "name": "Playing Game", "playtime_forever": 30}
-        ]
-        items = list(_fetch_steam_games("test_key", steam_id="76561198000000000"))
-        assert items[0].status == ConsumptionStatus.CURRENTLY_CONSUMING
-        assert items[0].rating is None
-
-        # Test that even high playtime doesn't mean "completed"
-        # (a 100-hour RPG vs a 5-hour indie game)
-        mock_get_games.return_value = [
-            {"appid": 3, "name": "Long Game", "playtime_forever": 6000}  # 100 hours
-        ]
-        items = list(_fetch_steam_games("test_key", steam_id="76561198000000000"))
-        assert items[0].status == ConsumptionStatus.CURRENTLY_CONSUMING
 
     @patch("src.ingestion.sources.steam.get_game_details")
     @patch("src.ingestion.sources.steam.get_owned_games")
@@ -532,6 +495,50 @@ class TestSteamPluginValidation:
         errors = plugin.validate_config({})
 
         assert len(errors) == 2
+
+
+class TestSteamStatusInferenceRegression:
+    """Regression tests for Steam status inference from playtime (issue #42).
+
+    Bug: Steam ingestion inferred ConsumptionStatus.CURRENTLY_CONSUMING for any
+    game with playtime_forever > 0, so every previously-played game appeared as
+    "currently consuming" on import. This is inconsistent with all other
+    ingestion sources (Goodreads, generic CSV, markdown), which only set
+    CURRENTLY_CONSUMING when the user explicitly declares it.
+
+    Root cause: _fetch_steam_games branched on playtime_minutes to choose
+    between UNREAD and CURRENTLY_CONSUMING, but Steam exposes no explicit
+    "currently playing" or "completed" signal — playtime alone is not a
+    reliable indicator of either.
+
+    Fix: Always assign ConsumptionStatus.UNREAD. Users mark progress in the UI.
+
+    Reported in: https://github.com/therealahall/recommendinator/issues/42
+    """
+
+    @pytest.mark.parametrize("playtime_minutes", [0, 1, 30, 6000])
+    @patch("src.ingestion.sources.steam.get_game_details")
+    @patch("src.ingestion.sources.steam.get_owned_games")
+    def test_fetch_steam_games_status_always_unread_regression(
+        self,
+        mock_get_games: Mock,
+        mock_get_details: Mock,
+        playtime_minutes: int,
+    ) -> None:
+        """Status is UNREAD regardless of playtime."""
+        mock_get_details.return_value = {}
+        mock_get_games.return_value = [
+            {
+                "appid": 12345,
+                "name": "Test Game",
+                "playtime_forever": playtime_minutes,
+            }
+        ]
+
+        items = list(_fetch_steam_games("test_key", steam_id="76561198000000000"))
+
+        assert len(items) == 1
+        assert items[0].status == ConsumptionStatus.UNREAD
 
 
 class TestSteamNoneConfigValuesRegression:
