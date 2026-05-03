@@ -156,7 +156,7 @@ describe('SyncSourceAccordion', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-testid="form-save"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="enabled-toggle-steam"]').exists()).toBe(
+    expect(wrapper.find('[data-testid="form-toggle-enabled"]').exists()).toBe(
       true,
     )
     expect(wrapper.find('[data-testid="migrate-btn-steam"]').exists()).toBe(

@@ -202,7 +202,7 @@ def get_available_sync_sources(
         ``enabled`` flag), sorted by ID.
     """
     registry = get_registry()
-    inputs_config = config.get("inputs", {}) if config else {}
+    inputs_config = config.get("inputs", {})
 
     db_configs: dict[str, dict[str, Any]] = {}
     if storage is not None:
