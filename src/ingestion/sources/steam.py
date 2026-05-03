@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import time
 from collections.abc import Callable, Iterator
 from typing import TYPE_CHECKING, Any
 
@@ -16,7 +15,6 @@ from src.ingestion.plugin_base import (
     SourcePlugin,
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
-from src.utils.progress import log_progress
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
@@ -89,101 +87,6 @@ def get_owned_games(
     except requests.RequestException as error:
         logger.error("Error fetching Steam games: %s", error)
         raise SteamAPIError(f"Failed to fetch Steam games: {error}") from error
-
-
-def get_game_details(
-    app_ids: list[int],
-    rate_limit_seconds: float = 3.0,
-    max_retries: int = 3,
-    backoff_multiplier: float = 2.0,
-    progress_callback: Callable[[int, int], None] | None = None,
-) -> dict[int, dict[str, Any]]:
-    """Fetch detailed information for multiple games with rate limiting and backoff.
-
-    Args:
-        app_ids: List of Steam app IDs
-        rate_limit_seconds: Base delay between requests to avoid rate limiting.
-            Steam's store API is rate-limited; 3 seconds is a safe default.
-        max_retries: Maximum number of retries per request on failure.
-        backoff_multiplier: Multiplier for exponential backoff on retries.
-        progress_callback: Optional callback(current, total) called after each
-            successful fetch for progress reporting.
-
-    Returns:
-        Dictionary mapping app_id to game details
-    """
-    # Steam Store API for game details
-    # Note: This is a public API, no key required
-    # Steam Store API has a limit on batch size (typically 1-5 app IDs)
-    # Using single requests to avoid 400 Bad Request errors
-    details: dict[int, dict[str, Any]] = {}
-    total = len(app_ids)
-    current_delay = rate_limit_seconds
-
-    for index, app_id in enumerate(app_ids):
-        app_ids_str = str(app_id)
-        url = "https://store.steampowered.com/api/appdetails"
-        params = {"appids": app_ids_str, "l": "en"}
-
-        current = index + 1
-        log_progress(logger, "game details", current, total)
-
-        # Retry loop with exponential backoff
-        retry_delay = current_delay
-        for attempt in range(max_retries + 1):
-            try:
-                response = requests.get(url, params=params, timeout=30)
-
-                # Check for rate limiting (429) or server errors (5xx)
-                if response.status_code == 429:
-                    logger.warning(
-                        "Rate limited by Steam API. Backing off for %.1fs...",
-                        retry_delay,
-                    )
-                    time.sleep(retry_delay)
-                    retry_delay *= backoff_multiplier
-                    # Increase base delay for future requests
-                    current_delay = min(current_delay * 1.5, 30.0)
-                    continue
-
-                response.raise_for_status()
-                data = response.json()
-                for app_id_str, app_data in data.items():
-                    if app_data.get("success"):
-                        details[int(app_id_str)] = app_data.get("data", {})
-                if progress_callback:
-                    progress_callback(current, total)
-                # Gradually reduce delay back toward base if successful
-                current_delay = max(rate_limit_seconds, current_delay * 0.9)
-                break
-
-            except requests.RequestException as error:
-                if attempt < max_retries:
-                    logger.warning(
-                        "Error fetching game details for app ID %s: %s. "
-                        "Retrying in %.1fs (attempt %d/%d)...",
-                        app_id,
-                        error,
-                        retry_delay,
-                        attempt + 1,
-                        max_retries,
-                    )
-                    time.sleep(retry_delay)
-                    retry_delay *= backoff_multiplier
-                else:
-                    logger.warning(
-                        "Error fetching game details for app ID %s: %s. "
-                        "Max retries exceeded, skipping.",
-                        app_id,
-                        error,
-                    )
-
-        # Rate limit: wait between requests to avoid being blocked
-        # Skip delay after the last request
-        if index + 1 < len(app_ids) and current_delay > 0:
-            time.sleep(current_delay)
-
-    return details
 
 
 class SteamPlugin(SourcePlugin):
@@ -298,11 +201,7 @@ class SteamPlugin(SourcePlugin):
         # Adapter: Steam internal (current, total, phase) -> plugin (items, total, item)
         def steam_internal_callback(current: int, total: int, phase: str) -> None:
             if progress_callback:
-                phase_msg = (
-                    "Fetching game details..."
-                    if phase == "game_details"
-                    else "Fetching library..." if phase == "owned_games" else phase
-                )
+                phase_msg = "Fetching library..." if phase == "owned_games" else phase
                 progress_callback(current, total, phase_msg)
 
         try:
@@ -330,6 +229,11 @@ def _fetch_steam_games(
 ) -> Iterator[ContentItem]:
     """Fetch and parse Steam game library.
 
+    Only the GetOwnedGames endpoint is called. Richer per-game metadata
+    (release date, developers, publishers, genres, Metacritic score, etc.)
+    is filled in asynchronously by the RAWG enrichment provider so initial
+    sync stays fast even for large libraries.
+
     Args:
         api_key: Steam Web API key
         steam_id: Steam ID (64-bit)
@@ -337,8 +241,7 @@ def _fetch_steam_games(
         min_playtime_minutes: Minimum playtime filter
         source: Source identifier for ContentItems
         progress_callback: Optional callback(fetched_count, total, phase) for
-            progress reporting. Phase is "owned_games", "game_details", or
-            "processing".
+            progress reporting. Phase is "owned_games" or a per-item title.
 
     Yields:
         ContentItem objects for each game
@@ -364,53 +267,26 @@ def _fetch_steam_games(
         logger.warning("No games found in Steam library")
         return
 
-    # Fetch additional game details for better metadata
-    app_ids = [game["appid"] for game in games]
-    total_games = len(app_ids)
-    logger.info(
-        "Fetching detailed information for %d games "
-        "(this may take a while due to API rate limits)...",
-        total_games,
-    )
-
-    def game_details_progress(current: int, total: int) -> None:
-        if progress_callback:
-            progress_callback(current, total, "game_details")
-
-    game_details = get_game_details(app_ids, progress_callback=game_details_progress)
-    logger.info("Successfully fetched details for %d games", len(game_details))
-
-    # Process each game
     count = 0
     for game in games:
         app_id = game.get("appid")
         if not app_id:
             continue
 
-        # Get playtime (in minutes)
         playtime_minutes = game.get("playtime_forever", 0)
         if playtime_minutes < min_playtime_minutes:
             continue
 
-        # Get game name
         game_name = game.get("name", "").strip()
         if not game_name:
-            # Try to get from details
-            details = game_details.get(app_id, {})
-            game_name = details.get("name", f"Steam App {app_id}")
-            if not game_name or game_name == f"Steam App {app_id}":
-                continue  # Skip games without names
+            continue
 
         # Steam exposes no explicit "currently playing" or "completed" signal,
         # so we never infer status from playtime. Users mark progress in the UI.
         status = ConsumptionStatus.UNREAD
-
-        # Convert playtime to hours for metadata
         playtime_hours = playtime_minutes / 60.0
 
-        # Get additional metadata from game details
-        details = game_details.get(app_id, {})
-        metadata = {
+        metadata: dict[str, Any] = {
             "steam_app_id": str(app_id),
             "playtime_minutes": playtime_minutes,
             "playtime_hours": round(playtime_hours, 1),
@@ -420,26 +296,6 @@ def _fetch_steam_games(
             "playtime_linux_forever": game.get("playtime_linux_forever", 0),
         }
 
-        # Add game details if available
-        if details:
-            metadata.update(
-                {
-                    "release_date": details.get("release_date", {}).get("date"),
-                    "developers": details.get("developers", []),
-                    "publishers": details.get("publishers", []),
-                    "genres": [
-                        genre.get("description") for genre in details.get("genres", [])
-                    ],
-                    "categories": [
-                        category.get("description")
-                        for category in details.get("categories", [])
-                    ],
-                    "short_description": details.get("short_description"),
-                    "website": details.get("website"),
-                    "metacritic_score": details.get("metacritic", {}).get("score"),
-                }
-            )
-
         count += 1
 
         if progress_callback:
@@ -448,12 +304,12 @@ def _fetch_steam_games(
         yield ContentItem(
             id=str(app_id),
             title=game_name,
-            author=None,  # Games don't have authors
+            author=None,
             content_type=ContentType.VIDEO_GAME,
             rating=None,
-            review=None,  # Steam API doesn't provide user reviews
+            review=None,
             status=status,
-            date_completed=None,  # Steam doesn't track completion dates
+            date_completed=None,
             metadata=metadata,
             source=source,
         )
