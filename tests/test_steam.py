@@ -5,12 +5,12 @@ from unittest.mock import Mock, patch
 import pytest
 import requests
 
+import src.ingestion.sources.steam as steam_module
 from src.ingestion.plugin_base import SourceError, SourcePlugin
 from src.ingestion.sources.steam import (
     SteamAPIError,
     SteamPlugin,
     _fetch_steam_games,
-    get_game_details,
     get_owned_games,
     get_steam_id_from_vanity_url,
 )
@@ -120,80 +120,11 @@ class TestGetOwnedGames:
             get_owned_games("test_key", "76561198000000000")
 
 
-class TestGetGameDetails:
-    """Tests for fetching game details."""
-
-    @patch("src.ingestion.sources.steam.requests.get")
-    def test_get_game_details_success(self, mock_get):
-        """Test successful game details fetch."""
-        mock_response = Mock(spec=requests.Response)
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "12345": {
-                "success": True,
-                "data": {
-                    "name": "Test Game",
-                    "short_description": "A test game",
-                    "developers": ["Developer 1"],
-                    "publishers": ["Publisher 1"],
-                    "genres": [{"description": "Action"}],
-                    "release_date": {"date": "Jan 1, 2020"},
-                    "metacritic": {"score": 85},
-                },
-            }
-        }
-        mock_response.raise_for_status = Mock()
-        mock_get.return_value = mock_response
-
-        details = get_game_details([12345])
-
-        assert 12345 in details
-        assert details[12345]["name"] == "Test Game"
-        assert details[12345]["short_description"] == "A test game"
-
-    @patch("src.ingestion.sources.steam.requests.get")
-    def test_get_game_details_batch(self, mock_get):
-        """Test game details fetch with multiple games."""
-        mock_response = Mock(spec=requests.Response)
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "12345": {"success": True, "data": {"name": "Game 1"}},
-            "67890": {"success": True, "data": {"name": "Game 2"}},
-        }
-        mock_response.raise_for_status = Mock()
-        mock_get.return_value = mock_response
-
-        details = get_game_details([12345, 67890])
-
-        assert len(details) == 2
-        assert 12345 in details
-        assert 67890 in details
-
-    @patch("src.ingestion.sources.steam.requests.get")
-    def test_get_game_details_large_batch(self, mock_get):
-        """Test game details fetch with large batch (should split)."""
-        mock_response = Mock(spec=requests.Response)
-        mock_response.status_code = 200
-        # Create response for single game (batch_size = 1)
-        mock_response.json.return_value = {
-            "0": {"success": True, "data": {"name": "Game 0"}}
-        }
-        mock_response.raise_for_status = Mock()
-        mock_get.return_value = mock_response
-
-        app_ids = list(range(5))  # 5 games should trigger 5 calls
-        get_game_details(app_ids)
-
-        # Should have made 5 calls (batch_size = 1)
-        assert mock_get.call_count == 5
-
-
 class TestParseSteamGames:
     """Tests for parsing Steam games into ContentItems."""
 
-    @patch("src.ingestion.sources.steam.get_game_details")
     @patch("src.ingestion.sources.steam.get_owned_games")
-    def test__fetch_steam_games_basic(self, mock_get_games, mock_get_details):
+    def test__fetch_steam_games_basic(self, mock_get_games):
         """Test basic game parsing."""
         mock_get_games.return_value = [
             {
@@ -203,14 +134,6 @@ class TestParseSteamGames:
                 "playtime_2weeks": 30,
             }
         ]
-        mock_get_details.return_value = {
-            12345: {
-                "name": "Test Game",
-                "short_description": "A great game",
-                "developers": ["Developer 1"],
-                "genres": [{"description": "Action"}],
-            }
-        }
 
         items = list(_fetch_steam_games("test_key", steam_id="76561198000000000"))
 
@@ -226,14 +149,9 @@ class TestParseSteamGames:
         assert item.metadata["playtime_hours"] == 2.0
         assert item.metadata["playtime_minutes"] == 120
 
-    @patch("src.ingestion.sources.steam.get_game_details")
     @patch("src.ingestion.sources.steam.get_owned_games")
-    def test__fetch_steam_games_rating_always_none(
-        self, mock_get_games, mock_get_details
-    ):
+    def test__fetch_steam_games_rating_always_none(self, mock_get_games):
         """Test that ratings are always None (user-provided, not inferred from playtime)."""
-        mock_get_details.return_value = {}
-
         for playtime_minutes in [0, 1, 60, 300, 600, 1200]:
             mock_get_games.return_value = [
                 {
@@ -247,22 +165,14 @@ class TestParseSteamGames:
                 items[0].rating is None
             ), f"Expected None rating for {playtime_minutes} minutes, got {items[0].rating}"
 
-    @patch("src.ingestion.sources.steam.get_game_details")
     @patch("src.ingestion.sources.steam.get_owned_games")
-    def test__fetch_steam_games_min_playtime_filter(
-        self, mock_get_games, mock_get_details
-    ):
+    def test__fetch_steam_games_min_playtime_filter(self, mock_get_games):
         """Test minimum playtime filter."""
         mock_get_games.return_value = [
             {"appid": 1, "name": "Game 1", "playtime_forever": 10},
             {"appid": 2, "name": "Game 2", "playtime_forever": 100},
             {"appid": 3, "name": "Game 3", "playtime_forever": 200},
         ]
-        mock_get_details.return_value = {
-            1: {"name": "Game 1"},
-            2: {"name": "Game 2"},
-            3: {"name": "Game 3"},
-        }
 
         # Filter games with < 50 minutes playtime
         items = list(
@@ -274,10 +184,9 @@ class TestParseSteamGames:
         assert len(items) == 2  # Only games 2 and 3
         assert all(item.metadata["playtime_minutes"] >= 50 for item in items)
 
-    @patch("src.ingestion.sources.steam.get_game_details")
     @patch("src.ingestion.sources.steam.get_owned_games")
-    def test__fetch_steam_games_metadata(self, mock_get_games, mock_get_details):
-        """Test that game metadata is properly extracted."""
+    def test__fetch_steam_games_metadata(self, mock_get_games):
+        """Playtime fields from GetOwnedGames flow into metadata."""
         mock_get_games.return_value = [
             {
                 "appid": 12345,
@@ -289,19 +198,6 @@ class TestParseSteamGames:
                 "playtime_linux_forever": 0,
             }
         ]
-        mock_get_details.return_value = {
-            12345: {
-                "name": "Test Game",
-                "short_description": "A great game",
-                "developers": ["Dev 1", "Dev 2"],
-                "publishers": ["Pub 1"],
-                "genres": [{"description": "Action"}, {"description": "Adventure"}],
-                "categories": [{"description": "Single-player"}],
-                "release_date": {"date": "Jan 1, 2020"},
-                "website": "https://example.com",
-                "metacritic": {"score": 85},
-            }
-        }
 
         items = list(_fetch_steam_games("test_key", steam_id="76561198000000000"))
 
@@ -311,23 +207,17 @@ class TestParseSteamGames:
         assert metadata["playtime_minutes"] == 120
         assert metadata["playtime_hours"] == 2.0
         assert metadata["playtime_2weeks"] == 30
-        assert metadata["developers"] == ["Dev 1", "Dev 2"]
-        assert metadata["publishers"] == ["Pub 1"]
-        assert metadata["genres"] == ["Action", "Adventure"]
-        assert metadata["metacritic_score"] == 85
+        assert metadata["playtime_windows_forever"] == 100
+        assert metadata["playtime_mac_forever"] == 20
+        assert metadata["playtime_linux_forever"] == 0
 
-    @patch("src.ingestion.sources.steam.get_game_details")
     @patch("src.ingestion.sources.steam.get_owned_games")
-    def test__fetch_steam_games_no_name_skipped(self, mock_get_games, mock_get_details):
+    def test__fetch_steam_games_no_name_skipped(self, mock_get_games):
         """Test that games without names are skipped."""
         mock_get_games.return_value = [
             {"appid": 12345, "name": "", "playtime_forever": 120},
             {"appid": 67890, "name": "Valid Game", "playtime_forever": 60},
         ]
-        mock_get_details.return_value = {
-            12345: {},  # No name in details either
-            67890: {"name": "Valid Game"},
-        }
 
         items = list(_fetch_steam_games("test_key", steam_id="76561198000000000"))
 
@@ -335,17 +225,13 @@ class TestParseSteamGames:
         assert items[0].title == "Valid Game"
 
     @patch("src.ingestion.sources.steam.get_steam_id_from_vanity_url")
-    @patch("src.ingestion.sources.steam.get_game_details")
     @patch("src.ingestion.sources.steam.get_owned_games")
-    def test__fetch_steam_games_vanity_url(
-        self, mock_get_games, mock_get_details, mock_resolve_vanity
-    ):
+    def test__fetch_steam_games_vanity_url(self, mock_get_games, mock_resolve_vanity):
         """Test parsing with vanity URL instead of Steam ID."""
         mock_resolve_vanity.return_value = "76561198000000000"
         mock_get_games.return_value = [
             {"appid": 12345, "name": "Test Game", "playtime_forever": 60}
         ]
-        mock_get_details.return_value = {12345: {"name": "Test Game"}}
 
         items = list(_fetch_steam_games("test_key", vanity_url="testuser"))
 
@@ -367,17 +253,14 @@ class TestParseSteamGames:
         ):
             list(_fetch_steam_games("test_key"))
 
-    @patch("src.ingestion.sources.steam.get_game_details")
     @patch("src.ingestion.sources.steam.get_owned_games")
-    def test__fetch_steam_games_empty_library(self, mock_get_games, mock_get_details):
+    def test__fetch_steam_games_empty_library(self, mock_get_games):
         """Test parsing with empty game library."""
         mock_get_games.return_value = []
 
         items = list(_fetch_steam_games("test_key", steam_id="76561198000000000"))
 
         assert len(items) == 0
-        # Should not call get_game_details for empty library
-        mock_get_details.assert_not_called()
 
 
 class TestSteamPluginProperties:
@@ -517,16 +400,13 @@ class TestSteamStatusInferenceRegression:
     """
 
     @pytest.mark.parametrize("playtime_minutes", [0, 1, 30, 6000])
-    @patch("src.ingestion.sources.steam.get_game_details")
     @patch("src.ingestion.sources.steam.get_owned_games")
     def test_fetch_steam_games_status_always_unread_regression(
         self,
         mock_get_games: Mock,
-        mock_get_details: Mock,
         playtime_minutes: int,
     ) -> None:
         """Status is UNREAD regardless of playtime."""
-        mock_get_details.return_value = {}
         mock_get_games.return_value = [
             {
                 "appid": 12345,
@@ -597,12 +477,10 @@ class TestSteamNoneConfigValuesRegression:
         assert result["vanity_url"] is None
 
     @patch("src.ingestion.sources.steam.get_steam_id_from_vanity_url")
-    @patch("src.ingestion.sources.steam.get_game_details")
     @patch("src.ingestion.sources.steam.get_owned_games")
     def test_fetch_pipeline_none_values_regression(
         self,
         mock_get_games: Mock,
-        mock_get_details: Mock,
         mock_resolve_vanity: Mock,
     ) -> None:
         """Full pipeline: None YAML values survive transform_config -> fetch.
@@ -615,7 +493,6 @@ class TestSteamNoneConfigValuesRegression:
         mock_get_games.return_value = [
             {"appid": 1, "name": "Game", "playtime_forever": 60}
         ]
-        mock_get_details.return_value = {1: {"name": "Game"}}
 
         plugin = SteamPlugin()
         raw_config = {"api_key": "test_key", "steam_id": None, "vanity_url": "testuser"}
@@ -629,16 +506,12 @@ class TestSteamNoneConfigValuesRegression:
 class TestSteamPluginFetch:
     """Tests for SteamPlugin.fetch()."""
 
-    @patch("src.ingestion.sources.steam.get_game_details")
     @patch("src.ingestion.sources.steam.get_owned_games")
-    def test_fetch_through_plugin(
-        self, mock_get_games: Mock, mock_get_details: Mock
-    ) -> None:
+    def test_fetch_through_plugin(self, mock_get_games: Mock) -> None:
         """Test fetching games through the plugin interface."""
         mock_get_games.return_value = [
             {"appid": 12345, "name": "Test Game", "playtime_forever": 120}
         ]
-        mock_get_details.return_value = {12345: {"name": "Test Game"}}
 
         plugin = SteamPlugin()
         items = list(
@@ -659,3 +532,102 @@ class TestSteamPluginFetch:
             list(plugin.fetch({"api_key": "test_key", "steam_id": "76561198000000000"}))
 
         assert exc_info.value.plugin_name == "steam"
+
+
+class TestSteamTwoPassRegression:
+    """Regression tests for the slow Steam Store API metadata pass (issue #34).
+
+    Bug: Steam sync ran a slow first pass calling the Steam Store appdetails
+    endpoint once per game (rate-limited to ~3s per request) before yielding
+    any items, then a fast second pass that emitted ContentItems with
+    per-game progress. For libraries of a few hundred games the first pass
+    took 15+ minutes and blocked all sync output.
+
+    Root cause: ``_fetch_steam_games`` called ``get_game_details(app_ids)``
+    inline to enrich each game with release_date/genres/publishers/etc.,
+    duplicating metadata that the RAWG enrichment provider already supplies
+    asynchronously after ingestion.
+
+    Fix: Drop the inline Steam Store API pass entirely. Sync only calls
+    ``GetOwnedGames`` (one request) and yields items immediately. Background
+    enrichment via RAWG fills in the same metadata without blocking.
+
+    Reported in: https://github.com/therealahall/recommendinator/issues/34
+    """
+
+    @patch("src.ingestion.sources.steam.requests.get")
+    def test_fetch_calls_only_owned_games_endpoint(self, mock_get: Mock) -> None:
+        """Sync hits GetOwnedGames once and never the Steam Store appdetails endpoint."""
+        mock_response = Mock(spec=requests.Response)
+        mock_response.json.return_value = {
+            "response": {
+                "games": [
+                    {"appid": 1, "name": "Game 1", "playtime_forever": 60},
+                    {"appid": 2, "name": "Game 2", "playtime_forever": 120},
+                    {"appid": 3, "name": "Game 3", "playtime_forever": 180},
+                ]
+            }
+        }
+        mock_response.raise_for_status = Mock()
+        mock_get.return_value = mock_response
+
+        items = list(_fetch_steam_games("test_key", steam_id="76561198000000000"))
+
+        assert len(items) == 3
+        assert mock_get.call_count == 1
+        called_url = mock_get.call_args_list[0][0][0]
+        assert "IPlayerService/GetOwnedGames" in called_url
+        assert "store.steampowered.com" not in called_url
+
+    def test_get_game_details_no_longer_exported(self) -> None:
+        """The old slow per-game appdetails helper is removed from the module."""
+        assert not hasattr(steam_module, "get_game_details")
+
+    @patch("src.ingestion.sources.steam.get_owned_games")
+    def test_fetch_skips_games_with_missing_appid(self, mock_get_games: Mock) -> None:
+        """Games whose appid is missing or None are silently skipped."""
+        mock_get_games.return_value = [
+            {"name": "No appid", "playtime_forever": 100},
+            {"appid": None, "name": "Null appid", "playtime_forever": 100},
+            {"appid": 42, "name": "Valid", "playtime_forever": 100},
+        ]
+
+        items = list(_fetch_steam_games("test_key", steam_id="76561198000000000"))
+
+        assert len(items) == 1
+        assert items[0].id == "42"
+
+    def test_fetch_missing_id_and_vanity_raises_source_error(self) -> None:
+        """SteamPlugin.fetch wraps the ValueError from missing id+vanity in SourceError."""
+        plugin = SteamPlugin()
+        with pytest.raises(SourceError, match="steam_id or vanity_url") as exc_info:
+            list(
+                plugin.fetch({"api_key": "test_key", "steam_id": "", "vanity_url": ""})
+            )
+
+        assert exc_info.value.plugin_name == "steam"
+
+    @patch("src.ingestion.sources.steam.get_owned_games")
+    def test_fetch_progress_callback_translates_phase(
+        self, mock_get_games: Mock
+    ) -> None:
+        """Adapter translates 'owned_games' phase to a human-readable label
+        and forwards per-item titles unchanged."""
+        mock_get_games.return_value = [
+            {"appid": 1, "name": "Alpha", "playtime_forever": 30},
+            {"appid": 2, "name": "Beta", "playtime_forever": 60},
+        ]
+        callback = Mock()
+
+        plugin = SteamPlugin()
+        list(
+            plugin.fetch(
+                {"api_key": "test_key", "steam_id": "76561198000000000"},
+                progress_callback=callback,
+            )
+        )
+
+        phases = [call.args[2] for call in callback.call_args_list]
+        assert "Fetching library..." in phases
+        assert "Alpha" in phases
+        assert "Beta" in phases
