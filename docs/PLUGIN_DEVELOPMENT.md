@@ -293,7 +293,22 @@ class MovieApiPlugin(SourcePlugin):
 
 ## Plugin Registration
 
-Plugins are **auto-discovered** by `PluginRegistry` from `src/ingestion/sources/`. No manual registration is needed — just create your plugin file and it will be found automatically.
+Plugins are **auto-discovered** by `PluginRegistry` from `src/ingestion/sources/`. Each plugin lives in its own folder, which the registry treats as a Python subpackage:
+
+```
+src/ingestion/sources/<plugin>/
+├── __init__.py        # re-exports everything from <plugin>.py for discovery
+├── <plugin>.py        # SourcePlugin subclass implementation
+├── README.md          # plugin-specific usage and configuration
+└── test_<plugin>.py   # tests live next to the plugin
+```
+
+The minimal `__init__.py` is one line:
+
+```python
+"""<plugin> plugin package."""
+from src.ingestion.sources.<plugin>.<plugin> import *  # noqa: F401, F403
+```
 
 To verify your plugin is discovered:
 
@@ -409,12 +424,14 @@ if new_refresh_token and new_refresh_token != original_refresh_token:
         on_credential_rotated("refresh_token", new_refresh_token)
 ```
 
-See `src/ingestion/sources/gog.py` and `src/ingestion/sources/epic_games.py`
+See `src/ingestion/sources/gog/gog.py` and `src/ingestion/sources/epic_games/epic_games.py`
 for complete examples.
 
 ## Enrichment Providers
 
-In addition to data source plugins, you can create custom **enrichment providers** that fetch metadata from external APIs. Enrichment providers use the same auto-discovery pattern as source plugins — place your provider in `src/enrichment/providers/` (or `plugins/private/enrichment/` for private providers) and it will be discovered automatically.
+In addition to data source plugins, you can create custom **enrichment providers** that fetch metadata from external APIs. Built-in enrichment providers use the folder-based auto-discovery pattern: place your provider at `src/enrichment/providers/<name>/<name>.py` with a one-line `__init__.py` that re-exports it (same `from src.enrichment.providers.<name>.<name> import *` shim used by source plugins), plus a `README.md` and a `test_<name>.py` alongside it.
+
+Private enrichment providers (under `plugins/private/enrichment/`) and private source plugins (under `private/plugins/`) currently remain **flat single-file modules** — the private discovery code globs `*.py` rather than walking subpackages, so a private provider folder would be silently skipped. If you need a private provider, drop a single `<name>.py` into the private directory.
 
 All enrichment providers inherit from `EnrichmentProvider` in `src/enrichment/provider_base.py`:
 
@@ -506,19 +523,19 @@ enrichment:
 
 ### Existing Enrichment Providers to Reference
 
-- `src/enrichment/providers/tmdb.py` — Movies and TV shows (API key required)
-- `src/enrichment/providers/openlibrary.py` — Books (no API key)
-- `src/enrichment/providers/rawg.py` — Video games (API key required)
+- `src/enrichment/providers/tmdb/tmdb.py` — Movies and TV shows (API key required)
+- `src/enrichment/providers/openlibrary/openlibrary.py` — Books (no API key)
+- `src/enrichment/providers/rawg/rawg.py` — Video games (API key required)
 
 ## Existing Plugins to Reference
 
-- `src/ingestion/sources/goodreads.py` - File-based CSV parser
-- `src/ingestion/sources/steam.py` - API-based with rate limiting
-- `src/ingestion/sources/gog.py` - OAuth-based API with token refresh
-- `src/ingestion/sources/epic_games.py` - OAuth-based API via Legendary
-- `src/ingestion/sources/radarr.py` - API-based movie library
-- `src/ingestion/sources/sonarr.py` - API-based TV library
-- `src/ingestion/sources/generic_csv.py` - Flexible CSV importer
-- `src/ingestion/sources/generic_json.py` - Flexible JSON importer
-- `src/ingestion/sources/markdown.py` - Flexible Markdown importer
-- `src/ingestion/sources/roms.py` - ROM Library scanner with curated extension defaults and built-in No-Intro/Redump/TOSEC title cleaner (`_rom_title.py`)
+- `src/ingestion/sources/goodreads/goodreads.py` - File-based CSV parser
+- `src/ingestion/sources/steam/steam.py` - API-based with rate limiting
+- `src/ingestion/sources/gog/gog.py` - OAuth-based API with token refresh
+- `src/ingestion/sources/epic_games/epic_games.py` - OAuth-based API via Legendary
+- `src/ingestion/sources/radarr/radarr.py` - API-based movie library
+- `src/ingestion/sources/sonarr/sonarr.py` - API-based TV library
+- `src/ingestion/sources/generic_csv/generic_csv.py` - Flexible CSV importer
+- `src/ingestion/sources/generic_json/generic_json.py` - Flexible JSON importer
+- `src/ingestion/sources/markdown/markdown.py` - Flexible Markdown importer
+- `src/ingestion/sources/roms/roms.py` - ROM Library scanner with curated extension defaults and built-in No-Intro/Redump/TOSEC title cleaner (`src/ingestion/sources/roms/_rom_title.py`)

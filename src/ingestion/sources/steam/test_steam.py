@@ -5,9 +5,9 @@ from unittest.mock import Mock, patch
 import pytest
 import requests
 
-import src.ingestion.sources.steam as steam_module
 from src.ingestion.plugin_base import SourceError, SourcePlugin
-from src.ingestion.sources.steam import (
+from src.ingestion.sources.steam import steam as steam_module
+from src.ingestion.sources.steam.steam import (
     SteamAPIError,
     SteamPlugin,
     _fetch_steam_games,
@@ -20,7 +20,7 @@ from src.models.content import ConsumptionStatus, ContentType
 class TestGetSteamIdFromVanityUrl:
     """Tests for Steam vanity URL resolution."""
 
-    @patch("src.ingestion.sources.steam.requests.get")
+    @patch("src.ingestion.sources.steam.steam.requests.get")
     def test_resolve_vanity_url_success(self, mock_get):
         """Test successful vanity URL resolution."""
         mock_response = Mock(spec=requests.Response)
@@ -39,7 +39,7 @@ class TestGetSteamIdFromVanityUrl:
         assert call_args[1]["params"]["key"] == "test_key"
         assert call_args[1]["params"]["vanityurl"] == "testuser"
 
-    @patch("src.ingestion.sources.steam.requests.get")
+    @patch("src.ingestion.sources.steam.steam.requests.get")
     def test_resolve_vanity_url_not_found(self, mock_get):
         """Test vanity URL resolution when not found."""
         mock_response = Mock(spec=requests.Response)
@@ -51,7 +51,7 @@ class TestGetSteamIdFromVanityUrl:
 
         assert steam_id is None
 
-    @patch("src.ingestion.sources.steam.requests.get")
+    @patch("src.ingestion.sources.steam.steam.requests.get")
     def test_resolve_vanity_url_api_error(self, mock_get):
         """Test vanity URL resolution with API error."""
         mock_get.side_effect = requests.RequestException("Connection error")
@@ -63,7 +63,7 @@ class TestGetSteamIdFromVanityUrl:
 class TestGetOwnedGames:
     """Tests for fetching owned games."""
 
-    @patch("src.ingestion.sources.steam.requests.get")
+    @patch("src.ingestion.sources.steam.steam.requests.get")
     def test_get_owned_games_success(self, mock_get):
         """Test successful game fetch."""
         mock_response = Mock(spec=requests.Response)
@@ -99,7 +99,7 @@ class TestGetOwnedGames:
         assert "IPlayerService/GetOwnedGames" in call_args[0][0]
         assert call_args[1]["params"]["steamid"] == "76561198000000000"
 
-    @patch("src.ingestion.sources.steam.requests.get")
+    @patch("src.ingestion.sources.steam.steam.requests.get")
     def test_get_owned_games_empty(self, mock_get):
         """Test game fetch with empty library."""
         mock_response = Mock(spec=requests.Response)
@@ -111,7 +111,7 @@ class TestGetOwnedGames:
 
         assert len(games) == 0
 
-    @patch("src.ingestion.sources.steam.requests.get")
+    @patch("src.ingestion.sources.steam.steam.requests.get")
     def test_get_owned_games_api_error(self, mock_get):
         """Test game fetch with API error."""
         mock_get.side_effect = requests.RequestException("API error")
@@ -123,7 +123,7 @@ class TestGetOwnedGames:
 class TestParseSteamGames:
     """Tests for parsing Steam games into ContentItems."""
 
-    @patch("src.ingestion.sources.steam.get_owned_games")
+    @patch("src.ingestion.sources.steam.steam.get_owned_games")
     def test__fetch_steam_games_basic(self, mock_get_games):
         """Test basic game parsing."""
         mock_get_games.return_value = [
@@ -149,7 +149,7 @@ class TestParseSteamGames:
         assert item.metadata["playtime_hours"] == 2.0
         assert item.metadata["playtime_minutes"] == 120
 
-    @patch("src.ingestion.sources.steam.get_owned_games")
+    @patch("src.ingestion.sources.steam.steam.get_owned_games")
     def test__fetch_steam_games_rating_always_none(self, mock_get_games):
         """Test that ratings are always None (user-provided, not inferred from playtime)."""
         for playtime_minutes in [0, 1, 60, 300, 600, 1200]:
@@ -165,7 +165,7 @@ class TestParseSteamGames:
                 items[0].rating is None
             ), f"Expected None rating for {playtime_minutes} minutes, got {items[0].rating}"
 
-    @patch("src.ingestion.sources.steam.get_owned_games")
+    @patch("src.ingestion.sources.steam.steam.get_owned_games")
     def test__fetch_steam_games_min_playtime_filter(self, mock_get_games):
         """Test minimum playtime filter."""
         mock_get_games.return_value = [
@@ -184,7 +184,7 @@ class TestParseSteamGames:
         assert len(items) == 2  # Only games 2 and 3
         assert all(item.metadata["playtime_minutes"] >= 50 for item in items)
 
-    @patch("src.ingestion.sources.steam.get_owned_games")
+    @patch("src.ingestion.sources.steam.steam.get_owned_games")
     def test__fetch_steam_games_metadata(self, mock_get_games):
         """Playtime fields from GetOwnedGames flow into metadata."""
         mock_get_games.return_value = [
@@ -211,7 +211,7 @@ class TestParseSteamGames:
         assert metadata["playtime_mac_forever"] == 20
         assert metadata["playtime_linux_forever"] == 0
 
-    @patch("src.ingestion.sources.steam.get_owned_games")
+    @patch("src.ingestion.sources.steam.steam.get_owned_games")
     def test__fetch_steam_games_no_name_skipped(self, mock_get_games):
         """Test that games without names are skipped."""
         mock_get_games.return_value = [
@@ -224,8 +224,8 @@ class TestParseSteamGames:
         assert len(items) == 1
         assert items[0].title == "Valid Game"
 
-    @patch("src.ingestion.sources.steam.get_steam_id_from_vanity_url")
-    @patch("src.ingestion.sources.steam.get_owned_games")
+    @patch("src.ingestion.sources.steam.steam.get_steam_id_from_vanity_url")
+    @patch("src.ingestion.sources.steam.steam.get_owned_games")
     def test__fetch_steam_games_vanity_url(self, mock_get_games, mock_resolve_vanity):
         """Test parsing with vanity URL instead of Steam ID."""
         mock_resolve_vanity.return_value = "76561198000000000"
@@ -238,7 +238,7 @@ class TestParseSteamGames:
         assert len(items) == 1
         mock_resolve_vanity.assert_called_once_with("test_key", "testuser")
 
-    @patch("src.ingestion.sources.steam.get_steam_id_from_vanity_url")
+    @patch("src.ingestion.sources.steam.steam.get_steam_id_from_vanity_url")
     def test__fetch_steam_games_vanity_url_failure(self, mock_resolve_vanity):
         """Test parsing when vanity URL resolution fails."""
         mock_resolve_vanity.return_value = None
@@ -253,7 +253,7 @@ class TestParseSteamGames:
         ):
             list(_fetch_steam_games("test_key"))
 
-    @patch("src.ingestion.sources.steam.get_owned_games")
+    @patch("src.ingestion.sources.steam.steam.get_owned_games")
     def test__fetch_steam_games_empty_library(self, mock_get_games):
         """Test parsing with empty game library."""
         mock_get_games.return_value = []
@@ -400,7 +400,7 @@ class TestSteamStatusInferenceRegression:
     """
 
     @pytest.mark.parametrize("playtime_minutes", [0, 1, 30, 6000])
-    @patch("src.ingestion.sources.steam.get_owned_games")
+    @patch("src.ingestion.sources.steam.steam.get_owned_games")
     def test_fetch_steam_games_status_always_unread_regression(
         self,
         mock_get_games: Mock,
@@ -476,8 +476,8 @@ class TestSteamNoneConfigValuesRegression:
         assert result["steam_id"] is None
         assert result["vanity_url"] is None
 
-    @patch("src.ingestion.sources.steam.get_steam_id_from_vanity_url")
-    @patch("src.ingestion.sources.steam.get_owned_games")
+    @patch("src.ingestion.sources.steam.steam.get_steam_id_from_vanity_url")
+    @patch("src.ingestion.sources.steam.steam.get_owned_games")
     def test_fetch_pipeline_none_values_regression(
         self,
         mock_get_games: Mock,
@@ -506,7 +506,7 @@ class TestSteamNoneConfigValuesRegression:
 class TestSteamPluginFetch:
     """Tests for SteamPlugin.fetch()."""
 
-    @patch("src.ingestion.sources.steam.get_owned_games")
+    @patch("src.ingestion.sources.steam.steam.get_owned_games")
     def test_fetch_through_plugin(self, mock_get_games: Mock) -> None:
         """Test fetching games through the plugin interface."""
         mock_get_games.return_value = [
@@ -522,7 +522,7 @@ class TestSteamPluginFetch:
         assert items[0].title == "Test Game"
         assert items[0].source == "steam"
 
-    @patch("src.ingestion.sources.steam.get_owned_games")
+    @patch("src.ingestion.sources.steam.steam.get_owned_games")
     def test_fetch_api_error_raises_source_error(self, mock_get_games: Mock) -> None:
         """Test that Steam API errors are wrapped in SourceError."""
         mock_get_games.side_effect = SteamAPIError("API failure")
@@ -555,7 +555,7 @@ class TestSteamTwoPassRegression:
     Reported in: https://github.com/therealahall/recommendinator/issues/34
     """
 
-    @patch("src.ingestion.sources.steam.requests.get")
+    @patch("src.ingestion.sources.steam.steam.requests.get")
     def test_fetch_calls_only_owned_games_endpoint(self, mock_get: Mock) -> None:
         """Sync hits GetOwnedGames once and never the Steam Store appdetails endpoint."""
         mock_response = Mock(spec=requests.Response)
@@ -583,7 +583,7 @@ class TestSteamTwoPassRegression:
         """The old slow per-game appdetails helper is removed from the module."""
         assert not hasattr(steam_module, "get_game_details")
 
-    @patch("src.ingestion.sources.steam.get_owned_games")
+    @patch("src.ingestion.sources.steam.steam.get_owned_games")
     def test_fetch_skips_games_with_missing_appid(self, mock_get_games: Mock) -> None:
         """Games whose appid is missing or None are silently skipped."""
         mock_get_games.return_value = [
@@ -607,7 +607,7 @@ class TestSteamTwoPassRegression:
 
         assert exc_info.value.plugin_name == "steam"
 
-    @patch("src.ingestion.sources.steam.get_owned_games")
+    @patch("src.ingestion.sources.steam.steam.get_owned_games")
     def test_fetch_progress_callback_translates_phase(
         self, mock_get_games: Mock
     ) -> None:
@@ -652,7 +652,7 @@ class TestSteamApiKeyScrubbingRegression:
     string ever reaches ``SteamAPIError`` or any logger.
     """
 
-    @patch("src.ingestion.sources.steam.requests.get")
+    @patch("src.ingestion.sources.steam.steam.requests.get")
     def test_vanity_url_http_error_does_not_leak_api_key(self, mock_get: Mock) -> None:
         """HTTPError on vanity resolution surfaces only the status code."""
         api_key = "SECRET_STEAM_KEY_123"
@@ -676,7 +676,7 @@ class TestSteamApiKeyScrubbingRegression:
         assert api_key not in message
         assert "HTTP 401" in message
 
-    @patch("src.ingestion.sources.steam.requests.get")
+    @patch("src.ingestion.sources.steam.steam.requests.get")
     def test_owned_games_http_error_does_not_leak_api_key(self, mock_get: Mock) -> None:
         """HTTPError on owned-games fetch surfaces only the status code."""
         api_key = "SECRET_STEAM_KEY_456"
@@ -700,7 +700,7 @@ class TestSteamApiKeyScrubbingRegression:
         assert api_key not in message
         assert "HTTP 503" in message
 
-    @patch("src.ingestion.sources.steam.requests.get")
+    @patch("src.ingestion.sources.steam.steam.requests.get")
     def test_transport_error_surfaces_only_exception_type(self, mock_get: Mock) -> None:
         """Connection errors surface only the exception class, not message text."""
         api_key = "SECRET_STEAM_KEY_789"
@@ -715,7 +715,7 @@ class TestSteamApiKeyScrubbingRegression:
         assert api_key not in message
         assert "ConnectionError" in message
 
-    @patch("src.ingestion.sources.steam.get_owned_games")
+    @patch("src.ingestion.sources.steam.steam.get_owned_games")
     def test_source_error_propagates_scrubbed_message(
         self, mock_get_games: Mock
     ) -> None:

@@ -7,7 +7,7 @@ import pytest
 import requests
 
 from src.enrichment.provider_base import ProviderError
-from src.enrichment.providers.rawg import (
+from src.enrichment.providers.rawg.rawg import (
     RAWGProvider,
     _filter_outlier_titles,
     _longest_common_prefix,
@@ -204,7 +204,7 @@ class TestRAWGProviderEnrichment:
 
         mock_series = {"results": []}
 
-        with patch("requests.get") as mock_get:
+        with patch("src.enrichment.providers.rawg.rawg.requests.get") as mock_get:
             mock_get.side_effect = [
                 MagicMock(
                     spec=requests.Response, status_code=200, json=lambda: mock_search
@@ -244,7 +244,7 @@ class TestRAWGProviderEnrichment:
 
         mock_search = {"results": []}
 
-        with patch("requests.get") as mock_get:
+        with patch("src.enrichment.providers.rawg.rawg.requests.get") as mock_get:
             mock_get.return_value = MagicMock(
                 spec=requests.Response, status_code=200, json=lambda: mock_search
             )
@@ -261,7 +261,7 @@ class TestRAWGProviderEnrichment:
         config: dict[str, Any],
     ) -> None:
         """Test that API errors raise ProviderError."""
-        with patch("requests.get") as mock_get:
+        with patch("src.enrichment.providers.rawg.rawg.requests.get") as mock_get:
             mock_get.side_effect = requests.RequestException("Connection failed")
 
             with pytest.raises(ProviderError) as exc_info:
@@ -299,7 +299,7 @@ class TestRAWGProviderEnrichment:
 
         mock_series = {"results": []}
 
-        with patch("requests.get") as mock_get:
+        with patch("src.enrichment.providers.rawg.rawg.requests.get") as mock_get:
             mock_get.side_effect = [
                 MagicMock(
                     spec=requests.Response, status_code=200, json=lambda: mock_search
@@ -527,7 +527,7 @@ class TestRAWGFranchiseExtraction:
             ]
         }
 
-        with patch("requests.get") as mock_get:
+        with patch("src.enrichment.providers.rawg.rawg.requests.get") as mock_get:
             mock_get.return_value = MagicMock(
                 status_code=200, json=lambda: mock_series_response
             )
@@ -546,7 +546,7 @@ class TestRAWGFranchiseExtraction:
         """Empty results return (None, None)."""
         mock_series_response = {"results": []}
 
-        with patch("requests.get") as mock_get:
+        with patch("src.enrichment.providers.rawg.rawg.requests.get") as mock_get:
             mock_get.return_value = MagicMock(
                 status_code=200, json=lambda: mock_series_response
             )
@@ -565,7 +565,7 @@ class TestRAWGFranchiseExtraction:
         self, provider: RAWGProvider
     ) -> None:
         """API error returns (None, None) without raising."""
-        with patch("requests.get") as mock_get:
+        with patch("src.enrichment.providers.rawg.rawg.requests.get") as mock_get:
             mock_get.side_effect = requests.RequestException("Connection failed")
 
             franchise_name, position = provider._fetch_game_series(
@@ -594,7 +594,7 @@ class TestRAWGFranchiseExtraction:
             ]
         }
 
-        with patch("requests.get") as mock_get:
+        with patch("src.enrichment.providers.rawg.rawg.requests.get") as mock_get:
             mock_get.return_value = MagicMock(
                 status_code=200, json=lambda: mock_series_response
             )
@@ -639,7 +639,7 @@ class TestRAWGFranchiseExtraction:
             ]
         }
 
-        with patch("requests.get") as mock_get:
+        with patch("src.enrichment.providers.rawg.rawg.requests.get") as mock_get:
             mock_get.side_effect = [
                 MagicMock(
                     spec=requests.Response, status_code=200, json=lambda: mock_search
@@ -687,7 +687,7 @@ class TestRAWGFranchiseExtraction:
             "description": "An epic RPG.",
         }
 
-        with patch("requests.get") as mock_get:
+        with patch("src.enrichment.providers.rawg.rawg.requests.get") as mock_get:
             # Search succeeds, game details succeed, game-series fails
             mock_get.side_effect = [
                 MagicMock(

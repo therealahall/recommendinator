@@ -6,7 +6,7 @@ import pytest
 import requests
 
 from src.ingestion.plugin_base import SourceError, SourcePlugin
-from src.ingestion.sources.radarr import RadarrPlugin
+from src.ingestion.sources.radarr.radarr import RadarrPlugin
 from src.models.content import ConsumptionStatus, ContentType
 
 
