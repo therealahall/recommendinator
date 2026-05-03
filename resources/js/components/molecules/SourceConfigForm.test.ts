@@ -298,6 +298,120 @@ describe('SourceConfigForm', () => {
     expect(saved![0][0]).toEqual({ tags: ['rpg', 'indie'] })
   })
 
+  it('does not render the enable/disable button when enabled prop is null', () => {
+    const wrapper = mount(SourceConfigForm, {
+      props: {
+        schema: [field({ name: 'path' })],
+        values: { path: 'x' },
+        secretStatus: {},
+      },
+    })
+    expect(wrapper.find('[data-testid="form-toggle-enabled"]').exists()).toBe(
+      false,
+    )
+  })
+
+  it('renders Disable in danger scheme when enabled is true', () => {
+    const wrapper = mount(SourceConfigForm, {
+      props: {
+        schema: [field({ name: 'path' })],
+        values: { path: 'x' },
+        secretStatus: {},
+        enabled: true,
+      },
+    })
+    const btn = wrapper.find('[data-testid="form-toggle-enabled"]')
+    expect(btn.exists()).toBe(true)
+    expect(btn.text()).toBe('Disable')
+    expect(btn.classes()).toContain('btn-danger')
+    expect(btn.attributes('aria-pressed')).toBe('true')
+  })
+
+  it('renders Enable in success scheme when enabled is false', () => {
+    const wrapper = mount(SourceConfigForm, {
+      props: {
+        schema: [field({ name: 'path' })],
+        values: { path: 'x' },
+        secretStatus: {},
+        enabled: false,
+      },
+    })
+    const btn = wrapper.find('[data-testid="form-toggle-enabled"]')
+    expect(btn.text()).toBe('Enable')
+    expect(btn.classes()).toContain('btn-success')
+    expect(btn.attributes('aria-pressed')).toBe('false')
+  })
+
+  it('disables the enable/disable button while enableBusy is true', () => {
+    const wrapper = mount(SourceConfigForm, {
+      props: {
+        schema: [field({ name: 'path' })],
+        values: { path: 'x' },
+        secretStatus: {},
+        enabled: true,
+        enableBusy: true,
+      },
+    })
+    const toggle = wrapper.find('[data-testid="form-toggle-enabled"]')
+    expect(toggle.attributes('disabled')).toBeDefined()
+    expect(toggle.text()).toBe('Disabling…')
+  })
+
+  it('emits toggle-enabled with the inverted state on click', async () => {
+    const wrapper = mount(SourceConfigForm, {
+      props: {
+        schema: [field({ name: 'path' })],
+        values: { path: 'x' },
+        secretStatus: {},
+        enabled: true,
+      },
+    })
+    await wrapper.find('[data-testid="form-toggle-enabled"]').trigger('click')
+    expect(wrapper.emitted('toggle-enabled')).toEqual([[false]])
+  })
+
+  it('renders a Saved status pill when saveStatus is "saved"', () => {
+    const wrapper = mount(SourceConfigForm, {
+      props: {
+        schema: [field({ name: 'path' })],
+        values: { path: 'x' },
+        secretStatus: {},
+        saveStatus: 'saved',
+      },
+    })
+    const status = wrapper.find('[data-testid="form-save-status"]')
+    expect(status.exists()).toBe(true)
+    expect(status.text()).toContain('Saved')
+    expect(status.attributes('role')).toBe('status')
+  })
+
+  it('renders an error pill with message when saveStatus is "error"', () => {
+    const wrapper = mount(SourceConfigForm, {
+      props: {
+        schema: [field({ name: 'path' })],
+        values: { path: 'x' },
+        secretStatus: {},
+        saveStatus: 'error',
+        saveError: 'boom',
+      },
+    })
+    const status = wrapper.find('[data-testid="form-save-status"]')
+    expect(status.text()).toContain('boom')
+    expect(status.attributes('role')).toBe('alert')
+  })
+
+  it('renders no save status pill when idle', () => {
+    const wrapper = mount(SourceConfigForm, {
+      props: {
+        schema: [field({ name: 'path' })],
+        values: { path: 'x' },
+        secretStatus: {},
+        saveStatus: 'idle',
+      },
+    })
+    expect(wrapper.find('[data-testid="form-save-status"]').exists()).toBe(false)
+  })
+
   it('disables the Save button while saving', () => {
     const schema = [field({ name: 'path' })]
     const wrapper = mount(SourceConfigForm, {

@@ -58,7 +58,10 @@ from src.web.sync_sources import (
     build_config_view,
     build_schema_view,
     clear_source_secret_value,
+    create_source,
+    delete_source,
     get_available_sync_sources,
+    list_available_plugins,
     migrate_source,
     resolve_inputs,
     resolve_source_plugin,
@@ -101,6 +104,7 @@ class SyncSourceResponse(BaseModel):
     id: str
     display_name: str
     plugin_display_name: str
+    enabled: bool
 
 
 class UserResponse(BaseModel):
@@ -378,6 +382,27 @@ class SourceMigrationResponse(BaseModel):
     migrated_at: str
     fields_migrated: list[str]
     secrets_migrated: list[str]
+
+
+class PluginInfoResponse(BaseModel):
+    """One installed source plugin's metadata for the Add-Source picker."""
+
+    name: str
+    display_name: str
+    description: str
+    content_types: list[str]
+    requires_api_key: bool
+    requires_network: bool
+    fields: list[SourceFieldSchema]
+
+
+class SourceCreateRequest(BaseModel):
+    """Body for ``POST /api/sync/sources`` — create a new DB-backed source."""
+
+    id: str = Field(..., max_length=64)
+    plugin: str = Field(..., max_length=128)
+    values: dict[str, Any] = Field(default_factory=dict)
+    enabled: bool = True
 
 
 def discover_themes(themes_dir: Path) -> list[ThemeResponse]:
@@ -1298,9 +1323,56 @@ async def get_sync_sources() -> list[SyncSourceResponse]:
             id=source.id,
             display_name=source.display_name,
             plugin_display_name=source.plugin_display_name,
+            enabled=source.enabled,
         )
         for source in sources
     ]
+
+
+@router.get("/plugins", response_model=list[PluginInfoResponse])
+async def list_plugins() -> list[PluginInfoResponse]:
+    """List every registered source plugin (for the Add-Source picker)."""
+    return [PluginInfoResponse(**info) for info in list_available_plugins()]
+
+
+@router.post(
+    "/sync/sources",
+    response_model=SourceConfigResponse,
+    status_code=201,
+)
+async def create_source_endpoint(
+    payload: SourceCreateRequest,
+) -> SourceConfigResponse:
+    """Create a new DB-backed source.
+
+    Sensitive fields must be set via ``PUT /secret/{key}`` *after* this
+    call returns; the create path rejects them in the body to keep the
+    sensitive-write surface narrow.
+    """
+    storage = _require_storage()
+    try:
+        view = create_source(
+            payload.id,
+            payload.plugin,
+            payload.values,
+            storage,
+            enabled=payload.enabled,
+            config=get_config(),
+        )
+    except SourceConfigError as error:
+        raise _config_error_to_http(error) from error
+    return SourceConfigResponse(**view)
+
+
+@router.delete("/sync/sources/{source_id}", status_code=204)
+async def delete_source_endpoint(source_id: str) -> Response:
+    """Drop a DB-backed source and clear its credentials."""
+    storage = _require_storage()
+    try:
+        delete_source(source_id, storage)
+    except SourceConfigError as error:
+        raise _config_error_to_http(error) from error
+    return Response(status_code=204)
 
 
 # Per-source configuration endpoints. Business logic lives in
@@ -1314,6 +1386,9 @@ _ERROR_KIND_TO_STATUS: dict[str, int] = {
     "invalid_field": 400,
     "not_sensitive": 400,
     "sensitive_in_config": 400,
+    "conflict": 409,
+    "invalid_id": 400,
+    "unknown_plugin": 400,
 }
 
 # Fixed user-facing strings keyed by error kind so HTTP responses never
@@ -1325,6 +1400,12 @@ _ERROR_KIND_TO_DETAIL: dict[str, str] = {
     "invalid_field": "Request references an unknown field.",
     "not_sensitive": "Field is not sensitive — use the config endpoint instead.",
     "sensitive_in_config": "Sensitive fields must be set via the secret endpoint.",
+    "conflict": "A source with that id already exists.",
+    "invalid_id": (
+        "Source id must start with a lowercase letter and contain only "
+        "lowercase letters, digits, and underscores."
+    ),
+    "unknown_plugin": "The requested plugin is not registered.",
 }
 
 

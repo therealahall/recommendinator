@@ -13,6 +13,8 @@ import type {
   SourceSchemaResponse,
   SourceConfigResponse,
   SourceMigrationResponse,
+  PluginInfoResponse,
+  SourceCreateRequest,
 } from '@/types/api'
 
 export const useDataStore = defineStore('data', () => {
@@ -301,6 +303,7 @@ export const useDataStore = defineStore('data', () => {
 
   const sourceSchemas = ref<Record<string, SourceSchemaResponse>>({})
   const sourceConfigs = ref<Record<string, SourceConfigResponse>>({})
+  const availablePlugins = ref<PluginInfoResponse[]>([])
 
   async function loadSourceSchema(sourceId: string): Promise<SourceSchemaResponse> {
     const schema = await api.get<SourceSchemaResponse>(
@@ -365,6 +368,44 @@ export const useDataStore = defineStore('data', () => {
       { enabled },
     )
     sourceConfigs.value = { ...sourceConfigs.value, [sourceId]: updated }
+    // Mirror the enabled flag onto the listing entry so the accordion's
+    // collapsed-state UI (Disabled badge, Sync button) updates immediately
+    // without waiting for a syncSources reload.
+    syncSources.value = syncSources.value.map((source) =>
+      source.id === sourceId ? { ...source, enabled } : source,
+    )
+  }
+
+  async function loadAvailablePlugins(): Promise<PluginInfoResponse[]> {
+    const plugins = await api.get<PluginInfoResponse[]>('/plugins')
+    availablePlugins.value = plugins
+    return plugins
+  }
+
+  async function createSource(
+    payload: SourceCreateRequest,
+  ): Promise<SourceConfigResponse> {
+    const created = await api.post<SourceConfigResponse>(
+      '/sync/sources',
+      payload,
+    )
+    sourceConfigs.value = { ...sourceConfigs.value, [created.source_id]: created }
+    // Refresh the listing from the server so the new entry's display_name
+    // matches ``humanize_source_id`` (the server-side canonical form, which
+    // applies acronym capitalisation we'd diverge from if synthesised here).
+    await loadSyncSources()
+    return created
+  }
+
+  async function deleteSource(sourceId: string): Promise<void> {
+    await api.delete(`/sync/sources/${encodeURIComponent(sourceId)}`)
+    syncSources.value = syncSources.value.filter((s) => s.id !== sourceId)
+    const remainingConfigs = { ...sourceConfigs.value }
+    delete remainingConfigs[sourceId]
+    sourceConfigs.value = remainingConfigs
+    const remainingSchemas = { ...sourceSchemas.value }
+    delete remainingSchemas[sourceId]
+    sourceSchemas.value = remainingSchemas
   }
 
   return {
@@ -384,6 +425,7 @@ export const useDataStore = defineStore('data', () => {
     enrichmentEnabled,
     sourceSchemas,
     sourceConfigs,
+    availablePlugins,
     // Actions
     loadSyncSources,
     triggerSync,
@@ -404,6 +446,9 @@ export const useDataStore = defineStore('data', () => {
     setSourceSecret,
     clearSourceSecret,
     setSourceEnabled,
+    loadAvailablePlugins,
+    createSource,
+    deleteSource,
     cleanup,
   }
 })

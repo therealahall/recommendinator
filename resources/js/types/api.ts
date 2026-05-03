@@ -84,6 +84,7 @@ export interface SyncSourceResponse {
   id: string
   display_name: string
   plugin_display_name: string
+  enabled: boolean
 }
 
 export type SourceFieldType = 'str' | 'int' | 'float' | 'bool' | 'list'
@@ -120,6 +121,23 @@ export interface SourceMigrationResponse {
   migrated_at: string
   fields_migrated: string[]
   secrets_migrated: string[]
+}
+
+export interface PluginInfoResponse {
+  name: string
+  display_name: string
+  description: string
+  content_types: string[]
+  requires_api_key: boolean
+  requires_network: boolean
+  fields: SourceFieldSchema[]
+}
+
+export interface SourceCreateRequest {
+  id: string
+  plugin: string
+  values: Record<string, unknown>
+  enabled: boolean
 }
 
 export interface SyncJobResponse {

@@ -133,11 +133,41 @@ you hot reload without rebuilding.
 
 See the `templates/` directory for import file examples. Templates support the `ignored` field for excluding items from recommendations, and TV show templates use a `seasons_watched` list (e.g., `1,2,5,6` in CSV or `[1,2,5,6]` in JSON) to track specific seasons watched.
 
-### Editing source configuration in the UI
+### Adding, editing, and removing sources in the UI
 
-Each data source in the **Data** tab is shown as an accordion that expands to reveal its settings. The first time you expand a source, click **Migrate to DB** to copy the YAML entry into the database — once migrated, every field defined in that plugin's config schema is editable inline from the web UI or via the `python3.11 -m src.cli source` CLI commands. The exact set of fields differs per plugin (e.g. Steam exposes `api_key` and `vanity_url`; Goodreads exposes `path`); the generic CSV / JSON / Markdown plugins also expose `content_type`. Run `python3.11 -m src.cli source schema <id>` to see what is editable for a given source. The accordion's enabled/disabled toggle is always available post-migration.
+The **Data** tab renders every configured source as an accordion. Both
+enabled and disabled sources are shown — disabled accordions appear muted
+with a "Disabled" badge next to the source name and a non-actionable Sync
+button. Sources are sorted enabled-first.
 
-Sensitive fields (API keys, OAuth tokens) are stored encrypted and never returned by the API; the UI shows a "set" / "unset" badge with **Replace** and **Clear** actions.
+There are two ways to create a source:
+
+- Click **+ Add source** at the top of the Sync Sources card. Pick a
+  plugin from the dropdown, give the source an id, fill in any
+  non-sensitive fields the plugin's schema declares, and click Create. The
+  source goes straight into the database — no YAML edit required. Add
+  sensitive fields (API keys, OAuth tokens) afterwards using the Replace
+  action in the source's expanded panel.
+- Define the source under `inputs:` in `config.yaml`, then click
+  **Migrate to DB** in the source's expanded panel to copy the YAML entry
+  into the database. After migration the YAML entry is ignored — all
+  edits go through the UI.
+
+Once a source is in the database, every field defined in its plugin's
+config schema is editable inline from the web UI or via the
+`python3.11 -m src.cli source` CLI commands. The exact set of fields
+differs per plugin (e.g. Steam exposes `api_key` and `vanity_url`;
+Goodreads exposes `path`); the generic CSV / JSON / Markdown plugins also
+expose `content_type`. Run `python3.11 -m src.cli source schema <id>` to
+see what is editable for a given source.
+
+Each source has an Enable/Disable toggle in its action row. Disabled
+sources stay in the list but are skipped during sync — `Sync All` and the
+per-source Sync button both ignore them. Use the Remove button to drop a
+DB-backed source entirely (clears every stored secret for that source).
+
+Sensitive fields are stored encrypted and never returned by the API; the
+UI shows a "set" / "unset" badge with **Replace** and **Clear** actions.
 
 ### Library Export
 

@@ -167,21 +167,32 @@ python3.11 -m src.cli update --source all
 python3.11 -m src.cli update --source list
 ```
 
-### Edit a source's configuration
+### Manage sources
 
-Once you've started up the app you can manage each source from the web
-**Data** tab (each source is an accordion that expands to reveal settings) or
-from the CLI:
+Once you've started up the app you can add, edit, enable/disable, and
+remove sources from the web **Data** tab (each source is an accordion
+that expands to reveal settings) or from the CLI. YAML is no longer
+required for new sources — sources can live in YAML (bootstrap), in the
+database (post-migration or freshly created), or both.
 
 ```bash
-# Move a YAML source into the database (one-time, idempotent)
+# Create a brand-new source directly in the database (no YAML edit needed)
+python3.11 -m src.cli source plugins             # see what plugins are available
+python3.11 -m src.cli source create my_books goodreads
+python3.11 -m src.cli source set-secret my_books api_key   # add credentials
+
+# Move an existing YAML source into the database (one-time, idempotent)
 python3.11 -m src.cli source migrate goodreads
 
-# Inspect / edit fields after migration
+# Inspect / edit fields after migration or creation
 python3.11 -m src.cli source show goodreads
 python3.11 -m src.cli source set goodreads path inputs/new_export.csv
-python3.11 -m src.cli source disable goodreads
+python3.11 -m src.cli source disable goodreads          # disabled sources are skipped during sync
+python3.11 -m src.cli source enable goodreads
 python3.11 -m src.cli source set-secret steam api_key   # hidden prompt
+
+# Remove a DB-backed source entirely (clears stored secrets too)
+python3.11 -m src.cli source remove my_books
 ```
 
 All `source` subcommands except `set-secret` and `clear-secret` accept

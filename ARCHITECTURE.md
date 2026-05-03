@@ -50,10 +50,15 @@ Manages persistent storage of processed data and embeddings.
 - `core_memories`, `conversation_messages`, `preference_profiles` for chat system
 
 **Source configuration precedence:**
-Each ingestion source can live in one of two places:
-1. The YAML config file (`config/config.yaml`, the bootstrap default).
-2. The `source_configs` table (after the user clicks "Migrate to DB" in the data accordion or runs `python3.11 -m src.cli source migrate <id>`).
-When a `source_configs` row exists for a given source ID, it is authoritative — the YAML entry is ignored. Sensitive fields (any `ConfigField` with `sensitive=True`) always live in the encrypted `credentials` table, regardless of which side owns the rest of the config. `resolve_inputs` merges the two: DB or YAML for the non-secret fields, then encrypted credentials on top. The migration endpoint (`POST /api/sync/sources/<id>/migrate`) splits a YAML entry into both tables on first call and is idempotent on subsequent calls.
+Each ingestion source can live in any of three states:
+
+1. **YAML only** (`config/config.yaml`, `inputs:` section). The bootstrap path: edit YAML, sync, and optionally click "Migrate to DB" later to make the entry editable from the UI.
+2. **YAML + DB** (post-migration). The DB row is authoritative; the YAML entry is ignored by `resolve_inputs` so subsequent edits in the UI are the only ones that take effect.
+3. **DB only**. Created directly via `+ Add source` in the web UI or `python3.11 -m src.cli source create <id> <plugin>`. Never touches `config.yaml`.
+
+Listing endpoints (`GET /api/sync/sources`, `recommendinator source list`) return every known source — enabled and disabled — each carrying its current `enabled` flag so the UI can render disabled sources in a muted state. `resolve_inputs` is the gate for sync execution; it filters disabled and unknown-plugin entries before invoking any plugin.
+
+Sensitive fields (any `ConfigField` with `sensitive=True`) always live in the encrypted `credentials` table regardless of which side owns the rest of the config. `resolve_inputs` merges encrypted credentials over the rest of the config at sync time. The migration endpoint (`POST /api/sync/sources/<id>/migrate`) splits a YAML entry into both tables on first call and is idempotent on subsequent calls. The create endpoint (`POST /api/sync/sources`) skips YAML entirely and writes only the non-sensitive values; sensitive fields are set afterwards via `PUT /api/sync/sources/<id>/secret/<key>`.
 
 **Cross-Source Deduplication:**
 Items imported from different sources (e.g., Steam and a personal blog) are automatically deduplicated by normalized title. When saving an item, the system first looks up an existing row by `(user_id, external_id, content_type)`. If found, it then checks for a *different* row with the same `(user_id, content_type, normalized_title)` and merges any such duplicate into the kept row. If no external_id match exists, it falls back to a direct normalized_title lookup to merge items from different sources. Merge rules: rating/review are filled from the duplicate only if the kept row is null; `date_completed` keeps the later date; genres/tags are merged additively; monotonic columns (seasons/episodes) keep the higher value; detail-table metadata is merged additively (existing keys preserved). Schema migrations re-normalize all titles and merge any duplicates exposed by the corrected normalization.

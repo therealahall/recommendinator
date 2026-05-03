@@ -8,7 +8,10 @@ const FOCUSABLE_SELECTOR =
  * This composable attaches a document-level keydown listener and does not
  * support stacked/nested traps.
  */
-export function useFocusTrap(containerRef: Ref<HTMLElement | null>, onEscape: () => void) {
+export function useFocusTrap(
+  containerRef: Ref<HTMLElement | null>,
+  onEscape: () => void,
+): void {
   function onKeydown(event: KeyboardEvent) {
     if (event.key === 'Escape') {
       onEscape()
@@ -29,7 +32,13 @@ export function useFocusTrap(containerRef: Ref<HTMLElement | null>, onEscape: ()
     }
   }
 
+  // Remember the element that had focus before the trap activated so we
+  // can restore it on close — without this, keyboard users get stranded
+  // at <body> after the modal closes (WCAG 2.4.3).
+  let previousFocus: HTMLElement | null = null
+
   onMounted(() => {
+    previousFocus = document.activeElement as HTMLElement | null
     document.addEventListener('keydown', onKeydown)
     nextTick(() => {
       containerRef.value?.focus()
@@ -38,5 +47,8 @@ export function useFocusTrap(containerRef: Ref<HTMLElement | null>, onEscape: ()
 
   onUnmounted(() => {
     document.removeEventListener('keydown', onKeydown)
+    if (previousFocus && document.contains(previousFocus)) {
+      previousFocus.focus()
+    }
   })
 }

@@ -55,10 +55,15 @@ ingestion:
 # Each entry is a user-defined name with a 'plugin' field specifying the plugin type.
 # This allows multiple instances of the same plugin (e.g., two json_import sources).
 #
-# YAML is the bootstrap; the database is the long-term source of truth. Once a
-# source is migrated via the data accordion ("Migrate to DB" button) or
-# `recommendinator source migrate <id>`, its YAML entry below is ignored —
-# subsequent edits happen through the web UI or `source` CLI commands and
+# YAML is one of three places a source can live:
+#   1. YAML only (this file) — bootstrap path; edit, sync, optionally migrate
+#      to DB later via the data accordion or `python3.11 -m src.cli source migrate <id>`.
+#   2. YAML + DB (post-migration) — DB row is authoritative, YAML entry is ignored.
+#   3. DB only — created via `+ Add source` in the web UI or
+#      `python3.11 -m src.cli source create <id> <plugin>`. Never touches YAML.
+#
+# YAML is therefore optional for new sources. Once a source is in the DB,
+# all subsequent edits go through the web UI / source CLI commands and
 # write to the source_configs / credentials tables. See the "Source
 # configuration precedence" section in ARCHITECTURE.md.
 inputs:
