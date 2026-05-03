@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "recommendinator"
-version = "0.9.2"
+version = "0.9.3"
 description = "Privacy-focused recommendation engine for books, movies, TV shows, and video games"
 requires-python = ">=3.11"
 dependencies = [

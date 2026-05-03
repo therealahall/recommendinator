@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.9.3 (2026-05-03)
+
+### Bug Fixes
+
+- **ingestion**: Drop Steam status inference from playtime (closes #42)
+  ([`2544bb9`](https://github.com/therealahall/recommendinator/commit/2544bb9b3f1fb6cd5136a43d83f2c797f9952164))
+
+
 ## v0.9.2 (2026-05-03)
 
 ### Bug Fixes
