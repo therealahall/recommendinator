@@ -267,6 +267,16 @@ class EnrichmentManager:
                     len(not_found_ids),
                 )
 
+            # Status polling reads total_items mid-run, so it must be set
+            # before the first batch starts. Querying upfront avoids the
+            # previous "growing in batch_size steps" UI behavior.
+            pending_count = self.storage_manager.count_items_needing_enrichment(
+                content_type=content_type,
+                user_id=user_id,
+            )
+            with self._lock:
+                self._status.total_items = pending_count + len(not_found_ids)
+
             # Process items in batches
             while not self._stop_requested:
                 # Fetch next batch of items (normal items only, not include_not_found)
@@ -298,9 +308,6 @@ class EnrichmentManager:
                 if not items:
                     # No more items to process
                     break
-
-                with self._lock:
-                    self._status.total_items += len(items)
 
                 # Process each item
                 self._process_batch(items)

@@ -2,7 +2,7 @@
 
 import time
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -227,6 +227,9 @@ class TestEnrichmentManager:
         """Create a mock storage manager."""
         storage = MagicMock(spec=StorageManager)
         storage.get_items_needing_enrichment.return_value = []
+        # Return an int so `_run_enrichment` can compute total_items without
+        # silently producing a MagicMock when tests don't override the value.
+        storage.count_items_needing_enrichment.return_value = 0
         return storage
 
     @pytest.fixture
@@ -336,6 +339,7 @@ class TestEnrichmentManager:
 
         # Return items on first call, empty on second
         mock_storage.get_items_needing_enrichment.side_effect = [items, []]
+        mock_storage.count_items_needing_enrichment.return_value = 2
 
         # Setup provider
         provider = MockProvider()
@@ -350,6 +354,7 @@ class TestEnrichmentManager:
         assert status.completed is True
         assert status.items_processed == 2
         assert status.items_enriched == 2
+        assert status.total_items == 2
 
     def test_enrichment_marks_not_found(
         self,
@@ -435,6 +440,12 @@ class TestEnrichmentManager:
             limit=10,
             include_not_found=False,
         )
+        # The count query that drives total_items must propagate the same filter,
+        # otherwise the UI would show a total for all types while processing one.
+        mock_storage.count_items_needing_enrichment.assert_called_once_with(
+            content_type=ContentType.MOVIE,
+            user_id=None,
+        )
 
     def test_enrichment_merges_genres_and_tags(
         self,
@@ -504,3 +515,155 @@ class TestEnrichmentManager:
 
         status = manager.get_status()
         assert status.items_not_found == 1
+
+
+class TestEnrichmentProgressRegressions:
+    """Regression tests for enrichment progress reporting (issue #60).
+
+    Reported symptom: the web UI showed enrichment ``total_items`` jumping in
+    batch_size steps (e.g. 50, 100, 150, 200) for a 200-item enrichment run
+    rather than displaying the real total from the start.
+
+    Root cause: ``EnrichmentManager._run_enrichment`` accumulated the total
+    via ``self._status.total_items += len(items)`` inside the batch loop, so
+    the value reported by ``get_status()`` only matched reality once every
+    page had been fetched.
+
+    Fix: query ``StorageManager.count_items_needing_enrichment`` once before
+    the batch loop and assign ``total_items`` in a single statement (combined
+    with the precomputed ``not_found_ids`` set when retrying not-found items).
+    """
+
+    @pytest.fixture
+    def mock_storage(self) -> MagicMock:
+        storage = MagicMock(spec=StorageManager)
+        storage.get_items_needing_enrichment.return_value = []
+        storage.count_items_needing_enrichment.return_value = 0
+        return storage
+
+    @pytest.fixture
+    def mock_registry(self) -> EnrichmentRegistry:
+        registry = EnrichmentRegistry()
+        registry._discovered = True
+        return registry
+
+    @pytest.fixture
+    def config(self) -> dict[str, Any]:
+        return {
+            "enrichment": {
+                "batch_size": 10,
+                "providers": {"mock": {"enabled": True}},
+            }
+        }
+
+    def test_total_items_set_before_first_batch(
+        self,
+        mock_storage: MagicMock,
+        mock_registry: EnrichmentRegistry,
+        config: dict[str, Any],
+    ) -> None:
+        """total_items must equal the upfront count when the first batch starts.
+
+        Pre-fix the value would have been ``len(items)`` for the first batch
+        (1) and grown to 3 only after the third batch. Post-fix the count
+        method is consulted once and total_items reflects the real total
+        from batch 1 onward.
+        """
+        items_batches = [
+            [
+                (
+                    db_id,
+                    ContentItem(
+                        id=f"movie{db_id}",
+                        title=f"Movie {db_id}",
+                        content_type=ContentType.MOVIE,
+                        status=ConsumptionStatus.UNREAD,
+                    ),
+                )
+            ]
+            for db_id in (1, 2, 3)
+        ]
+        mock_storage.get_items_needing_enrichment.side_effect = items_batches + [[]]
+        mock_storage.count_items_needing_enrichment.return_value = 3
+
+        provider = MockProvider()
+        mock_registry.register(provider)
+
+        manager = EnrichmentManager(mock_storage, config, mock_registry)
+
+        observed_totals: list[int] = []
+        original_process_batch = manager._process_batch
+
+        def capture_total(items: list[tuple[int, ContentItem]]) -> None:
+            with manager._lock:
+                observed_totals.append(manager._status.total_items)
+            original_process_batch(items)
+
+        with patch.object(manager, "_process_batch", side_effect=capture_total):
+            manager.start_enrichment()
+            manager._wait_for_completion()
+
+        assert observed_totals == [3, 3, 3], (
+            "total_items should report the full count from the first batch onward, "
+            f"got {observed_totals}"
+        )
+        mock_storage.count_items_needing_enrichment.assert_called_once_with(
+            content_type=None,
+            user_id=None,
+        )
+
+    def test_total_items_includes_not_found_when_retrying(
+        self,
+        mock_storage: MagicMock,
+        mock_registry: EnrichmentRegistry,
+        config: dict[str, Any],
+    ) -> None:
+        """With include_not_found=True, total_items = pending count + not_found IDs.
+
+        The manager fetches not-found IDs upfront into a separate set and the
+        batch loop only counts them once they're mixed into a batch. Without
+        adding them to the upfront total, the displayed total would understate
+        the work and progress would briefly exceed 100%. Post-fix the regression
+        is guarded by combining ``count_items_needing_enrichment`` with the
+        precomputed ``not_found_ids`` set.
+        """
+        not_found_item = ContentItem(
+            id="movie99",
+            title="Previously Not Found",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+        )
+        not_found_item.db_id = 99
+        # Sequence: include_not_found=True for the upfront candidate scan,
+        # then include_not_found=False on each batch-loop iteration. The third
+        # entry must exist so the loop exits via the empty-batch break instead
+        # of via StopIteration (which would silently route through the broad
+        # `except Exception` in _run_enrichment and mask any real failure).
+        mock_storage.get_items_needing_enrichment.side_effect = [
+            [(99, not_found_item)],
+            [],
+            [],
+        ]
+        mock_storage.get_enrichment_status.return_value = {
+            "enrichment_quality": "not_found"
+        }
+        mock_storage.count_items_needing_enrichment.return_value = 5
+        mock_storage.get_content_items_by_db_ids.return_value = [not_found_item]
+
+        provider = MockProvider()
+        mock_registry.register(provider)
+
+        manager = EnrichmentManager(mock_storage, config, mock_registry)
+        manager.start_enrichment(include_not_found=True)
+        manager._wait_for_completion()
+
+        status = manager.get_status()
+        assert status.total_items == 6  # 5 pending + 1 not_found
+        # Guard that the job ended via the normal completion path, not via
+        # the broad except in _run_enrichment swallowing a mock-setup error.
+        assert status.completed is True
+        assert status.errors == []
+        mock_storage.count_items_needing_enrichment.assert_called_once_with(
+            content_type=None,
+            user_id=None,
+        )

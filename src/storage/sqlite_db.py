@@ -1371,35 +1371,12 @@ class SQLiteDB:
 
         with self.connection() as conn:
             cursor = conn.cursor()
-
-            # Find items without enrichment status or with needs_enrichment=TRUE
-            # Optionally also include items with enrichment_quality='not_found'
-            if include_not_found:
-                status_filter = (
-                    "(es.content_item_id IS NULL OR es.needs_enrichment = 1"
-                    " OR es.enrichment_quality = ?)"
-                )
-            else:
-                status_filter = (
-                    "(es.content_item_id IS NULL OR es.needs_enrichment = 1)"
-                )
-
-            query = f"""
-                SELECT ci.id
-                FROM content_items ci
-                LEFT JOIN enrichment_status es ON ci.id = es.content_item_id
-                WHERE ci.user_id = ?
-                  AND {status_filter}
-            """
-            params: list[Any] = [effective_user_id]
-            if include_not_found:
-                params.append("not_found")
-
-            if content_type:
-                query += " AND ci.content_type = ?"
-                content_type_value = get_enum_value(content_type)
-                params.append(content_type_value)
-
+            query, params = self._build_enrichment_query(
+                effective_user_id,
+                content_type,
+                include_not_found,
+                count_only=False,
+            )
             query += " ORDER BY ci.id LIMIT ?"
             params.append(limit)
 
@@ -1410,6 +1387,79 @@ class SQLiteDB:
         # Batch-fetch all items in a single query (outside the first connection)
         items = self.get_content_items_by_db_ids(db_ids)
         return [(item.db_id, item) for item in items if item.db_id is not None]
+
+    def count_items_needing_enrichment(
+        self,
+        content_type: ContentType | None = None,
+        user_id: int | None = None,
+    ) -> int:
+        """Count content items that need enrichment.
+
+        Uses the same filter as :meth:`get_items_needing_enrichment` (with
+        ``include_not_found=False``) so the enrichment manager can report a
+        total upfront instead of incrementing per batch. Items previously
+        marked as ``not_found`` are tracked separately by the manager and are
+        intentionally excluded here to avoid double-counting.
+
+        Args:
+            content_type: Optional filter by content type
+            user_id: Filter by user ID (defaults to default user)
+
+        Returns:
+            Number of items matching the enrichment filter.
+        """
+        effective_user_id = user_id if user_id is not None else get_default_user_id()
+
+        with self.connection() as conn:
+            cursor = conn.cursor()
+            query, params = self._build_enrichment_query(
+                effective_user_id,
+                content_type,
+                include_not_found=False,
+                count_only=True,
+            )
+            cursor.execute(query, params)
+            row = cursor.fetchone()
+            return int(row[0]) if row else 0
+
+    @staticmethod
+    def _build_enrichment_query(
+        user_id: int,
+        content_type: ContentType | None,
+        include_not_found: bool,
+        count_only: bool,
+    ) -> tuple[str, list[Any]]:
+        """Build the shared SELECT for items needing enrichment.
+
+        Returns the query string and the bound parameter list. Callers append
+        ORDER BY / LIMIT clauses as needed. The SELECT clause is hardcoded
+        based on ``count_only`` rather than accepting an open string, so this
+        helper cannot be misused to inject SQL.
+        """
+        select_clause = "SELECT COUNT(*)" if count_only else "SELECT ci.id"
+
+        if include_not_found:
+            status_filter = (
+                "(es.content_item_id IS NULL OR es.needs_enrichment = 1"
+                " OR es.enrichment_quality = ?)"
+            )
+        else:
+            status_filter = "(es.content_item_id IS NULL OR es.needs_enrichment = 1)"
+
+        query = f"""
+            {select_clause}
+            FROM content_items ci
+            LEFT JOIN enrichment_status es ON ci.id = es.content_item_id
+            WHERE ci.user_id = ?
+              AND {status_filter}
+        """
+        params: list[Any] = [user_id]
+        if include_not_found:
+            params.append("not_found")
+        if content_type:
+            query += " AND ci.content_type = ?"
+            params.append(get_enum_value(content_type))
+        return query, params
 
     def get_content_item_db_id(
         self,
