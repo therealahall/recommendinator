@@ -83,6 +83,7 @@ function toggle(): void {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  padding: var(--space-2) 0;
   transition: background 0.15s ease;
 }
 

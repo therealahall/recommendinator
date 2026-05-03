@@ -299,6 +299,14 @@ class TestUpdateConfigEndpoint:
             },
         )
         assert response.status_code == 200
+        body = response.json()
+        # Response body reflects the freshly-saved values — guards against a
+        # regression where the endpoint returns stale data after the write.
+        assert body["source_id"] == "my_games"
+        assert body["field_values"]["user_id"] == "new_user"
+        assert body["field_values"]["min_minutes"] == 60
+        assert body["field_values"]["tags"] == ["rpg"]
+        assert body["field_values"]["active"] is False
         row = storage.get_source_config(1, "my_games")
         assert row is not None
         assert row["config"]["user_id"] == "new_user"
@@ -432,6 +440,10 @@ class TestEnabledEndpoint:
             "/api/sync/sources/my_books/enabled", json={"enabled": False}
         )
         assert response.status_code == 200
+        body = response.json()
+        # Response body reflects the freshly-toggled state, not stale data.
+        assert body["enabled"] is False
+        assert body["source_id"] == "my_books"
         row = storage.get_source_config(1, "my_books")
         assert row is not None
         assert row["enabled"] is False
@@ -445,13 +457,215 @@ class TestEnabledEndpoint:
     def test_re_enables_a_disabled_source(
         self, client: TestClient, storage: StorageManager
     ) -> None:
-        """Symmetric round-trip: disable then re-enable a migrated source."""
+        """Symmetric round-trip: disable then re-enable a migrated source.
+
+        Verifies both the DB-side state AND the response body so a regression
+        that returns stale data after the toggle would be caught.
+        """
         client.post("/api/sync/sources/my_books/migrate")
         client.put("/api/sync/sources/my_books/enabled", json={"enabled": False})
         response = client.put(
             "/api/sync/sources/my_books/enabled", json={"enabled": True}
         )
         assert response.status_code == 200
+        body = response.json()
+        assert body["enabled"] is True
+        assert body["source_id"] == "my_books"
         row = storage.get_source_config(1, "my_books")
         assert row is not None
         assert row["enabled"] is True
+
+
+class TestPluginsEndpoint:
+    def test_lists_registered_plugins_with_schemas(self, client: TestClient) -> None:
+        """Exact-match assertions on the PluginInfoResponse shape.
+
+        Fixture pins the registry to two fakes; assert the full set so any
+        spurious extra plugin appearing in the response is caught.
+        """
+        response = client.get("/api/plugins")
+        assert response.status_code == 200
+        body = response.json()
+        assert {p["name"] for p in body} == {"fake_file", "fake_api"}
+
+        fake_api = next(p for p in body if p["name"] == "fake_api")
+        # Top-level fields cover the entire PluginInfoResponse shape.
+        assert set(fake_api.keys()) == {
+            "name",
+            "display_name",
+            "description",
+            "content_types",
+            "requires_api_key",
+            "requires_network",
+            "fields",
+        }
+        assert fake_api["display_name"] == "Fake API"
+        assert fake_api["description"]  # non-empty string
+        assert fake_api["content_types"] == ["video_game"]
+        assert fake_api["requires_api_key"] is True
+        assert fake_api["requires_network"] is True
+
+        # Per-field shape: every field must include the SourceFieldSchema keys.
+        for field in fake_api["fields"]:
+            assert set(field.keys()) == {
+                "name",
+                "field_type",
+                "required",
+                "default",
+                "description",
+                "sensitive",
+            }
+        sensitive_map = {f["name"]: f["sensitive"] for f in fake_api["fields"]}
+        assert sensitive_map["api_key"] is True
+        # Sensitive field defaults are masked to None on the wire.
+        api_key_field = next(f for f in fake_api["fields"] if f["name"] == "api_key")
+        assert api_key_field["default"] is None
+
+    def test_returns_empty_list_when_no_plugins_registered(
+        self, client: TestClient
+    ) -> None:
+        """Endpoint returns ``[]`` (not 404) when the registry is empty."""
+        from src.ingestion.registry import PluginRegistry
+
+        registry = PluginRegistry.get_instance()
+        registry._discovered = True
+        registry._plugins.clear()
+        try:
+            response = client.get("/api/plugins")
+            assert response.status_code == 200
+            assert response.json() == []
+        finally:
+            PluginRegistry.reset_instance()
+
+
+class TestCreateSourceEndpoint:
+    def test_creates_db_backed_source(
+        self, client: TestClient, storage: StorageManager
+    ) -> None:
+        response = client.post(
+            "/api/sync/sources",
+            json={
+                "id": "new_books",
+                "plugin": "fake_file",
+                "values": {"path": "/data/new.csv", "content_type": "book"},
+                "enabled": True,
+            },
+        )
+        assert response.status_code == 201
+        body = response.json()
+        assert body["source_id"] == "new_books"
+        assert body["plugin"] == "fake_file"
+        assert body["plugin_display_name"] == "Fake File"
+        assert body["enabled"] is True
+        assert body["migrated"] is True
+        assert body["field_values"] == {
+            "path": "/data/new.csv",
+            "content_type": "book",
+        }
+        assert body["secret_status"] == {}
+        row = storage.get_source_config(1, "new_books")
+        assert row is not None
+        assert row["config"]["path"] == "/data/new.csv"
+
+    def test_rejects_existing_yaml_source(self, client: TestClient) -> None:
+        """Creating a source whose id is already in YAML returns 409."""
+        response = client.post(
+            "/api/sync/sources",
+            json={"id": "my_books", "plugin": "fake_file", "values": {}},
+        )
+        assert response.status_code == 409
+
+    def test_rejects_existing_db_source(
+        self, client: TestClient, storage: StorageManager
+    ) -> None:
+        storage.upsert_source_config(
+            1, "already_here", "fake_file", {"path": "/x"}, enabled=True
+        )
+        response = client.post(
+            "/api/sync/sources",
+            json={
+                "id": "already_here",
+                "plugin": "fake_file",
+                "values": {"path": "/y"},
+            },
+        )
+        assert response.status_code == 409
+
+    def test_rejects_invalid_id(self, client: TestClient) -> None:
+        response = client.post(
+            "/api/sync/sources",
+            json={"id": "Bad-ID!", "plugin": "fake_file", "values": {}},
+        )
+        assert response.status_code == 400
+
+    def test_rejects_unknown_plugin(self, client: TestClient) -> None:
+        response = client.post(
+            "/api/sync/sources",
+            json={"id": "good_id", "plugin": "no_such_plugin", "values": {}},
+        )
+        assert response.status_code == 400
+
+    def test_rejects_sensitive_field_in_values(
+        self, client: TestClient, storage: StorageManager
+    ) -> None:
+        response = client.post(
+            "/api/sync/sources",
+            json={
+                "id": "leaky",
+                "plugin": "fake_api",
+                "values": {"api_key": "leaked"},
+            },
+        )
+        assert response.status_code == 400
+        assert storage.get_source_config(1, "leaky") is None
+        assert storage.get_credential(1, "leaky", "api_key") is None
+
+    def test_rejects_unknown_field(self, client: TestClient) -> None:
+        response = client.post(
+            "/api/sync/sources",
+            json={
+                "id": "wrong_field",
+                "plugin": "fake_file",
+                "values": {"no_such_field": "x"},
+            },
+        )
+        assert response.status_code == 400
+
+
+class TestDeleteSourceEndpoint:
+    def test_removes_db_row_and_credentials(
+        self, client: TestClient, storage: StorageManager
+    ) -> None:
+        client.post("/api/sync/sources/my_games/migrate")
+        assert storage.get_source_config(1, "my_games") is not None
+        assert storage.get_credential(1, "my_games", "api_key") == "yaml_api_key"
+
+        response = client.delete("/api/sync/sources/my_games")
+        assert response.status_code == 204
+
+        assert storage.get_source_config(1, "my_games") is None
+        assert storage.get_credential(1, "my_games", "api_key") is None
+
+    def test_returns_404_when_not_migrated(self, client: TestClient) -> None:
+        response = client.delete("/api/sync/sources/my_books")
+        assert response.status_code == 404
+
+    def test_returns_400_for_invalid_source_id(self, client: TestClient) -> None:
+        """Malformed path id is rejected before any DB lookup."""
+        response = client.delete("/api/sync/sources/Bad-ID")
+        assert response.status_code == 400
+
+    def test_drops_row_even_when_plugin_no_longer_registered(
+        self, client: TestClient, storage: StorageManager
+    ) -> None:
+        """Plugin renamed/removed post-migration: row still goes away.
+
+        Credentials may linger (we can't introspect the schema without a
+        plugin), but the source_configs row is removed regardless.
+        """
+        storage.upsert_source_config(
+            1, "ghost", "this_plugin_was_removed", {"x": 1}, enabled=True
+        )
+        response = client.delete("/api/sync/sources/ghost")
+        assert response.status_code == 204
+        assert storage.get_source_config(1, "ghost") is None

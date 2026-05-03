@@ -10,7 +10,7 @@ import sys
 import time
 import webbrowser
 from pathlib import Path
-from typing import NoReturn
+from typing import Any, NoReturn
 
 import click
 from tabulate import tabulate
@@ -58,7 +58,10 @@ from src.web.sync_sources import (
     build_config_view,
     build_schema_view,
     clear_source_secret_value,
+    create_source,
+    delete_source,
     get_available_sync_sources,
+    list_available_plugins,
     migrate_source,
     resolve_inputs,
     resolve_source_plugin,
@@ -1956,11 +1959,6 @@ def chat_reset(ctx: click.Context, user_id: int) -> None:
     click.echo(f"Cleared {count} message(s). Core memories preserved.")
 
 
-# ``recommendinator source`` group: per-source configuration management.
-# Mirrors the web `/api/sync/sources/{id}/...` endpoints, sharing the same
-# business logic from ``src.web.sync_sources`` so CLI and web stay in lockstep.
-
-
 _SOURCE_DEFAULT_USER_ID = 1
 _SECRET_VALUE_ENV = "RECOMMENDINATOR_SECRET_VALUE"
 
@@ -1983,15 +1981,15 @@ def _resolve_cli_plugin(ctx: click.Context, source_id: str) -> SourcePlugin:
 
 
 def _require_storage(ctx: click.Context) -> StorageManager:
-    storage = ctx.obj.get("storage")
+    storage: StorageManager | None = ctx.obj.get("storage")
     if storage is None:
         _abort_with("Storage unavailable")
-    if not isinstance(storage, StorageManager):  # pragma: no cover - defensive
-        _abort_with("Storage is not a StorageManager instance")
     return storage
 
 
-def _coerce_set_value(field: ConfigField, raw: str) -> object:
+def _coerce_set_value(
+    field: ConfigField, raw: str
+) -> bool | int | float | list[str] | str:
     if field.field_type is bool:
         lowered = raw.strip().lower()
         if lowered in {"true", "1", "yes", "on"}:
@@ -2012,6 +2010,28 @@ def _coerce_set_value(field: ConfigField, raw: str) -> object:
     if field.field_type is list:
         return [item.strip() for item in raw.split(",") if item.strip()]
     return raw
+
+
+def _read_json_payload(from_json: str) -> dict[str, Any]:
+    """Read a JSON object from stdin (``-``) or a file path.
+
+    Aborts with a friendly message rather than letting ``FileNotFoundError`` /
+    ``PermissionError`` surface as a Python traceback.
+    """
+    if from_json == "-":
+        raw = sys.stdin.read()
+    else:
+        try:
+            raw = Path(from_json).read_text(encoding="utf-8")
+        except OSError as error:
+            _abort_with(f"Could not read {from_json}: {error}")
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as error:
+        _abort_with(f"Invalid JSON: {error}")
+    if not isinstance(parsed, dict):
+        _abort_with("JSON payload must be an object mapping field names to values")
+    return parsed
 
 
 def _emit_config_view(
@@ -2062,6 +2082,7 @@ def source_list(ctx: click.Context, output_format: str) -> None:
             "id": entry.id,
             "display_name": entry.display_name,
             "plugin_display_name": entry.plugin_display_name,
+            "enabled": entry.enabled,
         }
         for entry in sources
     ]
@@ -2075,11 +2096,20 @@ def source_list(ctx: click.Context, output_format: str) -> None:
         return
 
     rows = [
-        [item["id"], item["display_name"], item["plugin_display_name"]]
+        [
+            item["id"],
+            item["display_name"],
+            item["plugin_display_name"],
+            "yes" if item["enabled"] else "no",
+        ]
         for item in payload
     ]
     click.echo(
-        tabulate(rows, headers=["ID", "Display Name", "Plugin"], tablefmt="grid")
+        tabulate(
+            rows,
+            headers=["ID", "Display Name", "Plugin", "Enabled"],
+            tablefmt="grid",
+        )
     )
 
 
@@ -2329,17 +2359,7 @@ def source_apply(
     plugin = _resolve_cli_plugin(ctx, source_id)
     storage = _require_storage(ctx)
 
-    raw = (
-        sys.stdin.read()
-        if from_json == "-"
-        else Path(from_json).read_text(encoding="utf-8")
-    )
-    try:
-        values = json.loads(raw)
-    except json.JSONDecodeError as error:
-        _abort_with(f"Invalid JSON: {error}")
-    if not isinstance(values, dict):
-        _abort_with("JSON payload must be an object mapping field names to values")
+    values = _read_json_payload(from_json)
 
     try:
         update_source_config_values(
@@ -2412,3 +2432,128 @@ def source_clear_secret(ctx: click.Context, source_id: str, field_name: str) -> 
     except SourceConfigError as error:
         _abort_with(error.message)
     click.echo(f"Cleared secret for {source_id}.{field_name}.")
+
+
+@source.command("plugins")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    default="table",
+    help="Output format",
+)
+@click.pass_context
+def source_plugins(ctx: click.Context, output_format: str) -> None:
+    """List every registered source plugin (mirrors GET /api/plugins)."""
+    plugins = list_available_plugins()
+    if output_format == "json":
+        click.echo(json.dumps(plugins, indent=2))
+        return
+
+    if not plugins:
+        click.echo("No source plugins registered.")
+        return
+
+    rows = [
+        [
+            p["name"],
+            p["display_name"],
+            ",".join(p["content_types"]),
+            "yes" if p["requires_api_key"] else "no",
+            "yes" if p["requires_network"] else "no",
+        ]
+        for p in plugins
+    ]
+    click.echo(
+        tabulate(
+            rows,
+            headers=["Name", "Display Name", "Content Types", "API Key", "Network"],
+            tablefmt="grid",
+        )
+    )
+
+
+@source.command("create")
+@click.argument("source_id")
+@click.argument("plugin_name")
+@click.option(
+    "--from-json",
+    "from_json",
+    default=None,
+    help=(
+        "Path to a JSON file with initial non-sensitive field values, or "
+        "'-' for stdin. Sensitive fields must be set via "
+        "``source set-secret`` after creation."
+    ),
+)
+@click.option("--enabled/--disabled", default=True, help="Initial enabled state.")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    default="table",
+    help="Output format",
+)
+@click.pass_context
+def source_create(
+    ctx: click.Context,
+    source_id: str,
+    plugin_name: str,
+    from_json: str | None,
+    enabled: bool,
+    output_format: str,
+) -> None:
+    """Create a new DB-backed source (mirrors POST /api/sync/sources)."""
+    storage = _require_storage(ctx)
+
+    values: dict[str, Any] = (
+        _read_json_payload(from_json) if from_json is not None else {}
+    )
+
+    try:
+        view = create_source(
+            source_id,
+            plugin_name,
+            values,
+            storage,
+            enabled=enabled,
+            user_id=_SOURCE_DEFAULT_USER_ID,
+            config=ctx.obj.get("config"),
+        )
+    except SourceConfigError as error:
+        _abort_with(error.message)
+
+    if output_format == "json":
+        click.echo(json.dumps(view, indent=2))
+        return
+
+    click.echo(
+        f"Created source '{source_id}' (plugin={plugin_name}, "
+        f"enabled={'yes' if enabled else 'no'})."
+    )
+
+
+@source.command("remove")
+@click.argument("source_id")
+@click.option(
+    "--yes",
+    "skip_confirm",
+    is_flag=True,
+    default=False,
+    help="Skip the destructive confirmation prompt (for scripting).",
+)
+@click.pass_context
+def source_remove(ctx: click.Context, source_id: str, skip_confirm: bool) -> None:
+    """Delete a DB-backed source and any stored credentials."""
+    storage = _require_storage(ctx)
+    if not skip_confirm and not click.confirm(
+        f"Remove source '{source_id}' and clear its credentials?",
+        default=False,
+    ):
+        click.echo("Aborted.")
+        return
+    try:
+        delete_source(source_id, storage, user_id=_SOURCE_DEFAULT_USER_ID)
+    except SourceConfigError as error:
+        _abort_with(error.message)
+    click.echo(f"Removed source '{source_id}'.")

@@ -48,7 +48,9 @@ describe('useDataStore', () => {
   })
 
   it('loadSyncSources fetches sources and auth status', async () => {
-    const sources = [{ id: 'steam', display_name: 'Steam', plugin_display_name: 'Steam' }]
+    const sources = [
+      { id: 'steam', display_name: 'Steam', plugin_display_name: 'Steam', enabled: true },
+    ]
     mockPost.mockResolvedValue({})
     mockGet
       .mockResolvedValueOnce(sources)
@@ -553,6 +555,171 @@ describe('useDataStore', () => {
         enabled: false,
       })
       expect(store.sourceConfigs.steam.enabled).toBe(false)
+    })
+
+    it('setSourceEnabled also patches the matching syncSources listing entry', async () => {
+      mockPut.mockResolvedValueOnce({
+        source_id: 'steam',
+        plugin: 'steam',
+        plugin_display_name: 'Steam',
+        enabled: false,
+        migrated: true,
+        migrated_at: 'now',
+        field_values: {},
+        secret_status: {},
+      })
+
+      const store = useDataStore()
+      // Seed the listing as the page would after loadSyncSources.
+      store.syncSources = [
+        {
+          id: 'steam',
+          display_name: 'Steam',
+          plugin_display_name: 'Steam',
+          enabled: true,
+        },
+      ]
+
+      await store.setSourceEnabled('steam', false)
+
+      expect(store.syncSources[0].enabled).toBe(false)
+    })
+
+    it('loadAvailablePlugins fetches and caches plugin metadata', async () => {
+      const plugins = [
+        {
+          name: 'fake_file',
+          display_name: 'Fake File',
+          description: 'desc',
+          content_types: ['book'],
+          requires_api_key: false,
+          requires_network: false,
+          fields: [],
+        },
+      ]
+      mockGet.mockResolvedValueOnce(plugins)
+
+      const store = useDataStore()
+      const result = await store.loadAvailablePlugins()
+
+      expect(mockGet).toHaveBeenCalledWith('/plugins')
+      expect(result).toEqual(plugins)
+      expect(store.availablePlugins).toEqual(plugins)
+    })
+
+    it('createSource POSTs the payload and refreshes the listing', async () => {
+      const created = {
+        source_id: 'fresh',
+        plugin: 'fake_file',
+        plugin_display_name: 'Fake File',
+        enabled: true,
+        migrated: true,
+        migrated_at: 'now',
+        field_values: {},
+        secret_status: {},
+      }
+      mockPost.mockResolvedValueOnce(created)
+      // Subsequent loadSyncSources call (config/reload + sources + gog + epic).
+      mockPost.mockResolvedValueOnce({})
+      mockGet
+        .mockResolvedValueOnce([
+          { id: 'fresh', display_name: 'Fresh', plugin_display_name: 'Fake File', enabled: true },
+        ])
+        .mockResolvedValueOnce({ enabled: false, connected: false })
+        .mockResolvedValueOnce({ enabled: false, connected: false })
+
+      const store = useDataStore()
+      const payload = {
+        id: 'fresh',
+        plugin: 'fake_file',
+        values: {},
+        enabled: true,
+      }
+      const result = await store.createSource(payload)
+
+      expect(mockPost).toHaveBeenNthCalledWith(1, '/sync/sources', payload)
+      expect(result).toEqual(created)
+      expect(store.sourceConfigs.fresh).toEqual(created)
+      // Listing was refreshed from the server, not synthesised locally.
+      expect(store.syncSources.map((s) => s.id)).toEqual(['fresh'])
+    })
+
+    it('createSource propagates API rejection to the caller', async () => {
+      const error = new ApiError(409, 'Conflict')
+      mockPost.mockRejectedValueOnce(error)
+
+      const store = useDataStore()
+      const beforeCount = store.syncSources.length
+
+      await expect(
+        store.createSource({
+          id: 'taken',
+          plugin: 'fake_file',
+          values: {},
+          enabled: true,
+        }),
+      ).rejects.toBe(error)
+
+      // Listing left untouched on rejection — caller is the one with UI to react.
+      expect(store.syncSources.length).toBe(beforeCount)
+      expect(store.sourceConfigs.taken).toBeUndefined()
+    })
+
+    it('deleteSource DELETEs and prunes the listing + caches', async () => {
+      mockDelete.mockResolvedValueOnce(null)
+
+      const store = useDataStore()
+      store.syncSources = [
+        {
+          id: 'goner',
+          display_name: 'Goner',
+          plugin_display_name: 'Fake File',
+          enabled: true,
+        },
+        {
+          id: 'survivor',
+          display_name: 'Survivor',
+          plugin_display_name: 'Fake File',
+          enabled: true,
+        },
+      ]
+      store.sourceConfigs = {
+        goner: {
+          source_id: 'goner',
+          plugin: 'fake_file',
+          plugin_display_name: 'Fake File',
+          enabled: true,
+          migrated: true,
+          migrated_at: 'now',
+          field_values: {},
+          secret_status: {},
+        },
+      }
+
+      await store.deleteSource('goner')
+
+      expect(mockDelete).toHaveBeenCalledWith('/sync/sources/goner')
+      expect(store.syncSources.map((s) => s.id)).toEqual(['survivor'])
+      expect(store.sourceConfigs.goner).toBeUndefined()
+    })
+
+    it('deleteSource leaves caches intact when the API rejects', async () => {
+      const error = new ApiError(404, 'Not Found')
+      mockDelete.mockRejectedValueOnce(error)
+
+      const store = useDataStore()
+      store.syncSources = [
+        {
+          id: 'still_here',
+          display_name: 'Still Here',
+          plugin_display_name: 'Fake File',
+          enabled: true,
+        },
+      ]
+
+      await expect(store.deleteSource('still_here')).rejects.toBe(error)
+      // The listing is untouched so the UI keeps showing the source.
+      expect(store.syncSources.map((s) => s.id)).toEqual(['still_here'])
     })
   })
 })

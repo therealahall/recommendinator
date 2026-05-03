@@ -405,10 +405,15 @@ class TestSourceIdPropagation:
 
 @pytest.mark.usefixtures("_registry_with_fakes")
 class TestGetAvailableSyncSources:
-    """Tests for get_available_sync_sources function."""
+    """Tests for get_available_sync_sources function.
 
-    def test_returns_enabled_sources(self) -> None:
-        """Test that enabled sources are returned as SyncSourceInfo."""
+    The listing surface includes BOTH enabled and disabled sources so the
+    UI can render disabled accordions in a muted state. ``resolve_inputs``
+    is the gate that filters to enabled-only for sync execution.
+    """
+
+    def test_returns_all_sources_with_enabled_flag(self) -> None:
+        """Both enabled and disabled sources are listed; enabled flag exposed."""
         config = {
             "inputs": {
                 "my_books": {
@@ -425,11 +430,24 @@ class TestGetAvailableSyncSources:
         }
 
         sources = get_available_sync_sources(config)
+        by_id = {s.id: s for s in sources}
 
-        assert len(sources) == 1
-        assert sources[0].id == "my_books"
-        assert sources[0].display_name == "My Books"
-        assert sources[0].plugin_display_name == "Fake Books"
+        assert by_id["my_books"].enabled is True
+        assert by_id["my_books"].display_name == "My Books"
+        assert by_id["my_books"].plugin_display_name == "Fake Books"
+        assert by_id["my_games"].enabled is False
+
+    def test_skips_unknown_plugin(self) -> None:
+        """Sources referencing an unregistered plugin are dropped from listing."""
+        config = {
+            "inputs": {
+                "ghost": {
+                    "plugin": "nonexistent_plugin",
+                    "enabled": True,
+                },
+            }
+        }
+        assert get_available_sync_sources(config) == []
 
     def test_empty_config(self) -> None:
         """Test that empty config returns empty list."""

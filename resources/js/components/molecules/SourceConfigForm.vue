@@ -2,6 +2,8 @@
 import { computed, reactive, ref, watch } from 'vue'
 import type { SourceFieldSchema } from '@/types/api'
 
+type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
+
 const props = withDefaults(
   defineProps<{
     schema: SourceFieldSchema[]
@@ -9,14 +11,26 @@ const props = withDefaults(
     secretStatus: Record<string, boolean>
     saving?: boolean
     disabled?: boolean
+    enabled?: boolean | null
+    enableBusy?: boolean
+    saveStatus?: SaveStatus
+    saveError?: string
   }>(),
-  { saving: false, disabled: false },
+  {
+    saving: false,
+    disabled: false,
+    enabled: null,
+    enableBusy: false,
+    saveStatus: 'idle',
+    saveError: '',
+  },
 )
 
 const emit = defineEmits<{
   save: [values: Record<string, unknown>]
   'set-secret': [name: string, value: string]
   'clear-secret': [name: string]
+  'toggle-enabled': [next: boolean]
 }>()
 
 type FormValue = string | number | boolean | string[]
@@ -191,23 +205,28 @@ function isSecretSet(name: string): boolean {
         @change="formValues[field.name] = ($event.target as HTMLInputElement).checked"
       />
 
-      <div v-else-if="field.field_type === 'list'" class="chips-container">
-        <span
-          v-for="(chip, index) in getList(field.name)"
-          :key="`${field.name}-${index}`"
-          data-testid="chip"
-          class="chip"
+      <div v-else-if="field.field_type === 'list'" class="chips-field">
+        <div
+          v-if="getList(field.name).length > 0"
+          class="chips-list"
         >
-          {{ chip }}
-          <button
-            type="button"
-            class="chip-remove"
-            :data-testid="`chip-remove-${field.name}-${index}`"
-            :aria-label="`Remove ${chip}`"
-            :disabled="disabled"
-            @click="removeChip(field.name, index)"
-          >×</button>
-        </span>
+          <span
+            v-for="(chip, index) in getList(field.name)"
+            :key="`${field.name}-${index}`"
+            data-testid="chip"
+            class="chip"
+          >
+            {{ chip }}
+            <button
+              type="button"
+              class="chip-remove"
+              :data-testid="`chip-remove-${field.name}-${index}`"
+              :aria-label="`Remove ${chip}`"
+              :disabled="disabled"
+              @click="removeChip(field.name, index)"
+            >×</button>
+          </span>
+        </div>
         <input
           :id="`field-${field.name}`"
           type="text"
@@ -291,13 +310,42 @@ function isSecretSet(name: string): boolean {
     </fieldset>
 
     <div class="source-form-actions">
+      <slot name="actions-extra" />
       <button
+        v-if="enabled !== null"
         type="button"
-        class="btn btn-primary"
-        data-testid="form-save"
-        :disabled="saving || disabled"
-        @click="onSave"
-      >{{ saving ? 'Saving…' : 'Save' }}</button>
+        class="btn source-form-toggle-btn"
+        :class="enabled ? 'btn-danger' : 'btn-success'"
+        data-testid="form-toggle-enabled"
+        :disabled="enableBusy || disabled"
+        :aria-pressed="enabled"
+        @click="emit('toggle-enabled', !enabled)"
+      >{{
+        enableBusy
+          ? (enabled ? 'Disabling…' : 'Enabling…')
+          : (enabled ? 'Disable' : 'Enable')
+      }}</button>
+      <div class="source-form-save-group" aria-live="polite" aria-atomic="true">
+        <span
+          v-if="saveStatus === 'saved'"
+          class="source-form-save-status source-form-save-status--ok"
+          data-testid="form-save-status"
+          role="status"
+        >Saved ✓</span>
+        <span
+          v-else-if="saveStatus === 'error'"
+          class="source-form-save-status source-form-save-status--err"
+          data-testid="form-save-status"
+          role="alert"
+        >Error: {{ saveError || 'failed to save' }}</span>
+        <button
+          type="button"
+          class="btn btn-primary"
+          data-testid="form-save"
+          :disabled="saving || disabled"
+          @click="onSave"
+        >{{ saving ? 'Saving…' : 'Save' }}</button>
+      </div>
     </div>
   </form>
 </template>
@@ -306,29 +354,60 @@ function isSecretSet(name: string): boolean {
 .source-form {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: var(--space-4);
 }
 
 .source-form-field {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: var(--space-2);
 }
 
 .source-form-label {
   font-weight: 600;
   font-size: var(--text-sm);
+  color: var(--text-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.source-form-field input[type="text"],
+.source-form-field input[type="number"],
+.source-form-field input[type="password"] {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-card, var(--surface));
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font: inherit;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.source-form-field input[type="text"]:hover,
+.source-form-field input[type="number"]:hover,
+.source-form-field input[type="password"]:hover {
+  border-color: var(--accent);
+}
+
+.source-form-field input[type="text"]:focus-visible,
+.source-form-field input[type="number"]:focus-visible,
+.source-form-field input[type="password"]:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 .source-form-help {
   font-size: var(--text-xs);
   color: var(--text-secondary);
   margin: 0;
+  font-style: italic;
 }
 
 .source-form-secrets {
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
   padding: var(--space-3);
   display: flex;
   flex-direction: column;
@@ -339,6 +418,8 @@ function isSecretSet(name: string): boolean {
   padding: 0 var(--space-2);
   font-size: var(--text-sm);
   font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .secret-status-row,
@@ -358,18 +439,40 @@ function isSecretSet(name: string): boolean {
   border-radius: var(--radius-sm);
 }
 
-.chips-container {
+.chips-field {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-card, var(--surface));
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.chips-field:hover {
+  border-color: var(--accent);
+}
+
+.chips-field:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.chips-list {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-1);
+  gap: var(--space-2);
   align-items: center;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border-default);
 }
 
 .chip {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
-  background: var(--surface-alt, rgba(0, 0, 0, 0.06));
+  background: color-mix(in srgb, var(--accent) 25%, transparent);
+  color: var(--text-primary);
   padding: 0 var(--space-2);
   border-radius: 999px;
   font-size: var(--text-sm);
@@ -386,13 +489,97 @@ function isSecretSet(name: string): boolean {
 }
 
 .chip-input {
-  flex: 1 1 8rem;
-  min-width: 8rem;
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  background: transparent;
+  border: 0;
+  color: var(--text-primary);
+  font: inherit;
+}
+
+.chip-input:focus:not(:focus-visible) {
+  /* Mouse focus stays subtle — the .chips-field:focus-within halo on the
+     parent already conveys focus position. */
+  outline: none;
+}
+
+.chip-input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.chip-input::placeholder {
+  color: var(--text-secondary);
+  font-style: italic;
 }
 
 .source-form-actions {
   display: flex;
   justify-content: flex-end;
-  gap: var(--space-2);
+  align-items: center;
+  gap: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-default);
+}
+
+.source-form-save-group {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-left: auto;
+}
+
+.source-form-save-status {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+  animation: source-form-save-status-fade 0.2s ease-out;
+}
+
+/* Use --text-primary on a tinted background so the pill clears WCAG
+   1.4.3 4.5:1 contrast at the small (13px) pill size. The semantic
+   colour shows through the background tint and a leading icon. */
+.source-form-save-status--ok {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--color-success) 35%, transparent);
+}
+
+.source-form-save-status--err {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--color-error) 35%, transparent);
+}
+
+@keyframes source-form-save-status-fade {
+  from { opacity: 0; transform: translateY(-2px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .source-form-save-status {
+    animation: none;
+  }
+}
+
+/* btn-success keeps the Enable button visually distinct from Save
+   (primary blue) without leaning on btn-primary. The Nord palette
+   ships a light green (`--color-success`) — pair it with dark text
+   (`--bg-primary`) so the contrast clears WCAG AA easily. */
+:deep(.btn-success) {
+  background: var(--color-success);
+  color: var(--bg-primary);
+  border-color: var(--color-success);
+  font-weight: 600;
+}
+
+:deep(.btn-success:hover:not(:disabled)) {
+  background: color-mix(in srgb, var(--color-success) 88%, black);
+  border-color: color-mix(in srgb, var(--color-success) 88%, black);
+}
+
+:deep(.btn-success:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 </style>

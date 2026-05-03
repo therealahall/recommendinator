@@ -9,6 +9,12 @@ const baseSource = {
   id: 'steam',
   display_name: 'Steam',
   plugin_display_name: 'Steam',
+  enabled: true,
+}
+
+const disabledSource = {
+  ...baseSource,
+  enabled: false,
 }
 
 const baseSchema: SourceSchemaResponse = {
@@ -200,7 +206,27 @@ describe('SyncSourceAccordion', () => {
     expect(sync.attributes('aria-label')).toContain('another sync is in progress')
   })
 
-  it('toggling the enabled switch calls store.setSourceEnabled', async () => {
+  it('disables the Sync button and shows a Disabled badge when source.enabled is false', () => {
+    const wrapper = mount(SyncSourceAccordion, {
+      props: { source: disabledSource, syncing: false, disabled: false },
+    })
+
+    const sync = wrapper.find('[data-testid="sync-btn-steam"]')
+    expect(sync.attributes('disabled')).toBeDefined()
+    expect(sync.attributes('aria-label')).toContain('source is disabled')
+    expect(wrapper.text()).toContain('Disabled')
+  })
+
+  it('does not emit sync when disabled source button is clicked', async () => {
+    const wrapper = mount(SyncSourceAccordion, {
+      props: { source: disabledSource, syncing: false, disabled: false },
+    })
+
+    await wrapper.find('[data-testid="sync-btn-steam"]').trigger('click')
+    expect(wrapper.emitted('sync')).toBeUndefined()
+  })
+
+  it('clicking the Disable button on an enabled source calls store.setSourceEnabled(false)', async () => {
     const wrapper = mount(SyncSourceAccordion, {
       props: { source: baseSource, syncing: false, disabled: false },
     })
@@ -213,9 +239,156 @@ describe('SyncSourceAccordion', () => {
     await wrapper.find('button.accordion-trigger').trigger('click')
     await flushPromises()
     await wrapper
-      .find('[data-testid="enabled-toggle-steam"] [role="switch"]')
+      .find('[data-testid="form-toggle-enabled"]')
       .trigger('click')
 
     expect(setEnabled).toHaveBeenCalledWith('steam', false)
+  })
+
+  it('clicking the Enable button on a disabled source calls store.setSourceEnabled(true)', async () => {
+    const wrapper = mount(SyncSourceAccordion, {
+      props: { source: baseSource, syncing: false, disabled: false },
+    })
+    const store = useDataStore()
+    primeStore(store, { ...migratedConfig, enabled: false })
+    const setEnabled = vi
+      .spyOn(store, 'setSourceEnabled')
+      .mockResolvedValue(undefined)
+
+    await wrapper.find('button.accordion-trigger').trigger('click')
+    await flushPromises()
+    await wrapper
+      .find('[data-testid="form-toggle-enabled"]')
+      .trigger('click')
+
+    expect(setEnabled).toHaveBeenCalledWith('steam', true)
+  })
+
+  it('saving the form forwards the values to store.updateSourceConfig', async () => {
+    const wrapper = mount(SyncSourceAccordion, {
+      props: { source: baseSource, syncing: false, disabled: false },
+    })
+    const store = useDataStore()
+    primeStore(store, migratedConfig)
+    const update = vi
+      .spyOn(store, 'updateSourceConfig')
+      .mockResolvedValue(undefined)
+
+    await wrapper.find('button.accordion-trigger').trigger('click')
+    await flushPromises()
+
+    // Type into the path field, then click Save.
+    await wrapper.find('input[name="vanity_url"]').setValue('updated')
+    await wrapper.find('[data-testid="form-save"]').trigger('click')
+    await flushPromises()
+
+    expect(update).toHaveBeenCalledTimes(1)
+    expect(update.mock.calls[0][0]).toBe('steam')
+    expect(update.mock.calls[0][1]).toMatchObject({ vanity_url: 'updated' })
+  })
+
+  it('clicking Remove with confirm=true calls store.deleteSource', async () => {
+    const wrapper = mount(SyncSourceAccordion, {
+      props: { source: baseSource, syncing: false, disabled: false },
+    })
+    const store = useDataStore()
+    primeStore(store, migratedConfig)
+    const remove = vi.spyOn(store, 'deleteSource').mockResolvedValue(undefined)
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    await wrapper.find('button.accordion-trigger').trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-testid="remove-btn-steam"]').trigger('click')
+    await flushPromises()
+
+    expect(confirmSpy).toHaveBeenCalled()
+    expect(remove).toHaveBeenCalledWith('steam')
+    confirmSpy.mockRestore()
+  })
+
+  it('clicking Remove with confirm=false does NOT call store.deleteSource', async () => {
+    const wrapper = mount(SyncSourceAccordion, {
+      props: { source: baseSource, syncing: false, disabled: false },
+    })
+    const store = useDataStore()
+    primeStore(store, migratedConfig)
+    const remove = vi.spyOn(store, 'deleteSource').mockResolvedValue(undefined)
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+
+    await wrapper.find('button.accordion-trigger').trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-testid="remove-btn-steam"]').trigger('click')
+    await flushPromises()
+
+    expect(confirmSpy).toHaveBeenCalled()
+    expect(remove).not.toHaveBeenCalled()
+    confirmSpy.mockRestore()
+  })
+
+  it('renders the Saved status pill after a successful save', async () => {
+    const wrapper = mount(SyncSourceAccordion, {
+      props: { source: baseSource, syncing: false, disabled: false },
+    })
+    const store = useDataStore()
+    primeStore(store, migratedConfig)
+    vi.spyOn(store, 'updateSourceConfig').mockResolvedValue(undefined)
+
+    await wrapper.find('button.accordion-trigger').trigger('click')
+    await flushPromises()
+    await wrapper.find('input[name="vanity_url"]').setValue('renamed')
+    await wrapper.find('[data-testid="form-save"]').trigger('click')
+    await flushPromises()
+
+    const status = wrapper.find('[data-testid="form-save-status"]')
+    expect(status.exists()).toBe(true)
+    expect(status.text()).toContain('Saved')
+  })
+
+  it('renders the Error status pill when updateSourceConfig rejects', async () => {
+    const wrapper = mount(SyncSourceAccordion, {
+      props: { source: baseSource, syncing: false, disabled: false },
+    })
+    const store = useDataStore()
+    primeStore(store, migratedConfig)
+    vi.spyOn(store, 'updateSourceConfig').mockRejectedValue(
+      new Error('save blew up'),
+    )
+
+    await wrapper.find('button.accordion-trigger').trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-testid="form-save"]').trigger('click')
+    await flushPromises()
+
+    const status = wrapper.find('[data-testid="form-save-status"]')
+    expect(status.exists()).toBe(true)
+    expect(status.text()).toContain('save blew up')
+    expect(status.attributes('role')).toBe('alert')
+  })
+
+  it('disables the toggle button while setSourceEnabled is in flight (re-entrant guard)', async () => {
+    const wrapper = mount(SyncSourceAccordion, {
+      props: { source: baseSource, syncing: false, disabled: false },
+    })
+    const store = useDataStore()
+    primeStore(store, migratedConfig)
+    // Hold the toggle in-flight so the second click hits the busy guard.
+    let releaseToggle: () => void = () => {}
+    const inflight = new Promise<void>((resolve) => {
+      releaseToggle = resolve
+    })
+    const setEnabled = vi
+      .spyOn(store, 'setSourceEnabled')
+      .mockImplementation(() => inflight)
+
+    await wrapper.find('button.accordion-trigger').trigger('click')
+    await flushPromises()
+    const toggle = wrapper.find('[data-testid="form-toggle-enabled"]')
+    await toggle.trigger('click')
+    // Second click while the first is still pending must be a no-op.
+    await toggle.trigger('click')
+    expect(setEnabled).toHaveBeenCalledTimes(1)
+    // Release the in-flight call so component teardown isn't fighting timers.
+    releaseToggle()
+    await flushPromises()
   })
 })

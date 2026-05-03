@@ -1,7 +1,6 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import Accordion from '@/components/atoms/Accordion.vue'
-import ToggleSwitch from '@/components/atoms/ToggleSwitch.vue'
 import SourceConfigForm from '@/components/molecules/SourceConfigForm.vue'
 import OAuthConnectFlow from '@/components/molecules/OAuthConnectFlow.vue'
 import { useDataStore } from '@/stores/data'
@@ -23,6 +22,11 @@ const detailsLoaded = ref(false)
 const detailsLoading = ref(false)
 const migrating = ref(false)
 const savingConfig = ref(false)
+const togglingEnabled = ref(false)
+type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
+const saveStatus = ref<SaveStatus>('idle')
+const saveError = ref('')
+let saveStatusTimer: ReturnType<typeof setTimeout> | null = null
 
 const schema = computed(() => data.sourceSchemas[props.source.id])
 const config = computed(() => data.sourceConfigs[props.source.id])
@@ -63,9 +67,23 @@ async function onMigrate(): Promise<void> {
 }
 
 async function onSaveConfig(values: Record<string, unknown>): Promise<void> {
+  if (saveStatusTimer) {
+    clearTimeout(saveStatusTimer)
+    saveStatusTimer = null
+  }
   savingConfig.value = true
+  saveStatus.value = 'saving'
+  saveError.value = ''
   try {
     await data.updateSourceConfig(props.source.id, values)
+    saveStatus.value = 'saved'
+    saveStatusTimer = setTimeout(() => {
+      saveStatus.value = 'idle'
+      saveStatusTimer = null
+    }, 2500)
+  } catch (err) {
+    saveStatus.value = 'error'
+    saveError.value = err instanceof Error ? err.message : 'Unknown error'
   } finally {
     savingConfig.value = false
   }
@@ -80,7 +98,31 @@ async function onClearSecret(name: string): Promise<void> {
 }
 
 async function onEnabledChange(value: boolean): Promise<void> {
-  await data.setSourceEnabled(props.source.id, value)
+  if (togglingEnabled.value) return
+  togglingEnabled.value = true
+  try {
+    await data.setSourceEnabled(props.source.id, value)
+  } finally {
+    togglingEnabled.value = false
+  }
+}
+
+const removing = ref(false)
+
+async function onRemove(): Promise<void> {
+  if (removing.value) return
+  const ok = window.confirm(
+    `Remove "${props.source.display_name}" from the database? This drops ` +
+      'every stored secret for this source. The original config.yaml entry ' +
+      '(if any) will reappear next reload.',
+  )
+  if (!ok) return
+  removing.value = true
+  try {
+    await data.deleteSource(props.source.id)
+  } finally {
+    removing.value = false
+  }
 }
 
 const isGog = computed(() => props.source.id === 'gog')
@@ -102,7 +144,17 @@ const showOAuthDisconnect = computed(() => {
   return false
 })
 
-const syncDisabled = computed(() => props.syncing || props.disabled)
+onBeforeUnmount(() => {
+  if (saveStatusTimer) {
+    clearTimeout(saveStatusTimer)
+    saveStatusTimer = null
+  }
+})
+
+const sourceEnabled = computed(() => props.source.enabled)
+const syncDisabled = computed(
+  () => props.syncing || props.disabled || !sourceEnabled.value,
+)
 const syncLabel = computed(() => (props.syncing ? 'Syncing…' : 'Sync'))
 </script>
 
@@ -110,10 +162,17 @@ const syncLabel = computed(() => (props.syncing ? 'Syncing…' : 'Sync'))
   <Accordion
     :id="source.id"
     :expanded="expanded"
+    :class="{ 'source-accordion--disabled': !sourceEnabled }"
     @update:expanded="onToggleExpanded"
   >
     <template #header>
-      <span class="source-accordion-name">{{ source.display_name }}</span>
+      <span class="source-accordion-header-text">
+        <span class="source-accordion-name">{{ source.display_name }}</span>
+        <span
+          v-if="!sourceEnabled"
+          class="source-accordion-status-badge"
+        >Disabled</span>
+      </span>
     </template>
 
     <template #header-actions>
@@ -123,7 +182,9 @@ const syncLabel = computed(() => (props.syncing ? 'Syncing…' : 'Sync'))
         :data-testid="`sync-btn-${source.id}`"
         :disabled="syncDisabled"
         :aria-label="
-          props.syncing
+          !sourceEnabled
+            ? `Sync ${source.display_name} — source is disabled`
+            : props.syncing
             ? `Syncing ${source.display_name} — in progress`
             : props.disabled
             ? `Sync ${source.display_name} — another sync is in progress`
@@ -153,17 +214,6 @@ const syncLabel = computed(() => (props.syncing ? 'Syncing…' : 'Sync'))
       </template>
 
       <template v-else>
-        <div
-          class="source-accordion-toggle"
-          :data-testid="`enabled-toggle-${source.id}`"
-        >
-          <ToggleSwitch
-            :model-value="config.enabled"
-            label="Enabled"
-            @update:model-value="onEnabledChange"
-          />
-        </div>
-
         <div v-if="showOAuthConnect" class="source-accordion-oauth">
           <OAuthConnectFlow
             v-if="isGog && data.gogStatus.authUrl"
@@ -185,62 +235,116 @@ const syncLabel = computed(() => (props.syncing ? 'Syncing…' : 'Sync'))
           />
         </div>
 
-        <div v-if="showOAuthDisconnect" class="source-accordion-oauth">
-          <!--
-            aria-live regions must exist in the DOM before content arrives,
-            otherwise some screen readers (notably JAWS) skip announcements
-            when the region is inserted with content already populated. Keep
-            the &lt;p&gt; persistent and let the text update reactively.
-          -->
-          <p
-            v-if="isGog"
-            class="sr-only"
-            aria-live="polite"
-            aria-atomic="true"
-          >{{ data.gogConnectMessage }}</p>
-          <p
-            v-if="isEpic"
-            class="sr-only"
-            aria-live="polite"
-            aria-atomic="true"
-          >{{ data.epicConnectMessage }}</p>
-          <button
-            type="button"
-            class="btn btn-danger"
-            :data-testid="`disconnect-btn-${source.id}`"
-            :aria-label="isGog ? 'Disconnect GOG' : 'Disconnect Epic Games'"
-            :disabled="props.syncing"
-            @click="isGog ? data.disconnectGog() : data.disconnectEpic()"
-          >Disconnect</button>
-        </div>
-
         <SourceConfigForm
           :schema="schema.fields"
           :values="config.field_values"
           :secret-status="config.secret_status"
           :saving="savingConfig"
           :disabled="props.disabled"
+          :enabled="config.enabled"
+          :enable-busy="togglingEnabled"
+          :save-status="saveStatus"
+          :save-error="saveError"
+          :data-testid="`enabled-toggle-${source.id}`"
           @save="onSaveConfig"
           @set-secret="onSetSecret"
           @clear-secret="onClearSecret"
-        />
+          @toggle-enabled="onEnabledChange"
+        >
+          <template #actions-extra>
+            <!--
+              aria-live regions must exist in the DOM before content arrives,
+              otherwise some screen readers (notably JAWS) skip announcements
+              when the region is inserted with content already populated. Keep
+              the <p> persistent and let the text update reactively.
+            -->
+            <p
+              v-if="isGog && showOAuthDisconnect"
+              class="sr-only"
+              aria-live="polite"
+              aria-atomic="true"
+            >{{ data.gogConnectMessage }}</p>
+            <p
+              v-if="isEpic && showOAuthDisconnect"
+              class="sr-only"
+              aria-live="polite"
+              aria-atomic="true"
+            >{{ data.epicConnectMessage }}</p>
+            <button
+              v-if="showOAuthDisconnect"
+              type="button"
+              class="btn btn-danger"
+              :data-testid="`disconnect-btn-${source.id}`"
+              :aria-label="isGog ? 'Disconnect GOG' : 'Disconnect Epic Games'"
+              :disabled="props.syncing"
+              @click="isGog ? data.disconnectGog() : data.disconnectEpic()"
+            >Disconnect</button>
+            <button
+              type="button"
+              class="btn btn-danger source-accordion-remove-btn"
+              :data-testid="`remove-btn-${source.id}`"
+              :aria-label="`Remove ${source.display_name} from the database`"
+              :disabled="removing || props.syncing"
+              @click="onRemove"
+            >{{ removing ? 'Removing…' : 'Remove' }}</button>
+          </template>
+        </SourceConfigForm>
       </template>
     </template>
   </Accordion>
 </template>
 
 <style scoped>
+.source-accordion-header-text {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.sync-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  background: var(--border-default);
+  color: var(--text-secondary);
+  border-color: var(--border-default);
+  pointer-events: none;
+}
+
+.sync-btn:disabled:hover {
+  background: var(--border-default);
+}
+
 .source-accordion-name {
   font-weight: 600;
+}
+
+.source-accordion-status-badge {
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 2px var(--space-2);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-secondary) 12%, transparent);
+  /* --text-primary on the tinted background passes WCAG AA at 12px. */
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+/* Convey the disabled state via a softer border + secondary text colour
+   on the muted parts. ``opacity`` is avoided because it composites against
+   the surface and would push every text element below the WCAG 1.4.3 4.5:1
+   contrast threshold. */
+.source-accordion--disabled :deep(.accordion) {
+  border-color: var(--border-subtle);
+}
+
+.source-accordion--disabled :deep(.accordion-trigger) {
+  color: var(--text-secondary);
 }
 
 .source-accordion-explainer {
   color: var(--text-secondary);
   font-size: var(--text-sm);
-  margin-bottom: var(--space-3);
-}
-
-.source-accordion-toggle {
   margin-bottom: var(--space-3);
 }
 

@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useDataStore } from '@/stores/data'
 import SyncSourceAccordion from '@/components/organisms/SyncSourceAccordion.vue'
+import AddSourceModal from '@/components/organisms/AddSourceModal.vue'
 import EnrichmentCard from '@/components/organisms/EnrichmentCard.vue'
 
 const data = useDataStore()
+const showAddSourceModal = ref(false)
 
 onMounted(() => {
   data.loadSyncSources()
@@ -22,6 +24,16 @@ const syncAllLabel = computed(() => {
   if (data.syncStatus === 'running') return 'Sync in Progress'
   return 'Sync All Sources'
 })
+
+// Enabled sources first, disabled sources collapsed at the bottom in a
+// muted state. Within each group preserve the API ordering (already
+// alphabetical by source id).
+const orderedSources = computed(() => {
+  return [...data.syncSources].sort((a, b) => {
+    if (a.enabled === b.enabled) return 0
+    return a.enabled ? -1 : 1
+  })
+})
 </script>
 
 <template>
@@ -32,7 +44,15 @@ const syncAllLabel = computed(() => {
     </div>
 
     <div class="card">
-      <h3>Sync Sources</h3>
+      <div class="sync-sources-header">
+        <h3>Sync Sources</h3>
+        <button
+          type="button"
+          class="btn btn-primary"
+          data-testid="add-source-btn"
+          @click="showAddSourceModal = true"
+        >+ Add source</button>
+      </div>
       <div
         v-if="data.syncMessage"
         class="sync-status-message"
@@ -63,7 +83,7 @@ const syncAllLabel = computed(() => {
       </div>
       <div v-else class="sync-accordion-list">
         <SyncSourceAccordion
-          v-for="source in data.syncSources"
+          v-for="source in orderedSources"
           :key="source.id"
           :source="source"
           :syncing="data.syncingSource === source.id || data.syncingSource === 'all'"
@@ -93,10 +113,24 @@ const syncAllLabel = computed(() => {
     </div>
 
     <EnrichmentCard />
+
+    <AddSourceModal
+      v-if="showAddSourceModal"
+      @close="showAddSourceModal = false"
+      @created="() => (showAddSourceModal = false)"
+    />
   </div>
 </template>
 
 <style scoped>
+.sync-sources-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
 .sync-accordion-list {
   display: flex;
   flex-direction: column;

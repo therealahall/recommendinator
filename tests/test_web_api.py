@@ -388,9 +388,13 @@ def test_sync_sources_endpoint(client, mock_config):
     assert goodreads["plugin_display_name"] == "Goodreads"
 
 
-def test_sync_sources_only_enabled(client):
-    """Test that disabled sources (enabled: false) are not returned."""
-    # Override config: only goodreads and sonarr enabled
+def test_sync_sources_lists_all_with_enabled_flag(client):
+    """All configured sources are listed; ``enabled`` flag exposed per source.
+
+    The UI renders disabled sources in a muted state instead of hiding them
+    entirely, so the listing endpoint must surface them. ``resolve_inputs``
+    is the gate that filters to enabled-only for sync execution.
+    """
     app_state.config = {
         "inputs": {
             "goodreads": {
@@ -422,12 +426,12 @@ def test_sync_sources_only_enabled(client):
     response = client.get("/api/sync/sources")
     assert response.status_code == 200
     sources = response.json()
-    source_ids = [s["id"] for s in sources]
+    by_id = {s["id"]: s for s in sources}
 
-    assert "goodreads" in source_ids
-    assert "sonarr" in source_ids
-    assert "steam" not in source_ids
-    assert "radarr" not in source_ids
+    assert by_id["goodreads"]["enabled"] is True
+    assert by_id["sonarr"]["enabled"] is True
+    assert by_id["steam"]["enabled"] is False
+    assert by_id["radarr"]["enabled"] is False
 
 
 def test_recommendations_endpoint(client, mock_components):
