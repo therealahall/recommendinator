@@ -47,7 +47,7 @@ jobs:
       - name: Run semantic-release
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
-        run: uv run python -m semantic_release version --push --commit --tag
+        run: uv run python -m semantic_release version --push --commit --tag --no-vcs-release
 
       - name: Create GitHub release with docker-compose.yml asset
         env:
@@ -66,6 +66,17 @@ jobs:
           fi
           NEW_TAG=$(printf '%s\n' "$TAGS" | head -1)
           VERSION="${NEW_TAG#v}"
+
+          # Recovery path: if a prior partial run already created the release
+          # (e.g. before --no-vcs-release was wired up, or a future psr default
+          # change), delete it so we can recreate it with the asset bundled at
+          # creation. Tag is preserved (--cleanup-tag=false). This is safe for
+          # immutable releases too — deletion is allowed; only post-creation
+          # mutation is forbidden.
+          if gh release view "$NEW_TAG" >/dev/null 2>&1; then
+            echo "Release $NEW_TAG already exists; deleting so it can be recreated with asset."
+            gh release delete "$NEW_TAG" --yes --cleanup-tag=false
+          fi
 
           # Extract the section for this version from CHANGELOG.md
           # (everything between "## vX.Y.Z " and the next "## v" heading).
