@@ -6,6 +6,7 @@ import importlib.metadata
 import json
 import logging
 import os
+import sys
 import time
 import webbrowser
 from pathlib import Path
@@ -2292,6 +2293,67 @@ def source_set(
         plugin,
         output_format,
         f"Set {source_id}.{field_name} = {coerced!r}",
+    )
+
+
+@source.command("apply")
+@click.argument("source_id")
+@click.option(
+    "--from-json",
+    "from_json",
+    required=True,
+    help=(
+        "Path to a JSON file containing a values dict, or '-' to read from "
+        "stdin. Mirrors PUT /api/sync/sources/<id>/config — applies all "
+        "fields atomically."
+    ),
+)
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    default="table",
+    help="Output format",
+)
+@click.pass_context
+def source_apply(
+    ctx: click.Context, source_id: str, from_json: str, output_format: str
+) -> None:
+    """Apply a JSON dict of non-sensitive fields atomically (bulk update).
+
+    The web ``PUT /api/sync/sources/<id>/config`` endpoint accepts an
+    arbitrary ``values`` dict and updates every key in a single
+    transaction. This command mirrors that path so scripts can perform
+    multi-field updates without N round-trip CLI invocations.
+    """
+    plugin = _resolve_cli_plugin(ctx, source_id)
+    storage = _require_storage(ctx)
+
+    raw = (
+        sys.stdin.read()
+        if from_json == "-"
+        else Path(from_json).read_text(encoding="utf-8")
+    )
+    try:
+        values = json.loads(raw)
+    except json.JSONDecodeError as error:
+        _abort_with(f"Invalid JSON: {error}")
+    if not isinstance(values, dict):
+        _abort_with("JSON payload must be an object mapping field names to values")
+
+    try:
+        update_source_config_values(
+            source_id, plugin, storage, values, user_id=_SOURCE_DEFAULT_USER_ID
+        )
+    except SourceConfigError as error:
+        _abort_with(error.message)
+
+    _emit_config_view(
+        ctx,
+        source_id,
+        plugin,
+        output_format,
+        f"Applied {len(values)} field(s) to {source_id}.",
     )
 
 

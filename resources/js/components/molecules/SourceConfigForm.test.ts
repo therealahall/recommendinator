@@ -72,16 +72,16 @@ describe('SourceConfigForm', () => {
   })
 
   it('renders a checkbox for bool fields', () => {
-    const schema = [field({ name: 'enabled_filter', field_type: 'bool' })]
+    const schema = [field({ name: 'active', field_type: 'bool' })]
     const wrapper = mount(SourceConfigForm, {
       props: {
         schema,
-        values: { enabled_filter: true },
+        values: { active: true },
         secretStatus: {},
       },
     })
 
-    const input = wrapper.find('input[name="enabled_filter"]')
+    const input = wrapper.find('input[name="active"]')
     expect(input.attributes('type')).toBe('checkbox')
     expect((input.element as HTMLInputElement).checked).toBe(true)
   })

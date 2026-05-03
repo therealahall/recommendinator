@@ -41,8 +41,8 @@ class MyPlugin(SourcePlugin):
         return [
             # Mark API keys / OAuth tokens with sensitive=True so they get
             # stored encrypted and stripped from web/CLI responses. The web
-            # UI's data accordion and the `recommendinator source` CLI
-            # commands auto-generate forms from this schema, so accurate
+            # UI's data accordion and the `python3.11 -m src.cli source`
+            # CLI commands auto-generate forms from this schema, so accurate
             # `field_type`, `required`, `description`, and `sensitive` flags
             # directly drive the user-facing UI.
             ConfigField(
