@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.9.5 (2026-05-03)
+
+### Bug Fixes
+
+- **enrichment**: Report total_items upfront instead of per batch (closes #60)
+  ([`0d1ac50`](https://github.com/therealahall/recommendinator/commit/0d1ac50e6cddd7fe374ef8ea764d42349ca71dba))
+
+
 ## v0.9.4 (2026-05-03)
 
 ### Bug Fixes
