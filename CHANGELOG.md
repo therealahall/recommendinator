@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.9.1 (2026-05-03)
+
+### Bug Fixes
+
+- **release**: Bundle docker-compose.yml at release creation
+  ([`cde361a`](https://github.com/therealahall/recommendinator/commit/cde361aefb28be21babd539554598df99876ebf3))
+
+
 ## v0.9.0 (2026-05-03)
 
 ### Chores
