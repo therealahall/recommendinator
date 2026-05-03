@@ -1,6 +1,32 @@
 # CHANGELOG
 
 
+## v0.9.0 (2026-05-03)
+
+### Chores
+
+- **agents**: Forbid review agents from writing code in their output
+  ([`f3bed41`](https://github.com/therealahall/recommendinator/commit/f3bed413e0a98a852371a53cf3868b3eb120c03f))
+
+### Documentation
+
+- Document ROM Library plugin
+  ([`d1dc877`](https://github.com/therealahall/recommendinator/commit/d1dc8776ebc0809ddc54058d1d3ad398d193ec14))
+
+### Features
+
+- **ingestion**: Add ROM Library scanner plugin
+  ([`75928f8`](https://github.com/therealahall/recommendinator/commit/75928f840876e36911a82b0a5dfa658185100597))
+
+- **roms**: Normalize underscores to spaces in cleaned titles
+  ([`a2daedd`](https://github.com/therealahall/recommendinator/commit/a2daedd23b92b066a42052c0862d01aabb599510))
+
+### Testing
+
+- **roms**: Cover underscore edge cases in title cleaner
+  ([`24bf6c4`](https://github.com/therealahall/recommendinator/commit/24bf6c4dd131a79eb44087a269204c9c4b757430))
+
+
 ## v0.8.1 (2026-05-01)
 
 ### Bug Fixes
