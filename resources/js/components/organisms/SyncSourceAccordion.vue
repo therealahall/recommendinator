@@ -245,7 +245,6 @@ const syncLabel = computed(() => (props.syncing ? 'Syncing…' : 'Sync'))
           :enable-busy="togglingEnabled"
           :save-status="saveStatus"
           :save-error="saveError"
-          :data-testid="`enabled-toggle-${source.id}`"
           @save="onSaveConfig"
           @set-secret="onSetSecret"
           @clear-secret="onClearSecret"

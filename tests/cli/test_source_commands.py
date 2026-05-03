@@ -613,6 +613,30 @@ class TestSourceApply:
         assert result.exit_code != 0
         assert storage.get_credential(1, "my_games", "api_key") is None
 
+    def test_apply_aborts_when_file_missing(
+        self,
+        cli_runner: CliRunner,
+        storage: StorageManager,
+        base_config: dict[str, Any],
+        tmp_path: Path,
+    ) -> None:
+        """A path that does not exist aborts cleanly via ``_abort_with``.
+
+        Regression guard: a stray ``FileNotFoundError`` would otherwise
+        surface as a Python traceback instead of the friendly error
+        path every other CLI failure goes through.
+        """
+        storage.upsert_source_config(1, "my_games", "fake_api", {}, enabled=True)
+        missing = tmp_path / "does_not_exist.json"
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["source", "apply", "my_games", "--from-json", str(missing)],
+            mock_storage=storage,
+            config=base_config,
+        )
+        assert result.exit_code != 0
+        assert "Could not read" in result.output
+
     def test_apply_rejects_invalid_json(
         self,
         cli_runner: CliRunner,

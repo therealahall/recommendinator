@@ -444,6 +444,9 @@ class TestEnabledEndpoint:
         # Response body reflects the freshly-toggled state, not stale data.
         assert body["enabled"] is False
         assert body["source_id"] == "my_books"
+        # migrated_at survives the toggle (a regression that returned None
+        # would still satisfy the boolean assertion above).
+        assert body["migrated_at"] is not None
         row = storage.get_source_config(1, "my_books")
         assert row is not None
         assert row["enabled"] is False
