@@ -309,6 +309,137 @@ class TestGetItemsNeedingEnrichment:
         assert len(items) == 3
 
 
+class TestCountItemsNeedingEnrichment:
+    """Tests for counting items needing enrichment.
+
+    The count and get methods share ``_build_enrichment_query`` so the same
+    WHERE clause drives both. These tests verify count parity with the get
+    path and exercise the COUNT(*) -> int cursor branch.
+    """
+
+    @pytest.fixture
+    def storage_manager(self, tmp_path: Path) -> StorageManager:
+        db_path = tmp_path / "test.db"
+        return StorageManager(sqlite_path=db_path, ai_enabled=False)
+
+    def test_count_empty_database_returns_zero(
+        self, storage_manager: StorageManager
+    ) -> None:
+        """Empty database returns 0 (covers the `if row else 0` guard)."""
+        assert storage_manager.count_items_needing_enrichment() == 0
+
+    def test_count_includes_new_and_pending_items(
+        self, storage_manager: StorageManager
+    ) -> None:
+        """Items without an enrichment_status row are counted (NULL branch)."""
+        for index in range(4):
+            storage_manager.save_content_item(
+                ContentItem(
+                    id=f"movie{index}",
+                    title=f"Movie {index}",
+                    content_type=ContentType.MOVIE,
+                    status=ConsumptionStatus.UNREAD,
+                )
+            )
+
+        assert storage_manager.count_items_needing_enrichment() == 4
+
+    def test_count_includes_items_marked_needs_enrichment(
+        self, storage_manager: StorageManager
+    ) -> None:
+        """Items with `needs_enrichment = 1` are counted (the second WHERE branch).
+
+        The shared `_build_enrichment_query` matches both `content_item_id IS NULL`
+        and `needs_enrichment = 1`. Without an explicit test here, the count path
+        only exercises the NULL branch even though the get path covers both.
+        """
+        # Save the item, then mark needs_enrichment so it has a status row
+        # with needs_enrichment = 1 (no longer NULL on the JOIN side).
+        item = ContentItem(
+            id="movie1",
+            title="Movie",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+        )
+        db_id = storage_manager.save_content_item(item)
+        storage_manager.mark_item_needs_enrichment(db_id)
+
+        assert (
+            storage_manager.get_enrichment_status(db_id) is not None
+        ), "expected enrichment_status row to exist for the needs_enrichment=1 branch"
+        assert storage_manager.count_items_needing_enrichment() == 1
+
+    def test_count_excludes_enriched_items(
+        self, storage_manager: StorageManager
+    ) -> None:
+        """Items already enriched are not counted."""
+        item = ContentItem(
+            id="movie1",
+            title="Movie 1",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+        )
+        db_id = storage_manager.save_content_item(item)
+        storage_manager.mark_enrichment_complete(db_id, "tmdb", "high")
+
+        assert storage_manager.count_items_needing_enrichment() == 0
+
+    def test_count_filters_by_content_type(
+        self, storage_manager: StorageManager
+    ) -> None:
+        """`content_type` parameter scopes the count to a single type."""
+        storage_manager.save_content_item(
+            ContentItem(
+                id="movie1",
+                title="Movie",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.UNREAD,
+            )
+        )
+        storage_manager.save_content_item(
+            ContentItem(
+                id="book1",
+                title="Book",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            )
+        )
+
+        assert (
+            storage_manager.count_items_needing_enrichment(
+                content_type=ContentType.MOVIE
+            )
+            == 1
+        )
+        assert (
+            storage_manager.count_items_needing_enrichment(
+                content_type=ContentType.BOOK
+            )
+            == 1
+        )
+
+    def test_count_matches_get_length(self, storage_manager: StorageManager) -> None:
+        """Count and get must agree — they share the same WHERE clause."""
+        for index in range(3):
+            db_id = storage_manager.save_content_item(
+                ContentItem(
+                    id=f"movie{index}",
+                    title=f"Movie {index}",
+                    content_type=ContentType.MOVIE,
+                    status=ConsumptionStatus.UNREAD,
+                )
+            )
+            if index == 0:
+                # Enrich one item — both methods should agree it's excluded.
+                storage_manager.mark_enrichment_complete(db_id, "tmdb", "high")
+
+        items = storage_manager.get_items_needing_enrichment(limit=100)
+        count = storage_manager.count_items_needing_enrichment()
+
+        assert count == 2
+        assert len(items) == 2
+
+
 class TestEnrichmentStats:
     """Tests for enrichment statistics."""
 

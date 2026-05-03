@@ -648,6 +648,25 @@ class StorageManager:
             include_not_found=include_not_found,
         )
 
+    def count_items_needing_enrichment(
+        self,
+        content_type: ContentType | None = None,
+        user_id: int | None = None,
+    ) -> int:
+        """Count content items that need enrichment.
+
+        Args:
+            content_type: Optional filter by content type
+            user_id: Filter by user ID (defaults to the default user when None)
+
+        Returns:
+            Number of items matching the enrichment filter.
+        """
+        return self.sqlite_db.count_items_needing_enrichment(
+            content_type=content_type,
+            user_id=user_id,
+        )
+
     def get_enrichment_status(
         self, content_item_id: int
     ) -> EnrichmentStatusDict | None:
