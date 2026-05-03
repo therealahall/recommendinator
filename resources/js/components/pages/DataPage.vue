@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted } from 'vue'
 import { useDataStore } from '@/stores/data'
-import SyncSourceCard from '@/components/molecules/SyncSourceCard.vue'
-import OAuthConnectFlow from '@/components/molecules/OAuthConnectFlow.vue'
+import SyncSourceAccordion from '@/components/organisms/SyncSourceAccordion.vue'
 import EnrichmentCard from '@/components/organisms/EnrichmentCard.vue'
 
 const data = useDataStore()
@@ -17,16 +16,6 @@ onMounted(() => {
 onUnmounted(() => {
   data.cleanup()
 })
-
-const gogState = computed(() => ({
-  needsConnect: !data.gogStatus.connected && !!data.gogStatus.authUrl,
-  showDisconnect: data.gogStatus.connected,
-}))
-
-const epicState = computed(() => ({
-  needsConnect: !data.epicStatus.connected && !!data.epicStatus.authUrl,
-  showDisconnect: data.epicStatus.connected,
-}))
 
 const syncAllLabel = computed(() => {
   if (data.syncStatus === 'running' && data.syncingSource === 'all') return 'Syncing...'
@@ -43,7 +32,7 @@ const syncAllLabel = computed(() => {
     </div>
 
     <div class="card">
-      <h2>Sync Sources</h2>
+      <h3>Sync Sources</h3>
       <div
         v-if="data.syncMessage"
         class="sync-status-message"
@@ -72,74 +61,31 @@ const syncAllLabel = computed(() => {
       <div v-else-if="data.syncSources.length === 0" class="empty-state">
         No sync sources configured. Add sources to config.yaml with enabled: true.
       </div>
-      <div v-else class="sync-grid">
-        <SyncSourceCard
+      <div v-else class="sync-accordion-list">
+        <SyncSourceAccordion
           v-for="source in data.syncSources"
           :key="source.id"
           :source="source"
           :syncing="data.syncingSource === source.id || data.syncingSource === 'all'"
           :disabled="data.syncStatus === 'running' && data.syncingSource !== source.id && data.syncingSource !== 'all'"
-          :show-sync-button="
-            !(source.id === 'gog' && gogState.needsConnect) &&
-            !(source.id === 'epic_games' && epicState.needsConnect)
-          "
           @sync="data.triggerSync($event)"
-        >
-          <template v-if="source.id === 'gog' && gogState.needsConnect">
-            <OAuthConnectFlow
-              :auth-url="data.gogStatus.authUrl"
-              expected-origin="https://login.gog.com"
-              :connect-message="data.gogConnectMessage"
-              help-text="Paste the redirect URL after logging in:"
-              service-name="GOG Account"
-              @submit="data.submitGogCode($event)"
-            />
-          </template>
-          <template v-else-if="source.id === 'epic_games' && epicState.needsConnect">
-            <OAuthConnectFlow
-              :auth-url="data.epicStatus.authUrl"
-              expected-origin="https://www.epicgames.com"
-              :connect-message="data.epicConnectMessage"
-              help-text="Paste the authorization code from the JSON response:"
-              service-name="Epic Games"
-              @submit="data.submitEpicCode($event)"
-            />
-          </template>
-          <template v-else-if="source.id === 'gog' && gogState.showDisconnect">
-            <p
-              v-if="data.gogConnectMessage"
-              class="sr-only"
-              aria-live="polite"
-            >{{ data.gogConnectMessage }}</p>
-            <button
-              type="button"
-              class="btn btn-danger disconnect-btn"
-              :disabled="data.syncStatus === 'running'"
-              aria-label="Disconnect GOG"
-              @click="data.disconnectGog()"
-            >Disconnect</button>
-          </template>
-          <template v-else-if="source.id === 'epic_games' && epicState.showDisconnect">
-            <p
-              v-if="data.epicConnectMessage"
-              class="sr-only"
-              aria-live="polite"
-            >{{ data.epicConnectMessage }}</p>
-            <button
-              type="button"
-              class="btn btn-danger disconnect-btn"
-              :disabled="data.syncStatus === 'running'"
-              aria-label="Disconnect Epic Games"
-              @click="data.disconnectEpic()"
-            >Disconnect</button>
-          </template>
-        </SyncSourceCard>
-        <div v-if="data.syncSources.length > 1" class="sync-card">
-          <h3>All Sources</h3>
-          <p class="sync-plugin-name">Sync all enabled sources at once</p>
+        />
+        <div v-if="data.syncSources.length > 1" class="sync-all-card">
+          <div>
+            <h3>All Sources</h3>
+            <p class="sync-plugin-name">Sync all enabled sources at once</p>
+          </div>
           <button
+            type="button"
             class="btn btn-secondary sync-btn"
             :disabled="data.syncStatus === 'running'"
+            :aria-label="
+              data.syncStatus === 'running' && data.syncingSource === 'all'
+                ? 'Syncing all sources — in progress'
+                : data.syncStatus === 'running'
+                ? 'Sync all sources — another sync is in progress'
+                : 'Sync all sources'
+            "
             @click="data.triggerSync('all')"
           >{{ syncAllLabel }}</button>
         </div>
@@ -151,12 +97,21 @@ const syncAllLabel = computed(() => {
 </template>
 
 <style scoped>
-/* .btn is display:inline-flex, so the Sync button would otherwise sit next
-   to the Disconnect button on the same line. Force a block break so they
-   stack with spacing — separating the destructive action from Sync also
-   makes misclicks less likely. */
-.disconnect-btn {
+.sync-accordion-list {
   display: flex;
-  margin: 0 auto var(--space-3);
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.sync-all-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 2px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
 }
 </style>

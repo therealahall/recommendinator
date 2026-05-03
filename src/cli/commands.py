@@ -5,9 +5,11 @@ from __future__ import annotations  # noqa: I001
 import importlib.metadata
 import json
 import logging
+import os
 import time
 import webbrowser
 from pathlib import Path
+from typing import NoReturn
 
 import click
 from tabulate import tabulate
@@ -30,6 +32,7 @@ from src.recommendations.preference_interpreter import (
 )
 from src.recommendations.scorers import SCORER_NAME_MAP
 from src.storage.credential_migration import migrate_config_credentials
+from src.storage.manager import StorageManager
 from src.utils.item_serialization import item_to_dict
 from src.web.epic_auth import (
     exchange_code_for_tokens as exchange_epic_code,
@@ -48,7 +51,21 @@ from src.web.gog_auth import (
     is_gog_enabled,
     save_gog_token,
 )
-from src.web.sync_sources import resolve_inputs, validate_source_config
+from src.ingestion.plugin_base import ConfigField, SourcePlugin
+from src.web.sync_sources import (
+    SourceConfigError,
+    build_config_view,
+    build_schema_view,
+    clear_source_secret_value,
+    get_available_sync_sources,
+    migrate_source,
+    resolve_inputs,
+    resolve_source_plugin,
+    set_source_enabled_state,
+    set_source_secret_value,
+    update_source_config_values,
+    validate_source_config,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1936,3 +1953,400 @@ def chat_reset(ctx: click.Context, user_id: int) -> None:
     storage = ctx.obj["storage"]
     count = storage.clear_conversation_history(user_id)
     click.echo(f"Cleared {count} message(s). Core memories preserved.")
+
+
+# ``recommendinator source`` group: per-source configuration management.
+# Mirrors the web `/api/sync/sources/{id}/...` endpoints, sharing the same
+# business logic from ``src.web.sync_sources`` so CLI and web stay in lockstep.
+
+
+_SOURCE_DEFAULT_USER_ID = 1
+_SECRET_VALUE_ENV = "RECOMMENDINATOR_SECRET_VALUE"
+
+
+def _abort_with(message: str) -> NoReturn:
+    click.echo(f"Error: {message}", err=True)
+    raise click.Abort()
+
+
+def _resolve_cli_plugin(ctx: click.Context, source_id: str) -> SourcePlugin:
+    plugin = resolve_source_plugin(
+        source_id,
+        ctx.obj.get("config"),
+        ctx.obj.get("storage"),
+        user_id=_SOURCE_DEFAULT_USER_ID,
+    )
+    if plugin is None:
+        _abort_with(f"Unknown source: {source_id}")
+    return plugin
+
+
+def _require_storage(ctx: click.Context) -> StorageManager:
+    storage = ctx.obj.get("storage")
+    if storage is None:
+        _abort_with("Storage unavailable")
+    if not isinstance(storage, StorageManager):  # pragma: no cover - defensive
+        _abort_with("Storage is not a StorageManager instance")
+    return storage
+
+
+def _coerce_set_value(field: ConfigField, raw: str) -> object:
+    if field.field_type is bool:
+        lowered = raw.strip().lower()
+        if lowered in {"true", "1", "yes", "on"}:
+            return True
+        if lowered in {"false", "0", "no", "off"}:
+            return False
+        _abort_with(f"Field '{field.name}' is bool — pass true/false")
+    if field.field_type is int:
+        try:
+            return int(raw)
+        except ValueError:
+            _abort_with(f"Field '{field.name}' must be an integer")
+    if field.field_type is float:
+        try:
+            return float(raw)
+        except ValueError:
+            _abort_with(f"Field '{field.name}' must be a number")
+    if field.field_type is list:
+        return [item.strip() for item in raw.split(",") if item.strip()]
+    return raw
+
+
+def _emit_config_view(
+    ctx: click.Context,
+    source_id: str,
+    plugin: SourcePlugin,
+    output_format: str,
+    success_message: str,
+) -> None:
+    """Render the post-update SourceConfigResponse-shaped view for a source."""
+    storage = _require_storage(ctx)
+    view = build_config_view(
+        source_id,
+        plugin,
+        ctx.obj.get("config"),
+        storage,
+        user_id=_SOURCE_DEFAULT_USER_ID,
+    )
+    if output_format == "json":
+        click.echo(json.dumps(view, indent=2))
+    else:
+        click.echo(success_message)
+
+
+@click.group()
+def source() -> None:
+    """Manage data source configuration."""
+
+
+@source.command("list")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    default="table",
+    help="Output format",
+)
+@click.pass_context
+def source_list(ctx: click.Context, output_format: str) -> None:
+    """List configured data sources (mirrors GET /api/sync/sources)."""
+    config = ctx.obj.get("config") or {}
+    storage = ctx.obj.get("storage")
+    sources = get_available_sync_sources(
+        config, storage=storage, user_id=_SOURCE_DEFAULT_USER_ID
+    )
+    payload = [
+        {
+            "id": entry.id,
+            "display_name": entry.display_name,
+            "plugin_display_name": entry.plugin_display_name,
+        }
+        for entry in sources
+    ]
+
+    if output_format == "json":
+        click.echo(json.dumps(payload, indent=2))
+        return
+
+    if not payload:
+        click.echo("No sync sources configured.")
+        return
+
+    rows = [
+        [item["id"], item["display_name"], item["plugin_display_name"]]
+        for item in payload
+    ]
+    click.echo(
+        tabulate(rows, headers=["ID", "Display Name", "Plugin"], tablefmt="grid")
+    )
+
+
+@source.command("show")
+@click.argument("source_id")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    default="table",
+    help="Output format",
+)
+@click.pass_context
+def source_show(ctx: click.Context, source_id: str, output_format: str) -> None:
+    """Show current values for a source (mirrors GET /api/sync/sources/<id>/config)."""
+    plugin = _resolve_cli_plugin(ctx, source_id)
+    storage = ctx.obj.get("storage")
+    view = build_config_view(
+        source_id,
+        plugin,
+        ctx.obj.get("config"),
+        storage,
+        user_id=_SOURCE_DEFAULT_USER_ID,
+    )
+
+    if output_format == "json":
+        click.echo(json.dumps(view, indent=2))
+        return
+
+    rows: list[list[str]] = [
+        ["plugin", view["plugin"]],
+        ["enabled", str(view["enabled"])],
+        ["migrated", str(view["migrated"])],
+        ["migrated_at", str(view["migrated_at"] or "—")],
+    ]
+    for name, value in view["field_values"].items():
+        rows.append([name, json.dumps(value)])
+    for name, is_set in view["secret_status"].items():
+        rows.append([f"{name} (secret)", "set" if is_set else "unset"])
+    click.echo(tabulate(rows, headers=["Field", "Value"], tablefmt="grid"))
+
+
+@source.command("schema")
+@click.argument("source_id")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    default="table",
+    help="Output format",
+)
+@click.pass_context
+def source_schema(ctx: click.Context, source_id: str, output_format: str) -> None:
+    """Show the plugin schema for a source (mirrors GET /api/sync/sources/<id>/schema)."""
+    plugin = _resolve_cli_plugin(ctx, source_id)
+    view = build_schema_view(source_id, plugin)
+
+    if output_format == "json":
+        click.echo(json.dumps(view, indent=2))
+        return
+
+    rows = [
+        [
+            field["name"],
+            field["field_type"],
+            "yes" if field["required"] else "no",
+            "yes" if field["sensitive"] else "no",
+            field["description"],
+        ]
+        for field in view["fields"]
+    ]
+    click.echo(
+        tabulate(
+            rows,
+            headers=["Field", "Type", "Required", "Sensitive", "Description"],
+            tablefmt="grid",
+        )
+    )
+
+
+@source.command("migrate")
+@click.argument("source_id")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    default="table",
+    help="Output format",
+)
+@click.pass_context
+def source_migrate(ctx: click.Context, source_id: str, output_format: str) -> None:
+    """Migrate a YAML source entry into the database (idempotent)."""
+    plugin = _resolve_cli_plugin(ctx, source_id)
+    storage = _require_storage(ctx)
+    try:
+        result = migrate_source(
+            source_id,
+            plugin,
+            ctx.obj.get("config"),
+            storage,
+            user_id=_SOURCE_DEFAULT_USER_ID,
+        )
+    except SourceConfigError as error:
+        _abort_with(error.message)
+
+    if output_format == "json":
+        click.echo(json.dumps(result, indent=2))
+        return
+
+    click.echo(f"Migrated source '{source_id}' to the database.")
+    if result["fields_migrated"]:
+        click.echo(f"  Fields: {', '.join(result['fields_migrated'])}")
+    if result["secrets_migrated"]:
+        click.echo(f"  Secrets: {', '.join(result['secrets_migrated'])}")
+
+
+@source.command("enable")
+@click.argument("source_id")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    default="table",
+    help="Output format",
+)
+@click.pass_context
+def source_enable(ctx: click.Context, source_id: str, output_format: str) -> None:
+    """Enable a migrated source (mirrors PUT /api/sync/sources/<id>/enabled)."""
+    plugin = _resolve_cli_plugin(ctx, source_id)
+    storage = _require_storage(ctx)
+    try:
+        set_source_enabled_state(
+            source_id, storage, True, user_id=_SOURCE_DEFAULT_USER_ID
+        )
+    except SourceConfigError as error:
+        _abort_with(error.message)
+    _emit_config_view(
+        ctx, source_id, plugin, output_format, f"Enabled source '{source_id}'."
+    )
+
+
+@source.command("disable")
+@click.argument("source_id")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    default="table",
+    help="Output format",
+)
+@click.pass_context
+def source_disable(ctx: click.Context, source_id: str, output_format: str) -> None:
+    """Disable a migrated source (mirrors PUT /api/sync/sources/<id>/enabled)."""
+    plugin = _resolve_cli_plugin(ctx, source_id)
+    storage = _require_storage(ctx)
+    try:
+        set_source_enabled_state(
+            source_id, storage, False, user_id=_SOURCE_DEFAULT_USER_ID
+        )
+    except SourceConfigError as error:
+        _abort_with(error.message)
+    _emit_config_view(
+        ctx, source_id, plugin, output_format, f"Disabled source '{source_id}'."
+    )
+
+
+@source.command("set")
+@click.argument("source_id")
+@click.argument("field_name")
+@click.argument("value")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    default="table",
+    help="Output format",
+)
+@click.pass_context
+def source_set(
+    ctx: click.Context,
+    source_id: str,
+    field_name: str,
+    value: str,
+    output_format: str,
+) -> None:
+    """Set a non-sensitive config field for a migrated source."""
+    plugin = _resolve_cli_plugin(ctx, source_id)
+    storage = _require_storage(ctx)
+
+    schema = {f.name: f for f in plugin.get_config_schema()}
+    field = schema.get(field_name)
+    if field is None:
+        _abort_with(f"Unknown field: {field_name}")
+    if field.sensitive:
+        _abort_with(f"Field '{field_name}' is sensitive — use 'source set-secret'")
+
+    coerced = _coerce_set_value(field, value)
+    try:
+        update_source_config_values(
+            source_id,
+            plugin,
+            storage,
+            {field_name: coerced},
+            user_id=_SOURCE_DEFAULT_USER_ID,
+        )
+    except SourceConfigError as error:
+        _abort_with(error.message)
+    _emit_config_view(
+        ctx,
+        source_id,
+        plugin,
+        output_format,
+        f"Set {source_id}.{field_name} = {coerced!r}",
+    )
+
+
+@source.command("set-secret")
+@click.argument("source_id")
+@click.argument("field_name")
+@click.pass_context
+def source_set_secret(ctx: click.Context, source_id: str, field_name: str) -> None:
+    """Store a sensitive field's value.
+
+    Reads from the ``RECOMMENDINATOR_SECRET_VALUE`` environment variable for
+    non-interactive use (env vars are not exposed in shell history or in the
+    process list to other users); otherwise prompts with hidden input.
+    """
+    plugin = _resolve_cli_plugin(ctx, source_id)
+    storage = _require_storage(ctx)
+
+    value = os.environ.get(_SECRET_VALUE_ENV)
+    if value is None:
+        value = click.prompt(
+            f"New value for {source_id}.{field_name}",
+            hide_input=True,
+            confirmation_prompt=False,
+        )
+
+    try:
+        set_source_secret_value(
+            source_id,
+            plugin,
+            storage,
+            field_name,
+            value,
+            user_id=_SOURCE_DEFAULT_USER_ID,
+        )
+    except SourceConfigError as error:
+        _abort_with(error.message)
+    click.echo(f"Stored secret for {source_id}.{field_name}.")
+
+
+@source.command("clear-secret")
+@click.argument("source_id")
+@click.argument("field_name")
+@click.pass_context
+def source_clear_secret(ctx: click.Context, source_id: str, field_name: str) -> None:
+    """Delete a sensitive field's stored value."""
+    plugin = _resolve_cli_plugin(ctx, source_id)
+    storage = _require_storage(ctx)
+    try:
+        clear_source_secret_value(
+            source_id,
+            plugin,
+            storage,
+            field_name,
+            user_id=_SOURCE_DEFAULT_USER_ID,
+        )
+    except SourceConfigError as error:
+        _abort_with(error.message)
+    click.echo(f"Cleared secret for {source_id}.{field_name}.")

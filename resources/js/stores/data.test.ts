@@ -5,6 +5,7 @@ import { ApiError } from '@/composables/useApi'
 
 const mockGet = vi.fn()
 const mockPost = vi.fn()
+const mockPut = vi.fn()
 const mockDelete = vi.fn()
 
 vi.mock('@/composables/useApi', () => ({
@@ -17,7 +18,7 @@ vi.mock('@/composables/useApi', () => ({
   useApi: () => ({
     get: (...args: unknown[]) => mockGet(...args),
     post: (...args: unknown[]) => mockPost(...args),
-    put: vi.fn(),
+    put: (...args: unknown[]) => mockPut(...args),
     patch: vi.fn(),
     delete: (...args: unknown[]) => mockDelete(...args),
     raw: vi.fn(),
@@ -30,6 +31,7 @@ describe('useDataStore', () => {
     vi.useFakeTimers()
     mockGet.mockReset()
     mockPost.mockReset()
+    mockPut.mockReset()
     mockDelete.mockReset()
   })
 
@@ -386,5 +388,171 @@ describe('useDataStore', () => {
     await pending
 
     expect(store.epicConnectMessage).toBe('Error: server returned 500')
+  })
+
+  describe('source config flows', () => {
+    it('loadSourceSchema fetches and caches the schema', async () => {
+      const schema = {
+        source_id: 'steam',
+        plugin: 'steam',
+        plugin_display_name: 'Steam',
+        fields: [
+          {
+            name: 'api_key',
+            field_type: 'str',
+            required: true,
+            default: null,
+            description: '',
+            sensitive: true,
+          },
+        ],
+      }
+      mockGet.mockResolvedValueOnce(schema)
+
+      const store = useDataStore()
+      const result = await store.loadSourceSchema('steam')
+
+      expect(mockGet).toHaveBeenCalledWith('/sync/sources/steam/schema')
+      expect(result).toEqual(schema)
+      expect(store.sourceSchemas.steam).toEqual(schema)
+    })
+
+    it('loadSourceConfig fetches and caches the config snapshot', async () => {
+      const cfg = {
+        source_id: 'steam',
+        plugin: 'steam',
+        plugin_display_name: 'Steam',
+        enabled: true,
+        migrated: true,
+        migrated_at: '2026-05-03T00:00:00Z',
+        field_values: { vanity_url: 'me' },
+        secret_status: { api_key: true },
+      }
+      mockGet.mockResolvedValueOnce(cfg)
+
+      const store = useDataStore()
+      const result = await store.loadSourceConfig('steam')
+
+      expect(mockGet).toHaveBeenCalledWith('/sync/sources/steam/config')
+      expect(result).toEqual(cfg)
+      expect(store.sourceConfigs.steam).toEqual(cfg)
+    })
+
+    it('migrateSource POSTs migrate and refreshes config', async () => {
+      const migration = {
+        source_id: 'steam',
+        migrated_at: 'now',
+        fields_migrated: ['vanity_url'],
+        secrets_migrated: ['api_key'],
+      }
+      const cfg = {
+        source_id: 'steam',
+        plugin: 'steam',
+        plugin_display_name: 'Steam',
+        enabled: true,
+        migrated: true,
+        migrated_at: 'now',
+        field_values: { vanity_url: 'me' },
+        secret_status: { api_key: true },
+      }
+      mockPost.mockResolvedValueOnce(migration)
+      mockGet.mockResolvedValueOnce(cfg)
+
+      const store = useDataStore()
+      await store.migrateSource('steam')
+
+      expect(mockPost).toHaveBeenCalledWith('/sync/sources/steam/migrate')
+      expect(mockGet).toHaveBeenCalledWith('/sync/sources/steam/config')
+      expect(store.sourceConfigs.steam).toEqual(cfg)
+    })
+
+    it('updateSourceConfig PUTs values and refreshes config', async () => {
+      mockPut.mockResolvedValueOnce({})
+      mockGet.mockResolvedValueOnce({
+        source_id: 'steam',
+        plugin: 'steam',
+        plugin_display_name: 'Steam',
+        enabled: true,
+        migrated: true,
+        migrated_at: 'now',
+        field_values: { vanity_url: 'new' },
+        secret_status: {},
+      })
+
+      const store = useDataStore()
+      await store.updateSourceConfig('steam', { vanity_url: 'new' })
+
+      expect(mockPut).toHaveBeenCalledWith('/sync/sources/steam/config', {
+        values: { vanity_url: 'new' },
+      })
+      expect(mockGet).toHaveBeenCalledWith('/sync/sources/steam/config')
+      expect(store.sourceConfigs.steam.field_values.vanity_url).toBe('new')
+    })
+
+    it('setSourceSecret PUTs the secret to the per-key endpoint', async () => {
+      mockPut.mockResolvedValueOnce(null)
+      mockGet.mockResolvedValueOnce({
+        source_id: 'steam',
+        plugin: 'steam',
+        plugin_display_name: 'Steam',
+        enabled: true,
+        migrated: true,
+        migrated_at: 'now',
+        field_values: {},
+        secret_status: { api_key: true },
+      })
+
+      const store = useDataStore()
+      await store.setSourceSecret('steam', 'api_key', 'rotated')
+
+      expect(mockPut).toHaveBeenCalledWith(
+        '/sync/sources/steam/secret/api_key',
+        { value: 'rotated' },
+      )
+      expect(store.sourceConfigs.steam.secret_status.api_key).toBe(true)
+    })
+
+    it('clearSourceSecret deletes secret and refreshes config', async () => {
+      mockDelete.mockResolvedValueOnce(null)
+      mockGet.mockResolvedValueOnce({
+        source_id: 'steam',
+        plugin: 'steam',
+        plugin_display_name: 'Steam',
+        enabled: true,
+        migrated: true,
+        migrated_at: 'now',
+        field_values: {},
+        secret_status: { api_key: false },
+      })
+
+      const store = useDataStore()
+      await store.clearSourceSecret('steam', 'api_key')
+
+      expect(mockDelete).toHaveBeenCalledWith(
+        '/sync/sources/steam/secret/api_key',
+      )
+      expect(store.sourceConfigs.steam.secret_status.api_key).toBe(false)
+    })
+
+    it('setSourceEnabled PUTs new enabled flag', async () => {
+      mockPut.mockResolvedValueOnce({
+        source_id: 'steam',
+        plugin: 'steam',
+        plugin_display_name: 'Steam',
+        enabled: false,
+        migrated: true,
+        migrated_at: 'now',
+        field_values: {},
+        secret_status: {},
+      })
+
+      const store = useDataStore()
+      await store.setSourceEnabled('steam', false)
+
+      expect(mockPut).toHaveBeenCalledWith('/sync/sources/steam/enabled', {
+        enabled: false,
+      })
+      expect(store.sourceConfigs.steam.enabled).toBe(false)
+    })
   })
 })

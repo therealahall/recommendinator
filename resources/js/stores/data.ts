@@ -10,6 +10,9 @@ import type {
   EnrichmentStatsResponse,
   EnrichmentJobStatusResponse,
   AuthStatusResponse,
+  SourceSchemaResponse,
+  SourceConfigResponse,
+  SourceMigrationResponse,
 } from '@/types/api'
 
 export const useDataStore = defineStore('data', () => {
@@ -294,6 +297,76 @@ export const useDataStore = defineStore('data', () => {
     stopEnrichmentPolling()
   }
 
+  // Per-source config flows.
+
+  const sourceSchemas = ref<Record<string, SourceSchemaResponse>>({})
+  const sourceConfigs = ref<Record<string, SourceConfigResponse>>({})
+
+  async function loadSourceSchema(sourceId: string): Promise<SourceSchemaResponse> {
+    const schema = await api.get<SourceSchemaResponse>(
+      `/sync/sources/${encodeURIComponent(sourceId)}/schema`,
+    )
+    sourceSchemas.value = { ...sourceSchemas.value, [sourceId]: schema }
+    return schema
+  }
+
+  async function loadSourceConfig(sourceId: string): Promise<SourceConfigResponse> {
+    const config = await api.get<SourceConfigResponse>(
+      `/sync/sources/${encodeURIComponent(sourceId)}/config`,
+    )
+    sourceConfigs.value = { ...sourceConfigs.value, [sourceId]: config }
+    return config
+  }
+
+  async function migrateSource(sourceId: string): Promise<SourceMigrationResponse> {
+    const migration = await api.post<SourceMigrationResponse>(
+      `/sync/sources/${encodeURIComponent(sourceId)}/migrate`,
+    )
+    await loadSourceConfig(sourceId)
+    return migration
+  }
+
+  async function updateSourceConfig(
+    sourceId: string,
+    values: Record<string, unknown>,
+  ): Promise<void> {
+    await api.put(
+      `/sync/sources/${encodeURIComponent(sourceId)}/config`,
+      { values },
+    )
+    await loadSourceConfig(sourceId)
+  }
+
+  async function setSourceSecret(
+    sourceId: string,
+    key: string,
+    value: string,
+  ): Promise<void> {
+    await api.put(
+      `/sync/sources/${encodeURIComponent(sourceId)}/secret/${encodeURIComponent(key)}`,
+      { value },
+    )
+    await loadSourceConfig(sourceId)
+  }
+
+  async function clearSourceSecret(sourceId: string, key: string): Promise<void> {
+    await api.delete(
+      `/sync/sources/${encodeURIComponent(sourceId)}/secret/${encodeURIComponent(key)}`,
+    )
+    await loadSourceConfig(sourceId)
+  }
+
+  async function setSourceEnabled(
+    sourceId: string,
+    enabled: boolean,
+  ): Promise<void> {
+    const updated = await api.put<SourceConfigResponse>(
+      `/sync/sources/${encodeURIComponent(sourceId)}/enabled`,
+      { enabled },
+    )
+    sourceConfigs.value = { ...sourceConfigs.value, [sourceId]: updated }
+  }
+
   return {
     // State
     syncSources,
@@ -309,6 +382,8 @@ export const useDataStore = defineStore('data', () => {
     enrichmentStats,
     enrichmentJob,
     enrichmentEnabled,
+    sourceSchemas,
+    sourceConfigs,
     // Actions
     loadSyncSources,
     triggerSync,
@@ -322,6 +397,13 @@ export const useDataStore = defineStore('data', () => {
     stopEnrichment,
     resetEnrichment,
     checkEnrichmentStatus,
+    loadSourceSchema,
+    loadSourceConfig,
+    migrateSource,
+    updateSourceConfig,
+    setSourceSecret,
+    clearSourceSecret,
+    setSourceEnabled,
     cleanup,
   }
 })

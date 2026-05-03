@@ -45,8 +45,15 @@ Manages persistent storage of processed data and embeddings.
 - `content_items` table scoped by `user_id`
 - Type-specific detail tables (`book_details`, `movie_details`, `tv_show_details`, `video_game_details`)
 - `credentials` table for encrypted OAuth tokens and API keys (auto-migrated from config on startup)
+- `source_configs` table for non-sensitive per-source config that has been migrated from `config.yaml` via the web UI ("Migrate to DB" button); see [Source configuration precedence](#source-configuration-precedence) below
 - `enrichment_status` for tracking metadata enrichment
 - `core_memories`, `conversation_messages`, `preference_profiles` for chat system
+
+**Source configuration precedence:**
+Each ingestion source can live in one of two places:
+1. The YAML config file (`config/config.yaml`, the bootstrap default).
+2. The `source_configs` table (after the user clicks "Migrate to DB" in the data accordion or runs `recommendinator source migrate <id>`).
+When a `source_configs` row exists for a given source ID, it is authoritative — the YAML entry is ignored. Sensitive fields (any `ConfigField` with `sensitive=True`) always live in the encrypted `credentials` table, regardless of which side owns the rest of the config. `resolve_inputs` merges the two: DB or YAML for the non-secret fields, then encrypted credentials on top. The migration endpoint (`POST /api/sync/sources/<id>/migrate`) splits a YAML entry into both tables on first call and is idempotent on subsequent calls.
 
 **Cross-Source Deduplication:**
 Items imported from different sources (e.g., Steam and a personal blog) are automatically deduplicated by normalized title. When saving an item, the system first looks up an existing row by `(user_id, external_id, content_type)`. If found, it then checks for a *different* row with the same `(user_id, content_type, normalized_title)` and merges any such duplicate into the kept row. If no external_id match exists, it falls back to a direct normalized_title lookup to merge items from different sources. Merge rules: rating/review are filled from the duplicate only if the kept row is null; `date_completed` keeps the later date; genres/tags are merged additively; monotonic columns (seasons/episodes) keep the higher value; detail-table metadata is merged additively (existing keys preserved). Schema migrations re-normalize all titles and merge any duplicates exposed by the corrected normalization.
@@ -227,6 +234,14 @@ inputs:
     content_type: "movie"
     enabled: true
 ```
+
+**YAML is the bootstrap; the database is the long-term source of truth.**
+Once a source is migrated to the database (via the "Migrate to DB" button in
+the data accordion or `recommendinator source migrate <id>`), its YAML entry
+is ignored. Subsequent edits to the source — including enabling/disabling
+it — happen through the web UI or `recommendinator source` CLI commands,
+which write back to `source_configs` (non-sensitive fields) and `credentials`
+(sensitive fields). See [Source configuration precedence](#source-configuration-precedence).
 
 ## Extension Points
 

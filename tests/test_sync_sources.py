@@ -669,3 +669,178 @@ class TestValidateSourceConfigWithStorage:
         errors = validate_source_config("my_epic", config, storage=storage, user_id=1)
 
         assert errors == []
+
+
+@pytest.mark.usefixtures("_registry_with_fakes")
+class TestResolveInputsWithDbSourceConfig:
+    """Tests for resolve_inputs DB-backed source_configs precedence."""
+
+    @pytest.fixture()
+    def storage(self, tmp_path: Path) -> StorageManager:
+        """Create a StorageManager with a temp DB."""
+        return StorageManager(sqlite_path=tmp_path / "test.db")
+
+    def test_db_config_overrides_yaml_when_migrated(
+        self, storage: StorageManager
+    ) -> None:
+        """When source_configs has a row, DB values authoritative; yaml ignored."""
+        config = {
+            "inputs": {
+                "my_books": {
+                    "plugin": "fake_books",
+                    "enabled": True,
+                    "path": "/yaml/books.csv",
+                },
+            }
+        }
+        storage.upsert_source_config(
+            1, "my_books", "fake_books", {"path": "/db/books.csv"}, enabled=True
+        )
+
+        resolved = resolve_inputs(config, storage=storage)
+
+        assert len(resolved) == 1
+        assert resolved[0].config["path"] == "/db/books.csv"
+        assert resolved[0].source_id == "my_books"
+
+    def test_db_config_disabled_excludes_source(self, storage: StorageManager) -> None:
+        """A migrated source with enabled=False is excluded even when yaml is enabled."""
+        config = {
+            "inputs": {
+                "my_books": {
+                    "plugin": "fake_books",
+                    "enabled": True,
+                    "path": "/yaml/books.csv",
+                },
+            }
+        }
+        storage.upsert_source_config(
+            1, "my_books", "fake_books", {"path": "/db/books.csv"}, enabled=False
+        )
+
+        resolved = resolve_inputs(config, storage=storage)
+
+        assert resolved == []
+
+    def test_db_only_source_resolves(self, storage: StorageManager) -> None:
+        """A source that exists in DB but not yaml still resolves."""
+        config: dict[str, Any] = {"inputs": {}}
+        storage.upsert_source_config(
+            1, "books_only_in_db", "fake_books", {"path": "/db/x.csv"}, enabled=True
+        )
+
+        resolved = resolve_inputs(config, storage=storage)
+
+        assert len(resolved) == 1
+        assert resolved[0].source_id == "books_only_in_db"
+        assert resolved[0].config["path"] == "/db/x.csv"
+
+    def test_yaml_only_source_still_resolves_when_other_migrated(
+        self, storage: StorageManager
+    ) -> None:
+        """Mixed state: one yaml-only and one migrated source both resolve."""
+        config = {
+            "inputs": {
+                "yaml_books": {
+                    "plugin": "fake_books",
+                    "enabled": True,
+                    "path": "/yaml/yaml_books.csv",
+                },
+                "migrated_books": {
+                    "plugin": "fake_books",
+                    "enabled": True,
+                    "path": "/yaml/old_path.csv",
+                },
+            }
+        }
+        storage.upsert_source_config(
+            1,
+            "migrated_books",
+            "fake_books",
+            {"path": "/db/new_path.csv"},
+            enabled=True,
+        )
+
+        resolved = resolve_inputs(config, storage=storage)
+
+        by_id = {entry.source_id: entry for entry in resolved}
+        assert by_id["yaml_books"].config["path"] == "/yaml/yaml_books.csv"
+        assert by_id["migrated_books"].config["path"] == "/db/new_path.csv"
+
+    def test_db_config_strips_yaml_for_disabled_yaml_entry(
+        self, storage: StorageManager
+    ) -> None:
+        """When yaml has the source disabled but DB enables it, DB wins."""
+        config = {
+            "inputs": {
+                "my_books": {
+                    "plugin": "fake_books",
+                    "enabled": False,
+                    "path": "/yaml/books.csv",
+                },
+            }
+        }
+        storage.upsert_source_config(
+            1, "my_books", "fake_books", {"path": "/db/books.csv"}, enabled=True
+        )
+
+        resolved = resolve_inputs(config, storage=storage)
+
+        assert len(resolved) == 1
+        assert resolved[0].config["path"] == "/db/books.csv"
+
+    def test_db_config_merges_with_credentials(self, storage: StorageManager) -> None:
+        """Sensitive creds from credentials table merge over DB config dict."""
+        config: dict[str, Any] = {"inputs": {}}
+        storage.upsert_source_config(1, "my_games", "fake_games", {}, enabled=True)
+        storage.save_credential(1, "my_games", "api_key", "secret_from_creds")
+
+        resolved = resolve_inputs(config, storage=storage)
+
+        assert resolved[0].config["api_key"] == "secret_from_creds"
+
+    def test_get_available_sync_sources_includes_db_only(
+        self, storage: StorageManager
+    ) -> None:
+        """A DB-only source appears in get_available_sync_sources."""
+        config: dict[str, Any] = {"inputs": {}}
+        storage.upsert_source_config(
+            1, "db_only", "fake_books", {"path": "/x.csv"}, enabled=True
+        )
+
+        sources = get_available_sync_sources(config, storage=storage)
+
+        ids = {s.id for s in sources}
+        assert ids == {"db_only"}
+
+    def test_get_sync_handler_finds_db_only_source(
+        self, storage: StorageManager
+    ) -> None:
+        """get_sync_handler resolves a DB-only source by its id."""
+        config: dict[str, Any] = {"inputs": {}}
+        storage.upsert_source_config(
+            1, "db_only", "fake_books", {"path": "/x.csv"}, enabled=True
+        )
+
+        handler = get_sync_handler("db_only", config, storage=storage)
+
+        assert handler is not None
+        assert handler.source_id == "db_only"
+
+    def test_db_config_with_unregistered_plugin_is_skipped(
+        self, storage: StorageManager
+    ) -> None:
+        """DB row referencing an unknown plugin is silently skipped (not crashed).
+
+        Regression scenario: a plugin gets renamed or removed after the user
+        migrated their source. The DB row still references the old plugin
+        name. ``resolve_inputs`` must log + skip rather than raise.
+        """
+        config: dict[str, Any] = {"inputs": {}}
+        storage.upsert_source_config(
+            1, "ghost_source", "this_plugin_no_longer_exists", {}, enabled=True
+        )
+
+        resolved = resolve_inputs(config, storage=storage)
+
+        assert resolved == []

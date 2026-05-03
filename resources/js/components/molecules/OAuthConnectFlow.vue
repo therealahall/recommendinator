@@ -58,7 +58,17 @@ function submitCode() {
         <input :id="sanitizedId" type="text" v-model="codeInput" placeholder="Paste authorization code...">
         <button class="btn btn-primary" @click="submitCode">Connect</button>
       </div>
-      <div v-if="connectMessage" class="mt-2">{{ connectMessage }}</div>
+      <!--
+        Live region must be present in the DOM before content arrives,
+        otherwise some screen readers won't announce updates. Keep the
+        container persistent and let Vue reactivity update the text.
+      -->
+      <div
+        class="mt-2"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+      >{{ connectMessage }}</div>
     </div>
   </div>
 </template>
