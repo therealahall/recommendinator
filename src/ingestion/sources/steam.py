@@ -401,15 +401,9 @@ def _fetch_steam_games(
             if not game_name or game_name == f"Steam App {app_id}":
                 continue  # Skip games without names
 
-        # Determine status based on playtime
-        # Note: Steam doesn't provide completion data, and playtime is unreliable
-        # for determining completion (a 5-hour indie vs 100-hour RPG). We only
-        # distinguish between "never played" and "has been played". Users can
-        # manually mark games as completed via the UI.
-        if playtime_minutes == 0:
-            status = ConsumptionStatus.UNREAD
-        else:
-            status = ConsumptionStatus.CURRENTLY_CONSUMING
+        # Steam exposes no explicit "currently playing" or "completed" signal,
+        # so we never infer status from playtime. Users mark progress in the UI.
+        status = ConsumptionStatus.UNREAD
 
         # Convert playtime to hours for metadata
         playtime_hours = playtime_minutes / 60.0
