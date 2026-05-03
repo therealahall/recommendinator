@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.9.2 (2026-05-03)
+
+### Bug Fixes
+
+- **release**: Pass --no-vcs-release so psr does not pre-create release
+  ([`ae84c7b`](https://github.com/therealahall/recommendinator/commit/ae84c7bead4e0a16521f95902bf5847988366c0d))
+
+
 ## v0.9.1 (2026-05-03)
 
 ### Bug Fixes
