@@ -517,7 +517,7 @@ class TestEnrichmentManager:
         assert status.items_not_found == 1
 
 
-class TestEnrichmentProgressRegressions:
+class TestEnrichmentProgressRegression:
     """Regression tests for enrichment progress reporting (issue #60).
 
     Reported symptom: the web UI showed enrichment ``total_items`` jumping in
@@ -556,7 +556,7 @@ class TestEnrichmentProgressRegressions:
             }
         }
 
-    def test_total_items_set_before_first_batch(
+    def test_total_items_set_before_first_batch_regression(
         self,
         mock_storage: MagicMock,
         mock_registry: EnrichmentRegistry,
@@ -612,7 +612,7 @@ class TestEnrichmentProgressRegressions:
             user_id=None,
         )
 
-    def test_total_items_includes_not_found_when_retrying(
+    def test_total_items_includes_not_found_when_retrying_regression(
         self,
         mock_storage: MagicMock,
         mock_registry: EnrichmentRegistry,
