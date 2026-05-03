@@ -31,6 +31,20 @@ class SteamAPIError(Exception):
     pass
 
 
+def _scrub_request_error(error: requests.RequestException) -> str:
+    """Render a requests exception without leaking the URL/query string.
+
+    The default ``str()`` of ``requests.HTTPError`` includes the request URL,
+    which embeds the Steam Web API key (``?key=<api_key>&...``). The wrapped
+    exception flows into ``SourceError`` and from there into the sync job's
+    ``error_message`` field that the web API returns to the browser. Strip the
+    URL and surface only the HTTP status (when known) plus the exception type.
+    """
+    if isinstance(error, requests.HTTPError) and error.response is not None:
+        return f"HTTP {error.response.status_code}"
+    return type(error).__name__
+
+
 def get_steam_id_from_vanity_url(api_key: str, vanity_url: str) -> str | None:
     """Resolve Steam vanity URL to Steam ID.
 
@@ -53,8 +67,9 @@ def get_steam_id_from_vanity_url(api_key: str, vanity_url: str) -> str | None:
             return str(steamid) if steamid else None
         return None
     except requests.RequestException as error:
-        logger.error("Error resolving Steam vanity URL: %s", error)
-        raise SteamAPIError(f"Failed to resolve Steam ID: {error}") from error
+        scrubbed = _scrub_request_error(error)
+        logger.error("Error resolving Steam vanity URL: %s", scrubbed)
+        raise SteamAPIError(f"Failed to resolve Steam ID: {scrubbed}") from error
 
 
 def get_owned_games(
@@ -85,8 +100,9 @@ def get_owned_games(
         games = data.get("response", {}).get("games", [])
         return list(games) if games else []
     except requests.RequestException as error:
-        logger.error("Error fetching Steam games: %s", error)
-        raise SteamAPIError(f"Failed to fetch Steam games: {error}") from error
+        scrubbed = _scrub_request_error(error)
+        logger.error("Error fetching Steam games: %s", scrubbed)
+        raise SteamAPIError(f"Failed to fetch Steam games: {scrubbed}") from error
 
 
 class SteamPlugin(SourcePlugin):

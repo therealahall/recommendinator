@@ -631,3 +631,102 @@ class TestSteamTwoPassRegression:
         assert "Fetching library..." in phases
         assert "Alpha" in phases
         assert "Beta" in phases
+
+
+class TestSteamApiKeyScrubbingRegression:
+    """Regression tests for Steam API key leaking via error messages.
+
+    Bug: ``requests.HTTPError.__str__`` includes the full request URL, which
+    for Steam Web API calls embeds ``?key=<api_key>`` in the query string. The
+    plugin wrapped the exception verbatim as ``SteamAPIError(f'... {error}')``
+    and again as ``SourceError(self.name, str(error))``. ``SourceError``
+    propagates into ``SyncJob.error_message``, which the web API returns to
+    the browser and writes to logs — exposing the user's Steam API key.
+
+    Root cause: `f"... {error}"` interpolation called the default
+    ``RequestException.__str__``, which contains the full URL (including the
+    ``key`` query parameter) for HTTPErrors raised by ``raise_for_status()``.
+
+    Fix: ``_scrub_request_error`` renders only ``HTTP <status>`` for HTTP
+    errors and the bare exception class name for transport errors, before the
+    string ever reaches ``SteamAPIError`` or any logger.
+    """
+
+    @patch("src.ingestion.sources.steam.requests.get")
+    def test_vanity_url_http_error_does_not_leak_api_key(self, mock_get: Mock) -> None:
+        """HTTPError on vanity resolution surfaces only the status code."""
+        api_key = "SECRET_STEAM_KEY_123"
+        url_with_key = (
+            "https://api.steampowered.com/ISteamUser/ResolveVanityURL/v0001/"
+            f"?key={api_key}&vanityurl=user"
+        )
+        response = Mock(spec=requests.Response)
+        response.status_code = 401
+        http_error = requests.HTTPError(
+            f"401 Client Error: UNAUTHORIZED for url: {url_with_key}",
+            response=response,
+        )
+        response.raise_for_status = Mock(side_effect=http_error)
+        mock_get.return_value = response
+
+        with pytest.raises(SteamAPIError) as exc_info:
+            get_steam_id_from_vanity_url(api_key, "user")
+
+        message = str(exc_info.value)
+        assert api_key not in message
+        assert "HTTP 401" in message
+
+    @patch("src.ingestion.sources.steam.requests.get")
+    def test_owned_games_http_error_does_not_leak_api_key(self, mock_get: Mock) -> None:
+        """HTTPError on owned-games fetch surfaces only the status code."""
+        api_key = "SECRET_STEAM_KEY_456"
+        url_with_key = (
+            "https://api.steampowered.com/IPlayerService/GetOwnedGames/v0001/"
+            f"?key={api_key}&steamid=76561198000000000"
+        )
+        response = Mock(spec=requests.Response)
+        response.status_code = 503
+        http_error = requests.HTTPError(
+            f"503 Server Error: Service Unavailable for url: {url_with_key}",
+            response=response,
+        )
+        response.raise_for_status = Mock(side_effect=http_error)
+        mock_get.return_value = response
+
+        with pytest.raises(SteamAPIError) as exc_info:
+            get_owned_games(api_key, "76561198000000000")
+
+        message = str(exc_info.value)
+        assert api_key not in message
+        assert "HTTP 503" in message
+
+    @patch("src.ingestion.sources.steam.requests.get")
+    def test_transport_error_surfaces_only_exception_type(self, mock_get: Mock) -> None:
+        """Connection errors surface only the exception class, not message text."""
+        api_key = "SECRET_STEAM_KEY_789"
+        mock_get.side_effect = requests.ConnectionError(
+            f"Failed to connect; key={api_key} was in URL"
+        )
+
+        with pytest.raises(SteamAPIError) as exc_info:
+            get_owned_games(api_key, "76561198000000000")
+
+        message = str(exc_info.value)
+        assert api_key not in message
+        assert "ConnectionError" in message
+
+    @patch("src.ingestion.sources.steam.get_owned_games")
+    def test_source_error_propagates_scrubbed_message(
+        self, mock_get_games: Mock
+    ) -> None:
+        """End-to-end: SourceError raised through plugin.fetch carries no API key."""
+        api_key = "SECRET_STEAM_KEY_END2END"
+        mock_get_games.side_effect = SteamAPIError(
+            "Failed to fetch Steam games: HTTP 401"
+        )
+
+        plugin = SteamPlugin()
+        with pytest.raises(SourceError) as exc_info:
+            list(plugin.fetch({"api_key": api_key, "steam_id": "76561198000000000"}))
+
+        assert api_key not in str(exc_info.value)
