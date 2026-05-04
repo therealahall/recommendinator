@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import sqlite3
+import threading
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
@@ -104,6 +105,12 @@ class StorageManager:
         self.conflict_strategy = conflict_strategy
         self.source_priority = source_priority or []
         self._credential_key_path = self._resolve_key_path(sqlite_path)
+        # Serialises the read-conflict-write sequence in save_content_item
+        # and the encrypt-then-write sequence in save_credential. SQLite
+        # WAL allows concurrent readers but the cross-source dedup path
+        # and the credential rotation path both have a read-then-write
+        # gap that can race under parallel sync (max_workers > 1).
+        self._save_lock = threading.Lock()
 
         # Only initialize vector DB if AI is enabled and path provided.
         # Deferred import: chromadb is heavy (~500 MB+) and should not load
@@ -183,38 +190,39 @@ class StorageManager:
         Returns:
             Database ID of the saved item
         """
-        # Apply conflict resolution if item has an external ID
-        resolved_item = item
-        if item.id:
-            existing = self.get_content_item_by_external_id(
-                external_id=item.id,
-                content_type=ContentType(item.content_type),
-                user_id=user_id if user_id is not None else item.user_id,
-            )
-            if existing is not None:
-                resolved_item = resolve_conflict(
-                    existing=existing,
-                    incoming=item,
-                    strategy=self.conflict_strategy,
-                    source_priority=self.source_priority,
+        with self._save_lock:
+            # Apply conflict resolution if item has an external ID
+            resolved_item = item
+            if item.id:
+                existing = self.get_content_item_by_external_id(
+                    external_id=item.id,
+                    content_type=ContentType(item.content_type),
+                    user_id=user_id if user_id is not None else item.user_id,
                 )
+                if existing is not None:
+                    resolved_item = resolve_conflict(
+                        existing=existing,
+                        incoming=item,
+                        strategy=self.conflict_strategy,
+                        source_priority=self.source_priority,
+                    )
 
-        # Save to SQLite
-        db_id = self.sqlite_db.save_content_item(resolved_item, user_id=user_id)
+            # Save to SQLite
+            db_id = self.sqlite_db.save_content_item(resolved_item, user_id=user_id)
 
-        # Save embedding if provided and vector DB is enabled
-        if embedding is not None and self.vector_db:
-            # Use external_id if available, otherwise use db_id as string
-            content_id = item.id if item.id else f"db_{db_id}"
+            # Save embedding if provided and vector DB is enabled
+            if embedding is not None and self.vector_db:
+                # Use external_id if available, otherwise use db_id as string
+                content_id = item.id if item.id else f"db_{db_id}"
 
-            metadata = {
-                "content_type": get_enum_value(item.content_type),
-                "title": item.title,
-                "author": item.author or "",
-                "status": get_enum_value(item.status),
-                "user_id": str(user_id or item.user_id),
-            }
-            self.vector_db.add_embedding(content_id, embedding, metadata)
+                metadata = {
+                    "content_type": get_enum_value(item.content_type),
+                    "title": item.title,
+                    "author": item.author or "",
+                    "status": get_enum_value(item.status),
+                    "user_id": str(user_id or item.user_id),
+                }
+                self.vector_db.add_embedding(content_id, embedding, metadata)
 
         return db_id
 
@@ -1009,7 +1017,7 @@ class StorageManager:
             value: Plaintext value to encrypt and store.
         """
         encrypted = self._encryptor.encrypt(value)
-        with self.sqlite_db.connection() as conn:
+        with self._save_lock, self.sqlite_db.connection() as conn:
             save_credential(conn, user_id, source_id, key, encrypted)
 
     def get_credentials_for_source(
