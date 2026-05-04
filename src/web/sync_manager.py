@@ -25,6 +25,15 @@ class SyncStatus(str, Enum):
 
 
 @dataclass
+class _SourceProgress:
+    """Per-source progress slot for a multi-source sync job."""
+
+    items_processed: int = 0
+    total_items: int | None = None
+    current_item: str | None = None
+
+
+@dataclass
 class SyncJob:
     """Represents a sync job with its status and progress."""
 
@@ -38,9 +47,25 @@ class SyncJob:
     current_source: str | None = None  # Currently syncing source (for multi-source)
     error_message: str | None = None
     errors: list[str] = field(default_factory=list)
+    # Keyed by humanised source name so the UI can render one row per source.
+    source_progress: dict[str, _SourceProgress] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert job to dictionary for API response."""
+        sources = [
+            {
+                "source": name,
+                "items_processed": progress.items_processed,
+                "total_items": progress.total_items,
+                "current_item": progress.current_item,
+                "progress_percent": (
+                    int(progress.items_processed * 100 / progress.total_items)
+                    if progress.total_items and progress.total_items > 0
+                    else None
+                ),
+            }
+            for name, progress in sorted(self.source_progress.items())
+        ]
         return {
             "source": self.source,
             "status": self.status.value,
@@ -59,6 +84,7 @@ class SyncJob:
                 else None
             ),
             "error_count": len(self.errors),
+            "sources": sources,
         }
 
 
@@ -208,6 +234,11 @@ class SyncManager:
         """Update progress of the current job.
 
         Thread-safe method to update job progress from the sync function.
+        When ``current_source`` is provided, the per-source slot in
+        ``source_progress`` is updated and the top-level ``items_processed``
+        / ``total_items`` are recomputed as the sum across all sources.
+        When ``current_source`` is not provided, the top-level fields are
+        written directly (legacy single-source path).
 
         Args:
             items_processed: Number of items processed so far.
@@ -218,14 +249,44 @@ class SyncManager:
         with self._lock:
             if self._current_job is None:
                 return
-            if items_processed is not None:
-                self._current_job.items_processed = items_processed
-            if total_items is not None:
-                self._current_job.total_items = total_items
-            if current_item is not None:
-                self._current_job.current_item = current_item
+
             if current_source is not None:
+                slot = self._current_job.source_progress.setdefault(
+                    current_source, _SourceProgress()
+                )
+                if items_processed is not None:
+                    slot.items_processed = items_processed
+                if total_items is not None:
+                    slot.total_items = total_items
+                if current_item is not None:
+                    slot.current_item = current_item
                 self._current_job.current_source = current_source
+                # Top-level current_item is intentionally last-write-wins
+                # for the single-line "Currently syncing X" status banner;
+                # source_progress[*].current_item holds the per-source view.
+                if current_item is not None:
+                    self._current_job.current_item = current_item
+                # Recompute aggregates from the per-source map so the
+                # top-level counters reflect the sum across all sources
+                # rather than racing on the most recent worker's update.
+                self._current_job.items_processed = sum(
+                    progress.items_processed
+                    for progress in self._current_job.source_progress.values()
+                )
+                total_sum = sum(
+                    progress.total_items or 0
+                    for progress in self._current_job.source_progress.values()
+                )
+                # None until at least one source reported a known total —
+                # avoids divide-by-zero in progress_percent rendering.
+                self._current_job.total_items = total_sum if total_sum > 0 else None
+            else:
+                if items_processed is not None:
+                    self._current_job.items_processed = items_processed
+                if total_items is not None:
+                    self._current_job.total_items = total_items
+                if current_item is not None:
+                    self._current_job.current_item = current_item
 
     def add_error(self, error: str) -> None:
         """Add an error message to the current job.

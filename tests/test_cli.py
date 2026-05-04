@@ -6,6 +6,7 @@ import pytest
 from click.testing import CliRunner
 
 from src.cli.main import cli
+from src.ingestion.sync import SyncResult
 from src.llm.client import OllamaClient
 from src.llm.embeddings import EmbeddingGenerator
 from src.llm.recommendations import RecommendationGenerator
@@ -429,6 +430,289 @@ def test_update_command_steam_api_error(mock_components):
 
         assert result.exit_code == 0
         assert "Error" in result.output or "error" in result.output.lower()
+
+
+class TestUpdateWorkersFlag:
+    """Tests for the parallel-sync --workers flag (issue #45).
+
+    The CLI must (1) accept --workers N to override the worker pool size,
+    (2) fall back to config['sync']['max_workers'] when the flag is
+    omitted, (3) default to 4 when neither is configured, and (4) forward
+    the resolved value to execute_multi_source_sync so the underlying
+    ThreadPoolExecutor sizes correctly.
+    """
+
+    @staticmethod
+    def _config_with_sources(
+        sync_block: dict | None = None,
+    ) -> dict:
+        config: dict = {
+            "ollama": {
+                "base_url": "http://localhost:11434",
+                "model": "mistral:7b",
+                "embedding_model": "nomic-embed-text",
+            },
+            "storage": {
+                "database_path": "data/test.db",
+                "vector_db_path": "data/test_chroma",
+            },
+            "inputs": {
+                "steam": {
+                    "plugin": "steam",
+                    "api_key": "test_api_key",
+                    "steam_id": "76561198000000000",
+                    "enabled": True,
+                },
+                "goodreads": {
+                    "plugin": "goodreads",
+                    "path": "/tmp/goodreads.csv",
+                    "enabled": True,
+                },
+            },
+            "recommendations": {
+                "min_rating_for_preference": 4,
+            },
+        }
+        if sync_block is not None:
+            config["sync"] = sync_block
+        return config
+
+    def test_workers_flag_appears_in_help(self, mock_components: dict) -> None:
+        runner = CliRunner()
+        result = runner.invoke(cli, ["update", "--help"])
+
+        assert result.exit_code == 0
+        assert "--workers" in result.output
+
+    def test_workers_flag_overrides_config(self) -> None:
+        """--workers overrides config['sync']['max_workers']."""
+        config = self._config_with_sources(sync_block={"max_workers": 2})
+
+        captured: dict = {}
+
+        def fake_execute(
+            **kwargs: object,
+        ) -> list:
+            captured.update(kwargs)
+            sources_arg = kwargs.get("sources") or []
+            return [
+                SyncResult(source_name=plugin.display_name)
+                for plugin, _config in sources_arg  # type: ignore[misc]
+            ]
+
+        with (
+            patch("src.cli.main.load_config", return_value=config),
+            patch(
+                "src.cli.commands.execute_multi_source_sync",
+                side_effect=fake_execute,
+            ),
+            patch(
+                "src.ingestion.sources.steam.SteamPlugin.validate_config",
+                return_value=[],
+            ),
+            patch(
+                "src.ingestion.sources.goodreads.GoodreadsPlugin.validate_config",
+                return_value=[],
+            ),
+        ):
+            runner = CliRunner()
+            result = runner.invoke(cli, ["update", "--workers", "8"])
+
+        assert result.exit_code == 0, result.output
+        assert captured["max_workers"] == 8
+
+    def test_workers_falls_back_to_config(self) -> None:
+        """Without --workers, config['sync']['max_workers'] is used."""
+        config = self._config_with_sources(sync_block={"max_workers": 6})
+
+        captured: dict = {}
+
+        def fake_execute(**kwargs: object) -> list:
+            captured.update(kwargs)
+            sources_arg = kwargs.get("sources") or []
+            return [
+                SyncResult(source_name=plugin.display_name)
+                for plugin, _config in sources_arg  # type: ignore[misc]
+            ]
+
+        with (
+            patch("src.cli.main.load_config", return_value=config),
+            patch(
+                "src.cli.commands.execute_multi_source_sync",
+                side_effect=fake_execute,
+            ),
+            patch(
+                "src.ingestion.sources.steam.SteamPlugin.validate_config",
+                return_value=[],
+            ),
+            patch(
+                "src.ingestion.sources.goodreads.GoodreadsPlugin.validate_config",
+                return_value=[],
+            ),
+        ):
+            runner = CliRunner()
+            result = runner.invoke(cli, ["update"])
+
+        assert result.exit_code == 0, result.output
+        assert captured["max_workers"] == 6
+
+    def test_workers_defaults_to_four_when_unset(self) -> None:
+        """No --workers and no config => default 4."""
+        config = self._config_with_sources()  # no sync block
+
+        captured: dict = {}
+
+        def fake_execute(**kwargs: object) -> list:
+            captured.update(kwargs)
+            sources_arg = kwargs.get("sources") or []
+            return [
+                SyncResult(source_name=plugin.display_name)
+                for plugin, _config in sources_arg  # type: ignore[misc]
+            ]
+
+        with (
+            patch("src.cli.main.load_config", return_value=config),
+            patch(
+                "src.cli.commands.execute_multi_source_sync",
+                side_effect=fake_execute,
+            ),
+            patch(
+                "src.ingestion.sources.steam.SteamPlugin.validate_config",
+                return_value=[],
+            ),
+            patch(
+                "src.ingestion.sources.goodreads.GoodreadsPlugin.validate_config",
+                return_value=[],
+            ),
+        ):
+            runner = CliRunner()
+            result = runner.invoke(cli, ["update"])
+
+        assert result.exit_code == 0, result.output
+        assert captured["max_workers"] == 4
+
+    def test_workers_zero_rejected_by_click(self, mock_components: dict) -> None:
+        """Click's IntRange rejects values below 1."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["update", "--workers", "0"])
+
+        assert result.exit_code != 0
+        assert "Invalid value" in result.output or "out of range" in result.output
+
+    def test_workers_above_ceiling_rejected_by_click(
+        self, mock_components: dict
+    ) -> None:
+        """Click's IntRange(1,32) rejects values above 32."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["update", "--workers", "33"])
+
+        assert result.exit_code != 0
+        assert "Invalid value" in result.output or "out of range" in result.output
+
+    def test_workers_one_overrides_config_to_force_sequential(self) -> None:
+        """--workers 1 overrides a parallel config to force sequential sync."""
+        config = self._config_with_sources(sync_block={"max_workers": 8})
+
+        captured: dict = {}
+
+        def fake_execute(**kwargs: object) -> list:
+            captured.update(kwargs)
+            sources_arg = kwargs.get("sources") or []
+            return [
+                SyncResult(source_name=plugin.display_name)
+                for plugin, _config in sources_arg  # type: ignore[misc]
+            ]
+
+        with (
+            patch("src.cli.main.load_config", return_value=config),
+            patch(
+                "src.cli.commands.execute_multi_source_sync",
+                side_effect=fake_execute,
+            ),
+            patch(
+                "src.ingestion.sources.steam.SteamPlugin.validate_config",
+                return_value=[],
+            ),
+            patch(
+                "src.ingestion.sources.goodreads.GoodreadsPlugin.validate_config",
+                return_value=[],
+            ),
+        ):
+            runner = CliRunner()
+            result = runner.invoke(cli, ["update", "--workers", "1"])
+
+        assert result.exit_code == 0, result.output
+        assert captured["max_workers"] == 1
+
+    def test_workers_non_integer_config_falls_back_to_default(self) -> None:
+        """Non-integer config['sync']['max_workers'] falls back to 4."""
+        config = self._config_with_sources(sync_block={"max_workers": "banana"})
+
+        captured: dict = {}
+
+        def fake_execute(**kwargs: object) -> list:
+            captured.update(kwargs)
+            sources_arg = kwargs.get("sources") or []
+            return [
+                SyncResult(source_name=plugin.display_name)
+                for plugin, _config in sources_arg  # type: ignore[misc]
+            ]
+
+        with (
+            patch("src.cli.main.load_config", return_value=config),
+            patch(
+                "src.cli.commands.execute_multi_source_sync",
+                side_effect=fake_execute,
+            ),
+            patch(
+                "src.ingestion.sources.steam.SteamPlugin.validate_config",
+                return_value=[],
+            ),
+            patch(
+                "src.ingestion.sources.goodreads.GoodreadsPlugin.validate_config",
+                return_value=[],
+            ),
+        ):
+            runner = CliRunner()
+            result = runner.invoke(cli, ["update"])
+
+        assert result.exit_code == 0, result.output
+        assert captured["max_workers"] == 4
+
+    def test_workers_config_above_ceiling_clamped(self) -> None:
+        """A config-driven max_workers above 32 is clamped to 32."""
+        config = self._config_with_sources(sync_block={"max_workers": 9999})
+
+        captured: dict = {}
+
+        def fake_execute(**kwargs: object) -> list:
+            captured.update(kwargs)
+            sources_arg = kwargs.get("sources") or []
+            return [
+                SyncResult(source_name=plugin.display_name)
+                for plugin, _config in sources_arg  # type: ignore[misc]
+            ]
+
+        with (
+            patch("src.cli.main.load_config", return_value=config),
+            patch(
+                "src.cli.commands.execute_multi_source_sync",
+                side_effect=fake_execute,
+            ),
+            patch(
+                "src.ingestion.sources.steam.SteamPlugin.validate_config",
+                return_value=[],
+            ),
+            patch(
+                "src.ingestion.sources.goodreads.GoodreadsPlugin.validate_config",
+                return_value=[],
+            ),
+        ):
+            runner = CliRunner()
+            result = runner.invoke(cli, ["update"])
+
+        assert result.exit_code == 0, result.output
+        assert captured["max_workers"] == 32
 
 
 # ---------------------------------------------------------------------------

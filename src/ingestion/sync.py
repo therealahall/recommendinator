@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -33,6 +34,39 @@ class SyncResult:
     items_synced: int = 0
     total_items: int = 0
     errors: list[str] = field(default_factory=list)
+
+
+# Hard ceiling on the parallel-sync worker pool. Bounds both the CLI flag
+# (via Click IntRange) and the config-file path so a malicious or
+# misconfigured config.yaml cannot exhaust OS thread limits.
+MAX_WORKERS_CEILING = 32
+
+
+def resolve_max_workers(
+    config: dict[str, Any] | None,
+    override: int | None = None,
+    default: int = 4,
+) -> int:
+    """Resolve the parallel-sync worker count from override + config + default.
+
+    Order of precedence: ``override`` (typically a CLI flag) wins; otherwise
+    ``config['sync']['max_workers']`` is used; otherwise ``default``. The
+    result is always clamped to ``[1, MAX_WORKERS_CEILING]``. Non-integer
+    config values fall back to ``default`` rather than raising — this path
+    runs on every sync invocation, so the function must not crash on a
+    malformed config.
+    """
+
+    def _clamp(value: int) -> int:
+        return max(1, min(MAX_WORKERS_CEILING, value))
+
+    if override is not None:
+        return _clamp(override)
+    sync_config = (config or {}).get("sync") or {}
+    try:
+        return _clamp(int(sync_config.get("max_workers", default)))
+    except (TypeError, ValueError):
+        return default
 
 
 def execute_sync(
@@ -190,29 +224,44 @@ def execute_multi_source_sync(
     error_callback: Callable[[str], None] | None = None,
     mark_for_enrichment: bool = False,
     user_id: int = 1,
+    max_workers: int = 1,
 ) -> list[SyncResult]:
-    """Execute sync for multiple plugin sources sequentially.
+    """Execute sync for multiple plugin sources, optionally in parallel.
+
+    With ``max_workers <= 1`` (default), sources sync sequentially.
+    With ``max_workers > 1``, sources run on a ThreadPoolExecutor, capped
+    at ``min(max_workers, len(sources))``. Per-source rate limiting is
+    enforced inside each plugin, so cross-source parallelism is safe.
+
+    Thread-safety contract: when ``max_workers > 1``, ``progress_callback``
+    and ``error_callback`` may be invoked concurrently from multiple worker
+    threads. Both callers in this codebase honour that contract — the web
+    ``SyncManager`` takes a lock internally, and the CLI ``cli_progress``
+    serialises ``click.echo`` via its own lock — but any future caller
+    must do the same.
 
     Args:
         sources: List of (plugin, plugin_config) tuples to sync.
         storage_manager: Storage manager for saving items.
         embedding_generator: Optional embedding generator.
         use_embeddings: Whether to generate embeddings.
-        progress_callback: Optional callback for progress updates.
-        error_callback: Optional callback for error reporting.
+        progress_callback: Optional callback for progress updates. Must be
+            thread-safe when ``max_workers > 1``.
+        error_callback: Optional callback for error reporting. Must be
+            thread-safe when ``max_workers > 1``.
         mark_for_enrichment: Whether to mark items as needing enrichment after save.
         user_id: User ID for credential storage (default 1).
+        max_workers: Maximum sources to sync concurrently. ``1`` (default)
+            preserves the legacy sequential behaviour.
 
     Returns:
-        List of SyncResult, one per source.
+        List of SyncResult, one per source, in the same order as ``sources``.
     """
-    results: list[SyncResult] = []
 
-    for plugin, plugin_config in sources:
+    def _run_one(plugin: SourcePlugin, plugin_config: dict[str, Any]) -> SyncResult:
         logger.info("[SYNC] === Starting sync for source: %s ===", plugin.name)
-
         try:
-            result = execute_sync(
+            return execute_sync(
                 plugin=plugin,
                 plugin_config=plugin_config,
                 storage_manager=storage_manager,
@@ -222,27 +271,36 @@ def execute_multi_source_sync(
                 mark_for_enrichment=mark_for_enrichment,
                 user_id=user_id,
             )
-            results.append(result)
-
-            if result.errors and error_callback:
-                for error_message in result.errors:
-                    error_callback(error_message)
-
         except Exception as error:
             error_message = f"Sync failed for {plugin.name}: {error}"
             logger.error("[SYNC] %s", error_message)
-            if error_callback:
-                error_callback(error_message)
             source_id = plugin_config.get("_source_id")
             error_source_name = (
                 humanize_source_id(source_id) if source_id else plugin.display_name
             )
-            results.append(
-                SyncResult(
-                    source_name=error_source_name,
-                    errors=[error_message],
-                )
+            return SyncResult(
+                source_name=error_source_name,
+                errors=[error_message],
             )
+
+    effective_workers = min(max_workers, len(sources)) if sources else 1
+
+    if effective_workers > 1:
+        with ThreadPoolExecutor(
+            max_workers=effective_workers, thread_name_prefix="sync"
+        ) as executor:
+            futures = [
+                executor.submit(_run_one, plugin, plugin_config)
+                for plugin, plugin_config in sources
+            ]
+            results = [future.result() for future in futures]
+    else:
+        results = [_run_one(plugin, cfg) for plugin, cfg in sources]
+
+    if error_callback:
+        for result in results:
+            for error_message in result.errors:
+                error_callback(error_message)
 
     total_synced = sum(result.items_synced for result in results)
     logger.info("[SYNC] === Completed. Total items processed: %d ===", total_synced)

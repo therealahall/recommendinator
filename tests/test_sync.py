@@ -1,6 +1,7 @@
 """Tests for the shared sync executor."""
 
 import logging
+import threading
 from collections.abc import Iterator
 from typing import Any
 from unittest.mock import MagicMock
@@ -8,11 +9,80 @@ from unittest.mock import MagicMock
 import pytest
 
 from src.ingestion.plugin_base import SourceError, SourcePlugin
-from src.ingestion.sync import SyncResult, execute_multi_source_sync, execute_sync
+from src.ingestion.sync import (
+    MAX_WORKERS_CEILING,
+    SyncResult,
+    execute_multi_source_sync,
+    execute_sync,
+    resolve_max_workers,
+)
 from src.llm.embeddings import EmbeddingGenerator
 from src.models.content import ContentItem
 from src.storage.manager import StorageManager
 from tests.factories import make_item
+
+
+class TestResolveMaxWorkers:
+    """Unit tests for the shared max_workers resolution helper."""
+
+    def test_override_wins_over_config(self) -> None:
+        assert resolve_max_workers({"sync": {"max_workers": 9}}, override=2) == 2
+
+    def test_override_clamps_to_floor(self) -> None:
+        # Belt-and-braces: Click's IntRange already enforces this on the
+        # CLI side, but the helper must remain safe if any future caller
+        # passes a non-Click-validated value.
+        assert resolve_max_workers({}, override=0) == 1
+        assert resolve_max_workers({}, override=-5) == 1
+
+    def test_override_clamps_to_ceiling(self) -> None:
+        assert (
+            resolve_max_workers({}, override=MAX_WORKERS_CEILING + 100)
+            == MAX_WORKERS_CEILING
+        )
+
+    def test_config_value_used_when_no_override(self) -> None:
+        assert resolve_max_workers({"sync": {"max_workers": 12}}, override=None) == 12
+
+    def test_config_value_clamped_to_ceiling(self) -> None:
+        assert (
+            resolve_max_workers({"sync": {"max_workers": 9999}}, override=None)
+            == MAX_WORKERS_CEILING
+        )
+
+    def test_config_value_clamped_to_floor(self) -> None:
+        assert resolve_max_workers({"sync": {"max_workers": 0}}, override=None) == 1
+
+    def test_default_used_when_config_missing(self) -> None:
+        assert resolve_max_workers({}, override=None, default=6) == 6
+
+    def test_default_used_when_config_is_none(self) -> None:
+        assert resolve_max_workers(None, override=None, default=4) == 4
+
+    def test_non_integer_config_falls_back_to_default(self) -> None:
+        assert (
+            resolve_max_workers(
+                {"sync": {"max_workers": "banana"}}, override=None, default=4
+            )
+            == 4
+        )
+
+    def test_none_config_value_falls_back_to_default(self) -> None:
+        assert (
+            resolve_max_workers(
+                {"sync": {"max_workers": None}}, override=None, default=4
+            )
+            == 4
+        )
+
+    def test_float_config_value_truncates(self) -> None:
+        # int(7.9) = 7. Documents the cast behaviour rather than promises.
+        assert (
+            resolve_max_workers(
+                {"sync": {"max_workers": 7.9}}, override=None, default=4
+            )
+            == 7
+        )
 
 
 class TestSyncResult:
@@ -307,8 +377,12 @@ class TestExecuteMultiSourceSync:
         assert len(results) == 2
         assert results[0].items_synced == 0
         assert len(results[0].errors) == 1
+        assert "boom" in results[0].errors[0]
         assert results[1].items_synced == 1
-        error_callback.assert_called()
+        error_callback.assert_called_once()
+        (callback_message,), _ = error_callback.call_args
+        assert "failing" in callback_message
+        assert "boom" in callback_message
 
     def test_empty_sources(self) -> None:
         """Empty source list returns empty results."""
@@ -320,6 +394,143 @@ class TestExecuteMultiSourceSync:
         )
 
         assert results == []
+
+    def test_max_workers_default_runs_sequentially(self) -> None:
+        """Default max_workers=1 keeps the legacy sequential ordering."""
+        order: list[str] = []
+
+        def fetch_a(*_args: object, **_kwargs: object) -> Iterator[ContentItem]:
+            order.append("a")
+            return iter([make_item("A1")])
+
+        def fetch_b(*_args: object, **_kwargs: object) -> Iterator[ContentItem]:
+            order.append("b")
+            return iter([make_item("B1")])
+
+        plugin_a = MagicMock(spec=SourcePlugin)
+        plugin_a.name = "source_a"
+        plugin_a.display_name = "Source A"
+        plugin_a.fetch.side_effect = fetch_a
+
+        plugin_b = MagicMock(spec=SourcePlugin)
+        plugin_b.name = "source_b"
+        plugin_b.display_name = "Source B"
+        plugin_b.fetch.side_effect = fetch_b
+
+        storage = MagicMock(spec=StorageManager)
+
+        results = execute_multi_source_sync(
+            sources=[(plugin_a, {}), (plugin_b, {})],
+            storage_manager=storage,
+        )
+
+        assert order == ["a", "b"]
+        assert [result.source_name for result in results] == ["Source A", "Source B"]
+
+    def test_max_workers_runs_sources_concurrently(self) -> None:
+        """With max_workers>1, sources fetch in parallel via a thread pool."""
+        thread_count = 3
+        barrier = threading.Barrier(thread_count, timeout=5.0)
+
+        def make_fetch(label: str) -> Any:
+            def fetch(*_args: object, **_kwargs: object) -> Iterator[ContentItem]:
+                # Each source blocks until ALL sources reach the barrier;
+                # if execution were sequential, the second/third source
+                # would never start and the barrier would time out.
+                barrier.wait()
+                return iter([make_item(f"{label}1")])
+
+            return fetch
+
+        plugins = []
+        for index in range(thread_count):
+            plugin = MagicMock(spec=SourcePlugin)
+            plugin.name = f"src_{index}"
+            plugin.display_name = f"Src {index}"
+            plugin.fetch.side_effect = make_fetch(f"src_{index}")
+            plugins.append(plugin)
+
+        storage = MagicMock(spec=StorageManager)
+
+        results = execute_multi_source_sync(
+            sources=[(plugin, {}) for plugin in plugins],
+            storage_manager=storage,
+            max_workers=thread_count,
+        )
+
+        assert len(results) == thread_count
+        # Result ordering matches input ordering even though fetches ran
+        # concurrently and may have completed in any order.
+        assert [result.source_name for result in results] == [
+            f"Src {index}" for index in range(thread_count)
+        ]
+        assert all(result.items_synced == 1 for result in results)
+
+    def test_max_workers_capped_to_source_count(self) -> None:
+        """max_workers larger than len(sources) does not spawn extra threads."""
+        plugin = MagicMock(spec=SourcePlugin)
+        plugin.name = "only"
+        plugin.display_name = "Only"
+        plugin.fetch.return_value = iter([make_item("Solo")])
+
+        storage = MagicMock(spec=StorageManager)
+
+        results = execute_multi_source_sync(
+            sources=[(plugin, {})],
+            storage_manager=storage,
+            max_workers=99,
+        )
+
+        assert len(results) == 1
+        assert results[0].items_synced == 1
+
+    def test_parallel_isolates_per_source_failures(self) -> None:
+        """A failing source under parallel execution does not break others."""
+        # Both fetches block on the same barrier so we know they ran
+        # concurrently — neither runs until both have started.
+        barrier = threading.Barrier(2, timeout=5.0)
+
+        def fetch_failing(*_args: object, **_kwargs: object) -> Iterator[ContentItem]:
+            barrier.wait()
+            raise SourceError("failing", "boom")
+
+        def fetch_ok(*_args: object, **_kwargs: object) -> Iterator[ContentItem]:
+            barrier.wait()
+            return iter([make_item("ok")])
+
+        plugin_a = MagicMock(spec=SourcePlugin)
+        plugin_a.name = "failing"
+        plugin_a.display_name = "Failing"
+        plugin_a.fetch.side_effect = fetch_failing
+
+        plugin_b = MagicMock(spec=SourcePlugin)
+        plugin_b.name = "working"
+        plugin_b.display_name = "Working"
+        plugin_b.fetch.side_effect = fetch_ok
+
+        storage = MagicMock(spec=StorageManager)
+        error_callback = MagicMock()
+
+        results = execute_multi_source_sync(
+            sources=[(plugin_a, {}), (plugin_b, {})],
+            storage_manager=storage,
+            error_callback=error_callback,
+            max_workers=2,
+        )
+
+        assert len(results) == 2
+        # Order preserved despite parallel execution
+        assert results[0].source_name == "Failing"
+        assert results[1].source_name == "Working"
+        assert results[0].items_synced == 0
+        assert len(results[0].errors) == 1
+        assert "boom" in results[0].errors[0]
+        assert results[1].items_synced == 1
+        # Exactly one error was reported, and its message is the failing one.
+        error_callback.assert_called_once()
+        (callback_message,), _ = error_callback.call_args
+        assert "failing" in callback_message
+        assert "boom" in callback_message
 
     def test_mark_for_enrichment_passed_through(self) -> None:
         """mark_for_enrichment flag is passed to execute_sync."""
