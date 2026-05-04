@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import sys
+import threading
 import time
 import webbrowser
 from pathlib import Path
@@ -19,7 +20,11 @@ from src.cli.config import get_feature_flags
 from src.conversation.engine import ConversationEngine
 from src.conversation.profile import ProfileGenerator
 from src.enrichment.manager import EnrichmentManager
-from src.ingestion.sync import execute_sync
+from src.ingestion.sync import (
+    MAX_WORKERS_CEILING,
+    execute_multi_source_sync,
+    resolve_max_workers,
+)
 from src.models.content import (
     ConsumptionStatus,
     ContentItem,
@@ -54,6 +59,7 @@ from src.web.gog_auth import (
 )
 from src.ingestion.plugin_base import ConfigField, SourcePlugin
 from src.web.sync_sources import (
+    ResolvedInput,
     SourceConfigError,
     build_config_view,
     build_schema_view,
@@ -277,8 +283,18 @@ def recommend(
     default="all",
     help="Data source to update (use 'list' to see available sources, 'all' for everything)",
 )
+@click.option(
+    "--workers",
+    type=click.IntRange(1, MAX_WORKERS_CEILING),
+    default=None,
+    help=(
+        f"Number of sources to sync in parallel (1-{MAX_WORKERS_CEILING}). "
+        "Defaults to config.sync.max_workers (or 4 if unset). "
+        "Use 1 for sequential."
+    ),
+)
 @click.pass_context
-def update(ctx: click.Context, source: str) -> None:
+def update(ctx: click.Context, source: str, workers: int | None) -> None:
     """Update data from configured sources."""
     storage = ctx.obj["storage"]
     embedding_gen = ctx.obj["embedding_gen"]
@@ -349,64 +365,79 @@ def update(ctx: click.Context, source: str) -> None:
             if resolved_entry.source_id == source
         ]
 
-    click.echo(
-        f"Updating data from {', '.join(entry.source_id for entry in resolved)}..."
-    )
-
-    try:
-        total_count = 0
-
-        for resolved_entry in resolved:
-            validation_errors = validate_source_config(
-                resolved_entry.source_id, config, storage=storage
-            )
-            if validation_errors:
-                for error in validation_errors:
-                    click.echo(
-                        f"  {resolved_entry.plugin.display_name}: Error: {error}",
-                        err=True,
-                    )
-                continue
-
-            click.echo(
-                f"  Syncing {resolved_entry.plugin.display_name} ({resolved_entry.source_id})..."
-            )
-
-            def cli_progress(
-                items_processed: int,
-                total_items: int | None,
-                current_item: str | None,
-                current_source: str | None = None,
-            ) -> None:
-                if total_items and items_processed > 0 and items_processed % 10 == 0:
-                    click.echo(f"    Processed {items_processed}/{total_items}...")
-
-            try:
-                result = execute_sync(
-                    plugin=resolved_entry.plugin,
-                    plugin_config=resolved_entry.config,
-                    storage_manager=storage,
-                    embedding_generator=embedding_gen,
-                    use_embeddings=use_embeddings,
-                    progress_callback=cli_progress,
-                    mark_for_enrichment=auto_enrich,
-                )
-
+    # Filter out resolved entries that fail validation (preserves the
+    # per-source error reporting from the legacy sequential path).
+    valid: list[ResolvedInput] = []
+    for resolved_entry in resolved:
+        validation_errors = validate_source_config(
+            resolved_entry.source_id, config, storage=storage
+        )
+        if validation_errors:
+            for error in validation_errors:
                 click.echo(
-                    f"  Updated {result.items_synced} items from "
-                    f"{resolved_entry.plugin.display_name} ({resolved_entry.source_id})"
-                )
-                if result.errors:
-                    for error in result.errors:
-                        click.echo(f"    Warning: {error}", err=True)
-
-                total_count += result.items_synced
-
-            except Exception as error:
-                click.echo(
-                    f"  Error syncing {resolved_entry.plugin.display_name}: {error}",
+                    f"  {resolved_entry.plugin.display_name}: Error: {error}",
                     err=True,
                 )
+            continue
+        valid.append(resolved_entry)
+
+    if not valid:
+        click.echo(
+            "No items were updated. Check your configuration and source settings."
+        )
+        return
+
+    max_workers = resolve_max_workers(config, override=workers)
+
+    click.echo(
+        f"Updating data from {', '.join(entry.source_id for entry in valid)}"
+        + (f" (workers={max_workers})" if max_workers > 1 else "")
+        + "..."
+    )
+
+    # Click's echo is not thread-safe and progress messages from parallel
+    # workers can interleave; serialise output via a lock.
+    output_lock = threading.Lock()
+    last_reported: dict[str, int] = {}
+
+    def cli_progress(
+        items_processed: int,
+        total_items: int | None,
+        current_item: str | None,
+        current_source: str | None = None,
+    ) -> None:
+        if not (total_items and items_processed > 0 and items_processed % 10 == 0):
+            return
+        prefix = f"[{current_source}] " if current_source else ""
+        with output_lock:
+            # Suppress duplicate "Processed N/M" lines a worker may emit
+            # if its callback fires twice for the same threshold.
+            key = current_source or ""
+            if last_reported.get(key) == items_processed:
+                return
+            last_reported[key] = items_processed
+            click.echo(f"    {prefix}Processed {items_processed}/{total_items}...")
+
+    try:
+        results = execute_multi_source_sync(
+            sources=[(entry.plugin, entry.config) for entry in valid],
+            storage_manager=storage,
+            embedding_generator=embedding_gen,
+            use_embeddings=use_embeddings,
+            progress_callback=cli_progress,
+            mark_for_enrichment=auto_enrich,
+            max_workers=max_workers,
+        )
+
+        total_count = 0
+        for result, resolved_entry in zip(results, valid, strict=True):
+            click.echo(
+                f"  Updated {result.items_synced} items from "
+                f"{resolved_entry.plugin.display_name} ({resolved_entry.source_id})"
+            )
+            for error in result.errors:
+                click.echo(f"    Warning: {error}", err=True)
+            total_count += result.items_synced
 
         if total_count == 0:
             click.echo(
