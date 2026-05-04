@@ -1,5 +1,7 @@
 """Tests for background sync job manager."""
 
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
@@ -769,6 +771,203 @@ class TestSyncJobDefaults:
         assert job.current_item is None
         assert job.current_source is None
         assert job.error_message is None
+
+
+class TestSyncManagerPerSourceProgress:
+    """Per-source progress tracking for parallel multi-source sync (issue #45).
+
+    With max_workers > 1 in execute_multi_source_sync, multiple worker
+    threads call update_progress concurrently with different
+    ``current_source`` names. The single-slot current_item/current_source
+    pair raced and flickered. The fix maintains a per-source progress map
+    so each source has its own slot, the aggregate items_processed is the
+    sum across sources, and to_dict exposes a ``sources`` list.
+    """
+
+    @patch("src.web.sync_manager.threading.Thread")
+    def test_per_source_slot_isolated(self, mock_thread_class: MagicMock) -> None:
+        """Two sources can have their own current_item without overwriting each other."""
+        mock_thread_class.return_value = MagicMock()
+        manager = SyncManager()
+        manager.start_sync(source="all", sync_function=MagicMock(return_value=0))
+
+        manager.update_progress(
+            items_processed=3,
+            total_items=10,
+            current_item="Book A",
+            current_source="goodreads",
+        )
+        manager.update_progress(
+            items_processed=7,
+            total_items=20,
+            current_item="Game B",
+            current_source="steam",
+        )
+
+        status = manager.get_status()
+        sources = status["job"]["sources"]
+        by_source = {entry["source"]: entry for entry in sources}
+
+        assert by_source["goodreads"]["items_processed"] == 3
+        assert by_source["goodreads"]["total_items"] == 10
+        assert by_source["goodreads"]["current_item"] == "Book A"
+        assert by_source["steam"]["items_processed"] == 7
+        assert by_source["steam"]["total_items"] == 20
+        assert by_source["steam"]["current_item"] == "Game B"
+
+    @patch("src.web.sync_manager.threading.Thread")
+    def test_aggregate_items_processed_is_sum(
+        self, mock_thread_class: MagicMock
+    ) -> None:
+        """items_processed at the job level is the sum across sources."""
+        mock_thread_class.return_value = MagicMock()
+        manager = SyncManager()
+        manager.start_sync(source="all", sync_function=MagicMock(return_value=0))
+
+        manager.update_progress(items_processed=4, current_source="goodreads")
+        manager.update_progress(items_processed=11, current_source="steam")
+
+        status = manager.get_status()
+        assert status["job"]["items_processed"] == 15
+
+    @patch("src.web.sync_manager.threading.Thread")
+    def test_aggregate_total_items_is_sum(self, mock_thread_class: MagicMock) -> None:
+        """total_items at the job level is the sum of per-source totals."""
+        mock_thread_class.return_value = MagicMock()
+        manager = SyncManager()
+        manager.start_sync(source="all", sync_function=MagicMock(return_value=0))
+
+        manager.update_progress(total_items=10, current_source="goodreads")
+        manager.update_progress(total_items=25, current_source="steam")
+
+        status = manager.get_status()
+        assert status["job"]["total_items"] == 35
+
+    @patch("src.web.sync_manager.threading.Thread")
+    def test_progress_percent_uses_aggregate(
+        self, mock_thread_class: MagicMock
+    ) -> None:
+        """progress_percent reflects aggregate items_processed / total_items."""
+        mock_thread_class.return_value = MagicMock()
+        manager = SyncManager()
+        manager.start_sync(source="all", sync_function=MagicMock(return_value=0))
+
+        manager.update_progress(
+            items_processed=2, total_items=10, current_source="goodreads"
+        )
+        manager.update_progress(
+            items_processed=8, total_items=10, current_source="steam"
+        )
+
+        status = manager.get_status()
+        # 10 of 20 = 50%
+        assert status["job"]["progress_percent"] == 50
+
+    def test_concurrent_per_source_updates_no_loss(self) -> None:
+        """Concurrent per-source updates from many threads all land in the map.
+
+        No ``@patch`` here: the test workers run in a real thread pool and
+        patching ``threading.Thread`` would replace pool threads with
+        MagicMocks, deadlocking on the barrier.
+        """
+        manager = SyncManager()
+        # Plant a job directly so update_progress has a target without
+        # racing the spawned background thread or running through start_sync.
+        manager._current_job = SyncJob(
+            source="all", status=SyncStatus.RUNNING, started_at=datetime.now()
+        )
+
+        source_count = 8
+        items_per_source = 25
+        barrier = threading.Barrier(source_count)
+
+        def worker(source_name: str) -> None:
+            barrier.wait()
+            for index in range(items_per_source):
+                manager.update_progress(
+                    items_processed=index + 1,
+                    total_items=items_per_source,
+                    current_item=f"{source_name}_item_{index}",
+                    current_source=source_name,
+                )
+
+        # ThreadPoolExecutor's threads are unaffected by the
+        # ``src.web.sync_manager.threading.Thread`` patch (which would
+        # otherwise turn our test threads into MagicMocks because Python
+        # shares a single ``threading`` module across imports).
+        with ThreadPoolExecutor(max_workers=source_count) as pool:
+            futures = [pool.submit(worker, f"source_{i}") for i in range(source_count)]
+            for future in futures:
+                future.result()
+
+        status = manager.get_status()
+        assert len(status["job"]["sources"]) == source_count
+        # Final state: each source reached items_per_source
+        assert status["job"]["items_processed"] == source_count * items_per_source
+        assert status["job"]["total_items"] == source_count * items_per_source
+
+        # Each source's per-slot current_item must equal its own last
+        # write — proving the slots are isolated and not clobbering each
+        # other across threads.
+        by_source = {entry["source"]: entry for entry in status["job"]["sources"]}
+        for index in range(source_count):
+            source_name = f"source_{index}"
+            expected_item = f"{source_name}_item_{items_per_source - 1}"
+            assert by_source[source_name]["current_item"] == expected_item
+
+    @patch("src.web.sync_manager.threading.Thread")
+    def test_legacy_update_without_current_source_still_works(
+        self, mock_thread_class: MagicMock
+    ) -> None:
+        """Updates with no current_source set top-level fields directly."""
+        mock_thread_class.return_value = MagicMock()
+        manager = SyncManager()
+        manager.start_sync(source="steam", sync_function=MagicMock(return_value=0))
+
+        manager.update_progress(items_processed=42, total_items=100)
+
+        status = manager.get_status()
+        assert status["job"]["items_processed"] == 42
+        assert status["job"]["total_items"] == 100
+        assert status["job"]["sources"] == []
+
+    @patch("src.web.sync_manager.threading.Thread")
+    def test_per_source_progress_percent_over_100(
+        self, mock_thread_class: MagicMock
+    ) -> None:
+        """Per-source progress_percent reflects actual ratio, even if >100.
+
+        Some sources (e.g. paginated APIs that report a stale total) emit
+        more items than their initial total estimate. The contract is that
+        progress_percent reports what actually happened — clamping would
+        hide the discrepancy from observers.
+        """
+        mock_thread_class.return_value = MagicMock()
+        manager = SyncManager()
+        manager.start_sync(source="all", sync_function=MagicMock(return_value=0))
+
+        manager.update_progress(
+            items_processed=15, total_items=10, current_source="estimated"
+        )
+
+        status = manager.get_status()
+        sources = {entry["source"]: entry for entry in status["job"]["sources"]}
+        assert sources["estimated"]["progress_percent"] == 150
+
+    @patch("src.web.sync_manager.threading.Thread")
+    def test_sources_list_is_sorted(self, mock_thread_class: MagicMock) -> None:
+        """The ``sources`` list is sorted by source name for stable UI rendering."""
+        mock_thread_class.return_value = MagicMock()
+        manager = SyncManager()
+        manager.start_sync(source="all", sync_function=MagicMock(return_value=0))
+
+        manager.update_progress(items_processed=1, current_source="zeta")
+        manager.update_progress(items_processed=1, current_source="alpha")
+        manager.update_progress(items_processed=1, current_source="middle")
+
+        status = manager.get_status()
+        names = [entry["source"] for entry in status["job"]["sources"]]
+        assert names == ["alpha", "middle", "zeta"]
 
 
 class TestSyncManagerZeroItemsWithErrorsRegression:

@@ -14,7 +14,11 @@ from pydantic import BaseModel, Field
 from src import __version__ as APP_VERSION
 from src.cli.config import get_feature_flags
 from src.ingestion.plugin_base import SourcePlugin
-from src.ingestion.sync import execute_multi_source_sync
+from src.ingestion.sync import (
+    MAX_WORKERS_CEILING,
+    execute_multi_source_sync,
+    resolve_max_workers,
+)
 from src.models.content import (
     ConsumptionStatus,
     ContentItem,
@@ -95,6 +99,15 @@ class UpdateRequest(BaseModel):
     source: str = Field(
         ...,
         description="Data source (e.g. goodreads, steam, sonarr, radarr, or 'all')",
+    )
+    max_workers: int | None = Field(
+        None,
+        ge=1,
+        le=MAX_WORKERS_CEILING,
+        description=(
+            "Override config['sync']['max_workers'] for this invocation. "
+            "Mirrors the CLI's --workers flag."
+        ),
     )
 
 
@@ -188,6 +201,16 @@ class UserPreferenceResponse(BaseModel):
     theme: str = ""
 
 
+class SyncSourceProgressResponse(BaseModel):
+    """Per-source progress slot for a multi-source sync job."""
+
+    source: str
+    items_processed: int
+    total_items: int | None
+    current_item: str | None
+    progress_percent: int | None
+
+
 class SyncJobResponse(BaseModel):
     """Response model for sync job status."""
 
@@ -202,6 +225,7 @@ class SyncJobResponse(BaseModel):
     error_message: str | None
     progress_percent: int | None
     error_count: int
+    sources: list[SyncSourceProgressResponse] = []
 
 
 class SyncStatusResponse(BaseModel):
@@ -1191,6 +1215,8 @@ async def update_data(request: UpdateRequest) -> dict[str, Any]:
                 current_source=current_source,
             )
 
+        max_workers = resolve_max_workers(config, override=request.max_workers)
+
         results = execute_multi_source_sync(
             sources=source_pairs,
             storage_manager=storage,
@@ -1200,6 +1226,7 @@ async def update_data(request: UpdateRequest) -> dict[str, Any]:
             error_callback=sync_manager.add_error,
             mark_for_enrichment=auto_enrich,
             user_id=1,
+            max_workers=max_workers,
         )
         return sum(result.items_synced for result in results)
 

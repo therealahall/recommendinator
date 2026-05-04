@@ -1,6 +1,8 @@
 """Tests for web API endpoints."""
 
 import json
+import threading
+from collections.abc import Callable
 from dataclasses import fields
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -8,6 +10,7 @@ from unittest.mock import Mock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from src.ingestion.sync import SyncResult
 from src.llm.client import OllamaClient
 from src.llm.embeddings import EmbeddingGenerator
 from src.llm.recommendations import RecommendationGenerator
@@ -21,7 +24,11 @@ from src.web.enrichment_manager import WebEnrichmentManager
 from src.web.epic_auth import EpicAuthError
 from src.web.gog_auth import GogAuthError
 from src.web.state import AppState, app_state
-from src.web.sync_manager import SyncManager, reset_sync_manager
+from src.web.sync_manager import (
+    SyncManager,
+    get_sync_manager,
+    reset_sync_manager,
+)
 
 
 @pytest.fixture
@@ -1615,6 +1622,162 @@ class TestUpdateEndpoint409Conflict:
             detail = response.json()["detail"]
             assert "Sync already in progress" in detail
             assert "goodreads" in detail
+
+
+class TestUpdateEndpointParallelSync:
+    """Tests for max_workers wiring in POST /api/update (issue #45).
+
+    The endpoint must read ``config['sync']['max_workers']`` and forward
+    it to ``execute_multi_source_sync`` so the underlying ThreadPoolExecutor
+    sizes correctly. ``GET /api/sync/status`` must include the per-source
+    progress map in its response so the UI can render parallel progress.
+    """
+
+    @staticmethod
+    def _make_capture(
+        captured_kwargs: dict, completion: threading.Event
+    ) -> Callable[..., list[SyncResult]]:
+        """Build a fake execute_multi_source_sync that signals completion.
+
+        The endpoint hands the real call off to a daemon thread, so the
+        test must wait for that thread to invoke the patched function
+        before asserting on captured kwargs. A ``threading.Event`` set
+        from inside the fake is deterministic — no time-budget polling.
+        """
+
+        def fake_execute(**kwargs: object) -> list:
+            try:
+                captured_kwargs.update(kwargs)
+                sources_arg = kwargs.get("sources") or []
+                return [
+                    SyncResult(source_name=plugin.display_name)
+                    for plugin, _config in sources_arg  # type: ignore[misc]
+                ]
+            finally:
+                completion.set()
+
+        return fake_execute
+
+    def test_config_max_workers_forwarded_to_executor(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """config['sync']['max_workers'] is passed to execute_multi_source_sync."""
+        app_state.config["sync"] = {"max_workers": 7}
+
+        captured_kwargs: dict = {}
+        completion = threading.Event()
+        with (
+            patch(
+                "src.web.api.execute_multi_source_sync",
+                side_effect=self._make_capture(captured_kwargs, completion),
+            ),
+            patch(
+                "src.ingestion.sources.goodreads.GoodreadsPlugin.validate_config",
+                return_value=[],
+            ),
+        ):
+            response = client.post("/api/update", json={"source": "all"})
+            assert completion.wait(timeout=5.0), "background sync did not run"
+
+        assert response.status_code == 200
+        assert captured_kwargs.get("max_workers") == 7
+
+    def test_default_max_workers_is_four_when_unset(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """No config['sync'] block => max_workers defaults to 4."""
+        app_state.config.pop("sync", None)
+
+        captured_kwargs: dict = {}
+        completion = threading.Event()
+        with (
+            patch(
+                "src.web.api.execute_multi_source_sync",
+                side_effect=self._make_capture(captured_kwargs, completion),
+            ),
+            patch(
+                "src.ingestion.sources.goodreads.GoodreadsPlugin.validate_config",
+                return_value=[],
+            ),
+        ):
+            response = client.post("/api/update", json={"source": "all"})
+            assert completion.wait(timeout=5.0), "background sync did not run"
+
+        assert response.status_code == 200
+        assert captured_kwargs.get("max_workers") == 4
+
+    def test_request_body_max_workers_overrides_config(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """max_workers in the POST body overrides config (CLI parity)."""
+        app_state.config["sync"] = {"max_workers": 2}
+
+        captured_kwargs: dict = {}
+        completion = threading.Event()
+        with (
+            patch(
+                "src.web.api.execute_multi_source_sync",
+                side_effect=self._make_capture(captured_kwargs, completion),
+            ),
+            patch(
+                "src.ingestion.sources.goodreads.GoodreadsPlugin.validate_config",
+                return_value=[],
+            ),
+        ):
+            response = client.post(
+                "/api/update", json={"source": "all", "max_workers": 8}
+            )
+            assert completion.wait(timeout=5.0), "background sync did not run"
+
+        assert response.status_code == 200, response.text
+        assert captured_kwargs.get("max_workers") == 8
+
+    def test_request_body_max_workers_above_ceiling_rejected(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """Pydantic le=MAX_WORKERS_CEILING rejects max_workers above the ceiling."""
+        response = client.post("/api/update", json={"source": "all", "max_workers": 99})
+        assert response.status_code == 422
+
+    def test_sync_status_includes_per_source_progress(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """GET /api/sync/status emits a `sources` array with per-source progress."""
+        manager = get_sync_manager()
+        # Patch Thread so start_sync's daemon thread never runs and the
+        # planted per-source progress survives until /sync/status is hit.
+        with patch("src.web.sync_manager.threading.Thread"):
+            success, _ = manager.start_sync(source="all", sync_function=lambda _job: 0)
+        assert success
+
+        manager.update_progress(
+            items_processed=12,
+            total_items=20,
+            current_item="Book 12",
+            current_source="goodreads",
+        )
+        manager.update_progress(
+            items_processed=3,
+            total_items=10,
+            current_item="Game 3",
+            current_source="steam",
+        )
+
+        response = client.get("/api/sync/status")
+        assert response.status_code == 200
+        body = response.json()
+        sources = body["job"]["sources"]
+        # End-to-end serialisation contract: exactly the two sources we
+        # planted, sorted alphabetically (the SyncJob.to_dict guarantee).
+        assert len(sources) == 2
+        assert [entry["source"] for entry in sources] == ["goodreads", "steam"]
+        by_source = {entry["source"]: entry for entry in sources}
+        assert by_source["goodreads"]["items_processed"] == 12
+        assert by_source["goodreads"]["total_items"] == 20
+        assert by_source["goodreads"]["current_item"] == "Book 12"
+        assert by_source["goodreads"]["progress_percent"] == 60
+        assert by_source["steam"]["items_processed"] == 3
+        assert by_source["steam"]["progress_percent"] == 30
 
 
 # ---------------------------------------------------------------------------
