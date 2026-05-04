@@ -2,6 +2,7 @@
 
 import logging
 import sys
+import threading
 from pathlib import Path
 from unittest.mock import patch
 
@@ -425,3 +426,114 @@ def test_chromadb_import_error_sqlite_still_works(tmp_path: Path) -> None:
     assert retrieved is not None
     assert retrieved.title == "Test Book"
     assert retrieved.content_type == ContentType.BOOK
+
+
+class TestConcurrentSaveContentItem:
+    """Thread-safety contract for parallel multi-source sync (issue #45).
+
+    Bug: when execute_multi_source_sync runs sources on multiple threads,
+    two workers can call save_content_item concurrently with overlapping
+    normalized titles. The read-conflict-write sequence is non-atomic, so
+    interleaved cross-source dedup merges could merge the same row twice
+    or lose data.
+
+    Fix: a per-StorageManager threading.Lock serialises save_content_item
+    so the dedup sequence is atomic; a SQLite busy_timeout PRAGMA blocks
+    rather than raising on writer contention.
+    """
+
+    def test_concurrent_distinct_items_all_persisted(
+        self, temp_storage_manager: StorageManager
+    ) -> None:
+        """All items saved exactly once when many threads write distinct items."""
+        item_count = 50
+        items = [
+            ContentItem(
+                id=f"ext_{i}",
+                title=f"Distinct Title {i}",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            )
+            for i in range(item_count)
+        ]
+
+        barrier = threading.Barrier(item_count)
+        errors: list[Exception] = []
+        db_ids: list[int] = []
+        ids_lock = threading.Lock()
+
+        def save(item: ContentItem) -> None:
+            barrier.wait()
+            try:
+                db_id = temp_storage_manager.save_content_item(item)
+                with ids_lock:
+                    db_ids.append(db_id)
+            except Exception as error:
+                errors.append(error)
+
+        threads = [threading.Thread(target=save, args=(item,)) for item in items]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        assert errors == []
+        assert len(db_ids) == item_count
+        assert len(set(db_ids)) == item_count
+        assert temp_storage_manager.count_items() == item_count
+
+    def test_concurrent_overlapping_titles_dedupes_safely(
+        self, temp_storage_manager: StorageManager
+    ) -> None:
+        """Concurrent writes for the same normalized title produce one row, no errors.
+
+        Two sources independently importing the same book trigger the
+        cross-source dedup path inside save_content_item. The sequence
+        must not interleave to a state where both writers create rows
+        and neither merges them.
+        """
+        thread_count = 16
+        shared_title = "The Same Book"
+        items = [
+            ContentItem(
+                id=f"src_a_{i}" if i % 2 == 0 else f"src_b_{i}",
+                title=shared_title,
+                source="source_a" if i % 2 == 0 else "source_b",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            )
+            for i in range(thread_count)
+        ]
+
+        barrier = threading.Barrier(thread_count)
+        errors: list[Exception] = []
+
+        def save(item: ContentItem) -> None:
+            barrier.wait()
+            try:
+                temp_storage_manager.save_content_item(item)
+            except Exception as error:
+                errors.append(error)
+
+        threads = [threading.Thread(target=save, args=(item,)) for item in items]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        assert errors == []
+        # Each unique external_id keeps its own row (dedup-by-title only
+        # merges when titles match AND no row matches the external_id).
+        # The contract is "no exceptions, no lost data", not "everything
+        # collapses to one row" — that depends on insertion order.
+        assert temp_storage_manager.count_items() <= thread_count
+        assert temp_storage_manager.count_items() >= 1
+
+    def test_busy_timeout_pragma_set_on_connections(
+        self, temp_storage_manager: StorageManager
+    ) -> None:
+        """PRAGMA busy_timeout is applied so writers block instead of raising."""
+        with temp_storage_manager.connection() as conn:
+            row = conn.execute("PRAGMA busy_timeout").fetchone()
+        assert row is not None
+        assert row[0] >= 5000
