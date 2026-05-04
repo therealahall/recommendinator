@@ -29,7 +29,8 @@ Responsible for parsing and normalizing data from various sources.
 - `ContentItem.source` reflects the user-defined key name, not the plugin name, enabling per-instance tracking
 - Each plugin handles config validation, fetching, and rating normalization
 - Shared sync executor (`execute_multi_source_sync`) used by both CLI and web
-- Progress callbacks for long-running operations
+- **Parallel multi-source sync**: `execute_multi_source_sync` accepts `max_workers` (configured via `sync.max_workers`, default 4; CLI override `--workers N`). Each enabled source runs on its own thread in a `concurrent.futures.ThreadPoolExecutor`; per-source results preserve input ordering. Plugin-internal rate limits (e.g. GOG's `rate_limit_seconds`) remain enforced per source so cross-source parallelism is safe.
+- Progress callbacks for long-running operations; the web `SyncManager` aggregates per-source progress into a `sources` map for UI rendering
 - Generic CSV/JSON importers support `ignored` field and `seasons_watched` as a list of specific season numbers
 
 ### 2. Storage Layer (`src/storage/`)
@@ -62,6 +63,9 @@ Sensitive fields (any `ConfigField` with `sensitive=True`) always live in the en
 
 **Cross-Source Deduplication:**
 Items imported from different sources (e.g., Steam and a personal blog) are automatically deduplicated by normalized title. When saving an item, the system first looks up an existing row by `(user_id, external_id, content_type)`. If found, it then checks for a *different* row with the same `(user_id, content_type, normalized_title)` and merges any such duplicate into the kept row. If no external_id match exists, it falls back to a direct normalized_title lookup to merge items from different sources. Merge rules: rating/review are filled from the duplicate only if the kept row is null; `date_completed` keeps the later date; genres/tags are merged additively; monotonic columns (seasons/episodes) keep the higher value; detail-table metadata is merged additively (existing keys preserved). Schema migrations re-normalize all titles and merge any duplicates exposed by the corrected normalization.
+
+**Thread Safety:**
+SQLite runs in WAL mode and `_get_connection` issues `PRAGMA busy_timeout = 5000` so concurrent writers block rather than raising `SQLITE_BUSY`. The read-resolve-write sequence inside `StorageManager.save_content_item` (which performs the cross-source dedup merge) is serialised via a per-`StorageManager` `threading.Lock` so the parallel multi-source sync executor cannot interleave merges on the same normalized title.
 
 ### 3. LLM Interaction Layer (`src/llm/`) — Optional
 

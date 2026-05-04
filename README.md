@@ -169,6 +169,22 @@ DB-backed source entirely (clears every stored secret for that source).
 Sensitive fields are stored encrypted and never returned by the API; the
 UI shows a "set" / "unset" badge with **Replace** and **Clear** actions.
 
+#### Parallel Sync
+
+When syncing multiple sources, each runs on its own worker thread, so
+the total sync time is bounded by the slowest source rather than the
+sum of all sources. Configure the worker pool in `config.yaml`:
+
+```yaml
+sync:
+  max_workers: 4  # default; set to 1 for sequential
+```
+
+The CLI accepts `--workers N` to override per-invocation, e.g.
+`python3.11 -m src.cli update --workers 8`. Per-source rate limits
+(e.g. GOG's `rate_limit_seconds`) are enforced inside each plugin and
+remain untouched.
+
 ### Library Export
 
 Export your library data from the web UI:

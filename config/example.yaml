@@ -279,6 +279,15 @@ conversation:
     # detection. Enable when using conversation_model with a 3B parameter model.
     compact_mode: false
 
+# Sync (data ingestion) configuration
+sync:
+  # Number of data sources to sync in parallel. Each enabled source runs
+  # on its own worker thread inside execute_multi_source_sync, so total
+  # sync time scales with the slowest source rather than the sum of all
+  # sources. Set to 1 for sequential (legacy) behaviour. The CLI flag
+  # `--workers N` overrides this value per invocation.
+  max_workers: 4
+
 # Metadata enrichment configuration
 # Enriches content items with additional metadata (genres, tags, descriptions)
 # from external APIs in a background process.

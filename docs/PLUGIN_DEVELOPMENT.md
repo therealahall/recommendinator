@@ -417,6 +417,29 @@ class TestMyPlugin:
 10. **Respect the `ignored` field** - If your source provides a way to mark items as excluded, set `ignored=True` on the `ContentItem`. Use `parse_boolean_field()` from `generic_csv` for flexible boolean parsing.
 11. **Use list format for `seasons_watched`** - For TV shows, store `seasons_watched` as a list of specific season numbers (e.g., `[1, 2, 5, 6]`) in metadata. Use `parse_seasons_watched()` from `generic_csv` if converting from string input. A single integer is treated as a count for backward compatibility (e.g., `5` → `[1, 2, 3, 4, 5]`).
 
+## Thread Safety
+
+When the user enables parallel sync (`config.sync.max_workers > 1`), each
+enabled source runs on its own worker thread inside
+`execute_multi_source_sync`. To stay safe under that model:
+
+- **Plugin instances are independent.** The registry instantiates a
+  separate plugin object per source entry, so per-instance state is fine.
+- **Avoid mutable class-level state.** Class attributes are shared across
+  instances and across threads — keep state on `self`, not on the class.
+- **Per-source rate limiting is your responsibility.** Sleep / token-bucket
+  inside `fetch()` for the source you're talking to. Cross-source
+  parallelism is what the framework adds; intra-source pacing must remain.
+- **Storage writes are already serialised.** `StorageManager` takes a
+  lock around `save_content_item` and `save_credential`, so there is
+  nothing for plugins to coordinate on the persistence side.
+- **`progress_callback` is called from the worker thread.** The framework
+  guarantees the callback itself is thread-safe; plugins just call it as
+  documented.
+
+Stateless plugins (the existing CSV / Goodreads / Steam / Sonarr / Radarr
+implementations) need no changes for parallel sync.
+
 ## Handling Token Rotation (OAuth Plugins)
 
 If your plugin uses OAuth refresh tokens, the token may be rotated by the
