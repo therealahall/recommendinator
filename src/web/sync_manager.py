@@ -1,7 +1,9 @@
 """Background sync job manager for data source synchronization.
 
-Manages sync jobs that run in background threads, tracking status and
-preventing concurrent sync operations.
+Manages sync jobs that run in background threads. Multiple jobs can run
+concurrently as long as each is keyed by a distinct ``source`` label;
+the manager rejects a duplicate start request for a source whose job is
+still running.
 """
 
 import logging
@@ -84,6 +86,7 @@ class SyncJob:
                 else None
             ),
             "error_count": len(self.errors),
+            "errors": list(self.errors),
             "sources": sources,
         }
 
@@ -91,41 +94,53 @@ class SyncJob:
 class SyncManager:
     """Manages background sync jobs for data sources.
 
-    Only one sync job can run at a time. The manager tracks job status
-    and provides methods to start jobs and check their progress.
+    Multiple jobs can run at the same time as long as each is keyed by a
+    distinct ``source`` label. ``start_sync`` rejects a duplicate start
+    request for a source whose job is still in ``RUNNING`` state. Newer
+    completed/failed entries replace older ones for the same source so
+    ``get_status`` always reflects the latest result per source.
     """
 
+    # Cap on retained completed/failed jobs. Running jobs are never
+    # evicted (see ``_evict_history_locked``). Prevents an unauthenticated
+    # /api/update caller from growing ``_jobs`` without bound by
+    # triggering syncs with arbitrary source labels.
+    _MAX_TERMINAL_HISTORY = 50
+
     def __init__(self) -> None:
-        """Initialize the sync manager."""
         self._lock = threading.Lock()
-        self._current_job: SyncJob | None = None
-        self._thread: threading.Thread | None = None
+        self._jobs: dict[str, SyncJob] = {}
 
-    def is_running(self) -> bool:
-        """Check if a sync job is currently running.
+    def is_running(self, source: str | None = None) -> bool:
+        """Check whether a sync job is running.
 
-        Returns:
-            True if a job is running, False otherwise.
+        Args:
+            source: When provided, check only the job for this source label.
+                When omitted, return ``True`` if any job is currently running.
         """
         with self._lock:
-            return (
-                self._current_job is not None
-                and self._current_job.status == SyncStatus.RUNNING
-            )
+            if source is not None:
+                job = self._jobs.get(source)
+                return job is not None and job.status == SyncStatus.RUNNING
+            return any(job.status == SyncStatus.RUNNING for job in self._jobs.values())
 
     def get_status(self) -> dict[str, Any]:
-        """Get the current sync status.
-
-        Returns:
-            Dictionary with sync status information.
-        """
+        """Get the aggregate sync status across every tracked job."""
+        # Compute the running flag inside the lock so a concurrent
+        # ``_run_sync`` cannot transition a job between this snapshot and
+        # the status decision and make the response say "idle" while a
+        # job is still RUNNING. ``to_dict`` runs outside the lock — it
+        # reads but does not mutate, and the brief drift between snapshot
+        # and serialisation is acceptable for a polling endpoint.
         with self._lock:
-            if self._current_job is None:
-                return {"status": SyncStatus.IDLE.value, "job": None}
-            return {
-                "status": self._current_job.status.value,
-                "job": self._current_job.to_dict(),
-            }
+            jobs = list(self._jobs.values())
+            any_running = any(job.status == SyncStatus.RUNNING for job in jobs)
+        return {
+            "status": (
+                SyncStatus.RUNNING.value if any_running else SyncStatus.IDLE.value
+            ),
+            "jobs": [job.to_dict() for job in sorted(jobs, key=lambda j: j.source)],
+        }
 
     def start_sync(
         self,
@@ -133,52 +148,80 @@ class SyncManager:
         sync_function: Callable[[SyncJob], int],
         on_complete: Callable[[], None] | None = None,
     ) -> tuple[bool, str]:
-        """Start a background sync job.
+        """Start a background sync job keyed by ``source``.
+
+        A second start with the same ``source`` while the previous job is
+        still running is rejected. Different ``source`` values can run
+        concurrently.
 
         Args:
-            source: Name of the source being synced (e.g., "steam", "goodreads").
-            sync_function: Function that performs the sync. Should accept a SyncJob
-                parameter for progress updates and return the count of items processed.
-            on_complete: Optional callback to run after sync completes successfully.
+            source: Label that identifies the job (e.g. ``"Steam"`` or
+                ``"All Sources"``). Used as the dict key.
+            sync_function: Function that performs the sync. Should accept a
+                SyncJob parameter for progress updates and return the count
+                of items processed.
+            on_complete: Optional callback to run after sync completes
+                successfully.
 
         Returns:
-            Tuple of (success, message). Success is False if a job is already running.
+            Tuple of ``(success, message)``. Success is ``False`` if a job
+            for the same ``source`` is still running.
         """
         with self._lock:
-            if (
-                self._current_job is not None
-                and self._current_job.status == SyncStatus.RUNNING
-            ):
-                return False, f"Sync already in progress for {self._current_job.source}"
+            existing = self._jobs.get(source)
+            if existing is not None and existing.status == SyncStatus.RUNNING:
+                return False, f"Sync already in progress for {source}"
 
-            self._current_job = SyncJob(
+            self._jobs[source] = SyncJob(
                 source=source,
                 status=SyncStatus.RUNNING,
                 started_at=datetime.now(),
             )
+            # Eviction runs AFTER the new RUNNING job is inserted. The
+            # eviction filter excludes RUNNING jobs by status, so the
+            # freshly inserted entry cannot be the one removed even at
+            # cap. This ordering is load-bearing — moving the eviction
+            # call earlier or relaxing the RUNNING filter would risk
+            # evicting the job whose thread is about to read it.
+            self._evict_history_locked()
 
-        # Start background thread
-        self._thread = threading.Thread(
+        thread = threading.Thread(
             target=self._run_sync,
-            args=(sync_function, on_complete),
+            args=(source, sync_function, on_complete),
             daemon=True,
         )
-        self._thread.start()
+        thread.start()
 
         return True, f"Started sync for {source}"
 
+    def _evict_history_locked(self) -> None:
+        """Drop the oldest non-running jobs once history exceeds the cap.
+
+        Caller must already hold ``self._lock``.
+        """
+        terminal = [
+            (label, job)
+            for label, job in self._jobs.items()
+            if job.status != SyncStatus.RUNNING
+        ]
+        excess = len(terminal) - self._MAX_TERMINAL_HISTORY
+        if excess <= 0:
+            return
+        terminal.sort(
+            key=lambda pair: pair[1].completed_at or datetime.min,
+        )
+        for label, _ in terminal[:excess]:
+            self._jobs.pop(label, None)
+
     def _run_sync(
         self,
+        source: str,
         sync_function: Callable[[SyncJob], int],
         on_complete: Callable[[], None] | None = None,
     ) -> None:
-        """Run the sync function in a background thread.
-
-        Args:
-            sync_function: Function that performs the sync.
-            on_complete: Optional callback to run after sync completes successfully.
-        """
-        job = self._current_job
+        """Run the sync function in a background thread for ``source``."""
+        with self._lock:
+            job = self._jobs.get(source)
         if job is None:
             return
 
@@ -200,10 +243,7 @@ class SyncManager:
                 error_count = len(job.errors)
 
             if final_status == SyncStatus.COMPLETED:
-                logger.info(
-                    "Sync completed for %s: %d items processed", job.source, count
-                )
-                # Run completion callback only on true success
+                logger.info("Sync completed for %s: %d items processed", source, count)
                 if on_complete is not None:
                     try:
                         on_complete()
@@ -214,7 +254,7 @@ class SyncManager:
             else:
                 logger.warning(
                     "Sync for %s produced no items; marking failed (%d errors)",
-                    job.source,
+                    source,
                     error_count,
                 )
         except Exception:
@@ -222,81 +262,80 @@ class SyncManager:
                 job.status = SyncStatus.FAILED
                 job.completed_at = datetime.now()
                 job.error_message = "Sync failed due to an internal error"
-            logger.error("Sync failed for %s", job.source, exc_info=True)
+            logger.error("Sync failed for %s", source, exc_info=True)
 
     def update_progress(
         self,
+        source: str,
         items_processed: int | None = None,
         total_items: int | None = None,
         current_item: str | None = None,
         current_source: str | None = None,
     ) -> None:
-        """Update progress of the current job.
+        """Update progress on the job keyed by ``source``.
 
-        Thread-safe method to update job progress from the sync function.
-        When ``current_source`` is provided, the per-source slot in
-        ``source_progress`` is updated and the top-level ``items_processed``
-        / ``total_items`` are recomputed as the sum across all sources.
-        When ``current_source`` is not provided, the top-level fields are
-        written directly (legacy single-source path).
+        When ``current_source`` is provided, the per-source slot in the
+        job's ``source_progress`` map is updated and the top-level
+        ``items_processed`` / ``total_items`` are recomputed as the sum
+        across that job's sources. When ``current_source`` is not provided,
+        the top-level fields are written directly (legacy single-source
+        path).
 
         Args:
+            source: The job key (matches the ``source`` passed to
+                ``start_sync``).
             items_processed: Number of items processed so far.
             total_items: Total number of items to process.
             current_item: Name of the item currently being processed.
-            current_source: Name of the source currently being synced.
+            current_source: Name of the per-source slot within this job.
         """
         with self._lock:
-            if self._current_job is None:
+            job = self._jobs.get(source)
+            if job is None:
                 return
 
             if current_source is not None:
-                slot = self._current_job.source_progress.setdefault(
-                    current_source, _SourceProgress()
-                )
+                slot = job.source_progress.setdefault(current_source, _SourceProgress())
                 if items_processed is not None:
                     slot.items_processed = items_processed
                 if total_items is not None:
                     slot.total_items = total_items
                 if current_item is not None:
                     slot.current_item = current_item
-                self._current_job.current_source = current_source
+                job.current_source = current_source
                 # Top-level current_item is intentionally last-write-wins
-                # for the single-line "Currently syncing X" status banner;
+                # for the single-line "Currently syncing X" banner;
                 # source_progress[*].current_item holds the per-source view.
                 if current_item is not None:
-                    self._current_job.current_item = current_item
+                    job.current_item = current_item
                 # Recompute aggregates from the per-source map so the
                 # top-level counters reflect the sum across all sources
                 # rather than racing on the most recent worker's update.
-                self._current_job.items_processed = sum(
+                job.items_processed = sum(
                     progress.items_processed
-                    for progress in self._current_job.source_progress.values()
+                    for progress in job.source_progress.values()
                 )
                 total_sum = sum(
                     progress.total_items or 0
-                    for progress in self._current_job.source_progress.values()
+                    for progress in job.source_progress.values()
                 )
                 # None until at least one source reported a known total —
                 # avoids divide-by-zero in progress_percent rendering.
-                self._current_job.total_items = total_sum if total_sum > 0 else None
+                job.total_items = total_sum if total_sum > 0 else None
             else:
                 if items_processed is not None:
-                    self._current_job.items_processed = items_processed
+                    job.items_processed = items_processed
                 if total_items is not None:
-                    self._current_job.total_items = total_items
+                    job.total_items = total_items
                 if current_item is not None:
-                    self._current_job.current_item = current_item
+                    job.current_item = current_item
 
-    def add_error(self, error: str) -> None:
-        """Add an error message to the current job.
-
-        Args:
-            error: Error message to add.
-        """
+    def add_error(self, source: str, error: str) -> None:
+        """Append an error message to the job keyed by ``source``."""
         with self._lock:
-            if self._current_job is not None:
-                self._current_job.errors.append(error)
+            job = self._jobs.get(source)
+            if job is not None:
+                job.errors.append(error)
 
 
 # Global sync manager instance

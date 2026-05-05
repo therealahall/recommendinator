@@ -1597,31 +1597,75 @@ class TestExportEndpoint:
 
 
 class TestUpdateEndpoint409Conflict:
-    """Tests for POST /api/update 409 Conflict when sync is already running."""
+    """POST /api/update returns 409 when the SAME source is already syncing.
 
-    def test_update_returns_409_when_sync_already_running(
+    Distinct sources can run concurrently after issue #45, so the 409
+    only fires when ``is_running(<source_label>)`` reports True.
+    """
+
+    def test_update_returns_409_when_same_source_already_running(
         self, client: TestClient, mock_components: dict
     ) -> None:
-        """POST /api/update returns 409 when a sync job is already in progress.
-
-        Bug coverage: The 409 conflict response path was untested.
-        This verifies that when the SyncManager reports a running job,
-        the endpoint returns HTTP 409 with an informative error message.
-        """
+        """409 surfaces start_sync's atomic check-and-set rejection."""
         with patch("src.web.api.get_sync_manager") as mock_get_sync_manager:
             mock_manager = Mock(spec=SyncManager)
-            mock_manager.is_running.return_value = True
-            mock_manager.get_status.return_value = {
-                "job": {"source": "goodreads"},
-            }
+            mock_manager.start_sync.return_value = (
+                False,
+                "Sync already in progress for Goodreads",
+            )
             mock_get_sync_manager.return_value = mock_manager
 
-            response = client.post("/api/update", json={"source": "steam"})
+            with patch(
+                "src.ingestion.sources.goodreads.GoodreadsPlugin.validate_config",
+                return_value=[],
+            ):
+                response = client.post("/api/update", json={"source": "goodreads"})
 
             assert response.status_code == 409
             detail = response.json()["detail"]
             assert "Sync already in progress" in detail
-            assert "goodreads" in detail
+            assert "Goodreads" in detail
+            assert mock_manager.start_sync.call_args.args[0] == "Goodreads"
+
+    def test_update_allows_different_sources_concurrently(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """A second source is accepted while a different source is running.
+
+        Plants a real RUNNING job for Steam in the global SyncManager
+        before triggering a Goodreads sync. The endpoint must reject
+        only when the SAME label is running — different labels return
+        200 even with another sync still in flight.
+        """
+        # Plant a running Steam job so the manager genuinely has work in
+        # progress when the second POST lands.
+        from src.web.sync_manager import SyncJob, SyncStatus, get_sync_manager
+
+        manager = get_sync_manager()
+        with patch("src.web.sync_manager.threading.Thread"):
+            # Start Steam to keep the daemon thread out of the way; the
+            # real start_sync transition gives us a RUNNING job.
+            manager.start_sync(source="Steam", sync_function=lambda _job: 0)
+        assert manager.is_running("Steam") is True
+
+        with patch(
+            "src.ingestion.sources.goodreads.GoodreadsPlugin.validate_config",
+            return_value=[],
+        ):
+            # Drop the captured execute_multi_source_sync into a no-op so
+            # the second sync's daemon doesn't try to actually run.
+            with patch(
+                "src.web.api.execute_multi_source_sync",
+                return_value=[SyncJob(source="Goodreads", status=SyncStatus.RUNNING)],
+            ):
+                response = client.post("/api/update", json={"source": "goodreads"})
+
+        assert response.status_code == 200, response.text
+        assert "Sync started" in response.json()["message"]
+        # Manager now tracks both jobs; the Steam one is still running
+        # and the Goodreads one was added on top.
+        assert manager.is_running("Steam") is True
+        assert "Goodreads" in {job["source"] for job in manager.get_status()["jobs"]}
 
 
 class TestUpdateEndpointParallelSync:
@@ -1742,21 +1786,25 @@ class TestUpdateEndpointParallelSync:
     def test_sync_status_includes_per_source_progress(
         self, client: TestClient, mock_components: dict
     ) -> None:
-        """GET /api/sync/status emits a `sources` array with per-source progress."""
+        """GET /api/sync/status emits a `jobs[]` array with per-source progress."""
         manager = get_sync_manager()
         # Patch Thread so start_sync's daemon thread never runs and the
         # planted per-source progress survives until /sync/status is hit.
         with patch("src.web.sync_manager.threading.Thread"):
-            success, _ = manager.start_sync(source="all", sync_function=lambda _job: 0)
+            success, _ = manager.start_sync(
+                source="All Sources", sync_function=lambda _job: 0
+            )
         assert success
 
         manager.update_progress(
+            source="All Sources",
             items_processed=12,
             total_items=20,
             current_item="Book 12",
             current_source="goodreads",
         )
         manager.update_progress(
+            source="All Sources",
             items_processed=3,
             total_items=10,
             current_item="Game 3",
@@ -1766,9 +1814,10 @@ class TestUpdateEndpointParallelSync:
         response = client.get("/api/sync/status")
         assert response.status_code == 200
         body = response.json()
-        sources = body["job"]["sources"]
-        # End-to-end serialisation contract: exactly the two sources we
-        # planted, sorted alphabetically (the SyncJob.to_dict guarantee).
+        # New shape: top-level status + jobs[] (multi-job model).
+        assert body["status"] == "running"
+        assert len(body["jobs"]) == 1
+        sources = body["jobs"][0]["sources"]
         assert len(sources) == 2
         assert [entry["source"] for entry in sources] == ["goodreads", "steam"]
         by_source = {entry["source"]: entry for entry in sources}
@@ -1778,6 +1827,45 @@ class TestUpdateEndpointParallelSync:
         assert by_source["goodreads"]["progress_percent"] == 60
         assert by_source["steam"]["items_processed"] == 3
         assert by_source["steam"]["progress_percent"] == 30
+
+    def test_sync_status_idle_response_shape(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """GET /api/sync/status with no jobs returns the empty-list shape."""
+        # Ensure no leftover jobs from earlier tests in this suite.
+        from src.web.sync_manager import reset_sync_manager
+
+        reset_sync_manager()
+
+        response = client.get("/api/sync/status")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["status"] == "idle"
+        assert body["jobs"] == []
+
+    def test_sync_status_lists_multiple_concurrent_jobs(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """Two jobs keyed by different sources are both reported,
+        regardless of insertion order — proves the sort is applied."""
+        manager = get_sync_manager()
+        with patch("src.web.sync_manager.threading.Thread"):
+            # Insert in REVERSE alphabetical order so the assertion
+            # below proves sorting, not insertion order.
+            ok_steam, _ = manager.start_sync(
+                source="Steam", sync_function=lambda _job: 0
+            )
+            ok_goodreads, _ = manager.start_sync(
+                source="Goodreads", sync_function=lambda _job: 0
+            )
+        assert ok_steam and ok_goodreads
+
+        response = client.get("/api/sync/status")
+        assert response.status_code == 200
+        body = response.json()
+        sources_in_play = [job["source"] for job in body["jobs"]]
+        assert sources_in_play == ["Goodreads", "Steam"]
+        assert body["status"] == "running"
 
 
 # ---------------------------------------------------------------------------
