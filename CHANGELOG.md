@@ -1,6 +1,41 @@
 # CHANGELOG
 
 
+## v0.11.0 (2026-05-05)
+
+### Bug Fixes
+
+- **sync**: Scrub exception text from client errors and emit 1-based progress
+  ([`02354e7`](https://github.com/therealahall/recommendinator/commit/02354e7e4f2f514f06902ea1267e2c90f1c8ce93))
+
+### Documentation
+
+- **sync**: Document parallel sync, thread safety, and worker config (closes #45)
+  ([`fa4fd10`](https://github.com/therealahall/recommendinator/commit/fa4fd10c82833572e5778e9d302e3f5ba82aaa6f))
+
+### Features
+
+- **cli**: --workers flag for parallel sync
+  ([`d5f3430`](https://github.com/therealahall/recommendinator/commit/d5f34308f35e9c545c6aad2b456c449b2e262ef3))
+
+- **storage**: Thread-safe writes for parallel multi-source sync
+  ([`624e780`](https://github.com/therealahall/recommendinator/commit/624e780bd434d953e1e464be63215fa25fcb1b5c))
+
+- **sync**: Parallel multi-source sync with ThreadPoolExecutor
+  ([`84cdedf`](https://github.com/therealahall/recommendinator/commit/84cdedf7155a0cc156dad7f1487887f26fb7349e))
+
+- **web**: Per-source progress + max_workers override on /api/update
+  ([`ed58535`](https://github.com/therealahall/recommendinator/commit/ed585352653c7c654b8939f440771dc94997cf61))
+
+- **web-ui**: Per-accordion progress and concurrent sync triggers
+  ([`aee3843`](https://github.com/therealahall/recommendinator/commit/aee3843c0f367832dc5136947eae076590381e23))
+
+### Refactoring
+
+- **web**: Concurrent multi-job sync via SyncManager dict
+  ([`441bbb8`](https://github.com/therealahall/recommendinator/commit/441bbb8078f23f986cdb0ca90e812db4c383900a))
+
+
 ## v0.10.0 (2026-05-03)
 
 ### Chores
