@@ -225,14 +225,15 @@ class SyncJobResponse(BaseModel):
     error_message: str | None
     progress_percent: int | None
     error_count: int
+    errors: list[str] = []
     sources: list[SyncSourceProgressResponse] = []
 
 
 class SyncStatusResponse(BaseModel):
-    """Response model for overall sync status."""
+    """Response model for the aggregate sync status across every job."""
 
     status: str
-    job: SyncJobResponse | None = None
+    jobs: list[SyncJobResponse] = []
 
 
 class UserPreferenceUpdateRequest(BaseModel):
@@ -1125,7 +1126,8 @@ async def update_data(request: UpdateRequest) -> dict[str, Any]:
     """Start a background sync job for the specified data source.
 
     The sync runs in the background. Use GET /sync/status to monitor progress.
-    Only one sync job can run at a time.
+    Multiple sources can sync concurrently — only a duplicate request for
+    the same source label (while still running) is rejected with 409.
 
     Args:
         request: Update request specifying the source to sync.
@@ -1141,19 +1143,15 @@ async def update_data(request: UpdateRequest) -> dict[str, Any]:
         raise HTTPException(status_code=500, detail="Components not initialized")
 
     sync_manager = get_sync_manager()
-
-    # Check if a sync is already running
-    if sync_manager.is_running():
-        status = sync_manager.get_status()
-        job = status.get("job", {})
-        raise HTTPException(
-            status_code=409,
-            detail=f"Sync already in progress for {job.get('source', 'unknown')}. "
-            "Please wait for it to complete.",
-        )
-
-    # Validate source configuration before starting
     source = request.source
+    source_label = humanize_source_id(source) if source != "all" else "All Sources"
+
+    # Multiple sources can sync concurrently; the duplicate check happens
+    # atomically inside ``sync_manager.start_sync`` further down. Two
+    # POSTs racing to start the same source-label would both pass any
+    # pre-check here, so don't bother with one — let start_sync's
+    # check-and-set be the single source of truth.
+
     inputs_config = config.get("inputs", {})
 
     # Resolve which sources to sync (dynamic from config)
@@ -1209,11 +1207,15 @@ async def update_data(request: UpdateRequest) -> dict[str, Any]:
             current_source: str | None,
         ) -> None:
             sync_manager.update_progress(
+                source=source_label,
                 items_processed=items_processed,
                 total_items=total_items,
                 current_item=current_item,
                 current_source=current_source,
             )
+
+        def error_callback(error_message: str) -> None:
+            sync_manager.add_error(source_label, error_message)
 
         max_workers = resolve_max_workers(config, override=request.max_workers)
 
@@ -1223,7 +1225,7 @@ async def update_data(request: UpdateRequest) -> dict[str, Any]:
             embedding_generator=embedding_gen,
             use_embeddings=use_embeddings,
             progress_callback=progress_callback,
-            error_callback=sync_manager.add_error,
+            error_callback=error_callback,
             mark_for_enrichment=auto_enrich,
             user_id=1,
             max_workers=max_workers,
@@ -1261,7 +1263,6 @@ async def update_data(request: UpdateRequest) -> dict[str, Any]:
                 logger.info("[ENRICHMENT] Auto-start skipped: %s", message)
 
     # Start background sync
-    source_label = humanize_source_id(source) if source != "all" else "All Sources"
     success, message = sync_manager.start_sync(
         source_label, run_sync, on_complete=on_sync_complete
     )
@@ -1559,22 +1560,19 @@ async def set_source_enabled_endpoint(
 
 @router.get("/sync/status", response_model=SyncStatusResponse)
 async def get_sync_status() -> SyncStatusResponse:
-    """Get current sync job status.
+    """Get the current status of every tracked sync job.
 
     Returns:
-        Current sync status including job progress if running.
+        Aggregate sync status with one entry per job in the
+        ``jobs`` list. ``status`` is ``"running"`` when at least one job
+        is still running, otherwise ``"idle"``.
     """
     sync_manager = get_sync_manager()
     status_dict = sync_manager.get_status()
 
-    job_data = status_dict.get("job")
-    job_response = None
-    if job_data:
-        job_response = SyncJobResponse(**job_data)
-
     return SyncStatusResponse(
         status=status_dict["status"],
-        job=job_response,
+        jobs=[SyncJobResponse(**job) for job in status_dict.get("jobs", [])],
     )
 
 
