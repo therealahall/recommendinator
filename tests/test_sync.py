@@ -245,7 +245,37 @@ class TestExecuteSync:
         assert result.items_synced == 2
         assert result.total_items == 3
         assert len(result.errors) == 1
+        # Item-identifying summary is safe to expose; raw exception text
+        # ("db error") must NOT appear because plugin exceptions can carry
+        # credential bytes.
         assert "Bad" in result.errors[0]
+        assert "db error" not in result.errors[0]
+
+    def test_progress_callback_reports_one_based_item_number(self) -> None:
+        """Progress callback emits ``index + 1`` so the final iteration
+        shows ``items_processed == total_items`` instead of N-1/N."""
+        items = [make_item(f"Item {i}") for i in range(3)]
+        plugin = MagicMock(spec=SourcePlugin)
+        plugin.display_name = "TestPlugin"
+        plugin.fetch.return_value = iter(items)
+
+        storage = MagicMock(spec=StorageManager)
+        progress = MagicMock()
+
+        execute_sync(
+            plugin=plugin,
+            plugin_config={},
+            storage_manager=storage,
+            progress_callback=progress,
+        )
+
+        # In-loop calls report (1, 3, ...), (2, 3, ...), (3, 3, ...).
+        in_loop_counts = [
+            call.args[0]
+            for call in progress.call_args_list
+            if len(call.args) >= 2 and call.args[1] == 3 and call.args[2] is not None
+        ]
+        assert in_loop_counts == [1, 2, 3]
 
     def test_progress_callback_called(self) -> None:
         """Progress callback receives updates during sync."""
@@ -377,12 +407,15 @@ class TestExecuteMultiSourceSync:
         assert len(results) == 2
         assert results[0].items_synced == 0
         assert len(results[0].errors) == 1
-        assert "boom" in results[0].errors[0]
+        # The error mentions the plugin name but NOT the raw exception
+        # message — that text might carry credentials when plugins fail.
+        assert "failing" in results[0].errors[0]
+        assert "boom" not in results[0].errors[0]
         assert results[1].items_synced == 1
         error_callback.assert_called_once()
         (callback_message,), _ = error_callback.call_args
         assert "failing" in callback_message
-        assert "boom" in callback_message
+        assert "boom" not in callback_message
 
     def test_empty_sources(self) -> None:
         """Empty source list returns empty results."""
@@ -524,13 +557,16 @@ class TestExecuteMultiSourceSync:
         assert results[1].source_name == "Working"
         assert results[0].items_synced == 0
         assert len(results[0].errors) == 1
-        assert "boom" in results[0].errors[0]
+        # The error names the plugin but does NOT carry the raw exception
+        # message — credentials in plugin exceptions must not leak into
+        # /api/sync/status.
+        assert "failing" in results[0].errors[0]
+        assert "boom" not in results[0].errors[0]
         assert results[1].items_synced == 1
-        # Exactly one error was reported, and its message is the failing one.
         error_callback.assert_called_once()
         (callback_message,), _ = error_callback.call_args
         assert "failing" in callback_message
-        assert "boom" in callback_message
+        assert "boom" not in callback_message
 
     def test_mark_for_enrichment_passed_through(self) -> None:
         """mark_for_enrichment flag is passed to execute_sync."""

@@ -146,7 +146,10 @@ def execute_sync(
         content_type = get_enum_value(item.content_type)
         try:
             if progress_callback:
-                progress_callback(index, result.total_items, item.title, source_name)
+                # Report ``item_num`` (1-based) so the UI shows the current
+                # item number rather than the count of completed items.
+                # Final iteration produces ``items_processed == total_items``.
+                progress_callback(item_num, result.total_items, item.title, source_name)
 
             logger.debug(
                 "[SYNC] %s: Syncing %s %d/%d - %s",
@@ -195,9 +198,18 @@ def execute_sync(
                     )
 
         except Exception as error:
-            error_message = f"Failed to process '{item.title}': {error}"
-            logger.warning("[SYNC] %s: %s", source_name, error_message)
-            result.errors.append(error_message)
+            # Don't append the raw exception to ``result.errors`` — that
+            # list is exposed via /api/sync/status and plugin exceptions
+            # can carry credential text (e.g. an HTTP 401 echoing the
+            # Authorization header). Log the full detail server-side and
+            # return only the safe item-identifying summary to clients.
+            logger.warning(
+                "[SYNC] %s: Failed to process '%s': %s",
+                source_name,
+                item.title,
+                error,
+            )
+            result.errors.append(f"Failed to process '{item.title}'")
 
     embedding_summary = ""
     if use_embeddings and embedding_generator:
@@ -272,15 +284,17 @@ def execute_multi_source_sync(
                 user_id=user_id,
             )
         except Exception as error:
-            error_message = f"Sync failed for {plugin.name}: {error}"
-            logger.error("[SYNC] %s", error_message)
+            # See sibling note in execute_sync: keep raw exception text
+            # out of result.errors. Plugin failures can include
+            # credential bytes in their messages.
+            logger.error("[SYNC] Sync failed for %s: %s", plugin.name, error)
             source_id = plugin_config.get("_source_id")
             error_source_name = (
                 humanize_source_id(source_id) if source_id else plugin.display_name
             )
             return SyncResult(
                 source_name=error_source_name,
-                errors=[error_message],
+                errors=[f"Sync failed for {plugin.name}"],
             )
 
     effective_workers = min(max_workers, len(sources)) if sources else 1
