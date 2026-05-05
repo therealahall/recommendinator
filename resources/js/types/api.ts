@@ -140,6 +140,14 @@ export interface SourceCreateRequest {
   enabled: boolean
 }
 
+export interface SyncSourceProgressResponse {
+  source: string
+  items_processed: number
+  total_items: number | null
+  current_item: string | null
+  progress_percent: number | null
+}
+
 export interface SyncJobResponse {
   source: string
   status: string
@@ -152,11 +160,13 @@ export interface SyncJobResponse {
   error_message: string | null
   progress_percent: number | null
   error_count: number
+  errors: string[]
+  sources: SyncSourceProgressResponse[]
 }
 
 export interface SyncStatusResponse {
   status: string
-  job: SyncJobResponse | null
+  jobs: SyncJobResponse[]
 }
 
 // --- Enrichment ---

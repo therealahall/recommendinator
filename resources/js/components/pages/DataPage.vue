@@ -20,8 +20,7 @@ onUnmounted(() => {
 })
 
 const syncAllLabel = computed(() => {
-  if (data.syncStatus === 'running' && data.syncingSource === 'all') return 'Syncing...'
-  if (data.syncStatus === 'running') return 'Sync in Progress'
+  if (data.isSourceIdSyncing('all')) return 'Syncing...'
   return 'Sync All Sources'
 })
 
@@ -64,18 +63,10 @@ const orderedSources = computed(() => {
           'sync-status-info': data.syncStatus === 'running' || data.syncStatus === 'idle',
         }"
       >{{ data.syncMessage }}</div>
-      <div
-        v-if="data.syncJob?.progress_percent != null && data.syncStatus === 'running'"
-        class="sync-progress-bar"
-        role="progressbar"
-        :aria-valuenow="data.syncJob.progress_percent"
-        aria-valuemin="0"
-        aria-valuemax="100"
-        :aria-label="`Sync progress: ${data.syncJob.progress_percent}%`"
-      >
-        <div class="sync-progress-fill" :style="{ width: `${data.syncJob.progress_percent}%` }" />
-      </div>
-      <p class="help-text">Sync data from your configured sources. Only one sync can run at a time.</p>
+      <p class="help-text">
+        Sync data from your configured sources. Multiple sources can run in
+        parallel.
+      </p>
 
       <div v-if="data.syncLoading" class="empty-state"><span class="spinner" /> Loading sync sources...</div>
       <div v-else-if="data.syncSources.length === 0" class="empty-state">
@@ -86,8 +77,8 @@ const orderedSources = computed(() => {
           v-for="source in orderedSources"
           :key="source.id"
           :source="source"
-          :syncing="data.syncingSource === source.id || data.syncingSource === 'all'"
-          :disabled="data.syncStatus === 'running' && data.syncingSource !== source.id && data.syncingSource !== 'all'"
+          :syncing="data.isSourceIdSyncing(source.id) || data.isSourceIdSyncing('all')"
+          :job="data.jobForSourceId(source.id) || data.jobForSourceId('all')"
           @sync="data.triggerSync($event)"
         />
         <div v-if="data.syncSources.length > 1" class="sync-all-card">
@@ -98,12 +89,10 @@ const orderedSources = computed(() => {
           <button
             type="button"
             class="btn btn-secondary sync-btn"
-            :disabled="data.syncStatus === 'running'"
+            :disabled="data.isSourceIdSyncing('all')"
             :aria-label="
-              data.syncStatus === 'running' && data.syncingSource === 'all'
+              data.isSourceIdSyncing('all')
                 ? 'Syncing all sources — in progress'
-                : data.syncStatus === 'running'
-                ? 'Sync all sources — another sync is in progress'
                 : 'Sync all sources'
             "
             @click="data.triggerSync('all')"
@@ -148,4 +137,5 @@ const orderedSources = computed(() => {
   background: var(--surface);
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
 }
+
 </style>

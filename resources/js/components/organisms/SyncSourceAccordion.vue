@@ -4,12 +4,16 @@ import Accordion from '@/components/atoms/Accordion.vue'
 import SourceConfigForm from '@/components/molecules/SourceConfigForm.vue'
 import OAuthConnectFlow from '@/components/molecules/OAuthConnectFlow.vue'
 import { useDataStore } from '@/stores/data'
-import type { SyncSourceResponse } from '@/types/api'
+import type {
+  SyncJobResponse,
+  SyncSourceProgressResponse,
+  SyncSourceResponse,
+} from '@/types/api'
 
 const props = defineProps<{
   source: SyncSourceResponse
   syncing: boolean
-  disabled: boolean
+  job?: SyncJobResponse | null
 }>()
 
 const emit = defineEmits<{
@@ -151,27 +155,102 @@ onBeforeUnmount(() => {
   }
 })
 
-const sourceEnabled = computed(() => props.source.enabled)
-const syncDisabled = computed(
-  () => props.syncing || props.disabled || !sourceEnabled.value,
-)
+const syncDisabled = computed(() => props.syncing || !props.source.enabled)
 const syncLabel = computed(() => (props.syncing ? 'Syncing…' : 'Sync'))
+
+// Progress for THIS source. When the running job is single-source (the
+// user clicked Sync on this row), use the job's top-level counters. When
+// the job is the umbrella "All Sources" run, look up this source's slot
+// in ``job.sources[]`` by display_name.
+const progress = computed<SyncSourceProgressResponse | null>(() => {
+  const job = props.job
+  if (!job || job.status !== 'running') return null
+  if (job.source === props.source.display_name) {
+    return {
+      source: job.source,
+      items_processed: job.items_processed,
+      total_items: job.total_items,
+      current_item: job.current_item,
+      progress_percent: job.progress_percent,
+    }
+  }
+  return (
+    job.sources.find((entry) => entry.source === props.source.display_name) ||
+    null
+  )
+})
+
+const progressLabel = computed<string>(() => {
+  const entry = progress.value
+  if (!entry) return ''
+  if (entry.total_items != null && entry.total_items > 0) {
+    const pct = entry.progress_percent != null ? ` (${entry.progress_percent}%)` : ''
+    return `${entry.items_processed}/${entry.total_items}${pct}`
+  }
+  return `${entry.items_processed} items`
+})
+
+const errorBadgeText = computed<string>(() => {
+  const count = props.job?.error_count ?? 0
+  return `${count} error${count === 1 ? '' : 's'}`
+})
+
+const errorBadgeAriaLabel = computed<string>(
+  () => `${errorBadgeText.value} on last sync`,
+)
 </script>
 
 <template>
   <Accordion
     :id="source.id"
     :expanded="expanded"
-    :class="{ 'source-accordion--disabled': !sourceEnabled }"
+    :class="{ 'source-accordion--disabled': !props.source.enabled }"
     @update:expanded="onToggleExpanded"
   >
     <template #header>
       <span class="source-accordion-header-text">
         <span class="source-accordion-name">{{ source.display_name }}</span>
         <span
-          v-if="!sourceEnabled"
+          v-if="!props.source.enabled"
           class="source-accordion-status-badge"
         >Disabled</span>
+        <!--
+          v-show (not v-if) keeps the live region in the DOM so JAWS/NVDA
+          announce progress as values change rather than treating each
+          poll as a fresh insertion (WCAG 4.1.3 status messages).
+          All `progress?` derefs are null-safe so the children evaluate
+          cleanly while the region is hidden.
+        -->
+        <span
+          v-show="progress"
+          class="source-accordion-progress"
+          aria-live="polite"
+        >
+          <span
+            v-if="progress?.progress_percent != null"
+            class="source-accordion-progress-bar"
+            role="progressbar"
+            :aria-valuenow="progress.progress_percent"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            :aria-label="`${source.display_name} sync progress: ${progress.progress_percent}%`"
+          >
+            <span
+              class="source-accordion-progress-fill"
+              :style="{ width: `${Math.min(100, progress.progress_percent)}%` }"
+            />
+          </span>
+          <span class="source-accordion-progress-counts">{{ progressLabel }}</span>
+          <span
+            v-if="progress?.current_item"
+            class="source-accordion-progress-item"
+          >{{ progress.current_item }}</span>
+        </span>
+        <span
+          v-if="!progress && job && job.error_count > 0 && !syncing"
+          class="source-accordion-error-badge"
+          :aria-label="errorBadgeAriaLabel"
+        >{{ errorBadgeText }}</span>
       </span>
     </template>
 
@@ -182,12 +261,10 @@ const syncLabel = computed(() => (props.syncing ? 'Syncing…' : 'Sync'))
         :data-testid="`sync-btn-${source.id}`"
         :disabled="syncDisabled"
         :aria-label="
-          !sourceEnabled
+          !props.source.enabled
             ? `Sync ${source.display_name} — source is disabled`
             : props.syncing
             ? `Syncing ${source.display_name} — in progress`
-            : props.disabled
-            ? `Sync ${source.display_name} — another sync is in progress`
             : `Sync ${source.display_name}`
         "
         @click="onSyncClick"
@@ -240,7 +317,7 @@ const syncLabel = computed(() => (props.syncing ? 'Syncing…' : 'Sync'))
           :values="config.field_values"
           :secret-status="config.secret_status"
           :saving="savingConfig"
-          :disabled="props.disabled"
+          :disabled="props.syncing"
           :enabled="config.enabled"
           :enable-busy="togglingEnabled"
           :save-status="saveStatus"
@@ -349,5 +426,63 @@ const syncLabel = computed(() => (props.syncing ? 'Syncing…' : 'Sync'))
 
 .source-accordion-oauth {
   margin-bottom: var(--space-3);
+}
+
+.source-accordion-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  flex-wrap: wrap;
+}
+
+.source-accordion-progress-bar {
+  position: relative;
+  display: inline-block;
+  width: 80px;
+  height: 6px;
+  background: var(--border-default);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  vertical-align: middle;
+}
+
+.source-accordion-progress-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.2s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .source-accordion-progress-fill {
+    transition: none;
+  }
+}
+
+.source-accordion-progress-counts {
+  font-variant-numeric: tabular-nums;
+}
+
+.source-accordion-progress-item {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-style: italic;
+}
+
+.source-accordion-error-badge {
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 2px var(--space-2);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-error) 18%, transparent);
+  color: var(--text-primary);
+  font-weight: 500;
+  margin-left: var(--space-3);
 }
 </style>
