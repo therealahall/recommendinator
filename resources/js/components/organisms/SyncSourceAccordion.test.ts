@@ -65,7 +65,7 @@ describe('SyncSourceAccordion', () => {
 
   it('shows only the source name and Sync button when collapsed', async () => {
     const wrapper = mount(SyncSourceAccordion, {
-      props: { source: baseSource, syncing: false, disabled: false },
+      props: { source: baseSource, syncing: false },
     })
     await flushPromises()
 
@@ -86,7 +86,7 @@ describe('SyncSourceAccordion', () => {
 
   it('emits sync with the source id when the Sync button is clicked', async () => {
     const wrapper = mount(SyncSourceAccordion, {
-      props: { source: baseSource, syncing: false, disabled: false },
+      props: { source: baseSource, syncing: false },
     })
     await flushPromises()
 
@@ -115,7 +115,7 @@ describe('SyncSourceAccordion', () => {
 
   it('clicking the trigger loads schema and config and expands the panel', async () => {
     const wrapper = mount(SyncSourceAccordion, {
-      props: { source: baseSource, syncing: false, disabled: false },
+      props: { source: baseSource, syncing: false },
     })
     const store = useDataStore()
     const { loadSchema, loadConfig } = primeStore(store, yamlConfig)
@@ -132,7 +132,7 @@ describe('SyncSourceAccordion', () => {
 
   it('shows the Migrate to DB button when the source is not yet migrated', async () => {
     const wrapper = mount(SyncSourceAccordion, {
-      props: { source: baseSource, syncing: false, disabled: false },
+      props: { source: baseSource, syncing: false },
     })
     const store = useDataStore()
     primeStore(store, yamlConfig)
@@ -147,7 +147,7 @@ describe('SyncSourceAccordion', () => {
 
   it('shows the config form and enabled toggle once migrated', async () => {
     const wrapper = mount(SyncSourceAccordion, {
-      props: { source: baseSource, syncing: false, disabled: false },
+      props: { source: baseSource, syncing: false },
     })
     const store = useDataStore()
     primeStore(store, migratedConfig)
@@ -166,7 +166,7 @@ describe('SyncSourceAccordion', () => {
 
   it('clicking Migrate calls store.migrateSource', async () => {
     const wrapper = mount(SyncSourceAccordion, {
-      props: { source: baseSource, syncing: false, disabled: false },
+      props: { source: baseSource, syncing: false },
     })
     const store = useDataStore()
     primeStore(store, yamlConfig)
@@ -187,7 +187,7 @@ describe('SyncSourceAccordion', () => {
 
   it('renders the Sync button label as Syncing… while syncing', () => {
     const wrapper = mount(SyncSourceAccordion, {
-      props: { source: baseSource, syncing: true, disabled: false },
+      props: { source: baseSource, syncing: true },
     })
 
     const sync = wrapper.find('[data-testid="sync-btn-steam"]')
@@ -196,19 +196,9 @@ describe('SyncSourceAccordion', () => {
     expect(sync.attributes('aria-label')).toContain('Syncing Steam')
   })
 
-  it('disables the Sync button when another sync is running (disabled prop)', () => {
-    const wrapper = mount(SyncSourceAccordion, {
-      props: { source: baseSource, syncing: false, disabled: true },
-    })
-
-    const sync = wrapper.find('[data-testid="sync-btn-steam"]')
-    expect(sync.attributes('disabled')).toBeDefined()
-    expect(sync.attributes('aria-label')).toContain('another sync is in progress')
-  })
-
   it('disables the Sync button and shows a Disabled badge when source.enabled is false', () => {
     const wrapper = mount(SyncSourceAccordion, {
-      props: { source: disabledSource, syncing: false, disabled: false },
+      props: { source: disabledSource, syncing: false },
     })
 
     const sync = wrapper.find('[data-testid="sync-btn-steam"]')
@@ -219,7 +209,7 @@ describe('SyncSourceAccordion', () => {
 
   it('does not emit sync when disabled source button is clicked', async () => {
     const wrapper = mount(SyncSourceAccordion, {
-      props: { source: disabledSource, syncing: false, disabled: false },
+      props: { source: disabledSource, syncing: false },
     })
 
     await wrapper.find('[data-testid="sync-btn-steam"]').trigger('click')
@@ -228,7 +218,7 @@ describe('SyncSourceAccordion', () => {
 
   it('clicking the Disable button on an enabled source calls store.setSourceEnabled(false)', async () => {
     const wrapper = mount(SyncSourceAccordion, {
-      props: { source: baseSource, syncing: false, disabled: false },
+      props: { source: baseSource, syncing: false },
     })
     const store = useDataStore()
     primeStore(store, migratedConfig)
@@ -247,7 +237,7 @@ describe('SyncSourceAccordion', () => {
 
   it('clicking the Enable button on a disabled source calls store.setSourceEnabled(true)', async () => {
     const wrapper = mount(SyncSourceAccordion, {
-      props: { source: baseSource, syncing: false, disabled: false },
+      props: { source: baseSource, syncing: false },
     })
     const store = useDataStore()
     primeStore(store, { ...migratedConfig, enabled: false })
@@ -266,7 +256,7 @@ describe('SyncSourceAccordion', () => {
 
   it('saving the form forwards the values to store.updateSourceConfig', async () => {
     const wrapper = mount(SyncSourceAccordion, {
-      props: { source: baseSource, syncing: false, disabled: false },
+      props: { source: baseSource, syncing: false },
     })
     const store = useDataStore()
     primeStore(store, migratedConfig)
@@ -289,7 +279,7 @@ describe('SyncSourceAccordion', () => {
 
   it('clicking Remove with confirm=true calls store.deleteSource', async () => {
     const wrapper = mount(SyncSourceAccordion, {
-      props: { source: baseSource, syncing: false, disabled: false },
+      props: { source: baseSource, syncing: false },
     })
     const store = useDataStore()
     primeStore(store, migratedConfig)
@@ -308,7 +298,7 @@ describe('SyncSourceAccordion', () => {
 
   it('clicking Remove with confirm=false does NOT call store.deleteSource', async () => {
     const wrapper = mount(SyncSourceAccordion, {
-      props: { source: baseSource, syncing: false, disabled: false },
+      props: { source: baseSource, syncing: false },
     })
     const store = useDataStore()
     primeStore(store, migratedConfig)
@@ -327,7 +317,7 @@ describe('SyncSourceAccordion', () => {
 
   it('renders the Saved status pill after a successful save', async () => {
     const wrapper = mount(SyncSourceAccordion, {
-      props: { source: baseSource, syncing: false, disabled: false },
+      props: { source: baseSource, syncing: false },
     })
     const store = useDataStore()
     primeStore(store, migratedConfig)
@@ -346,7 +336,7 @@ describe('SyncSourceAccordion', () => {
 
   it('renders the Error status pill when updateSourceConfig rejects', async () => {
     const wrapper = mount(SyncSourceAccordion, {
-      props: { source: baseSource, syncing: false, disabled: false },
+      props: { source: baseSource, syncing: false },
     })
     const store = useDataStore()
     primeStore(store, migratedConfig)
@@ -367,7 +357,7 @@ describe('SyncSourceAccordion', () => {
 
   it('disables the toggle button while setSourceEnabled is in flight (re-entrant guard)', async () => {
     const wrapper = mount(SyncSourceAccordion, {
-      props: { source: baseSource, syncing: false, disabled: false },
+      props: { source: baseSource, syncing: false },
     })
     const store = useDataStore()
     primeStore(store, migratedConfig)
@@ -390,5 +380,138 @@ describe('SyncSourceAccordion', () => {
     // Release the in-flight call so component teardown isn't fighting timers.
     releaseToggle()
     await flushPromises()
+  })
+
+  describe('progress + error rendering driven by the job prop', () => {
+    function makeJob(overrides: Record<string, unknown> = {}) {
+      return {
+        source: 'Steam',
+        status: 'running' as const,
+        started_at: null,
+        completed_at: null,
+        items_processed: 4,
+        total_items: 10,
+        current_item: 'Half-Life 2',
+        current_source: 'Steam',
+        error_message: null,
+        progress_percent: 40,
+        error_count: 0,
+        errors: [] as string[],
+        sources: [] as never[],
+        ...overrides,
+      }
+    }
+
+    it('renders progress bar from a single-source running job', () => {
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: baseSource, syncing: true, job: makeJob() },
+      })
+
+      const bar = wrapper.find('[role="progressbar"]')
+      expect(bar.exists()).toBe(true)
+      expect(bar.attributes('aria-valuenow')).toBe('40')
+      expect(wrapper.text()).toContain('4/10')
+      expect(wrapper.text()).toContain('40%')
+      expect(wrapper.text()).toContain('Half-Life 2')
+    })
+
+    it('looks up this source in job.sources[] when job is umbrella', () => {
+      const job = makeJob({
+        source: 'All Sources',
+        items_processed: 100,
+        total_items: 200,
+        progress_percent: 50,
+        current_item: 'Other thing',
+        sources: [
+          {
+            source: 'Steam',
+            items_processed: 7,
+            total_items: 8,
+            current_item: 'Portal 2',
+            progress_percent: 87,
+          },
+        ],
+      })
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: baseSource, syncing: true, job },
+      })
+
+      const bar = wrapper.find('[role="progressbar"]')
+      expect(bar.attributes('aria-valuenow')).toBe('87')
+      expect(wrapper.text()).toContain('7/8')
+      expect(wrapper.text()).toContain('Portal 2')
+      // The umbrella job's top-level current_item ("Other thing") is for
+      // a different source — it must NOT leak into this accordion.
+      expect(wrapper.text()).not.toContain('Other thing')
+    })
+
+    it('omits the progress bar when progress_percent is null', () => {
+      const job = makeJob({ progress_percent: null, total_items: null })
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: baseSource, syncing: true, job },
+      })
+
+      expect(wrapper.find('[role="progressbar"]').exists()).toBe(false)
+      // Counts label uses the items-only fallback, NOT a malformed
+      // fraction with a null total.
+      expect(wrapper.text()).toContain('4 items')
+      expect(wrapper.text()).not.toContain('4/null')
+      expect(wrapper.text()).not.toContain('4/0')
+    })
+
+    it('renders the error badge for a completed job with errors', () => {
+      const job = makeJob({
+        status: 'completed',
+        error_count: 3,
+        errors: ['e1', 'e2', 'e3'],
+      })
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: baseSource, syncing: false, job },
+      })
+
+      expect(wrapper.text()).toContain('3 errors')
+      const badge = wrapper.find('.source-accordion-error-badge')
+      expect(badge.attributes('aria-label')).toBe('3 errors on last sync')
+    })
+
+    it('uses singular wording when error_count is 1', () => {
+      const job = makeJob({
+        status: 'completed',
+        error_count: 1,
+        errors: ['e1'],
+      })
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: baseSource, syncing: false, job },
+      })
+
+      const badge = wrapper.find('.source-accordion-error-badge')
+      expect(badge.text()).toBe('1 error')
+      expect(badge.attributes('aria-label')).toBe('1 error on last sync')
+    })
+
+    it('hides the error badge while a sync is in progress', () => {
+      const job = makeJob({
+        status: 'running',
+        error_count: 5,
+      })
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: baseSource, syncing: true, job },
+      })
+
+      expect(wrapper.find('.source-accordion-error-badge').exists()).toBe(false)
+    })
+
+    it('renders nothing extra when job is null', () => {
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: baseSource, syncing: false, job: null },
+      })
+
+      // The aria-live progress region is in the DOM via v-show but
+      // hidden, and the error badge is absent because there's no job.
+      expect(wrapper.find('.source-accordion-error-badge').exists()).toBe(false)
+      const region = wrapper.find('.source-accordion-progress')
+      expect(region.exists()).toBe(true)
+      expect((region.element as HTMLElement).style.display).toBe('none')
+    })
   })
 })

@@ -43,7 +43,8 @@ describe('useDataStore', () => {
     const store = useDataStore()
     expect(store.syncSources).toEqual([])
     expect(store.syncStatus).toBe('idle')
-    expect(store.syncingSource).toBeNull()
+    expect(store.syncJobs).toEqual([])
+    expect(store.isSourceIdSyncing('steam')).toBe(false)
     expect(store.enrichmentStats).toBeNull()
   })
 
@@ -64,58 +65,211 @@ describe('useDataStore', () => {
     expect(store.gogStatus.authUrl).toBe('https://gog.com/auth')
   })
 
-  it('triggerSync sets syncingSource and status', async () => {
-    mockPost.mockResolvedValue({ message: 'Sync started for steam' })
+  function steamSource() {
+    return {
+      id: 'steam',
+      display_name: 'Steam',
+      plugin_display_name: 'Steam',
+      enabled: true,
+    }
+  }
+
+  function goodreadsSource() {
+    return {
+      id: 'goodreads',
+      display_name: 'Goodreads',
+      plugin_display_name: 'Goodreads',
+      enabled: true,
+    }
+  }
+
+  it('triggerSync marks the source label as syncing', async () => {
+    mockPost.mockResolvedValue({ message: 'Sync started for Steam' })
 
     const store = useDataStore()
+    store.$patch({ syncSources: [steamSource()] })
     await store.triggerSync('steam')
 
-    expect(store.syncMessage).toBe('Sync started for steam')
     expect(store.syncStatus).toBe('running')
-    expect(store.syncingSource).toBe('steam')
+    expect(store.syncMessage).toBe('Sync started for Steam')
+    expect(store.isSourceIdSyncing('steam')).toBe(true)
+    expect(store.isSourceIdSyncing('goodreads')).toBe(false)
   })
 
-  it('triggerSync clears syncingSource on API error', async () => {
+  it('triggerSync clears the optimistic trigger on API error', async () => {
     mockPost.mockRejectedValue(new ApiError(503, 'Service Unavailable'))
 
     const store = useDataStore()
+    store.$patch({ syncSources: [steamSource()] })
     await store.triggerSync('steam')
 
     expect(store.syncStatus).toBe('failed')
-    expect(store.syncingSource).toBeNull()
+    expect(store.isSourceIdSyncing('steam')).toBe(false)
     expect(store.syncMessage).toContain('server returned 503')
   })
 
-  it('triggerSync clears syncingSource on generic error', async () => {
+  it('triggerSync clears the optimistic trigger on generic error', async () => {
     mockPost.mockRejectedValue(new Error('network failure'))
 
     const store = useDataStore()
+    store.$patch({ syncSources: [steamSource()] })
     await store.triggerSync('steam')
 
     expect(store.syncStatus).toBe('failed')
-    expect(store.syncingSource).toBeNull()
+    expect(store.isSourceIdSyncing('steam')).toBe(false)
     expect(store.syncMessage).toContain('unexpected failure')
   })
 
-  it('checkSyncStatus clears syncingSource on completed', async () => {
+  it('triggerSync handles the "all" pseudo-source via the All Sources label', async () => {
+    mockPost.mockResolvedValue({ message: 'Sync started for All Sources' })
+
+    const store = useDataStore()
+    await store.triggerSync('all')
+
+    expect(store.isSourceIdSyncing('all')).toBe(true)
+  })
+
+  it('checkSyncStatus drops the optimistic trigger once the server ack\'s the job', async () => {
+    // Plant an optimistic trigger via triggerSync, then poll status and
+    // observe the trigger is cleared because the server now reports the
+    // job — isSourceIdSyncing should still be true (driven by the job),
+    // but the source of truth has shifted from optimistic to server.
+    mockPost.mockResolvedValue({ message: 'Sync started for Steam' })
     mockGet.mockResolvedValue({
-      status: 'completed',
-      job: { items_processed: 42, error_count: 0, source: 'steam' },
+      status: 'running',
+      jobs: [
+        {
+          source: 'Steam',
+          status: 'running',
+          items_processed: 0,
+          total_items: null,
+          error_count: 0,
+          errors: [],
+          sources: [],
+        },
+      ],
     })
 
     const store = useDataStore()
-    store.$patch({ syncingSource: 'steam' })
+    store.$patch({ syncSources: [steamSource()] })
+    await store.triggerSync('steam')
+    await store.checkSyncStatus()
+
+    expect(store.isSourceIdSyncing('steam')).toBe(true)
+    // A second poll with the same response keeps the source syncing —
+    // the source of truth has shifted from optimistic to server, but
+    // the public flag stays true because the server reports running.
+    await store.checkSyncStatus()
+    expect(store.isSourceIdSyncing('steam')).toBe(true)
+  })
+
+  it('checkSyncStatus reports idle on empty jobs array', async () => {
+    mockGet.mockResolvedValue({ status: 'idle', jobs: [] })
+
+    const store = useDataStore()
+    await store.checkSyncStatus()
+
+    expect(store.syncStatus).toBe('idle')
+    expect(store.syncJobs).toEqual([])
+    expect(store.syncMessage).toBe('')
+  })
+
+  it('checkSyncStatus treats total_items=0 as unknown total in aggregate banner', async () => {
+    mockGet.mockResolvedValue({
+      status: 'running',
+      jobs: [
+        {
+          source: 'Steam',
+          status: 'running',
+          items_processed: 5,
+          total_items: 0,
+          error_count: 0,
+          errors: [],
+          sources: [],
+        },
+      ],
+    })
+
+    const store = useDataStore()
+    await store.checkSyncStatus()
+
+    expect(store.syncMessage).toContain('5 items so far')
+    expect(store.syncMessage).not.toContain('/0')
+  })
+
+  it('checkSyncStatus matches the "all" source ID to the "All Sources" job', async () => {
+    mockGet.mockResolvedValue({
+      status: 'running',
+      jobs: [
+        {
+          source: 'All Sources',
+          status: 'running',
+          items_processed: 4,
+          total_items: 10,
+          progress_percent: 40,
+          current_source: 'Steam',
+          current_item: 'Half-Life 2',
+          error_count: 0,
+          errors: [],
+          sources: [],
+        },
+      ],
+    })
+
+    const store = useDataStore()
+    await store.checkSyncStatus()
+
+    expect(store.isSourceIdSyncing('all')).toBe(true)
+    const job = store.jobForSourceId('all')
+    expect(job?.source).toBe('All Sources')
+    expect(job?.items_processed).toBe(4)
+  })
+
+  it('checkSyncStatus reports completed when no jobs are running', async () => {
+    mockGet.mockResolvedValue({
+      status: 'idle',
+      jobs: [
+        {
+          source: 'Steam',
+          status: 'completed',
+          items_processed: 42,
+          total_items: 42,
+          error_count: 0,
+          errors: [],
+          sources: [],
+        },
+      ],
+    })
+
+    const store = useDataStore()
     await store.checkSyncStatus()
 
     expect(store.syncStatus).toBe('completed')
-    expect(store.syncingSource).toBeNull()
     expect(store.syncMessage).toContain('42 items synced')
+    expect(store.isSourceIdSyncing('steam')).toBe(false)
   })
 
-  it('checkSyncStatus includes error count in completed message', async () => {
+  it('checkSyncStatus aggregates errors across completed jobs', async () => {
     mockGet.mockResolvedValue({
-      status: 'completed',
-      job: { items_processed: 100, error_count: 3, source: 'steam' },
+      status: 'idle',
+      jobs: [
+        {
+          source: 'Steam',
+          status: 'completed',
+          items_processed: 90,
+          error_count: 2,
+          errors: ['e1', 'e2'],
+          sources: [],
+        },
+        {
+          source: 'Goodreads',
+          status: 'completed',
+          items_processed: 10,
+          error_count: 1,
+          errors: ['e3'],
+          sources: [],
+        },
+      ],
     })
 
     const store = useDataStore()
@@ -125,52 +279,81 @@ describe('useDataStore', () => {
     expect(store.syncMessage).toContain('3 errors')
   })
 
-  it('checkSyncStatus clears syncingSource on failed', async () => {
+  it('checkSyncStatus surfaces a failed job before completed jobs', async () => {
     mockGet.mockResolvedValue({
-      status: 'failed',
-      job: { error_message: 'timeout', source: 'steam' },
+      status: 'idle',
+      jobs: [
+        {
+          source: 'Steam',
+          status: 'failed',
+          items_processed: 0,
+          error_message: 'timeout',
+          error_count: 1,
+          errors: ['timeout'],
+          sources: [],
+        },
+      ],
     })
 
     const store = useDataStore()
-    store.$patch({ syncingSource: 'steam' })
     await store.checkSyncStatus()
 
     expect(store.syncStatus).toBe('failed')
-    expect(store.syncingSource).toBeNull()
     expect(store.syncMessage).toContain('timeout')
+    expect(store.syncMessage).toContain('Steam')
   })
 
-  it('checkSyncStatus clears syncingSource on idle', async () => {
-    mockGet.mockResolvedValue({ status: 'idle' })
+  it('checkSyncStatus is idle when no jobs are tracked', async () => {
+    mockGet.mockResolvedValue({ status: 'idle', jobs: [] })
 
     const store = useDataStore()
-    store.$patch({ syncingSource: 'steam' })
     await store.checkSyncStatus()
 
     expect(store.syncStatus).toBe('idle')
-    expect(store.syncingSource).toBeNull()
+    expect(store.syncMessage).toBe('')
   })
 
-  it('checkSyncStatus restores syncingSource from server on running', async () => {
+  it('checkSyncStatus marks per-source jobs as syncing for their source IDs', async () => {
     mockGet.mockResolvedValue({
       status: 'running',
-      job: { source: 'goodreads', items_processed: 5, current_source: 'goodreads' },
+      jobs: [
+        {
+          source: 'Goodreads',
+          status: 'running',
+          items_processed: 5,
+          error_count: 0,
+          errors: [],
+          sources: [],
+        },
+      ],
     })
 
     const store = useDataStore()
+    store.$patch({ syncSources: [goodreadsSource(), steamSource()] })
     await store.checkSyncStatus()
 
     expect(store.syncStatus).toBe('running')
-    expect(store.syncingSource).toBe('goodreads')
+    expect(store.isSourceIdSyncing('goodreads')).toBe(true)
+    expect(store.isSourceIdSyncing('steam')).toBe(false)
   })
 
-  it('checkSyncStatus builds progress message with total and percent', async () => {
+  it('checkSyncStatus builds aggregate progress message with totals', async () => {
     mockGet.mockResolvedValue({
       status: 'running',
-      job: {
-        source: 'steam', items_processed: 10, total_items: 100,
-        progress_percent: 10, current_source: 'steam', current_item: 'Half-Life 2',
-      },
+      jobs: [
+        {
+          source: 'Steam',
+          status: 'running',
+          items_processed: 10,
+          total_items: 100,
+          progress_percent: 10,
+          current_source: 'Steam',
+          current_item: 'Half-Life 2',
+          error_count: 0,
+          errors: [],
+          sources: [],
+        },
+      ],
     })
 
     const store = useDataStore()
@@ -181,61 +364,20 @@ describe('useDataStore', () => {
     expect(store.syncMessage).toContain('Half-Life 2')
   })
 
-  it('checkSyncStatus builds progress message at sync start', async () => {
+  it('checkSyncStatus shows "items so far" when total is unknown', async () => {
     mockGet.mockResolvedValue({
       status: 'running',
-      job: {
-        source: 'steam', items_processed: 0, total_items: null,
-        progress_percent: null, current_source: 'steam', current_item: null,
-      },
-    })
-
-    const store = useDataStore()
-    await store.checkSyncStatus()
-
-    expect(store.syncMessage).toContain('0 items so far')
-    expect(store.syncMessage).not.toMatch(/^ *-/)
-  })
-
-  it('checkSyncStatus builds progress message with total but no percent', async () => {
-    mockGet.mockResolvedValue({
-      status: 'running',
-      job: {
-        source: 'steam', items_processed: 10, total_items: 100,
-        progress_percent: null, current_source: 'steam', current_item: null,
-      },
-    })
-
-    const store = useDataStore()
-    await store.checkSyncStatus()
-
-    expect(store.syncMessage).toContain('10/100')
-    expect(store.syncMessage).not.toContain('%')
-  })
-
-  it('checkSyncStatus treats total_items of 0 as unknown total', async () => {
-    mockGet.mockResolvedValue({
-      status: 'running',
-      job: {
-        source: 'steam', items_processed: 5, total_items: 0,
-        progress_percent: null, current_source: 'steam', current_item: null,
-      },
-    })
-
-    const store = useDataStore()
-    await store.checkSyncStatus()
-
-    expect(store.syncMessage).toContain('5 items so far')
-    expect(store.syncMessage).not.toContain('/0')
-  })
-
-  it('checkSyncStatus builds progress message with items only', async () => {
-    mockGet.mockResolvedValue({
-      status: 'running',
-      job: {
-        source: 'steam', items_processed: 7, total_items: null,
-        progress_percent: null, current_source: 'steam', current_item: null,
-      },
+      jobs: [
+        {
+          source: 'Steam',
+          status: 'running',
+          items_processed: 7,
+          total_items: null,
+          error_count: 0,
+          errors: [],
+          sources: [],
+        },
+      ],
     })
 
     const store = useDataStore()
@@ -244,29 +386,70 @@ describe('useDataStore', () => {
     expect(store.syncMessage).toContain('7 items so far')
   })
 
-  it('checkSyncStatus preserves syncingSource when already set and running', async () => {
+  it('checkSyncStatus aggregates running jobs into a single banner', async () => {
     mockGet.mockResolvedValue({
       status: 'running',
-      job: { source: 'steam', items_processed: 5, current_source: 'steam' },
+      jobs: [
+        {
+          source: 'Goodreads',
+          status: 'running',
+          items_processed: 5,
+          total_items: 10,
+          error_count: 0,
+          errors: [],
+          sources: [],
+        },
+        {
+          source: 'Steam',
+          status: 'running',
+          items_processed: 3,
+          total_items: 20,
+          error_count: 0,
+          errors: [],
+          sources: [],
+        },
+      ],
     })
 
     const store = useDataStore()
-    store.$patch({ syncingSource: 'all' })
     await store.checkSyncStatus()
 
-    expect(store.syncingSource).toBe('all')
+    expect(store.syncMessage).toContain('8/30')
+    expect(store.syncMessage).toContain('Syncing 2 sources in parallel')
   })
 
   it('checkSyncStatus silently ignores GET failure without changing state', async () => {
     mockGet.mockRejectedValue(new Error('network error'))
 
     const store = useDataStore()
-    store.$patch({ syncStatus: 'running', syncingSource: 'steam', syncMessage: 'previous message' })
+    store.$patch({ syncStatus: 'running', syncMessage: 'previous message' })
     await store.checkSyncStatus()
 
     expect(store.syncStatus).toBe('running')
-    expect(store.syncingSource).toBe('steam')
     expect(store.syncMessage).toBe('previous message')
+  })
+
+  it('jobForSourceId returns the job whose source matches display_name', async () => {
+    const job = {
+      source: 'Steam',
+      status: 'running' as const,
+      items_processed: 9,
+      total_items: 10,
+      current_item: 'Half-Life 2',
+      error_count: 0,
+      errors: [] as string[],
+      sources: [] as never[],
+    }
+    mockGet.mockResolvedValue({ status: 'running', jobs: [job] })
+
+    const store = useDataStore()
+    store.$patch({ syncSources: [steamSource()] })
+    await store.checkSyncStatus()
+
+    const found = store.jobForSourceId('steam')
+    expect(found?.source).toBe('Steam')
+    expect(found?.current_item).toBe('Half-Life 2')
+    expect(store.jobForSourceId('goodreads')).toBeNull()
   })
 
   it('loadEnrichmentStats fetches stats', async () => {
