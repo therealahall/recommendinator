@@ -312,8 +312,10 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile ai up -d app-ai
 ```
 
-This builds the image locally instead of pulling, bind-mounts `./src` and `./templates`
-into the container, and runs uvicorn with `--reload` so Python changes trigger a
-~1s restart. For frontend hot reload, run `pnpm dev` on the host (Vite serves on
-port 5173 and proxies API calls to the container). See [CONTRIBUTING.md](../CONTRIBUTING.md)
+This builds the image locally instead of pulling, bind-mounts `./src`, `./templates`,
+and `./pyproject.toml` into the container, and runs uvicorn with `--reload` so Python
+changes trigger a ~1s restart. The `pyproject.toml` mount keeps the runtime
+`__version__` in sync with semantic-release bumps without rebuilding the image.
+For frontend hot reload, run `pnpm dev` on the host (Vite serves on port 5173
+and proxies API calls to the container). See [CONTRIBUTING.md](../CONTRIBUTING.md)
 for the full developer workflow.

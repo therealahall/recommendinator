@@ -145,7 +145,7 @@ config = load_config(Path("config/config.yaml"))
 The project uses **python-semantic-release** for automatic semantic versioning driven by conventional commits.
 
 - **Version source of truth**: `pyproject.toml` `[project] version` field — written by python-semantic-release, never edit manually
-- **Runtime version**: `src/__init__.py` reads the version via `importlib.metadata.version("recommendinator")` — never hardcode versions
+- **Runtime version**: `src/__init__.py` resolves the version by preferring an adjacent `pyproject.toml` (dev and Docker source layouts) and falling back to `importlib.metadata.version("recommendinator")` for wheel installs — never hardcode versions. The pyproject.toml preference keeps editable installs and Docker dev containers in sync after `python-semantic-release` bumps the version without requiring a reinstall.
 - **CHANGELOG.md**: Auto-generated from commit messages — **do not edit manually** (edits will be silently overwritten on the next release)
 - **Version bump rules**: `feat` → minor, `fix`/`perf` → patch, `BREAKING CHANGE` footer → major (but `major_on_zero = false` while pre-1.0)
 - **Release workflow**: GitHub Actions on push to `main` → analyzes commits → bumps version → updates CHANGELOG.md → creates version commit and tag → regenerates and commits `uv.lock`
