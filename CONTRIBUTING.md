@@ -35,8 +35,10 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 What the override does:
 - **Builds locally** instead of pulling from GHCR, so changes to `Dockerfile`,
   `pyproject.toml`, or the frontend build are reflected.
-- **Bind-mounts `./src` and `./templates`** into the container so Python edits
-  are visible immediately without a rebuild.
+- **Bind-mounts `./src`, `./templates`, and `./pyproject.toml`** into the container
+  so Python edits are visible immediately without a rebuild. The `pyproject.toml`
+  mount keeps the runtime `__version__` in sync with `python-semantic-release`
+  bumps without rebuilding the image.
 - **Starts uvicorn with `--reload`**, watching `src/` and `templates/` — backend
   changes restart in ~1 second.
 
@@ -194,7 +196,7 @@ Follow **Conventional Commits**:
 The project uses **automatic semantic versioning**:
 
 - **Version source of truth**: `pyproject.toml` `[project] version` field, written by python-semantic-release
-- **Runtime version**: `src/__init__.py` reads the version via `importlib.metadata` — never hardcode versions
+- **Runtime version**: `src/__init__.py` resolves the version by preferring an adjacent `pyproject.toml` (dev and Docker source layouts) and falling back to `importlib.metadata.version("recommendinator")` for wheel installs — never hardcode versions. The pyproject.toml preference keeps editable installs and Docker dev containers in sync after `python-semantic-release` bumps the version without requiring a reinstall.
 - **CHANGELOG.md**: Auto-generated from commit messages — **do not edit manually** (edits will be overwritten on the next release)
 - **Release workflow**: A GitHub Actions workflow on push to `main` analyzes commits, bumps the version, updates CHANGELOG.md, and creates a version commit and tag. A follow-up step regenerates `uv.lock` and commits it separately
 - **No manual version bumps**: Never edit the version in `pyproject.toml` by hand — let the release workflow handle it
