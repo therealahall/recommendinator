@@ -1,6 +1,15 @@
 # CHANGELOG
 
 
+## v0.11.3 (2026-05-07)
+
+### Bug Fixes
+
+- **ui**: Keep stepper inline with content-type dropdown on mobile
+  ([#58](https://github.com/therealahall/recommendinator/pull/58),
+  [`1bb5bfb`](https://github.com/therealahall/recommendinator/commit/1bb5bfba74402fa46a439ddd81ba36648e1d59eb))
+
+
 ## v0.11.2 (2026-05-07)
 
 ### Bug Fixes
