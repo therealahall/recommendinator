@@ -18,32 +18,28 @@ const app = useAppStore()
       <!-- Mobile: dropdown replaces pills -->
       <TypeSelect v-model="recs.contentType" :include-all="false" class="toolbar-select rec-type-select" />
 
+      <NumberStepper
+        v-model="recs.count"
+        :min="1"
+        :max="app.recommendationsConfig.max_count"
+        class="rec-stepper"
+        aria-label="Number of recommendations"
+      />
+
       <div class="toolbar-divider" />
 
-      <!-- Stepper + action buttons (mobile: reflows to full-width row) -->
-      <div class="rec-actions-row">
-        <NumberStepper
-          v-model="recs.count"
-          :min="1"
-          :max="app.recommendationsConfig.max_count"
-          aria-label="Number of recommendations"
-        />
-
-        <div class="toolbar-divider" />
-
-        <div class="toolbar-zone toolbar-right">
-          <button
-            class="btn btn-secondary"
-            :disabled="recs.loading"
-            @click="recs.fetch(false)"
-          >Generate</button>
-          <button
-            v-if="app.aiReasoningEnabled"
-            class="btn btn-primary"
-            :disabled="recs.loading"
-            @click="recs.fetch(true)"
-          >&#10024; AI Recommendations</button>
-        </div>
+      <div class="toolbar-zone toolbar-actions">
+        <button
+          class="btn btn-secondary"
+          :disabled="recs.loading"
+          @click="recs.fetch(false)"
+        >Generate</button>
+        <button
+          v-if="app.aiReasoningEnabled"
+          class="btn btn-primary"
+          :disabled="recs.loading"
+          @click="recs.fetch(true)"
+        ><span aria-hidden="true">&#10024;</span> AI Recommendations</button>
       </div>
     </div>
   </div>
@@ -63,13 +59,7 @@ const app = useAppStore()
   gap: var(--space-2);
 }
 
-.rec-actions-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-}
-
-.toolbar-right {
+.toolbar-actions {
   margin-left: auto;
 }
 
@@ -77,7 +67,8 @@ const app = useAppStore()
   display: none;
 }
 
-/* Mobile: dropdown replaces pills, stepper stays in actions row */
+/* Mobile: dropdown replaces pills; dropdown + stepper share top row;
+   action buttons wrap to their own full-width row below. */
 @media (max-width: 640px) {
   .rec-pills,
   .rec-toolbar > .toolbar-divider {
@@ -86,20 +77,21 @@ const app = useAppStore()
 
   .rec-type-select {
     display: block;
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .rec-stepper {
+    flex: 0 0 auto;
+  }
+
+  .toolbar-actions {
     width: 100%;
-  }
-
-  .rec-actions-row {
-    width: 100%;
-    gap: var(--space-2);
-  }
-
-  .rec-actions-row > .toolbar-divider {
-    display: none;
-  }
-
-  .toolbar-right {
     margin-left: 0;
+  }
+
+  .toolbar-actions .btn {
+    flex: 1 1 0;
   }
 }
 </style>
