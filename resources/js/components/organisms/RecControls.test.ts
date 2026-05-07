@@ -198,3 +198,60 @@ describe('RecControls', () => {
     expect(el.value).toBe('tv_show')
   })
 })
+
+describe('RecControls layout regression (issue #58)', () => {
+  /**
+   * Bug: on mobile (≤640px), the NumberStepper rendered on its own row below
+   * the content-type dropdown instead of on the same line.
+   *
+   * Root cause: NumberStepper was nested inside .rec-actions-row, which has
+   * width: 100% on mobile, forcing it (and its parent row) below the dropdown.
+   *
+   * Fix: lift NumberStepper to be a direct child of .rec-toolbar alongside
+   * TypePills/TypeSelect. Mobile CSS lets dropdown + stepper share the top row
+   * while .toolbar-actions wraps to its own full-width row below.
+   *
+   * These tests assert the structural invariant the CSS fix relies on:
+   * NumberStepper is a sibling of TypeSelect inside .rec-toolbar, and the
+   * action buttons sit in a separate .toolbar-actions wrapper that can wrap
+   * independently.
+   */
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
+  it('NumberStepper and TypeSelect are siblings under .rec-toolbar', () => {
+    const wrapper = mount(RecControls)
+
+    const stepper = wrapper.find('.number-stepper')
+    const select = wrapper.find('.rec-type-select')
+    expect(stepper.exists()).toBe(true)
+    expect(select.exists()).toBe(true)
+
+    const stepperParent = stepper.element.parentElement
+    const selectParent = select.element.parentElement
+    expect(stepperParent?.classList.contains('rec-toolbar')).toBe(true)
+    expect(selectParent?.classList.contains('rec-toolbar')).toBe(true)
+    expect(stepperParent).toBe(selectParent)
+  })
+
+  it('action buttons live in .toolbar-actions which is a direct child of .rec-toolbar', () => {
+    const app = useAppStore()
+    app.features.ai_enabled = true
+    app.features.llm_reasoning_enabled = true
+
+    const wrapper = mount(RecControls)
+
+    const genBtn = wrapper.findAll('.btn').find(b => b.text() === 'Generate')
+    const aiBtn = wrapper.findAll('.btn').find(b => b.text().includes('AI'))
+    expect(genBtn).toBeDefined()
+    expect(aiBtn).toBeDefined()
+
+    const actions = genBtn!.element.parentElement
+    expect(actions).not.toBeNull()
+    expect(actions!.classList.contains('toolbar-actions')).toBe(true)
+    expect(actions!.parentElement?.classList.contains('rec-toolbar')).toBe(true)
+
+    expect(aiBtn!.element.parentElement).toBe(actions)
+  })
+})
