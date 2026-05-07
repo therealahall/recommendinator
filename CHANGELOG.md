@@ -1,6 +1,27 @@
 # CHANGELOG
 
 
+## v0.11.1 (2026-05-07)
+
+### Bug Fixes
+
+- **core**: Resolve runtime version from pyproject.toml in source layouts (fixes #68)
+  ([`ff9cd09`](https://github.com/therealahall/recommendinator/commit/ff9cd098b2c5531671c64383c96d5cec308e1151))
+
+- **docker**: Bind-mount pyproject.toml in dev compose so version updates are live
+  ([`2501dce`](https://github.com/therealahall/recommendinator/commit/2501dcea9aa79e8280e70e089184687450c6f2f1))
+
+### Documentation
+
+- Document pyproject-first version resolution and dev pyproject mount
+  ([`8e5d5aa`](https://github.com/therealahall/recommendinator/commit/8e5d5aafb0f3e5facc3a3bd0e1b0b21442b744d5))
+
+### Testing
+
+- **core**: Cover pyproject-first version resolution and edge cases
+  ([`3e37e89`](https://github.com/therealahall/recommendinator/commit/3e37e89c6b03c4eaf830ff26e06ea4cebbb5dd19))
+
+
 ## v0.11.0 (2026-05-05)
 
 ### Bug Fixes
