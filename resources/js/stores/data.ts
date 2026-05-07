@@ -357,6 +357,7 @@ export const useDataStore = defineStore('data', () => {
       const status = await api.get<EnrichmentJobStatusResponse>('/enrichment/status')
       enrichmentJob.value = status
       if (status.running) {
+        await loadEnrichmentStats()
         if (!enrichPollTimer) startEnrichmentPolling()
       } else {
         stopEnrichmentPolling()

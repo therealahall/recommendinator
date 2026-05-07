@@ -463,6 +463,60 @@ describe('useDataStore', () => {
     expect(store.enrichmentEnabled).toBe(true)
   })
 
+  describe('enrichment stats poll regression', () => {
+    // Reported in #54: EnrichmentCard's "<enriched>/<total>" counter stayed
+    // stale while a job was running — the user had to refresh the page to
+    // see progress. Root cause: checkEnrichmentStatus polled
+    // /enrichment/status every 3s but only refreshed /enrichment/stats on
+    // job completion, so the top counter never updated mid-run. Fix
+    // refreshes stats on every poll tick while running.
+    let store: ReturnType<typeof useDataStore> | null = null
+
+    afterEach(() => {
+      store?.cleanup()
+      store = null
+    })
+
+    it('checkEnrichmentStatus refreshes stats while job is running', async () => {
+      const runningStatus = {
+        running: true,
+        completed: false,
+        cancelled: false,
+        items_processed: 25,
+        items_enriched: 25,
+        items_failed: 0,
+        items_not_found: 0,
+        total_items: 100,
+        current_item: 'Some Game',
+        content_type: null,
+        errors: [],
+        elapsed_seconds: 7.5,
+        progress_percent: 25,
+      }
+      const updatedStats = {
+        enabled: true,
+        total: 100,
+        enriched: 25,
+        pending: 75,
+        not_found: 0,
+        failed: 0,
+        by_provider: {},
+        by_quality: {},
+      }
+      mockGet
+        .mockResolvedValueOnce(runningStatus)
+        .mockResolvedValueOnce(updatedStats)
+
+      store = useDataStore()
+      await store.checkEnrichmentStatus()
+
+      expect(mockGet).toHaveBeenNthCalledWith(1, '/enrichment/status')
+      expect(mockGet).toHaveBeenNthCalledWith(2, '/enrichment/stats', { user_id: 1 })
+      expect(store.enrichmentStats).toEqual(updatedStats)
+      expect(store.enrichmentJob).toEqual(runningStatus)
+    })
+  })
+
   it('disconnectGog calls DELETE /gog/token and reloads sync sources', async () => {
     mockDelete.mockResolvedValue({})
     mockPost.mockResolvedValue({})
