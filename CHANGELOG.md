@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.11.2 (2026-05-07)
+
+### Bug Fixes
+
+- **web**: Refresh enrichment stats on every poll tick while job running
+  ([`282f88e`](https://github.com/therealahall/recommendinator/commit/282f88efc574cb584e824a950e6dbc36ab71bbd6))
+
+
 ## v0.11.1 (2026-05-07)
 
 ### Bug Fixes
