@@ -14,6 +14,9 @@
 #   - Bind-mounts ./src and ./templates into the container so Python edits
 #     are visible immediately. Combined with --reload, uvicorn restarts in
 #     ~1s on file save — no rebuild needed.
+#   - Bind-mounts pyproject.toml so the runtime __version__ reflects the
+#     host's current value after semantic-release bumps it (without
+#     rebuilding the image). See src/__init__.py:_read_source_version.
 #   - Renames the local images so they don't shadow the GHCR cache when you
 #     switch back to the production compose.
 #
@@ -27,6 +30,7 @@ x-dev-common: &dev-common
   volumes:
     - ./src:/app/src
     - ./templates:/app/templates
+    - ./pyproject.toml:/app/pyproject.toml:ro
   command:
     - python
     - -m
