@@ -110,6 +110,8 @@ RecommendationEngine
   |
   |-- UserPreferenceConfig (optional per-user weight overrides, diversity_weight)
   |-- Ranker (adaptation bonus, series bonus, diversity bonus, preference adjustments)
+  |-- Variety penalty (when variety_after_completion enabled) — stepped genre-fatigue
+  |     multiplier scoped to the recommended content type (see variety.py)
   |-- [LLM reasoning post-processing]  (when AI enabled)
 ```
 
@@ -125,8 +127,9 @@ RecommendationEngine
 4. Score all unconsumed candidates through the scoring pipeline
 5. Optionally blend vector-similarity scores when AI is enabled
 6. Apply series filtering with substitution (when `series_in_order` is enabled): candidates that fail series ordering rules are replaced with the earliest recommendable entry from the same series, using the substitute's own pipeline score. Duplicate substitutions per series are prevented. Also apply diversity bonus (genre-hopping) and ranking adjustments
-7. Filter out items marked as `ignored`
-8. Generate ranked recommendations with score breakdowns
+7. Apply the variety penalty (when `variety_after_completion` is enabled): build a stepped genre-fatigue ladder from the user's recently completed items **of the recommended content type**, then multiply each candidate's final score by `1 - penalty` where the penalty is the strongest among the candidate's recently finished genre clusters (`variety.py`). The applied penalty is surfaced per recommendation
+8. Filter out items marked as `ignored`
+9. Generate ranked recommendations with score breakdowns
 
 **Cross-Content-Type Recommendations:**
 - Preferences from all content types influence recommendations
