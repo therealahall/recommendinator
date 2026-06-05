@@ -339,6 +339,14 @@ python3.11 -m src.cli preferences set-length movie any
 python3.11 -m src.cli preferences set-length video_game long
 ```
 
+### Toggle variety after completion
+
+```bash
+# Demote genres you've recently finished so recommendations vary (per content
+# type) instead of marching through the next entry in a just-finished series.
+python3.11 -m src.cli preferences set-toggle variety_after_completion on
+```
+
 ## Optional: Enable AI Features
 
 If you want semantic similarity and LLM-powered explanations:

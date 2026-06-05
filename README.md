@@ -396,6 +396,10 @@ python3.11 -m src.cli preferences get --format json
 python3.11 -m src.cli preferences set-weight genre_match 3.0
 python3.11 -m src.cli preferences set-length book short
 
+# Toggle boolean preferences (series_in_order, variety_after_completion)
+python3.11 -m src.cli preferences set-toggle variety_after_completion on
+python3.11 -m src.cli preferences set-toggle series_in_order off
+
 # Reset all preferences to defaults
 python3.11 -m src.cli preferences reset
 
@@ -510,15 +514,17 @@ Set length preferences per content type (`short`, `medium`, `long`, or `any`) vi
 
 Items without length metadata (common before enrichment) receive a small benefit-of-the-doubt score rather than being penalized.
 
-### Diversity Bonus
+### Variety After Completion
 
-The diversity bonus encourages genre variety in recommendations. When enabled, items with genres different from your recently completed content get a score boost (calculated via Jaccard distance on genre sets). Configure it per-user:
+Enable the **"Variety after completion"** preference (web UI toggle, or `preferences set-toggle variety_after_completion on` in the CLI) to stop the recommender from marching through the next entry in a genre you just finished — for example, finishing a fantasy book no longer makes the next fantasy book your automatic #1.
 
-- **0.0** (default) — Disabled
-- **0.1–0.3** — Subtle variety
-- **0.5+** — Strong genre-hopping
+When enabled, the genres you most recently *completed* are penalized on a stepped ladder by recency. The most recently finished genre cluster takes an **80%** penalty, and the penalty decays over your last **5 distinct** finished genres (80% → 64% → 48% → 32% → 16%, then nothing). A candidate is penalized by its freshest matching genre, and the penalty multiplies its final score, so a heavily-penalized item still keeps a fraction of its score rather than disappearing.
 
-You can also enable the **"Variety after completion"** preference, which applies a default diversity weight of 0.2 automatically.
+The penalty is **per content type** — finishing a fantasy *book* varies your book recommendations but leaves fantasy *movies* and *games* untouched. Each recommendation surfaces its applied penalty (CLI table/JSON and the web "Score Details" panel) so you can see why a recently finished genre was demoted.
+
+### Diversity Bonus (advanced)
+
+Independently of the variety toggle, an explicit per-user `diversity_weight` (0.0–1.0, default 0.0) adds a mild genre-hopping bonus in the ranker, boosting candidates whose genres differ from your recently completed content (Jaccard distance on genre sets). Leave it at 0.0 unless you want an extra nudge on top of the variety penalty.
 
 ### Ignored Items
 
