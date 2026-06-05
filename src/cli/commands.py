@@ -250,6 +250,7 @@ def recommend(
                         "reasoning": rec["reasoning"],
                         "llm_reasoning": rec.get("llm_reasoning"),
                         "score_breakdown": rec.get("score_breakdown", {}),
+                        "variety_penalty": rec.get("variety_penalty", 0.0),
                     }
                 )
             click.echo(json.dumps(output, indent=2))
@@ -259,13 +260,21 @@ def recommend(
             for i, rec in enumerate(recommendations, 1):
                 item = rec["item"]
                 author = item.author or "N/A"
+                reasoning = rec["reasoning"]
+                penalty = rec.get("variety_penalty", 0.0)
+                if penalty > 0:
+                    # Surface the stepped variety penalty inline so CLI users
+                    # can see why a recently finished genre was demoted.
+                    reasoning = (
+                        f"{reasoning}\n(variety penalty -{round(penalty * 100)}%)"
+                    )
                 table_data.append(
                     [
                         i,
                         item.title,
                         author,
                         f"{rec['score']:.2f}",
-                        rec["reasoning"],
+                        reasoning,
                     ]
                 )
 
@@ -589,6 +598,46 @@ def preferences_set_weight(
     preference_config.scorer_weights[scorer_name] = weight
     storage.save_user_preference_config(user_id, preference_config)
     click.echo(f"Set {scorer_name} weight to {weight} for user {user_id}")
+
+
+# Boolean preference toggles settable from the CLI, mirroring the web UI's
+# TogglePrefs section.  Each name is also the UserPreferenceConfig attribute.
+_TOGGLE_NAMES: tuple[str, ...] = ("series_in_order", "variety_after_completion")
+
+
+@preferences.command("set-toggle")
+@click.argument("toggle_name", type=click.Choice(_TOGGLE_NAMES))
+@click.argument("value", type=click.Choice(["on", "off"], case_sensitive=False))
+@click.option(
+    "--user",
+    "user_id",
+    type=int,
+    default=1,
+    help="User ID",
+)
+@click.pass_context
+def preferences_set_toggle(
+    ctx: click.Context, toggle_name: str, value: str, user_id: int
+) -> None:
+    """Enable or disable a boolean preference toggle.
+
+    TOGGLE_NAME is the setting to change (series_in_order,
+    variety_after_completion).  VALUE is 'on' or 'off'.
+
+    'variety_after_completion' turns on the stepped genre-fatigue penalty:
+    genres you have recently finished are demoted so recommendations vary
+    instead of marching through the next entry in a just-completed series.
+    """
+    enabled = value.lower() == "on"
+    storage = ctx.obj["storage"]
+    preference_config = storage.get_user_preference_config(user_id)
+    # Guard against the allowlist drifting away from the model's bool fields.
+    if not isinstance(getattr(preference_config, toggle_name, None), bool):
+        raise click.ClickException(f"'{toggle_name}' is not a boolean preference")
+    setattr(preference_config, toggle_name, enabled)
+    storage.save_user_preference_config(user_id, preference_config)
+    state = "on" if enabled else "off"
+    click.echo(f"Set {toggle_name} {state} for user {user_id}")
 
 
 @preferences.command("reset")
