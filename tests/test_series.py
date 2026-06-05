@@ -2,6 +2,7 @@
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.utils.series import (
+    MAX_SEASONS,
     _extract_series_from_title,
     _roman_to_int,
     build_series_tracking,
@@ -1360,3 +1361,73 @@ class TestDecimalSeriesOrderingRegression:
         assert should_recommend_item(novella_25, series_tracking, unconsumed) is True
         # Book 3 waits behind the novella that precedes it.
         assert should_recommend_item(book_three, series_tracking, unconsumed) is False
+
+
+class TestSeasonBoundsRegression:
+    """Regression tests bounding user-supplied TV season numbers.
+
+    Season counts and numbers arrive from imports and the web edit endpoint
+    and feed ``range()`` calls, so a malformed value must not allocate an
+    unbounded amount of work.
+    """
+
+    def test_expand_caps_total_seasons_regression(self) -> None:
+        """Regression test: a huge total_seasons cannot explode expansion.
+
+        Bug reported: ``total_seasons`` from metadata fed
+        ``range(1, total_seasons + 1)`` in ``expand_tv_shows_to_seasons`` with
+        no upper bound, so a value like 2_000_000_000 would allocate billions
+        of season items (local CPU/memory DoS).
+        Root cause: the season count was trusted verbatim from user metadata.
+        Fix: cap the expansion at ``MAX_SEASONS``.
+        """
+        show = ContentItem(
+            id="show1",
+            title="Endless Show",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"total_seasons": 2_000_000_000},
+        )
+        expanded = expand_tv_shows_to_seasons([show])
+        assert len(expanded) == MAX_SEASONS
+        # The cap produces seasons 1..MAX_SEASONS, not some other run of 200.
+        assert expanded[0].metadata["season"] == 1
+        assert expanded[-1].metadata["season"] == MAX_SEASONS
+        assert expanded[-1].title == f"Endless Show (Season {MAX_SEASONS})"
+
+    def test_expand_keeps_exactly_max_seasons_uncapped_regression(self) -> None:
+        """A legitimate count of exactly MAX_SEASONS is preserved (inclusive cap)."""
+        show = ContentItem(
+            id="show2",
+            title="Long Show",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"number_of_seasons": MAX_SEASONS},
+        )
+        expanded = expand_tv_shows_to_seasons([show])
+        assert len(expanded) == MAX_SEASONS
+        assert expanded[0].metadata["season"] == 1
+        assert expanded[-1].metadata["season"] == MAX_SEASONS
+
+    def test_inject_drops_out_of_range_seasons_regression(self) -> None:
+        """Regression test: out-of-range watched seasons are not tracked.
+
+        Bug reported: ``inject_seasons_watched_tracking`` added raw season
+        ints into series tracking with no bound, so a value like 2_000_000
+        became ``max_consumed`` and exploded the gap-ladder ``range()`` in
+        ``should_recommend_item``.
+        Root cause: only a type check guarded the injected season numbers.
+        Fix: bound each injected season to ``1..MAX_SEASONS``.
+        """
+        show = ContentItem(
+            id="show1",
+            title="The Show",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            metadata={
+                "seasons_watched": [1, 5, MAX_SEASONS, MAX_SEASONS + 1, 2_000_000]
+            },
+        )
+        tracking = inject_seasons_watched_tracking([show], {})
+        # In-range seasons (including the cap boundary) kept; out-of-range dropped.
+        assert tracking["The Show"] == {1, 5, MAX_SEASONS}

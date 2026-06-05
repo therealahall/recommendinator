@@ -40,6 +40,7 @@ from src.recommendations.scorers import SCORER_NAME_MAP
 from src.storage.credential_migration import migrate_config_credentials
 from src.storage.manager import StorageManager
 from src.utils.item_serialization import item_to_dict
+from src.utils.series import MAX_SEASONS
 from src.web.epic_auth import (
     exchange_code_for_tokens as exchange_epic_code,
     extract_code_from_input as extract_epic_code,
@@ -1313,7 +1314,7 @@ def library_show(
 @click.option(
     "--seasons-watched",
     default=None,
-    help="Comma-separated list of watched season numbers",
+    help=f"Comma-separated list of watched season numbers (1-{MAX_SEASONS})",
 )
 @click.option(
     "--user",
@@ -1359,13 +1360,29 @@ def library_edit(
     parsed_seasons: list[int] | None = None
     if seasons_watched is not None:
         try:
-            parsed_seasons = [int(s.strip()) for s in seasons_watched.split(",")]
+            parsed_seasons = [
+                int(token.strip()) for token in seasons_watched.split(",")
+            ]
         except ValueError:
             click.echo(
                 "Error: --seasons-watched must be comma-separated integers (e.g. 1,2,3).",
                 err=True,
             )
             raise click.Abort() from None
+        # Mirror the web ItemEditRequest bounds so both interfaces reject the
+        # same out-of-range season values instead of silently storing them.
+        if len(parsed_seasons) > MAX_SEASONS:
+            click.echo(
+                f"Error: --seasons-watched accepts at most {MAX_SEASONS} seasons.",
+                err=True,
+            )
+            raise click.Abort()
+        if any(not 1 <= season <= MAX_SEASONS for season in parsed_seasons):
+            click.echo(
+                f"Error: --seasons-watched values must each be between 1 and {MAX_SEASONS}.",
+                err=True,
+            )
+            raise click.Abort()
 
     updated = storage.update_item_from_ui(
         db_id=item_id,

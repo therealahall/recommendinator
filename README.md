@@ -376,6 +376,9 @@ python3.11 -m src.cli library show --id 42
 # Edit item metadata
 python3.11 -m src.cli library edit --id 42 --rating 5 --status completed
 
+# Mark watched TV seasons (comma-separated season numbers, each 1-200)
+python3.11 -m src.cli library edit --id 42 --seasons-watched 1,2,3
+
 # Ignore/unignore items (excluded from recommendations)
 python3.11 -m src.cli library ignore --id 42
 python3.11 -m src.cli library unignore --id 42
