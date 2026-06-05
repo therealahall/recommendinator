@@ -193,6 +193,92 @@ def test_recommend_command_json(mock_components):
     assert '"score"' in result.output
 
 
+def test_recommend_command_surfaces_variety_penalty(mock_components):
+    """The variety penalty appears in JSON output and the table reasoning."""
+    mock_item = ContentItem(
+        id="1",
+        title="Penalised Book",
+        author="Author",
+        content_type=ContentType.BOOK,
+        status=ConsumptionStatus.UNREAD,
+    )
+    mock_recommendations = [
+        {
+            "item": mock_item,
+            "score": 0.2,
+            "similarity_score": 0.5,
+            "preference_score": 0.5,
+            "reasoning": "Recommended",
+            "variety_penalty": 0.64,
+        }
+    ]
+    mock_components["storage"].get_completed_items.return_value = [
+        ContentItem(
+            id="2",
+            title="Read",
+            author="Author",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+        )
+    ]
+    mock_components["storage"].get_unconsumed_items.return_value = [mock_item]
+    mock_components["engine"].generate_recommendations.return_value = (
+        mock_recommendations
+    )
+
+    runner = CliRunner()
+    json_result = runner.invoke(
+        cli, ["recommend", "--type", "book", "--count", "1", "--format", "json"]
+    )
+    assert json_result.exit_code == 0
+    assert '"variety_penalty": 0.64' in json_result.output
+
+    table_result = runner.invoke(cli, ["recommend", "--type", "book", "--count", "1"])
+    assert table_result.exit_code == 0
+    assert "variety penalty -64%" in table_result.output
+
+
+def test_recommend_command_omits_zero_variety_penalty_note(mock_components):
+    """A zero penalty adds no note to the table reasoning."""
+    mock_item = ContentItem(
+        id="1",
+        title="Plain Book",
+        author="Author",
+        content_type=ContentType.BOOK,
+        status=ConsumptionStatus.UNREAD,
+    )
+    mock_recommendations = [
+        {
+            "item": mock_item,
+            "score": 0.85,
+            "similarity_score": 0.5,
+            "preference_score": 0.5,
+            "reasoning": "Recommended",
+            "variety_penalty": 0.0,
+        }
+    ]
+    mock_components["storage"].get_completed_items.return_value = [
+        ContentItem(
+            id="2",
+            title="Read",
+            author="Author",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+        )
+    ]
+    mock_components["storage"].get_unconsumed_items.return_value = [mock_item]
+    mock_components["engine"].generate_recommendations.return_value = (
+        mock_recommendations
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["recommend", "--type", "book", "--count", "1"])
+    assert result.exit_code == 0
+    assert "variety penalty" not in result.output
+
+
 def test_update_command_help(mock_components):
     """Test update command help."""
     runner = CliRunner()
@@ -788,6 +874,45 @@ def test_preferences_set_weight(mock_components):
     assert result.exit_code == 0
     assert "Set genre_match weight to 3.0" in result.output
     mock_components["storage"].save_user_preference_config.assert_called_once()
+
+
+def test_preferences_set_toggle_on(mock_components):
+    """Test enabling variety_after_completion via set-toggle."""
+    config = UserPreferenceConfig()
+    mock_components["storage"].get_user_preference_config = Mock(return_value=config)
+    mock_components["storage"].save_user_preference_config = Mock()
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli, ["preferences", "set-toggle", "variety_after_completion", "on"]
+    )
+
+    assert result.exit_code == 0
+    assert "Set variety_after_completion on" in result.output
+    assert config.variety_after_completion is True
+    mock_components["storage"].save_user_preference_config.assert_called_once()
+
+
+def test_preferences_set_toggle_off(mock_components):
+    """Test disabling a toggle via set-toggle."""
+    config = UserPreferenceConfig(series_in_order=True)
+    mock_components["storage"].get_user_preference_config = Mock(return_value=config)
+    mock_components["storage"].save_user_preference_config = Mock()
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["preferences", "set-toggle", "series_in_order", "off"])
+
+    assert result.exit_code == 0
+    assert "Set series_in_order off" in result.output
+    assert config.series_in_order is False
+
+
+def test_preferences_set_toggle_rejects_unknown_name(mock_components):
+    """An unknown toggle name is rejected by the Click choice."""
+    runner = CliRunner()
+    result = runner.invoke(cli, ["preferences", "set-toggle", "not_a_toggle", "on"])
+
+    assert result.exit_code != 0
 
 
 def test_preferences_reset(mock_components):

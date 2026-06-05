@@ -168,6 +168,7 @@ class TestRecommendJsonOutput:
             "reasoning",
             "llm_reasoning",
             "score_breakdown",
+            "variety_penalty",
         }
         assert rec["db_id"] == 42
         assert rec["llm_reasoning"] == "LLM says so"
