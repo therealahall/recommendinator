@@ -633,6 +633,41 @@ def find_earliest_recommendable(
     return None
 
 
+def is_active_series_continuation(
+    item: ContentItem,
+    series_tracking: dict[str, set[float]],
+    unconsumed_items: list[ContentItem] | None = None,
+) -> bool:
+    """Return True if *item* is the next entry in an already-started series.
+
+    "Already-started" means the user has consumed at least one entry of the
+    series; "next entry" means the item passes :func:`should_recommend_item`.
+    The first book of an *unstarted* series and standalone items return False —
+    beginning a brand-new series is not a continuation and should not be
+    shielded from the variety penalty.
+
+    Used to soften (not remove) the genre-fatigue variety penalty for the book
+    a user is actively working towards, so the next entry in a series they are
+    mid-way through is not buried beneath unrelated content.
+
+    Args:
+        item: Candidate item being scored.
+        series_tracking: Series tracking dictionary (consumed items).
+        unconsumed_items: Optional unconsumed items for ordering checks.
+
+    Returns:
+        True if the item continues a series the user has already started.
+    """
+    series_info = extract_series_info(item.title, item.metadata, item.content_type)
+    if series_info is None:
+        return False
+    series_name = series_info[0]
+    if not series_tracking.get(series_name):
+        # Unstarted series (or untracked) — starting fresh is not continuation.
+        return False
+    return should_recommend_item(item, series_tracking, unconsumed_items)
+
+
 def strip_series_suffix_from_title(title: str) -> str:
     """Strip trailing parenthetical series info from a title for display.
 

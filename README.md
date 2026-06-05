@@ -522,6 +522,8 @@ When enabled, the genres you most recently *completed* are penalized on a steppe
 
 The penalty is **per content type** — finishing a fantasy *book* varies your book recommendations but leaves fantasy *movies* and *games* untouched. Each recommendation surfaces its applied penalty (CLI table/JSON and the web "Score Details" panel) so you can see why a recently finished genre was demoted.
 
+The next entry in a series you're **actively reading** gets a softened penalty (halved): finishing book #1 of a series doesn't mean you're done with the genre, so the legit next book is nudged down but not buried. Starting a brand-new series in a just-finished genre still takes the full penalty — that's exactly the genre-hop the toggle is for.
+
 ### Diversity Bonus (advanced)
 
 Independently of the variety toggle, an explicit per-user `diversity_weight` (0.0–1.0, default 0.0) adds a mild genre-hopping bonus in the ranker, boosting candidates whose genres differ from your recently completed content (Jaccard distance on genre sets). Leave it at 0.0 unless you want an extra nudge on top of the variety penalty.

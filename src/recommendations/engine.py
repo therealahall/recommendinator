@@ -47,6 +47,7 @@ from src.utils.series import (
     get_series_name,
     get_series_name_from_metadata,
     inject_seasons_watched_tracking,
+    is_active_series_continuation,
     should_recommend_item,
     strip_series_suffix_from_title,
 )
@@ -378,7 +379,10 @@ class RecommendationEngine:
             and user_preference_config.variety_after_completion
         ):
             ranked_items = self._apply_variety_penalty(
-                ranked_items, consumed_items_of_type
+                ranked_items,
+                consumed_items_of_type,
+                series_tracking,
+                unconsumed_items,
             )
 
         top_recommendations = ranked_items[:count]
@@ -613,6 +617,8 @@ class RecommendationEngine:
     def _apply_variety_penalty(
         ranked_items: list[tuple[ContentItem, float, dict[str, Any]]],
         completed_items_of_type: list[ContentItem],
+        series_tracking: dict[str, set[float]],
+        unconsumed_items: list[ContentItem],
     ) -> list[tuple[ContentItem, float, dict[str, Any]]]:
         """Apply the stepped genre-fatigue penalty and re-sort (issue #74).
 
@@ -625,10 +631,19 @@ class RecommendationEngine:
         games.  The applied penalty is recorded under ``"variety_penalty"`` in
         each item's rank metadata for display.
 
+        The penalty is softened for an item that continues a series the user is
+        actively progressing through (see
+        :func:`is_active_series_continuation`): finishing book #1 does not mean
+        the user is done with the genre, so the next book is nudged rather than
+        buried beneath unrelated content.
+
         Args:
             ranked_items: ``(item, score, metadata)`` tuples from the ranker.
             completed_items_of_type: Completed items of the recommended content
                 type, used to build the ladder.
+            series_tracking: Series name -> consumed item numbers, used to
+                detect active series continuations.
+            unconsumed_items: Candidate items, used for series ordering checks.
 
         Returns:
             Re-sorted ``(item, score, metadata)`` tuples with the penalty
@@ -640,7 +655,12 @@ class RecommendationEngine:
 
         penalised: list[tuple[ContentItem, float, dict[str, Any]]] = []
         for item, score, metadata in ranked_items:
-            penalty = variety_penalty_for(item, ladder)
+            is_continuation = is_active_series_continuation(
+                item, series_tracking, unconsumed_items
+            )
+            penalty = variety_penalty_for(
+                item, ladder, is_series_continuation=is_continuation
+            )
             updated_metadata = {**metadata, "variety_penalty": penalty}
             penalised.append((item, score * (1.0 - penalty), updated_metadata))
 

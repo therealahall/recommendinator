@@ -15,6 +15,7 @@ import pytest
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.recommendations.variety import (
     VARIETY_LADDER_STEPS,
+    VARIETY_SERIES_CONTINUATION_FACTOR,
     VARIETY_TOP_PENALTY,
     build_variety_ladder,
     variety_penalty_for,
@@ -213,3 +214,43 @@ class TestVarietyPenaltyFor:
             _candidate("Crossover", ["Fantasy", "Science Fiction"]), ladder
         )
         assert penalty == pytest.approx(0.8)
+
+    def test_series_continuation_no_match_stays_zero(self) -> None:
+        """Continuation softening of a non-matching candidate is still zero.
+
+        The softening is multiplicative, so a candidate that matches no ladder
+        cluster stays at ``0.0`` even when flagged as a series continuation.
+        """
+        ladder = {"fantasy": 0.8}
+        candidate = _candidate("Sci Sequel", ["Science Fiction"])
+        assert (
+            variety_penalty_for(candidate, ladder, is_series_continuation=True) == 0.0
+        )
+
+
+class TestVarietySeriesContinuationRegression:
+    """Regression tests for the variety penalty burying the next series book."""
+
+    def test_series_continuation_softens_penalty_regression(self) -> None:
+        """Regression test: the next book in a started series isn't buried.
+
+        Bug reported: after reading Expanse book #1, the legit next book #2
+        (Caliban's War) sank to rank 123 under a 48% variety penalty while
+        unreadable novellas floated to the top.
+        Root cause: the variety-after-completion penalty hit the next-in-series
+        book at full strength because it shares the just-completed sci-fi
+        cluster — finishing book #1 was treated as finishing the genre.
+        Fix: soften (halve) — not remove — the variety penalty for an item that
+        continues a series the user is actively progressing through, so genre
+        fatigue still nudges but no longer buries the next book.
+        """
+        ladder = {"science_fiction": VARIETY_TOP_PENALTY}
+        candidate = _candidate("Caliban's War", ["Science Fiction"])
+        full = variety_penalty_for(candidate, ladder)
+        softened = variety_penalty_for(candidate, ladder, is_series_continuation=True)
+        assert full == pytest.approx(VARIETY_TOP_PENALTY)
+        assert softened == pytest.approx(
+            VARIETY_TOP_PENALTY * VARIETY_SERIES_CONTINUATION_FACTOR
+        )
+        # Softening only lowers; it never raises the penalty.
+        assert softened < full
