@@ -12,6 +12,7 @@ from src.ingestion.sources.generic_csv.generic_csv import (
     parse_seasons_watched,
 )
 from src.models.content import ConsumptionStatus, ContentType
+from src.utils.series import MAX_SEASONS
 
 
 @pytest.fixture()
@@ -593,3 +594,33 @@ class TestParseSeasonsWatched:
 
     def test_negative(self) -> None:
         assert parse_seasons_watched(-1) == []
+
+    def test_huge_count_capped_at_max_seasons(self) -> None:
+        """A malformed count must not expand into an unbounded list."""
+        result = parse_seasons_watched(2_000_000_000)
+        assert result == list(range(1, MAX_SEASONS + 1))
+        assert len(result) == MAX_SEASONS
+
+    def test_huge_string_count_capped(self) -> None:
+        """A malformed single-number string (count path) is capped too."""
+        assert parse_seasons_watched("2000000000") == list(range(1, MAX_SEASONS + 1))
+
+    def test_out_of_range_array_elements_dropped(self) -> None:
+        """Above the cap (or below 1) is dropped; the cap itself is kept."""
+        assert parse_seasons_watched(
+            [1, 5, 0, -3, MAX_SEASONS, MAX_SEASONS + 1, 2_000_000]
+        ) == [1, 5, MAX_SEASONS]
+
+    def test_non_numeric_array_elements_skipped(self) -> None:
+        """Non-numeric array entries are skipped, not raised (matches comma path)."""
+        assert parse_seasons_watched([1, "abc", 3, ""]) == [1, 3]
+
+    def test_out_of_range_comma_values_dropped(self) -> None:
+        """Comma path drops out-of-range values but keeps the cap boundary."""
+        assert parse_seasons_watched(
+            f"1,2,{MAX_SEASONS},{MAX_SEASONS + 1},9000000"
+        ) == [
+            1,
+            2,
+            MAX_SEASONS,
+        ]

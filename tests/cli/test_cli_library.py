@@ -9,6 +9,7 @@ from click.testing import CliRunner
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.manager import StorageManager
+from src.utils.series import MAX_SEASONS
 
 from .conftest import _invoke_with_mocks
 
@@ -435,6 +436,74 @@ class TestLibraryEdit:
 
         assert result.exit_code != 0
         assert "failed to update" in result.output.lower()
+
+
+class TestLibraryEditRegression:
+    """Regression tests for the library edit command's season validation."""
+
+    def _tv_storage(self) -> MagicMock:
+        """A storage mock returning a TV show item from get_content_item."""
+        item = _make_item(db_id=1, title="Show", content_type=ContentType.TV_SHOW)
+        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage.get_content_item.return_value = item
+        mock_storage.update_item_from_ui.return_value = True
+        return mock_storage
+
+    def test_edit_rejects_season_above_cap_regression(
+        self, cli_runner: CliRunner
+    ) -> None:
+        """A season number above the cap is rejected, matching the web bound.
+
+        Bug reported: the web ItemEditRequest rejects seasons outside
+        1..MAX_SEASONS with a 422, but the CLI stored them silently.
+        Root cause: the CLI parsed --seasons-watched ints with no range check.
+        Fix: the CLI now rejects out-of-range seasons before touching storage.
+        """
+        mock_storage = self._tv_storage()
+        result = _invoke_with_mocks(
+            cli_runner,
+            [
+                "library",
+                "edit",
+                "--id",
+                "1",
+                "--seasons-watched",
+                f"1,{MAX_SEASONS + 1}",
+            ],
+            mock_storage,
+        )
+        assert result.exit_code != 0
+        assert f"between 1 and {MAX_SEASONS}" in result.output
+        mock_storage.update_item_from_ui.assert_not_called()
+
+    def test_edit_rejects_season_below_one_regression(
+        self, cli_runner: CliRunner
+    ) -> None:
+        """A season number below 1 is rejected, matching the web ge=1 bound."""
+        mock_storage = self._tv_storage()
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["library", "edit", "--id", "1", "--seasons-watched", "0"],
+            mock_storage,
+        )
+        assert result.exit_code != 0
+        assert f"between 1 and {MAX_SEASONS}" in result.output
+        mock_storage.update_item_from_ui.assert_not_called()
+
+    def test_edit_rejects_too_many_seasons_regression(
+        self, cli_runner: CliRunner
+    ) -> None:
+        """A list longer than the cap is rejected, matching web max_length."""
+        mock_storage = self._tv_storage()
+        too_many = ",".join(str(n) for n in range(1, MAX_SEASONS + 2))
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["library", "edit", "--id", "1", "--seasons-watched", too_many],
+            mock_storage,
+        )
+        assert result.exit_code != 0
+        assert f"at most {MAX_SEASONS} seasons" in result.output
+        mock_storage.update_item_from_ui.assert_not_called()
 
 
 class TestLibraryIgnore:

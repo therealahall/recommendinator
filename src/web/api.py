@@ -5,7 +5,7 @@ import logging
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any, cast
+from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response, StreamingResponse
@@ -28,6 +28,7 @@ from src.models.content import (
 from src.models.user_preferences import UserPreferenceConfig
 from src.storage.manager import VALID_SORT_OPTIONS, StorageManager
 from src.utils.item_serialization import item_to_dict
+from src.utils.series import MAX_SEASONS
 from src.utils.text import humanize_source_id
 from src.web.enrichment_manager import get_enrichment_manager
 from src.web.epic_auth import (
@@ -290,7 +291,9 @@ class ItemEditRequest(BaseModel):
     status: str = Field(..., description="Status value")
     rating: int | None = Field(None, ge=1, le=5)
     review: str | None = Field(None, max_length=10000)
-    seasons_watched: list[int] | None = Field(None)
+    seasons_watched: list[Annotated[int, Field(ge=1, le=MAX_SEASONS)]] | None = Field(
+        None, max_length=MAX_SEASONS
+    )
 
 
 class EnrichmentStartRequest(BaseModel):

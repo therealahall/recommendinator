@@ -16,6 +16,7 @@ from src.ingestion.plugin_base import (
     SourcePlugin,
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.utils.series import MAX_SEASONS
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
@@ -126,6 +127,10 @@ def parse_seasons_watched(value: str | int | list[int] | None) -> list[int]:
     - Array [1, 2, 5, 6] -> pass through
     - Empty/None -> []
 
+    Season numbers outside ``1..MAX_SEASONS`` are dropped, and a count is
+    capped at ``MAX_SEASONS`` so a malformed value cannot expand into an
+    unbounded list.
+
     Args:
         value: Raw seasons_watched value
 
@@ -136,12 +141,22 @@ def parse_seasons_watched(value: str | int | list[int] | None) -> list[int]:
         return []
 
     if isinstance(value, list):
-        return sorted(int(season) for season in value if str(season).strip())
+        parsed = []
+        for entry in value:
+            if not str(entry).strip():
+                continue
+            try:
+                season = int(entry)
+            except (ValueError, TypeError):
+                continue
+            if 1 <= season <= MAX_SEASONS:
+                parsed.append(season)
+        return sorted(parsed)
 
     if isinstance(value, int):
         if value <= 0:
             return []
-        return list(range(1, value + 1))
+        return list(range(1, min(value, MAX_SEASONS) + 1))
 
     text = str(value).strip()
     if not text:
@@ -154,9 +169,11 @@ def parse_seasons_watched(value: str | int | list[int] | None) -> list[int]:
             part = part.strip()
             if part:
                 try:
-                    seasons.append(int(part))
+                    season = int(part)
                 except ValueError:
                     continue
+                if 1 <= season <= MAX_SEASONS:
+                    seasons.append(season)
         return sorted(seasons)
 
     # Single number — treat as count for backward compatibility
@@ -164,7 +181,7 @@ def parse_seasons_watched(value: str | int | list[int] | None) -> list[int]:
         count = int(text)
         if count <= 0:
             return []
-        return list(range(1, count + 1))
+        return list(range(1, min(count, MAX_SEASONS) + 1))
     except ValueError:
         return []
 

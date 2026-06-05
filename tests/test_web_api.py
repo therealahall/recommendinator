@@ -18,6 +18,7 @@ from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.engine import RecommendationEngine
 from src.storage.manager import StorageManager
+from src.utils.series import MAX_SEASONS
 from src.web.api import APP_VERSION, _item_to_response
 from src.web.app import create_app
 from src.web.enrichment_manager import WebEnrichmentManager
@@ -1261,6 +1262,43 @@ def test_edit_tv_show_seasons(client, mock_components):
         seasons_watched=[1, 2, 3],
         user_id=1,
     )
+
+
+def test_edit_rejects_out_of_range_season_regression(client, mock_components):
+    """PATCH /api/items/{db_id} rejects season numbers outside the cap.
+
+    Regression: seasons_watched was unbounded, so a hostile value could feed
+    an enormous range() downstream. The request model now bounds each element
+    to 1..MAX_SEASONS and the list to MAX_SEASONS entries, rejecting bad input
+    at the API boundary before any storage write.
+    """
+    mock_components["storage"].update_item_from_ui = Mock(return_value=True)
+
+    # Above the per-element cap.
+    too_high = client.patch(
+        "/api/items/42?user_id=1",
+        json={"status": "currently_consuming", "seasons_watched": [1, 2_000_000_000]},
+    )
+    assert too_high.status_code == 422
+
+    # Below the per-element minimum (ge=1).
+    too_low = client.patch(
+        "/api/items/42?user_id=1",
+        json={"status": "currently_consuming", "seasons_watched": [0]},
+    )
+    assert too_low.status_code == 422
+
+    # More entries than the list cap allows.
+    too_many = client.patch(
+        "/api/items/42?user_id=1",
+        json={
+            "status": "currently_consuming",
+            "seasons_watched": [1] * (MAX_SEASONS + 1),
+        },
+    )
+    assert too_many.status_code == 422
+
+    mock_components["storage"].update_item_from_ui.assert_not_called()
 
 
 def test_edit_item_not_found(client, mock_components):

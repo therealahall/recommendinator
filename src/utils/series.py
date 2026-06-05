@@ -14,6 +14,13 @@ from typing import NamedTuple
 
 from src.models.content import ContentItem, ContentType
 
+# Upper bound on TV season numbers and counts. No real series approaches this,
+# but season values arrive from user-supplied metadata (imports, the web edit
+# endpoint) and feed ``range()`` calls when expanding shows to seasons and when
+# building the recommendation gap ladder. Bounding them keeps a malformed or
+# hostile season value (e.g. 2_000_000_000) from allocating an enormous list.
+MAX_SEASONS = 200
+
 
 class _SeriesPattern(NamedTuple):
     """Pre-compiled regex pattern for series detection."""
@@ -378,7 +385,7 @@ def inject_seasons_watched_tracking(
             merged[show_title] = set(merged[show_title])
 
         for season_num in seasons_watched:
-            if isinstance(season_num, int):
+            if isinstance(season_num, int) and 1 <= season_num <= MAX_SEASONS:
                 merged[show_title].add(season_num)
 
     return merged
@@ -417,6 +424,10 @@ def expand_tv_shows_to_seasons(items: list[ContentItem]) -> list[ContentItem]:
             expanded.append(item)
             continue
 
+        # Cap the expansion: a malformed or hostile ``total_seasons`` must not
+        # allocate an unbounded number of season-level items.
+        total_seasons = min(total_seasons, MAX_SEASONS)
+
         base_id = item.id or ""
         show_title = item.title
 
@@ -425,7 +436,9 @@ def expand_tv_shows_to_seasons(items: list[ContentItem]) -> list[ContentItem]:
         watched_set: set[int] = set()
         if isinstance(seasons_watched_raw, list):
             watched_set = {
-                season for season in seasons_watched_raw if isinstance(season, int)
+                season
+                for season in seasons_watched_raw
+                if isinstance(season, int) and 1 <= season <= MAX_SEASONS
             }
 
         for season_num in range(1, total_seasons + 1):
@@ -582,8 +595,10 @@ def should_recommend_item(
     #
     # ``int(max_consumed)`` floors fractional positions intentionally: a
     # consumed #2.5 novella still yields integer slots up to the next whole
-    # book. ``max_consumed`` is bounded by the 1..1000 range enforced in
-    # ``extract_series_info``, so the slot set never grows without bound.
+    # book. ``max_consumed`` is bounded — series positions are capped at 1000
+    # in ``extract_series_info`` and injected TV seasons at ``MAX_SEASONS`` in
+    # ``inject_seasons_watched_tracking`` — so the slot set never grows without
+    # bound.
     max_consumed = max(consumed_numbers)
     virtual_slots = {float(slot) for slot in range(1, int(max_consumed) + 2)}
     positions = consumed_numbers | unconsumed_item_nums | {item_num} | virtual_slots
