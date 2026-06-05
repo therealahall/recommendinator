@@ -855,6 +855,65 @@ def test_recommendations_include_breakdown(client, mock_components):
     assert data[0]["score_breakdown"]["creator_match"] == 0.5
 
 
+def test_recommendations_include_variety_penalty(client, mock_components):
+    """Recommendations response includes the variety_penalty field (issue #74)."""
+    mock_item = ContentItem(
+        id="1",
+        title="Penalised Book",
+        author="Author",
+        content_type=ContentType.BOOK,
+        status=ConsumptionStatus.UNREAD,
+    )
+    mock_recommendations = [
+        {
+            "item": mock_item,
+            "score": 0.2,
+            "similarity_score": 0.5,
+            "preference_score": 0.5,
+            "reasoning": "Recommended",
+            "score_breakdown": {"genre_match": 0.9},
+            "variety_penalty": 0.8,
+        }
+    ]
+    mock_components["engine"].generate_recommendations.return_value = (
+        mock_recommendations
+    )
+
+    response = client.get("/api/recommendations?type=book&count=1")
+    assert response.status_code == 200
+    data = response.json()
+    assert data[0]["variety_penalty"] == 0.8
+
+
+def test_recommendations_variety_penalty_defaults_to_zero(client, mock_components):
+    """variety_penalty defaults to 0.0 when the engine omits it."""
+    mock_item = ContentItem(
+        id="1",
+        title="Plain Book",
+        author="Author",
+        content_type=ContentType.BOOK,
+        status=ConsumptionStatus.UNREAD,
+    )
+    mock_recommendations = [
+        {
+            "item": mock_item,
+            "score": 0.85,
+            "similarity_score": 0.8,
+            "preference_score": 0.7,
+            "reasoning": "Recommended",
+            "score_breakdown": {"genre_match": 0.9},
+        }
+    ]
+    mock_components["engine"].generate_recommendations.return_value = (
+        mock_recommendations
+    )
+
+    response = client.get("/api/recommendations?type=book&count=1")
+    assert response.status_code == 200
+    data = response.json()
+    assert data[0]["variety_penalty"] == 0.0
+
+
 def test_recommendations_with_user_id(client, mock_components):
     """GET /api/recommendations with user_id loads user preferences."""
     mock_item = ContentItem(
