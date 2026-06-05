@@ -343,7 +343,8 @@ python3.11 -m src.cli preferences set-length video_game long
 
 ```bash
 # Demote genres you've recently finished so recommendations vary (per content
-# type) instead of marching through the next entry in a just-finished series.
+# type). The next entry in a series you're actively reading gets a softened
+# (halved) penalty, so it's nudged down but not buried under unrelated content.
 python3.11 -m src.cli preferences set-toggle variety_after_completion on
 ```
 

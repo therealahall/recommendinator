@@ -11,6 +11,7 @@ from src.utils.series import (
     get_series_item_number,
     get_series_name,
     inject_seasons_watched_tracking,
+    is_active_series_continuation,
     is_first_item_in_series,
     should_recommend_item,
     strip_series_suffix_from_title,
@@ -473,6 +474,64 @@ def test_should_recommend_item_mixed_completion():
         status=ConsumptionStatus.UNREAD,
     )
     assert should_recommend_item(item_me3, series_tracking, unconsumed_items) is False
+
+
+def test_is_active_series_continuation():
+    """`is_active_series_continuation` flags the next pick in a started series.
+
+    Drives the softened variety penalty: the next entry in a series the user
+    is mid-way through should not be demoted as if its genre were finished.
+    """
+    started_tracking = {"The Expanse": {1.0}}
+    unconsumed_items = [
+        ContentItem(
+            id="exp2",
+            title="Caliban's War (The Expanse, #2)",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        ),
+        ContentItem(
+            id="exp25",
+            title="Gods of Risk (The Expanse, #2.5)",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        ),
+    ]
+    book_two = unconsumed_items[0]
+    novella_25 = unconsumed_items[1]
+
+    # Next book in an already-started series → continuation.
+    assert (
+        is_active_series_continuation(book_two, started_tracking, unconsumed_items)
+        is True
+    )
+    # Out-of-order novella → not a continuation.
+    assert (
+        is_active_series_continuation(novella_25, started_tracking, unconsumed_items)
+        is False
+    )
+
+    # First book of an unstarted series → not a continuation (starting fresh).
+    first_book = ContentItem(
+        id="new1",
+        title="The Way of Kings (Stormlight, #1)",
+        content_type=ContentType.BOOK,
+        status=ConsumptionStatus.UNREAD,
+    )
+    assert is_active_series_continuation(first_book, {}, [first_book]) is False
+
+    # Standalone item → not a continuation.
+    standalone = ContentItem(
+        id="solo",
+        title="A Standalone Novel",
+        content_type=ContentType.BOOK,
+        status=ConsumptionStatus.UNREAD,
+    )
+    assert is_active_series_continuation(standalone, started_tracking, []) is False
+
+    # Without an unconsumed list, the next book of a started series is still
+    # recognised as a continuation (the optional argument defaults to None).
+    assert is_active_series_continuation(book_two, started_tracking) is True
 
 
 def test_should_recommend_item_tv_show_series():

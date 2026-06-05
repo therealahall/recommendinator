@@ -16,6 +16,10 @@ from src.models.content import (
 from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.engine import RecommendationEngine, _shuffle_close_scores
 from src.recommendations.preferences import PreferenceAnalyzer, UserPreferences
+from src.recommendations.variety import (
+    VARIETY_SERIES_CONTINUATION_FACTOR,
+    VARIETY_TOP_PENALTY,
+)
 from src.storage.manager import StorageManager
 from src.storage.vector_db import VectorDB
 
@@ -1858,6 +1862,85 @@ class TestVarietyAfterCompletionRegression:
         assert _variety_rank_of(recs_on, "mystery_book") < _variety_rank_of(
             recs_on, "dragonlance_2"
         )
+
+    def test_decimal_novella_below_next_book_with_variety_regression(
+        self, non_ai_engine, mock_storage
+    ) -> None:
+        """The unread next book outranks half-numbered novellas end-to-end.
+
+        Reported: a 200-book run with variety enabled put Expanse novellas
+        "Drive (#2.7)" and "Gods of Risk (#2.5)" at ranks 45-48 while the
+        actual next book "Caliban's War (#2)" sank to 123 under a 48% variety
+        penalty — the user had read only book #1.
+
+        Root cause (two compounding bugs): decimal novella positions parsed as
+        non-series so they dodged the too-far-ahead suppression, and the
+        variety penalty hit the legit next book at full strength.
+
+        Fix: decimal-aware ordering substitutes the novellas with the earliest
+        recommendable entry (book #2), and the variety penalty is softened for
+        that active series continuation. This test wires both layers together
+        through ``generate_recommendations``.
+        """
+        book_one = ContentItem(
+            id="exp1",
+            title="Leviathan Wakes (The Expanse, #1)",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            date_completed=date(2026, 1, 1),
+            metadata={"genres": ["Science Fiction"]},
+        )
+        book_two = ContentItem(
+            id="exp2",
+            title="Caliban's War (The Expanse, #2)",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genres": ["Science Fiction"]},
+        )
+        novella_25 = ContentItem(
+            id="exp25",
+            title="Gods of Risk (The Expanse, #2.5)",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genres": ["Science Fiction"]},
+        )
+        novella_27 = ContentItem(
+            id="exp27",
+            title="Drive (The Expanse, #2.7)",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genres": ["Science Fiction"]},
+        )
+
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: [book_one]
+        )
+        mock_storage.get_unconsumed_items = Mock(
+            return_value=[novella_27, novella_25, book_two]
+        )
+
+        recs = non_ai_engine.generate_recommendations(
+            content_type=ContentType.BOOK,
+            count=10,
+            user_preference_config=UserPreferenceConfig(variety_after_completion=True),
+        )
+
+        rec_ids = [rec["item"].id for rec in recs]
+        # The legit next book is recommended; the out-of-order novellas are
+        # substituted away by series filtering and never appear.
+        assert "exp2" in rec_ids
+        assert "exp25" not in rec_ids
+        assert "exp27" not in rec_ids
+
+        # The variety layer fired too: Caliban's War shares the just-finished
+        # sci-fi cluster, but as an active series continuation its penalty is
+        # softened (halved), not applied at full strength.
+        book_two_rec = next(rec for rec in recs if rec["item"].id == "exp2")
+        assert book_two_rec["variety_penalty"] == pytest.approx(
+            VARIETY_TOP_PENALTY * VARIETY_SERIES_CONTINUATION_FACTOR
+        )
+        assert book_two_rec["variety_penalty"] < VARIETY_TOP_PENALTY
 
 
 class TestEngineSeriesSubstitutionRegression:

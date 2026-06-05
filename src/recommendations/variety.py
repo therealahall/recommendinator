@@ -34,6 +34,13 @@ VARIETY_TOP_PENALTY = 0.8
 # Penalty decays linearly: rung 0 = TOP, rung STEPS-1 = TOP/STEPS, rung STEPS+ = 0.
 VARIETY_LADDER_STEPS = 5
 
+# Multiplier applied to the variety penalty of an item that continues a series
+# the user is actively progressing through. Finishing book #1 of a series does
+# not mean the user is done with that genre — an unfinished series is the
+# opposite of a completed one — so the next book is softened (halved), not
+# exempted: genre fatigue still nudges it down but no longer buries it.
+VARIETY_SERIES_CONTINUATION_FACTOR = 0.5
+
 
 def _completion_sort_key(item: ContentItem) -> tuple[bool, date, int]:
     """Sort key ordering completed items newest-first.
@@ -105,15 +112,27 @@ def build_variety_ladder(
     return ladder
 
 
-def variety_penalty_for(item: ContentItem, ladder: dict[str, float]) -> float:
+def variety_penalty_for(
+    item: ContentItem,
+    ladder: dict[str, float],
+    *,
+    is_series_continuation: bool = False,
+) -> float:
     """Return the variety penalty for *item* given a penalty *ladder*.
 
     The penalty is the strongest among the clusters the candidate shares with
     the ladder — i.e. the candidate is judged by its freshest matching genre.
 
+    When *is_series_continuation* is True (the item is the next entry in a
+    series the user is actively reading) the penalty is softened by
+    :data:`VARIETY_SERIES_CONTINUATION_FACTOR` so the next book is nudged but
+    not buried. Softening only lowers an existing penalty; a non-matching
+    candidate stays at ``0.0``.
+
     Args:
         item: Candidate item being scored.
         ladder: Cluster -> penalty mapping from :func:`build_variety_ladder`.
+        is_series_continuation: Whether the item continues a started series.
 
     Returns:
         Penalty in ``[0, top_penalty]``; ``0.0`` when no cluster matches.
@@ -121,6 +140,9 @@ def variety_penalty_for(item: ContentItem, ladder: dict[str, float]) -> float:
     if not ladder:
         return 0.0
     clusters = get_clusters_for_terms(extract_and_normalize_genres(item.metadata))
-    return max(
+    penalty = max(
         (ladder[cluster] for cluster in clusters if cluster in ladder), default=0.0
     )
+    if is_series_continuation:
+        penalty *= VARIETY_SERIES_CONTINUATION_FACTOR
+    return penalty

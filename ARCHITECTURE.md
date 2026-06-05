@@ -127,7 +127,7 @@ RecommendationEngine
 4. Score all unconsumed candidates through the scoring pipeline
 5. Optionally blend vector-similarity scores when AI is enabled
 6. Apply series filtering with substitution (when `series_in_order` is enabled): candidates that fail series ordering rules are replaced with the earliest recommendable entry from the same series, using the substitute's own pipeline score. Duplicate substitutions per series are prevented. Also apply diversity bonus (genre-hopping) and ranking adjustments
-7. Apply the variety penalty (when `variety_after_completion` is enabled): build a stepped genre-fatigue ladder from the user's recently completed items **of the recommended content type**, then multiply each candidate's final score by `1 - penalty` where the penalty is the strongest among the candidate's recently finished genre clusters (`variety.py`). The applied penalty is surfaced per recommendation
+7. Apply the variety penalty (when `variety_after_completion` is enabled): build a stepped genre-fatigue ladder from the user's recently completed items **of the recommended content type**, then multiply each candidate's final score by `1 - penalty` where the penalty is the strongest among the candidate's recently finished genre clusters (`variety.py`). The penalty is softened (halved) for an item that continues a series the user is actively progressing through (`is_active_series_continuation`), so the next book in an unfinished series is not buried by genre fatigue. The applied penalty is surfaced per recommendation
 8. Filter out items marked as `ignored`
 9. Generate ranked recommendations with score breakdowns
 
