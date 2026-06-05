@@ -28,9 +28,11 @@
     --border-subtle: #d8dee9;
     --border-focus: var(--accent);
 
-    /* Semantic colors — adjusted for light backgrounds */
+    /* Semantic colors — adjusted for light backgrounds. Warning is a dark
+       amber so warning text clears 4.5:1 on the white card and warning bars
+       clear 3:1 on the default border track (WCAG 1.4.3 / 1.4.11). */
     --color-success: #5a8a4a;
-    --color-warning: #bf8c20;
+    --color-warning: #7a5a00;
     --color-error: #b04850;
     --color-info: var(--accent);
 
