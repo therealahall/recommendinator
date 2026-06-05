@@ -1,6 +1,20 @@
 # CHANGELOG
 
 
+## v0.12.1 (2026-06-05)
+
+### Bug Fixes
+
+- **recommendations**: Order half-numbered series entries by fractional position
+  ([`1c31dfd`](https://github.com/therealahall/recommendinator/commit/1c31dfd7df0f1e2f57bc5fc6911713a313db31bf))
+
+- **recommendations**: Soften variety penalty for the next book in an active series
+  ([`87d8509`](https://github.com/therealahall/recommendinator/commit/87d8509967dca55b697a746147b66d0a2381a32b))
+
+- **series**: Bound TV season numbers to prevent resource exhaustion
+  ([`70dff1b`](https://github.com/therealahall/recommendinator/commit/70dff1b326aa6c6750137cb37d9c0542e3b1d724))
+
+
 ## v0.12.0 (2026-06-05)
 
 ### Chores
