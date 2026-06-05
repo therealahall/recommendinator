@@ -1,5 +1,6 @@
 """Tests for recommendation engine cross-content-type recommendations."""
 
+from datetime import date
 from unittest.mock import Mock
 
 import pytest
@@ -1561,27 +1562,43 @@ class TestShuffleCloseScores:
             }
 
 
-class TestVarietyAfterCompletion:
-    """Tests for the variety_after_completion toggle wiring."""
+def _variety_score_for(recs: list[dict], item_id: str) -> float:
+    """Return the score of the recommendation with *item_id* (0.0 if absent)."""
+    for rec in recs:
+        if rec["item"].id == item_id:
+            return rec["score"]
+    return 0.0
 
-    def test_variety_toggle_enables_diversity_bonus(
+
+def _variety_rank_of(recs: list[dict], item_id: str) -> int:
+    """Return the index of *item_id* in *recs* (len(recs) if absent)."""
+    for index, rec in enumerate(recs):
+        if rec["item"].id == item_id:
+            return index
+    return len(recs)
+
+
+class TestVarietyAfterCompletion:
+    """Behavioural tests for the variety_after_completion genre-fatigue penalty.
+
+    The variety toggle drives a stepped penalty that demotes candidates whose
+    genre cluster the user recently finished. The issue #74 bug regression
+    lives in :class:`TestVarietyAfterCompletionRegression`.
+    """
+
+    def test_variety_penalty_demotes_recently_finished_genre(
         self, non_ai_engine, mock_storage
     ) -> None:
-        """variety_after_completion=True should boost genre-diverse items.
-
-        When a user has completed Sci-Fi items and variety is enabled,
-        a Mystery candidate should be boosted relative to another Sci-Fi
-        candidate compared to when variety is disabled.
-        """
+        """Enabling variety lowers a just-finished genre's candidate score."""
         consumed = ContentItem(
             id="consumed_1",
             title="Dune",
             content_type=ContentType.BOOK,
             status=ConsumptionStatus.COMPLETED,
             rating=5,
+            date_completed=date(2026, 1, 1),
             metadata={"genres": ["Science Fiction"]},
         )
-
         same_genre = ContentItem(
             id="same_genre",
             title="Foundation",
@@ -1590,9 +1607,227 @@ class TestVarietyAfterCompletion:
             metadata={"genres": ["Science Fiction"]},
         )
 
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: [consumed]
+        )
+        mock_storage.get_unconsumed_items = Mock(return_value=[same_genre])
+
+        recs_off = non_ai_engine.generate_recommendations(
+            content_type=ContentType.BOOK,
+            count=1,
+            user_preference_config=UserPreferenceConfig(variety_after_completion=False),
+        )
+        recs_on = non_ai_engine.generate_recommendations(
+            content_type=ContentType.BOOK,
+            count=1,
+            user_preference_config=UserPreferenceConfig(variety_after_completion=True),
+        )
+
+        score_off = _variety_score_for(recs_off, "same_genre")
+        score_on = _variety_score_for(recs_on, "same_genre")
+        # Top penalty 0.8 => ~20% of the original score retained.
+        assert score_on == pytest.approx(score_off * 0.2, rel=1e-6)
+        assert recs_on[0]["variety_penalty"] == pytest.approx(0.8)
+        assert recs_off[0]["variety_penalty"] == 0.0
+
+    def test_variety_penalty_steps_by_recency(
+        self, non_ai_engine, mock_storage
+    ) -> None:
+        """The most recently finished genre is penalised more than an older one.
+
+        Finishing fantasy then sci-fi puts sci-fi on the top rung (0.8) and
+        fantasy on the next rung (0.64), so a fantasy candidate outranks a
+        sci-fi candidate even though sci-fi was also recently finished.
+        """
+        finished_fantasy = ContentItem(
+            id="finished_fantasy",
+            title="The Hobbit",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            date_completed=date(2026, 1, 1),
+            metadata={"genres": ["Fantasy"]},
+        )
+        finished_scifi = ContentItem(
+            id="finished_scifi",
+            title="Dune",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            date_completed=date(2026, 1, 2),  # more recent
+            metadata={"genres": ["Science Fiction"]},
+        )
+        fantasy_candidate = ContentItem(
+            id="fantasy_candidate",
+            title="The Name of the Wind",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genres": ["Fantasy"]},
+        )
+        scifi_candidate = ContentItem(
+            id="scifi_candidate",
+            title="Hyperion",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genres": ["Science Fiction"]},
+        )
+
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: [
+                finished_fantasy,
+                finished_scifi,
+            ]
+        )
+        mock_storage.get_unconsumed_items = Mock(
+            return_value=[fantasy_candidate, scifi_candidate]
+        )
+
+        recs = non_ai_engine.generate_recommendations(
+            content_type=ContentType.BOOK,
+            count=2,
+            user_preference_config=UserPreferenceConfig(variety_after_completion=True),
+        )
+
+        # Sci-fi finished most recently => stronger penalty => ranked lower.
+        assert _variety_rank_of(recs, "fantasy_candidate") < _variety_rank_of(
+            recs, "scifi_candidate"
+        )
+        fantasy_penalty = next(
+            rec["variety_penalty"]
+            for rec in recs
+            if rec["item"].id == "fantasy_candidate"
+        )
+        scifi_penalty = next(
+            rec["variety_penalty"]
+            for rec in recs
+            if rec["item"].id == "scifi_candidate"
+        )
+        assert scifi_penalty == pytest.approx(0.8)
+        assert fantasy_penalty == pytest.approx(0.64)
+
+    def test_variety_penalty_is_per_content_type(
+        self, non_ai_engine, mock_storage
+    ) -> None:
+        """Finishing a fantasy book must not penalise a fantasy game.
+
+        The penalty ladder is scoped to completed items of the content type
+        being recommended, so genres vary independently per type.
+        """
+        finished_book = ContentItem(
+            id="finished_book",
+            title="The Hobbit",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            date_completed=date(2026, 1, 1),
+            metadata={"genres": ["Fantasy"]},
+        )
+        fantasy_game = ContentItem(
+            id="fantasy_game",
+            title="Baldur's Gate 3",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genres": ["Fantasy"]},
+        )
+
+        def completed_items(content_type=None, **kwargs):
+            # Cross-type preference analysis sees the book; the game-type
+            # query (used to build the ladder) sees no completed games.
+            if content_type is None or content_type == ContentType.BOOK:
+                return [finished_book]
+            return []
+
+        mock_storage.get_completed_items = Mock(side_effect=completed_items)
+        mock_storage.get_unconsumed_items = Mock(return_value=[fantasy_game])
+
+        recs = non_ai_engine.generate_recommendations(
+            content_type=ContentType.VIDEO_GAME,
+            count=1,
+            user_preference_config=UserPreferenceConfig(variety_after_completion=True),
+        )
+
+        # No completed games => empty ladder => the fantasy game is untouched.
+        assert recs[0]["item"].id == "fantasy_game"
+        assert recs[0]["variety_penalty"] == 0.0
+
+    def test_no_variety_no_penalty(self, non_ai_engine, mock_storage) -> None:
+        """With variety disabled, no penalty is recorded on recommendations."""
+        consumed = ContentItem(
+            id="consumed_1",
+            title="Dune",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            date_completed=date(2026, 1, 1),
+            metadata={"genres": ["Science Fiction"]},
+        )
+        candidate = ContentItem(
+            id="candidate_1",
+            title="Foundation",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genres": ["Science Fiction"]},
+        )
+
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: [consumed]
+        )
+        mock_storage.get_unconsumed_items = Mock(return_value=[candidate])
+
+        recs = non_ai_engine.generate_recommendations(
+            content_type=ContentType.BOOK,
+            count=1,
+            user_preference_config=UserPreferenceConfig(variety_after_completion=False),
+        )
+        assert recs[0]["variety_penalty"] == 0.0
+
+
+class TestVarietyAfterCompletionRegression:
+    """Regression tests for the variety_after_completion feature (issue #74)."""
+
+    def test_next_in_series_demoted_when_variety_enabled_regression(
+        self, non_ai_engine, mock_storage
+    ) -> None:
+        """The next book in a just-finished series must not be #1 with variety on.
+
+        Reported: 'Finished a book, setting turned on, new number 1
+        recommendation is the next book in the series.'
+
+        Root cause: variety_after_completion only nudged the legacy ranker's
+        weak additive diversity bonus, which could not overcome the strong
+        SeriesOrderScorer (next-in-series scores 1.0).
+
+        Fix: variety now multiplicatively penalises recently finished genre
+        clusters, demoting the next-in-series fantasy book below a
+        different-genre candidate.
+        """
+        consumed = ContentItem(
+            id="dragonlance_1",
+            title="Dragonlance: Dragons of Autumn Twilight",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            date_completed=date(2026, 1, 1),
+            metadata={
+                "franchise": "Dragonlance",
+                "series_position": 1,
+                "genres": ["Fantasy"],
+            },
+        )
+        next_in_series = ContentItem(
+            id="dragonlance_2",
+            title="Dragonlance: Dragons of Winter Night",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={
+                "franchise": "Dragonlance",
+                "series_position": 2,
+                "genres": ["Fantasy"],
+            },
+        )
         different_genre = ContentItem(
-            id="diff_genre",
-            title="Sherlock Holmes",
+            id="mystery_book",
+            title="The Hound of the Baskervilles",
             content_type=ContentType.BOOK,
             status=ConsumptionStatus.UNREAD,
             metadata={"genres": ["Mystery"]},
@@ -1602,97 +1837,26 @@ class TestVarietyAfterCompletion:
             side_effect=lambda content_type=None, **kwargs: [consumed]
         )
         mock_storage.get_unconsumed_items = Mock(
-            return_value=[same_genre, different_genre]
+            return_value=[next_in_series, different_genre]
         )
 
-        # Without variety: get baseline scores
-        prefs_no_variety = UserPreferenceConfig(variety_after_completion=False)
-        recs_no_variety = non_ai_engine.generate_recommendations(
+        # Without variety: the next-in-series fantasy book tops the list (bug).
+        recs_off = non_ai_engine.generate_recommendations(
             content_type=ContentType.BOOK,
             count=2,
-            user_preference_config=prefs_no_variety,
+            user_preference_config=UserPreferenceConfig(variety_after_completion=False),
         )
+        assert recs_off[0]["item"].id == "dragonlance_2"
 
-        # With variety: genre-diverse item should get a boost
-        prefs_with_variety = UserPreferenceConfig(variety_after_completion=True)
-        recs_with_variety = non_ai_engine.generate_recommendations(
+        # With variety: the fantasy continuation is demoted below the mystery.
+        recs_on = non_ai_engine.generate_recommendations(
             content_type=ContentType.BOOK,
             count=2,
-            user_preference_config=prefs_with_variety,
+            user_preference_config=UserPreferenceConfig(variety_after_completion=True),
         )
-
-        # Find the different-genre item's score in each run
-        def score_for(recs: list[dict], item_id: str) -> float:
-            for rec in recs:
-                if rec["item"].id == item_id:
-                    return rec["score"]
-            return 0.0
-
-        diff_score_without = score_for(recs_no_variety, "diff_genre")
-        diff_score_with = score_for(recs_with_variety, "diff_genre")
-
-        # The diversity bonus should increase the different-genre item's score
-        assert diff_score_with > diff_score_without, (
-            f"Expected variety toggle to boost genre-diverse item: "
-            f"without={diff_score_without:.4f}, with={diff_score_with:.4f}"
-        )
-
-    def test_variety_toggle_respects_explicit_diversity_weight(
-        self, non_ai_engine, mock_storage
-    ) -> None:
-        """When diversity_weight is explicitly set, variety toggle doesn't override it."""
-        consumed = ContentItem(
-            id="consumed_1",
-            title="Dune",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-            metadata={"genres": ["Science Fiction"]},
-        )
-
-        candidate = ContentItem(
-            id="candidate_1",
-            title="Sherlock Holmes",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"genres": ["Mystery"]},
-        )
-
-        mock_storage.get_completed_items = Mock(
-            side_effect=lambda content_type=None, **kwargs: [consumed]
-        )
-        mock_storage.get_unconsumed_items = Mock(return_value=[candidate])
-
-        # Explicit diversity_weight=0.5 with variety toggle on
-        prefs_explicit = UserPreferenceConfig(
-            variety_after_completion=True,
-            diversity_weight=0.5,
-        )
-        recs_explicit = non_ai_engine.generate_recommendations(
-            content_type=ContentType.BOOK,
-            count=1,
-            user_preference_config=prefs_explicit,
-        )
-
-        # Variety toggle on with default (0.0) diversity_weight → uses 0.2
-        prefs_default = UserPreferenceConfig(
-            variety_after_completion=True,
-            diversity_weight=0.0,
-        )
-        recs_default = non_ai_engine.generate_recommendations(
-            content_type=ContentType.BOOK,
-            count=1,
-            user_preference_config=prefs_default,
-        )
-
-        # The explicit 0.5 weight should produce a higher score than the
-        # default 0.2 that the toggle applies
-        score_explicit = recs_explicit[0]["score"]
-        score_default = recs_default[0]["score"]
-        assert score_explicit > score_default, (
-            f"Expected explicit diversity_weight=0.5 to produce higher score "
-            f"than default 0.2: explicit={score_explicit:.4f}, "
-            f"default={score_default:.4f}"
+        assert recs_on[0]["item"].id == "mystery_book"
+        assert _variety_rank_of(recs_on, "mystery_book") < _variety_rank_of(
+            recs_on, "dragonlance_2"
         )
 
 
