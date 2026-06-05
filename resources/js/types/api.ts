@@ -27,6 +27,7 @@ export interface RecommendationResponse {
   reasoning: string
   llm_reasoning: string | null
   score_breakdown: Record<string, number>
+  variety_penalty: number
 }
 
 // --- Users ---

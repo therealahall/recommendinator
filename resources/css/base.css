@@ -1102,6 +1102,17 @@ input[type="checkbox"] {
   transition: width 0.3s ease;
 }
 
+/* Variety penalty row: a deduction, not a positive score. Rendered with the
+   warning colour and a leading minus sign so it does not read as a high score
+   (the "-NN%" text label conveys the meaning without relying on colour). */
+.score-bar-fill-penalty {
+  background: var(--color-warning);
+}
+
+.score-row-penalty .score-value {
+  color: var(--color-warning);
+}
+
 .score-value {
   width: 40px;
   text-align: right;
