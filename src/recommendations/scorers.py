@@ -92,7 +92,7 @@ class ScoringContext:
 
     preferences: UserPreferences
     consumed_items: list[ContentItem]
-    series_tracking: dict[str, set[int]]
+    series_tracking: dict[str, set[float]]
     content_type: ContentType
     all_unconsumed_items: list[ContentItem]
 

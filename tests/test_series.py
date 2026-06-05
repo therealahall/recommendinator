@@ -146,6 +146,9 @@ def test_get_series_item_number():
     """Test getting item number from title."""
     assert get_series_item_number(title="Book (The Witcher, #4)") == 4
     assert get_series_item_number(title="Standalone Book") is None
+    # Half-numbered novellas parse as floats, not truncated to an int.
+    novella_number = get_series_item_number(title="Gods of Risk (The Expanse, #2.5)")
+    assert novella_number == 2.5
 
 
 def test_build_series_tracking():
@@ -191,6 +194,26 @@ def test_build_series_tracking():
     assert "Series B" in tracking
     assert tracking["Series B"] == {1}
     assert "Standalone Book" not in tracking
+
+
+def test_build_series_tracking_preserves_decimal_positions():
+    """A consumed half-numbered novella is tracked as a float, not truncated."""
+    items = [
+        ContentItem(
+            id="1",
+            title="Leviathan Wakes (The Expanse, #1)",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+        ),
+        ContentItem(
+            id="2",
+            title="Gods of Risk (The Expanse, #2.5)",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+        ),
+    ]
+    tracking = build_series_tracking(items)
+    assert tracking["The Expanse"] == {1.0, 2.5}
 
 
 def test_is_first_item_in_series_by_title():
@@ -938,7 +961,7 @@ class TestFindEarliestRecommendable:
             ),
         ]
         # User hasn't played any FF games
-        series_tracking: dict[str, set[int]] = {}
+        series_tracking: dict[str, set[float]] = {}
 
         result = find_earliest_recommendable(
             "Final Fantasy", series_tracking, unconsumed
@@ -1135,3 +1158,146 @@ class TestStripSeriesSuffixFromTitle:
             "The Way of Kings (Cosmere) (The Stormlight Archive, #1)"
         )
         assert result == "The Way of Kings (Cosmere)"
+
+
+class TestDecimalSeriesOrderingRegression:
+    """Regression tests for out-of-order recommendations of half-numbered
+    series entries (novellas like ``#2.5`` / ``#2.7`` / ``#5.5``)."""
+
+    def _expanse(self, item_id: str, title: str) -> ContentItem:
+        """Build an UNREAD Expanse book candidate with the given title."""
+        return ContentItem(
+            id=item_id,
+            title=title,
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        )
+
+    def test_decimal_position_parses_to_float_regression(self) -> None:
+        """Regression test: half-numbered novellas parse instead of dropping.
+
+        Bug reported: a 200-book run recommended Expanse novellas "Drive (The
+        Expanse, #2.7)", "Gods of Risk (The Expanse, #2.5)", and "The Vital
+        Abyss (The Expanse, #5.5)" out of series order.
+        Root cause: the title regex captured only ``\\d+`` and stopped at the
+        decimal point, so "#2.7" failed to match; the metadata path's
+        ``int()`` conversion raised on "2.7". Both paths returned ``None`` and
+        the novellas were treated as standalone items that dodged ordering.
+        Fix: capture an optional fractional part and parse with ``float()``.
+        """
+        assert extract_series_info("Drive (The Expanse, #2.7)") == ("The Expanse", 2.7)
+        assert extract_series_info("Gods of Risk (The Expanse, #2.5)") == (
+            "The Expanse",
+            2.5,
+        )
+        assert extract_series_info("The Vital Abyss (The Expanse, #5.5)") == (
+            "The Expanse",
+            5.5,
+        )
+        # Whole-number positions still parse, now as floats (the point of the
+        # migration) — assert the type explicitly, not just equality.
+        whole = extract_series_info("Caliban's War (The Expanse, #2)")
+        assert whole == ("The Expanse", 2)
+        assert whole is not None and isinstance(whole[1], float)
+        # Decimal position carried in metadata as a float.
+        metadata_float = {"series_name": "The Expanse", "series_position": 2.7}
+        assert extract_series_info("Drive", metadata_float, ContentType.BOOK) == (
+            "The Expanse",
+            2.7,
+        )
+        # Decimal position carried in metadata as a string.
+        metadata_str = {"series_name": "The Expanse", "series_position": "2.7"}
+        assert extract_series_info("Drive", metadata_str, ContentType.BOOK) == (
+            "The Expanse",
+            2.7,
+        )
+
+    def test_non_finite_metadata_position_rejected_regression(self) -> None:
+        """Regression test: inf/nan series positions are rejected, not stored.
+
+        Bug reported: hardening follow-up — the int->float migration changed
+        the metadata path from ``int()`` to ``float()``.
+        Root cause: unlike ``int()``, ``float()`` accepts "inf"/"nan", which
+        would enter series tracking and corrupt ordering comparisons
+        (``nan`` compares False against everything; ``inf`` breaks the virtual
+        slot ``range()``).
+        Fix: a ``math.isfinite`` guard rejects non-finite metadata positions so
+        ``extract_series_info`` returns ``None``.
+        """
+        for bad_value in ("inf", "-inf", "nan", float("inf"), float("nan")):
+            metadata = {"series_name": "The Expanse", "series_position": bad_value}
+            assert extract_series_info("Drive", metadata, ContentType.BOOK) is None
+
+    def test_novella_blocked_before_next_book_regression(self) -> None:
+        """Regression test: novellas wait for the preceding integer book.
+
+        Bug reported: with only Expanse book #1 read, novellas #2.5 and #2.7
+        were recommended ahead of the actual next book #2 (Caliban's War).
+        Root cause: decimal positions parsed as ``None`` so the novellas
+        dodged ordering; even once parsed, the integer ``range(1, item_num)``
+        gap logic could not express "read book 2 before its novellas".
+        Fix: parse decimals to floats and gate on the set of known series
+        numbers below the candidate.
+        """
+        series_tracking = {"The Expanse": {1.0}}
+        book_two = self._expanse("exp2", "Caliban's War (The Expanse, #2)")
+        novella_25 = self._expanse("exp25", "Gods of Risk (The Expanse, #2.5)")
+        novella_27 = self._expanse("exp27", "Drive (The Expanse, #2.7)")
+        unconsumed = [book_two, novella_25, novella_27]
+
+        # The legit next book is recommendable; the novellas must wait for it.
+        assert should_recommend_item(book_two, series_tracking, unconsumed) is True
+        assert should_recommend_item(novella_25, series_tracking, unconsumed) is False
+        assert should_recommend_item(novella_27, series_tracking, unconsumed) is False
+
+        # Substitution offers Caliban's War in place of an out-of-order novella.
+        substitute = find_earliest_recommendable(
+            "The Expanse", series_tracking, unconsumed
+        )
+        assert substitute is not None
+        assert substitute.id == "exp2"
+
+    def test_novella_blocked_in_unstarted_series_regression(self) -> None:
+        """Regression test: a novella in an unstarted series waits for book 1.
+
+        Bug reported: novellas surfaced out of order even for series the user
+        had never started.
+        Root cause: with decimals dropped, a #2.5 novella looked standalone and
+        skipped the unstarted-series prerequisite check entirely.
+        Fix: the unstarted-series branch now blocks any entry that has an
+        earlier-numbered sibling present in the unconsumed pool.
+
+        Covers the ``consumed_numbers`` empty branch: when book #2 exists in
+        the unconsumed pool, a #2.5 novella must not be recommended ahead of
+        it even though nothing in the series has been read yet.
+        """
+        series_tracking: dict[str, set[float]] = {}
+        book_two = self._expanse("exp2", "Caliban's War (The Expanse, #2)")
+        novella_25 = self._expanse("exp25", "Gods of Risk (The Expanse, #2.5)")
+        unconsumed = [book_two, novella_25]
+
+        assert should_recommend_item(novella_25, series_tracking, unconsumed) is False
+
+    def test_novella_eligible_after_book_read_regression(self) -> None:
+        """Regression test: a novella opens up once its book is consumed.
+
+        Bug reported: the fix must not over-correct and permanently bury
+        novellas — once eligible, a #2.5 novella should be recommended in
+        order.
+        Root cause: decimal-aware ordering needed to place a fractional entry
+        between its neighbouring integer books, not exclude it outright.
+        Fix: the set-based gap logic surfaces #2.5 as the next entry after
+        books 1 and 2, ahead of book #3.
+
+        With books 1 and 2 read, the #2.5 novella becomes the next entry and
+        is recommended *before* book #3, which stays blocked until the novella
+        is read.
+        """
+        series_tracking = {"The Expanse": {1.0, 2.0}}
+        novella_25 = self._expanse("exp25", "Gods of Risk (The Expanse, #2.5)")
+        book_three = self._expanse("exp3", "Abaddon's Gate (The Expanse, #3)")
+        unconsumed = [novella_25, book_three]
+
+        assert should_recommend_item(novella_25, series_tracking, unconsumed) is True
+        # Book 3 waits behind the novella that precedes it.
+        assert should_recommend_item(book_three, series_tracking, unconsumed) is False
