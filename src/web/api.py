@@ -158,6 +158,37 @@ class RecommendationResponse(BaseModel):
     reasoning: str
     llm_reasoning: str | None = None
     score_breakdown: dict[str, float] = Field(default_factory=dict)
+    # Stepped genre-fatigue penalty applied when variety_after_completion is
+    # enabled (0.0 when off or the item's genre was not recently finished).
+    variety_penalty: float = Field(0.0, ge=0.0, le=1.0)
+
+
+def _recommendation_payload(rec: dict[str, Any]) -> dict[str, Any]:
+    """Build the common RecommendationResponse field mapping from a rec dict.
+
+    Shared by the synchronous endpoint and the SSE Phase 1 payload so the two
+    serialization paths cannot drift.  The caller supplies ``llm_reasoning``
+    separately: the synchronous endpoint passes the rec's value, while the SSE
+    Phase 1 payload forces ``None`` because blurbs stream in later.
+
+    Args:
+        rec: A recommendation dict produced by the engine.
+
+    Returns:
+        Mapping of RecommendationResponse fields (excluding ``llm_reasoning``).
+    """
+    item = rec["item"]
+    return {
+        "db_id": item.db_id,
+        "title": item.title,
+        "author": item.author,
+        "score": rec["score"],
+        "similarity_score": rec["similarity_score"],
+        "preference_score": rec["preference_score"],
+        "reasoning": rec["reasoning"],
+        "score_breakdown": rec.get("score_breakdown", {}),
+        "variety_penalty": rec.get("variety_penalty", 0.0),
+    }
 
 
 class FeaturesStatus(BaseModel):
@@ -550,18 +581,10 @@ async def get_recommendations(
         # Format response
         response = []
         for rec in recommendations:
-            item = rec["item"]
             response.append(
                 RecommendationResponse(
-                    db_id=item.db_id,
-                    title=item.title,
-                    author=item.author,
-                    score=rec["score"],
-                    similarity_score=rec["similarity_score"],
-                    preference_score=rec["preference_score"],
-                    reasoning=rec["reasoning"],
+                    **_recommendation_payload(rec),
                     llm_reasoning=rec.get("llm_reasoning"),
-                    score_breakdown=rec.get("score_breakdown", {}),
                 )
             )
 
@@ -645,19 +668,8 @@ async def stream_recommendations(
             # Phase 1: send recommendations immediately (no LLM reasoning)
             items_payload: list[dict[str, Any]] = []
             for rec in recommendations:
-                item = rec["item"]
                 items_payload.append(
-                    {
-                        "db_id": item.db_id,
-                        "title": item.title,
-                        "author": item.author,
-                        "score": rec["score"],
-                        "similarity_score": rec["similarity_score"],
-                        "preference_score": rec["preference_score"],
-                        "reasoning": rec["reasoning"],
-                        "llm_reasoning": None,
-                        "score_breakdown": rec.get("score_breakdown", {}),
-                    }
+                    {**_recommendation_payload(rec), "llm_reasoning": None}
                 )
             event: dict[str, Any] = {
                 "type": "recommendations",
