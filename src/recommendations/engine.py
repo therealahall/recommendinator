@@ -37,6 +37,7 @@ from src.recommendations.scorers import (
 )
 from src.recommendations.scoring_pipeline import ScoredCandidate, ScoringPipeline
 from src.recommendations.similarity import _MAX_SIMILARITY_CANDIDATES, SimilarityMatcher
+from src.recommendations.variety import build_variety_ladder, variety_penalty_for
 from src.storage.manager import StorageManager
 from src.utils.series import (
     build_series_tracking,
@@ -69,12 +70,6 @@ _CONTENT_TYPE_NATURAL_LABEL: dict[str, str] = {
     "tv_show": "the TV show",
     "video_game": "the video game",
 }
-
-
-# Default diversity weight applied when variety_after_completion is enabled
-# but the user hasn't set an explicit diversity_weight.  0.2 gives a subtle
-# genre-hopping nudge without overwhelming relevance scores.
-_DEFAULT_VARIETY_DIVERSITY_WEIGHT = 0.2
 
 
 def _shuffle_close_scores(
@@ -371,6 +366,21 @@ class RecommendationEngine:
             recently_completed=consumed_items_of_type,
         )
 
+        # Apply the stepped genre-fatigue variety penalty (issue #74) when the
+        # user has enabled variety_after_completion.  This multiplicatively
+        # demotes candidates whose genre cluster the user recently finished,
+        # so the next entry in a just-completed genre/series no longer
+        # automatically tops the list.  The ladder is built from completed
+        # items of the *same* content type, so finishing a fantasy book does
+        # not suppress fantasy movies or games — each type varies independently.
+        if (
+            user_preference_config is not None
+            and user_preference_config.variety_after_completion
+        ):
+            ranked_items = self._apply_variety_penalty(
+                ranked_items, consumed_items_of_type
+            )
+
         top_recommendations = ranked_items[:count]
 
         # Format recommendations
@@ -574,10 +584,12 @@ class RecommendationEngine:
         self,
         user_preference_config: UserPreferenceConfig | None,
     ) -> RecommendationRanker:
-        """Configure a ranker with per-user diversity weight if applicable.
+        """Configure a ranker with the user's explicit diversity weight.
 
-        Uses the user's explicit diversity_weight, or applies a sensible
-        default when variety_after_completion is enabled.
+        The ranker's additive genre-diversity bonus is only applied when the
+        user has explicitly set ``diversity_weight`` above zero.  The
+        ``variety_after_completion`` toggle drives the stepped genre-fatigue
+        penalty (see :meth:`_apply_variety_penalty`) rather than this bonus.
 
         Args:
             user_preference_config: Optional per-user preference config.
@@ -588,21 +600,52 @@ class RecommendationEngine:
         if user_preference_config is None:
             return self.ranker
 
-        effective_diversity_weight = user_preference_config.diversity_weight
-        if (
-            user_preference_config.variety_after_completion
-            and effective_diversity_weight == 0
-        ):
-            effective_diversity_weight = _DEFAULT_VARIETY_DIVERSITY_WEIGHT
-
-        if effective_diversity_weight > 0:
+        if user_preference_config.diversity_weight > 0:
             return RecommendationRanker(
                 similarity_weight=self.ranker.similarity_weight,
                 preference_weight=self.ranker.preference_weight,
-                diversity_weight=effective_diversity_weight,
+                diversity_weight=user_preference_config.diversity_weight,
             )
 
         return self.ranker
+
+    @staticmethod
+    def _apply_variety_penalty(
+        ranked_items: list[tuple[ContentItem, float, dict[str, Any]]],
+        completed_items_of_type: list[ContentItem],
+    ) -> list[tuple[ContentItem, float, dict[str, Any]]]:
+        """Apply the stepped genre-fatigue penalty and re-sort (issue #74).
+
+        Builds a cluster -> penalty ladder from the user's recently completed
+        items *of the content type being recommended*, then multiplies each
+        candidate's score by ``1 - penalty`` where the penalty is the strongest
+        among the candidate's recently finished genre clusters.  Scoping the
+        ladder to a single content type keeps genres varying independently per
+        type — finishing a fantasy book does not penalise fantasy movies or
+        games.  The applied penalty is recorded under ``"variety_penalty"`` in
+        each item's rank metadata for display.
+
+        Args:
+            ranked_items: ``(item, score, metadata)`` tuples from the ranker.
+            completed_items_of_type: Completed items of the recommended content
+                type, used to build the ladder.
+
+        Returns:
+            Re-sorted ``(item, score, metadata)`` tuples with the penalty
+            applied.  Returns the input unchanged when the ladder is empty.
+        """
+        ladder = build_variety_ladder(completed_items_of_type)
+        if not ladder:
+            return ranked_items
+
+        penalised: list[tuple[ContentItem, float, dict[str, Any]]] = []
+        for item, score, metadata in ranked_items:
+            penalty = variety_penalty_for(item, ladder)
+            updated_metadata = {**metadata, "variety_penalty": penalty}
+            penalised.append((item, score * (1.0 - penalty), updated_metadata))
+
+        penalised.sort(key=lambda entry: entry[1], reverse=True)
+        return penalised
 
     def _format_recommendations(
         self,
@@ -649,6 +692,7 @@ class RecommendationEngine:
                     contributing_list,
                 ),
                 "score_breakdown": breakdown_by_id.get(item.id, {}),
+                "variety_penalty": rank_metadata.get("variety_penalty", 0.0),
                 "contributing_items": contributing_list,
                 "adaptations": adaptations_list,
             }
@@ -753,6 +797,7 @@ class RecommendationEngine:
                                 "reasoning": llm_rec.get("reasoning", ""),
                                 "llm_reasoning": llm_rec.get("reasoning", ""),
                                 "score_breakdown": {},
+                                "variety_penalty": 0.0,
                             }
                         )
         except Exception as error:
@@ -823,6 +868,7 @@ class RecommendationEngine:
                         "preference_score": 0.0,
                         "reasoning": "Available in your library",
                         "score_breakdown": {},
+                        "variety_penalty": 0.0,
                     }
                 )
                 if len(recommendations) >= count:
