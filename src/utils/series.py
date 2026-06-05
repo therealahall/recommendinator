@@ -7,6 +7,7 @@ Supports series detection for:
 - Video Games: Part 1, 2, 3, etc. (e.g., "Mass Effect, #1")
 """
 
+import math
 import re
 from collections import defaultdict
 from typing import NamedTuple
@@ -23,8 +24,9 @@ class _SeriesPattern(NamedTuple):
 
 # Pre-compiled patterns tried in order. Each captures (series_name, number).
 _SERIES_PATTERNS: list[_SeriesPattern] = [
-    # (Series Name, #N) or (Series Name #N)
-    _SeriesPattern(re.compile(r"\(([^,]+?)(?:,\s*)?#\s*(\d+)\)"), 1000),
+    # (Series Name, #N) or (Series Name #N) — N may be fractional (e.g. #2.5
+    # for half-numbered novellas like "Gods of Risk (The Expanse, #2.5)").
+    _SeriesPattern(re.compile(r"\(([^,]+?)(?:,\s*)?#\s*(\d+(?:\.\d+)?)\)"), 1000),
     # (Series Name, Book N)
     _SeriesPattern(re.compile(r"\(([^,]+?),\s*Book\s+(\d+)\)", re.IGNORECASE), 1000),
     # (Series Name, Season N)
@@ -35,8 +37,8 @@ _SERIES_PATTERNS: list[_SeriesPattern] = [
     _SeriesPattern(re.compile(r"\(([^,]+?),\s*Part\s+(\d+)\)", re.IGNORECASE), 100),
     # (Series Name, Episode N)
     _SeriesPattern(re.compile(r"\(([^,]+?),\s*Episode\s+(\d+)\)", re.IGNORECASE), 100),
-    # (Series Name N) — generic fallback
-    _SeriesPattern(re.compile(r"\(([^,]+?)\s+(\d+)\)"), 100),
+    # (Series Name N) — generic fallback (N may be fractional)
+    _SeriesPattern(re.compile(r"\(([^,]+?)\s+(\d+(?:\.\d+)?)\)"), 100),
 ]
 
 
@@ -96,7 +98,7 @@ _TITLE_ROMAN_PATTERN: re.Pattern[str] = re.compile(
 )
 
 
-def _extract_series_from_title(title: str) -> tuple[str, int] | None:
+def _extract_series_from_title(title: str) -> tuple[str, float] | None:
     """Try to extract series info from trailing numbers in a title.
 
     Matches patterns like "Dungeon Siege 3" or "Final Fantasy XII".
@@ -109,13 +111,15 @@ def _extract_series_from_title(title: str) -> tuple[str, int] | None:
     Returns:
         Tuple of (series_name, number) or ``None``.
     """
-    # Try Arabic numerals first (more common)
+    # Try Arabic numerals first (more common). Title-embedded game numbers are
+    # whole numbers, but return a float to match the series-number type used
+    # everywhere else (fractional novella positions like #2.5).
     match = _TITLE_ARABIC_PATTERN.match(title.strip())
     if match:
         series_name = match.group(1).strip()
         number = int(match.group(2))
         if 1 <= number <= 100 and len(series_name) >= 2:
-            return (series_name, number)
+            return (series_name, float(number))
 
     # Try Roman numerals
     match = _TITLE_ROMAN_PATTERN.match(title.strip())
@@ -128,7 +132,7 @@ def _extract_series_from_title(title: str) -> tuple[str, int] | None:
             and 1 <= roman_number <= 100
             and len(series_name) >= 2
         ):
-            return (series_name, roman_number)
+            return (series_name, float(roman_number))
 
     return None
 
@@ -137,7 +141,7 @@ def extract_series_info(
     title: str,
     metadata: dict | None = None,
     content_type: ContentType | None = None,
-) -> tuple[str, int] | None:
+) -> tuple[str, float] | None:
     """Extract series name and item number from title or metadata.
 
     Works for all content types (books, games, TV shows, movies, etc.).
@@ -170,7 +174,7 @@ def extract_series_info(
         match = pattern.regex.search(title)
         if match:
             series_name = match.group(1).strip()
-            item_num = int(match.group(2))
+            item_num = float(match.group(2))
             if 1 <= item_num <= pattern.max_number:
                 return (series_name, item_num)
 
@@ -186,7 +190,7 @@ def extract_series_info(
 
 def _extract_from_metadata(
     metadata: dict, content_type: ContentType | None = None
-) -> tuple[str, int] | None:
+) -> tuple[str, float] | None:
     """Extract series information from metadata.
 
     Checks common metadata fields for series information:
@@ -211,14 +215,14 @@ def _extract_from_metadata(
         return None
 
     # Try to find item number based on content type
-    item_num = None
+    item_num: float | None = None
 
     if content_type == ContentType.TV_SHOW:
         # For TV shows, look for season number
         for key in ["series_position", "season", "season_number", "season_num"]:
             if key in metadata and metadata[key]:
                 try:
-                    item_num = int(metadata[key])
+                    item_num = float(metadata[key])
                     break
                 except (ValueError, TypeError):
                     continue
@@ -234,7 +238,7 @@ def _extract_from_metadata(
         ]:
             if key in metadata and metadata[key]:
                 try:
-                    item_num = int(metadata[key])
+                    item_num = float(metadata[key])
                     break
                 except (ValueError, TypeError):
                     continue
@@ -251,12 +255,19 @@ def _extract_from_metadata(
         ]:
             if key in metadata and metadata[key]:
                 try:
-                    item_num = int(metadata[key])
+                    item_num = float(metadata[key])
                     break
                 except (ValueError, TypeError):
                     continue
 
-    if series_name and item_num and 1 <= item_num <= 1000:
+    # ``float()`` accepts "inf"/"nan" where ``int()`` raised; reject non-finite
+    # values explicitly so a malformed metadata position cannot poison ordering.
+    if (
+        series_name
+        and item_num is not None
+        and math.isfinite(item_num)
+        and 1 <= item_num <= 1000
+    ):
         return (series_name, item_num)
 
     return None
@@ -289,7 +300,7 @@ def get_series_name_from_metadata(metadata: dict | None) -> str | None:
 
 def _get_series_info(
     item: ContentItem | None = None, *, title: str | None = None
-) -> tuple[str, int] | None:
+) -> tuple[str, float] | None:
     """Extract series info from a ContentItem or title string.
 
     Shared implementation for get_series_name and get_series_item_number.
@@ -319,7 +330,7 @@ def get_series_name(
 
 def get_series_item_number(
     item: ContentItem | None = None, *, title: str | None = None
-) -> int | None:
+) -> float | None:
     """Get item number in series from ContentItem or title.
 
     Args:
@@ -335,8 +346,8 @@ def get_series_item_number(
 
 def inject_seasons_watched_tracking(
     unconsumed_items: list[ContentItem],
-    series_tracking: dict[str, set[int]],
-) -> dict[str, set[int]]:
+    series_tracking: dict[str, set[float]],
+) -> dict[str, set[float]]:
     """Add seasons_watched metadata from unconsumed TV shows to series tracking.
 
     When a user imports TV shows with specific seasons_watched (e.g., [5, 6]),
@@ -447,7 +458,7 @@ def expand_tv_shows_to_seasons(items: list[ContentItem]) -> list[ContentItem]:
 
 def build_series_tracking(
     consumed_items: list[ContentItem],
-) -> dict[str, set[int]]:
+) -> dict[str, set[float]]:
     """Build a map of series names to item numbers the user has consumed.
 
     Works for all content types (books, games, TV shows, movies).
@@ -458,7 +469,7 @@ def build_series_tracking(
     Returns:
         Dictionary mapping series names to sets of item numbers
     """
-    series_tracking: dict[str, set[int]] = defaultdict(set)
+    series_tracking: dict[str, set[float]] = defaultdict(set)
 
     for item in consumed_items:
         series_info = extract_series_info(item.title, item.metadata, item.content_type)
@@ -489,7 +500,7 @@ def is_first_item_in_series(
 
 def should_recommend_item(
     item: ContentItem,
-    series_tracking: dict[str, set[int]],
+    series_tracking: dict[str, set[float]],
     unconsumed_items: list[ContentItem] | None = None,
 ) -> bool:
     """Determine if an item should be recommended based on series rules.
@@ -502,7 +513,13 @@ def should_recommend_item(
       don't recommend
     - If previous items don't exist in unconsumed data: recommend
       (assume they don't exist)
-    - Special case: If user has consumed item #0 (prequel), recommend item #1
+    - Prequels: consuming item #0 unlocks item #1 as the next entry (this
+      falls out of the gap-finding logic rather than being special-cased)
+
+    Item numbers may be fractional — half-numbered novellas such as
+    "(The Expanse, #2.5)" sort *after* book ``#2`` and *before* ``#3``, so a
+    user who has only read book ``#1`` is not recommended a ``#2.5`` novella
+    until they have read ``#2``.
 
     Examples:
     - Books: If you've read Book 1 and 2, Book 3 is recommended
@@ -528,7 +545,7 @@ def should_recommend_item(
     consumed_numbers = series_tracking.get(series_name, set())
 
     # Build set of unconsumed item numbers for this series
-    unconsumed_item_nums: set[int] = set()
+    unconsumed_item_nums: set[float] = set()
     if unconsumed_items:
         for unconsumed in unconsumed_items:
             unconsumed_series_info = extract_series_info(
@@ -543,59 +560,40 @@ def should_recommend_item(
                     unconsumed_item_nums.add(unconsumed_item_num)
 
     if not consumed_numbers:
-        # User hasn't started this series
-        # Only recommend if it's the first item (#1) or prequel (#0)
+        # User hasn't started this series. Only recommend the first item (#1)
+        # or a prequel (#0); a later entry waits until an earlier one in the
+        # data is consumed. If unconsumed_items is None we can't verify what
+        # exists, so be conservative and don't recommend a later entry.
         if item_num == 1 or item_num == 0:
             return True
-        # If it's a later item, check if previous items exist in
-        # unconsumed data. If unconsumed_items is None, be conservative
-        # and don't recommend (we can't verify if previous items exist)
         if unconsumed_items is None:
             return False
-        # If previous items exist in unconsumed data but aren't
-        # completed, don't recommend
-        for prev_num in range(1, item_num):
-            if prev_num in unconsumed_item_nums:
-                # Previous item exists in unconsumed data but isn't
-                # completed
-                return False
-        # Previous items don't exist in unconsumed data, so recommend
-        return True
-    else:
-        # User has started this series
-        # Find the highest item number they've consumed
-        max_consumed = max(consumed_numbers)
+        # If any earlier entry exists in the unconsumed data, hold this one.
+        return not any(num < item_num for num in unconsumed_item_nums)
 
-        # Special case: if they've consumed #0, recommend #1
-        if max_consumed == 0 and item_num == 1:
-            return True
-
-        # Check if user has completed all previous items
-        # Need to check all items from 1 to (item_num - 1)
-        for prev_num in range(1, item_num):
-            if prev_num not in consumed_numbers:
-                # Previous item not consumed - check if it exists in
-                # unconsumed data
-                if prev_num in unconsumed_item_nums:
-                    # Previous item exists but isn't completed - don't
-                    # recommend
-                    return False
-                # Previous item doesn't exist in unconsumed data - assume OK
-                # (might be a gap in the data or user can start anywhere)
-
-        # User has completed all previous items (or they don't exist in
-        # data). Recommend if it fills the first gap in the sequence.
-        # For sequential {1,2}: first gap is 3 = max_consumed + 1
-        # For non-sequential {5,6}: first gap is 1 -> recommend season 1
-        for candidate_num in range(1, max_consumed + 2):
-            if candidate_num not in consumed_numbers:
-                return item_num == candidate_num
-        return False
+    # User has started this series. Recommend the item only if it is the
+    # earliest entry the user has not yet consumed. The candidate pool is the
+    # union of: numbers known to exist in the data (consumed + unconsumed),
+    # this item's own number (so direct callers that pass an item absent from
+    # ``unconsumed_items`` are still considered), and the virtual sequential
+    # slots 1..max+1 (so a missing next book still blocks later entries, and
+    # gaps like a skipped season 2 are surfaced before season 7). Fractional
+    # novellas naturally slot between their neighbouring integer books.
+    #
+    # ``int(max_consumed)`` floors fractional positions intentionally: a
+    # consumed #2.5 novella still yields integer slots up to the next whole
+    # book. ``max_consumed`` is bounded by the 1..1000 range enforced in
+    # ``extract_series_info``, so the slot set never grows without bound.
+    max_consumed = max(consumed_numbers)
+    virtual_slots = {float(slot) for slot in range(1, int(max_consumed) + 2)}
+    positions = consumed_numbers | unconsumed_item_nums | {item_num} | virtual_slots
+    remaining = sorted(pos for pos in positions if pos not in consumed_numbers)
+    return bool(remaining) and item_num == remaining[0]
 
 
 def find_earliest_recommendable(
     series_name: str,
-    series_tracking: dict[str, set[int]],
+    series_tracking: dict[str, set[float]],
     unconsumed_items: list[ContentItem],
 ) -> ContentItem | None:
     """Find the earliest unconsumed item in a series that passes series rules.
@@ -614,7 +612,7 @@ def find_earliest_recommendable(
         :func:`should_recommend_item`, or ``None`` if none qualifies.
     """
     # Collect unconsumed items belonging to this series, paired with their number
-    series_candidates: list[tuple[int, ContentItem]] = []
+    series_candidates: list[tuple[float, ContentItem]] = []
     for item in unconsumed_items:
         series_info = extract_series_info(item.title, item.metadata, item.content_type)
         if series_info and series_info[0] == series_name:

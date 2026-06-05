@@ -468,7 +468,7 @@ class RecommendationEngine:
     def _apply_series_filtering(
         self,
         pipeline_scored: list[ScoredCandidate],
-        series_tracking: dict[str, set[int]],
+        series_tracking: dict[str, set[float]],
         unconsumed_items: list[ContentItem],
     ) -> list[ScoredCandidate]:
         """Filter and substitute candidates based on series ordering rules.
@@ -707,7 +707,7 @@ class RecommendationEngine:
         all_consumed_items: list[ContentItem],
         unconsumed_items: list[ContentItem],
         count: int,
-        series_tracking: dict[str, set[int]],
+        series_tracking: dict[str, set[float]],
     ) -> None:
         """Enhance recommendations with LLM-generated reasoning.
 
@@ -840,7 +840,7 @@ class RecommendationEngine:
     def _build_fallback_recommendations(
         self,
         unconsumed_items: list[ContentItem],
-        series_tracking: dict[str, set[int]],
+        series_tracking: dict[str, set[float]],
         count: int,
     ) -> list[dict[str, Any]]:
         """Build fallback recommendations when no scored recommendations exist.

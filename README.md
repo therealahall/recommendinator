@@ -499,7 +499,7 @@ Each scorer has a configurable weight. Set a weight to 0 to disable a scorer ent
 
 ### Series Filtering
 
-When the **"Recommend series in order"** preference is enabled (the default), the engine enforces series ordering. If Book 3 in a series would otherwise be recommended but you haven't consumed Books 1 and 2, the engine automatically substitutes the earliest available entry. This works with numbered titles, Roman numerals, season indicators, and metadata-based series info from enrichment.
+When the **"Recommend series in order"** preference is enabled (the default), the engine enforces series ordering. If Book 3 in a series would otherwise be recommended but you haven't consumed Books 1 and 2, the engine automatically substitutes the earliest available entry. This works with numbered titles, Roman numerals, season indicators, and metadata-based series info from enrichment. Half-numbered entries — novellas like `(The Expanse, #2.5)` — are ordered as fractions, so a `#2.5` novella waits until you've read book `#2` rather than being offered ahead of it.
 
 ### Content Length Preferences
 
