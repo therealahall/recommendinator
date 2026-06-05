@@ -1,6 +1,39 @@
 # CHANGELOG
 
 
+## v0.12.0 (2026-06-05)
+
+### Chores
+
+- **claude**: Restrict subagent tool access via frontmatter
+  ([`21f5be8`](https://github.com/therealahall/recommendinator/commit/21f5be8ab2801f715597cf797fc5b260341195cd))
+
+### Documentation
+
+- Document the variety-after-completion penalty
+  ([`9dd825e`](https://github.com/therealahall/recommendinator/commit/9dd825e10b8c5cce595fc5e211f194f017c13f2c))
+
+- Move development patterns out of CLAUDE.md
+  ([`ccf6e94`](https://github.com/therealahall/recommendinator/commit/ccf6e9447080f53e429df17e7036e51f4cd1e379))
+
+### Features
+
+- **cli**: Add preferences set-toggle and surface variety penalty
+  ([`ab5b6a8`](https://github.com/therealahall/recommendinator/commit/ab5b6a8644a8c4f33bc9256e2a6a2bbc0d90566f))
+
+- **recommendations**: Add stepped genre-fatigue variety penalty module
+  ([`9e7cd43`](https://github.com/therealahall/recommendinator/commit/9e7cd435fa1297553f563f81296456561e220817))
+
+- **recommendations**: Apply variety penalty after ranking (closes #74)
+  ([`6e6a526`](https://github.com/therealahall/recommendinator/commit/6e6a526c1d9b28c28f899a50662182a5a11d48d5))
+
+- **ui**: Show variety penalty in the score details panel
+  ([`55d09b4`](https://github.com/therealahall/recommendinator/commit/55d09b42058bbca780c55e68b3d1d7be7c8c274c))
+
+- **web**: Expose variety_penalty on recommendation responses
+  ([`ad4c68c`](https://github.com/therealahall/recommendinator/commit/ad4c68c459f39c810636f6f9490f390b3e219754))
+
+
 ## v0.11.3 (2026-05-07)
 
 ### Bug Fixes
