@@ -130,7 +130,10 @@ inputs:
     enabled: true
 ```
 
-Some sources (GOG, Epic Games) require OAuth setup — see the [README.md](README.md) for step-by-step instructions.
+Some sources (GOG, Epic Games) require OAuth setup — see that source's setup guide
+(e.g. [GOG](src/ingestion/sources/gog/README.md), [Epic Games](src/ingestion/sources/epic_games/README.md))
+for step-by-step instructions. [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md) lists
+every source and covers managing them in the UI.
 
 ### Generic CSV/JSON/Markdown
 
@@ -299,6 +302,30 @@ python3.11 -m src.cli chat start
 python3.11 -m src.cli chat send --message "What should I read next?"
 ```
 
+## Manage Memories (requires AI)
+
+Memories are persistent preference signals the chat system remembers across
+conversations:
+
+```bash
+# List, add, and remove memories
+python3.11 -m src.cli memory list
+python3.11 -m src.cli memory add --text "I love hard sci-fi"
+python3.11 -m src.cli memory toggle --id 3    # flip active/inactive
+python3.11 -m src.cli memory delete --id 3
+```
+
+## View Your Profile
+
+Your computed preference profile summarizes what the engine has learned from your
+library:
+
+```bash
+# Show the profile, or regenerate it from current library data
+python3.11 -m src.cli profile show
+python3.11 -m src.cli profile regenerate
+```
+
 ## Use the Web Interface
 
 ```bash
@@ -371,7 +398,10 @@ See [docs/MODEL_RECOMMENDATIONS.md](docs/MODEL_RECOMMENDATIONS.md) for model gui
 ## Next Steps
 
 - [docs/ENRICHMENT_SETUP.md](docs/ENRICHMENT_SETUP.md) — Metadata enrichment setup (do this first)
-- [README.md](README.md) — Full feature overview, source-specific setup guides
+- [README.md](README.md) — Full feature overview
+- [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md) — Managing sources, parallel sync, export
+- [docs/CLI.md](docs/CLI.md) — Full CLI command reference
+- [docs/SCORING.md](docs/SCORING.md) — How the recommendation engine scores
 - [docs/CONVERSATION_GUIDE.md](docs/CONVERSATION_GUIDE.md) — Chat interface setup (AI only)
 - [ARCHITECTURE.md](ARCHITECTURE.md) — How the system works
 - [docs/PLUGIN_DEVELOPMENT.md](docs/PLUGIN_DEVELOPMENT.md) — Creating custom data source plugins

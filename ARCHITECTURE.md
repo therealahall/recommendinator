@@ -183,9 +183,17 @@ When enabled (recommended for 3B models), the engine uses a condensed system pro
 
 ### 7. Interface Layer
 
+The CLI and the web UI are **alternative interfaces to the same capabilities** —
+neither is a subset of the other. Both call into the same recommendation,
+ingestion, storage, and conversation services, so anything you can do in one you
+can do in the other (browse and edit your library, manage sources, tune
+preferences, run enrichment, authenticate sources, chat, manage memories, and
+view your profile). New capabilities are expected to land in both interfaces; the
+`parity-review` agent enforces this on any change under `src/web/` or `src/cli/`.
+
 #### CLI (`src/cli/`)
 - Click-based command structure
-- Commands: `status`, `recommend`, `update`, `complete`, `preferences`, `enrichment`, `library`, `auth`, `memory`, `profile`, `chat`
+- Commands: `status`, `recommend`, `update`, `complete`, `source`, `preferences`, `enrichment`, `library`, `auth`, `memory`, `profile`, `chat` (full reference: [docs/CLI.md](docs/CLI.md))
 - Supports batch operations and multiple output formats
 
 #### Web (`src/web/` + `resources/`)

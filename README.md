@@ -1,52 +1,24 @@
 # Recommendinator
 
-A privacy-focused recommendation engine that learns from your ratings and reviews across books, movies, TV shows, and video games. Runs entirely on your machine with **no AI required** — AI features are opt-in for users who want them.
+A privacy-focused recommendation engine that learns from your ratings and reviews
+across books, movies, TV shows, and video games. Runs entirely on your machine
+with **no AI required** — AI features are opt-in for users who want them.
 
-## Why This Project?
+- **Runs locally** — your data never leaves your machine
+- **Works without AI** — smart scoring algorithms that don't need an LLM
+- **AI is optional** — enable Ollama integration when you want deeper insights
+- **You own your data** — a SQLite database you can query, back up, or delete
 
-Most recommendation systems are black boxes that harvest your data. This one:
+It imports from sources you already use (Goodreads, Steam, GOG, Epic, Sonarr,
+Radarr, ROM libraries, or plain CSV/JSON/Markdown), enriches items with metadata,
+and ranks recommendations through a transparent scoring pipeline. Your love of
+sci-fi books can influence game and movie suggestions via semantic genre clusters.
+Browse and tune everything from a themeable web UI or the CLI — they are
+[interchangeable interfaces](ARCHITECTURE.md#7-interface-layer) to the same engine.
 
-- **Runs locally** — Your data never leaves your machine
-- **Works without AI** — Smart scoring algorithms that don't need an LLM
-- **AI is optional** — Enable Ollama integration when you want deeper insights
-- **You own your data** — SQLite database you can query, backup, or delete
+## 30-second start
 
-## Features
-
-### Core Features (No AI Required)
-
-- **Multi-source ingestion** — Import from Goodreads, Steam, GOG, Epic Games, Sonarr, Radarr, a local ROM library, or generic CSV/JSON/Markdown files
-- **Cross-content recommendations** — Your love of sci-fi books influences game and movie suggestions via semantic genre clusters that bridge different vocabularies
-- **Smart scoring pipeline** — Genre matching, creator preferences, series order, cluster-aware tag overlap, rating patterns
-- **Custom rules** — Natural language preferences like "avoid horror" or "prefer short books"
-- **Content length filtering** — Prefer short books, long games, any movie length
-- **Multi-user support** — Each user gets their own preferences and history
-- **Metadata enrichment** — Automatically fills in missing metadata from TMDB, OpenLibrary, and RAWG. **This is critical for recommendation quality** — see [Enrichment Setup Guide](docs/ENRICHMENT_SETUP.md)
-- **Themeable web UI** — Ships with Nord and Snowstorm themes, or create your own
-- **Version display and update detection** — Version shown in sidebar; automatically detects when a new version is available and prompts you to reload
-- **Dual interface** — CLI for automation, web UI for browsing
-
-### Optional AI Features (Opt-In)
-
-When you enable AI with a local Ollama instance:
-
-- **Conversational chat** — Ask questions about your library, get recommendations through natural conversation with memory and user profiling
-- **Semantic similarity** — Find content similar in meaning, not just tags
-- **LLM reasoning** — Natural language explanations for recommendations
-- **Smart rule interpretation** — LLM understands complex preference rules
-
-## Security Notice
-
-This is a **personal, single-user tool** designed to run on your own machine. It has **no authentication or authorization** on any endpoint. By default it binds to `127.0.0.1` (localhost only).
-
-If you change the host to `0.0.0.0` to allow LAN access, **anyone on your network can view and modify your data**. Do not expose this application to the public internet.
-
-## Quick Start
-
-### Option 1: Docker (Recommended)
-
-No git clone required. Pull a published image, mount your config and data
-directories, and run.
+Pull the published Docker image, mount your config and data, run:
 
 ```bash
 mkdir -p recommendinator/{config,data,inputs} && cd recommendinator
@@ -61,232 +33,72 @@ docker run -d \
   ghcr.io/therealahall/recommendinator:latest
 ```
 
-The container generates a starter `config/config.yaml` from the bundled example
-on first run. Edit it with your API keys and run `docker restart recommendinator`.
+The container writes a starter `config/config.yaml` on first run. Edit it with
+your API keys, run `docker restart recommendinator`, then open
+**http://localhost:18473**.
 
-For the AI variant (with semantic search and LLM-powered explanations) and the
-required Ollama sidecar, use Docker Compose:
+Then, in order:
 
-```bash
-curl -L https://github.com/therealahall/recommendinator/releases/latest/download/docker-compose.yml \
-  -o docker-compose.yml
-docker compose --profile ai up -d app-ai
-```
+1. **[Set up enrichment](docs/ENRICHMENT_SETUP.md) first** — it fills in the
+   genres, tags, and descriptions the scoring pipeline depends on. Skipping it
+   produces poor recommendations.
+2. **Connect a data source** — pick yours from the table below.
+3. **Get recommendations** — in the web UI, or `python3.11 -m src.cli recommend --type book --count 5`.
 
-The `app-ai` service name is required so the default `app` service (no profile,
-always-on) is skipped — otherwise both variants race for the same host port.
+> Running from source instead of Docker? See the [Quick Start guide](QUICKSTART.md).
+> For AI features, GPU support, reverse proxies, and the full deployment
+> reference, see [docs/DOCKER.md](docs/DOCKER.md).
 
-Both variants are published as multi-arch images for `linux/amd64` and
-`linux/arm64`, so they run on x86 servers, Apple Silicon, and modern NAS
-hardware. See **[docs/DOCKER.md](docs/DOCKER.md)** for the full deployment
-guide — parameter reference, AI mode, GPU support, reverse proxy, troubleshooting.
+## Security notice
 
-### Option 2: Local Installation (for contributors)
+This is a **personal, single-user tool** designed to run on your own machine. It
+has **no authentication or authorization** on any endpoint. By default it binds
+to `127.0.0.1` (localhost only).
 
-If you're developing Recommendinator or prefer to run it from source:
+If you change the host to `0.0.0.0` to allow LAN access, **anyone on your network
+can view and modify your data**. Do not expose this application to the public
+internet. See [docs/SECURITY.md](docs/SECURITY.md).
 
-```bash
-# Clone and install
-git clone https://github.com/ahall/recommendinator.git
-cd recommendinator
-curl -LsSf https://astral.sh/uv/install.sh | sh  # install uv if needed
-uv sync --locked --extra ai
+## Data sources
 
-# Install and build frontend (Node.js 18+ required for web UI)
-corepack enable    # enables pnpm via Node.js corepack
-pnpm install --frozen-lockfile
-pnpm build
+Each source has its own setup guide. Pick the ones you use — you can ignore the
+rest.
 
-# Set up config
-cp config/example.yaml config/config.yaml
+| Source | Type | Setup |
+|--------|------|-------|
+| **Goodreads** | Books | [goodreads](src/ingestion/sources/goodreads/README.md) |
+| **Steam** | Games | [steam](src/ingestion/sources/steam/README.md) |
+| **GOG** | Games | [gog](src/ingestion/sources/gog/README.md) |
+| **Epic Games** | Games | [epic_games](src/ingestion/sources/epic_games/README.md) |
+| **Sonarr** | TV Shows | [sonarr](src/ingestion/sources/sonarr/README.md) |
+| **Radarr** | Movies | [radarr](src/ingestion/sources/radarr/README.md) |
+| **ROM Library** | Games | [roms](src/ingestion/sources/roms/README.md) |
+| **CSV / JSON / Markdown** | Any | [generic_csv](src/ingestion/sources/generic_csv/README.md) · [generic_json](src/ingestion/sources/generic_json/README.md) · [markdown](src/ingestion/sources/markdown/README.md) |
 
-# Import your data
-python3.11 -m src.cli update --source goodreads
+For adding/editing/removing sources in the UI, parallel sync, and library export,
+see **[docs/DATA_SOURCES.md](docs/DATA_SOURCES.md)**.
 
-# Get recommendations
-python3.11 -m src.cli recommend --type book --count 5
+## Features
 
-# Or start the web interface
-python3.11 -m src.web
-```
+**Core (no AI required)**
 
-Access the web interface at `http://localhost:18473`. See [CONTRIBUTING.md](CONTRIBUTING.md)
-for the full development workflow including the Docker dev override that gives
-you hot reload without rebuilding.
+- Multi-source ingestion with cross-content recommendations via semantic genre clusters
+- Transparent scoring pipeline — genre, creator, series order, tag overlap, rating patterns ([how it works](docs/SCORING.md))
+- Natural-language [custom rules](docs/CUSTOM_RULES.md) like "avoid horror" or "prefer short books"
+- Content-length filtering, multi-user support, [metadata enrichment](docs/ENRICHMENT_SETUP.md) (TMDB/OpenLibrary/RAWG)
+- Themeable web UI (ships with Nord and Snowstorm) with version display and update detection
+- Dual interface — CLI for automation, web UI for browsing
 
-**Important:** [Set up metadata enrichment](docs/ENRICHMENT_SETUP.md) **before importing your data** and enable `auto_enrich_on_sync: true` so items are enriched automatically on every sync. Enrichment is disabled by default but is essential for recommendation quality — without it, many items will lack the genres, tags, and descriptions that the scoring pipeline depends on.
+**Optional AI (opt-in, local Ollama)**
 
-## Data Sources
+- Conversational chat over your library with memory and user profiling
+- Semantic similarity, LLM-reasoned explanations, smart rule interpretation
 
-| Source | Type | Description |
-|--------|------|-------------|
-| **Goodreads** | Books | CSV export from your Goodreads library |
-| **Steam** | Games | Automatic import via Steam Web API |
-| **GOG** | Games | Import from your GOG.com library and wishlist |
-| **Epic Games** | Games | Import from your Epic Games library |
-| **Sonarr** | TV Shows | Import from your Sonarr library |
-| **Radarr** | Movies | Import from your Radarr library |
-| **ROM Library** | Games | Scan filesystem directories for emulator ROMs (No-Intro/Redump/TOSEC title cleaning, multi-disc collapse) |
-| **CSV** | Any | Generic CSV with customizable mapping |
-| **JSON** | Any | Generic JSON/JSONL import |
-| **Markdown** | Any | Human-readable markdown lists |
-
-See the `templates/` directory for import file examples. Templates support the `ignored` field for excluding items from recommendations, and TV show templates use a `seasons_watched` list (e.g., `1,2,5,6` in CSV or `[1,2,5,6]` in JSON) to track specific seasons watched.
-
-### Adding, editing, and removing sources in the UI
-
-The **Data** tab renders every configured source as an accordion. Both
-enabled and disabled sources are shown — disabled accordions appear muted
-with a "Disabled" badge next to the source name and a non-actionable Sync
-button. Sources are sorted enabled-first.
-
-There are two ways to create a source:
-
-- Click **+ Add source** at the top of the Sync Sources card. Pick a
-  plugin from the dropdown, give the source an id, fill in any
-  non-sensitive fields the plugin's schema declares, and click Create. The
-  source goes straight into the database — no YAML edit required. Add
-  sensitive fields (API keys, OAuth tokens) afterwards using the Replace
-  action in the source's expanded panel.
-- Define the source under `inputs:` in `config.yaml`, then click
-  **Migrate to DB** in the source's expanded panel to copy the YAML entry
-  into the database. After migration the YAML entry is ignored — all
-  edits go through the UI.
-
-Once a source is in the database, every field defined in its plugin's
-config schema is editable inline from the web UI or via the
-`python3.11 -m src.cli source` CLI commands. The exact set of fields
-differs per plugin (e.g. Steam exposes `api_key` and `vanity_url`;
-Goodreads exposes `path`); the generic CSV / JSON / Markdown plugins also
-expose `content_type`. Run `python3.11 -m src.cli source schema <id>` to
-see what is editable for a given source.
-
-Each source has an Enable/Disable toggle in its action row. Disabled
-sources stay in the list but are skipped during sync — `Sync All` and the
-per-source Sync button both ignore them. Use the Remove button to drop a
-DB-backed source entirely (clears every stored secret for that source).
-
-Sensitive fields are stored encrypted and never returned by the API; the
-UI shows a "set" / "unset" badge with **Replace** and **Clear** actions.
-
-#### Parallel Sync
-
-When syncing multiple sources, each runs on its own worker thread, so
-the total sync time is bounded by the slowest source rather than the
-sum of all sources. Configure the worker pool in `config.yaml`:
-
-```yaml
-sync:
-  max_workers: 4  # default; set to 1 for sequential
-```
-
-The CLI accepts `--workers N` to override per-invocation, e.g.
-`python3.11 -m src.cli update --workers 8`. Per-source rate limits
-(e.g. GOG's `rate_limit_seconds`) are enforced inside each plugin and
-remain untouched.
-
-### Library Export
-
-Export your library data from the web UI:
-1. Go to the **Library** tab
-2. Select a content type from the type filter
-3. Choose a format (CSV or JSON)
-4. Click **Export** to download
-
-Exported files match the import template format, so you can edit them (e.g., mark items as `ignored`, update `seasons_watched`) and re-import via CSV or JSON sync.
-
-### GOG Setup
-
-GOG requires an OAuth refresh token for API access. The token is stored in an encrypted credential database — not in config.yaml.
-
-**Option 1: Web UI (Recommended)**
-
-The easiest way to connect your GOG account:
-
-1. Enable GOG in your config.yaml:
-   ```yaml
-   inputs:
-     gog:
-       plugin: gog
-       enabled: true
-   ```
-
-2. Start the web server and go to the **Data** tab
-3. Follow the "Connect GOG Account" wizard — it handles the OAuth flow and stores the token securely
-
-**Option 2: Manual Setup**
-
-If you prefer to set up manually:
-
-1. **Open the GOG auth URL in your browser:**
-   ```
-   https://auth.gog.com/auth?client_id=46899977096215655&redirect_uri=https%3A%2F%2Fembed.gog.com%2Fon_login_success%3Forigin%3Dclient&response_type=code&layout=client2
-   ```
-
-2. **Log in with your GOG account** when prompted.
-
-3. **After login, you'll be redirected** to a URL like:
-   ```
-   https://embed.gog.com/on_login_success?origin=client&code=LONG_CODE_HERE
-   ```
-   **Copy the entire URL** (or just the code after `code=`).
-
-4. **Paste the URL/code in the Web UI** to complete the connection. The token is encrypted and stored in the database automatically.
-
-**Note:** The refresh token is long-lived but may eventually expire. If GOG sync fails with an authentication error, reconnect via the web UI.
-
-**Credential storage:** All sensitive credentials (API keys, OAuth tokens) are encrypted at rest using Fernet symmetric encryption. The encryption key is stored at `data/.credential_key` by default, or at the path specified by the `RECOMMENDINATOR_KEY_PATH` environment variable. If you move the database to a new host, copy the key file too.
-
-### Sonarr / Radarr Setup
-
-Sonarr (TV shows) and Radarr (movies) import your media library directly from their APIs.
-
-1. **Find your API key** in the Sonarr/Radarr web UI: **Settings > General > Security > API Key**
-2. **Add to your config:**
-   ```yaml
-   inputs:
-     sonarr:
-       plugin: sonarr
-       url: "http://localhost:8989"    # Your Sonarr URL
-       api_key: "your-sonarr-api-key"
-       content_type: "tv_show"
-       enabled: true
-
-     radarr:
-       plugin: radarr
-       url: "http://localhost:7878"    # Your Radarr URL
-       api_key: "your-radarr-api-key"
-       content_type: "movie"
-       enabled: true
-   ```
-
-Radarr also imports movie collection data (e.g., trilogies, franchises), which enables series-aware recommendations across your movie library.
-
-### Epic Games Setup
-
-Epic Games uses OAuth authentication via the [Legendary](https://github.com/derrod/legendary) launcher's API client. The token is stored in an encrypted credential database — not in config.yaml.
-
-1. Enable Epic Games in your config.yaml:
-   ```yaml
-   inputs:
-     epic_games:
-       plugin: epic_games
-       enabled: true
-   ```
-
-2. Start the web server and go to the **Data** tab
-3. Click **"Connect Epic Games"** — this opens Epic's login page in a new tab
-4. Log in with your Epic account — you'll see a JSON response with an `authorizationCode`
-5. Copy the code (or the entire JSON), paste it into the web UI input, and click **Connect**
-6. The token is encrypted and stored in the database automatically
-
-Works in both local and Docker installations — no host-side tools needed.
-
-**Note:** The refresh token is long-lived but may eventually expire. If Epic sync fails with an authentication error, reconnect via the web UI.
+See [Enabling AI features](#enabling-ai-features) below.
 
 ## Configuration
 
-Copy `config/example.yaml` to `config/config.yaml` and customize:
+Copy `config/example.yaml` to `config/config.yaml` and customize. The essentials:
 
 ```yaml
 # AI is disabled by default
@@ -295,309 +107,77 @@ features:
   embeddings_enabled: false
   llm_reasoning_enabled: false
 
-# Configure your data sources
-# Each entry has a user-defined name and a 'plugin' field specifying the plugin type.
-# Multiple instances of the same plugin are supported (e.g., two json_import sources).
+# Configure your data sources (see each source's setup guide for fields)
 inputs:
   goodreads:
     plugin: goodreads
     path: "inputs/goodreads_library_export.csv"
     enabled: true
 
-  steam:
-    plugin: steam
-    api_key: "your-steam-api-key"
-    steam_id: "your-steam-id"
-    enabled: true
-
-# Tune the scoring weights
-recommendations:
-  scorer_weights:
-    genre_match: 2.0
-    creator_match: 1.5
-    series_order: 1.5
-    tag_overlap: 1.0
-    rating_pattern: 1.0
-    content_length: 1.0
-    continuation: 2.0
-    series_affinity: 1.0
-    custom_preference: 1.0
-    semantic_similarity: 1.0  # AI only
-
-# Per-user diversity bonus (set in user preferences, not global config)
-# diversity_weight: 0.2  # 0.0 = disabled, higher = more genre variety
-
-# Conflict resolution when items are imported from multiple sources
+# Conflict resolution when an item is imported from multiple sources
 ingestion:
   conflict_strategy: "last_write_wins"  # or "source_priority" or "keep_existing"
-  source_priority: ["goodreads", "steam"]  # highest priority first (source_priority only)
 ```
 
-**Conflict strategies:** When the same item is imported from multiple sources (e.g., a game from both Steam and GOG), the `conflict_strategy` setting controls which data wins. `last_write_wins` (default) uses the most recent import. `source_priority` uses data from the highest-priority source. `keep_existing` never overwrites — only fills in missing fields. Metadata (genres, tags) is always merged additively regardless of strategy.
+`config/example.yaml` documents every option (scorer weights, sync workers,
+enrichment providers, conversation tuning). Scorer weights are explained in
+[docs/SCORING.md](docs/SCORING.md).
 
-## CLI Usage
+**Conflict strategies:** when the same item is imported from multiple sources,
+`conflict_strategy` controls which data wins. `last_write_wins` (default) uses
+the most recent import; `source_priority` uses the highest-priority source;
+`keep_existing` only fills missing fields. Metadata (genres, tags) is always
+merged additively.
 
-The CLI provides full access to all Recommendinator features. Commands are organized into groups:
+## CLI usage
 
-### Import & Recommend
+The CLI is a full peer to the web UI. A taste:
 
 ```bash
-# Import data
-python3.11 -m src.cli update --source goodreads
-python3.11 -m src.cli update --source steam
-python3.11 -m src.cli update --source all
-
-# Get recommendations
+python3.11 -m src.cli update --source all          # import everything
 python3.11 -m src.cli recommend --type book --count 10
-python3.11 -m src.cli recommend --type video_game --count 5
-
-# Mark content as completed
-python3.11 -m src.cli complete --type book --title "Project Hail Mary" --rating 5
+python3.11 -m src.cli library list --type book --status completed --sort rating
+python3.11 -m src.cli chat start                   # conversational mode (AI)
 ```
 
-### System Status
+Full command reference: **[docs/CLI.md](docs/CLI.md)**.
 
-```bash
-# Check system health, component readiness, and feature flags
-python3.11 -m src.cli status
-python3.11 -m src.cli status --format json
-```
+## Enabling AI features
 
-### Library Management
+AI is entirely optional. To enable semantic similarity and LLM-powered
+explanations:
 
-```bash
-# List items with filtering and sorting
-python3.11 -m src.cli library list --type book --status completed --sort rating --limit 20
-python3.11 -m src.cli library list --format json
+- **Docker:** `docker compose --profile ai up -d app-ai` — Ollama and models are
+  set up automatically.
+- **Local:** install [Ollama](https://ollama.ai), `ollama pull mistral:7b`, then
+  set `ai_enabled`, `embeddings_enabled`, and `llm_reasoning_enabled` to `true`
+  in `config.yaml`.
 
-# Show item details
-python3.11 -m src.cli library show --id 42
-
-# Edit item metadata
-python3.11 -m src.cli library edit --id 42 --rating 5 --status completed
-
-# Mark watched TV seasons (comma-separated season numbers, each 1-200)
-python3.11 -m src.cli library edit --id 42 --seasons-watched 1,2,3
-
-# Ignore/unignore items (excluded from recommendations)
-python3.11 -m src.cli library ignore --id 42
-python3.11 -m src.cli library unignore --id 42
-
-# Export library data
-python3.11 -m src.cli library export --type book --format csv --output books.csv
-python3.11 -m src.cli library export --type video_game --format json
-```
-
-### Preferences
-
-```bash
-# View current preferences (table or JSON)
-python3.11 -m src.cli preferences get
-python3.11 -m src.cli preferences get --format json
-
-# Adjust scorer weights and content length preferences
-python3.11 -m src.cli preferences set-weight genre_match 3.0
-python3.11 -m src.cli preferences set-length book short
-
-# Toggle boolean preferences (series_in_order, variety_after_completion)
-python3.11 -m src.cli preferences set-toggle variety_after_completion on
-python3.11 -m src.cli preferences set-toggle series_in_order off
-
-# Reset all preferences to defaults
-python3.11 -m src.cli preferences reset
-
-# Custom rules (natural-language preferences interpreted by the LLM)
-python3.11 -m src.cli preferences custom-rules add "avoid horror"
-python3.11 -m src.cli preferences custom-rules list
-python3.11 -m src.cli preferences custom-rules interpret "avoid horror" --use-llm
-python3.11 -m src.cli preferences custom-rules remove 0
-python3.11 -m src.cli preferences custom-rules clear --yes
-```
-
-### Enrichment
-
-```bash
-# Run enrichment (all items or filtered by content type)
-python3.11 -m src.cli enrichment start
-python3.11 -m src.cli enrichment start --type movie
-
-# Re-process items previously marked as not_found (providers can drift over time)
-python3.11 -m src.cli enrichment start --retry-not-found
-python3.11 -m src.cli enrichment start --type movie --retry-not-found
-
-# Check enrichment statistics
-python3.11 -m src.cli enrichment status
-
-# Reset enrichment status so items are re-processed on the next run
-python3.11 -m src.cli enrichment reset
-```
-
-### Authentication (GOG/Epic)
-
-```bash
-# Check OAuth connection status
-python3.11 -m src.cli auth status
-
-# Connect via browser OAuth flow
-python3.11 -m src.cli auth connect --source gog
-python3.11 -m src.cli auth connect --source epic
-
-# Disconnect stored credentials
-python3.11 -m src.cli auth disconnect --source gog
-```
-
-### Conversation & Memories (requires AI)
-
-```bash
-# Interactive chat session
-python3.11 -m src.cli chat start
-python3.11 -m src.cli chat start --type book    # filter to books only
-
-# Single-shot message
-python3.11 -m src.cli chat send --message "What should I read next?"
-
-# Conversation history
-python3.11 -m src.cli chat history --limit 20
-python3.11 -m src.cli chat reset
-
-# Manage memories (persistent preference signals)
-python3.11 -m src.cli memory list
-python3.11 -m src.cli memory add --text "I love hard sci-fi"
-python3.11 -m src.cli memory edit --id 3 --text "I love hard sci-fi and space opera"
-python3.11 -m src.cli memory edit --id 3 --inactive          # Set explicit active state
-python3.11 -m src.cli memory edit --id 3 --text "..." --inactive  # Text + state in one call
-python3.11 -m src.cli memory toggle --id 3                   # Flip active/inactive
-python3.11 -m src.cli memory delete --id 3
-```
-
-### User Profile
-
-```bash
-# View your computed preference profile
-python3.11 -m src.cli profile show
-python3.11 -m src.cli profile show --format json
-
-# Regenerate profile from current library data
-python3.11 -m src.cli profile regenerate
-```
-
-## How Scoring Works
-
-The recommendation engine scores candidates through multiple factors:
-
-| Scorer | What it does |
-|--------|--------------|
-| **Genre Match** | Boosts content matching genres you've rated highly |
-| **Creator Match** | Prefers authors/directors/developers you've enjoyed |
-| **Tag Overlap** | Threshold-based tag matching with semantic cluster bridging |
-| **Series Order** | Prioritizes next items in series you're reading/watching/playing |
-| **Continuation** | Boosts items you're actively consuming (e.g., in-progress TV show). Automatically removed from the pipeline when you have no in-progress items, so it never produces noise. |
-| **Series Affinity** | Boosts items in franchises you've rated well |
-| **Rating Pattern** | Learns from your rating history within genres |
-| **Content Length** | Soft penalty for items that don't match your preferred length |
-| **Custom Rules** | Applies your explicit preferences ("avoid X", "prefer Y") |
-| **Semantic Similarity** | *(AI only)* Finds conceptually similar content |
-
-Each scorer has a configurable weight. Set a weight to 0 to disable a scorer entirely.
-
-### Series Filtering
-
-When the **"Recommend series in order"** preference is enabled (the default), the engine enforces series ordering. If Book 3 in a series would otherwise be recommended but you haven't consumed Books 1 and 2, the engine automatically substitutes the earliest available entry. This works with numbered titles, Roman numerals, season indicators, and metadata-based series info from enrichment. Half-numbered entries — novellas like `(The Expanse, #2.5)` — are ordered as fractions, so a `#2.5` novella waits until you've read book `#2` rather than being offered ahead of it.
-
-### Content Length Preferences
-
-Set length preferences per content type (`short`, `medium`, `long`, or `any`) via the CLI or web UI. Items that don't match your preference still appear but rank lower — it's a soft penalty, not a hard filter.
-
-| Content Type | Short | Medium | Long |
-|---|---|---|---|
-| Book | < 250 pages | 250–500 pages | 500+ pages |
-| Movie | < 90 minutes | 90–150 minutes | 150+ minutes |
-| TV Show | < 3 seasons | 3–6 seasons | 6+ seasons |
-| Video Game | < 10 hours | 10–40 hours | 40+ hours |
-
-Items without length metadata (common before enrichment) receive a small benefit-of-the-doubt score rather than being penalized.
-
-### Variety After Completion
-
-Enable the **"Variety after completion"** preference (web UI toggle, or `preferences set-toggle variety_after_completion on` in the CLI) to stop the recommender from marching through the next entry in a genre you just finished — for example, finishing a fantasy book no longer makes the next fantasy book your automatic #1.
-
-When enabled, the genres you most recently *completed* are penalized on a stepped ladder by recency. The most recently finished genre cluster takes an **80%** penalty, and the penalty decays over your last **5 distinct** finished genres (80% → 64% → 48% → 32% → 16%, then nothing). A candidate is penalized by its freshest matching genre, and the penalty multiplies its final score, so a heavily-penalized item still keeps a fraction of its score rather than disappearing.
-
-The penalty is **per content type** — finishing a fantasy *book* varies your book recommendations but leaves fantasy *movies* and *games* untouched. Each recommendation surfaces its applied penalty (CLI table/JSON and the web "Score Details" panel) so you can see why a recently finished genre was demoted.
-
-The next entry in a series you're **actively reading** gets a softened penalty (halved): finishing book #1 of a series doesn't mean you're done with the genre, so the legit next book is nudged down but not buried. Starting a brand-new series in a just-finished genre still takes the full penalty — that's exactly the genre-hop the toggle is for.
-
-### Diversity Bonus (advanced)
-
-Independently of the variety toggle, an explicit per-user `diversity_weight` (0.0–1.0, default 0.0) adds a mild genre-hopping bonus in the ranker, boosting candidates whose genres differ from your recently completed content (Jaccard distance on genre sets). Leave it at 0.0 unless you want an extra nudge on top of the variety penalty.
-
-### Ignored Items
-
-Items can be marked as `ignored` to permanently exclude them from recommendations. Set `ignored: true` when importing via CSV or JSON templates, or use the **Ignore** button in the web UI's Library page. Ignored items remain in your library but are filtered out before recommendations are generated.
-
-## Enabling AI Features
-
-If you want AI-enhanced recommendations:
-
-### Docker Users
-
-Run `docker compose --profile ai up -d app-ai` — Ollama and models are set up automatically. The `app-ai` service name keeps the default no-AI service from starting on the same port.
-
-### Local Installation Users
-
-1. **Install Ollama**: https://ollama.ai
-2. **Pull a model**: `ollama pull mistral:7b`
-3. **Enable in config**:
-   ```yaml
-   features:
-     ai_enabled: true
-     embeddings_enabled: true      # For semantic similarity
-     llm_reasoning_enabled: true   # For natural language explanations
-   ```
-
-See [docs/MODEL_RECOMMENDATIONS.md](docs/MODEL_RECOMMENDATIONS.md) for model selection guidance.
-
-## Project Structure
-
-```
-recommendinator/
-├── src/
-│   ├── cli/              # Command-line interface
-│   ├── web/              # FastAPI web interface (themes in static/themes/)
-│   ├── ingestion/        # Data source parsers (plugins in sources/)
-│   ├── recommendations/  # Scoring pipeline and engine
-│   ├── conversation/     # Conversational AI chat system (optional)
-│   ├── enrichment/       # Background metadata enrichment (TMDB, OpenLibrary, RAWG)
-│   ├── storage/          # SQLite + optional ChromaDB
-│   ├── llm/              # Ollama integration (optional)
-│   ├── models/           # Data models
-│   └── utils/            # Utility functions
-├── tests/                # Test suite
-├── config/               # Configuration files
-├── templates/            # Import file templates
-├── inputs/               # Your data files
-├── data/                 # Database and cache (gitignored)
-└── docs/                 # Additional documentation
-```
+See [docs/MODEL_RECOMMENDATIONS.md](docs/MODEL_RECOMMENDATIONS.md) for model
+selection guidance.
 
 ## Documentation
 
 | Document | Description |
 |----------|-------------|
-| [QUICKSTART.md](QUICKSTART.md) | Getting started guide |
+| [QUICKSTART.md](QUICKSTART.md) | Getting started guide (Docker and from-source) |
+| [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md) | Managing sources, parallel sync, export |
+| [docs/CLI.md](docs/CLI.md) | Full CLI command reference |
+| [docs/SCORING.md](docs/SCORING.md) | How the recommendation engine scores |
+| [docs/ENRICHMENT_SETUP.md](docs/ENRICHMENT_SETUP.md) | Metadata enrichment setup (critical) |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | System design and components |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Contributing guidelines |
-| [docs/ENRICHMENT_SETUP.md](docs/ENRICHMENT_SETUP.md) | Metadata enrichment setup (critical) |
+| [docs/DOCKER.md](docs/DOCKER.md) | Docker deployment, AI mode, GPU, reverse proxy |
 | [docs/CONVERSATION_GUIDE.md](docs/CONVERSATION_GUIDE.md) | Chat interface and AI conversation |
 | [docs/CUSTOM_RULES.md](docs/CUSTOM_RULES.md) | Custom preference rules |
 | [docs/PLUGIN_DEVELOPMENT.md](docs/PLUGIN_DEVELOPMENT.md) | Adding new data sources |
-| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Common issues and solutions |
+| [docs/THEME_DEVELOPMENT.md](docs/THEME_DEVELOPMENT.md) | Creating custom web UI themes |
 | [docs/MODEL_RECOMMENDATIONS.md](docs/MODEL_RECOMMENDATIONS.md) | Ollama model selection |
 | [docs/CHROMADB_SETUP.md](docs/CHROMADB_SETUP.md) | ChromaDB setup (AI-only) |
-| [docs/SECURITY.md](docs/SECURITY.md) | Security considerations |
 | [docs/OLLAMA_SETUP_GUIDE.md](docs/OLLAMA_SETUP_GUIDE.md) | Ollama installation and setup |
+| [docs/SECURITY.md](docs/SECURITY.md) | Security considerations |
 | [docs/PYTHON_VERSION.md](docs/PYTHON_VERSION.md) | Python version requirements |
-| [docs/THEME_DEVELOPMENT.md](docs/THEME_DEVELOPMENT.md) | Creating custom web UI themes |
+| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Common issues and solutions |
 
 ## Requirements
 
@@ -607,4 +187,5 @@ recommendinator/
 
 ## License
 
-[PolyForm Noncommercial 1.0.0](LICENSE) — Free for personal and noncommercial use. See LICENSE for details.
+[PolyForm Noncommercial 1.0.0](LICENSE) — free for personal and noncommercial
+use. See LICENSE for details.
