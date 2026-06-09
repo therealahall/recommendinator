@@ -6,7 +6,37 @@ Imports owned games and (optionally) wishlist items from a [GOG.com](https://www
 - `video_game`
 
 ## Requirements
-- GOG OAuth refresh token. The web UI Data tab can produce one via browser login; alternatively, follow the manual setup steps in `README.md`.
+- GOG OAuth refresh token. The web UI Data tab can produce one via browser login; alternatively, follow the manual setup steps below. The token is stored in an encrypted credential database — not in `config.yaml`.
+
+## Setup
+
+### Option 1: Web UI (recommended)
+
+1. Enable GOG in `config.yaml`:
+   ```yaml
+   inputs:
+     gog:
+       plugin: gog
+       enabled: true
+   ```
+2. Start the web server and open the **Data** tab.
+3. Follow the **Connect GOG Account** wizard — it runs the OAuth flow and stores the token securely.
+
+### Option 2: Manual
+
+1. Open the GOG auth URL in your browser:
+   ```
+   https://auth.gog.com/auth?client_id=46899977096215655&redirect_uri=https%3A%2F%2Fembed.gog.com%2Fon_login_success%3Forigin%3Dclient&response_type=code&layout=client2
+   ```
+2. Log in with your GOG account.
+3. After login you are redirected to a URL like:
+   ```
+   https://embed.gog.com/on_login_success?origin=client&code=LONG_CODE_HERE
+   ```
+   Copy the entire URL (or just the value after `code=`).
+4. Paste the URL/code into the web UI to complete the connection. The token is encrypted and stored automatically.
+
+If GOG sync later fails with an authentication error, the refresh token has expired — reconnect via the web UI. You can also connect from the CLI with `python3.11 -m src.cli auth connect --source gog`.
 
 ## Configuration
 
