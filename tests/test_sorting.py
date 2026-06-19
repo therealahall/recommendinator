@@ -57,22 +57,22 @@ class TestGetSortTitle:
         # "Theater" starts with "The" but shouldn't be stripped
         assert get_sort_title("Theater") == "theater"
 
-    def test_french_articles(self) -> None:
-        """Test French articles are stripped."""
-        assert get_sort_title("Les Misérables") == "misérables"
-        assert get_sort_title("Le Petit Prince") == "petit prince"
-        assert get_sort_title("La Vie en Rose") == "vie en rose"
+    def test_french_articles_not_stripped(self) -> None:
+        """Test French articles are NOT stripped (English-only, see #77)."""
+        assert get_sort_title("Les Misérables") == "les misérables"
+        assert get_sort_title("Le Petit Prince") == "le petit prince"
+        assert get_sort_title("La Vie en Rose") == "la vie en rose"
 
-    def test_spanish_articles(self) -> None:
-        """Test Spanish articles are stripped."""
-        assert get_sort_title("El Mariachi") == "mariachi"
-        assert get_sort_title("Los Tres Amigos") == "tres amigos"
+    def test_spanish_articles_not_stripped(self) -> None:
+        """Test Spanish articles are NOT stripped (English-only, see #77)."""
+        assert get_sort_title("El Mariachi") == "el mariachi"
+        assert get_sort_title("Los Tres Amigos") == "los tres amigos"
 
-    def test_german_articles(self) -> None:
-        """Test German articles are stripped."""
-        assert get_sort_title("Der Untergang") == "untergang"
-        assert get_sort_title("Die Hard") == "hard"
-        assert get_sort_title("Das Boot") == "boot"
+    def test_german_articles_not_stripped(self) -> None:
+        """Test German articles are NOT stripped (English-only, see #77)."""
+        assert get_sort_title("Der Untergang") == "der untergang"
+        assert get_sort_title("Die Hard") == "die hard"
+        assert get_sort_title("Das Boot") == "das boot"
 
     def test_single_word_starting_with_article_letters(self) -> None:
         """Test that single words starting with article letters aren't mangled."""
@@ -93,17 +93,11 @@ class TestSortTitleArticleRegression:
         Root cause: "i" was included as an Italian plural article, but it
         collides with the very common English word "I".
 
-        Fix: Removed "i" from ARTICLES frozenset.
+        Fix: Removed "i" from ARTICLES frozenset (later superseded by the full
+        English-only narrowing in #77, which removed every non-English article).
         """
         assert get_sort_title("I Am Legend") == "i am legend"
         assert get_sort_title("I, Robot") == "i, robot"
-
-    def test_il_postino_still_strips_regression(self) -> None:
-        """Regression test: "Il Postino" should still strip the Italian article.
-
-        Ensures removing "i" didn't break "il" stripping.
-        """
-        assert get_sort_title("Il Postino") == "postino"
 
     def test_l_apostrophe_was_unreachable_regression(self) -> None:
         """Regression test: "l'" was dead code in ARTICLES.
@@ -113,6 +107,46 @@ class TestSortTitleArticleRegression:
         Titles like "L'Étranger" are unaffected (were never stripped).
         """
         assert get_sort_title("L'Étranger") == "l'étranger"
+
+
+class TestNonEnglishArticleStrippingRegression:
+    """Regression tests for issue #77: non-English articles wrongly stripped.
+
+    Bug reported: "Die Hard" sorted under H instead of D because the German
+    article "die" ("the") was in the multilingual ARTICLES set and got
+    stripped. Same trap for "Das Boot" (German "das"), "El Camino" (Spanish
+    "el"), "Los Angeles" (Spanish "los"), etc.
+
+    Root cause: ARTICLES spanned English, French, Spanish, German, and Italian.
+    Many non-English articles collide with English words and proper nouns.
+
+    Fix: Narrowed ARTICLES to English only ({"a", "an", "the"}). Locale-aware
+    multilingual stripping is deferred to a future per-locale config.
+    """
+
+    def test_die_hard_sorts_under_d_regression(self) -> None:
+        """ "Die Hard" must keep "die" so it sorts under D, not H."""
+        assert get_sort_title("Die Hard") == "die hard"
+
+    def test_das_boot_sorts_under_d_regression(self) -> None:
+        """ "Das Boot" must keep the German article "das"."""
+        assert get_sort_title("Das Boot") == "das boot"
+
+    def test_el_camino_sorts_under_e_regression(self) -> None:
+        """ "El Camino" must keep the Spanish article "el"."""
+        assert get_sort_title("El Camino") == "el camino"
+
+    def test_le_petit_prince_sorts_under_l_regression(self) -> None:
+        """ "Le Petit Prince" must keep the French article "le"."""
+        assert get_sort_title("Le Petit Prince") == "le petit prince"
+
+    def test_il_postino_sorts_under_i_regression(self) -> None:
+        """ "Il Postino" must keep the Italian article "il"."""
+        assert get_sort_title("Il Postino") == "il postino"
+
+    def test_english_the_still_stripped_regression(self) -> None:
+        """English articles must still be stripped after the narrowing."""
+        assert get_sort_title("The Matrix") == "matrix"
 
 
 class TestSortTitleOrdering:

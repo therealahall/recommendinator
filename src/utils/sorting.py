@@ -2,35 +2,11 @@
 
 import re
 
-# Common articles to strip when sorting titles.
-# Includes English and some common non-English articles.
-ARTICLES = frozenset(
-    {
-        "a",
-        "an",
-        "the",
-        # French
-        "le",
-        "la",
-        "les",
-        "un",
-        "une",
-        # Spanish
-        "el",
-        "los",
-        "las",
-        # German
-        "der",
-        "die",
-        "das",
-        "ein",
-        "eine",
-        # Italian
-        "il",
-        "lo",
-        "gli",
-    }
-)
+# Articles to strip when sorting titles. Intentionally English-only: a
+# multilingual set collides with English words (German "die" in "Die Hard",
+# Spanish "el" in "El Camino"), sorting them under the wrong letter. Locale-aware
+# multilingual stripping is deferred to a future per-locale config (see #77).
+ARTICLES = frozenset({"a", "an", "the"})
 
 # Regex to match a leading article followed by whitespace
 _ARTICLE_PATTERN = re.compile(
@@ -58,8 +34,8 @@ def get_sort_title(title: str) -> str:
         'tale of two cities'
         >>> get_sort_title("An American in Paris")
         'american in paris'
-        >>> get_sort_title("Les Misérables")
-        'misérables'
+        >>> get_sort_title("Die Hard")
+        'die hard'
         >>> get_sort_title("1984")
         '1984'
     """
@@ -80,8 +56,8 @@ def get_sort_title(title: str) -> str:
 def titles_similar(title1: str, title2: str) -> bool:
     """Check if two titles are similar (fuzzy matching).
 
-    Uses get_sort_title to strip leading articles (including non-English)
-    and normalize case, then checks substring containment.
+    Uses get_sort_title to strip leading English articles and normalize
+    case, then checks substring containment.
 
     Args:
         title1: First title.
