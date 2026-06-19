@@ -53,11 +53,40 @@ def get_sort_title(title: str) -> str:
     return normalized
 
 
+def _contains_on_word_boundary(shorter: str, longer: str) -> bool:
+    """Check if `shorter` occurs in `longer` aligned on word boundaries.
+
+    An occurrence counts only when it is bounded on each side by the string
+    start/end or a non-alphanumeric character, so a short title cannot match
+    mid-word (e.g. "an" must not match inside "antique").
+
+    Returns False for an empty `shorter`: it has no boundaries to align and
+    str.find("") would otherwise loop forever.
+    """
+    if not shorter:
+        return False
+
+    shorter_length = len(shorter)
+    start = longer.find(shorter)
+    while start != -1:
+        before_ok = start == 0 or not longer[start - 1].isalnum()
+        end = start + shorter_length
+        after_ok = end == len(longer) or not longer[end].isalnum()
+        if before_ok and after_ok:
+            return True
+        start = longer.find(shorter, start + 1)
+    return False
+
+
 def titles_similar(title1: str, title2: str) -> bool:
     """Check if two titles are similar (fuzzy matching).
 
     Uses get_sort_title to strip leading English articles and normalize
     case, then checks substring containment.
+
+    Substring containment must align on word boundaries: the shorter
+    normalized title only matches when it is bounded by the string start/end
+    or a non-alphanumeric character, so it never matches mid-word.
 
     Args:
         title1: First title.
@@ -72,4 +101,11 @@ def titles_similar(title1: str, title2: str) -> bool:
     t1_norm = get_sort_title(title1)
     t2_norm = get_sort_title(title2)
 
-    return t1_norm in t2_norm or t2_norm in t1_norm
+    if t1_norm == t2_norm:
+        return True
+
+    # Compare the shorter against the longer. When lengths are equal the two
+    # strings differ (equality returned above), so neither can contain the
+    # other and the helper returns False regardless of ordering.
+    shorter, longer = sorted((t1_norm, t2_norm), key=len)
+    return _contains_on_word_boundary(shorter, longer)

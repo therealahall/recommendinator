@@ -214,3 +214,60 @@ class TestTitlesSimilar:
     def test_no_false_match_on_short_overlap(self) -> None:
         """Unrelated titles with no substring relationship should not match."""
         assert titles_similar("Portal", "Inception") is False
+
+
+class TestTitlesSimilarWordBoundaryRegression:
+    """Regression tests for intra-word substring false positives.
+
+    Bug reported: titles_similar matched a short title that appeared INSIDE
+    an unrelated word (e.g. "An" matched "Antique", "Up" matched "Upgrade").
+
+    Root cause: the function used raw character substring containment
+    (`t1_norm in t2_norm or t2_norm in t1_norm`), so any normalized title
+    that happened to occur mid-word in another title was treated as similar.
+
+    Fix: substring containment now must align on word boundaries — the shorter
+    normalized title must be bounded by the string start/end or a
+    non-alphanumeric character on each side.
+    """
+
+    def test_an_does_not_match_antique_regression(self) -> None:
+        assert titles_similar("An", "Antique") is False
+
+    def test_up_does_not_match_upgrade_regression(self) -> None:
+        assert titles_similar("Up", "Upgrade") is False
+
+    def test_it_does_not_match_spirit_regression(self) -> None:
+        assert titles_similar("It", "Spirit") is False
+
+    def test_the_does_not_match_theater_regression(self) -> None:
+        # "The" alone normalizes to "the" (the strip regex needs trailing
+        # whitespace), so this exercises the mid-word boundary check, not
+        # article stripping: "the" must not match inside "theater".
+        assert titles_similar("The", "Theater") is False
+
+    def test_her_does_not_match_where_regression(self) -> None:
+        assert titles_similar("Her", "Where") is False
+
+    def test_a_does_not_match_cars_regression(self) -> None:
+        assert titles_similar("A", "Cars") is False
+
+    def test_phrase_prefix_still_matches_regression(self) -> None:
+        """A real phrase prefix bounded by whitespace still matches."""
+        assert titles_similar("Blade Runner", "Blade Runner 2049") is True
+
+    def test_hyphen_is_a_word_boundary_regression(self) -> None:
+        """A non-alphanumeric separator (hyphen) counts as a boundary."""
+        assert titles_similar("Spider", "Spider-Man") is True
+
+    def test_later_boundary_occurrence_matches_regression(self) -> None:
+        """The scan continues past a mid-word hit to a later boundary hit.
+
+        "it" occurs mid-word inside "spirit" (rejected) and again as a
+        standalone word (accepted), exercising the loop-continuation path.
+        """
+        assert titles_similar("It", "Spirit It") is True
+
+    def test_whitespace_only_title_does_not_match_regression(self) -> None:
+        """A title that normalizes to empty must not match (no infinite loop)."""
+        assert titles_similar("   ", "Spirited Away") is False
