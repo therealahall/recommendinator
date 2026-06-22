@@ -111,9 +111,11 @@ python3.11 -m src.cli preferences get --format json
 python3.11 -m src.cli preferences set-weight genre_match 3.0
 python3.11 -m src.cli preferences set-length book short
 
-# Toggle boolean preferences (series_in_order, variety_after_completion)
-python3.11 -m src.cli preferences set-toggle variety_after_completion on
+# Toggle boolean preferences (series_in_order)
 python3.11 -m src.cli preferences set-toggle series_in_order off
+
+# Set the variety-after-completion penalty (0.0-0.8; 0.0 = off)
+python3.11 -m src.cli preferences set-variety 0.8
 
 # Reset all preferences to defaults
 python3.11 -m src.cli preferences reset

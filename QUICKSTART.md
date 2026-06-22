@@ -369,13 +369,14 @@ python3.11 -m src.cli preferences set-length movie any
 python3.11 -m src.cli preferences set-length video_game long
 ```
 
-### Toggle variety after completion
+### Set variety after completion
 
 ```bash
 # Demote genres you've recently finished so recommendations vary (per content
-# type). The next entry in a series you're actively reading gets a softened
-# (halved) penalty, so it's nudged down but not buried under unrelated content.
-python3.11 -m src.cli preferences set-toggle variety_after_completion on
+# type). The value (0.0-0.8) is the penalty strength; 0.0 turns it off. The next
+# entry in a series you're actively reading gets a softened (halved) penalty, so
+# it's nudged down but not buried under unrelated content.
+python3.11 -m src.cli preferences set-variety 0.8
 ```
 
 ## Optional: Enable AI Features
