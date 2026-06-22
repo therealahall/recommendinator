@@ -52,6 +52,24 @@ describe('ScorerSlider', () => {
     expect(wrapper.find('.scorer-tooltip-wrap').exists()).toBe(false)
   })
 
+  it('associates the tooltip text with its trigger via aria-describedby', () => {
+    const wrapper = mount(ScorerSlider, {
+      props: { ...defaultProps, tooltip: 'A helpful tip' },
+    })
+    const tooltipText = wrapper.find('.scorer-tooltip-text')
+    const tooltipWrap = wrapper.find('.scorer-tooltip-wrap')
+    expect(tooltipText.attributes('id')).toBe('slider-label-popularity-bias-tip')
+    expect(tooltipWrap.attributes('aria-describedby')).toBe('slider-label-popularity-bias-tip')
+    expect(tooltipText.attributes('role')).toBe('tooltip')
+  })
+
+  it('renders the tooltip text content in the DOM so assistive tech can read it', () => {
+    const wrapper = mount(ScorerSlider, {
+      props: { ...defaultProps, tooltip: 'A helpful tip' },
+    })
+    expect(wrapper.find('.scorer-tooltip-text').text()).toBe('A helpful tip')
+  })
+
   it('strips non-alphanumeric characters from label id', () => {
     const wrapper = mount(ScorerSlider, {
       props: { label: 'Genre (Bias)', modelValue: 1.0 },
