@@ -876,21 +876,65 @@ def test_preferences_set_weight(mock_components):
     mock_components["storage"].save_user_preference_config.assert_called_once()
 
 
-def test_preferences_set_toggle_on(mock_components):
-    """Test enabling variety_after_completion via set-toggle."""
+def test_preferences_set_variety(mock_components):
+    """Test setting the numeric variety penalty via set-variety."""
     config = UserPreferenceConfig()
     mock_components["storage"].get_user_preference_config = Mock(return_value=config)
     mock_components["storage"].save_user_preference_config = Mock()
 
     runner = CliRunner()
-    result = runner.invoke(
-        cli, ["preferences", "set-toggle", "variety_after_completion", "on"]
-    )
+    result = runner.invoke(cli, ["preferences", "set-variety", "0.8"])
 
     assert result.exit_code == 0
-    assert "Set variety_after_completion on" in result.output
-    assert config.variety_after_completion is True
+    assert "Set variety_penalty to 0.8" in result.output
+    assert config.variety_penalty == 0.8
     mock_components["storage"].save_user_preference_config.assert_called_once()
+
+
+def test_preferences_set_variety_off(mock_components):
+    """Setting variety to 0.0 disables the penalty."""
+    config = UserPreferenceConfig(variety_penalty=0.8)
+    mock_components["storage"].get_user_preference_config = Mock(return_value=config)
+    mock_components["storage"].save_user_preference_config = Mock()
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["preferences", "set-variety", "0.0"])
+
+    assert result.exit_code == 0
+    assert "Set variety_penalty to 0.0" in result.output
+    assert config.variety_penalty == 0.0
+    mock_components["storage"].save_user_preference_config.assert_called_once()
+
+
+def test_preferences_get_includes_variety_penalty(mock_components):
+    """preferences get surfaces the numeric variety_penalty and its value."""
+    mock_components["storage"].get_user_preference_config = Mock(
+        return_value=UserPreferenceConfig(variety_penalty=0.5)
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["preferences", "get", "--format", "json"])
+
+    assert result.exit_code == 0
+    assert "variety_penalty" in result.output
+    assert "0.5" in result.output
+
+
+def test_preferences_set_variety_rejects_out_of_range(mock_components):
+    """A value above the 0.8 cap is rejected with a non-zero exit and no save."""
+    mock_components["storage"].get_user_preference_config = Mock(
+        return_value=UserPreferenceConfig()
+    )
+    mock_components["storage"].save_user_preference_config = Mock()
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["preferences", "set-variety", "1.5"])
+
+    assert result.exit_code != 0
+    # The rejection must name both ends of the accepted range.
+    assert "0.0" in result.output
+    assert "0.8" in result.output
+    mock_components["storage"].save_user_preference_config.assert_not_called()
 
 
 def test_preferences_set_toggle_off(mock_components):

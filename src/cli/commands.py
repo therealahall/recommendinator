@@ -603,7 +603,7 @@ def preferences_set_weight(
 
 # Boolean preference toggles settable from the CLI, mirroring the web UI's
 # TogglePrefs section.  Each name is also the UserPreferenceConfig attribute.
-_TOGGLE_NAMES: tuple[str, ...] = ("series_in_order", "variety_after_completion")
+_TOGGLE_NAMES: tuple[str, ...] = ("series_in_order",)
 
 
 @preferences.command("set-toggle")
@@ -622,12 +622,8 @@ def preferences_set_toggle(
 ) -> None:
     """Enable or disable a boolean preference toggle.
 
-    TOGGLE_NAME is the setting to change (series_in_order,
-    variety_after_completion).  VALUE is 'on' or 'off'.
-
-    'variety_after_completion' turns on the stepped genre-fatigue penalty:
-    genres you have recently finished are demoted so recommendations vary
-    instead of marching through the next entry in a just-completed series.
+    TOGGLE_NAME is the setting to change (series_in_order).  VALUE is 'on' or
+    'off'.
     """
     enabled = value.lower() == "on"
     storage = ctx.obj["storage"]
@@ -639,6 +635,34 @@ def preferences_set_toggle(
     storage.save_user_preference_config(user_id, preference_config)
     state = "on" if enabled else "off"
     click.echo(f"Set {toggle_name} {state} for user {user_id}")
+
+
+@preferences.command("set-variety")
+@click.argument(
+    "penalty",
+    type=click.FloatRange(0.0, UserPreferenceConfig.MAX_VARIETY_PENALTY),
+)
+@click.option(
+    "--user",
+    "user_id",
+    type=int,
+    default=1,
+    help="User ID",
+)
+@click.pass_context
+def preferences_set_variety(ctx: click.Context, penalty: float, user_id: int) -> None:
+    """Set the variety-after-completion penalty for a user.
+
+    PENALTY is the strength of the genre-fatigue penalty (0.0-0.8). 0.0 turns
+    it off; higher values more strongly demote genres you have recently
+    finished so recommendations vary instead of marching through the next entry
+    in a just-completed series.
+    """
+    storage = ctx.obj["storage"]
+    preference_config = storage.get_user_preference_config(user_id)
+    preference_config.variety_penalty = penalty
+    storage.save_user_preference_config(user_id, preference_config)
+    click.echo(f"Set variety_penalty to {penalty} for user {user_id}")
 
 
 @preferences.command("reset")

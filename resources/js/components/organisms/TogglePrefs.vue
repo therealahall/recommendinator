@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { usePreferencesStore } from '@/stores/preferences'
+import { usePreferencesStore, VARIETY_PENALTY_TOOLTIP } from '@/stores/preferences'
+import VarietySlider from '@/components/atoms/VarietySlider.vue'
 
 const prefs = usePreferencesStore()
 </script>
@@ -11,9 +12,11 @@ const prefs = usePreferencesStore()
       <input type="checkbox" id="prefSeriesOrder" v-model="prefs.seriesInOrder">
       <label for="prefSeriesOrder">Recommend series in order</label>
     </div>
-    <div class="toggle-row">
-      <input type="checkbox" id="prefVariety" v-model="prefs.varietyAfterCompletion">
-      <label for="prefVariety">Variety after completion</label>
-    </div>
+    <VarietySlider
+      label="Variety after completion"
+      :tooltip="VARIETY_PENALTY_TOOLTIP"
+      :model-value="prefs.varietyPenalty"
+      @update:model-value="prefs.varietyPenalty = $event"
+    />
   </div>
 </template>

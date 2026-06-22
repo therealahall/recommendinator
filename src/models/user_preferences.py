@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from typing import Any, ClassVar
 
 
 @dataclass
@@ -15,8 +15,11 @@ class UserPreferenceConfig:
             user has explicitly set are present; missing keys mean "use system
             default."
         series_in_order: Whether to prefer recommending series in order.
-        variety_after_completion: Whether to recommend variety after completing
-            a series.
+        variety_penalty: Strength of the genre-fatigue penalty applied after
+            completing content (0.0-0.8). ``0.0`` disables it; higher values
+            demote candidates whose genre the user recently finished more
+            strongly. The value is the ladder's top penalty (see
+            ``src/recommendations/variety.py``). Default 0.0 (disabled).
         custom_rules: Free-form rule descriptions interpreted by the
             pattern-based or LLM-powered preference interpreter.
         content_length_preferences: Per-content-type length preference.
@@ -34,11 +37,15 @@ class UserPreferenceConfig:
 
     scorer_weights: dict[str, float] = field(default_factory=dict)
     series_in_order: bool = True
-    variety_after_completion: bool = False
+    variety_penalty: float = 0.0
     custom_rules: list[str] = field(default_factory=list)
     content_length_preferences: dict[str, str] = field(default_factory=dict)
     diversity_weight: float = 0.0
     theme: str = ""
+
+    #: Strongest variety penalty a user may set. Caps the genre-fatigue ladder's
+    #: top rung so a fully penalised candidate keeps at least 20% of its score.
+    MAX_VARIETY_PENALTY: ClassVar[float] = 0.8
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a dictionary for JSON storage.
@@ -52,6 +59,11 @@ class UserPreferenceConfig:
     def from_dict(cls, data: dict[str, Any]) -> UserPreferenceConfig:
         """Deserialize from a dictionary.
 
+        Migrates the legacy boolean ``variety_after_completion`` field: stored
+        JSON written before the slider existed maps ``True`` -> the maximum
+        penalty and ``False`` -> ``0.0``. A present ``variety_penalty`` always
+        wins and is clamped into ``[0.0, MAX_VARIETY_PENALTY]``.
+
         Args:
             data: Dictionary representation (e.g. from JSON).
 
@@ -61,9 +73,26 @@ class UserPreferenceConfig:
         return cls(
             scorer_weights=data.get("scorer_weights", {}),
             series_in_order=data.get("series_in_order", True),
-            variety_after_completion=data.get("variety_after_completion", False),
+            variety_penalty=cls._resolve_variety_penalty(data),
             custom_rules=data.get("custom_rules", []),
             content_length_preferences=data.get("content_length_preferences", {}),
             diversity_weight=data.get("diversity_weight", 0.0),
             theme=data.get("theme", ""),
         )
+
+    @classmethod
+    def _resolve_variety_penalty(cls, data: dict[str, Any]) -> float:
+        """Resolve the variety penalty from stored data, migrating the old key.
+
+        Args:
+            data: Dictionary representation (e.g. from JSON).
+
+        Returns:
+            A penalty clamped into ``[0.0, MAX_VARIETY_PENALTY]``.
+        """
+        if "variety_penalty" in data:
+            penalty = float(data["variety_penalty"])
+            return max(0.0, min(cls.MAX_VARIETY_PENALTY, penalty))
+        if data.get("variety_after_completion"):
+            return cls.MAX_VARIETY_PENALTY
+        return 0.0

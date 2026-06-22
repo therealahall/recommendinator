@@ -159,8 +159,8 @@ class RecommendationResponse(BaseModel):
     reasoning: str
     llm_reasoning: str | None = None
     score_breakdown: dict[str, float] = Field(default_factory=dict)
-    # Stepped genre-fatigue penalty applied when variety_after_completion is
-    # enabled (0.0 when off or the item's genre was not recently finished).
+    # Stepped genre-fatigue penalty applied when the variety_penalty preference
+    # is set (0.0 when off or the item's genre was not recently finished).
     variety_penalty: float = Field(0.0, ge=0.0, le=1.0)
 
 
@@ -227,7 +227,9 @@ class UserPreferenceResponse(BaseModel):
 
     scorer_weights: dict[str, float]
     series_in_order: bool
-    variety_after_completion: bool
+    variety_penalty: float = Field(
+        0.0, ge=0.0, le=UserPreferenceConfig.MAX_VARIETY_PENALTY
+    )
     custom_rules: list[str]
     content_length_preferences: dict[str, str] = Field(default_factory=dict)
     theme: str = ""
@@ -273,7 +275,9 @@ class UserPreferenceUpdateRequest(BaseModel):
 
     scorer_weights: dict[str, float] | None = None
     series_in_order: bool | None = None
-    variety_after_completion: bool | None = None
+    variety_penalty: float | None = Field(
+        None, ge=0.0, le=UserPreferenceConfig.MAX_VARIETY_PENALTY
+    )
     custom_rules: list[str] | None = None
     content_length_preferences: dict[str, str] | None = None
     theme: str | None = None
@@ -1066,8 +1070,8 @@ async def update_user_preferences(
         existing.scorer_weights.update(request.scorer_weights)
     if request.series_in_order is not None:
         existing.series_in_order = request.series_in_order
-    if request.variety_after_completion is not None:
-        existing.variety_after_completion = request.variety_after_completion
+    if request.variety_penalty is not None:
+        existing.variety_penalty = request.variety_penalty
     if request.custom_rules is not None:
         existing.custom_rules = request.custom_rules
     if request.content_length_preferences is not None:

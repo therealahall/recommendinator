@@ -757,7 +757,7 @@ def test_put_user_preferences_full(client, mock_components):
         json={
             "scorer_weights": {"genre_match": 5.0},
             "series_in_order": False,
-            "variety_after_completion": True,
+            "variety_penalty": 0.8,
             "custom_rules": ["no horror"],
         },
     )
@@ -765,8 +765,51 @@ def test_put_user_preferences_full(client, mock_components):
     data = response.json()
     assert data["scorer_weights"] == {"genre_match": 5.0}
     assert data["series_in_order"] is False
-    assert data["variety_after_completion"] is True
+    assert data["variety_penalty"] == 0.8
     assert data["custom_rules"] == ["no horror"]
+
+
+def test_put_user_preferences_rejects_out_of_range_variety_penalty(
+    client, mock_components
+):
+    """variety_penalty above the 0.8 cap is rejected with a 422."""
+    mock_components["storage"].get_user_preference_config = Mock(
+        return_value=UserPreferenceConfig()
+    )
+    mock_components["storage"].save_user_preference_config = Mock()
+
+    response = client.put(
+        "/api/users/1/preferences",
+        json={"variety_penalty": 1.5},
+    )
+    assert response.status_code == 422
+    mock_components["storage"].save_user_preference_config.assert_not_called()
+
+
+def test_put_user_preferences_rejects_negative_variety_penalty(client, mock_components):
+    """variety_penalty below 0.0 is rejected with a 422 and never saved."""
+    mock_components["storage"].get_user_preference_config = Mock(
+        return_value=UserPreferenceConfig()
+    )
+    mock_components["storage"].save_user_preference_config = Mock()
+
+    response = client.put(
+        "/api/users/1/preferences",
+        json={"variety_penalty": -0.1},
+    )
+    assert response.status_code == 422
+    mock_components["storage"].save_user_preference_config.assert_not_called()
+
+
+def test_get_user_preferences_includes_variety_penalty(client, mock_components):
+    """GET surfaces the numeric variety_penalty field."""
+    mock_components["storage"].get_user_preference_config = Mock(
+        return_value=UserPreferenceConfig(variety_penalty=0.4)
+    )
+
+    response = client.get("/api/users/1/preferences")
+    assert response.status_code == 200
+    assert response.json()["variety_penalty"] == 0.4
 
 
 def test_list_users(client, mock_components):

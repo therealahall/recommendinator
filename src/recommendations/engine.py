@@ -368,21 +368,23 @@ class RecommendationEngine:
         )
 
         # Apply the stepped genre-fatigue variety penalty (issue #74) when the
-        # user has enabled variety_after_completion.  This multiplicatively
+        # user has set a non-zero variety_penalty.  This multiplicatively
         # demotes candidates whose genre cluster the user recently finished,
         # so the next entry in a just-completed genre/series no longer
         # automatically tops the list.  The ladder is built from completed
         # items of the *same* content type, so finishing a fantasy book does
         # not suppress fantasy movies or games — each type varies independently.
+        # The user's variety_penalty becomes the ladder's top rung.
         if (
             user_preference_config is not None
-            and user_preference_config.variety_after_completion
+            and user_preference_config.variety_penalty > 0.0
         ):
             ranked_items = self._apply_variety_penalty(
                 ranked_items,
                 consumed_items_of_type,
                 series_tracking,
                 unconsumed_items,
+                top_penalty=user_preference_config.variety_penalty,
             )
 
         top_recommendations = ranked_items[:count]
@@ -592,7 +594,7 @@ class RecommendationEngine:
 
         The ranker's additive genre-diversity bonus is only applied when the
         user has explicitly set ``diversity_weight`` above zero.  The
-        ``variety_after_completion`` toggle drives the stepped genre-fatigue
+        ``variety_penalty`` preference drives the stepped genre-fatigue
         penalty (see :meth:`_apply_variety_penalty`) rather than this bonus.
 
         Args:
@@ -619,6 +621,8 @@ class RecommendationEngine:
         completed_items_of_type: list[ContentItem],
         series_tracking: dict[str, set[float]],
         unconsumed_items: list[ContentItem],
+        *,
+        top_penalty: float,
     ) -> list[tuple[ContentItem, float, dict[str, Any]]]:
         """Apply the stepped genre-fatigue penalty and re-sort (issue #74).
 
@@ -644,12 +648,14 @@ class RecommendationEngine:
             series_tracking: Series name -> consumed item numbers, used to
                 detect active series continuations.
             unconsumed_items: Candidate items, used for series ordering checks.
+            top_penalty: The user's variety_penalty, used as the ladder's top
+                rung — the penalty for the most recently finished genre.
 
         Returns:
             Re-sorted ``(item, score, metadata)`` tuples with the penalty
             applied.  Returns the input unchanged when the ladder is empty.
         """
-        ladder = build_variety_ladder(completed_items_of_type)
+        ladder = build_variety_ladder(completed_items_of_type, top_penalty=top_penalty)
         if not ladder:
             return ranked_items
 

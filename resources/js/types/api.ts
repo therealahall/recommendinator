@@ -64,7 +64,7 @@ export interface StatusResponse {
 export interface UserPreferenceResponse {
   scorer_weights: Record<string, number>
   series_in_order: boolean
-  variety_after_completion: boolean
+  variety_penalty: number
   custom_rules: string[]
   content_length_preferences: Record<string, string>
   theme: string
@@ -73,7 +73,7 @@ export interface UserPreferenceResponse {
 export interface UserPreferenceUpdateRequest {
   scorer_weights?: Record<string, number>
   series_in_order?: boolean
-  variety_after_completion?: boolean
+  variety_penalty?: number
   custom_rules?: string[]
   content_length_preferences?: Record<string, string>
   theme?: string
