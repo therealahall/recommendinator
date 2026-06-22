@@ -65,19 +65,26 @@ benefit-of-the-doubt score rather than being penalized.
 
 ## Variety after completion
 
-Enable the **"Variety after completion"** preference (web UI toggle, or
-`preferences set-toggle variety_after_completion on` in the CLI) to stop the
-recommender from marching through the next entry in a genre you just finished —
-for example, finishing a fantasy book no longer makes the next fantasy book your
-automatic #1.
+Set the **"Variety after completion"** preference above `0.0` (web UI slider, or
+`preferences set-variety <0.0-0.8>` in the CLI) to stop the recommender from
+marching through the next entry in a genre you just finished — for example,
+finishing a fantasy book no longer makes the next fantasy book your automatic #1.
 
-When enabled, the genres you most recently *completed* are penalized on a stepped
-ladder by recency. The most recently finished genre cluster takes an **80%**
-penalty, and the penalty decays over your last **5 distinct** finished genres
-(80% → 64% → 48% → 32% → 16%, then nothing). A candidate is penalized by its
-freshest matching genre, and the penalty multiplies its final score, so a
-heavily-penalized item still keeps a fraction of its score rather than
-disappearing.
+`variety_penalty` is a number in **0.0–0.8**. `0.0` turns the feature **off**;
+any value above zero becomes the **top penalty** at the head of the ladder, so a
+higher number demotes recently finished genres more aggressively. The cap of
+`0.8` is what guarantees a fully-penalized candidate keeps at least **20%** of
+its score (the penalty multiplies the score, so `0.8` leaves `0.2`) — a
+genre-homogeneous library never produces an empty list.
+
+The genres you most recently *completed* are penalized on a stepped ladder by
+recency. The most recently finished genre cluster takes the full penalty you set,
+and the penalty decays over your last **5 distinct** finished genres. With the
+maximum `0.8` that ladder is 80% → 64% → 48% → 32% → 16%, then nothing; a smaller
+value scales the whole ladder down (e.g. `0.4` gives 40% → 32% → 24% → 16% → 8%).
+A candidate is penalized by its freshest matching genre, and the penalty
+multiplies its final score, so a heavily-penalized item still keeps a fraction of
+its score rather than disappearing.
 
 The penalty is **per content type** — finishing a fantasy *book* varies your book
 recommendations but leaves fantasy *movies* and *games* untouched. Each
@@ -88,7 +95,7 @@ The next entry in a series you're **actively reading** gets a softened penalty
 (halved): finishing book #1 of a series doesn't mean you're done with the genre,
 so the legit next book is nudged down but not buried. Starting a brand-new series
 in a just-finished genre still takes the full penalty — that's exactly the
-genre-hop the toggle is for.
+genre-hop this preference is for.
 
 ## Diversity bonus (advanced)
 
