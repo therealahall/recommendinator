@@ -1,14 +1,11 @@
 """FastAPI application for web interface."""
 
-import html
 import logging
 import os
-import re
 import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from urllib.parse import quote
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -225,39 +222,19 @@ def create_app(config_path: Path | None = None) -> FastAPI:
     if static_dir.exists():
         app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
-    # Serve Vue SPA from Vite build output, falling back to legacy template
-    dist_dir = Path("src/web/static/dist")
-    dist_index = dist_dir / "index.html"
-    legacy_template = Path("src/web/templates/index.html")
+    # Serve the Vue SPA from Vite build output
+    dist_index = Path("src/web/static/dist/index.html")
 
     @app.get("/", response_class=HTMLResponse)
     async def root() -> HTMLResponse:
         """Serve the main web UI.
 
-        Prefers the Vite-built SPA (dist/index.html) when available.
-        Vite uses content-hashed filenames so no manual cache-busting
-        is needed.  Falls back to the legacy template for backwards
-        compatibility during the migration period.
+        Serves the Vite-built SPA (dist/index.html) when present. Vite uses
+        content-hashed filenames so no manual cache-busting is needed. When
+        the SPA has not been built, returns a plain API-running message.
         """
         if dist_index.exists():
             return HTMLResponse(content=dist_index.read_text())
-        if legacy_template.exists():
-            content = legacy_template.read_text()
-            # Escape version for safe injection into HTML and URLs
-            version_attr = html.escape(APP_VERSION, quote=True)
-            version_url = quote(APP_VERSION, safe="")
-            # Inject app version into body data attribute
-            content = content.replace(
-                'data-version=""',
-                f'data-version="{version_attr}"',
-            )
-            # Append version query param to static asset URLs for cache busting
-            content = re.sub(
-                r'(href|src)="(/static/[^"]+)"',
-                lambda m: f'{m.group(1)}="{m.group(2)}?v={version_url}"',
-                content,
-            )
-            return HTMLResponse(content=content)
         return HTMLResponse(
             content="<h1>Recommendinator API</h1><p>API is running. Use /docs for API documentation.</p>"
         )

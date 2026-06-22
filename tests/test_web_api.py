@@ -201,43 +201,6 @@ class TestRootEndpoint:
             not inline_scripts
         ), f"Inline scripts violate CSP script-src 'self': {inline_scripts}"
 
-    def test_legacy_cache_busts_static_assets(self, client):
-        """root() appends ?v={APP_VERSION} to legacy template static asset URLs.
-
-        Bug context: The legacy template uses manual cache busting via version
-        query parameters. We monkeypatch Path.exists so the dist/index.html is
-        not found, forcing the legacy template code path.
-        """
-        original_exists = Path.exists
-
-        def force_legacy(self: Path) -> bool:
-            # Hide dist/index.html to force legacy template path
-            if str(self).endswith("dist/index.html"):
-                return False
-            return original_exists(self)
-
-        with patch.object(Path, "exists", force_legacy):
-            response = client.get("/")
-        assert response.status_code == 200
-        # Verify at least one static asset gets the version query param
-        assert f"?v={APP_VERSION}" in response.text
-
-    def test_legacy_version_label_and_update_banner_present(self, client):
-        """Legacy template includes DOM elements for version display."""
-        original_exists = Path.exists
-
-        def force_legacy(self: Path) -> bool:
-            if str(self).endswith("dist/index.html"):
-                return False
-            return original_exists(self)
-
-        with patch.object(Path, "exists", force_legacy):
-            response = client.get("/")
-        assert response.status_code == 200
-        assert 'id="versionLabel"' in response.text
-        assert 'id="updateBanner"' in response.text
-        assert 'class="update-banner"' in response.text
-
     def test_fallback_when_template_missing(self, client):
         """root() returns a fallback page when no HTML template exists."""
         original_exists = Path.exists
@@ -252,20 +215,6 @@ class TestRootEndpoint:
         assert response.status_code == 200
         assert "text/html" in response.headers["content-type"]
         assert "Recommendinator API" in response.text
-
-    def test_legacy_body_has_data_version(self, client):
-        """root() injects the app version into body data-version (legacy template)."""
-        original_exists = Path.exists
-
-        def force_legacy(self: Path) -> bool:
-            if str(self).endswith("dist/index.html"):
-                return False
-            return original_exists(self)
-
-        with patch.object(Path, "exists", force_legacy):
-            response = client.get("/")
-        assert response.status_code == 200
-        assert f'data-version="{APP_VERSION}"' in response.text
 
 
 def test_app_title(mock_components):
