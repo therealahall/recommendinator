@@ -1,8 +1,9 @@
 """Genre-fatigue variety penalty applied after completing content.
 
-When ``variety_after_completion`` is enabled, recently finished genres are
-penalised on a stepped ladder so the recommender hops between genres instead
-of marching through the next entry in the genre/series the user just finished.
+When the user's ``variety_penalty`` preference is non-zero, recently finished
+genres are penalised on a stepped ladder so the recommender hops between genres
+instead of marching through the next entry in the genre/series just finished.
+That preference value becomes the ladder's ``top_penalty`` — the strongest rung.
 
 The ladder is built from the user's COMPLETED items ordered by completion date
 (newest first). Each distinct thematic genre cluster encountered claims the
@@ -22,13 +23,16 @@ from __future__ import annotations
 from datetime import date
 
 from src.models.content import ConsumptionStatus, ContentItem
+from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.genre_clusters import get_clusters_for_terms
 from src.recommendations.genre_normalizer import extract_and_normalize_genres
 
 # Strongest penalty, applied to the most recently finished genre cluster.
 # 0.8 => candidates in that cluster keep 20% of their score: a hard but not
 # total suppression, so genre-homogeneous libraries never return an empty list.
-VARIETY_TOP_PENALTY = 0.8
+# Single-sourced from the user-preference cap so the ladder's top rung and the
+# preference upper bound can never drift apart.
+VARIETY_TOP_PENALTY = UserPreferenceConfig.MAX_VARIETY_PENALTY
 
 # Number of distinct recently finished clusters the penalty ladder spans.
 # Penalty decays linearly: rung 0 = TOP, rung STEPS-1 = TOP/STEPS, rung STEPS+ = 0.

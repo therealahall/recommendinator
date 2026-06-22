@@ -41,6 +41,9 @@ export const SCORER_TOOLTIPS: Record<string, string> = {
   series_affinity: "Boosts items from franchises you've rated highly (avg 4+ stars). Keeps recommending series you love. Default: 1.0",
 }
 
+export const VARIETY_PENALTY_TOOLTIP =
+  'After you finish something, applies this penalty to further recommendations of the same content type, encouraging variety. 0% turns it off; higher values push harder, and the penalty decays as you complete more. Recommendations always keep at least 20% of their score, so your list never empties out.'
+
 export const CONTENT_TYPES = ['book', 'movie', 'tv_show', 'video_game'] as const
 export const LENGTH_OPTIONS = ['any', 'short', 'medium', 'long'] as const
 
@@ -50,7 +53,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
   // State
   const scorerWeights = ref<Record<string, number>>({})
   const seriesInOrder = ref(true)
-  const varietyAfterCompletion = ref(false)
+  const varietyPenalty = ref(0)
   const contentLengthPreferences = ref<Record<string, string>>({})
   const customRules = ref<string[]>([])
   const pendingTheme = ref('')
@@ -69,7 +72,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
       )
       scorerWeights.value = prefs.scorer_weights
       seriesInOrder.value = prefs.series_in_order
-      varietyAfterCompletion.value = prefs.variety_after_completion
+      varietyPenalty.value = prefs.variety_penalty ?? 0
       contentLengthPreferences.value = prefs.content_length_preferences || {}
       customRules.value = prefs.custom_rules || []
 
@@ -85,7 +88,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
       // Use defaults on error
       scorerWeights.value = {}
       seriesInOrder.value = true
-      varietyAfterCompletion.value = false
+      varietyPenalty.value = 0
       contentLengthPreferences.value = {}
       customRules.value = []
       pendingTheme.value = ''
@@ -102,7 +105,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
       const payload: UserPreferenceUpdateRequest = {
         scorer_weights: scorerWeights.value,
         series_in_order: seriesInOrder.value,
-        variety_after_completion: varietyAfterCompletion.value,
+        variety_penalty: varietyPenalty.value,
         content_length_preferences: contentLengthPreferences.value,
         custom_rules: customRules.value,
         theme: pendingTheme.value,
@@ -151,7 +154,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
   return {
     scorerWeights,
     seriesInOrder,
-    varietyAfterCompletion,
+    varietyPenalty,
     contentLengthPreferences,
     customRules,
     pendingTheme,

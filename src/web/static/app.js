@@ -5,6 +5,10 @@
 
     var API_BASE = "/api";
 
+    // Upper bound for the variety_penalty preference. Mirrors
+    // UserPreferenceConfig.MAX_VARIETY_PENALTY on the backend.
+    var MAX_VARIETY_PENALTY = 0.8;
+
     // Configure marked for chat markdown rendering
     if (typeof marked !== "undefined") {
         marked.setOptions({ breaks: true, gfm: true });
@@ -876,7 +880,7 @@
                 renderPreferences({
                     scorer_weights: {},
                     series_in_order: true,
-                    variety_after_completion: false
+                    variety_penalty: 0
                 });
             });
     }
@@ -987,9 +991,22 @@
         html += '<input type="checkbox" id="prefSeriesOrder"' + (prefs.series_in_order ? ' checked' : '') + '>';
         html += '<label for="prefSeriesOrder">Recommend series in order</label>';
         html += '</div>';
-        html += '<div class="toggle-row">';
-        html += '<input type="checkbox" id="prefVariety"' + (prefs.variety_after_completion ? ' checked' : '') + '>';
-        html += '<label for="prefVariety">Variety after completion</label>';
+        html += '</div>';
+
+        // Variety penalty: numeric strength of the genre-fatigue penalty applied
+        // after finishing content. Rendered as a range slider sending the raw
+        // float [0.0, MAX_VARIETY_PENALTY], matching the scorer-weight sliders.
+        var rawVariety = parseFloat(prefs.variety_penalty);
+        if (!isFinite(rawVariety)) rawVariety = 0;
+        var varietyValue = Math.max(0, Math.min(MAX_VARIETY_PENALTY, rawVariety));
+        html += '<div class="pref-section">';
+        html += '<h3>Variety After Completion</h3>';
+        html += '<p class="help-text">Demote genres you recently finished so recommendations hop between genres. 0 disables it.</p>';
+        html += '<div class="slider-row">';
+        html += '<span class="slider-label" id="prefVarietyLabel">Variety penalty</span>';
+        var varietyValueText = varietyValue === 0 ? 'Off' : varietyValue.toFixed(2);
+        html += '<input type="range" min="0" max="' + MAX_VARIETY_PENALTY + '" step="0.05" value="' + varietyValue + '" id="prefVariety" class="pref-variety-slider" aria-labelledby="prefVarietyLabel" aria-valuetext="' + varietyValueText + '">';
+        html += '<span class="slider-value" id="prefVarietyValue" aria-hidden="true">' + varietyValue.toFixed(2) + '</span>';
         html += '</div>';
         html += '</div>';
 
@@ -1058,6 +1075,20 @@
                 updateSliderFill(slider);
             });
         });
+
+        // Attach variety penalty slider listener with gradient fill
+        var varietySlider = document.getElementById("prefVariety");
+        if (varietySlider) {
+            updateSliderFill(varietySlider);
+            varietySlider.addEventListener("input", function () {
+                var value = parseFloat(varietySlider.value);
+                var valueText = value === 0 ? "Off" : value.toFixed(2);
+                var valueLabel = document.getElementById("prefVarietyValue");
+                if (valueLabel) valueLabel.textContent = value.toFixed(2);
+                varietySlider.setAttribute("aria-valuetext", valueText);
+                updateSliderFill(varietySlider);
+            });
+        }
 
         // Attach remove rule listeners
         container.querySelectorAll(".remove-rule-btn").forEach(function (btn) {
@@ -1153,7 +1184,7 @@
         var payload = {
             scorer_weights: weights,
             series_in_order: document.getElementById("prefSeriesOrder").checked,
-            variety_after_completion: document.getElementById("prefVariety").checked,
+            variety_penalty: parseFloat(document.getElementById("prefVariety").value),
             content_length_preferences: lengthPrefs,
             custom_rules: customRules
         };
