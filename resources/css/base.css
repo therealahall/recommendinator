@@ -755,8 +755,12 @@ input[type="checkbox"] {
   color: var(--accent);
 }
 
+/* Hidden from sighted users but kept in the accessibility tree so the
+   aria-describedby association resolves for screen readers (display: none
+   would drop the element from the a11y tree). Revealed on hover/focus below. */
 .scorer-tooltip-text {
-  display: none;
+  opacity: 0;
+  visibility: hidden;
   position: absolute;
   left: 50%;
   bottom: calc(100% + 8px);
@@ -787,7 +791,8 @@ input[type="checkbox"] {
 
 .scorer-tooltip-wrap:hover .scorer-tooltip-text,
 .scorer-tooltip-wrap:focus .scorer-tooltip-text {
-  display: block;
+  opacity: 1;
+  visibility: visible;
 }
 
 .slider-row input[type="range"] {

@@ -28,9 +28,14 @@ function onInput(event: Event) {
   <div class="slider-row">
     <span :id="labelId" class="slider-label">
       {{ label }}
-      <span v-if="tooltip" class="scorer-tooltip-wrap" tabindex="0">
+      <span
+        v-if="tooltip"
+        class="scorer-tooltip-wrap"
+        tabindex="0"
+        :aria-describedby="`${labelId}-tip`"
+      >
         <span class="scorer-tooltip-icon" :aria-label="`${label} info`">?</span>
-        <span class="scorer-tooltip-text">{{ tooltip }}</span>
+        <span :id="`${labelId}-tip`" class="scorer-tooltip-text" role="tooltip">{{ tooltip }}</span>
       </span>
     </span>
     <input
