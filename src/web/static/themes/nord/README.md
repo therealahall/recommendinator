@@ -12,5 +12,5 @@ The default dark theme based on the [Nord color palette](https://www.nordtheme.c
 ## Notes
 
 Nord is the built-in default. Its color variables are defined directly in `:root`
-in `style.css`, so `colors.css` is intentionally empty. When Nord is selected,
-the theme stylesheet loads cleanly without overriding anything.
+in `resources/css/base.css`, so `colors.css` is intentionally empty. When Nord is
+selected, the theme stylesheet loads cleanly without overriding anything.

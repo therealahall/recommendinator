@@ -14,5 +14,5 @@ Inverts the default dark palette:
 ## Notes
 
 This theme overrides all core color variables. The `color-mix()` declarations
-in `style.css` automatically derive transparent badge/button backgrounds from
-these overridden values, so no additional CSS is needed.
+in `resources/css/base.css` automatically derive transparent badge/button
+backgrounds from these overridden values, so no additional CSS is needed.
