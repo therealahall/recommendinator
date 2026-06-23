@@ -7,6 +7,13 @@ from unittest.mock import MagicMock, patch
 
 from click.testing import CliRunner
 
+from src.cli.commands import (
+    MAX_DESCRIPTION_LENGTH,
+    MAX_GENRE_TAG_LENGTH,
+    MAX_GENRES,
+    MAX_REVIEW_LENGTH,
+    MAX_TAGS,
+)
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.manager import StorageManager
 from src.utils.series import MAX_SEASONS
@@ -88,6 +95,10 @@ class TestLibraryList:
             "ignored",
             "seasons_watched",
             "total_seasons",
+            "enriched",
+            "genres",
+            "tags",
+            "description",
         }
         assert item["title"] == "Book One"
         assert item["db_id"] == 1
@@ -136,6 +147,73 @@ class TestLibraryList:
 
         assert result.exit_code == 0
         assert "No items found" in result.output
+
+    def test_list_enrichment_not_enriched(self, cli_runner: CliRunner) -> None:
+        """Test --enrichment not_enriched forwards the filter to storage."""
+        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage.get_content_items.return_value = []
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["library", "list", "--enrichment", "not_enriched"],
+            mock_storage,
+        )
+
+        assert result.exit_code == 0
+        call_kwargs = mock_storage.get_content_items.call_args[1]
+        assert call_kwargs["enrichment"] == "not_enriched"
+
+    def test_list_enrichment_enriched(self, cli_runner: CliRunner) -> None:
+        """Test --enrichment enriched forwards the filter to storage."""
+        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage.get_content_items.return_value = []
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["library", "list", "--enrichment", "enriched"],
+            mock_storage,
+        )
+
+        assert result.exit_code == 0
+        call_kwargs = mock_storage.get_content_items.call_args[1]
+        assert call_kwargs["enrichment"] == "enriched"
+
+    def test_list_enrichment_default_unset(self, cli_runner: CliRunner) -> None:
+        """Test the enrichment filter is None (all items) when not provided."""
+        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage.get_content_items.return_value = []
+
+        result = _invoke_with_mocks(cli_runner, ["library", "list"], mock_storage)
+
+        assert result.exit_code == 0
+        call_kwargs = mock_storage.get_content_items.call_args[1]
+        assert call_kwargs["enrichment"] is None
+
+    def test_list_enrichment_invalid_value(self, cli_runner: CliRunner) -> None:
+        """Test an invalid --enrichment value is rejected by Click choices."""
+        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage.get_content_items.return_value = []
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["library", "list", "--enrichment", "partial"],
+            mock_storage,
+        )
+
+        assert result.exit_code != 0
+        mock_storage.get_content_items.assert_not_called()
+
+    def test_list_table_shows_enriched_column(self, cli_runner: CliRunner) -> None:
+        """Test the table output carries an Enriched indicator column."""
+        item = _make_item(db_id=1, title="Book One")
+        item.enriched = True
+        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage.get_content_items.return_value = [item]
+
+        result = _invoke_with_mocks(cli_runner, ["library", "list"], mock_storage)
+
+        assert result.exit_code == 0
+        assert "Enriched" in result.output
 
     def test_list_forwards_sort_limit_offset(self, cli_runner: CliRunner) -> None:
         """Test that --sort, --limit, --offset, --show-ignored reach storage."""
@@ -233,6 +311,10 @@ class TestLibraryShow:
             "ignored",
             "seasons_watched",
             "total_seasons",
+            "enriched",
+            "genres",
+            "tags",
+            "description",
         }
         assert parsed["title"] == "The Great Book"
         assert parsed["rating"] == 5
@@ -382,10 +464,7 @@ class TestLibraryEdit:
         )
 
         assert result.exit_code != 0
-        assert (
-            "Provide at least one of --status, --rating, --review, --seasons-watched."
-            in result.output
-        )
+        assert "Provide at least one of" in result.output
         # Guard fires before any storage access.
         mock_storage.get_content_item.assert_not_called()
         mock_storage.update_item_from_ui.assert_not_called()
@@ -421,6 +500,78 @@ class TestLibraryEdit:
         call_kwargs = mock_storage.update_item_from_ui.call_args[1]
         assert call_kwargs["seasons_watched"] == [1, 2, 3]
 
+    def test_edit_genres_tags_description(self, cli_runner: CliRunner) -> None:
+        """Test setting manual enrichment metadata forwards lists/text to storage."""
+        item = _make_item(db_id=1, title="Book One")
+        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage.get_content_item.return_value = item
+        mock_storage.update_item_from_ui.return_value = True
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            [
+                "library",
+                "edit",
+                "--id",
+                "1",
+                "--genre",
+                "Action",
+                "--genre",
+                "RPG",
+                "--tag",
+                "co-op",
+                "--description",
+                "A grand adventure.",
+            ],
+            mock_storage,
+        )
+
+        assert result.exit_code == 0
+        call_kwargs = mock_storage.update_item_from_ui.call_args[1]
+        assert call_kwargs["genres"] == ["Action", "RPG"]
+        assert call_kwargs["tags"] == ["co-op"]
+        assert call_kwargs["description"] == "A grand adventure."
+
+    def test_edit_genre_only_leaves_others_unchanged(
+        self, cli_runner: CliRunner
+    ) -> None:
+        """Test editing only --genre leaves tags/description as None (unchanged)."""
+        item = _make_item(db_id=1, title="Book One")
+        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage.get_content_item.return_value = item
+        mock_storage.update_item_from_ui.return_value = True
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["library", "edit", "--id", "1", "--genre", "Sci-Fi"],
+            mock_storage,
+        )
+
+        assert result.exit_code == 0
+        call_kwargs = mock_storage.update_item_from_ui.call_args[1]
+        assert call_kwargs["genres"] == ["Sci-Fi"]
+        assert call_kwargs["tags"] is None
+        assert call_kwargs["description"] is None
+
+    def test_edit_description_only(self, cli_runner: CliRunner) -> None:
+        """Test editing only --description leaves genres/tags as None (unchanged)."""
+        item = _make_item(db_id=1, title="Book One")
+        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage.get_content_item.return_value = item
+        mock_storage.update_item_from_ui.return_value = True
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["library", "edit", "--id", "1", "--description", "New blurb."],
+            mock_storage,
+        )
+
+        assert result.exit_code == 0
+        call_kwargs = mock_storage.update_item_from_ui.call_args[1]
+        assert call_kwargs["description"] == "New blurb."
+        assert call_kwargs["genres"] is None
+        assert call_kwargs["tags"] is None
+
     def test_edit_update_fails(self, cli_runner: CliRunner) -> None:
         """Test edit when storage update returns False."""
         item = _make_item(db_id=1, title="Book One")
@@ -437,9 +588,26 @@ class TestLibraryEdit:
         assert result.exit_code != 0
         assert "failed to update" in result.output.lower()
 
+    def test_edit_review_at_length_limit(self, cli_runner: CliRunner) -> None:
+        """A review at exactly the length limit is accepted and forwarded."""
+        item = _make_item(db_id=1, title="Book One")
+        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage.get_content_item.return_value = item
+        mock_storage.update_item_from_ui.return_value = True
+
+        review = "x" * MAX_REVIEW_LENGTH
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["library", "edit", "--id", "1", "--review", review],
+            mock_storage,
+        )
+
+        assert result.exit_code == 0
+        assert mock_storage.update_item_from_ui.call_args[1]["review"] == review
+
 
 class TestLibraryEditRegression:
-    """Regression tests for the library edit command's season validation."""
+    """Regression tests for the library edit command's input validation."""
 
     def _tv_storage(self) -> MagicMock:
         """A storage mock returning a TV show item from get_content_item."""
@@ -504,6 +672,90 @@ class TestLibraryEditRegression:
         assert result.exit_code != 0
         assert f"at most {MAX_SEASONS} seasons" in result.output
         mock_storage.update_item_from_ui.assert_not_called()
+
+    def test_edit_rejects_over_long_review_regression(
+        self, cli_runner: CliRunner
+    ) -> None:
+        """An over-long review is rejected, matching the web bound.
+
+        Bug reported: the web ItemEditRequest rejects reviews over
+        MAX_REVIEW_LENGTH with a 422, but the CLI stored them silently.
+        Root cause: --review had no length check before reaching storage.
+        Fix: the CLI now rejects over-long reviews before touching storage.
+        """
+        item = _make_item(db_id=1, title="Book One")
+        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage.get_content_item.return_value = item
+        mock_storage.update_item_from_ui.return_value = True
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["library", "edit", "--id", "1", "--review", "x" * (MAX_REVIEW_LENGTH + 1)],
+            mock_storage,
+        )
+
+        assert result.exit_code != 0
+        assert f"at most {MAX_REVIEW_LENGTH} characters" in result.output
+        mock_storage.update_item_from_ui.assert_not_called()
+
+    def test_edit_rejects_manual_metadata_over_caps_regression(
+        self, cli_runner: CliRunner
+    ) -> None:
+        """Over-cap manual genres/tags/description are rejected by the CLI.
+
+        Bug reported: the web ItemEditRequest caps manual metadata (at most
+        MAX_GENRES genres, MAX_TAGS tags, MAX_GENRE_TAG_LENGTH chars per
+        value, MAX_DESCRIPTION_LENGTH for the description) and 422s past those
+        bounds, but the CLI accepted any size and wrote it straight through.
+        Root cause: --genre/--tag/--description had no length checks before
+        reaching storage. Fix: the CLI now validates each bound and aborts
+        before any storage write, matching the web 422.
+        """
+        item = _make_item(db_id=1, title="Book One")
+
+        cases: list[list[str]] = [
+            [arg for _ in range(MAX_GENRES + 1) for arg in ("--genre", "g")],
+            [arg for _ in range(MAX_TAGS + 1) for arg in ("--tag", "t")],
+            ["--genre", "x" * (MAX_GENRE_TAG_LENGTH + 1)],
+            ["--tag", "x" * (MAX_GENRE_TAG_LENGTH + 1)],
+            ["--description", "x" * (MAX_DESCRIPTION_LENGTH + 1)],
+        ]
+
+        for extra_args in cases:
+            mock_storage = MagicMock(spec=StorageManager)
+            mock_storage.get_content_item.return_value = item
+            mock_storage.update_item_from_ui.return_value = True
+
+            result = _invoke_with_mocks(
+                cli_runner,
+                ["library", "edit", "--id", "1", *extra_args],
+                mock_storage,
+            )
+
+            assert result.exit_code != 0, extra_args
+            mock_storage.update_item_from_ui.assert_not_called()
+
+    def test_edit_accepts_manual_metadata_at_caps(self, cli_runner: CliRunner) -> None:
+        """Manual metadata exactly at the caps is accepted and forwarded."""
+        item = _make_item(db_id=1, title="Book One")
+        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage.get_content_item.return_value = item
+        mock_storage.update_item_from_ui.return_value = True
+
+        extra_args = [arg for _ in range(MAX_GENRES) for arg in ("--genre", "g")]
+        extra_args += [arg for _ in range(MAX_TAGS) for arg in ("--tag", "t")]
+        extra_args += ["--description", "x" * MAX_DESCRIPTION_LENGTH]
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["library", "edit", "--id", "1", *extra_args],
+            mock_storage,
+        )
+
+        assert result.exit_code == 0
+        call_kwargs = mock_storage.update_item_from_ui.call_args[1]
+        assert len(call_kwargs["genres"]) == MAX_GENRES
+        assert len(call_kwargs["tags"]) == MAX_TAGS
 
 
 class TestLibraryIgnore:
