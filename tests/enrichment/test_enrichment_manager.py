@@ -1,6 +1,7 @@
 """Tests for the enrichment manager."""
 
 import time
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -667,3 +668,95 @@ class TestEnrichmentProgressRegression:
             content_type=None,
             user_id=None,
         )
+
+
+class TestManualEditEnrichmentProtectionRegression:
+    """Regression: an automatic enrichment run must not clobber manual edits.
+
+    Reported concern: a user hand-enters genres/tags/description on an item,
+    then a later background enrichment run could append provider genres/tags
+    (the merge is additive, not gap-fill) or otherwise mutate the manual data.
+
+    Root cause / fix: a manual edit marks the item enriched
+    (``needs_enrichment=0`` via the ``manual`` provider), so
+    ``get_items_needing_enrichment`` excludes it and ``_apply_enrichment``
+    never runs against it. This test drives the real StorageManager queue end
+    to end to prove the manual item is never handed to a provider and its
+    values survive a full run.
+    """
+
+    @pytest.fixture
+    def storage_manager(self, tmp_path: Path) -> StorageManager:
+        return StorageManager(sqlite_path=tmp_path / "test.db", ai_enabled=False)
+
+    @pytest.fixture
+    def registry(self) -> EnrichmentRegistry:
+        registry = EnrichmentRegistry()
+        registry._discovered = True
+        return registry
+
+    @pytest.fixture
+    def config(self) -> dict[str, Any]:
+        return {
+            "enrichment": {
+                "batch_size": 10,
+                "providers": {"mock": {"enabled": True}},
+            }
+        }
+
+    def test_auto_enrichment_skips_manually_edited_item_regression(
+        self,
+        storage_manager: StorageManager,
+        registry: EnrichmentRegistry,
+        config: dict[str, Any],
+    ) -> None:
+        """The provider never sees the manual item; its values are untouched."""
+        manual_id = storage_manager.save_content_item(
+            ContentItem(
+                id="manual_movie",
+                title="Manual Movie",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.UNREAD,
+            )
+        )
+        auto_id = storage_manager.save_content_item(
+            ContentItem(
+                id="auto_movie",
+                title="Auto Movie",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.UNREAD,
+            )
+        )
+
+        storage_manager.update_item_from_ui(
+            db_id=manual_id,
+            status="unread",
+            genres=["Drama"],
+            tags=["slow-burn"],
+            description="Hand written synopsis.",
+        )
+
+        provider = MockProvider()
+        registry.register(provider)
+
+        manager = EnrichmentManager(storage_manager, config, registry)
+        manager.start_enrichment()
+        manager._wait_for_completion()
+
+        # Only the un-edited item was offered to the provider — exactly one
+        # enrich call, never the manual item.
+        assert len(provider.enrich_calls) == 1
+        enriched_titles = {item.title for item in provider.enrich_calls}
+        assert enriched_titles == {"Auto Movie"}
+
+        # Manual values survive verbatim — no provider genres/tags appended.
+        manual = storage_manager.get_content_item(manual_id)
+        assert manual.metadata.get("genres") == ["Drama"]
+        assert manual.metadata.get("tags") == ["slow-burn"]
+        assert manual.metadata.get("description") == "Hand written synopsis."
+        assert manual.enriched is True
+
+        # The auto item did get enriched, proving the run actually executed.
+        auto = storage_manager.get_content_item(auto_id)
+        assert auto.metadata.get("genres") == ["Action", "Drama"]
+        assert auto.enriched is True

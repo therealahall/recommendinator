@@ -12,6 +12,7 @@ from src.models.content import (
     ConsumptionStatus,
     ContentItem,
     ContentType,
+    EnrichmentFilter,
     get_enum_value,
 )
 from src.storage.merge import (
@@ -24,7 +25,11 @@ from src.storage.merge import (
     _parse_json_list,
     normalize_title_for_matching,
 )
-from src.storage.schema import create_schema, get_default_user_id
+from src.storage.schema import (
+    create_schema,
+    get_default_user_id,
+    write_enrichment_complete,
+)
 from src.utils.list_merge import merge_string_lists
 from src.utils.sorting import get_sort_title
 
@@ -65,13 +70,32 @@ _CONTENT_ITEM_SELECT = """
            vgd.platforms, vgd.genres as game_genres,
            vgd.release_year as game_year,
            vgd.tags as game_tags, vgd.description as game_description,
-           vgd.metadata as game_metadata
+           vgd.metadata as game_metadata,
+           es.content_item_id as enrichment_item_id,
+           es.needs_enrichment, es.enrichment_provider,
+           es.enrichment_quality, es.enrichment_error
     FROM content_items ci
     LEFT JOIN book_details bd ON ci.id = bd.content_item_id
     LEFT JOIN movie_details md ON ci.id = md.content_item_id
     LEFT JOIN tv_show_details td ON ci.id = td.content_item_id
     LEFT JOIN video_game_details vgd ON ci.id = vgd.content_item_id
+    LEFT JOIN enrichment_status es ON ci.id = es.content_item_id
 """
+
+# An item is enriched when it has a clean enrichment_status row: a real
+# provider found a match, no error, and re-enrichment is not pending. Anything
+# else (no row, needs_enrichment=1, not_found quality, or a recorded error)
+# counts as not enriched. Expressed as a WHERE fragment over the ``es`` alias
+# from _CONTENT_ITEM_SELECT so the list filter and the per-row flag stay in
+# sync.
+_ENRICHED_PREDICATE = (
+    "es.content_item_id IS NOT NULL"
+    " AND es.needs_enrichment = 0"
+    " AND es.enrichment_error IS NULL"
+    " AND es.enrichment_provider IS NOT NULL"
+    " AND es.enrichment_provider != 'none'"
+    " AND es.enrichment_quality != 'not_found'"
+)
 
 
 def _resolve_status_forward(existing_status: str | None, incoming_status: str) -> str:
@@ -777,6 +801,7 @@ class SQLiteDB:
         offset: int = 0,
         sort_by: str = "title",
         include_ignored: bool = True,
+        enrichment: EnrichmentFilter | None = None,
     ) -> list[ContentItem]:
         """Get content items with optional filters.
 
@@ -792,6 +817,8 @@ class SQLiteDB:
                 "updated_at", "rating", or "created_at"
             include_ignored: Whether to include ignored items (default True
                 for backward compatibility)
+            enrichment: Filter by enrichment state ("enriched" or
+                "not_enriched"). None returns all items.
 
         Returns:
             List of ContentItem objects
@@ -812,6 +839,11 @@ class SQLiteDB:
                 query += " AND ci.content_type = ?"
                 content_type_value = get_enum_value(content_type)
                 params.append(content_type_value)
+
+            if enrichment == "enriched":
+                query += f" AND ({_ENRICHED_PREDICATE})"
+            elif enrichment == "not_enriched":
+                query += f" AND NOT ({_ENRICHED_PREDICATE})"
 
             if status is not None:
                 if isinstance(status, list):
@@ -1060,8 +1092,27 @@ class SQLiteDB:
             date_completed=date_completed,
             source=self._get_row_value(row, "source"),
             ignored=bool(self._get_row_value(row, "ignored")),
+            enriched=self._row_is_enriched(row),
             metadata=metadata,
         )
+
+    @staticmethod
+    def _row_is_enriched(row: sqlite3.Row) -> bool:
+        """Derive the enriched flag from the joined enrichment_status columns.
+
+        Mirrors ``_ENRICHED_PREDICATE`` so the per-row flag and the list
+        filter agree: a clean row (real provider, no error, not pending).
+        """
+        if SQLiteDB._get_row_value(row, "enrichment_item_id") is None:
+            return False
+        if SQLiteDB._get_row_value(row, "needs_enrichment"):
+            return False
+        if SQLiteDB._get_row_value(row, "enrichment_error") is not None:
+            return False
+        if SQLiteDB._get_row_value(row, "enrichment_quality") == "not_found":
+            return False
+        provider = SQLiteDB._get_row_value(row, "enrichment_provider")
+        return provider is not None and provider != "none"
 
     def update_item_from_ui(
         self,
@@ -1070,6 +1121,9 @@ class SQLiteDB:
         rating: int | None = None,
         review: str | None = None,
         seasons_watched: list[int] | None = None,
+        genres: list[str] | None = None,
+        tags: list[str] | None = None,
+        description: str | None = None,
         user_id: int | None = None,
     ) -> bool:
         """Update a content item from the web UI (unrestricted editing).
@@ -1083,12 +1137,20 @@ class SQLiteDB:
         0 watched = unread, all watched = completed, partial = currently_consuming.
         The auto-derived status overrides the status parameter.
 
+        Manual genres/tags/description overwrite the detail-table values
+        (rather than the additive merge used by sync/enrichment) and mark the
+        item enriched via the ``manual`` provider so it drops out of the
+        not-enriched filter and is never re-queued for automatic enrichment.
+
         Args:
             db_id: Database ID of the item to update.
             status: New status value (unread, currently_consuming, completed).
             rating: New rating (1-5) or None to clear.
             review: New review text or None to clear.
             seasons_watched: List of watched season numbers (TV shows only).
+            genres: Manual genres to set (overwrite). None leaves them as-is.
+            tags: Manual tags to set (overwrite). None leaves them as-is.
+            description: Manual description to set. None leaves it as-is.
             user_id: Optional user ID filter for authorization.
 
         Returns:
@@ -1160,8 +1222,74 @@ class SQLiteDB:
                 " WHERE id = ?",
                 (resolved_status, rating, review, db_id),
             )
+
+            if genres is not None or tags is not None or description is not None:
+                # _write_manual_metadata raises for an unknown content_type, so
+                # the enriched row is only written when metadata actually was.
+                self._write_manual_metadata(
+                    cursor, db_id, content_type, genres, tags, description
+                )
+                write_enrichment_complete(cursor, db_id, "manual", "high")
+
             conn.commit()
             return True
+
+    def _write_manual_metadata(
+        self,
+        cursor: sqlite3.Cursor,
+        db_id: int,
+        content_type: str,
+        genres: list[str] | None,
+        tags: list[str] | None,
+        description: str | None,
+    ) -> None:
+        """Overwrite manual genres/tags/description in the detail table.
+
+        Only the supplied (non-None) fields are written. Genres/tags are
+        stored as JSON arrays to match the detail-table read path. The row is
+        created if the item has no detail row yet.
+
+        Raises ``ValueError`` for an unknown content_type so the caller never
+        marks an item enriched without having written any metadata.
+        """
+        config = self._DETAIL_TABLE_CONFIG.get(content_type)
+        if not config:
+            raise ValueError(f"Unknown content_type: {content_type!r}")
+        table = config["table"]
+        if table not in _ALLOWED_DETAIL_TABLES:
+            raise ValueError(f"Unknown detail table: {table!r}")
+
+        updates: dict[str, Any] = {}
+        if genres is not None:
+            updates["genres"] = json.dumps(genres)
+        if tags is not None:
+            updates["tags"] = json.dumps(tags)
+        if description is not None:
+            updates["description"] = description
+
+        cursor.execute(
+            f"SELECT 1 FROM {table} WHERE content_item_id = ?",
+            (db_id,),
+        )
+        row_exists = cursor.fetchone() is not None
+
+        columns = list(updates)
+        for name in columns:
+            _assert_safe_identifier(name)
+
+        if row_exists:
+            set_clause = ", ".join(f"{name} = ?" for name in columns)
+            cursor.execute(
+                f"UPDATE {table} SET {set_clause} WHERE content_item_id = ?",
+                [*updates.values(), db_id],
+            )
+        else:
+            col_list = ", ".join(["content_item_id", *columns])
+            placeholders = ", ".join("?" for _ in range(len(columns) + 1))
+            cursor.execute(
+                f"INSERT INTO {table} ({col_list}) VALUES ({placeholders})",
+                [db_id, *updates.values()],
+            )
 
     def delete_content_item(self, db_id: int, user_id: int | None = None) -> bool:
         """Delete a content item by database ID.
