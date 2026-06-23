@@ -3,7 +3,7 @@ import { ref } from 'vue'
 import { useApi } from '@/composables/useApi'
 import { useAppStore } from '@/stores/app'
 import { readSseStream } from '@/composables/useSse'
-import type { RecommendationResponse } from '@/types/api'
+import type { ContentItemResponse, ItemEditRequest, RecommendationResponse } from '@/types/api'
 
 interface RecStreamEvent {
   type: 'recommendations' | 'blurb' | 'done' | 'error'
@@ -23,6 +23,10 @@ export const useRecommendationsStore = defineStore('recommendations', () => {
   const error = ref('')
   const contentType = ref('book')
   const count = ref(5)
+
+  // Edit modal (reused from the library to mark recommendations complete)
+  const editingItem = ref<ContentItemResponse | null>(null)
+  const editSaving = ref(false)
 
   // Actions
   async function fetch(useLlm: boolean) {
@@ -122,6 +126,47 @@ export const useRecommendationsStore = defineStore('recommendations', () => {
     }
   }
 
+  async function openEdit(dbId: number) {
+    const app = useAppStore()
+    error.value = ''
+    try {
+      editingItem.value = await api.get<ContentItemResponse>(`/items/${dbId}`, {
+        user_id: app.currentUserId,
+      })
+    } catch (err) {
+      // The user clicked expecting a modal, so surface the failure instead of
+      // leaving a dead button (mirrors the library store's openEdit).
+      error.value = err instanceof Error ? err.message : 'Failed to load item'
+    }
+  }
+
+  function closeEdit() {
+    editingItem.value = null
+    editSaving.value = false
+  }
+
+  async function markComplete(dbId: number, data: ItemEditRequest) {
+    const app = useAppStore()
+    editSaving.value = true
+    error.value = ''
+    try {
+      await api.patch<ContentItemResponse>(`/items/${dbId}`, {
+        ...data,
+        user_id: app.currentUserId,
+      })
+      // Remove from list, mirroring ignore.
+      items.value = items.value.filter((i) => i.db_id !== dbId)
+      closeEdit()
+    } catch (err) {
+      // Surface the failure (mirrors the library store's saveEdit). Leave the
+      // list unchanged and keep the modal open so the user can retry, then
+      // re-throw so the page can react (it skips moving focus out of the form).
+      error.value = err instanceof Error ? err.message : 'Failed to save'
+      editSaving.value = false
+      throw err
+    }
+  }
+
   return {
     items,
     loading,
@@ -129,7 +174,12 @@ export const useRecommendationsStore = defineStore('recommendations', () => {
     error,
     contentType,
     count,
+    editingItem,
+    editSaving,
     fetch,
     ignoreItem,
+    openEdit,
+    closeEdit,
+    markComplete,
   }
 })

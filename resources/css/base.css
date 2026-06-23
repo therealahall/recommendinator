@@ -1346,10 +1346,15 @@ input[type="checkbox"] {
   border-color: var(--border-default);
 }
 
+/* Shared success-tint action button. The text mixes the success colour toward
+   --text-primary (light in dark themes, dark in light themes) so it clears WCAG
+   1.4.3 4.5:1 against the tinted card surface in both Nord (4.77:1) and
+   Snowstorm (4.90:1) — pure --color-success on the tint falls short in both. */
+.btn-complete,
 .btn-unignore {
-  background: color-mix(in srgb, var(--color-success) 15%, transparent);
-  color: var(--color-success);
-  border-color: color-mix(in srgb, var(--color-success) 30%, transparent);
+  background: color-mix(in srgb, var(--color-success) 12%, var(--bg-card));
+  color: color-mix(in srgb, var(--color-success) 70%, var(--text-primary));
+  border-color: color-mix(in srgb, var(--color-success) 40%, transparent);
 }
 
 /* Empty State */
