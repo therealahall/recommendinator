@@ -203,6 +203,7 @@ view your profile). New capabilities are expected to land in both interfaces; th
   - Build output: `src/web/static/dist/` (Vite generates content-hashed asset bundles)
   - Dev server: Vite on `:5173` proxies `/api/*` and `/static/themes/*` to FastAPI on `:18473`
 - Tabbed UI: Recommendations, Library, Chat, Data, Preferences (Chat hidden when AI is disabled)
+  - Recommendations cards offer two actions: **ignore** (excludes the item from future recommendations and removes its card) and **mark complete** (opens the shared edit dialog to set status/rating/review, saves to the library, and removes the card). Neither regenerates the list.
 - SSE streaming for chat responses and AI recommendation blurbs
 - Library export: `GET /api/items/export?type=book&format=csv` (CSV or JSON download)
 - **Themeable UI**: CSS custom properties system with folder-per-theme in `src/web/static/themes/`. Each theme provides a `theme.json` metadata file and a `colors.css` override. Tailwind `@theme` maps CSS vars to utility classes. Theme selection persisted per user via backend preferences (system default: `nord`). CSS uses `color-mix()` so themes only need to define core color variables. See `docs/THEME_DEVELOPMENT.md`.
