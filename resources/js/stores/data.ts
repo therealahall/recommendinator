@@ -189,7 +189,12 @@ export const useDataStore = defineStore('data', () => {
           syncMessage.value = msg
         }
         stopSyncPolling()
-        loadEnrichmentStats()
+        // A completed sync may have auto-triggered enrichment server-side
+        // (enrichment.auto_enrich_on_sync). checkEnrichmentStatus refreshes
+        // the stats AND starts polling when a job is running, so the data
+        // view live-updates enrichment progress without a manual reload —
+        // a one-shot loadEnrichmentStats would miss the running job.
+        checkEnrichmentStatus()
       } else {
         syncStatus.value = 'idle'
         syncMessage.value = ''

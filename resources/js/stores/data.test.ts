@@ -249,6 +249,137 @@ describe('useDataStore', () => {
     expect(store.isSourceIdSyncing('steam')).toBe(false)
   })
 
+  it('checkSyncStatus starts enrichment polling when a completed sync auto-triggered enrichment', async () => {
+    // Reported in #59: after a sync that auto-triggers enrichment
+    // (enrichment.auto_enrich_on_sync), the data view did not reflect that
+    // enrichment was running and never live-updated — the user had to
+    // navigate away and back. Root cause: the completed branch of
+    // checkSyncStatus called loadEnrichmentStats() once (a one-shot refresh)
+    // instead of checkEnrichmentStatus(), so the running job was never
+    // detected and polling never started. Fix calls checkEnrichmentStatus()
+    // which both refreshes stats and starts the 3s poll when running.
+    const runningStatus = {
+      running: true,
+      completed: false,
+      cancelled: false,
+      items_processed: 5,
+      items_enriched: 5,
+      items_failed: 0,
+      items_not_found: 0,
+      total_items: 50,
+      current_item: 'Half-Life 2',
+      content_type: null,
+      errors: [],
+      elapsed_seconds: 2.0,
+      progress_percent: 10,
+    }
+    const stats = {
+      enabled: true,
+      total: 50,
+      enriched: 5,
+      pending: 45,
+      not_found: 0,
+      failed: 0,
+      by_provider: {},
+      by_quality: {},
+    }
+    mockGet
+      // checkSyncStatus -> GET /sync/status (completed, nothing running)
+      .mockResolvedValueOnce({
+        status: 'idle',
+        jobs: [
+          {
+            source: 'Steam',
+            status: 'completed',
+            items_processed: 50,
+            total_items: 50,
+            error_count: 0,
+            errors: [],
+            sources: [],
+          },
+        ],
+      })
+      // checkEnrichmentStatus -> GET /enrichment/status (job running)
+      .mockResolvedValueOnce(runningStatus)
+      // checkEnrichmentStatus -> GET /enrichment/stats (refresh while running)
+      .mockResolvedValueOnce(stats)
+
+    const store = useDataStore()
+    await store.checkSyncStatus()
+    // Let the checkEnrichmentStatus() chain (not awaited in the completed
+    // branch) settle before asserting.
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(store.syncStatus).toBe('completed')
+    expect(store.enrichmentJob).toEqual(runningStatus)
+    expect(store.enrichmentStats).toEqual(stats)
+
+    // Polling is live: a tick re-fetches status (running again) + stats,
+    // and the refreshed values land in the store.
+    const tickStatus = { ...runningStatus, items_processed: 30, items_enriched: 30, progress_percent: 60 }
+    const tickStats = { ...stats, enriched: 30, pending: 20 }
+    mockGet.mockResolvedValueOnce(tickStatus).mockResolvedValueOnce(tickStats)
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(mockGet).toHaveBeenCalledWith('/enrichment/status')
+    expect(store.enrichmentJob).toEqual(tickStatus)
+    expect(store.enrichmentStats).toEqual(tickStats)
+
+    store.cleanup()
+  })
+
+  it('checkSyncStatus does not start enrichment polling when the completed sync left enrichment idle', async () => {
+    // Symmetric to the auto-trigger case: a completed sync that did NOT
+    // start enrichment must not spin up the 3s enrichment poll, otherwise
+    // the data view would fetch /enrichment/status forever for no reason.
+    const idleStatus = {
+      running: false,
+      completed: false,
+      cancelled: false,
+      items_processed: 0,
+      items_enriched: 0,
+      items_failed: 0,
+      items_not_found: 0,
+      total_items: 0,
+      current_item: null,
+      content_type: null,
+      errors: [],
+      elapsed_seconds: 0,
+      progress_percent: 0,
+    }
+    mockGet
+      // checkSyncStatus -> GET /sync/status (completed, nothing running)
+      .mockResolvedValueOnce({
+        status: 'idle',
+        jobs: [
+          {
+            source: 'Steam',
+            status: 'completed',
+            items_processed: 50,
+            total_items: 50,
+            error_count: 0,
+            errors: [],
+            sources: [],
+          },
+        ],
+      })
+      // checkEnrichmentStatus -> GET /enrichment/status (not running)
+      .mockResolvedValueOnce(idleStatus)
+
+    const store = useDataStore()
+    await store.checkSyncStatus()
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(store.syncStatus).toBe('completed')
+    expect(store.enrichmentJob).toEqual(idleStatus)
+
+    // No poll is scheduled: advancing past a tick must not re-fetch status.
+    const callsBefore = mockGet.mock.calls.length
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(mockGet.mock.calls.length).toBe(callsBefore)
+
+    store.cleanup()
+  })
+
   it('checkSyncStatus aggregates errors across completed jobs', async () => {
     mockGet.mockResolvedValue({
       status: 'idle',
