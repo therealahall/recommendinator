@@ -622,3 +622,398 @@ class TestTagsAndDescriptionStorage:
         )
 
         assert found_id is None
+
+
+class TestEnrichmentFilter:
+    """Tests for the enrichment-state filter on get_content_items.
+
+    The filter joins enrichment_status. An item is enriched when it has a row
+    with needs_enrichment=0, enrichment_error IS NULL, and a real provider.
+    Everything else (no row, needs_enrichment=1, not_found, failed) is not
+    enriched. ``enriched`` and ``not_enriched`` partition the library.
+    """
+
+    @pytest.fixture
+    def storage_manager(self, tmp_path: Path) -> StorageManager:
+        db_path = tmp_path / "test.db"
+        return StorageManager(sqlite_path=db_path, ai_enabled=False)
+
+    def _save(self, storage: StorageManager, external_id: str) -> int:
+        return storage.save_content_item(
+            ContentItem(
+                id=external_id,
+                title=f"Movie {external_id}",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.UNREAD,
+            )
+        )
+
+    def test_not_enriched_includes_all_four_subcases(
+        self, storage_manager: StorageManager
+    ) -> None:
+        """not_enriched returns: no row, needs_enrichment=1, not_found, failed."""
+        no_row = self._save(storage_manager, "no_row")
+        pending = self._save(storage_manager, "pending")
+        not_found = self._save(storage_manager, "not_found")
+        failed = self._save(storage_manager, "failed")
+        enriched = self._save(storage_manager, "enriched")
+
+        storage_manager.mark_item_needs_enrichment(pending)
+        storage_manager.mark_enrichment_complete(not_found, "tmdb", "not_found")
+        storage_manager.mark_enrichment_failed(failed, "boom")
+        storage_manager.mark_enrichment_complete(enriched, "tmdb", "high")
+
+        items = storage_manager.get_content_items(enrichment="not_enriched")
+        db_ids = {item.db_id for item in items}
+
+        assert db_ids == {no_row, pending, not_found, failed}
+        assert all(item.enriched is False for item in items)
+
+    def test_enriched_returns_complement(self, storage_manager: StorageManager) -> None:
+        """enriched returns only items with a clean enrichment_status row."""
+        self._save(storage_manager, "no_row")
+        high = self._save(storage_manager, "high")
+        medium = self._save(storage_manager, "medium")
+
+        storage_manager.mark_enrichment_complete(high, "tmdb", "high")
+        storage_manager.mark_enrichment_complete(medium, "tmdb", "medium")
+
+        items = storage_manager.get_content_items(enrichment="enriched")
+        db_ids = {item.db_id for item in items}
+
+        assert db_ids == {high, medium}
+        assert all(item.enriched is True for item in items)
+
+    def test_no_filter_returns_all_with_enriched_flag(
+        self, storage_manager: StorageManager
+    ) -> None:
+        """No filter returns every item, each carrying its enriched flag."""
+        pending = self._save(storage_manager, "pending")
+        enriched = self._save(storage_manager, "enriched")
+        storage_manager.mark_enrichment_complete(enriched, "tmdb", "high")
+
+        items = storage_manager.get_content_items()
+        flags = {item.db_id: item.enriched for item in items}
+
+        assert flags == {pending: False, enriched: True}
+
+    def test_single_item_carries_enriched_flag(
+        self, storage_manager: StorageManager
+    ) -> None:
+        """get_content_item exposes the enriched flag for the detail view."""
+        db_id = self._save(storage_manager, "movie")
+
+        assert storage_manager.get_content_item(db_id).enriched is False
+
+        storage_manager.mark_enrichment_complete(db_id, "tmdb", "high")
+        assert storage_manager.get_content_item(db_id).enriched is True
+
+    def test_failed_item_is_not_enriched(self, storage_manager: StorageManager) -> None:
+        """A failed item carries enriched=False even with a provider row.
+
+        Isolates the ``enrichment_error IS NOT NULL`` exclusion: the row has a
+        recorded error, so it must not count as enriched regardless of having
+        an enrichment_status row at all.
+        """
+        db_id = self._save(storage_manager, "failed")
+        storage_manager.mark_enrichment_failed(db_id, "boom")
+
+        assert storage_manager.get_content_item(db_id).enriched is False
+        enriched = storage_manager.get_content_items(enrichment="enriched")
+        assert db_id not in {item.db_id for item in enriched}
+
+    def test_not_enriched_combines_with_content_type_filter(
+        self, storage_manager: StorageManager
+    ) -> None:
+        """not_enriched AND a content_type filter compose correctly.
+
+        Guards SQL precedence of the AND/OR predicate composition: the
+        not_enriched fragment is parenthesized so the content_type filter
+        narrows it rather than widening via a stray OR.
+        """
+        movie_pending = self._save(storage_manager, "movie_pending")
+        movie_enriched = self._save(storage_manager, "movie_enriched")
+        storage_manager.mark_enrichment_complete(movie_enriched, "tmdb", "high")
+
+        book_pending = storage_manager.save_content_item(
+            ContentItem(
+                id="book_pending",
+                title="Book Pending",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            )
+        )
+
+        items = storage_manager.get_content_items(
+            content_type=ContentType.MOVIE, enrichment="not_enriched"
+        )
+        db_ids = {item.db_id for item in items}
+
+        # Only the not-enriched movie; the enriched movie and the book are out.
+        assert db_ids == {movie_pending}
+        assert movie_enriched not in db_ids
+        assert book_pending not in db_ids
+
+
+class TestManualMetadataEdit:
+    """Tests for persisting manual genres/tags/description via update_item_from_ui.
+
+    Manual edits overwrite the detail-table values and mark the item enriched
+    with the ``manual`` provider so it drops out of the not_enriched filter and
+    is never re-queued for automatic enrichment.
+    """
+
+    @pytest.fixture
+    def storage_manager(self, tmp_path: Path) -> StorageManager:
+        db_path = tmp_path / "test.db"
+        return StorageManager(sqlite_path=db_path, ai_enabled=False)
+
+    def test_manual_edit_persists_and_marks_enriched(
+        self, storage_manager: StorageManager
+    ) -> None:
+        """Manual fields persist and the item becomes enriched."""
+        db_id = storage_manager.save_content_item(
+            ContentItem(
+                id="movie1",
+                title="Test Movie",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.UNREAD,
+            )
+        )
+
+        updated = storage_manager.update_item_from_ui(
+            db_id=db_id,
+            status="unread",
+            genres=["Drama", "Thriller"],
+            tags=["slow-burn"],
+            description="A tense character study.",
+        )
+        assert updated is True
+
+        loaded = storage_manager.get_content_item(db_id)
+        assert loaded.metadata.get("genres") == ["Drama", "Thriller"]
+        assert loaded.metadata.get("tags") == ["slow-burn"]
+        assert loaded.metadata.get("description") == "A tense character study."
+        assert loaded.enriched is True
+
+        status = storage_manager.get_enrichment_status(db_id)
+        assert status["enrichment_provider"] == "manual"
+        assert status["needs_enrichment"] is False
+
+    def test_manual_edit_overwrites_existing_values(
+        self, storage_manager: StorageManager
+    ) -> None:
+        """Manual genres replace prior values rather than merging additively.
+
+        Also proves a None field (description here) leaves the stored value
+        as-is: only supplied fields are overwritten.
+        """
+        db_id = storage_manager.save_content_item(
+            ContentItem(
+                id="movie1",
+                title="Test Movie",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.UNREAD,
+                metadata={
+                    "genres": ["Action", "Comedy"],
+                    "tags": ["old"],
+                    "description": "Original synopsis.",
+                },
+            )
+        )
+
+        storage_manager.update_item_from_ui(
+            db_id=db_id,
+            status="unread",
+            genres=["Drama"],
+            tags=["new"],
+        )
+
+        loaded = storage_manager.get_content_item(db_id)
+        assert loaded.metadata.get("genres") == ["Drama"]
+        assert loaded.metadata.get("tags") == ["new"]
+        # description was omitted (None) so it must be left untouched.
+        assert loaded.metadata.get("description") == "Original synopsis."
+
+    def test_manual_edit_drops_item_from_not_enriched_filter(
+        self, storage_manager: StorageManager
+    ) -> None:
+        """After a manual edit the item appears under enriched, not not_enriched."""
+        db_id = storage_manager.save_content_item(
+            ContentItem(
+                id="movie1",
+                title="Test Movie",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.UNREAD,
+            )
+        )
+
+        storage_manager.update_item_from_ui(
+            db_id=db_id,
+            status="unread",
+            description="Manually written.",
+        )
+
+        not_enriched = storage_manager.get_content_items(enrichment="not_enriched")
+        enriched = storage_manager.get_content_items(enrichment="enriched")
+        assert [item.db_id for item in not_enriched] == []
+        assert [item.db_id for item in enriched] == [db_id]
+
+    def test_status_only_edit_does_not_mark_enriched(
+        self, storage_manager: StorageManager
+    ) -> None:
+        """Editing only status/rating leaves enrichment state untouched."""
+        db_id = storage_manager.save_content_item(
+            ContentItem(
+                id="movie1",
+                title="Test Movie",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.UNREAD,
+            )
+        )
+
+        storage_manager.update_item_from_ui(db_id=db_id, status="completed", rating=5)
+
+        assert storage_manager.get_enrichment_status(db_id) is None
+        assert storage_manager.get_content_item(db_id).enriched is False
+
+    def test_unknown_content_type_raises_and_does_not_mark_enriched(
+        self, storage_manager: StorageManager
+    ) -> None:
+        """An unknown content_type raises and never marks the item enriched.
+
+        Guards the bug where _write_manual_metadata silently returned for an
+        unrecognized content_type while the caller went on to mark the item
+        enriched with no metadata written. The stored content_type is forced to
+        a bogus value to drive the defensive branch.
+        """
+        db_id = storage_manager.save_content_item(
+            ContentItem(
+                id="movie1",
+                title="Test Movie",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.UNREAD,
+            )
+        )
+        conn = storage_manager.sqlite_db._get_connection()
+        try:
+            conn.execute(
+                "UPDATE content_items SET content_type = ? WHERE id = ?",
+                ("bogus_type", db_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        with pytest.raises(ValueError, match="Unknown content_type"):
+            storage_manager.update_item_from_ui(
+                db_id=db_id, status="unread", genres=["Drama"]
+            )
+
+        # No enrichment row was written, so the item is not marked enriched.
+        assert storage_manager.get_enrichment_status(db_id) is None
+
+    def test_genres_empty_list_clears_while_none_leaves_as_is(
+        self, storage_manager: StorageManager
+    ) -> None:
+        """genres=[] clears all genres; genres=None leaves them untouched.
+
+        An empty list is a deliberate "clear" that stores an empty JSON array
+        and still marks the item enriched; None means "no change".
+        """
+        db_id = storage_manager.save_content_item(
+            ContentItem(
+                id="movie1",
+                title="Test Movie",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.UNREAD,
+                metadata={"genres": ["Action", "Comedy"]},
+            )
+        )
+
+        # genres=[] clears; tags omitted (None) so they are left as-is.
+        storage_manager.update_item_from_ui(db_id=db_id, status="unread", genres=[])
+
+        loaded = storage_manager.get_content_item(db_id)
+        assert loaded.metadata.get("genres", []) == []
+        assert loaded.enriched is True
+
+        # The stored column is an empty JSON array, not NULL.
+        conn = storage_manager.sqlite_db._get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT genres FROM movie_details WHERE content_item_id = ?",
+                (db_id,),
+            )
+            assert cursor.fetchone()["genres"] == "[]"
+        finally:
+            conn.close()
+
+    def test_manual_edit_overrides_prior_auto_enrichment(
+        self, storage_manager: StorageManager
+    ) -> None:
+        """A previously auto-enriched item flips to the manual provider.
+
+        After tmdb enrichment, a manual edit updates the enrichment row to
+        provider "manual" and the item still appears under enriched.
+        """
+        db_id = storage_manager.save_content_item(
+            ContentItem(
+                id="movie1",
+                title="Test Movie",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.UNREAD,
+            )
+        )
+        storage_manager.mark_enrichment_complete(db_id, "tmdb", "high")
+        assert storage_manager.get_enrichment_status(db_id)["enrichment_provider"] == (
+            "tmdb"
+        )
+
+        storage_manager.update_item_from_ui(
+            db_id=db_id, status="unread", genres=["Drama"]
+        )
+
+        status = storage_manager.get_enrichment_status(db_id)
+        assert status["enrichment_provider"] == "manual"
+        enriched = storage_manager.get_content_items(enrichment="enriched")
+        assert db_id in {item.db_id for item in enriched}
+
+    def test_manual_edit_inserts_detail_row_for_book(
+        self, storage_manager: StorageManager
+    ) -> None:
+        """Manual edit creates the detail row when the item has none yet.
+
+        Exercises the INSERT branch of _write_manual_metadata for a non-movie
+        type: the book_details row is removed to simulate an item without a
+        detail row, then a manual edit must insert it.
+        """
+        db_id = storage_manager.save_content_item(
+            ContentItem(
+                id="book1",
+                title="Test Book",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            )
+        )
+        conn = storage_manager.sqlite_db._get_connection()
+        try:
+            conn.execute("DELETE FROM book_details WHERE content_item_id = ?", (db_id,))
+            conn.commit()
+        finally:
+            conn.close()
+
+        storage_manager.update_item_from_ui(
+            db_id=db_id,
+            status="unread",
+            genres=["Fantasy"],
+            tags=["epic"],
+            description="A sweeping tale.",
+        )
+
+        loaded = storage_manager.get_content_item(db_id)
+        assert loaded.metadata.get("genres") == ["Fantasy"]
+        assert loaded.metadata.get("tags") == ["epic"]
+        assert loaded.metadata.get("description") == "A sweeping tale."
+        assert loaded.enriched is True

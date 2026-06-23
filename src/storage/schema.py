@@ -803,21 +803,24 @@ def get_enrichment_status(
     return None
 
 
-def mark_enrichment_complete(
-    conn: sqlite3.Connection,
+def write_enrichment_complete(
+    cursor: sqlite3.Cursor,
     content_item_id: int,
     provider: str,
     quality: str,
 ) -> None:
-    """Mark an item as successfully enriched.
+    """Write the "enriched" status row without committing.
+
+    Lets a caller fold the write into its own transaction and control the
+    single commit point. ``mark_enrichment_complete`` wraps this for callers
+    that own the connection and want an immediate commit.
 
     Args:
-        conn: SQLite database connection
+        cursor: Cursor on the caller's open transaction
         content_item_id: Content item database ID
         provider: Name of the provider that enriched the item
         quality: Match quality ("high", "medium", "not_found")
     """
-    cursor = conn.cursor()
     cursor.execute(
         """INSERT OR REPLACE INTO enrichment_status
            (content_item_id, last_enriched_at, enrichment_provider,
@@ -825,6 +828,23 @@ def mark_enrichment_complete(
            VALUES (?, CURRENT_TIMESTAMP, ?, ?, 0, NULL)""",
         (content_item_id, provider, quality),
     )
+
+
+def mark_enrichment_complete(
+    conn: sqlite3.Connection,
+    content_item_id: int,
+    provider: str,
+    quality: str,
+) -> None:
+    """Mark an item as successfully enriched and commit.
+
+    Args:
+        conn: SQLite database connection
+        content_item_id: Content item database ID
+        provider: Name of the provider that enriched the item
+        quality: Match quality ("high", "medium", "not_found")
+    """
+    write_enrichment_complete(conn.cursor(), content_item_id, provider, quality)
     conn.commit()
 
 

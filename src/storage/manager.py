@@ -18,6 +18,7 @@ from src.models.content import (
     ConsumptionStatus,
     ContentItem,
     ContentType,
+    EnrichmentFilter,
     get_enum_value,
 )
 from src.models.user_preferences import UserPreferenceConfig
@@ -261,6 +262,7 @@ class StorageManager:
         offset: int = 0,
         sort_by: str = "title",
         include_ignored: bool = True,
+        enrichment: EnrichmentFilter | None = None,
     ) -> list[ContentItem]:
         """Get content items with optional filters.
 
@@ -276,6 +278,8 @@ class StorageManager:
                 "updated_at", "rating", or "created_at"
             include_ignored: Whether to include ignored items (default True
                 for backward compatibility)
+            enrichment: Filter by enrichment state ("enriched" or
+                "not_enriched"). None returns all items.
 
         Returns:
             List of ContentItem objects
@@ -289,6 +293,7 @@ class StorageManager:
             offset=offset,
             sort_by=sort_by,
             include_ignored=include_ignored,
+            enrichment=enrichment,
         )
 
     def get_unconsumed_items(
@@ -433,6 +438,9 @@ class StorageManager:
         rating: int | None = None,
         review: str | None = None,
         seasons_watched: list[int] | None = None,
+        genres: list[str] | None = None,
+        tags: list[str] | None = None,
+        description: str | None = None,
         user_id: int | None = None,
     ) -> bool:
         """Update a content item from the web UI (unrestricted editing).
@@ -446,6 +454,9 @@ class StorageManager:
             rating: New rating (1-5) or None to clear.
             review: New review text or None to clear.
             seasons_watched: List of watched season numbers (TV shows only).
+            genres: Manual genres to set (overwrite). None leaves them as-is.
+            tags: Manual tags to set (overwrite). None leaves them as-is.
+            description: Manual description to set. None leaves it as-is.
             user_id: Optional user ID filter for authorization.
 
         Returns:
@@ -457,6 +468,9 @@ class StorageManager:
             rating=rating,
             review=review,
             seasons_watched=seasons_watched,
+            genres=genres,
+            tags=tags,
+            description=description,
             user_id=user_id,
         )
 

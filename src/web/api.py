@@ -23,6 +23,7 @@ from src.models.content import (
     ConsumptionStatus,
     ContentItem,
     ContentType,
+    EnrichmentFilter,
     get_enum_value,
 )
 from src.models.user_preferences import UserPreferenceConfig
@@ -145,6 +146,10 @@ class ContentItemResponse(BaseModel):
     ignored: bool = False
     seasons_watched: list[int] | None = None
     total_seasons: int | None = None
+    enriched: bool = False
+    genres: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+    description: str | None = None
 
 
 class RecommendationResponse(BaseModel):
@@ -297,6 +302,15 @@ class ItemEditRequest(BaseModel):
     review: str | None = Field(None, max_length=10000)
     seasons_watched: list[Annotated[int, Field(ge=1, le=MAX_SEASONS)]] | None = Field(
         None, max_length=MAX_SEASONS
+    )
+    genres: list[Annotated[str, Field(max_length=100)]] | None = Field(
+        None, max_length=50, description="Manual genres (overwrite)"
+    )
+    tags: list[Annotated[str, Field(max_length=100)]] | None = Field(
+        None, max_length=100, description="Manual tags (overwrite)"
+    )
+    description: str | None = Field(
+        None, max_length=10000, description="Manual description"
     )
 
 
@@ -790,6 +804,10 @@ async def list_items(
         False,
         description="Whether to include ignored items (default: hide ignored)",
     ),
+    enrichment: EnrichmentFilter | None = Query(
+        None,
+        description="Filter by enrichment state: enriched or not_enriched",
+    ),
 ) -> list[ContentItemResponse]:
     """List content items with optional filters.
 
@@ -801,6 +819,7 @@ async def list_items(
         offset: Number of items to skip (for pagination).
         sort_by: Sort order (default: title, which ignores leading articles).
         include_ignored: Whether to include ignored items (default: False).
+        enrichment: Optional enrichment-state filter (enriched/not_enriched).
 
     Returns:
         List of content items.
@@ -844,6 +863,7 @@ async def list_items(
         offset=offset,
         sort_by=sort_by.lower(),
         include_ignored=include_ignored,
+        enrichment=enrichment,
     )
 
     return [_item_to_response(item) for item in items]
@@ -1011,6 +1031,9 @@ async def edit_item(
         rating=request.rating,
         review=request.review,
         seasons_watched=request.seasons_watched,
+        genres=request.genres,
+        tags=request.tags,
+        description=request.description,
         user_id=user_id,
     )
     if not success:

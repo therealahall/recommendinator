@@ -1210,6 +1210,9 @@ def test_edit_item_status(client, mock_components):
         rating=None,
         review=None,
         seasons_watched=None,
+        genres=None,
+        tags=None,
+        description=None,
         user_id=1,
     )
 
@@ -1284,6 +1287,9 @@ def test_edit_tv_show_seasons(client, mock_components):
         rating=None,
         review=None,
         seasons_watched=[1, 2, 3],
+        genres=None,
+        tags=None,
+        description=None,
         user_id=1,
     )
 
@@ -1364,6 +1370,231 @@ def test_edit_response_includes_tv_metadata(client, mock_components):
     assert len(data) == 1
     assert data[0]["seasons_watched"] == [1, 2, 3, 4, 5]
     assert data[0]["total_seasons"] == 50
+
+
+# ---------------------------------------------------------------------------
+# GET /api/items — enrichment filter and exposed fields
+# ---------------------------------------------------------------------------
+
+
+def test_list_items_filters_not_enriched(client, mock_components):
+    """GET /api/items?enrichment=not_enriched forwards the filter to storage."""
+    mock_components["storage"].get_content_items = Mock(return_value=[])
+
+    response = client.get("/api/items?user_id=1&enrichment=not_enriched")
+
+    assert response.status_code == 200
+    call_kwargs = mock_components["storage"].get_content_items.call_args[1]
+    assert call_kwargs["enrichment"] == "not_enriched"
+
+
+def test_list_items_filters_enriched(client, mock_components):
+    """GET /api/items?enrichment=enriched forwards the filter to storage."""
+    mock_components["storage"].get_content_items = Mock(return_value=[])
+
+    response = client.get("/api/items?user_id=1&enrichment=enriched")
+
+    assert response.status_code == 200
+    call_kwargs = mock_components["storage"].get_content_items.call_args[1]
+    assert call_kwargs["enrichment"] == "enriched"
+
+
+def test_list_items_invalid_enrichment_returns_422(client, mock_components):
+    """GET /api/items?enrichment=bogus is rejected at the API boundary."""
+    response = client.get("/api/items?user_id=1&enrichment=bogus")
+    assert response.status_code == 422
+
+
+def test_list_items_default_enrichment_is_none(client, mock_components):
+    """GET /api/items without enrichment passes None (no filter)."""
+    mock_components["storage"].get_content_items = Mock(return_value=[])
+
+    response = client.get("/api/items?user_id=1")
+
+    assert response.status_code == 200
+    call_kwargs = mock_components["storage"].get_content_items.call_args[1]
+    assert call_kwargs["enrichment"] is None
+
+
+def test_list_items_response_exposes_enrichment_fields(client, mock_components):
+    """GET /api/items exposes enriched plus genres/tags/description."""
+    mock_item = ContentItem(
+        id="movie_1",
+        db_id=7,
+        title="Test Movie",
+        content_type=ContentType.MOVIE,
+        status=ConsumptionStatus.UNREAD,
+        metadata={
+            "genres": ["Drama"],
+            "tags": ["slow-burn"],
+            "description": "A tense character study.",
+        },
+    )
+    mock_item.enriched = True
+    mock_components["storage"].get_content_items = Mock(return_value=[mock_item])
+
+    response = client.get("/api/items?user_id=1")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data[0]["enriched"] is True
+    assert data[0]["genres"] == ["Drama"]
+    assert data[0]["tags"] == ["slow-burn"]
+    assert data[0]["description"] == "A tense character study."
+
+
+def test_get_single_item_exposes_enrichment_fields(client, mock_components):
+    """GET /api/items/{db_id} exposes enriched plus genres/tags/description."""
+    mock_item = ContentItem(
+        id="movie_1",
+        db_id=7,
+        title="Test Movie",
+        content_type=ContentType.MOVIE,
+        status=ConsumptionStatus.UNREAD,
+        metadata={"genres": ["Drama"], "tags": [], "description": None},
+    )
+    mock_item.enriched = False
+    mock_components["storage"].get_content_item = Mock(return_value=mock_item)
+
+    response = client.get("/api/items/7?user_id=1")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["enriched"] is False
+    assert data["genres"] == ["Drama"]
+
+
+def test_edit_item_manual_metadata(client, mock_components):
+    """PATCH /api/items/{db_id} forwards manual genres/tags/description."""
+    updated_item = ContentItem(
+        id="movie_1",
+        db_id=7,
+        title="Test Movie",
+        content_type=ContentType.MOVIE,
+        status=ConsumptionStatus.UNREAD,
+        metadata={
+            "genres": ["Drama"],
+            "tags": ["slow-burn"],
+            "description": "Hand written.",
+        },
+    )
+    updated_item.enriched = True
+    mock_components["storage"].update_item_from_ui = Mock(return_value=True)
+    mock_components["storage"].get_content_item = Mock(return_value=updated_item)
+
+    response = client.patch(
+        "/api/items/7?user_id=1",
+        json={
+            "status": "unread",
+            "genres": ["Drama"],
+            "tags": ["slow-burn"],
+            "description": "Hand written.",
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["genres"] == ["Drama"]
+    assert data["tags"] == ["slow-burn"]
+    assert data["description"] == "Hand written."
+    assert data["enriched"] is True
+
+    mock_components["storage"].update_item_from_ui.assert_called_once_with(
+        db_id=7,
+        status="unread",
+        rating=None,
+        review=None,
+        seasons_watched=None,
+        genres=["Drama"],
+        tags=["slow-burn"],
+        description="Hand written.",
+        user_id=1,
+    )
+
+
+def test_edit_item_without_manual_metadata_passes_none(client, mock_components):
+    """PATCH without manual fields forwards None for genres/tags/description."""
+    updated_item = ContentItem(
+        id="movie_1",
+        db_id=7,
+        title="Test Movie",
+        content_type=ContentType.MOVIE,
+        status=ConsumptionStatus.COMPLETED,
+    )
+    mock_components["storage"].update_item_from_ui = Mock(return_value=True)
+    mock_components["storage"].get_content_item = Mock(return_value=updated_item)
+
+    response = client.patch(
+        "/api/items/7?user_id=1",
+        json={"status": "completed", "rating": 4},
+    )
+
+    assert response.status_code == 200
+    mock_components["storage"].update_item_from_ui.assert_called_once_with(
+        db_id=7,
+        status="completed",
+        rating=4,
+        review=None,
+        seasons_watched=None,
+        genres=None,
+        tags=None,
+        description=None,
+        user_id=1,
+    )
+
+
+def test_edit_rejects_oversized_manual_metadata(client, mock_components):
+    """PATCH /api/items/{db_id} rejects manual metadata above the model caps.
+
+    Bounds the manual-edit fields at the API boundary: at most 50 genres and
+    100 tags, each genre/tag string at most 100 chars, and a description at
+    most 10000 chars. Each over-cap payload must 422 before any storage write.
+    """
+    mock_components["storage"].update_item_from_ui = Mock(return_value=True)
+
+    too_many_genres = client.patch(
+        "/api/items/42?user_id=1",
+        json={"status": "unread", "genres": ["g"] * 51},
+    )
+    assert too_many_genres.status_code == 422
+    assert too_many_genres.json()["detail"]
+
+    genre_too_long = client.patch(
+        "/api/items/42?user_id=1",
+        json={"status": "unread", "genres": ["x" * 101]},
+    )
+    assert genre_too_long.status_code == 422
+    assert genre_too_long.json()["detail"]
+
+    tag_too_long = client.patch(
+        "/api/items/42?user_id=1",
+        json={"status": "unread", "tags": ["x" * 101]},
+    )
+    assert tag_too_long.status_code == 422
+    assert tag_too_long.json()["detail"]
+
+    description_too_long = client.patch(
+        "/api/items/42?user_id=1",
+        json={"status": "unread", "description": "x" * 10001},
+    )
+    assert description_too_long.status_code == 422
+    assert description_too_long.json()["detail"]
+
+    too_many_tags = client.patch(
+        "/api/items/42?user_id=1",
+        json={"status": "unread", "tags": ["t"] * 101},
+    )
+    assert too_many_tags.status_code == 422
+    assert too_many_tags.json()["detail"]
+
+    review_too_long = client.patch(
+        "/api/items/42?user_id=1",
+        json={"status": "unread", "review": "x" * 10001},
+    )
+    assert review_too_long.status_code == 422
+    assert review_too_long.json()["detail"]
+
+    mock_components["storage"].update_item_from_ui.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

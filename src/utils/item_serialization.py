@@ -38,6 +38,7 @@ def item_to_dict(item: ContentItem) -> dict[str, object]:
     prevents field-set drift between the two interfaces.
     """
     seasons_watched, total_seasons = extract_tv_season_fields(item)
+    metadata = item.metadata
     return {
         "id": item.id,
         "db_id": item.db_id,
@@ -54,4 +55,12 @@ def item_to_dict(item: ContentItem) -> dict[str, object]:
         "ignored": bool(item.ignored),
         "seasons_watched": seasons_watched,
         "total_seasons": total_seasons,
+        # enriched is bool | None on ContentItem; None means the enrichment
+        # state is unknown (e.g. an item not read back from storage). The wire
+        # type is a non-nullable bool, so None intentionally serializes as
+        # False — unknown state is presented as "not enriched".
+        "enriched": bool(item.enriched),
+        "genres": metadata.get("genres") or [],
+        "tags": metadata.get("tags") or [],
+        "description": metadata.get("description"),
     }

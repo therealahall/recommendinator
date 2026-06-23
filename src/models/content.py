@@ -2,12 +2,16 @@
 
 from datetime import date
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 # Default user ID used across the application when no user is specified
 DEFAULT_USER_ID = 1
+
+# Enrichment-state filter for content listings. ``None`` (no filter) returns
+# every item; the two states partition the library.
+EnrichmentFilter = Literal["enriched", "not_enriched"]
 
 
 class ContentType(str, Enum):
@@ -95,6 +99,10 @@ class ContentItem(BaseModel):
     # Runtime-only: parent item ID (e.g., TV show ID for a season item).
     # Set during recommendation expansion, not persisted.
     parent_id: str | None = None
+
+    # Runtime-only: whether the item has been enriched (clean enrichment_status
+    # row). Populated when read from storage; None when the state is unknown.
+    enriched: bool | None = None
 
     # Whether this item is ignored (excluded from recommendations).
     # None means "not specified by this source" — the existing database
