@@ -38,6 +38,9 @@ python3.11 -m src.cli status --format json
 python3.11 -m src.cli library list --type book --status completed --sort rating --limit 20
 python3.11 -m src.cli library list --format json
 
+# Filter by enrichment state (enriched or not_enriched)
+python3.11 -m src.cli library list --enrichment not_enriched
+
 # Show item details
 python3.11 -m src.cli library show --id 42
 
@@ -47,6 +50,10 @@ python3.11 -m src.cli library edit --id 42 --rating 5 --status completed
 # Mark watched TV seasons (comma-separated season numbers, each 1-200)
 python3.11 -m src.cli library edit --id 42 --seasons-watched 1,2,3
 
+# Set manual enrichment metadata (repeated --genre/--tag replace the existing
+# lists; any provided field marks the item enriched)
+python3.11 -m src.cli library edit --id 42 --genre Action --genre RPG --tag co-op --description "A grand adventure."
+
 # Ignore/unignore items (excluded from recommendations)
 python3.11 -m src.cli library ignore --id 42
 python3.11 -m src.cli library unignore --id 42
@@ -55,6 +62,17 @@ python3.11 -m src.cli library unignore --id 42
 python3.11 -m src.cli library export --type book --format csv --output books.csv
 python3.11 -m src.cli library export --type video_game --format json
 ```
+
+`library list --enrichment` filters by enrichment state. An item is "enriched"
+only when a provider matched it cleanly (a real provider, no error, not "not
+found", and not pending re-enrichment); `not_enriched` is everything else. The
+list table shows an **Enriched** column.
+
+Passing any of `--genre`, `--tag`, or `--description` to `library edit` writes
+manual metadata. Repeated `--genre`/`--tag` replace the existing lists (they do
+not append), and `--description` replaces the existing text. Providing any of
+these marks the item enriched via the `manual` provider, so it drops out of the
+`not_enriched` set and is never re-queued for automatic enrichment.
 
 ## Source management
 

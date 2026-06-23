@@ -85,7 +85,7 @@ see **[docs/DATA_SOURCES.md](docs/DATA_SOURCES.md)**.
 - Multi-source ingestion with cross-content recommendations via semantic genre clusters
 - Transparent scoring pipeline — genre, creator, series order, tag overlap, rating patterns ([how it works](docs/SCORING.md))
 - Natural-language [custom rules](docs/CUSTOM_RULES.md) like "avoid horror" or "prefer short books"
-- Content-length filtering, multi-user support, [metadata enrichment](docs/ENRICHMENT_SETUP.md) (TMDB/OpenLibrary/RAWG)
+- Content-length filtering, multi-user support, [metadata enrichment](docs/ENRICHMENT_SETUP.md) (TMDB/OpenLibrary/RAWG) — automatic, plus manual editing of genres, tags, and descriptions and a library filter by enrichment state
 - Themeable web UI (ships with Nord and Snowstorm) with version display and update detection
 - Dual interface — CLI for automation, web UI for browsing
 

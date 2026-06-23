@@ -159,6 +159,8 @@ Background system that fills gaps in content metadata from external APIs.
 - Token bucket rate limiter per provider
 - Background worker with configurable batch size
 - Optional auto-enrichment hook after sync
+- **Manual metadata editing**: users can set genres, tags, and a description by hand from the web edit modal or `library edit --genre/--tag/--description`. Unlike the gap-filling merge, manual values overwrite the detail-table fields. The edit records the `"manual"` provider via `mark_enrichment_complete`, which marks the item enriched (so it leaves the `not_enriched` filter) and keeps it out of the automatic re-enrichment queue so manual values are never overwritten
+- **Enrichment-state filtering**: `get_content_items(enrichment="enriched"|"not_enriched")` and the per-row `enriched` flag share a single predicate (`_ENRICHED_PREDICATE`) over the joined `enrichment_status` row — an item is enriched only with a real provider, no error, not `not_found`, and `needs_enrichment=0`
 
 ### 6. Conversation System (`src/conversation/`) — Optional
 
