@@ -11,7 +11,7 @@ import threading
 import time
 import webbrowser
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import Any, NoReturn, cast
 
 import click
 from tabulate import tabulate
@@ -29,6 +29,7 @@ from src.models.content import (
     ConsumptionStatus,
     ContentItem,
     ContentType,
+    EnrichmentFilter,
     get_enum_value,
 )
 from src.models.user_preferences import UserPreferenceConfig
@@ -79,6 +80,14 @@ from src.web.sync_sources import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Manual-enrichment bounds, mirroring the web ItemEditRequest so both
+# interfaces reject the same oversized genres/tags/descriptions.
+MAX_GENRES = 50
+MAX_TAGS = 100
+MAX_GENRE_TAG_LENGTH = 100
+MAX_DESCRIPTION_LENGTH = 10000
+MAX_REVIEW_LENGTH = 10000
 
 
 @click.command()
@@ -1189,6 +1198,13 @@ def library() -> None:
     help="Include ignored items",
 )
 @click.option(
+    "--enrichment",
+    "enrichment_str",
+    type=click.Choice(["enriched", "not_enriched"], case_sensitive=False),
+    default=None,
+    help="Filter by enrichment state (default: all)",
+)
+@click.option(
     "--limit",
     type=click.IntRange(min=1, max=200),
     default=50,
@@ -1221,6 +1237,7 @@ def library_list(
     status_str: str | None,
     sort_by: str,
     show_ignored: bool,
+    enrichment_str: str | None,
     limit: int | None,
     offset: int,
     output_format: str,
@@ -1233,6 +1250,9 @@ def library_list(
         ContentType.from_string(content_type_str) if content_type_str else None
     )
     consumption_status = ConsumptionStatus(status_str) if status_str else None
+    enrichment: EnrichmentFilter | None = (
+        cast(EnrichmentFilter, enrichment_str.lower()) if enrichment_str else None
+    )
 
     items: list[ContentItem] = storage.get_content_items(
         user_id=user_id,
@@ -1242,6 +1262,7 @@ def library_list(
         include_ignored=show_ignored,
         limit=limit,
         offset=offset,
+        enrichment=enrichment,
     )
 
     if output_format == "json":
@@ -1264,9 +1285,10 @@ def library_list(
                 get_enum_value(item.content_type),
                 get_enum_value(item.status),
                 "N/A" if item.rating is None else item.rating,
+                "Yes" if item.enriched else "No",
             ]
         )
-    headers = ["ID", "Title", "Author", "Type", "Status", "Rating"]
+    headers = ["ID", "Title", "Author", "Type", "Status", "Rating", "Enriched"]
     click.echo(tabulate(table_data, headers=headers, tablefmt="grid"))
 
 
@@ -1301,6 +1323,10 @@ def library_show(
     if output_format == "json":
         click.echo(json.dumps(item_to_dict(item), indent=2))
     else:
+        serialized = item_to_dict(item)
+        genres = serialized["genres"]
+        tags = serialized["tags"]
+        description = serialized["description"]
         table_data = [
             ["Title", item.title],
             ["Author", item.author or "N/A"],
@@ -1313,6 +1339,10 @@ def library_show(
                 item.date_completed.isoformat() if item.date_completed else "N/A",
             ],
             ["Ignored", "Yes" if item.ignored else "No"],
+            ["Enriched", "Yes" if item.enriched else "No"],
+            ["Genres", ", ".join(cast(list[str], genres)) or "N/A"],
+            ["Tags", ", ".join(cast(list[str], tags)) or "N/A"],
+            ["Description", description or "N/A"],
         ]
         click.echo(tabulate(table_data, tablefmt="grid"))
 
@@ -1342,6 +1372,23 @@ def library_show(
     help=f"Comma-separated list of watched season numbers (1-{MAX_SEASONS})",
 )
 @click.option(
+    "--genre",
+    "genres",
+    multiple=True,
+    help="Manual genre (repeatable); replaces existing genres and marks enriched",
+)
+@click.option(
+    "--tag",
+    "tags",
+    multiple=True,
+    help="Manual tag (repeatable); replaces existing tags and marks enriched",
+)
+@click.option(
+    "--description",
+    default=None,
+    help="Manual description; replaces the existing one and marks enriched",
+)
+@click.option(
     "--user",
     "user_id",
     type=int,
@@ -1356,18 +1403,24 @@ def library_edit(
     rating: int | None,
     review: str | None,
     seasons_watched: str | None,
+    genres: tuple[str, ...],
+    tags: tuple[str, ...],
+    description: str | None,
     user_id: int,
 ) -> None:
-    """Edit an item's status, rating, or review."""
+    """Edit an item's status, rating, review, or manual enrichment metadata."""
     if (
         status_str is None
         and rating is None
         and review is None
         and seasons_watched is None
+        and not genres
+        and not tags
+        and description is None
     ):
         click.echo(
             "Error: Provide at least one of --status, --rating, --review, "
-            "--seasons-watched.",
+            "--seasons-watched, --genre, --tag, --description.",
             err=True,
         )
         raise click.Abort()
@@ -1409,12 +1462,50 @@ def library_edit(
             )
             raise click.Abort()
 
+    genre_list = list(genres) if genres else None
+    tag_list = list(tags) if tags else None
+    if genre_list is not None and len(genre_list) > MAX_GENRES:
+        click.echo(
+            f"Error: --genre accepts at most {MAX_GENRES} values.",
+            err=True,
+        )
+        raise click.Abort()
+    if tag_list is not None and len(tag_list) > MAX_TAGS:
+        click.echo(
+            f"Error: --tag accepts at most {MAX_TAGS} values.",
+            err=True,
+        )
+        raise click.Abort()
+    if any(len(value) > MAX_GENRE_TAG_LENGTH for value in genres + tags):
+        click.echo(
+            f"Error: each --genre/--tag must be at most {MAX_GENRE_TAG_LENGTH} "
+            "characters.",
+            err=True,
+        )
+        raise click.Abort()
+    if description is not None and len(description) > MAX_DESCRIPTION_LENGTH:
+        click.echo(
+            f"Error: --description must be at most {MAX_DESCRIPTION_LENGTH} "
+            "characters.",
+            err=True,
+        )
+        raise click.Abort()
+    if review is not None and len(review) > MAX_REVIEW_LENGTH:
+        click.echo(
+            f"Error: --review must be at most {MAX_REVIEW_LENGTH} characters.",
+            err=True,
+        )
+        raise click.Abort()
+
     updated = storage.update_item_from_ui(
         db_id=item_id,
         status=effective_status,
         rating=rating,
         review=review,
         seasons_watched=parsed_seasons,
+        genres=genre_list,
+        tags=tag_list,
+        description=description,
         user_id=user_id,
     )
 
