@@ -80,6 +80,11 @@ The CLI accepts `--workers N` to override per-invocation, e.g.
 
 ## Library export
 
+The **Library** tab can be filtered by content type, consumption status, and
+enrichment state (all items, enriched, or not enriched). The enrichment filter is
+handy for finding items still missing metadata so you can edit them by hand — see
+[ENRICHMENT_SETUP.md](ENRICHMENT_SETUP.md#manual-enrichment-editing).
+
 Export your library data from the web UI:
 
 1. Go to the **Library** tab.
