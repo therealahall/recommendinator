@@ -5,6 +5,7 @@ import { formatContentType, formatStatusForContentType } from '@/utils/format'
 import { useFocusTrap } from '@/composables/useFocusTrap'
 import StarRating from '@/components/atoms/StarRating.vue'
 import SeasonChecklist from '@/components/molecules/SeasonChecklist.vue'
+import TagInput from '@/components/atoms/TagInput.vue'
 
 const props = defineProps<{
   item: ContentItemResponse
@@ -23,6 +24,9 @@ const status = ref(props.item.status)
 const rating = ref<number | null>(props.item.rating)
 const review = ref(props.item.review || '')
 const seasonsWatched = ref<number[]>(props.item.seasons_watched || [])
+const genres = ref<string[]>(props.item.genres ?? [])
+const tags = ref<string[]>(props.item.tags ?? [])
+const description = ref(props.item.description ?? '')
 
 const isTvShow = computed(() => props.item.content_type === 'tv_show' && props.item.total_seasons)
 
@@ -44,6 +48,9 @@ function save() {
     status: status.value,
     rating: rating.value,
     review: review.value || null,
+    genres: genres.value,
+    tags: tags.value,
+    description: description.value || null,
   }
   if (isTvShow.value) {
     data.seasons_watched = seasonsWatched.value
@@ -92,6 +99,34 @@ function onBackdropClick(event: MouseEvent) {
           v-model="seasonsWatched"
           :total-seasons="item.total_seasons!"
         />
+      </div>
+
+      <hr class="edit-modal-divider">
+      <h4 class="edit-modal-section">Enrichment metadata</h4>
+
+      <div class="edit-field">
+        <TagInput
+          v-model="genres"
+          label="Genres"
+          input-id="edit-genres"
+          placeholder="Add a genre..."
+          empty-text="No genres yet"
+        />
+      </div>
+
+      <div class="edit-field">
+        <TagInput
+          v-model="tags"
+          label="Tags"
+          input-id="edit-tags"
+          placeholder="Add a tag..."
+          empty-text="No tags yet"
+        />
+      </div>
+
+      <div class="edit-field">
+        <label for="edit-description">Description</label>
+        <textarea id="edit-description" v-model="description" maxlength="10000" placeholder="Add a description..." />
       </div>
 
       <div class="edit-modal-actions">

@@ -989,6 +989,15 @@ input[type="checkbox"] {
   border-color: color-mix(in srgb, var(--color-warning) 30%, transparent);
 }
 
+/* Neutral marker for items lacking enrichment metadata. Uses the readable
+   --text-secondary token (not --text-muted) to clear 4.5:1 contrast on the
+   elevated background across themes. */
+.badge-enrichment {
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  border-color: var(--border-default);
+}
+
 .badge-score {
   background: color-mix(in srgb, var(--accent) 20%, transparent);
   color: var(--accent-light);
@@ -1331,6 +1340,22 @@ input[type="checkbox"] {
 .edit-field select:focus,
 .edit-field textarea:focus {
   border-color: var(--border-focus);
+}
+
+.edit-modal-divider {
+  border: none;
+  border-top: 1px solid var(--border-default);
+  margin: var(--space-5) 0 var(--space-4) 0;
+}
+
+.edit-modal-section {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  /* --text-secondary (not --text-muted) to clear WCAG 4.5:1 at this size on all themes */
+  color: var(--text-secondary);
+  margin: 0 0 var(--space-4) 0;
 }
 
 .edit-modal-actions {

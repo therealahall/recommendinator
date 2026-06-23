@@ -6,6 +6,7 @@ describe('LibraryFilters', () => {
   const defaultProps = {
     typeFilter: '',
     statusFilter: '',
+    enrichmentFilter: '',
     showIgnored: false,
   }
 
@@ -41,6 +42,34 @@ describe('LibraryFilters', () => {
     await select.setValue('completed')
 
     expect(wrapper.emitted('filterChange')).toEqual([['status', 'completed']])
+  })
+
+  it('renders the enrichment select with All/Enriched/Not enriched options', () => {
+    const wrapper = mount(LibraryFilters, { props: defaultProps })
+
+    const select = wrapper.find('select[aria-label="Enrichment"]')
+    expect(select.exists()).toBe(true)
+    const options = select.findAll('option')
+    expect(options.map(o => o.text())).toEqual(['All Items', 'Enriched', 'Not enriched'])
+    expect(options.map(o => o.attributes('value'))).toEqual(['', 'enriched', 'not_enriched'])
+  })
+
+  it('reflects enrichmentFilter prop in the enrichment select value', () => {
+    const wrapper = mount(LibraryFilters, {
+      props: { ...defaultProps, enrichmentFilter: 'not_enriched' },
+    })
+
+    const el = wrapper.find('select[aria-label="Enrichment"]').element as HTMLSelectElement
+    expect(el.value).toBe('not_enriched')
+  })
+
+  it('emits filterChange for enrichment on select change', async () => {
+    const wrapper = mount(LibraryFilters, { props: defaultProps })
+
+    const select = wrapper.find('select[aria-label="Enrichment"]')
+    await select.setValue('not_enriched')
+
+    expect(wrapper.emitted('filterChange')).toEqual([['enrichment', 'not_enriched']])
   })
 
   it('renders Unwatched label for movies', () => {

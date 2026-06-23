@@ -31,6 +31,7 @@ function statusClass(status: string): string {
         {{ formatStatusForContentType(item.status, item.content_type) }}
       </span>
       <span v-if="item.rating" class="badge badge-rating">{{ renderStars(item.rating) }}</span>
+      <span v-if="!item.enriched" class="badge badge-enrichment">Not enriched</span>
       <span v-if="item.ignored" class="badge badge-ignored">Ignored</span>
     </div>
     <div v-if="item.db_id" class="library-item-actions">

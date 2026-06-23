@@ -19,10 +19,10 @@ const defaultItem = {
   seasons_watched: null,
   total_seasons: null,
   ignored: false,
+  enriched: false,
   genres: [],
   tags: [],
   description: null,
-  enrichment_status: null,
 }
 
 describe('EditModal', () => {
@@ -95,7 +95,79 @@ describe('EditModal', () => {
     await wrapper.findAll('.btn-primary').find(b => b.text().includes('Save'))!.trigger('click')
     const emitted = wrapper.emitted('save')!
     expect(emitted[0][0]).toBe(1)
-    expect(emitted[0][1]).toMatchObject({ status: 'completed' })
+    expect(emitted[0][1]).toEqual({
+      status: 'completed',
+      rating: null,
+      review: null,
+      genres: [],
+      tags: [],
+      description: null,
+    })
+    wrapper.unmount()
+  })
+
+  it('renders the enrichment subsection with genres, tags, and description fields', () => {
+    const wrapper = mount(EditModal, {
+      props: { item: defaultItem, saving: false },
+      attachTo: document.body,
+    })
+    expect(wrapper.find('.edit-modal-section').text()).toBe('Enrichment metadata')
+    expect(wrapper.find('label[for="edit-genres"]').exists()).toBe(true)
+    expect(wrapper.find('label[for="edit-tags"]').exists()).toBe(true)
+    expect(wrapper.find('label[for="edit-description"]').exists()).toBe(true)
+    expect(wrapper.find('#edit-description').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('pre-fills enrichment fields from the item', () => {
+    const item = { ...defaultItem, genres: ['Sci-Fi'], tags: ['classic'], description: 'A tale.' }
+    const wrapper = mount(EditModal, {
+      props: { item, saving: false },
+      attachTo: document.body,
+    })
+    expect(wrapper.text()).toContain('Sci-Fi')
+    expect(wrapper.text()).toContain('classic')
+    expect((wrapper.find('#edit-description').element as HTMLTextAreaElement).value).toBe('A tale.')
+    wrapper.unmount()
+  })
+
+  it('save emits edited genres, tags, and description', async () => {
+    const item = { ...defaultItem, genres: ['Sci-Fi'], tags: [], description: null }
+    const wrapper = mount(EditModal, {
+      props: { item, saving: false },
+      attachTo: document.body,
+    })
+    await wrapper.find('#edit-tags').setValue('classic')
+    await wrapper.find('#edit-tags').trigger('keypress', { key: 'Enter' })
+    await wrapper.find('#edit-description').setValue('A tale.')
+    await wrapper.findAll('.btn-primary').find(b => b.text().includes('Save'))!.trigger('click')
+    const emitted = wrapper.emitted('save')!
+    expect(emitted[0][1]).toEqual({
+      status: 'unread',
+      rating: null,
+      review: null,
+      genres: ['Sci-Fi'],
+      tags: ['classic'],
+      description: 'A tale.',
+    })
+    wrapper.unmount()
+  })
+
+  it('save serializes an empty description to null', async () => {
+    const wrapper = mount(EditModal, {
+      props: { item: defaultItem, saving: false },
+      attachTo: document.body,
+    })
+    await wrapper.findAll('.btn-primary').find(b => b.text().includes('Save'))!.trigger('click')
+    const emitted = wrapper.emitted('save')!
+    expect(emitted[0][1]).toEqual({
+      status: 'unread',
+      rating: null,
+      review: null,
+      genres: [],
+      tags: [],
+      description: null,
+    })
     wrapper.unmount()
   })
 })
