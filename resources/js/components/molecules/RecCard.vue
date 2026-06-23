@@ -12,6 +12,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   ignore: [dbId: number]
+  complete: [dbId: number]
 }>()
 
 const { renderMarkdown } = useMarkdown()
@@ -33,8 +34,15 @@ const hasLlmReasoning = computed(() => !!props.rec.llm_reasoning?.trim())
         <span class="badge badge-score">{{ rec.score.toFixed(2) }}</span>
         <button
           v-if="rec.db_id"
+          class="btn btn-small btn-complete"
+          :aria-label="`Mark complete: ${rec.title}`"
+          @click="emit('complete', rec.db_id)"
+        >Mark complete</button>
+        <button
+          v-if="rec.db_id"
           class="btn btn-small btn-ignore"
-          @click="emit('ignore', rec.db_id!)"
+          :aria-label="`Ignore: ${rec.title}`"
+          @click="emit('ignore', rec.db_id)"
         >Ignore</button>
       </div>
     </div>
