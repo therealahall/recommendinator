@@ -19,6 +19,7 @@ export const useLibraryStore = defineStore('library', () => {
   // Filters
   const typeFilter = ref('')
   const statusFilter = ref('')
+  const enrichmentFilter = ref('')
   const showIgnored = ref(false)
 
   // Edit modal
@@ -51,6 +52,7 @@ export const useLibraryStore = defineStore('library', () => {
       }
       if (typeFilter.value) params.type = typeFilter.value
       if (statusFilter.value) params.status = statusFilter.value
+      if (enrichmentFilter.value) params.enrichment = enrichmentFilter.value
       if (showIgnored.value) params.include_ignored = true
 
       const result = await api.get<ContentItemResponse[]>('/items', params)
@@ -79,9 +81,10 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
-  function setFilter(key: 'type' | 'status' | 'showIgnored', value: string | boolean) {
+  function setFilter(key: 'type' | 'status' | 'enrichment' | 'showIgnored', value: string | boolean) {
     if (key === 'type') typeFilter.value = value as string
     else if (key === 'status') statusFilter.value = value as string
+    else if (key === 'enrichment') enrichmentFilter.value = value as string
     else if (key === 'showIgnored') showIgnored.value = value as boolean
     return resetAndLoad()
   }
@@ -165,6 +168,7 @@ export const useLibraryStore = defineStore('library', () => {
     error,
     typeFilter,
     statusFilter,
+    enrichmentFilter,
     showIgnored,
     editingItem,
     editSaving,

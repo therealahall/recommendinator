@@ -74,6 +74,27 @@ describe('useLibraryStore', () => {
     expect(mockGet).toHaveBeenCalled()
   })
 
+  it('setFilter stores the enrichment filter and sends it as a query param', async () => {
+    mockGet.mockResolvedValue([])
+    const store = useLibraryStore()
+
+    await store.setFilter('enrichment', 'not_enriched')
+
+    expect(store.enrichmentFilter).toBe('not_enriched')
+    const params = mockGet.mock.lastCall![1]
+    expect(params.enrichment).toBe('not_enriched')
+  })
+
+  it('omits the enrichment param when no enrichment filter is set', async () => {
+    mockGet.mockResolvedValue([])
+    const store = useLibraryStore()
+
+    await store.resetAndLoad()
+
+    const params = mockGet.mock.lastCall![1]
+    expect(params.enrichment).toBeUndefined()
+  })
+
   it('saveEdit updates item in list', async () => {
     const item = { db_id: 1, title: 'Book A', content_type: 'book', status: 'unread', rating: null, ignored: false }
     mockGet.mockResolvedValue([item])
@@ -85,9 +106,26 @@ describe('useLibraryStore', () => {
     store.editingItem = item as any
     await store.saveEdit(1, { status: 'completed', rating: 4 })
 
+    expect(mockPatch.mock.lastCall![0]).toBe('/items/1')
     expect(store.items[0].status).toBe('completed')
     expect(store.items[0].rating).toBe(4)
     expect(store.editingItem).toBeNull()
+  })
+
+  it('saveEdit posts enrichment fields and flips the local enriched flag', async () => {
+    const item = { db_id: 1, title: 'Book A', content_type: 'book', status: 'unread', rating: null, ignored: false, enriched: false, genres: [], tags: [], description: null }
+    mockGet.mockResolvedValue([item])
+    const store = useLibraryStore()
+    await store.resetAndLoad()
+
+    const updated = { ...item, enriched: true, genres: ['Sci-Fi'], tags: ['classic'], description: 'A tale.' }
+    mockPatch.mockResolvedValue(updated)
+    await store.saveEdit(1, { status: 'unread', genres: ['Sci-Fi'], tags: ['classic'], description: 'A tale.' })
+
+    const body = mockPatch.mock.lastCall![1]
+    expect(body).toMatchObject({ genres: ['Sci-Fi'], tags: ['classic'], description: 'A tale.' })
+    expect(store.items[0].enriched).toBe(true)
+    expect(store.items[0].genres).toEqual(['Sci-Fi'])
   })
 
   it('toggleIgnore updates item in list', async () => {

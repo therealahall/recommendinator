@@ -64,6 +64,7 @@ onUnmounted(() => {
     <LibraryFilters
       :type-filter="lib.typeFilter"
       :status-filter="lib.statusFilter"
+      :enrichment-filter="lib.enrichmentFilter"
       :show-ignored="lib.showIgnored"
       @filter-change="lib.setFilter"
       @export="lib.exportLibrary"

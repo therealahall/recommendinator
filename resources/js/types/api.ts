@@ -15,6 +15,10 @@ export interface ContentItemResponse {
   ignored: boolean
   seasons_watched: number[] | null
   total_seasons: number | null
+  enriched: boolean
+  genres: string[]
+  tags: string[]
+  description: string | null
 }
 
 export interface RecommendationResponse {
@@ -287,6 +291,9 @@ export interface ItemEditRequest {
   rating?: number | null
   review?: string | null
   seasons_watched?: number[] | null
+  genres?: string[]
+  tags?: string[]
+  description?: string | null
 }
 
 export interface IgnoreItemRequest {

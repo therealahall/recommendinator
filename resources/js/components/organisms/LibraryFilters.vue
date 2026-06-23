@@ -7,11 +7,12 @@ import ToggleSwitch from '@/components/atoms/ToggleSwitch.vue'
 const props = defineProps<{
   typeFilter: string
   statusFilter: string
+  enrichmentFilter: string
   showIgnored: boolean
 }>()
 
 const emit = defineEmits<{
-  filterChange: [key: 'type' | 'status' | 'showIgnored', value: string | boolean]
+  filterChange: [key: 'type' | 'status' | 'enrichment' | 'showIgnored', value: string | boolean]
   export: [format: 'csv' | 'json']
 }>()
 
@@ -77,6 +78,11 @@ onUnmounted(() => {
           <option value="unread">{{ unreadLabel }}</option>
           <option value="currently_consuming">In Progress</option>
           <option value="completed">Completed</option>
+        </select>
+        <select class="toolbar-select" aria-label="Enrichment" :value="enrichmentFilter" @change="emit('filterChange', 'enrichment', ($event.target as HTMLSelectElement).value)">
+          <option value="">All Items</option>
+          <option value="enriched">Enriched</option>
+          <option value="not_enriched">Not enriched</option>
         </select>
       </div>
 
