@@ -95,6 +95,218 @@ describe('useLibraryStore', () => {
     expect(params.enrichment).toBeUndefined()
   })
 
+  it('has empty search state initially', () => {
+    const store = useLibraryStore()
+    expect(store.searchQuery).toBe('')
+    expect(store.searchLoading).toBe(false)
+    expect(store.searchAnnouncement).toBe('')
+  })
+
+  it('setFilter search passes the search param and resets pagination', async () => {
+    vi.useFakeTimers()
+    try {
+      mockGet.mockResolvedValue([
+        { db_id: 1, title: 'Dune', content_type: 'book', status: 'unread', ignored: false },
+      ])
+      const store = useLibraryStore()
+      store.setFilter('search', 'dune')
+      expect(store.searchQuery).toBe('dune')
+
+      await vi.runAllTimersAsync()
+
+      expect(store.offset).toBe(1)
+      const params = mockGet.mock.calls[mockGet.mock.calls.length - 1][1]
+      expect(params.search).toBe('dune')
+      expect(params.offset).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('debounce coalesces rapid search changes into one request', async () => {
+    vi.useFakeTimers()
+    try {
+      mockGet.mockResolvedValue([])
+      const store = useLibraryStore()
+
+      store.setFilter('search', 'd')
+      store.setFilter('search', 'du')
+      store.setFilter('search', 'dune')
+
+      expect(mockGet).not.toHaveBeenCalled()
+      await vi.runAllTimersAsync()
+
+      expect(mockGet).toHaveBeenCalledTimes(1)
+      expect(mockGet.mock.calls[0][1].search).toBe('dune')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('toggles searchLoading around a search request', async () => {
+    vi.useFakeTimers()
+    try {
+      let resolve: (v: unknown) => void = () => {}
+      mockGet.mockReturnValue(new Promise((r) => { resolve = r }))
+      const store = useLibraryStore()
+
+      store.setFilter('search', 'dune')
+      expect(store.searchLoading).toBe(false)
+
+      await vi.advanceTimersByTimeAsync(250)
+      expect(store.searchLoading).toBe(true)
+
+      resolve([])
+      await vi.runAllTimersAsync()
+      expect(store.searchLoading).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('announces plural results for an active query', async () => {
+    vi.useFakeTimers()
+    try {
+      mockGet.mockResolvedValue([
+        { db_id: 1, title: 'A', content_type: 'book', status: 'unread', ignored: false },
+        { db_id: 2, title: 'B', content_type: 'book', status: 'unread', ignored: false },
+      ])
+      const store = useLibraryStore()
+      store.setFilter('search', 'a')
+      await vi.runAllTimersAsync()
+      expect(store.searchAnnouncement).toBe('2 items match “a”')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('announces a singular result for an active query', async () => {
+    vi.useFakeTimers()
+    try {
+      mockGet.mockResolvedValue([
+        { db_id: 1, title: 'A', content_type: 'book', status: 'unread', ignored: false },
+      ])
+      const store = useLibraryStore()
+      store.setFilter('search', 'a')
+      await vi.runAllTimersAsync()
+      expect(store.searchAnnouncement).toBe('1 item matches “a”')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('announces no results for an active query', async () => {
+    vi.useFakeTimers()
+    try {
+      mockGet.mockResolvedValue([])
+      const store = useLibraryStore()
+      store.setFilter('search', 'zzz')
+      await vi.runAllTimersAsync()
+      expect(store.searchAnnouncement).toBe('No items match “zzz”')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('clearing the search resets the query and announcement', async () => {
+    vi.useFakeTimers()
+    try {
+      mockGet.mockResolvedValue([])
+      const store = useLibraryStore()
+      store.setFilter('search', 'zzz')
+      await vi.runAllTimersAsync()
+      expect(store.searchAnnouncement).toBe('No items match “zzz”')
+
+      store.setFilter('search', '')
+      await vi.runAllTimersAsync()
+      expect(store.searchQuery).toBe('')
+      expect(store.searchAnnouncement).toBe('')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('clears searchLoading when a search is triggered while a load is in flight', async () => {
+    vi.useFakeTimers()
+    try {
+      let resolveFirst: (v: unknown) => void = () => {}
+      mockGet.mockReturnValueOnce(new Promise((r) => { resolveFirst = r }))
+      const store = useLibraryStore()
+
+      // Kick off a load that stays in flight.
+      const firstLoad = store.resetAndLoad()
+      expect(store.loading).toBe(true)
+
+      // Type a search while that load is still running: the debounced
+      // runSearch must await the real settle, not strand searchLoading.
+      mockGet.mockResolvedValue([])
+      store.setFilter('search', 'dune')
+      await vi.advanceTimersByTimeAsync(250)
+      expect(store.searchLoading).toBe(true)
+
+      resolveFirst([])
+      await firstLoad
+      await vi.runAllTimersAsync()
+      expect(store.searchLoading).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('cleanup cancels a pending debounced search', async () => {
+    vi.useFakeTimers()
+    try {
+      mockGet.mockResolvedValue([])
+      const store = useLibraryStore()
+
+      store.setFilter('search', 'dune')
+      store.cleanup()
+      await vi.runAllTimersAsync()
+
+      expect(mockGet).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('resets searchLoading and sets error when the search request rejects', async () => {
+    vi.useFakeTimers()
+    try {
+      mockGet.mockRejectedValue(new Error('network down'))
+      const store = useLibraryStore()
+
+      store.setFilter('search', 'dune')
+      await vi.runAllTimersAsync()
+
+      expect(store.searchLoading).toBe(false)
+      expect(store.error).toBe('network down')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('refreshes the announcement when a non-search filter changes during an active search', async () => {
+    vi.useFakeTimers()
+    try {
+      mockGet.mockResolvedValue([
+        { db_id: 1, title: 'A', content_type: 'book', status: 'unread', ignored: false },
+        { db_id: 2, title: 'B', content_type: 'book', status: 'unread', ignored: false },
+      ])
+      const store = useLibraryStore()
+      store.setFilter('search', 'a')
+      await vi.runAllTimersAsync()
+      expect(store.searchAnnouncement).toBe('2 items match “a”')
+
+      mockGet.mockResolvedValue([
+        { db_id: 1, title: 'A', content_type: 'book', status: 'unread', ignored: false },
+      ])
+      await store.setFilter('type', 'book')
+      expect(store.searchAnnouncement).toBe('1 item matches “a”')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('saveEdit updates item in list', async () => {
     const item = { db_id: 1, title: 'Book A', content_type: 'book', status: 'unread', rating: null, ignored: false }
     mockGet.mockResolvedValue([item])

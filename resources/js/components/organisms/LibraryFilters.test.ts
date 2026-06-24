@@ -8,7 +8,46 @@ describe('LibraryFilters', () => {
     statusFilter: '',
     enrichmentFilter: '',
     showIgnored: false,
+    searchQuery: '',
+    searchLoading: false,
   }
+
+  it('renders the search input as the first toolbar child', () => {
+    const wrapper = mount(LibraryFilters, { props: defaultProps })
+
+    const search = wrapper.find('.lib-search')
+    expect(search.exists()).toBe(true)
+    expect(search.find('input[type="search"]').attributes('placeholder')).toBe('Search by title or creator')
+    expect(wrapper.find('.library-toolbar').element.firstElementChild).toBe(search.element)
+  })
+
+  it('reflects searchQuery into the search input', () => {
+    const wrapper = mount(LibraryFilters, {
+      props: { ...defaultProps, searchQuery: 'dune' },
+    })
+
+    const input = wrapper.find('.lib-search input').element as HTMLInputElement
+    expect(input.value).toBe('dune')
+  })
+
+  it('emits filterChange for search on input', async () => {
+    const wrapper = mount(LibraryFilters, { props: defaultProps })
+
+    await wrapper.find('.lib-search input').setValue('dune')
+
+    expect(wrapper.emitted('filterChange')).toEqual([['search', 'dune']])
+  })
+
+  it('emits filterChange with empty search on clear', async () => {
+    const wrapper = mount(LibraryFilters, {
+      props: { ...defaultProps, searchQuery: 'dune' },
+    })
+
+    await wrapper.find('.search-input-clear').trigger('click')
+
+    const emitted = wrapper.emitted('filterChange')!
+    expect(emitted).toContainEqual(['search', ''])
+  })
 
   it('renders TypePills with all options', () => {
     const wrapper = mount(LibraryFilters, { props: defaultProps })

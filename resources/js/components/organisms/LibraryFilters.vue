@@ -3,16 +3,22 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import TypePills from '@/components/atoms/TypePills.vue'
 import TypeSelect from '@/components/atoms/TypeSelect.vue'
 import ToggleSwitch from '@/components/atoms/ToggleSwitch.vue'
+import SearchInput from '@/components/atoms/SearchInput.vue'
 
 const props = defineProps<{
   typeFilter: string
   statusFilter: string
   enrichmentFilter: string
   showIgnored: boolean
+  searchQuery: string
+  searchLoading: boolean
 }>()
 
 const emit = defineEmits<{
-  filterChange: [key: 'type' | 'status' | 'enrichment' | 'showIgnored', value: string | boolean]
+  filterChange: [
+    key: 'type' | 'status' | 'enrichment' | 'showIgnored' | 'search',
+    value: string | boolean,
+  ]
   export: [format: 'csv' | 'json']
 }>()
 
@@ -57,6 +63,14 @@ onUnmounted(() => {
 <template>
   <div class="card">
     <div class="library-toolbar">
+      <SearchInput
+        class="lib-search"
+        :model-value="searchQuery"
+        :loading="searchLoading"
+        placeholder="Search by title or creator"
+        @update:model-value="emit('filterChange', 'search', $event)"
+      />
+
       <!-- Desktop: Type pills -->
       <TypePills
         class="lib-pills"
@@ -122,6 +136,11 @@ onUnmounted(() => {
   flex-wrap: wrap;
 }
 
+.lib-search {
+  flex: 1 1 100%;
+  order: -1;
+}
+
 .lib-filter-row,
 .lib-actions-row {
   display: flex;
@@ -138,6 +157,12 @@ onUnmounted(() => {
 }
 
 @media (max-width: 640px) {
+  .card {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+  }
+
   .lib-pills,
   .toolbar-divider {
     display: none;
