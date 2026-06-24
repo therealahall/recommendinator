@@ -879,6 +879,403 @@ def test_get_content_items_include_ignored_false(temp_db: SQLiteDB) -> None:
     assert filtered_items[0].title == "Normal Book"
 
 
+class TestGetContentItemsSearch:
+    """Tests for the search capability of get_content_items."""
+
+    @staticmethod
+    def _seed_movies(temp_db: SQLiteDB) -> None:
+        """Seed a small movie library used by title-matching tests."""
+        movies = [
+            ContentItem(
+                id="movie_die_hard",
+                title="Die Hard (1988)",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.COMPLETED,
+            ),
+            ContentItem(
+                id="movie_matrix",
+                title="The Matrix",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.COMPLETED,
+            ),
+            ContentItem(
+                id="movie_star_wars",
+                title="Star Wars",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.UNREAD,
+            ),
+        ]
+        for movie in movies:
+            temp_db.save_content_item(movie)
+
+    def test_search_none_is_noop(self, temp_db: SQLiteDB) -> None:
+        """search=None returns the full unfiltered set (unchanged behavior)."""
+        self._seed_movies(temp_db)
+        assert len(temp_db.get_content_items(search=None)) == 3
+
+    def test_search_empty_string_is_noop(self, temp_db: SQLiteDB) -> None:
+        """An empty or whitespace search term does not filter."""
+        self._seed_movies(temp_db)
+        assert len(temp_db.get_content_items(search="")) == 3
+        assert len(temp_db.get_content_items(search="   ")) == 3
+
+    def test_search_exact_match(self, temp_db: SQLiteDB) -> None:
+        """An exact (article/case-insensitive) title matches."""
+        self._seed_movies(temp_db)
+        results = temp_db.get_content_items(search="the matrix")
+        assert [item.title for item in results] == ["The Matrix"]
+
+    def test_search_partial_match(self, temp_db: SQLiteDB) -> None:
+        """A substring term matches the longer title."""
+        self._seed_movies(temp_db)
+        results = temp_db.get_content_items(search="Die Hard")
+        assert [item.title for item in results] == ["Die Hard (1988)"]
+
+    def test_search_fuzzy_match(self, temp_db: SQLiteDB) -> None:
+        """A typo'd term still matches via fuzzy matching."""
+        self._seed_movies(temp_db)
+        results = temp_db.get_content_items(search="Die Heard")
+        assert [item.title for item in results] == ["Die Hard (1988)"]
+
+    def test_search_no_results(self, temp_db: SQLiteDB) -> None:
+        """An unrelated term returns nothing."""
+        self._seed_movies(temp_db)
+        assert temp_db.get_content_items(search="nonexistent zzz") == []
+
+    def test_search_matches_book_author(self, temp_db: SQLiteDB) -> None:
+        """Search matches a book's creator (author)."""
+        temp_db.save_content_item(
+            ContentItem(
+                id="book_1",
+                title="The Hobbit",
+                author="J.R.R. Tolkien",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+            )
+        )
+        results = temp_db.get_content_items(search="Tolkien")
+        assert [item.title for item in results] == ["The Hobbit"]
+
+    def test_search_matches_movie_director(self, temp_db: SQLiteDB) -> None:
+        """Search matches a movie's creator (director)."""
+        temp_db.save_content_item(
+            ContentItem(
+                id="movie_1",
+                title="Jurassic Park",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.COMPLETED,
+                metadata={"director": "Steven Spielberg"},
+            )
+        )
+        results = temp_db.get_content_items(search="Spielberg")
+        assert [item.title for item in results] == ["Jurassic Park"]
+
+    def test_search_matches_tv_creator(self, temp_db: SQLiteDB) -> None:
+        """Search matches a TV show's creator (creators)."""
+        temp_db.save_content_item(
+            ContentItem(
+                id="tv_1",
+                title="Breaking Bad",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.COMPLETED,
+                metadata={"creators": "Vince Gilligan"},
+            )
+        )
+        results = temp_db.get_content_items(search="Gilligan")
+        assert [item.title for item in results] == ["Breaking Bad"]
+
+    def test_search_matches_game_developer(self, temp_db: SQLiteDB) -> None:
+        """Search matches a video game's creator (developer)."""
+        temp_db.save_content_item(
+            ContentItem(
+                id="game_1",
+                title="Half-Life",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.COMPLETED,
+                metadata={"developer": "Valve"},
+            )
+        )
+        results = temp_db.get_content_items(search="Valve")
+        assert [item.title for item in results] == ["Half-Life"]
+
+    def test_search_ands_with_type_filter(self, temp_db: SQLiteDB) -> None:
+        """Search combines with a content_type filter (AND)."""
+        temp_db.save_content_item(
+            ContentItem(
+                id="movie_avatar",
+                title="Avatar",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.COMPLETED,
+            )
+        )
+        temp_db.save_content_item(
+            ContentItem(
+                id="game_avatar",
+                title="Avatar: Frontiers of Pandora",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.UNREAD,
+            )
+        )
+        results = temp_db.get_content_items(
+            search="Avatar", content_type=ContentType.MOVIE
+        )
+        assert [item.title for item in results] == ["Avatar"]
+
+    def test_search_ands_with_status_filter(self, temp_db: SQLiteDB) -> None:
+        """Search combines with a status filter (AND)."""
+        temp_db.save_content_item(
+            ContentItem(
+                id="alien_done",
+                title="Alien",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.COMPLETED,
+            )
+        )
+        temp_db.save_content_item(
+            ContentItem(
+                id="aliens_unread",
+                title="Aliens",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.UNREAD,
+            )
+        )
+        results = temp_db.get_content_items(
+            search="Alien", status=ConsumptionStatus.UNREAD
+        )
+        assert [item.title for item in results] == ["Aliens"]
+
+    def test_search_pagination_pages_over_filtered_set(self, temp_db: SQLiteDB) -> None:
+        """limit/offset page over the full searched+sorted set, not one DB page.
+
+        Twelve "Hero" movies match the search alongside non-matching noise.
+        Paging with limit=5 must walk the matching set in title order, so
+        offset=5 returns the next five matches (not five raw rows from the
+        unfiltered query that happen to follow).
+        """
+        for i in range(12):
+            temp_db.save_content_item(
+                ContentItem(
+                    id=f"hero_{i:02d}",
+                    title=f"Hero {i:02d}",
+                    content_type=ContentType.MOVIE,
+                    status=ConsumptionStatus.COMPLETED,
+                )
+            )
+        # Non-matching noise interleaved in the table.
+        for i in range(8):
+            temp_db.save_content_item(
+                ContentItem(
+                    id=f"noise_{i:02d}",
+                    title=f"Villain {i:02d}",
+                    content_type=ContentType.MOVIE,
+                    status=ConsumptionStatus.COMPLETED,
+                )
+            )
+
+        page1 = temp_db.get_content_items(search="Hero", limit=5, offset=0)
+        page2 = temp_db.get_content_items(search="Hero", limit=5, offset=5)
+        page3 = temp_db.get_content_items(search="Hero", limit=5, offset=10)
+
+        assert [item.title for item in page1] == [f"Hero {i:02d}" for i in range(5)]
+        assert [item.title for item in page2] == [f"Hero {i:02d}" for i in range(5, 10)]
+        assert [item.title for item in page3] == [
+            f"Hero {i:02d}" for i in range(10, 12)
+        ]
+
+        all_matches = temp_db.get_content_items(search="Hero")
+        assert len(all_matches) == 12
+
+    def test_search_book_without_author_does_not_match_creator(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """A book with author=None must not raise or spuriously creator-match.
+
+        The creator lookup falls back to ``item.author`` for books; when that
+        is None the bool(creator) guard must short-circuit so a creator-style
+        search neither errors nor returns the authorless book.
+        """
+        temp_db.save_content_item(
+            ContentItem(
+                id="book_no_author",
+                title="Untitled Manuscript",
+                author=None,
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+            )
+        )
+        # Searching for an author name does not match the authorless book.
+        assert temp_db.get_content_items(search="Tolkien") == []
+        # The same book still matches on its title.
+        title_results = temp_db.get_content_items(search="Untitled Manuscript")
+        assert [item.title for item in title_results] == ["Untitled Manuscript"]
+
+    def test_search_item_missing_creator_metadata_key(self, temp_db: SQLiteDB) -> None:
+        """Items whose metadata lacks the creator key match on title only.
+
+        A movie with no "director" key must not raise (the metadata.get returns
+        None) and must not match a creator-style search, while still matching
+        its own title.
+        """
+        temp_db.save_content_item(
+            ContentItem(
+                id="movie_no_director",
+                title="Mystery Film",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.COMPLETED,
+                metadata={},
+            )
+        )
+        assert temp_db.get_content_items(search="Spielberg") == []
+        title_results = temp_db.get_content_items(search="Mystery Film")
+        assert [item.title for item in title_results] == ["Mystery Film"]
+
+    def test_search_with_rating_sort_orders_and_paginates(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """Search combined with a non-title sort preserves SQL ordering.
+
+        With sort_by="rating", the SQL ORDER BY (rating DESC, title ASC) drives
+        ordering; Python search filtering must keep that order, and limit/offset
+        must page over the matched set. Three "Quest" movies with distinct
+        ratings (plus non-matching noise) verify both ordering and pagination.
+        """
+        temp_db.save_content_item(
+            ContentItem(
+                id="quest_low",
+                title="Quest Alpha",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.COMPLETED,
+                rating=2,
+            )
+        )
+        temp_db.save_content_item(
+            ContentItem(
+                id="quest_high",
+                title="Quest Bravo",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+            )
+        )
+        temp_db.save_content_item(
+            ContentItem(
+                id="quest_mid",
+                title="Quest Charlie",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.COMPLETED,
+                rating=4,
+            )
+        )
+        temp_db.save_content_item(
+            ContentItem(
+                id="noise_high",
+                title="Unrelated Film",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+            )
+        )
+
+        ordered = temp_db.get_content_items(search="Quest", sort_by="rating")
+        assert [item.title for item in ordered] == [
+            "Quest Bravo",
+            "Quest Charlie",
+            "Quest Alpha",
+        ]
+
+        page1 = temp_db.get_content_items(
+            search="Quest", sort_by="rating", limit=2, offset=0
+        )
+        page2 = temp_db.get_content_items(
+            search="Quest", sort_by="rating", limit=2, offset=2
+        )
+        assert [item.title for item in page1] == ["Quest Bravo", "Quest Charlie"]
+        assert [item.title for item in page2] == ["Quest Alpha"]
+
+    def test_search_empty_library(self, temp_db: SQLiteDB) -> None:
+        """Searching an empty library returns an empty list, not an error."""
+        assert temp_db.get_content_items(search="anything") == []
+
+    def test_search_pagination_exact_multiple_boundary(self, temp_db: SQLiteDB) -> None:
+        """When matched count is an exact multiple of the page size.
+
+        Edge probed by QA: ten matches with limit=5 yields two full pages and
+        an empty third page (offset past the end), with no dropped or
+        duplicated matches at the boundary.
+        """
+        for i in range(10):
+            temp_db.save_content_item(
+                ContentItem(
+                    id=f"page_match_{i:02d}",
+                    title=f"Boundary {i:02d}",
+                    content_type=ContentType.MOVIE,
+                    status=ConsumptionStatus.COMPLETED,
+                )
+            )
+        page1 = temp_db.get_content_items(search="Boundary", limit=5, offset=0)
+        page2 = temp_db.get_content_items(search="Boundary", limit=5, offset=5)
+        page3 = temp_db.get_content_items(search="Boundary", limit=5, offset=10)
+
+        assert [item.title for item in page1] == [f"Boundary {i:02d}" for i in range(5)]
+        assert [item.title for item in page2] == [
+            f"Boundary {i:02d}" for i in range(5, 10)
+        ]
+        assert page3 == []
+        # No overlap or gaps across the two full pages.
+        combined = [item.id for item in page1] + [item.id for item in page2]
+        assert len(set(combined)) == 10
+
+    def test_search_offset_beyond_matched_set(self, temp_db: SQLiteDB) -> None:
+        """An offset past the end of the matched set returns an empty list."""
+        temp_db.save_content_item(
+            ContentItem(
+                id="solo_match",
+                title="Solitary",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.COMPLETED,
+            )
+        )
+        assert temp_db.get_content_items(search="Solitary", offset=10) == []
+
+    def test_search_case_and_punctuation_insensitive(self, temp_db: SQLiteDB) -> None:
+        """Mixed case and punctuation differences still match.
+
+        Edge probed by QA: a loud, punctuation-heavy query must match a title
+        whose only difference is case and surrounding punctuation.
+        """
+        temp_db.save_content_item(
+            ContentItem(
+                id="spiderman",
+                title="Spider-Man: Homecoming",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.COMPLETED,
+            )
+        )
+        results = temp_db.get_content_items(search="  SPIDER MAN homecoming!!  ")
+        assert [item.title for item in results] == ["Spider-Man: Homecoming"]
+
+    def test_search_matches_one_of_multiple_tv_creators(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """A TV show with several comma-joined creators matches on any one.
+
+        TMDB stores the plural ``creators`` field as a comma-joined string
+        (e.g. "Vince Gilligan, Peter Gould"); searching for the second name
+        must still surface the show.
+        """
+        temp_db.save_content_item(
+            ContentItem(
+                id="bcs",
+                title="Better Call Saul",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.COMPLETED,
+                metadata={"creators": "Vince Gilligan, Peter Gould"},
+            )
+        )
+        results = temp_db.get_content_items(search="Peter Gould")
+        assert [item.title for item in results] == ["Better Call Saul"]
+
+
 class TestToJsonArrayRegression:
     """Regression tests for _to_json_array() bare string handling.
 

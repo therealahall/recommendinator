@@ -263,6 +263,7 @@ class StorageManager:
         sort_by: str = "title",
         include_ignored: bool = True,
         enrichment: EnrichmentFilter | None = None,
+        search: str | None = None,
     ) -> list[ContentItem]:
         """Get content items with optional filters.
 
@@ -280,6 +281,7 @@ class StorageManager:
                 for backward compatibility)
             enrichment: Filter by enrichment state ("enriched" or
                 "not_enriched"). None returns all items.
+            search: Optional search term matched against title and creator
 
         Returns:
             List of ContentItem objects
@@ -294,6 +296,7 @@ class StorageManager:
             sort_by=sort_by,
             include_ignored=include_ignored,
             enrichment=enrichment,
+            search=search,
         )
 
     def get_unconsumed_items(
