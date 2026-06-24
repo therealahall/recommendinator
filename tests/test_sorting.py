@@ -1,6 +1,13 @@
 """Tests for sorting utilities."""
 
-from src.utils.sorting import get_sort_title, titles_similar
+from src.utils.sorting import (
+    FUZZY_MATCH_THRESHOLD,
+    _best_window_ratio,
+    get_sort_title,
+    matches_search,
+    normalize_for_search,
+    titles_similar,
+)
 
 
 class TestGetSortTitle:
@@ -271,3 +278,129 @@ class TestTitlesSimilarWordBoundaryRegression:
     def test_whitespace_only_title_does_not_match_regression(self) -> None:
         """A title that normalizes to empty must not match (no infinite loop)."""
         assert titles_similar("   ", "Spirited Away") is False
+
+
+class TestNormalizeForSearch:
+    """Tests for normalize_for_search function."""
+
+    def test_lowercases_and_strips_articles(self) -> None:
+        assert normalize_for_search("The Matrix") == "matrix"
+
+    def test_strips_punctuation(self) -> None:
+        # Hyphens, parentheses, and the like collapse to single spaces so a
+        # search term and a title normalize onto equal footing.
+        assert normalize_for_search("Sci-Fi (1988)") == "sci fi 1988"
+
+    def test_collapses_whitespace(self) -> None:
+        assert (
+            normalize_for_search("Spider-Man:  Homecoming") == "spider man homecoming"
+        )
+
+    def test_empty_string(self) -> None:
+        assert normalize_for_search("") == ""
+
+    def test_punctuation_only(self) -> None:
+        assert normalize_for_search("!!!") == ""
+
+
+class TestMatchesSearch:
+    """Tests for the three matching tiers of matches_search."""
+
+    def test_exact_match(self) -> None:
+        assert matches_search("Die Hard", "die hard") is True
+
+    def test_exact_match_ignores_articles(self) -> None:
+        assert matches_search("The Matrix", "matrix") is True
+
+    def test_partial_substring_match(self) -> None:
+        assert matches_search("Die Hard (1988)", "Die Hard") is True
+
+    def test_fuzzy_typo_match(self) -> None:
+        # Hard PM requirement: "Die Heard" must match "Die Hard (1988)".
+        # After normalization this is "die heard" vs the "die hard " window of
+        # "die hard 1988", which scores ~0.89, above FUZZY_MATCH_THRESHOLD.
+        assert matches_search("Die Hard (1988)", "Die Heard") is True
+
+    def test_fuzzy_match_on_non_article_first_token(self) -> None:
+        """Fuzzy matching works on a longer multi-token title.
+
+        "Apocalypse Now" keeps both tokens, and the single-character typo
+        "Apocalipse Now" scores ~0.93, comfortably above threshold.
+        """
+        assert matches_search("Apocalypse Now", "Apocalipse Now") is True
+
+    def test_fuzzy_below_threshold_does_not_match(self) -> None:
+        """A typo whose ratio falls below threshold is rejected.
+
+        "Inception" vs "Insepton" scores ~0.75, below FUZZY_MATCH_THRESHOLD
+        (0.80), so it must not match.  This pins that the threshold genuinely
+        rejects near-misses rather than waving everything through.
+        """
+        assert _best_window_ratio("insepton", "inception") < FUZZY_MATCH_THRESHOLD
+        assert matches_search("Inception", "Insepton") is False
+
+    def test_short_query_fuzzy_false_positive(self) -> None:
+        """QA probe: a 3-letter query fuzzy-matches a 1-letter-different word.
+
+        This characterizes (does not condemn) a known property of a low
+        difflib threshold: "cat" vs "bat" scores 0.667 and is rejected, but
+        "cat" vs "car" / "cot" (also one letter off) likewise score 0.667.
+        At length 3 a single substitution never reaches 0.80, so short-query
+        false positives via substitution do not occur. A 4-letter query with
+        one substitution, however, scores 0.75 and is still rejected. This
+        pins that the threshold does not silently surface near-miss noise for
+        short terms.
+        """
+        assert matches_search("Bat", "cat") is False
+        assert matches_search("Cot", "cat") is False
+        assert matches_search("Card", "cart") is False
+
+    def test_unrelated_does_not_match(self) -> None:
+        assert matches_search("The Matrix", "Die Heard") is False
+
+    def test_empty_needle_does_not_match(self) -> None:
+        assert matches_search("Die Hard", "") is False
+
+    def test_empty_haystack_does_not_match(self) -> None:
+        assert matches_search("", "Die Hard") is False
+
+
+class TestBestWindowRatio:
+    """Tests for the _best_window_ratio fuzzy helper."""
+
+    def test_die_heard_clears_threshold(self) -> None:
+        """The required typo match clears the threshold with margin.
+
+        Normalized "die heard" against "die hard 1988" scores ~0.89 (best
+        window "die heard" vs "die hard "), above FUZZY_MATCH_THRESHOLD, which
+        is why "Die Heard" matches "Die Hard (1988)".
+        """
+        ratio = _best_window_ratio(
+            normalize_for_search("Die Heard"), normalize_for_search("Die Hard (1988)")
+        )
+        assert ratio > FUZZY_MATCH_THRESHOLD
+
+    def test_die_hardy_also_clears_threshold(self) -> None:
+        """A different one-letter variant scores the same as "Die Heard".
+
+        "die hardy" against "die hard 1988" also scores ~0.89, so the
+        threshold cannot distinguish it from "Die Heard"; both are accepted.
+        """
+        ratio = _best_window_ratio(
+            normalize_for_search("Die Hardy"), normalize_for_search("Die Hard (1988)")
+        )
+        assert ratio > FUZZY_MATCH_THRESHOLD
+
+    def test_needle_longer_than_haystack_uses_full_ratio(self) -> None:
+        """When the needle is longer than the haystack the fallback path runs.
+
+        With no window to slide, the helper compares the whole strings.
+        "akira kurosawa" (needle) is longer than the title "akira" (haystack),
+        exercising the ``len(needle) >= len(haystack)`` branch; the partial
+        overlap stays well below threshold.
+        """
+        ratio = _best_window_ratio(
+            normalize_for_search("Akira Kurosawa"), normalize_for_search("Akira")
+        )
+        assert ratio < FUZZY_MATCH_THRESHOLD
+        assert matches_search("Akira", "Akira Kurosawa") is False
