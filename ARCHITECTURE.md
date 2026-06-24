@@ -48,6 +48,7 @@ Manages persistent storage of processed data and embeddings.
 - Type-specific detail tables (`book_details`, `movie_details`, `tv_show_details`, `video_game_details`)
 - `credentials` table for encrypted OAuth tokens and API keys (auto-migrated from config on startup)
 - `source_configs` table for non-sensitive per-source config that has been migrated from `config.yaml` via the web UI ("Migrate to DB" button); see [Source configuration precedence](#source-configuration-precedence) below
+- `settings` table for global/system config (namespaced key -> JSON value), seeded from `config.yaml` on boot; see [Global configuration precedence](#global-configuration-precedence) below
 - `enrichment_status` for tracking metadata enrichment
 - `core_memories`, `conversation_messages`, `preference_profiles` for chat system
 
@@ -61,6 +62,9 @@ Each ingestion source can live in any of three states:
 Listing endpoints (`GET /api/sync/sources`, `recommendinator source list`) return every known source — enabled and disabled — each carrying its current `enabled` flag so the UI can render disabled sources in a muted state. `resolve_inputs` is the gate for sync execution; it filters disabled and unknown-plugin entries before invoking any plugin.
 
 Sensitive fields (any `ConfigField` with `sensitive=True`) always live in the encrypted `credentials` table regardless of which side owns the rest of the config. `resolve_inputs` merges encrypted credentials over the rest of the config at sync time. The migration endpoint (`POST /api/sync/sources/<id>/migrate`) splits a YAML entry into both tables on first call and is idempotent on subsequent calls. The create endpoint (`POST /api/sync/sources`) skips YAML entirely and writes only the non-sensitive values; sensitive fields are set afterwards via `PUT /api/sync/sources/<id>/secret/<key>`.
+
+**Global configuration precedence:**
+The global/system config sections (`features`, `ollama`, `ingestion`, `recommendations`, `conversation`, `sync`, `enrichment`, `web`, `logging`) are seeded into the `settings` table on every boot by `migrate_config_settings`. Granularity is **key-level**: each section is flattened to dotted leaf paths (e.g. `web.port`, `recommendations.scorer_weights.genre_match`) and each leaf is a separate `settings` row — scalars, lists and `null` are stored whole, only nested dicts are descended into. Seeding only writes leaves that are missing from the DB — a leaf already in the database is never overwritten by YAML. After seeding, each section is rebuilt by deep-merging the DB leaves on top of the YAML/default section, so a DB-stored leaf wins per-key while any *new* YAML leaf (added by a later app version) still flows through to the running config instead of being silently dropped. Existing `config[section][key]` read sites are unchanged. The same overlay re-runs on config hot-reload. The `storage` section (database/vector/cache paths) is the one exception: it bootstraps the database itself and therefore stays YAML/env only and is never written to the DB. `inputs` (sources) and credentials are owned by the `source_configs` / `credentials` migrations instead.
 
 **Cross-Source Deduplication:**
 Items imported from different sources (e.g., Steam and a personal blog) are automatically deduplicated by normalized title. When saving an item, the system first looks up an existing row by `(user_id, external_id, content_type)`. If found, it then checks for a *different* row with the same `(user_id, content_type, normalized_title)` and merges any such duplicate into the kept row. If no external_id match exists, it falls back to a direct normalized_title lookup to merge items from different sources. Merge rules: rating/review are filled from the duplicate only if the kept row is null; `date_completed` keeps the later date; genres/tags are merged additively; monotonic columns (seasons/episodes) keep the higher value; detail-table metadata is merged existing-wins — except `seasons_watched_dates`, which merges per season keeping the later watch date on both the normal-save/sync path and duplicate-row consolidation, so an earlier ingestion date never overrides a later user date, a newer Trakt watch still updates it, and new seasons are added. Schema migrations re-normalize all titles and merge any duplicates exposed by the corrected normalization.
@@ -242,6 +246,14 @@ Configuration files in `config/`:
 - `example.yaml`: Template with all options documented
 
 Key sections: `features`, `ollama`, `storage`, `inputs`, `web`, `recommendations`, `conversation`, `enrichment`, `logging`.
+
+**These files only bootstrap configuration.** On boot, the global/system
+sections (`features`, `ollama`, `ingestion`, `recommendations`, `conversation`,
+`sync`, `enrichment`, `web`, `logging`) are seeded into the `settings` table and
+the database becomes authoritative for them — see [Global configuration precedence](#global-configuration-precedence).
+The `storage` paths stay YAML-only (they bootstrap the database itself), and
+sensitive fields such as provider `api_key` are never written to the database;
+they remain in `config.yaml`.
 
 The `inputs` section uses **named source instances**: each key is a user-defined name and must include a `plugin:` field to identify the plugin type. This allows multiple instances of the same plugin (e.g., separate JSON imports for books and movies). File-based plugins use a standardized `path` field. Example:
 
