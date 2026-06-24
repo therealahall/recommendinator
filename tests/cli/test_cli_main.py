@@ -338,3 +338,29 @@ class TestUpdateDbOnlySourceRegression:
         assert result.exit_code == 0, result.output
         assert "calibre-web" in result.output
         assert "enabled" in result.output
+
+
+def test_cli_boot_seeds_and_overlays_db_settings(tmp_path: Path) -> None:
+    """CLI boot runs the real settings migration against an isolated DB.
+
+    Drives the *real* ``migrate_config_settings`` hook with a real temp-DB
+    StorageManager (no stub): boot must seed YAML leaves into the settings
+    table and overlay DB leaves back so config is DB-backed afterwards.
+    """
+    runner = CliRunner()
+    config: dict[str, Any] = {"web": {"port": 18473}}
+    storage = StorageManager(sqlite_path=tmp_path / "test.db")
+    # Pre-seed a DB leaf that must win over the YAML value on boot.
+    storage.set_setting("web.port", 9999)
+
+    with (
+        patch("src.cli.main.load_config", return_value=config),
+        patch("src.cli.main.create_storage_manager", return_value=storage),
+        patch("src.cli.main.create_llm_components", return_value=(None, None, None)),
+        patch("src.cli.main.create_recommendation_engine"),
+    ):
+        result = runner.invoke(cli, ["status"])
+
+    assert result.exit_code == 0
+    # Real hook overlaid the DB leaf onto the in-memory config (DB wins).
+    assert config["web"]["port"] == 9999

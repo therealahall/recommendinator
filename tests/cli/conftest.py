@@ -8,6 +8,7 @@ from click.testing import CliRunner
 from src.cli.main import cli
 from src.llm.embeddings import EmbeddingGenerator
 from src.llm.recommendations import RecommendationGenerator
+from tests.factories import back_mock_settings_store
 
 
 @pytest.fixture
@@ -21,6 +22,11 @@ def _cli_patches():
 
     The top-level ``cli`` callback runs the source migrations on every command,
     so they are patched here to keep them off the MagicMock storage in tests.
+
+    The real ``migrate_config_settings`` boot hook is NOT stubbed — it runs
+    against the mocked StorageManager, whose settings store behaves like an
+    empty database (see ``_invoke_with_mocks``) so seeding/overlay is a no-op
+    and config stays YAML-driven without leaking state across tests.
     """
     return (
         patch("src.cli.main.load_config"),
@@ -60,6 +66,7 @@ def _invoke_with_mocks(
         p_plugins,
     ):
         mock_load.return_value = config or {}
+        back_mock_settings_store(mock_storage)
         mock_storage_fn.return_value = mock_storage
         mock_llm.return_value = (
             llm_client,
