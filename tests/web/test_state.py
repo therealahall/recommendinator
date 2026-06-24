@@ -21,6 +21,7 @@ from src.web.state import (
     get_ollama_client,
     reload_config,
 )
+from tests.factories import back_mock_settings_store
 
 _AWATCH_PATCH_TARGET = "watchfiles.awatch"
 
@@ -71,6 +72,9 @@ class TestReloadConfig:
 
         app_state.config_path = str(config_file)
         storage = Mock(spec=StorageManager)
+        # The real settings hook now runs on hot-reload; back the mock's
+        # settings store so it is an isolated no-op here.
+        back_mock_settings_store(storage)
         app_state.storage = storage
 
         with (
@@ -99,6 +103,29 @@ class TestReloadConfig:
             reload_config()
 
         assert "Cannot reload config" in caplog.text
+
+    def test_reload_reapplies_settings_overlay(self, tmp_path: Path) -> None:
+        """Hot-reload re-runs the real settings migration/overlay against the DB.
+
+        Regression: DB-backed global config must survive a config file edit —
+        the watcher reloads YAML, so the overlay has to re-apply or the YAML
+        value would silently win until the next restart. Drives the real hook
+        against an isolated temp-DB StorageManager (no stub).
+        """
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("web:\n  port: 18473\n")
+
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+        # A DB leaf the operator edited must win over the reloaded YAML value.
+        storage.set_setting("web.port", 9999)
+
+        app_state.config_path = str(config_file)
+        app_state.storage = storage
+
+        result = reload_config()
+
+        assert result is True
+        assert app_state.config["web"]["port"] == 9999
 
     def test_reload_config_load_raises_returns_false(self) -> None:
         """reload_config returns False when load_config raises an exception.
