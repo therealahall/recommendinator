@@ -43,8 +43,11 @@ from src.storage.schema import (
     get_enrichment_stats,
     get_enrichment_status,
     get_preference_profile,
+    get_setting,
     get_source_config,
     get_user_by_id,
+    has_setting,
+    list_settings,
     list_source_configs,
     mark_enrichment_complete,
     mark_enrichment_failed,
@@ -55,6 +58,8 @@ from src.storage.schema import (
     save_core_memory,
     save_credential,
     save_preference_profile,
+    seed_setting,
+    set_setting,
     set_source_config_enabled,
     update_core_memory,
     update_user_settings,
@@ -1156,3 +1161,42 @@ class StorageManager:
         with self.sqlite_db.connection() as conn:
             rows = list_source_configs(conn, user_id)
         return [self._row_to_source_config_dict(row) for row in rows]
+
+    # Settings methods (global/system config, JSON-encoded values)
+
+    def get_setting(self, key: str) -> Any | None:
+        """Return the decoded value for a settings key, or ``None`` if unset.
+
+        Returns ``None`` for BOTH a missing key and a stored null value — use
+        ``has_setting`` to distinguish presence from a stored ``None``.
+        """
+        with self.sqlite_db.connection() as conn:
+            value_json = get_setting(conn, key)
+        return json.loads(value_json) if value_json is not None else None
+
+    def set_setting(self, key: str, value: Any) -> None:
+        """JSON-encode and persist a settings value (UPSERT)."""
+        value_json = json.dumps(value, sort_keys=True)
+        with self.sqlite_db.connection() as conn:
+            set_setting(conn, key, value_json)
+
+    def seed_setting(self, key: str, value: Any) -> None:
+        """JSON-encode and insert a settings value only if the key is absent.
+
+        Never overwrites an existing leaf (INSERT OR IGNORE). Encoding matches
+        ``set_setting`` so a later overwrite compares equal.
+        """
+        value_json = json.dumps(value, sort_keys=True)
+        with self.sqlite_db.connection() as conn:
+            seed_setting(conn, key, value_json)
+
+    def has_setting(self, key: str) -> bool:
+        """Return True when a settings key exists in the database."""
+        with self.sqlite_db.connection() as conn:
+            return has_setting(conn, key)
+
+    def list_settings(self) -> dict[str, Any]:
+        """Return every stored setting as a key -> decoded value mapping."""
+        with self.sqlite_db.connection() as conn:
+            raw = list_settings(conn)
+        return {key: json.loads(value_json) for key, value_json in raw.items()}
