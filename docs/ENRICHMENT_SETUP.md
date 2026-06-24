@@ -71,7 +71,8 @@ TMDB provides comprehensive metadata for movies and TV shows. It's the backbone 
 - Ratings
 - Release dates
 - Studio/network information
-- Creator credits (TV shows)
+- Director (movies, from credits; up to 3 directors comma-joined)
+- Creator credits (TV shows; up to 3 creators comma-joined)
 - Collection/franchise info with series position ordering (e.g., knowing that *The Dark Knight* is the 2nd film in the Dark Knight trilogy)
 
 **Getting your API key:**
