@@ -1,11 +1,13 @@
 """Tests for the enrichment manager."""
 
+import logging
 import time
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 
 from src.enrichment.manager import (
     EnrichmentJobStatus,
@@ -85,6 +87,50 @@ class MockProvider(EnrichmentProvider):
             match_quality="high",
             provider=self._name,
         )
+
+
+class RawRequestErrorProvider(EnrichmentProvider):
+    """Provider that lets a raw requests.HTTPError escape from enrich().
+
+    Models the failure mode where a provider forgets to wrap a ``requests``
+    exception in ``ProviderError``, so it falls through to the manager's
+    broad ``except Exception`` catch-all rather than the ``ProviderError``
+    branch.
+    """
+
+    def __init__(self, error: Exception) -> None:
+        self._error = error
+
+    @property
+    def name(self) -> str:
+        return "raw_request"
+
+    @property
+    def display_name(self) -> str:
+        return "Raw Request Provider"
+
+    @property
+    def content_types(self) -> list[ContentType]:
+        return [ContentType.MOVIE]
+
+    @property
+    def requires_api_key(self) -> bool:
+        return False
+
+    @property
+    def rate_limit_requests_per_second(self) -> float:
+        return 100.0
+
+    def get_config_schema(self) -> list[ConfigField]:
+        return []
+
+    def validate_config(self, config: dict[str, Any]) -> list[str]:
+        return []
+
+    def enrich(
+        self, item: ContentItem, config: dict[str, Any]
+    ) -> EnrichmentResult | None:
+        raise self._error
 
 
 class TestEnrichmentJobStatus:
@@ -516,6 +562,94 @@ class TestEnrichmentManager:
 
         status = manager.get_status()
         assert status.items_not_found == 1
+
+
+class TestEnrichmentStatusApiKeyScrubbingRegression:
+    """Regression tests for an api_key leaking through status.errors.
+
+    The provider raise sites already scrub ``requests`` exceptions, but the
+    manager's broad ``except Exception`` catch-alls stringify the raw error
+    into ``status.errors`` — which the web ``/enrichment/status`` endpoint and
+    CLI surface to users and logs. If a future provider ever lets a raw
+    ``requests.RequestException`` escape unwrapped (i.e. not inside
+    ``ProviderError``), the request URL — and the ``?api_key=<secret>`` it
+    carries — would leak there.
+
+    Fix: the catch-all sites render ``requests`` exceptions through
+    ``scrub_request_error`` (via ``_render_error``) while leaving genuine
+    non-request errors untouched, so they keep their useful detail.
+    """
+
+    _API_KEY = "SECRET_MANAGER_KEY_123"
+
+    @pytest.fixture
+    def mock_storage(self) -> MagicMock:
+        storage = MagicMock(spec=StorageManager)
+        storage.get_items_needing_enrichment.return_value = []
+        storage.count_items_needing_enrichment.return_value = 0
+        return storage
+
+    @pytest.fixture
+    def mock_registry(self) -> EnrichmentRegistry:
+        registry = EnrichmentRegistry()
+        registry._discovered = True
+        return registry
+
+    @pytest.fixture
+    def config(self) -> dict[str, Any]:
+        return {
+            "enrichment": {
+                "batch_size": 10,
+                "providers": {"raw_request": {"enabled": True}},
+            }
+        }
+
+    def _http_error(self) -> requests.HTTPError:
+        """Build an HTTPError whose str() embeds the api_key, like requests."""
+        response = MagicMock(spec=requests.Response)
+        response.status_code = 401
+        url = (
+            "https://api.themoviedb.org/3/search/movie"
+            f"?api_key={self._API_KEY}&query=The+Matrix"
+        )
+        return requests.HTTPError(f"401 Client Error for url: {url}", response=response)
+
+    def test_raw_request_error_does_not_leak_api_key_in_status(
+        self,
+        mock_storage: MagicMock,
+        mock_registry: EnrichmentRegistry,
+        config: dict[str, Any],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A raw, unwrapped requests error must be scrubbed in status and logs."""
+        item = ContentItem(
+            id="movie1",
+            title="The Matrix",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+        )
+        mock_storage.get_items_needing_enrichment.side_effect = [[(1, item)], []]
+        mock_storage.count_items_needing_enrichment.return_value = 1
+
+        mock_registry.register(RawRequestErrorProvider(self._http_error()))
+
+        manager = EnrichmentManager(mock_storage, config, mock_registry)
+        with caplog.at_level(logging.WARNING, logger="src.enrichment.manager"):
+            manager.start_enrichment()
+            manager._wait_for_completion()
+
+        status = manager.get_status()
+        assert status.errors, "expected the unwrapped request error to be recorded"
+        joined = " ".join(status.errors)
+        assert self._API_KEY not in joined
+        assert "api_key=" not in joined
+        assert "raw_request: HTTP 401" in joined
+
+        # The same scrubbed value must reach the logs (CWE-532): the catch-all
+        # logger call must not lazily stringify the raw error's leaky URL.
+        assert "raw_request" in caplog.text, "expected the error to be logged"
+        assert self._API_KEY not in caplog.text
+        assert "api_key=" not in caplog.text
 
 
 class TestEnrichmentProgressRegression:

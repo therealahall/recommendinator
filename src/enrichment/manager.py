@@ -13,15 +13,39 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+import requests
+
 from src.enrichment.provider_base import EnrichmentResult, ProviderError
 from src.enrichment.rate_limiter import RateLimiter
 from src.enrichment.registry import EnrichmentRegistry, get_enrichment_registry
 from src.models.content import ContentItem, ContentType, get_enum_value
+from src.utils.request_errors import scrub_request_error
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
 
 logger = logging.getLogger(__name__)
+
+
+def _render_error(error: Exception) -> str:
+    """Render an exception for the user-facing status without leaking secrets.
+
+    ``requests`` exceptions can embed a request URL carrying an API key in its
+    query string. If a provider ever lets one escape unwrapped, stringifying it
+    here would leak that key into ``status.errors`` (surfaced by the web API and
+    CLI). Scrub those; keep the full message for all other exception types,
+    which carry no credential and whose detail aids debugging.
+
+    Args:
+        error: The caught exception to render.
+
+    Returns:
+        The scrubbed ``HTTP <status>`` / class name for request exceptions,
+        otherwise ``str(error)``.
+    """
+    if isinstance(error, requests.RequestException):
+        return scrub_request_error(error)
+    return str(error)
 
 
 @dataclass
@@ -332,10 +356,11 @@ class EnrichmentManager:
             )
 
         except Exception as error:
-            logger.exception("Enrichment job failed with error: %s", error)
+            rendered = _render_error(error)
+            logger.exception("Enrichment job failed with error: %s", rendered)
             with self._lock:
                 self._status.running = False
-                self._status.errors.append(f"Job error: {error}")
+                self._status.errors.append(f"Job error: {rendered}")
 
     def _process_batch(self, items: list[tuple[int, ContentItem]]) -> None:
         """Process a batch of items.
@@ -447,11 +472,14 @@ class EnrichmentManager:
                     self._status.errors.append(f"{provider.name}: {error.message}")
 
             except Exception as error:
+                rendered = _render_error(error)
                 logger.warning(
-                    "[ENRICHMENT] Unexpected error from %s: %s", provider.name, error
+                    "[ENRICHMENT] Unexpected error from %s: %s",
+                    provider.name,
+                    rendered,
                 )
                 with self._lock:
-                    self._status.errors.append(f"{provider.name}: {error}")
+                    self._status.errors.append(f"{provider.name}: {rendered}")
 
         # No provider found a match
         logger.debug(
