@@ -5,6 +5,7 @@ import { useAppStore } from '@/stores/app'
 import type { ContentItemResponse, ItemEditRequest } from '@/types/api'
 
 const PAGE_SIZE = 50
+const SEARCH_DEBOUNCE_MS = 250
 
 export const useLibraryStore = defineStore('library', () => {
   const api = useApi()
@@ -22,6 +23,16 @@ export const useLibraryStore = defineStore('library', () => {
   const enrichmentFilter = ref('')
   const showIgnored = ref(false)
 
+  // Search
+  const searchQuery = ref('')
+  const searchLoading = ref(false)
+  const searchAnnouncement = ref('')
+  let searchTimer: ReturnType<typeof setTimeout> | null = null
+  // Tracks the in-flight load so a search triggered while a request is
+  // already running awaits the real settle instead of an instantly-resolved
+  // promise, keeping searchLoading bound to the true request lifecycle.
+  let inFlightLoad: Promise<void> | null = null
+
   // Edit modal
   const editingItem = ref<ContentItemResponse | null>(null)
   const editSaving = ref(false)
@@ -38,8 +49,17 @@ export const useLibraryStore = defineStore('library', () => {
     return load(true)
   }
 
-  async function load(isReset = false) {
-    if (loading.value) return
+  function load(isReset = false): Promise<void> {
+    // Never return undefined: a search triggered while a load is already in
+    // flight must await that settle so its finally clears searchLoading.
+    if (loading.value) return inFlightLoad ?? Promise.resolve()
+    inFlightLoad = runLoad(isReset).finally(() => {
+      inFlightLoad = null
+    })
+    return inFlightLoad
+  }
+
+  async function runLoad(isReset: boolean): Promise<void> {
     const app = useAppStore()
     loading.value = true
     error.value = ''
@@ -54,6 +74,7 @@ export const useLibraryStore = defineStore('library', () => {
       if (statusFilter.value) params.status = statusFilter.value
       if (enrichmentFilter.value) params.enrichment = enrichmentFilter.value
       if (showIgnored.value) params.include_ignored = true
+      if (searchQuery.value) params.search = searchQuery.value
 
       const result = await api.get<ContentItemResponse[]>('/items', params)
 
@@ -68,10 +89,41 @@ export const useLibraryStore = defineStore('library', () => {
       }
 
       offset.value += result.length
+
+      if (isReset) announceSearch(result.length)
     } catch (err) {
       error.value = err instanceof Error ? err.message : 'Failed to load library'
     } finally {
       loading.value = false
+    }
+  }
+
+  function announceSearch(count: number) {
+    const query = searchQuery.value
+    if (!query) {
+      searchAnnouncement.value = ''
+    } else if (count === 0) {
+      searchAnnouncement.value = `No items match “${query}”`
+    } else if (count === 1) {
+      searchAnnouncement.value = `1 item matches “${query}”`
+    } else {
+      searchAnnouncement.value = `${count} items match “${query}”`
+    }
+  }
+
+  async function runSearch(): Promise<void> {
+    searchLoading.value = true
+    try {
+      await resetAndLoad()
+    } finally {
+      searchLoading.value = false
+    }
+  }
+
+  function cleanup() {
+    if (searchTimer) {
+      clearTimeout(searchTimer)
+      searchTimer = null
     }
   }
 
@@ -81,7 +133,19 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
-  function setFilter(key: 'type' | 'status' | 'enrichment' | 'showIgnored', value: string | boolean) {
+  function setFilter(
+    key: 'type' | 'status' | 'enrichment' | 'showIgnored' | 'search',
+    value: string | boolean,
+  ) {
+    if (key === 'search') {
+      searchQuery.value = value as string
+      if (searchTimer) clearTimeout(searchTimer)
+      searchTimer = setTimeout(() => {
+        searchTimer = null
+        runSearch()
+      }, SEARCH_DEBOUNCE_MS)
+      return
+    }
     if (key === 'type') typeFilter.value = value as string
     else if (key === 'status') statusFilter.value = value as string
     else if (key === 'enrichment') enrichmentFilter.value = value as string
@@ -170,12 +234,16 @@ export const useLibraryStore = defineStore('library', () => {
     statusFilter,
     enrichmentFilter,
     showIgnored,
+    searchQuery,
+    searchLoading,
+    searchAnnouncement,
     editingItem,
     editSaving,
     totalLoaded,
     resetAndLoad,
     load,
     loadMore,
+    cleanup,
     setFilter,
     openEdit,
     closeEdit,
