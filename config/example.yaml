@@ -4,6 +4,13 @@
 # (docker compose up), the container's entrypoint copies this file to
 # config.yaml automatically on first run if config.yaml is missing — so
 # edit ./config/config.yaml on the host directly, not example.yaml.
+#
+# Global config sections (features, ollama, ingestion, recommendations,
+# conversation, sync, enrichment, web, logging) are seeded into the database on
+# boot; after that the database is authoritative for them and edits to this file
+# no longer take effect. The `storage` paths stay YAML-only (they bootstrap the
+# database). Sensitive fields such as the provider `api_key` values below are
+# NOT stored in the database — they remain only in this file.
 
 # Feature flags - control optional functionality
 features:
