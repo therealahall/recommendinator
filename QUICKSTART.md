@@ -110,7 +110,7 @@ With `auto_enrich_on_sync: true`, enrichment runs automatically every time you s
 
 The system supports multiple data sources through a plugin architecture. See `config/example.yaml` for the full list of available plugins and their configuration options.
 
-**Available plugins:** Goodreads (books), The StoryGraph (books), Steam (games), GOG (games), Epic Games (games), Sonarr (TV shows), Radarr (movies), Trakt (TV shows/movies), ROM Library (games), and generic CSV/JSON/Markdown importers for any content type.
+**Available plugins:** Goodreads (books), The StoryGraph (books), Calibre-Web (books), Steam (games), GOG (games), Epic Games (games), Sonarr (TV shows), Radarr (movies), Trakt (TV shows/movies), ROM Library (games), and generic CSV/JSON/Markdown importers for any content type.
 
 ### Configure a source
 

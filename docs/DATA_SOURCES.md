@@ -12,6 +12,7 @@ sources in the UI/CLI, parallel sync, and library export.
 | **Goodreads** | Books | [goodreads_csv](../src/ingestion/sources/goodreads_csv/README.md) — CSV export from your Goodreads library |
 | **Goodreads (RSS)** | Books | [goodreads_rss](../src/ingestion/sources/goodreads_rss/README.md) — sync public shelves via RSS (user ID or profile URL; no CSV export) |
 | **The StoryGraph** | Books | [storygraph_csv](../src/ingestion/sources/storygraph_csv/README.md) — CSV export from your StoryGraph library |
+| **Calibre-Web** | Books | [calibre_web](../src/ingestion/sources/calibre_web/README.md) — OPDS import from a Calibre-Web instance |
 | **Steam** | Games | [steam](../src/ingestion/sources/steam/README.md) — automatic import via Steam Web API |
 | **GOG** | Games | [gog](../src/ingestion/sources/gog/README.md) — OAuth; imports library and wishlist |
 | **Epic Games** | Games | [epic_games](../src/ingestion/sources/epic_games/README.md) — OAuth via Legendary |

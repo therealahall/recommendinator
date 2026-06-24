@@ -16,6 +16,7 @@ Responsible for parsing and normalizing data from various sources.
 - Goodreads CSV exports (books)
 - Goodreads public shelves via RSS (books)
 - The StoryGraph CSV exports (books)
+- Calibre-Web OPDS catalog (books)
 - Steam Web API (video games)
 - GOG OAuth API (video games)
 - Epic Games via Legendary (video games)
