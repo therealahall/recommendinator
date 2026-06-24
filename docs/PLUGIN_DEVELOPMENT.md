@@ -226,6 +226,7 @@ from typing import Any, Iterator
 
 from src.ingestion.plugin_base import ConfigField, ProgressCallback, SourceError, SourcePlugin
 from src.models.content import ContentItem, ContentType, ConsumptionStatus
+from src.utils.request_errors import scrub_request_error
 
 class MovieApiPlugin(SourcePlugin):
     API_BASE = "https://api.example.com/v1"
@@ -277,7 +278,7 @@ class MovieApiPlugin(SourcePlugin):
             response.raise_for_status()
             data = response.json()
         except requests.RequestException as e:
-            raise SourceError("movie_api", f"API request failed: {e}") from e
+            raise SourceError("movie_api", f"API request failed: {scrub_request_error(e)}") from e
         
         for movie in data.get("movies", []):
             yield ContentItem(
@@ -416,6 +417,7 @@ class TestMyPlugin:
    total_items, current_item)`. Use `total_items=None` when unknown.
 10. **Respect the `ignored` field** - If your source provides a way to mark items as excluded, set `ignored=True` on the `ContentItem`. Use `parse_boolean_field()` from `generic_csv` for flexible boolean parsing.
 11. **Use list format for `seasons_watched`** - For TV shows, store `seasons_watched` as a list of specific season numbers (e.g., `[1, 2, 5, 6]`) in metadata. Use `parse_seasons_watched()` from `generic_csv` if converting from string input. A single integer is treated as a count for backward compatibility (e.g., `5` → `[1, 2, 3, 4, 5]`).
+12. **Scrub `requests` errors that may carry secrets** - If your plugin passes a secret in the URL or query params (an `?api_key=` / `?key=` style API), the default `str()` of a `requests` exception embeds the full request URL and leaks that credential into raised errors and logs. Pass the exception through `scrub_request_error()` from `src.utils.request_errors` before interpolating it — it returns only `HTTP <status>` (or the bare exception class name), never the URL. The TMDB and RAWG enrichment providers and the Steam source all do this.
 
 ## Thread Safety
 
