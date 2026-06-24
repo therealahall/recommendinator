@@ -647,7 +647,8 @@ class TestSteamApiKeyScrubbingRegression:
     ``RequestException.__str__``, which contains the full URL (including the
     ``key`` query parameter) for HTTPErrors raised by ``raise_for_status()``.
 
-    Fix: ``_scrub_request_error`` renders only ``HTTP <status>`` for HTTP
+    Fix: the shared ``scrub_request_error`` helper (extracted into
+    :mod:`src.utils.request_errors`) renders only ``HTTP <status>`` for HTTP
     errors and the bare exception class name for transport errors, before the
     string ever reaches ``SteamAPIError`` or any logger.
     """
