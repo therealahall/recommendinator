@@ -9,8 +9,8 @@ with **no AI required** — AI features are opt-in for users who want them.
 - **AI is optional** — enable Ollama integration when you want deeper insights
 - **You own your data** — a SQLite database you can query, back up, or delete
 
-It imports from sources you already use (Goodreads, Steam, GOG, Epic, Sonarr,
-Radarr, ROM libraries, or plain CSV/JSON/Markdown), enriches items with metadata,
+It imports from sources you already use (Goodreads, Calibre-Web, Steam, GOG,
+Epic, Sonarr, Radarr, ROM libraries, or plain CSV/JSON/Markdown), enriches items with metadata,
 and ranks recommendations through a transparent scoring pipeline. Your love of
 sci-fi books can influence game and movie suggestions via semantic genre clusters.
 Browse and tune everything from a themeable web UI or the CLI — they are
@@ -67,6 +67,7 @@ rest.
 | Source | Type | Setup |
 |--------|------|-------|
 | **Goodreads** | Books | [goodreads](src/ingestion/sources/goodreads/README.md) |
+| **Calibre-Web** | Books | [calibre_web](src/ingestion/sources/calibre_web/README.md) |
 | **Steam** | Games | [steam](src/ingestion/sources/steam/README.md) |
 | **GOG** | Games | [gog](src/ingestion/sources/gog/README.md) |
 | **Epic Games** | Games | [epic_games](src/ingestion/sources/epic_games/README.md) |
