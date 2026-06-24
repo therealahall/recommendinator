@@ -31,7 +31,7 @@ from src.storage.schema import (
     write_enrichment_complete,
 )
 from src.utils.list_merge import merge_string_lists
-from src.utils.sorting import get_sort_title
+from src.utils.sorting import get_sort_title, matches_search
 
 # Status ordering for forward-only progression.
 # A status can only be overwritten by a status later in this sequence.
@@ -802,6 +802,7 @@ class SQLiteDB:
         sort_by: str = "title",
         include_ignored: bool = True,
         enrichment: EnrichmentFilter | None = None,
+        search: str | None = None,
     ) -> list[ContentItem]:
         """Get content items with optional filters.
 
@@ -819,13 +820,32 @@ class SQLiteDB:
                 for backward compatibility)
             enrichment: Filter by enrichment state ("enriched" or
                 "not_enriched"). None returns all items.
+            search: Optional search term. When non-empty (after strip),
+                results are filtered to items whose title or creator
+                (author/director/creators/developer) matches the term via
+                exact, substring, or fuzzy matching. ANDs with all other
+                filters. Filtering happens before limit/offset so pagination
+                pages over the full matched set.
 
         Returns:
             List of ContentItem objects
+
+        Note:
+            Search filtering runs in Python over the full candidate set (rows
+            remaining after the SQL type/status/rating filters) because it
+            inspects per-type creator metadata that is not queryable in SQL.
+            limit/offset are then applied to the filtered list so pagination
+            always covers the full matched set with no dropped matches. This
+            loads the candidate set into memory, which is acceptable at
+            personal-library scale; it would need an index-backed approach if
+            libraries grew into the hundreds of thousands of items.
         """
         # An empty status list matches nothing by definition.
         if isinstance(status, list) and not status:
             return []
+
+        # Normalize the search term; an empty/whitespace term is a no-op.
+        search_term = search.strip() if search else ""
 
         # Default to default user if not specified
         effective_user_id = user_id if user_id is not None else get_default_user_id()
@@ -874,8 +894,13 @@ class SQLiteDB:
                 query += " ORDER BY ci.rating DESC NULLS LAST, ci.title ASC"
             # For "title" sort, we do it in Python after fetching
 
-            if sort_by != "title":
-                # Apply SQL LIMIT/OFFSET for non-title sorts
+            # Search filtering happens in Python (it inspects creator metadata),
+            # so when searching we must fetch the full result set and defer
+            # limit/offset slicing until after filtering. Title sorting is also
+            # always done in Python (article stripping).
+            slice_in_python = sort_by == "title" or bool(search_term)
+            if not slice_in_python:
+                # Apply SQL LIMIT/OFFSET for non-title, non-search queries
                 if limit:
                     query += " LIMIT ?"
                     params.append(limit)
@@ -887,16 +912,59 @@ class SQLiteDB:
             rows = cursor.fetchall()
             items = [self._row_to_content_item(row) for row in rows]
 
-            # Apply title sorting in Python (ignoring articles)
+            if search_term:
+                items = [
+                    item for item in items if self._matches_item(item, search_term)
+                ]
+
+            # Apply title sorting in Python (ignoring articles). The SQL ORDER BY
+            # already ordered non-title sorts, but search filtering preserves
+            # that order, so no re-sort is needed for those.
             if sort_by == "title":
                 items.sort(key=lambda item: get_sort_title(item.title))
-                # Apply offset and limit after sorting
+
+            if slice_in_python:
                 if offset > 0:
                     items = items[offset:]
                 if limit:
                     items = items[:limit]
 
             return items
+
+    # Metadata key holding the "creator" for each non-book content type.
+    # Books expose their creator via the ContentItem.author attribute instead.
+    _SEARCH_CREATOR_METADATA_KEYS: dict[str, str] = {
+        "movie": "director",
+        "tv_show": "creators",
+        "video_game": "developer",
+    }
+
+    @classmethod
+    def _matches_item(cls, item: ContentItem, search_term: str) -> bool:
+        """Return True if *item*'s title or creator matches *search_term*.
+
+        The creator is the author (books) or the type-specific metadata field
+        (director/creators/developer). Matching is delegated to
+        :func:`matches_search` for exact/substring/fuzzy tiers.
+
+        Args:
+            item: The content item to test.
+            search_term: The (already stripped) non-empty search term.
+
+        Returns:
+            True if the title or creator matches.
+        """
+        if matches_search(item.title, search_term):
+            return True
+
+        content_type = get_enum_value(item.content_type)
+        if content_type == "book":
+            creator = item.author
+        else:
+            creator_key = cls._SEARCH_CREATOR_METADATA_KEYS.get(content_type)
+            creator = item.metadata.get(creator_key) if creator_key else None
+
+        return bool(creator) and matches_search(str(creator), search_term)
 
     def get_unconsumed_items(
         self,
