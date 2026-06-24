@@ -329,7 +329,11 @@ class TMDBProvider(EnrichmentProvider):
         try:
             response = requests.get(
                 f"{TMDB_API_BASE}/movie/{tmdb_id}",
-                params={"api_key": api_key, "language": language},
+                params={
+                    "api_key": api_key,
+                    "language": language,
+                    "append_to_response": "credits",
+                },
                 timeout=10,
             )
             response.raise_for_status()
@@ -364,6 +368,18 @@ class TMDBProvider(EnrichmentProvider):
                 ]
                 if studios:
                     extra_metadata["studio"] = studios[0]
+
+            # Extract director(s) from credits (requested via append_to_response).
+            # The truthiness guard on `name` excludes missing/None/empty values;
+            # the str() cast hardens against non-string names in the API payload.
+            crew = movie.get("credits", {}).get("crew", [])
+            directors = [
+                str(member["name"])
+                for member in crew
+                if member.get("job") == "Director" and member.get("name")
+            ][:3]
+            if directors:
+                extra_metadata["director"] = ", ".join(directors)
 
             # Extract collection/franchise info for series ordering
             collection = movie.get("belongs_to_collection")
@@ -447,10 +463,16 @@ class TMDBProvider(EnrichmentProvider):
                 networks = [network["name"] for network in show["networks"][:2]]
                 if networks:
                     extra_metadata["network"] = networks[0]
-            if show.get("created_by"):
-                creators = [creator["name"] for creator in show["created_by"][:3]]
-                if creators:
-                    extra_metadata["creators"] = ", ".join(creators)
+            # Extract creator(s). The truthiness guard on `name` excludes
+            # missing/None/empty values; the str() cast hardens against
+            # non-string names in the API payload.
+            creators = [
+                str(creator["name"])
+                for creator in show.get("created_by", [])
+                if creator.get("name")
+            ][:3]
+            if creators:
+                extra_metadata["creators"] = ", ".join(creators)
             if show.get("status"):
                 extra_metadata["status"] = show["status"]
 

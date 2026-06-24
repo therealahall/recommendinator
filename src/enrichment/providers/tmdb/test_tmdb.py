@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-from src.enrichment.provider_base import ProviderError
+from src.enrichment.provider_base import EnrichmentResult, ProviderError
 from src.enrichment.providers.tmdb.tmdb import (
     TMDBProvider,
     clean_media_title_for_search,
@@ -188,6 +188,8 @@ class TestTMDBProviderMovieEnrichment:
         assert result.provider == "tmdb"
         assert result.extra_metadata.get("runtime") == 136
         assert result.extra_metadata.get("release_year") == 1999
+        # Backward compat: a response without a 'credits' key degrades cleanly.
+        assert "director" not in result.extra_metadata
 
     def test_enrich_movie_with_search(
         self, provider: TMDBProvider, movie_item: ContentItem, config: dict[str, Any]
@@ -351,6 +353,301 @@ class TestTMDBProviderMovieEnrichment:
         assert result is not None
         assert result.external_id == "tmdb:603"
 
+    def test_enrich_movie_requests_credits_via_append_to_response(
+        self, provider: TMDBProvider, config: dict[str, Any]
+    ) -> None:
+        """Test that movie detail request appends credits in one round trip."""
+        item = ContentItem(
+            id="movie123",
+            title="The Matrix",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"tmdb_id": 603},
+        )
+
+        mock_movie_response = {
+            "id": 603,
+            "title": "The Matrix",
+            "genres": [{"id": 28, "name": "Action"}],
+            "credits": {"crew": []},
+        }
+        mock_keywords_response = {"keywords": []}
+
+        with patch("src.enrichment.providers.tmdb.tmdb.requests.get") as mock_get:
+            mock_get.side_effect = [
+                MagicMock(
+                    spec=requests.Response,
+                    status_code=200,
+                    json=lambda: mock_movie_response,
+                ),
+                MagicMock(
+                    spec=requests.Response,
+                    status_code=200,
+                    json=lambda: mock_keywords_response,
+                ),
+            ]
+
+            provider.enrich(item, config)
+
+        detail_call = mock_get.call_args_list[0]
+        # The append_to_response must be on the movie DETAIL call, not keywords.
+        assert detail_call.args[0].endswith("/movie/603")
+        assert detail_call.kwargs["params"]["append_to_response"] == "credits"
+
+    def test_enrich_movie_sets_director_and_excludes_non_director_roles(
+        self, provider: TMDBProvider, config: dict[str, Any]
+    ) -> None:
+        """Test that only Director-job crew is stored, excluding other roles.
+
+        The crew below includes a Writer that must NOT be picked up: only the
+        Director-job entry should land in the 'director' field.
+        """
+        item = ContentItem(
+            id="movie123",
+            title="Pulp Fiction",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"tmdb_id": 680},
+        )
+
+        mock_movie_response = {
+            "id": 680,
+            "title": "Pulp Fiction",
+            "genres": [{"id": 80, "name": "Crime"}],
+            "credits": {
+                "crew": [
+                    {"job": "Writer", "name": "Roger Avary"},
+                    {"job": "Director", "name": "Quentin Tarantino"},
+                ]
+            },
+        }
+        mock_keywords_response = {"keywords": []}
+
+        with patch("src.enrichment.providers.tmdb.tmdb.requests.get") as mock_get:
+            mock_get.side_effect = [
+                MagicMock(
+                    spec=requests.Response,
+                    status_code=200,
+                    json=lambda: mock_movie_response,
+                ),
+                MagicMock(
+                    spec=requests.Response,
+                    status_code=200,
+                    json=lambda: mock_keywords_response,
+                ),
+            ]
+
+            result = provider.enrich(item, config)
+
+        assert result is not None
+        # The Writer (Roger Avary) is excluded; only the Director remains.
+        assert result.extra_metadata.get("director") == "Quentin Tarantino"
+
+    def test_enrich_movie_comma_joins_multiple_directors(
+        self, provider: TMDBProvider, config: dict[str, Any]
+    ) -> None:
+        """Test that multiple directors are comma-joined and capped at three."""
+        item = ContentItem(
+            id="movie123",
+            title="Cloud Atlas",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"tmdb_id": 83542},
+        )
+
+        mock_movie_response = {
+            "id": 83542,
+            "title": "Cloud Atlas",
+            "genres": [{"id": 18, "name": "Drama"}],
+            "credits": {
+                "crew": [
+                    {"job": "Director", "name": "Lana Wachowski"},
+                    {"job": "Director", "name": "Tom Tykwer"},
+                    {"job": "Director", "name": "Lilly Wachowski"},
+                    {"job": "Director", "name": "Extra Director"},
+                ]
+            },
+        }
+        mock_keywords_response = {"keywords": []}
+
+        with patch("src.enrichment.providers.tmdb.tmdb.requests.get") as mock_get:
+            mock_get.side_effect = [
+                MagicMock(
+                    spec=requests.Response,
+                    status_code=200,
+                    json=lambda: mock_movie_response,
+                ),
+                MagicMock(
+                    spec=requests.Response,
+                    status_code=200,
+                    json=lambda: mock_keywords_response,
+                ),
+            ]
+
+            result = provider.enrich(item, config)
+
+        assert result is not None
+        assert (
+            result.extra_metadata.get("director")
+            == "Lana Wachowski, Tom Tykwer, Lilly Wachowski"
+        )
+
+    def _enrich_movie_with_credits(
+        self,
+        provider: TMDBProvider,
+        config: dict[str, Any],
+        movie_response: dict[str, Any],
+    ) -> EnrichmentResult | None:
+        """Enrich a movie via tmdb_id lookup with the given detail payload.
+
+        Mocks the movie-detail call (returning ``movie_response``) followed by an
+        empty keywords call, then returns the enrichment result.
+
+        Note: the item fixture is hardcoded with ``tmdb_id`` 603, so the movie
+        detail call always targets ``/movie/603`` regardless of the ``id`` field
+        in ``movie_response``.
+        """
+        item = ContentItem(
+            id="movie123",
+            title="The Matrix",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"tmdb_id": 603},
+        )
+        mock_keywords_response = {"keywords": []}
+
+        with patch("src.enrichment.providers.tmdb.tmdb.requests.get") as mock_get:
+            mock_get.side_effect = [
+                MagicMock(
+                    spec=requests.Response,
+                    status_code=200,
+                    json=lambda: movie_response,
+                ),
+                MagicMock(
+                    spec=requests.Response,
+                    status_code=200,
+                    json=lambda: mock_keywords_response,
+                ),
+            ]
+
+            return provider.enrich(item, config)
+
+    def test_enrich_movie_without_credits_key_omits_director(
+        self, provider: TMDBProvider, config: dict[str, Any]
+    ) -> None:
+        """Test that a response with no 'credits' key omits 'director', no raise."""
+        result = self._enrich_movie_with_credits(
+            provider,
+            config,
+            {
+                "id": 603,
+                "title": "The Matrix",
+                "genres": [{"id": 28, "name": "Action"}],
+            },
+        )
+
+        assert result is not None
+        assert "director" not in result.extra_metadata
+
+    def test_enrich_movie_with_credits_but_no_crew_omits_director(
+        self, provider: TMDBProvider, config: dict[str, Any]
+    ) -> None:
+        """Test that 'credits' present without 'crew' omits 'director', no raise."""
+        result = self._enrich_movie_with_credits(
+            provider,
+            config,
+            {
+                "id": 603,
+                "title": "The Matrix",
+                "genres": [{"id": 28, "name": "Action"}],
+                "credits": {},
+            },
+        )
+
+        assert result is not None
+        assert "director" not in result.extra_metadata
+
+    def test_enrich_movie_with_no_director_in_crew_omits_director(
+        self, provider: TMDBProvider, config: dict[str, Any]
+    ) -> None:
+        """Test that crew with no Director job omits 'director'."""
+        result = self._enrich_movie_with_credits(
+            provider,
+            config,
+            {
+                "id": 603,
+                "title": "The Matrix",
+                "genres": [{"id": 28, "name": "Action"}],
+                "credits": {"crew": [{"job": "Producer", "name": "Joel Silver"}]},
+            },
+        )
+
+        assert result is not None
+        assert "director" not in result.extra_metadata
+
+    def test_enrich_movie_director_missing_name_is_excluded(
+        self, provider: TMDBProvider, config: dict[str, Any]
+    ) -> None:
+        """Test that a Director entry missing the 'name' key is excluded, no raise."""
+        result = self._enrich_movie_with_credits(
+            provider,
+            config,
+            {
+                "id": 603,
+                "title": "The Matrix",
+                "genres": [{"id": 28, "name": "Action"}],
+                "credits": {"crew": [{"job": "Director"}]},
+            },
+        )
+
+        assert result is not None
+        assert "director" not in result.extra_metadata
+
+    def test_enrich_movie_director_empty_name_is_excluded(
+        self, provider: TMDBProvider, config: dict[str, Any]
+    ) -> None:
+        """Test that a Director entry with an empty-string name is excluded."""
+        result = self._enrich_movie_with_credits(
+            provider,
+            config,
+            {
+                "id": 603,
+                "title": "The Matrix",
+                "genres": [{"id": 28, "name": "Action"}],
+                "credits": {"crew": [{"job": "Director", "name": ""}]},
+            },
+        )
+
+        assert result is not None
+        assert "director" not in result.extra_metadata
+
+    def test_enrich_movie_non_exact_director_jobs_excluded(
+        self, provider: TMDBProvider, config: dict[str, Any]
+    ) -> None:
+        """Test that only the exact 'Director' job matches, not variants.
+
+        'Co-Director' and lowercase 'director' must be excluded so the match
+        stays an exact, case-sensitive equality.
+        """
+        result = self._enrich_movie_with_credits(
+            provider,
+            config,
+            {
+                "id": 603,
+                "title": "The Matrix",
+                "genres": [{"id": 28, "name": "Action"}],
+                "credits": {
+                    "crew": [
+                        {"job": "Co-Director", "name": "Someone Else"},
+                        {"job": "director", "name": "Lowercase Name"},
+                    ]
+                },
+            },
+        )
+
+        assert result is not None
+        assert "director" not in result.extra_metadata
+
 
 class TestTMDBProviderTVShowEnrichment:
     """Tests for TMDB TV show enrichment."""
@@ -489,6 +786,104 @@ class TestTMDBProviderTVShowEnrichment:
 
         assert result is not None
         assert result.external_id == "tmdb:1396"
+
+    def test_enrich_tv_show_creator_missing_or_empty_name_is_excluded(
+        self, provider: TMDBProvider, config: dict[str, Any]
+    ) -> None:
+        """Test that creators missing or with empty 'name' are excluded, no raise.
+
+        The 'created_by' list mixes a valid creator with one missing the 'name'
+        key and one with an empty-string name. Only the valid creator should be
+        captured, and the malformed entries must not raise.
+        """
+        item = ContentItem(
+            id="show123",
+            title="Breaking Bad",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"tmdb_id": 1396},
+        )
+
+        mock_tv_response = {
+            "id": 1396,
+            "name": "Breaking Bad",
+            "overview": "A great show.",
+            "genres": [{"id": 18, "name": "Drama"}],
+            "created_by": [
+                {"id": 1},
+                {"name": ""},
+                {"name": "Vince Gilligan"},
+            ],
+        }
+        mock_keywords_response = {"results": []}
+
+        with patch("src.enrichment.providers.tmdb.tmdb.requests.get") as mock_get:
+            mock_get.side_effect = [
+                MagicMock(
+                    spec=requests.Response,
+                    status_code=200,
+                    json=lambda: mock_tv_response,
+                ),
+                MagicMock(
+                    spec=requests.Response,
+                    status_code=200,
+                    json=lambda: mock_keywords_response,
+                ),
+            ]
+
+            result = provider.enrich(item, config)
+
+        assert result is not None
+        # Malformed entries are skipped; the valid creator is still captured.
+        assert result.extra_metadata.get("creators") == "Vince Gilligan"
+
+    def test_enrich_tv_show_comma_joins_multiple_creators(
+        self, provider: TMDBProvider, config: dict[str, Any]
+    ) -> None:
+        """Test that multiple creators are comma-joined and capped at three."""
+        item = ContentItem(
+            id="show123",
+            title="Game of Thrones",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"tmdb_id": 1399},
+        )
+
+        mock_tv_response = {
+            "id": 1399,
+            "name": "Game of Thrones",
+            "overview": "Noble families vie for control of the Iron Throne.",
+            "genres": [{"id": 18, "name": "Drama"}],
+            "created_by": [
+                {"name": "David Benioff"},
+                {"name": "D. B. Weiss"},
+                {"name": "George R. R. Martin"},
+                {"name": "Extra Creator"},
+            ],
+        }
+        mock_keywords_response = {"results": []}
+
+        with patch("src.enrichment.providers.tmdb.tmdb.requests.get") as mock_get:
+            mock_get.side_effect = [
+                MagicMock(
+                    spec=requests.Response,
+                    status_code=200,
+                    json=lambda: mock_tv_response,
+                ),
+                MagicMock(
+                    spec=requests.Response,
+                    status_code=200,
+                    json=lambda: mock_keywords_response,
+                ),
+            ]
+
+            result = provider.enrich(item, config)
+
+        assert result is not None
+        assert (
+            result.extra_metadata.get("creators")
+            == "David Benioff, D. B. Weiss, George R. R. Martin"
+        )
 
 
 class TestTMDBProviderKeywords:

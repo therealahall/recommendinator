@@ -31,6 +31,11 @@ enrichment:
 - Searches by title, with year-aware disambiguation when available.
 - Uses gap-filling — never overwrites existing fields.
 - Rate-limited to TMDB's 40 requests/sec ceiling.
+- Enriches genres, description, tags (keywords), and extra metadata. For movies
+  this includes runtime, ratings, release date/year, language, studio, series
+  ordering, and `director` (from credits, up to 3 directors comma-joined). For
+  TV shows it includes seasons, episodes, networks, status, and `creators` (up
+  to 3 creators comma-joined).
 
 ## Development
 - Implementation: [`tmdb.py`](tmdb.py)
