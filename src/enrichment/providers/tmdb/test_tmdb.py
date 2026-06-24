@@ -994,3 +994,167 @@ class TestTMDBProviderUnsupportedTypes:
 
         result = provider.enrich(item, {"api_key": "test"})
         assert result is None
+
+
+class TestTMDBApiKeyScrubbingRegression:
+    """Regression tests for the TMDB API key leaking via error messages.
+
+    Bug: TMDB requests pass the key as a query parameter
+    (``?api_key=<secret>``). On a failed request, ``requests.HTTPError``'s
+    ``str()`` embeds the full request URL — key and all. The provider
+    interpolated the raw exception into ``ProviderError(... f"...: {error}")``,
+    and that message flows into the enrichment status the web API and CLI
+    surface to users and logs, leaking the key.
+
+    Root cause: ``f"...: {error}"`` called the default
+    ``RequestException.__str__`` containing the request URL with the
+    ``api_key`` query parameter.
+
+    Fix: each ``except requests.RequestException`` block now renders the
+    error through :func:`src.utils.request_errors.scrub_request_error`, which
+    emits only ``HTTP <status>`` or the exception class name.
+    """
+
+    _API_KEY = "SECRET_TMDB_KEY_123"
+
+    def _http_error(self, status_code: int) -> requests.HTTPError:
+        """Build an HTTPError whose str() embeds the api_key, like requests."""
+        response = MagicMock(spec=requests.Response)
+        response.status_code = status_code
+        url = (
+            "https://api.themoviedb.org/3/movie/603"
+            f"?api_key={self._API_KEY}&language=en-US"
+        )
+        return requests.HTTPError(
+            f"{status_code} Client Error for url: {url}", response=response
+        )
+
+    def _config(self) -> dict[str, Any]:
+        return {"api_key": self._API_KEY, "language": "en-US"}
+
+    def test_search_error_does_not_leak_api_key(self) -> None:
+        """A failed search surfaces only the status code, not the key."""
+        provider = TMDBProvider()
+        item = ContentItem(
+            id="movie1",
+            title="The Matrix",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"release_year": 1999},
+        )
+
+        with patch("src.enrichment.providers.tmdb.tmdb.requests.get") as mock_get:
+            response = mock_get.return_value
+            response.raise_for_status.side_effect = self._http_error(401)
+
+            with pytest.raises(ProviderError) as exc_info:
+                provider.enrich(item, self._config())
+
+        message = str(exc_info.value)
+        assert self._API_KEY not in message
+        assert "api_key=" not in message
+        assert "Failed to search TMDB: HTTP 401" in message
+
+    def test_search_retry_error_does_not_leak_api_key(self) -> None:
+        """A failed year-less retry search surfaces only the status code.
+
+        The first request returns empty results, triggering the year-less
+        retry; that second request fails. Its error must still be scrubbed.
+        """
+        provider = TMDBProvider()
+        item = ContentItem(
+            id="movie1",
+            title="The Matrix",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"release_year": 1999},
+        )
+
+        empty_response = MagicMock(spec=requests.Response)
+        empty_response.raise_for_status.return_value = None
+        empty_response.json.return_value = {"results": []}
+
+        retry_response = MagicMock(spec=requests.Response)
+        retry_response.raise_for_status.side_effect = self._http_error(502)
+
+        with patch("src.enrichment.providers.tmdb.tmdb.requests.get") as mock_get:
+            mock_get.side_effect = [empty_response, retry_response]
+
+            with pytest.raises(ProviderError) as exc_info:
+                provider.enrich(item, self._config())
+
+        assert mock_get.call_count == 2
+        message = str(exc_info.value)
+        assert self._API_KEY not in message
+        assert "api_key=" not in message
+        assert "Failed to search TMDB: HTTP 502" in message
+
+    def test_movie_details_error_does_not_leak_api_key(self) -> None:
+        """A failed movie-details fetch surfaces only the status code."""
+        provider = TMDBProvider()
+        item = ContentItem(
+            id="movie1",
+            title="The Matrix",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"tmdb_id": 603},
+        )
+
+        with patch("src.enrichment.providers.tmdb.tmdb.requests.get") as mock_get:
+            response = mock_get.return_value
+            response.raise_for_status.side_effect = self._http_error(503)
+
+            with pytest.raises(ProviderError) as exc_info:
+                provider.enrich(item, self._config())
+
+        message = str(exc_info.value)
+        assert self._API_KEY not in message
+        assert "api_key=" not in message
+        assert "Failed to fetch movie details: HTTP 503" in message
+
+    def test_tv_details_error_does_not_leak_api_key(self) -> None:
+        """A failed TV-details fetch surfaces only the status code."""
+        provider = TMDBProvider()
+        item = ContentItem(
+            id="show1",
+            title="Breaking Bad",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"tmdb_id": 1396},
+        )
+
+        with patch("src.enrichment.providers.tmdb.tmdb.requests.get") as mock_get:
+            response = mock_get.return_value
+            response.raise_for_status.side_effect = self._http_error(500)
+
+            with pytest.raises(ProviderError) as exc_info:
+                provider.enrich(item, self._config())
+
+        message = str(exc_info.value)
+        assert self._API_KEY not in message
+        assert "api_key=" not in message
+        assert "Failed to fetch TV show details: HTTP 500" in message
+
+    def test_transport_error_surfaces_only_exception_type(self) -> None:
+        """A connection error surfaces only the class name, not its message."""
+        provider = TMDBProvider()
+        item = ContentItem(
+            id="movie1",
+            title="The Matrix",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"release_year": 1999},
+        )
+
+        with patch("src.enrichment.providers.tmdb.tmdb.requests.get") as mock_get:
+            mock_get.side_effect = requests.ConnectionError(
+                f"Failed to connect; api_key={self._API_KEY} was in URL"
+            )
+
+            with pytest.raises(ProviderError) as exc_info:
+                provider.enrich(item, self._config())
+
+        message = str(exc_info.value)
+        assert self._API_KEY not in message
+        assert "api_key=" not in message
+        assert "ConnectionError" in message
