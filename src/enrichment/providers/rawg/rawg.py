@@ -18,6 +18,7 @@ from src.enrichment.provider_base import (
     ProviderError,
 )
 from src.models.content import ContentItem, ContentType
+from src.utils.request_errors import scrub_request_error
 
 logger = logging.getLogger(__name__)
 
@@ -338,7 +339,9 @@ class RAWGProvider(EnrichmentProvider):
             return int(results[0]["id"])
 
         except requests.RequestException as error:
-            raise ProviderError(self.name, f"Failed to search RAWG: {error}") from error
+            raise ProviderError(
+                self.name, f"Failed to search RAWG: {scrub_request_error(error)}"
+            ) from error
 
     def _fetch_game_details(self, game_id: int, api_key: str) -> EnrichmentResult:
         """Fetch detailed game information.
@@ -433,7 +436,8 @@ class RAWGProvider(EnrichmentProvider):
 
         except requests.RequestException as error:
             raise ProviderError(
-                self.name, f"Failed to fetch game details: {error}"
+                self.name,
+                f"Failed to fetch game details: {scrub_request_error(error)}",
             ) from error
 
     def _fetch_game_series(
