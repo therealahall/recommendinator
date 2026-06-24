@@ -86,6 +86,7 @@ see **[docs/DATA_SOURCES.md](docs/DATA_SOURCES.md)**.
 - Transparent scoring pipeline — genre, creator, series order, tag overlap, rating patterns ([how it works](docs/SCORING.md))
 - Natural-language [custom rules](docs/CUSTOM_RULES.md) like "avoid horror" or "prefer short books"
 - Content-length filtering, multi-user support, [metadata enrichment](docs/ENRICHMENT_SETUP.md) (TMDB/OpenLibrary/RAWG) — automatic, plus manual editing of genres, tags, and descriptions and a library filter by enrichment state
+- Searchable library — fuzzy, typo-tolerant matching on title and creator (author/director/creators/developer), in both the web UI and CLI
 - Themeable web UI (ships with Nord and Snowstorm) with version display and update detection
 - Dual interface — CLI for automation, web UI for browsing
 
@@ -137,6 +138,7 @@ The CLI is a full peer to the web UI. A taste:
 python3.11 -m src.cli update --source all          # import everything
 python3.11 -m src.cli recommend --type book --count 10
 python3.11 -m src.cli library list --type book --status completed --sort rating
+python3.11 -m src.cli library list --search "die hard"   # fuzzy title/creator search
 python3.11 -m src.cli chat start                   # conversational mode (AI)
 ```
 
