@@ -1,5 +1,6 @@
 """Tests for CLI commands."""
 
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
@@ -14,6 +15,7 @@ from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.engine import RecommendationEngine
 from src.storage.manager import StorageManager
+from tests.factories import back_mock_settings_store
 
 
 @pytest.fixture
@@ -55,6 +57,10 @@ def mock_components(mock_config):
         mock_storage_manager = Mock(spec=StorageManager)
         mock_storage_manager.get_credentials_for_source.return_value = {}
         mock_storage_manager.list_source_configs.return_value = []
+        # Let the real migrate_config_settings boot hook run against an empty
+        # settings store (no stub) — seeding/overlay is a no-op and nothing
+        # leaks across tests.
+        back_mock_settings_store(mock_storage_manager)
         mock_storage.return_value = mock_storage_manager
 
         mock_client = Mock(spec=OllamaClient)
@@ -532,8 +538,20 @@ class TestUpdateWorkersFlag:
     ThreadPoolExecutor sizes correctly.
     """
 
-    @staticmethod
+    @pytest.fixture(autouse=True)
+    def _isolated_db(self, tmp_path: Path) -> None:
+        """Give each test its own SQLite DB.
+
+        These tests drive the real StorageManager + real settings-migration
+        boot hook (load_config is patched but create_storage_manager is not),
+        so a shared on-disk DB would leak seeded ``sync.max_workers`` leaves
+        across tests. Pointing each test at a temp DB keeps the real hook
+        running while isolating its state.
+        """
+        self._db_path = tmp_path / "test.db"
+
     def _config_with_sources(
+        self,
         sync_block: dict | None = None,
     ) -> dict:
         config: dict = {
@@ -543,8 +561,8 @@ class TestUpdateWorkersFlag:
                 "embedding_model": "nomic-embed-text",
             },
             "storage": {
-                "database_path": "data/test.db",
-                "vector_db_path": "data/test_chroma",
+                "database_path": str(self._db_path),
+                "vector_db_path": str(self._db_path.parent / "chroma"),
             },
             "inputs": {
                 "steam": {

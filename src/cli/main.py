@@ -25,6 +25,7 @@ from src.cli.config import (
     create_storage_manager,
     load_config,
 )
+from src.storage.settings_migration import migrate_config_settings
 
 
 @click.group()
@@ -49,6 +50,9 @@ def cli(ctx: click.Context, config: Path | None) -> None:
     # Initialize components
     try:
         ctx.obj["storage"] = create_storage_manager(ctx.obj["config"])
+        # Seed global config into the DB and overlay DB values onto config so
+        # the database wins over YAML for the rest of the invocation.
+        migrate_config_settings(ctx.obj["config"], ctx.obj["storage"])
         ctx.obj["llm_client"], ctx.obj["embedding_gen"], ctx.obj["rec_gen"] = (
             create_llm_components(ctx.obj["config"])
         )
