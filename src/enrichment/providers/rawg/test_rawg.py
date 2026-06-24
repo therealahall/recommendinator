@@ -1,7 +1,7 @@
 """Tests for the RAWG enrichment provider."""
 
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 import requests
@@ -705,3 +705,106 @@ class TestRAWGFranchiseExtraction:
         assert result.genres == ["RPG", "Action"]
         assert "franchise" not in result.extra_metadata
         assert "series_position" not in result.extra_metadata
+
+
+class TestRAWGApiKeyScrubbingRegression:
+    """Regression tests for the RAWG API key leaking via error messages.
+
+    Bug: RAWG requests pass the key as a query parameter (``?key=<secret>``).
+    On a failed request, ``requests.HTTPError``'s ``str()`` embeds the full
+    request URL — key and all. The provider interpolated the raw exception
+    into ``ProviderError(... f"...: {error}")``, and that message flows into
+    the enrichment status the web API and CLI surface to users and logs,
+    leaking the key.
+
+    Root cause: ``f"...: {error}"`` called the default
+    ``RequestException.__str__`` containing the request URL with the ``key``
+    query parameter.
+
+    Fix: each ``except requests.RequestException`` block now renders the
+    error through :func:`src.utils.request_errors.scrub_request_error`, which
+    emits only ``HTTP <status>`` or the exception class name.
+    """
+
+    _API_KEY = "SECRET_RAWG_KEY_123"
+
+    def _http_error(self, status_code: int) -> requests.HTTPError:
+        """Build an HTTPError whose str() embeds the key, like requests."""
+        response = MagicMock(spec=requests.Response)
+        response.status_code = status_code
+        url = f"https://api.rawg.io/api/games?key={self._API_KEY}&search=Doom"
+        return requests.HTTPError(
+            f"{status_code} Client Error for url: {url}", response=response
+        )
+
+    def _game_item(self) -> ContentItem:
+        return ContentItem(
+            id="game1",
+            title="The Witcher 3: Wild Hunt",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"release_year": 2015},
+        )
+
+    def test_search_error_does_not_leak_api_key(self) -> None:
+        """A failed search surfaces only the status code, not the key."""
+        provider = RAWGProvider()
+
+        with patch("src.enrichment.providers.rawg.rawg.requests.get") as mock_get:
+            response = mock_get.return_value
+            response.raise_for_status.side_effect = self._http_error(401)
+
+            with pytest.raises(ProviderError) as exc_info:
+                provider.enrich(self._game_item(), {"api_key": self._API_KEY})
+
+        message = str(exc_info.value)
+        assert self._API_KEY not in message
+        assert "key=" not in message
+        assert "Failed to search RAWG: HTTP 401" in message
+
+    def test_game_details_error_does_not_leak_api_key(self) -> None:
+        """A failed game-details fetch surfaces only the status code."""
+        provider = RAWGProvider()
+        mock_search = {
+            "results": [
+                {
+                    "id": 3328,
+                    "name": "The Witcher 3: Wild Hunt",
+                    "released": "2015-05-18",
+                }
+            ]
+        }
+
+        with patch("src.enrichment.providers.rawg.rawg.requests.get") as mock_get:
+            search_response = MagicMock(
+                spec=requests.Response, status_code=200, json=lambda: mock_search
+            )
+            search_response.raise_for_status = Mock(return_value=None)
+            details_response = MagicMock(spec=requests.Response)
+            details_response.raise_for_status.side_effect = self._http_error(503)
+            mock_get.side_effect = [search_response, details_response]
+
+            with pytest.raises(ProviderError) as exc_info:
+                provider.enrich(self._game_item(), {"api_key": self._API_KEY})
+
+        message = str(exc_info.value)
+        assert self._API_KEY not in message
+        assert "key=" not in message
+        assert "Failed to fetch game details: HTTP 503" in message
+
+    def test_transport_error_surfaces_only_exception_type(self) -> None:
+        """A connection error surfaces only the class name, not its message."""
+        provider = RAWGProvider()
+
+        with patch("src.enrichment.providers.rawg.rawg.requests.get") as mock_get:
+            mock_get.side_effect = requests.ConnectionError(
+                f"Failed to connect; key={self._API_KEY} was in URL"
+            )
+
+            with pytest.raises(ProviderError) as exc_info:
+                provider.enrich(self._game_item(), {"api_key": self._API_KEY})
+
+        message = str(exc_info.value)
+        assert self._API_KEY not in message
+        assert "key=" not in message
+        assert "ConnectionError" in message
