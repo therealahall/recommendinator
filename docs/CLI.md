@@ -41,6 +41,10 @@ python3.11 -m src.cli library list --format json
 # Filter by enrichment state (enriched or not_enriched)
 python3.11 -m src.cli library list --enrichment not_enriched
 
+# Search by title or creator (matches web API search). Fuzzy and typo-tolerant;
+# combines with the type/status filters.
+python3.11 -m src.cli library list --search "die hard"
+
 # Show item details
 python3.11 -m src.cli library show --id 42
 
