@@ -1827,6 +1827,78 @@ class TestPaginationAndSorting:
         assert call_kwargs["limit"] == 20
 
 
+class TestSearchParam:
+    """Tests for the search query param on /api/items."""
+
+    def test_search_is_passed_to_storage(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """GET /api/items?search=dune forwards the term to storage."""
+        mock_components["storage"].get_content_items = Mock(
+            spec=StorageManager.get_content_items, return_value=[]
+        )
+
+        response = client.get("/api/items?search=dune")
+        assert response.status_code == 200
+
+        call_kwargs = mock_components["storage"].get_content_items.call_args[1]
+        assert call_kwargs["search"] == "dune"
+
+    def test_search_defaults_to_none(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """GET /api/items without search forwards search=None to storage."""
+        mock_components["storage"].get_content_items = Mock(
+            spec=StorageManager.get_content_items, return_value=[]
+        )
+
+        response = client.get("/api/items")
+        assert response.status_code == 200
+
+        call_kwargs = mock_components["storage"].get_content_items.call_args[1]
+        assert call_kwargs["search"] is None
+
+    def test_search_combined_with_type_filter(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """GET /api/items?search=dune&type=book forwards both to storage."""
+        mock_components["storage"].get_content_items = Mock(
+            spec=StorageManager.get_content_items, return_value=[]
+        )
+
+        response = client.get("/api/items?search=dune&type=book")
+        assert response.status_code == 200
+
+        call_kwargs = mock_components["storage"].get_content_items.call_args[1]
+        assert call_kwargs["search"] == "dune"
+        assert call_kwargs["content_type"] == ContentType.BOOK
+
+    def test_search_returns_matching_items(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """GET /api/items?search=dune returns the items storage matched."""
+        mock_items = [
+            ContentItem(
+                id="1",
+                title="Dune",
+                author="Frank Herbert",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+                source="goodreads",
+            )
+        ]
+        mock_components["storage"].get_content_items = Mock(
+            spec=StorageManager.get_content_items, return_value=mock_items
+        )
+
+        response = client.get("/api/items?search=dune")
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 1
+        assert data[0]["title"] == "Dune"
+
+
 # ---------------------------------------------------------------------------
 # Count > max_count validation (8J)
 # ---------------------------------------------------------------------------
