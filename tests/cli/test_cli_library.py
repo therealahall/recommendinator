@@ -215,6 +215,66 @@ class TestLibraryList:
         assert result.exit_code == 0
         assert "Enriched" in result.output
 
+    def test_list_search_filters_results(self, cli_runner: CliRunner) -> None:
+        """Test that --search forwards the query and shows matching items."""
+        items = [_make_item(db_id=1, title="Dune", author="Frank Herbert")]
+        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage.get_content_items.return_value = items
+
+        result = _invoke_with_mocks(
+            cli_runner, ["library", "list", "--search", "Dune"], mock_storage
+        )
+
+        assert result.exit_code == 0
+        assert "Dune" in result.output
+        call_kwargs = mock_storage.get_content_items.call_args[1]
+        assert call_kwargs["search"] == "Dune"
+
+    def test_list_search_json_output(self, cli_runner: CliRunner) -> None:
+        """Test that --search works with JSON output."""
+        items = [_make_item(db_id=1, title="Dune", author="Frank Herbert")]
+        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage.get_content_items.return_value = items
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["library", "list", "--search", "Dune", "--format", "json"],
+            mock_storage,
+        )
+
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert parsed[0]["title"] == "Dune"
+        call_kwargs = mock_storage.get_content_items.call_args[1]
+        assert call_kwargs["search"] == "Dune"
+
+    def test_list_search_combines_with_type(self, cli_runner: CliRunner) -> None:
+        """Test that --search ANDs with --type."""
+        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage.get_content_items.return_value = []
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["library", "list", "--search", "Dune", "--type", "book"],
+            mock_storage,
+        )
+
+        assert result.exit_code == 0
+        call_kwargs = mock_storage.get_content_items.call_args[1]
+        assert call_kwargs["search"] == "Dune"
+        assert call_kwargs["content_type"] == ContentType.BOOK
+
+    def test_list_without_search_passes_none(self, cli_runner: CliRunner) -> None:
+        """Test that omitting --search forwards search=None (unchanged behavior)."""
+        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage.get_content_items.return_value = []
+
+        result = _invoke_with_mocks(cli_runner, ["library", "list"], mock_storage)
+
+        assert result.exit_code == 0
+        call_kwargs = mock_storage.get_content_items.call_args[1]
+        assert call_kwargs["search"] is None
+
     def test_list_forwards_sort_limit_offset(self, cli_runner: CliRunner) -> None:
         """Test that --sort, --limit, --offset, --show-ignored reach storage."""
         mock_storage = MagicMock(spec=StorageManager)

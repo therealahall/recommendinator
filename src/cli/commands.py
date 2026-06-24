@@ -1193,6 +1193,11 @@ def library() -> None:
     help="Sort order (default: title)",
 )
 @click.option(
+    "--search",
+    default=None,
+    help="Filter by title or creator (matches web API search)",
+)
+@click.option(
     "--show-ignored",
     is_flag=True,
     help="Include ignored items",
@@ -1236,6 +1241,7 @@ def library_list(
     content_type_str: str | None,
     status_str: str | None,
     sort_by: str,
+    search: str | None,
     show_ignored: bool,
     enrichment_str: str | None,
     limit: int | None,
@@ -1259,6 +1265,7 @@ def library_list(
         content_type=content_type,
         status=consumption_status,
         sort_by=sort_by,
+        search=search,
         include_ignored=show_ignored,
         limit=limit,
         offset=offset,
