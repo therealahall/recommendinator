@@ -17,6 +17,7 @@ from src.enrichment.provider_base import (
     ProviderError,
 )
 from src.models.content import ContentItem, ContentType
+from src.utils.request_errors import scrub_request_error
 
 logger = logging.getLogger(__name__)
 
@@ -292,7 +293,9 @@ class TMDBProvider(EnrichmentProvider):
             return None
 
         except requests.RequestException as error:
-            raise ProviderError(self.name, f"Failed to search TMDB: {error}") from error
+            raise ProviderError(
+                self.name, f"Failed to search TMDB: {scrub_request_error(error)}"
+            ) from error
 
     def _search_movie(
         self, item: ContentItem, api_key: str, language: str
@@ -405,7 +408,8 @@ class TMDBProvider(EnrichmentProvider):
 
         except requests.RequestException as error:
             raise ProviderError(
-                self.name, f"Failed to fetch movie details: {error}"
+                self.name,
+                f"Failed to fetch movie details: {scrub_request_error(error)}",
             ) from error
 
     def _fetch_tv_details(
@@ -488,7 +492,8 @@ class TMDBProvider(EnrichmentProvider):
 
         except requests.RequestException as error:
             raise ProviderError(
-                self.name, f"Failed to fetch TV show details: {error}"
+                self.name,
+                f"Failed to fetch TV show details: {scrub_request_error(error)}",
             ) from error
 
     def _fetch_keywords(
