@@ -808,6 +808,7 @@ async def list_items(
         None,
         description="Filter by enrichment state: enriched or not_enriched",
     ),
+    search: str | None = Query(None, description="Search term for title/creator"),
 ) -> list[ContentItemResponse]:
     """List content items with optional filters.
 
@@ -820,6 +821,7 @@ async def list_items(
         sort_by: Sort order (default: title, which ignores leading articles).
         include_ignored: Whether to include ignored items (default: False).
         enrichment: Optional enrichment-state filter (enriched/not_enriched).
+        search: Optional search term matched against title and creator.
 
     Returns:
         List of content items.
@@ -864,6 +866,7 @@ async def list_items(
         sort_by=sort_by.lower(),
         include_ignored=include_ignored,
         enrichment=enrichment,
+        search=search,
     )
 
     return [_item_to_response(item) for item in items]
