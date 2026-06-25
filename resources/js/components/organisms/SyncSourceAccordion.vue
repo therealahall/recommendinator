@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, ref } from 'vue'
 import Accordion from '@/components/atoms/Accordion.vue'
 import SourceConfigForm from '@/components/molecules/SourceConfigForm.vue'
 import OAuthConnectFlow from '@/components/molecules/OAuthConnectFlow.vue'
+import TraktDeviceCodeFlow from '@/components/molecules/TraktDeviceCodeFlow.vue'
 import { useDataStore } from '@/stores/data'
 import type {
   SyncJobResponse,
@@ -131,6 +132,7 @@ async function onRemove(): Promise<void> {
 
 const isGog = computed(() => props.source.id === 'gog')
 const isEpic = computed(() => props.source.id === 'epic_games')
+const isTrakt = computed(() => props.source.id === 'trakt')
 const showOAuthConnect = computed(() => {
   if (!isMigrated.value) return false
   if (isGog.value) {
@@ -147,6 +149,12 @@ const showOAuthDisconnect = computed(() => {
   if (isEpic.value) return data.epicStatus.connected
   return false
 })
+const showTraktConnect = computed(
+  () => isMigrated.value && isTrakt.value && !data.traktStatus.connected,
+)
+const showTraktDisconnect = computed(
+  () => isMigrated.value && isTrakt.value && data.traktStatus.connected,
+)
 
 onBeforeUnmount(() => {
   if (saveStatusTimer) {
@@ -312,6 +320,10 @@ const errorBadgeAriaLabel = computed<string>(
           />
         </div>
 
+        <div v-if="showTraktConnect" class="source-accordion-oauth">
+          <TraktDeviceCodeFlow />
+        </div>
+
         <SourceConfigForm
           :schema="schema.fields"
           :values="config.field_values"
@@ -355,6 +367,23 @@ const errorBadgeAriaLabel = computed<string>(
               :disabled="props.syncing"
               @click="isGog ? data.disconnectGog() : data.disconnectEpic()"
             >Disconnect</button>
+            <template v-if="showTraktDisconnect">
+              <span
+                class="source-accordion-connected"
+                data-testid="trakt-connected"
+                role="status"
+              >
+                Trakt account connected.
+              </span>
+              <button
+                type="button"
+                class="btn btn-danger"
+                data-testid="disconnect-btn-trakt"
+                aria-label="Disconnect Trakt"
+                :disabled="props.syncing"
+                @click="data.disconnectTrakt()"
+              >Disconnect</button>
+            </template>
             <button
               type="button"
               class="btn btn-danger source-accordion-remove-btn"
@@ -426,6 +455,12 @@ const errorBadgeAriaLabel = computed<string>(
 
 .source-accordion-oauth {
   margin-bottom: var(--space-3);
+}
+
+.source-accordion-connected {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  margin-right: var(--space-2);
 }
 
 .source-accordion-progress {

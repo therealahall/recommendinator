@@ -57,6 +57,7 @@ describe('useDataStore', () => {
       .mockResolvedValueOnce(sources)
       .mockResolvedValueOnce({ enabled: true, connected: false, auth_url: 'https://gog.com/auth' })
       .mockResolvedValueOnce({ enabled: false, connected: false })
+      .mockResolvedValueOnce({ enabled: false, connected: false })
 
     const store = useDataStore()
     await store.loadSyncSources()
@@ -760,6 +761,155 @@ describe('useDataStore', () => {
     expect(store.epicConnectMessage).toBe('Error: server returned 500')
   })
 
+  describe('trakt device-code auth', () => {
+    function reloadMocks(traktConnected: boolean) {
+      // loadSyncSources fires config/reload (POST) then GETs
+      // sources + gog + epic + trakt.
+      mockPost.mockResolvedValue({})
+      mockGet
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce({ enabled: false, connected: false })
+        .mockResolvedValueOnce({ enabled: false, connected: false })
+        .mockResolvedValueOnce({ enabled: true, connected: traktConnected })
+    }
+
+    it('loadTraktStatus stores enabled/connected flags', async () => {
+      mockGet.mockResolvedValueOnce({ enabled: true, connected: false })
+
+      const store = useDataStore()
+      const result = await store.loadTraktStatus()
+
+      expect(mockGet).toHaveBeenCalledWith('/trakt/status')
+      expect(result).toEqual({ enabled: true, connected: false })
+      expect(store.traktStatus).toEqual({ enabled: true, connected: false })
+    })
+
+    it('startTraktFlow POSTs and returns the device-flow payload', async () => {
+      const flow = {
+        user_code: 'ABCD-1234',
+        verification_url: 'https://trakt.tv/activate',
+        device_code: 'dev-code',
+        expires_in: 600,
+        interval: 5,
+      }
+      mockPost.mockResolvedValueOnce(flow)
+
+      const store = useDataStore()
+      const result = await store.startTraktFlow()
+
+      expect(mockPost).toHaveBeenCalledWith('/trakt/start-device-flow')
+      expect(result).toEqual(flow)
+    })
+
+    it('pollTraktApproval returns pending without reloading sources', async () => {
+      mockPost.mockResolvedValueOnce({
+        connected: false,
+        status: 'pending',
+        message: 'Waiting',
+      })
+
+      const store = useDataStore()
+      const result = await store.pollTraktApproval('dev-code')
+
+      expect(mockPost).toHaveBeenCalledWith('/trakt/poll-device-approval', {
+        device_code: 'dev-code',
+      })
+      expect(result.connected).toBe(false)
+      expect(store.traktStatus.connected).toBe(false)
+      // No reload triggered while still pending.
+      expect(mockGet).not.toHaveBeenCalled()
+    })
+
+    it('pollTraktApproval marks connected and reloads sources on success', async () => {
+      mockPost.mockResolvedValueOnce({
+        connected: true,
+        message: 'Connected',
+      })
+      reloadMocks(true)
+
+      const store = useDataStore()
+      const result = await store.pollTraktApproval('dev-code')
+
+      expect(result.connected).toBe(true)
+      expect(store.traktStatus.connected).toBe(true)
+      // loadSyncSources ran (config/reload + the four GETs).
+      expect(mockGet).toHaveBeenCalledWith('/trakt/status')
+    })
+
+    it('pollTraktApproval surfaces the expired terminal status', async () => {
+      mockPost.mockResolvedValueOnce({
+        connected: false,
+        status: 'expired',
+        message: 'Code expired',
+      })
+
+      const store = useDataStore()
+      const result = await store.pollTraktApproval('dev-code')
+
+      expect(result.status).toBe('expired')
+      expect(store.traktStatus.connected).toBe(false)
+    })
+
+    it('pollTraktApproval surfaces the denied terminal status', async () => {
+      mockPost.mockResolvedValueOnce({
+        connected: false,
+        status: 'denied',
+        message: 'Denied',
+      })
+
+      const store = useDataStore()
+      const result = await store.pollTraktApproval('dev-code')
+
+      expect(result.status).toBe('denied')
+      expect(store.traktStatus.connected).toBe(false)
+    })
+
+    it('disconnectTrakt DELETEs the token and reloads sources', async () => {
+      mockDelete.mockResolvedValueOnce({})
+      reloadMocks(false)
+
+      const store = useDataStore()
+      store.$patch({ traktStatus: { enabled: true, connected: true } })
+      await store.disconnectTrakt()
+
+      expect(mockDelete).toHaveBeenCalledWith('/trakt/token')
+      expect(store.traktStatus.connected).toBe(false)
+    })
+
+    it('loadTraktStatus propagates the rejection without clobbering state', async () => {
+      mockGet.mockRejectedValueOnce(new ApiError(500, 'Internal Server Error'))
+
+      const store = useDataStore()
+      store.$patch({ traktStatus: { enabled: true, connected: true } })
+
+      await expect(store.loadTraktStatus()).rejects.toBeInstanceOf(ApiError)
+      // The cached status is untouched — the caller decides how to react.
+      expect(store.traktStatus).toEqual({ enabled: true, connected: true })
+    })
+
+    it('startTraktFlow propagates a 400 not-configured rejection to the caller', async () => {
+      const error = new ApiError(400, 'Bad Request')
+      mockPost.mockRejectedValueOnce(error)
+
+      const store = useDataStore()
+
+      await expect(store.startTraktFlow()).rejects.toBe(error)
+    })
+
+    it('disconnectTrakt propagates the rejection and leaves status connected', async () => {
+      mockDelete.mockRejectedValueOnce(new ApiError(500, 'Internal Server Error'))
+
+      const store = useDataStore()
+      store.$patch({ traktStatus: { enabled: true, connected: true } })
+
+      await expect(store.disconnectTrakt()).rejects.toBeInstanceOf(ApiError)
+      // No reload on failure, and the connected flag stays true so the UI
+      // still shows the account as connected.
+      expect(store.traktStatus.connected).toBe(true)
+      expect(mockGet).not.toHaveBeenCalled()
+    })
+  })
+
   describe('source config flows', () => {
     it('loadSourceSchema fetches and caches the schema', async () => {
       const schema = {
@@ -987,12 +1137,14 @@ describe('useDataStore', () => {
         secret_status: {},
       }
       mockPost.mockResolvedValueOnce(created)
-      // Subsequent loadSyncSources call (config/reload + sources + gog + epic).
+      // Subsequent loadSyncSources call (config/reload + sources + gog +
+      // epic + trakt).
       mockPost.mockResolvedValueOnce({})
       mockGet
         .mockResolvedValueOnce([
           { id: 'fresh', display_name: 'Fresh', plugin_display_name: 'Fake File', enabled: true },
         ])
+        .mockResolvedValueOnce({ enabled: false, connected: false })
         .mockResolvedValueOnce({ enabled: false, connected: false })
         .mockResolvedValueOnce({ enabled: false, connected: false })
 

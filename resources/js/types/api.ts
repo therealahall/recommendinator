@@ -284,6 +284,27 @@ export interface AuthStatusResponse {
   auth_url?: string
 }
 
+export interface TraktStatusResponse {
+  enabled: boolean
+  connected: boolean
+}
+
+export interface TraktDeviceFlowResponse {
+  user_code: string
+  verification_url: string
+  device_code: string
+  expires_in: number
+  interval: number
+}
+
+export type TraktPollStatus = 'pending' | 'slow_down' | 'expired' | 'denied'
+
+export interface TraktPollResponse {
+  connected: boolean
+  status?: TraktPollStatus
+  message: string
+}
+
 // --- Item Edit ---
 
 export interface ItemEditRequest {

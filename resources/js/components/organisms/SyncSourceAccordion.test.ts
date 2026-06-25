@@ -382,6 +382,88 @@ describe('SyncSourceAccordion', () => {
     await flushPromises()
   })
 
+  describe('trakt device-code connect/disconnect', () => {
+    const traktSource = {
+      id: 'trakt',
+      display_name: 'Trakt',
+      plugin_display_name: 'Trakt',
+      enabled: true,
+    }
+    const traktConfig: SourceConfigResponse = {
+      ...migratedConfig,
+      source_id: 'trakt',
+      plugin: 'trakt',
+      plugin_display_name: 'Trakt',
+    }
+
+    async function expandTrakt(connected: boolean) {
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: traktSource, syncing: false },
+      })
+      const store = useDataStore()
+      store.$patch({ traktStatus: { enabled: true, connected } })
+      primeStore(store, traktConfig)
+
+      await wrapper.find('button.accordion-trigger').trigger('click')
+      await flushPromises()
+      return { wrapper, store }
+    }
+
+    it('renders the device-code connect flow when trakt is not connected', async () => {
+      const { wrapper } = await expandTrakt(false)
+
+      expect(wrapper.find('[data-testid="trakt-connect-btn"]').exists()).toBe(
+        true,
+      )
+      expect(wrapper.find('[data-testid="disconnect-btn-trakt"]').exists()).toBe(
+        false,
+      )
+    })
+
+    it('renders a connected state with a disconnect button when connected', async () => {
+      const { wrapper } = await expandTrakt(true)
+
+      expect(wrapper.find('[data-testid="trakt-connect-btn"]').exists()).toBe(
+        false,
+      )
+      const connected = wrapper.find('[data-testid="trakt-connected"]')
+      expect(connected.exists()).toBe(true)
+      // role="status" lets a screen reader self-describe the connected state
+      // when a user lands on an already-connected source.
+      expect(connected.attributes('role')).toBe('status')
+      const disconnect = wrapper.find('[data-testid="disconnect-btn-trakt"]')
+      expect(disconnect.exists()).toBe(true)
+      expect(disconnect.attributes('aria-label')).toBe('Disconnect Trakt')
+    })
+
+    it('clicking Disconnect calls store.disconnectTrakt', async () => {
+      const { wrapper, store } = await expandTrakt(true)
+      const disconnect = vi
+        .spyOn(store, 'disconnectTrakt')
+        .mockResolvedValue(undefined)
+
+      await wrapper.find('[data-testid="disconnect-btn-trakt"]').trigger('click')
+
+      expect(disconnect).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not render trakt affordances before migration', async () => {
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: traktSource, syncing: false },
+      })
+      const store = useDataStore()
+      store.$patch({ traktStatus: { enabled: true, connected: false } })
+      primeStore(store, { ...traktConfig, migrated: false, migrated_at: null })
+
+      await wrapper.find('button.accordion-trigger').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="trakt-connect-btn"]').exists()).toBe(
+        false,
+      )
+    })
+  })
+
   describe('progress + error rendering driven by the job prop', () => {
     function makeJob(overrides: Record<string, unknown> = {}) {
       return {
