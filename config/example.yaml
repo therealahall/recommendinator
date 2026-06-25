@@ -109,6 +109,21 @@ inputs:
     content_type: "video_game"
     enabled: false
 
+  # Trakt integration (movie and TV show tracker)
+  # Register your OWN Trakt API application to get a client id:
+  #   https://trakt.tv/oauth/applications
+  # The client_secret and refresh_token are entered via the connect flow
+  # (Data tab → Connect Trakt Account, or `auth connect --source trakt`) and
+  # stored in the encrypted credential database — do NOT put them in this file.
+  trakt:
+    plugin: trakt
+    client_id: ""  # Your Trakt API application client id
+    # Import watchlisted titles as unread items (default: true)
+    include_watchlist: true
+    # No content_type key: Trakt imports BOTH movies and TV shows in one sync;
+    # the plugin sets each item's type itself.
+    enabled: false
+
   # Generic CSV import — use templates from templates/ directory
   csv_movies:
     plugin: csv_import
