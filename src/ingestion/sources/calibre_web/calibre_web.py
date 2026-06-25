@@ -341,8 +341,6 @@ class CalibreWebPlugin(SourcePlugin):
             else ConsumptionStatus.UNREAD
         )
 
-        rating = self.normalize_rating(_parse_rating(entry))
-
         metadata = _build_metadata(entry)
 
         return ContentItem(
@@ -350,7 +348,9 @@ class CalibreWebPlugin(SourcePlugin):
             title=title,
             author=author,
             content_type=ContentType.BOOK,
-            rating=rating,
+            # Calibre's star rating is a community average, not the user's own
+            # rating, so it is never imported; ratings are left for the user.
+            rating=None,
             status=status,
             metadata=metadata,
             source=source,
@@ -423,58 +423,12 @@ def _build_external_id(entry: ElementTree.Element) -> str | None:
     return f"calibre:{identifier}"
 
 
-# A ``<category>`` is only treated as a rating when its ``scheme`` positively
-# identifies it as one. Calibre-Web tags carry content schemes (e.g. BISAC)
-# rather than a rating scheme, so a bare numeric label such as a publication
-# year is never mistaken for a star count.
+# A ``<category>`` is identified as a Calibre-Web rating only when its
+# ``scheme`` positively marks it as one. Such categories carry a star count as
+# their label, not a genuine tag, so :func:`_parse_tags` excludes them. Calibre
+# content categories carry content schemes (e.g. BISAC) rather than a rating
+# scheme, so a bare numeric label such as a publication year is kept as a tag.
 _RATING_SCHEME_MARKER = "rating"
-
-
-def _parse_rating(entry: ElementTree.Element) -> int | None:
-    """Extract a 0-5 star rating from an OPDS entry.
-
-    A rating is only derived from a genuine ratings signal:
-
-    - a ``<rating>`` element, or
-    - a ``<category>`` whose ``scheme`` identifies it as a rating (its scheme
-      contains ``"rating"``).
-
-    Bare numeric ``<category>`` labels without a rating scheme (e.g. a
-    publication-year facet like ``2008``) are NOT treated as ratings; they are
-    preserved as tags by :func:`_parse_tags`. Calibre stores ratings on a 0-10
-    scale (steps of 2 = 0-5 stars), so values above 5 are halved.
-
-    Args:
-        entry: OPDS ``<entry>`` element.
-
-    Returns:
-        The raw 0-5 star integer (including ``0`` for an explicit zero-star
-        rating), or None only when no rating signal is present or the value is
-        non-numeric. The ``0`` -> "no rating" conversion is finalized later by
-        :meth:`SourcePlugin.normalize_rating`, not here.
-    """
-    raw = _text(entry.find("atom:rating", _NS))
-    if raw is None:
-        for category in entry.findall("atom:category", _NS):
-            if not _is_rating_category(category):
-                continue
-            label = category.get("label") or category.get("term")
-            if label and label.strip():
-                raw = label.strip()
-                break
-
-    if raw is None:
-        return None
-
-    try:
-        value = float(raw)
-    except ValueError:
-        return None
-
-    # Calibre's native 0-10 scale (steps of 2) maps to 0-5 stars.
-    if value > 5:
-        value = value / 2
-    return int(round(value))
 
 
 def _is_rating_category(category: ElementTree.Element) -> bool:
