@@ -15,6 +15,7 @@ sources in the UI/CLI, parallel sync, and library export.
 | **Epic Games** | Games | [epic_games](../src/ingestion/sources/epic_games/README.md) — OAuth via Legendary |
 | **Sonarr** | TV Shows | [sonarr](../src/ingestion/sources/sonarr/README.md) — import from Sonarr API |
 | **Radarr** | Movies | [radarr](../src/ingestion/sources/radarr/README.md) — import from Radarr API |
+| **Trakt** | TV Shows / Movies | [trakt](../src/ingestion/sources/trakt/README.md) — OAuth device-code; imports watched history, ratings, and watchlist |
 | **ROM Library** | Games | [roms](../src/ingestion/sources/roms/README.md) — scan emulator ROM directories |
 | **CSV** | Any | [generic_csv](../src/ingestion/sources/generic_csv/README.md) — generic CSV with customizable mapping |
 | **JSON** | Any | [generic_json](../src/ingestion/sources/generic_json/README.md) — generic JSON/JSONL import |

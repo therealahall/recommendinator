@@ -179,7 +179,7 @@ python3.11 -m src.cli enrichment reset
 See [ENRICHMENT_SETUP.md](ENRICHMENT_SETUP.md) — enrichment is critical for
 recommendation quality.
 
-## Authentication (GOG/Epic)
+## Authentication (GOG/Epic/Trakt)
 
 ```bash
 # Check OAuth connection status
@@ -189,8 +189,12 @@ python3.11 -m src.cli auth status
 python3.11 -m src.cli auth connect --source gog
 python3.11 -m src.cli auth connect --source epic
 
+# Connect via the Trakt device-code flow (prints a verification URL + code)
+python3.11 -m src.cli auth connect --source trakt
+
 # Disconnect stored credentials
 python3.11 -m src.cli auth disconnect --source gog
+python3.11 -m src.cli auth disconnect --source trakt
 ```
 
 ## Conversation & memories (requires AI)

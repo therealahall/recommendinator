@@ -19,6 +19,7 @@ Responsible for parsing and normalizing data from various sources.
 - Epic Games via Legendary (video games)
 - Sonarr API (TV shows)
 - Radarr API (movies)
+- Trakt OAuth device-code API (TV shows and movies — watched history, ratings, watchlist)
 - ROM Library — local filesystem scanner with curated ROM extensions, built-in No-Intro/Redump/TOSEC title cleaner, and multi-disc collapse
 - Generic CSV, JSON, Markdown (any content type)
 
@@ -367,7 +368,7 @@ the `curl -L .../latest/download/docker-compose.yml` flow for end users.
 ## Security & Privacy
 
 - All processing happens locally
-- External API calls limited to: data source APIs (Steam, GOG, Epic, Sonarr, Radarr), enrichment APIs (TMDB, OpenLibrary, RAWG), and Ollama (local)
+- External API calls limited to: data source APIs (Steam, GOG, Epic, Sonarr, Radarr, Trakt), enrichment APIs (TMDB, OpenLibrary, RAWG), and Ollama (local)
 - Web interface accessible on internal network only
 - API keys stored in git-ignored `config/config.yaml`
 - See `docs/SECURITY.md` for details
