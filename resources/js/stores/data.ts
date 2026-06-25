@@ -9,12 +9,14 @@ import type {
   SyncJobResponse,
   EnrichmentStatsResponse,
   EnrichmentJobStatusResponse,
-  AuthStatusResponse,
   SourceSchemaResponse,
   SourceConfigResponse,
   SourceMigrationResponse,
   PluginInfoResponse,
   SourceCreateRequest,
+  TraktStatusResponse,
+  TraktDeviceFlowResponse,
+  TraktPollResponse,
 } from '@/types/api'
 
 const ALL_SOURCES_LABEL = 'All Sources'
@@ -66,6 +68,7 @@ export const useDataStore = defineStore('data', () => {
   // Auth state
   const gogStatus = ref<{ authUrl: string | null; connected: boolean }>({ authUrl: null, connected: false })
   const epicStatus = ref<{ authUrl: string | null; connected: boolean }>({ authUrl: null, connected: false })
+  const traktStatus = ref<TraktStatusResponse>({ enabled: false, connected: false })
   const gogConnectMessage = ref('')
   const epicConnectMessage = ref('')
 
@@ -84,10 +87,11 @@ export const useDataStore = defineStore('data', () => {
     try {
       // Config reload is best-effort — the endpoint may not be available during init
       await api.post('/config/reload').catch(() => {})
-      const [sources, gog, epic] = await Promise.all([
+      const [sources, gog, epic, trakt] = await Promise.all([
         api.get<SyncSourceResponse[]>('/sync/sources'),
         api.get<{ enabled: boolean; connected: boolean; auth_url?: string }>('/gog/status').catch(() => null),
         api.get<{ enabled: boolean; connected: boolean; auth_url?: string }>('/epic/status').catch(() => null),
+        api.get<TraktStatusResponse>('/trakt/status').catch(() => null),
       ])
       syncSources.value = sources
       if (gog) {
@@ -95,6 +99,9 @@ export const useDataStore = defineStore('data', () => {
       }
       if (epic) {
         epicStatus.value = { authUrl: epic.auth_url || null, connected: epic.connected }
+      }
+      if (trakt) {
+        traktStatus.value = { enabled: trakt.enabled, connected: trakt.connected }
       }
     } catch {
       syncSources.value = []
@@ -306,6 +313,37 @@ export const useDataStore = defineStore('data', () => {
     }
   }
 
+  // Trakt device-code auth
+  async function loadTraktStatus(): Promise<TraktStatusResponse> {
+    const status = await api.get<TraktStatusResponse>('/trakt/status')
+    traktStatus.value = { enabled: status.enabled, connected: status.connected }
+    return status
+  }
+
+  async function startTraktFlow(): Promise<TraktDeviceFlowResponse> {
+    return api.post<TraktDeviceFlowResponse>('/trakt/start-device-flow')
+  }
+
+  async function pollTraktApproval(
+    deviceCode: string,
+  ): Promise<TraktPollResponse> {
+    const result = await api.post<TraktPollResponse>(
+      '/trakt/poll-device-approval',
+      { device_code: deviceCode },
+    )
+    if (result.connected) {
+      traktStatus.value = { ...traktStatus.value, connected: true }
+      await loadSyncSources()
+    }
+    return result
+  }
+
+  async function disconnectTrakt(): Promise<void> {
+    await api.delete('/trakt/token')
+    traktStatus.value = { ...traktStatus.value, connected: false }
+    await loadSyncSources()
+  }
+
   // Enrichment actions
   async function loadEnrichmentStats() {
     const app = useAppStore()
@@ -513,6 +551,7 @@ export const useDataStore = defineStore('data', () => {
     jobForSourceId,
     gogStatus,
     epicStatus,
+    traktStatus,
     gogConnectMessage,
     epicConnectMessage,
     enrichmentStats,
@@ -529,6 +568,10 @@ export const useDataStore = defineStore('data', () => {
     submitEpicCode,
     disconnectGog,
     disconnectEpic,
+    loadTraktStatus,
+    startTraktFlow,
+    pollTraktApproval,
+    disconnectTrakt,
     loadEnrichmentStats,
     startEnrichment,
     stopEnrichment,
