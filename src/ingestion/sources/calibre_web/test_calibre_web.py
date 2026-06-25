@@ -1,5 +1,6 @@
 """Tests for the Calibre-Web OPDS book import plugin."""
 
+from pathlib import Path
 from unittest.mock import Mock, patch
 from xml.etree import ElementTree
 
@@ -11,8 +12,9 @@ from src.ingestion.sources.calibre_web.calibre_web import (
     CalibreWebPlugin,
     _parse_opds_xml,
 )
-from src.models.content import ConsumptionStatus, ContentType
+from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.manager import StorageManager
+from src.storage.sqlite_db import SQLiteDB
 
 _FEED_HEADER = (
     '<feed xmlns="http://www.w3.org/2005/Atom" '
@@ -25,17 +27,14 @@ def _entry(
     entry_id: str = "urn:uuid:abc-123",
     title: str = "The Hobbit",
     author: str = "J.R.R. Tolkien",
-    rating: str | None = None,
     extra: str = "",
 ) -> str:
     """Build an OPDS <entry> XML fragment for tests."""
-    rating_xml = f"<rating>{rating}</rating>" if rating is not None else ""
     return (
         "<entry>"
         f"<id>{entry_id}</id>"
         f"<title>{title}</title>"
         f"<author><name>{author}</name></author>"
-        f"{rating_xml}"
         f"{extra}"
         "</entry>"
     )
@@ -342,38 +341,18 @@ class TestCalibreWebFetch:
         assert len(items) == 1
         assert items[0].status == ConsumptionStatus.UNREAD
 
-    @pytest.mark.parametrize(
-        ("rating", "expected"),
-        [
-            ("0", None),
-            ("6", 3),
-            ("10", 5),
-            ("8", 4),
-            ("5", 5),
-            ("4", 4),
-            ("12", 5),
-        ],
-    )
-    def test_rating_mapping(
-        self,
-        plugin: CalibreWebPlugin,
-        config: dict[str, object],
-        rating: str,
-        expected: int | None,
-    ) -> None:
-        catalog = _feed(_entry(rating=rating))
-        responses = [_empty_read_feed(), _xml_response(catalog)]
-        with patch("requests.get", side_effect=responses):
-            items = list(plugin.fetch(config))
-
-        assert items[0].rating == expected
-
-    def test_rating_from_rating_scheme_category(
+    def test_imported_book_has_no_rating(
         self, plugin: CalibreWebPlugin, config: dict[str, object]
     ) -> None:
-        """A <category> whose scheme identifies it as a rating is read as one."""
+        """Calibre stars are a community average, not the user's own rating.
+
+        The plugin never sets a rating, even when the OPDS entry carries a
+        <rating> element or a rating-scheme <category>; ratings are left for
+        the user to set in Recommendinator.
+        """
         entry = _entry(
             extra=(
+                "<rating>10</rating>"
                 '<category scheme="http://opds-spec.org/2010/catalog/ratings" '
                 'term="8" label="8"/>'
             )
@@ -382,7 +361,37 @@ class TestCalibreWebFetch:
         with patch("requests.get", side_effect=responses):
             items = list(plugin.fetch(config))
 
-        assert items[0].rating == 4
+        assert items[0].rating is None
+
+    def test_read_shelf_book_with_rating_is_completed_with_no_rating(
+        self, plugin: CalibreWebPlugin, config: dict[str, object]
+    ) -> None:
+        """A read-shelf book that also carries a rating is COMPLETED, rating None.
+
+        Status (from the read-books shelf) and rating (never imported) are
+        independent. A book that is BOTH marked read AND carries a <rating>
+        element / rating-scheme <category> must come back COMPLETED with its
+        rating still None — the Calibre community-average star must not sneak in
+        just because the book happens to be read.
+        """
+        read_feed = _feed(_entry(entry_id="urn:uuid:read-rated", title="Read Rated"))
+        catalog = _feed(
+            _entry(
+                entry_id="urn:uuid:read-rated",
+                title="Read Rated",
+                extra=(
+                    "<rating>10</rating>"
+                    '<category scheme="http://opds-spec.org/2010/catalog/ratings" '
+                    'term="8" label="8"/>'
+                ),
+            )
+        )
+        responses = [_xml_response(read_feed), _xml_response(catalog)]
+        with patch("requests.get", side_effect=responses):
+            items = list(plugin.fetch(config))
+
+        assert items[0].status == ConsumptionStatus.COMPLETED
+        assert items[0].rating is None
 
     def test_rating_scheme_category_not_emitted_as_tag(
         self, plugin: CalibreWebPlugin, config: dict[str, object]
@@ -696,40 +705,6 @@ class TestCalibreWebEdgeCases:
             with pytest.raises(SourceError, match="Failed to parse OPDS feed"):
                 list(plugin.fetch(config))
 
-    def test_rating_element_takes_precedence_over_category(
-        self, plugin: CalibreWebPlugin, config: dict[str, object]
-    ) -> None:
-        """When both a <rating> element and a numeric category exist, the
-        explicit <rating> wins."""
-        entry = _entry(rating="10", extra='<category label="2"/>')
-        responses = [_empty_read_feed(), _xml_response(_feed(entry))]
-        with patch("requests.get", side_effect=responses):
-            items = list(plugin.fetch(config))
-
-        assert items[0].rating == 5
-
-    def test_non_numeric_rating_element_is_none(
-        self, plugin: CalibreWebPlugin, config: dict[str, object]
-    ) -> None:
-        """A <rating> with a non-numeric value yields no rating (ValueError)."""
-        entry = _entry(rating="not-a-number")
-        responses = [_empty_read_feed(), _xml_response(_feed(entry))]
-        with patch("requests.get", side_effect=responses):
-            items = list(plugin.fetch(config))
-
-        assert items[0].rating is None
-
-    def test_odd_numeric_rating_halved_and_rounded(
-        self, plugin: CalibreWebPlugin, config: dict[str, object]
-    ) -> None:
-        """An odd 0-10 rating (7) halves to 3.5 and rounds to 4 stars."""
-        entry = _entry(rating="7")
-        responses = [_empty_read_feed(), _xml_response(_feed(entry))]
-        with patch("requests.get", side_effect=responses):
-            items = list(plugin.fetch(config))
-
-        assert items[0].rating == 4
-
     def test_source_id_override_applied_to_items(
         self, plugin: CalibreWebPlugin
     ) -> None:
@@ -906,23 +881,24 @@ class TestCalibreWebXmlHardening:
 class TestCalibreWebRegression:
     """Regression tests for fixed Calibre-Web plugin bugs (issue #32)."""
 
-    def test_numeric_tag_not_misread_as_rating_regression(
+    def test_numeric_category_label_preserved_as_tag_regression(
         self, plugin: CalibreWebPlugin, config: dict[str, object]
     ) -> None:
-        """Bug: a non-rating numeric category label was parsed as a star rating.
+        """Bug: a non-rating numeric category label was dropped from tags.
 
         Bug: Calibre-Web books carry numeric facets such as a publication year
         ("2008") as ordinary ``<category>`` elements with no rating scheme. An
-        earlier implementation read any numeric category label as a star count,
-        so a year-tagged book got a fabricated rating and the year was dropped
-        from the tag list.
+        earlier implementation treated any numeric category label as a rating
+        signal, so a year-tagged book had the year silently dropped from its
+        tag list.
 
-        Root cause: rating extraction accepted any numeric ``<category>`` label
-        rather than requiring a category whose ``scheme`` marks it as a rating.
+        Root cause: the rating-category check accepted any numeric ``<category>``
+        label rather than requiring a category whose ``scheme`` marks it as a
+        rating.
 
-        Fix: only derive a rating from a ``<rating>`` element or a category
-        whose scheme contains ``"rating"``; bare numeric labels are preserved as
-        tags.
+        Fix: only a category whose scheme contains ``"rating"`` is excluded as a
+        rating category; bare numeric labels are preserved as tags by
+        ``_parse_tags``.
         """
         entry = _entry(
             entry_id="urn:uuid:year",
@@ -933,7 +909,6 @@ class TestCalibreWebRegression:
         with patch("requests.get", side_effect=responses):
             items = list(plugin.fetch(config))
 
-        assert items[0].rating is None
         assert items[0].metadata.get("tags") == ["2008"]
 
     def test_unread_book_yields_unread_status_regression(
@@ -958,6 +933,49 @@ class TestCalibreWebRegression:
             items = list(plugin.fetch(config))
 
         assert items[0].status == ConsumptionStatus.UNREAD
+
+    def test_resync_does_not_wipe_user_rating_regression(
+        self,
+        plugin: CalibreWebPlugin,
+        config: dict[str, object],
+        tmp_path: Path,
+    ) -> None:
+        """Bug: Calibre star ratings overwrote the user's own rating on sync.
+
+        Bug: Calibre's "download metadata" feature writes a community-average
+        star rating that the plugin used to map onto the user's 1-5 rating. On a
+        re-sync that fabricated rating could clobber a rating the user had set in
+        Recommendinator.
+
+        Root cause / fix: the plugin no longer extracts any rating, so it emits
+        ContentItem.rating == None. The DB's set-once rating rule (covered
+        generically by tests/test_sqlite_db.py::TestRatingSetOnce) then leaves an
+        existing user rating untouched. Here we pin the end-to-end contract: a
+        re-sync of an already-rated book preserves that rating.
+        """
+        db = SQLiteDB(tmp_path / "resync.db")
+        db.save_content_item(
+            ContentItem(
+                id="calibre:resync-1",
+                title="Already Rated",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+                source="calibre_web",
+            )
+        )
+
+        catalog = _feed(_entry(entry_id="urn:uuid:resync-1", title="Already Rated"))
+        responses = [_empty_read_feed(), _xml_response(catalog)]
+        with patch("requests.get", side_effect=responses):
+            items = list(plugin.fetch(config))
+
+        assert items[0].rating is None
+        db_id = db.save_content_item(items[0])
+
+        retrieved = db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.rating == 5
 
     def test_read_shelf_partial_pagination_keeps_collected_ids_regression(
         self, plugin: CalibreWebPlugin, config: dict[str, object]
