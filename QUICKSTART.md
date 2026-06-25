@@ -110,7 +110,7 @@ With `auto_enrich_on_sync: true`, enrichment runs automatically every time you s
 
 The system supports multiple data sources through a plugin architecture. See `config/example.yaml` for the full list of available plugins and their configuration options.
 
-**Available plugins:** Goodreads (books), Steam (games), GOG (games), Epic Games (games), Sonarr (TV shows), Radarr (movies), ROM Library (games), and generic CSV/JSON/Markdown importers for any content type.
+**Available plugins:** Goodreads (books), Steam (games), GOG (games), Epic Games (games), Sonarr (TV shows), Radarr (movies), Trakt (TV shows/movies), ROM Library (games), and generic CSV/JSON/Markdown importers for any content type.
 
 ### Configure a source
 
@@ -130,8 +130,9 @@ inputs:
     enabled: true
 ```
 
-Some sources (GOG, Epic Games) require OAuth setup — see that source's setup guide
-(e.g. [GOG](src/ingestion/sources/gog/README.md), [Epic Games](src/ingestion/sources/epic_games/README.md))
+Some sources (GOG, Epic Games, Trakt) require OAuth setup — see that source's setup guide
+(e.g. [GOG](src/ingestion/sources/gog/README.md), [Epic Games](src/ingestion/sources/epic_games/README.md),
+[Trakt](src/ingestion/sources/trakt/README.md))
 for step-by-step instructions. [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md) lists
 every source and covers managing them in the UI.
 
@@ -282,11 +283,14 @@ python3.11 -m src.cli library ignore --id 42
 python3.11 -m src.cli library unignore --id 42
 ```
 
-## Authenticate Game Sources (GOG/Epic)
+## Authenticate OAuth Sources (GOG/Epic/Trakt)
 
 ```bash
 # Connect your GOG account via browser OAuth
 python3.11 -m src.cli auth connect --source gog
+
+# Connect your Trakt account via the device-code flow
+python3.11 -m src.cli auth connect --source trakt
 
 # Check connection status
 python3.11 -m src.cli auth status

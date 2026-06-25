@@ -10,7 +10,7 @@ with **no AI required** — AI features are opt-in for users who want them.
 - **You own your data** — a SQLite database you can query, back up, or delete
 
 It imports from sources you already use (Goodreads, Steam, GOG, Epic, Sonarr,
-Radarr, ROM libraries, or plain CSV/JSON/Markdown), enriches items with metadata,
+Radarr, Trakt, ROM libraries, or plain CSV/JSON/Markdown), enriches items with metadata,
 and ranks recommendations through a transparent scoring pipeline. Your love of
 sci-fi books can influence game and movie suggestions via semantic genre clusters.
 Browse and tune everything from a themeable web UI or the CLI — they are
@@ -72,6 +72,7 @@ rest.
 | **Epic Games** | Games | [epic_games](src/ingestion/sources/epic_games/README.md) |
 | **Sonarr** | TV Shows | [sonarr](src/ingestion/sources/sonarr/README.md) |
 | **Radarr** | Movies | [radarr](src/ingestion/sources/radarr/README.md) |
+| **Trakt** | TV Shows / Movies | [trakt](src/ingestion/sources/trakt/README.md) |
 | **ROM Library** | Games | [roms](src/ingestion/sources/roms/README.md) |
 | **CSV / JSON / Markdown** | Any | [generic_csv](src/ingestion/sources/generic_csv/README.md) · [generic_json](src/ingestion/sources/generic_json/README.md) · [markdown](src/ingestion/sources/markdown/README.md) |
 
