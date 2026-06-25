@@ -59,6 +59,15 @@ from src.web.gog_auth import (
     is_gog_enabled,
     save_gog_token,
 )
+from src.web.trakt_auth import (
+    DevicePollStatus,
+    TraktAuthError,
+    is_trakt_connected,
+    poll_device_token,
+    resolve_trakt_client_credentials,
+    save_trakt_token,
+    start_device_auth_flow,
+)
 from src.ingestion.plugin_base import ConfigField, SourcePlugin
 from src.web.sync_sources import (
     ResolvedInput,
@@ -1643,7 +1652,7 @@ def library_export(
 # Maps CLI --source name to the internal storage source_id. The CLI accepts
 # "epic" for brevity but credentials are stored under "epic_games" to match
 # the plugin source identifier used across ingestion and storage.
-_SOURCE_ID_MAP = {"gog": "gog", "epic": "epic_games"}
+_SOURCE_ID_MAP = {"gog": "gog", "epic": "epic_games", "trakt": "trakt"}
 
 
 @click.group()
@@ -1668,15 +1677,30 @@ def auth_status(ctx: click.Context, user_id: int) -> None:
         found = True
         connected = has_epic_token(config, storage=storage, user_id=user_id)
         click.echo(f"  epic: {'connected' if connected else 'not connected'}")
+    if _is_trakt_enabled(config, storage, user_id):
+        found = True
+        connected = is_trakt_connected(storage, user_id=user_id)
+        click.echo(f"  trakt: {'connected' if connected else 'not connected'}")
 
     if not found:
         click.echo("No OAuth sources are enabled in config.")
 
 
+def _is_trakt_enabled(
+    config: dict[str, Any], storage: StorageManager, user_id: int
+) -> bool:
+    """Whether the Trakt source has client credentials saved for the device flow."""
+    try:
+        resolve_trakt_client_credentials(config, storage, user_id=user_id)
+    except TraktAuthError:
+        return False
+    return True
+
+
 @auth.command("connect")
 @click.option(
     "--source",
-    type=click.Choice(["gog", "epic"], case_sensitive=False),
+    type=click.Choice(["gog", "epic", "trakt"], case_sensitive=False),
     required=True,
     help="Source to authenticate",
 )
@@ -1689,6 +1713,10 @@ def auth_connect(
     """Connect an OAuth source by authenticating in browser."""
     config = ctx.obj["config"]
     storage = ctx.obj["storage"]
+
+    if source == "trakt":
+        _connect_trakt(config, storage, user_id)
+        return
 
     if source == "gog":
         is_enabled_fn, get_auth_url_fn = is_gog_enabled, get_gog_auth_url
@@ -1735,10 +1763,76 @@ def auth_connect(
         raise click.Abort() from None
 
 
+def _connect_trakt(
+    config: dict[str, Any], storage: StorageManager, user_id: int
+) -> None:
+    """Run the Trakt device-code flow: print the user code, then poll to approval.
+
+    Resolves the saved client_id/client_secret, starts the device flow, and
+    polls at the cadence Trakt returned until the user approves, the code
+    expires, or the request is denied.
+    """
+    try:
+        client_id, client_secret = resolve_trakt_client_credentials(
+            config, storage, user_id=user_id
+        )
+        flow = start_device_auth_flow(client_id)
+    except TraktAuthError as error:
+        click.echo(f"Error: {error}", err=True)
+        raise click.Abort() from None
+
+    click.echo(
+        f"\nGo to {flow['verification_url']} and enter code: {flow['user_code']}\n"
+    )
+    click.echo("Waiting for approval... (press Ctrl-C to cancel)")
+
+    interval = max(1, int(flow["interval"]))
+    deadline = time.monotonic() + int(flow["expires_in"])
+
+    try:
+        while time.monotonic() < deadline:
+            time.sleep(interval)
+            try:
+                result = poll_device_token(
+                    flow["device_code"], client_id, client_secret
+                )
+            except TraktAuthError as error:
+                click.echo(f"Error: {error}", err=True)
+                raise click.Abort() from None
+
+            if result.status is DevicePollStatus.SUCCESS:
+                if result.refresh_token is None:
+                    click.echo(
+                        "Error: Trakt approved but returned no refresh token.",
+                        err=True,
+                    )
+                    raise click.Abort()
+                save_trakt_token(storage, result.refresh_token, user_id=user_id)
+                click.echo("\ntrakt connected successfully.")
+                return
+            if result.status is DevicePollStatus.SLOW_DOWN:
+                interval += 5
+            elif result.status is DevicePollStatus.EXPIRED:
+                click.echo(
+                    "Error: The authorization code expired. Run connect again.",
+                    err=True,
+                )
+                raise click.Abort()
+            elif result.status is DevicePollStatus.DENIED:
+                click.echo("Error: The authorization request was denied.", err=True)
+                raise click.Abort()
+    except KeyboardInterrupt:
+        click.echo("\nCancelled.")
+        raise click.Abort() from None
+
+    click.echo("Error: Timed out waiting for Trakt approval.", err=True)
+    raise click.Abort()
+
+
 @auth.command("disconnect")
 @click.option(
     "--source",
-    type=click.Choice(["gog", "epic"], case_sensitive=False),
+    type=click.Choice(["gog", "epic", "trakt"], case_sensitive=False),
     required=True,
     help="Source to disconnect",
 )

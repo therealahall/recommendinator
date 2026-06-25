@@ -5,7 +5,7 @@ import logging
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, assert_never, cast
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response, StreamingResponse
@@ -75,6 +75,15 @@ from src.web.sync_sources import (
     set_source_secret_value,
     update_source_config_values,
     validate_source_config,
+)
+from src.web.trakt_auth import (
+    DevicePollStatus,
+    TraktAuthError,
+    is_trakt_connected,
+    poll_device_token,
+    resolve_trakt_client_credentials,
+    save_trakt_token,
+    start_device_auth_flow,
 )
 
 logger = logging.getLogger(__name__)
@@ -356,6 +365,17 @@ class EpicExchangeRequest(BaseModel):
         ...,
         max_length=4000,
         description="Authorization code or JSON response from Epic Games",
+    )
+
+
+class TraktPollRequest(BaseModel):
+    """Request model for one Trakt device-approval poll."""
+
+    device_code: str = Field(
+        ...,
+        min_length=10,
+        max_length=256,
+        description="Device code returned by POST /trakt/start-device-flow",
     )
 
 
@@ -2056,3 +2076,162 @@ async def disconnect_epic(user_id: int = Query(1, ge=1)) -> dict[str, Any]:
         )
     logger.info("Disconnected Epic Games account for user %s", user_id)
     return {"success": True, "message": "Epic Games disconnected."}
+
+
+# ---------------------------------------------------------------------------
+# Trakt OAuth device-code endpoints
+# ---------------------------------------------------------------------------
+
+_TRAKT_POLL_MESSAGES: dict[DevicePollStatus, str] = {
+    DevicePollStatus.PENDING: "Waiting for you to approve the request on Trakt.",
+    DevicePollStatus.SLOW_DOWN: "Polling too quickly — slowing down.",
+    DevicePollStatus.EXPIRED: "The authorization code expired. Start over.",
+    DevicePollStatus.DENIED: "The authorization request was denied.",
+}
+
+
+@router.get("/trakt/status")
+async def get_trakt_status(user_id: int = Query(1, ge=1)) -> dict[str, Any]:
+    """Get Trakt integration status.
+
+    ``enabled`` is true when the Trakt source has client credentials saved
+    (so the device flow can run). ``connected`` is true when a refresh token
+    is stored AND the source is enabled — a source whose client credentials
+    can no longer resolve is not usable, so it is never reported connected.
+    """
+    config = get_config()
+    if not config:
+        raise HTTPException(status_code=500, detail="Config not initialized")
+
+    storage = get_storage()
+
+    enabled = True
+    try:
+        resolve_trakt_client_credentials(config, storage, user_id=user_id)
+    except TraktAuthError:
+        enabled = False
+
+    connected = enabled and is_trakt_connected(storage, user_id=user_id)
+
+    return {"enabled": enabled, "connected": connected}
+
+
+@router.post("/trakt/start-device-flow")
+async def start_trakt_device_flow(user_id: int = Query(1, ge=1)) -> dict[str, Any]:
+    """Begin the Trakt device-code flow.
+
+    Resolves the saved client_id/client_secret server-side and returns the
+    user code plus verification URL for the user to enter. The client_id and
+    client_secret are never returned.
+
+    Returning ``device_code`` to the web client is inherent to the OAuth
+    device-code flow (the browser drives the polling loop), and is a conscious,
+    reviewed decision for this localhost single-user deployment: exposure is
+    bounded by the short device-code expiry and a server-side session mapping
+    is intentionally not used here.
+    """
+    config = get_config()
+    storage = get_storage()
+
+    if not config:
+        raise HTTPException(status_code=500, detail="Config not initialized")
+    if not storage:
+        raise HTTPException(status_code=500, detail="Storage not initialized")
+
+    try:
+        client_id, _ = resolve_trakt_client_credentials(
+            config, storage, user_id=user_id
+        )
+        flow = start_device_auth_flow(client_id)
+    except TraktAuthError as error:
+        logger.warning("Trakt device-flow start failed: %s", error)
+        raise HTTPException(
+            status_code=400, detail="Trakt authentication failed"
+        ) from error
+
+    return {
+        "user_code": flow["user_code"],
+        "verification_url": flow["verification_url"],
+        "device_code": flow["device_code"],
+        "expires_in": flow["expires_in"],
+        "interval": flow["interval"],
+    }
+
+
+@router.post("/trakt/poll-device-approval")
+async def poll_trakt_device_approval(
+    request: TraktPollRequest, user_id: int = Query(1, ge=1)
+) -> dict[str, Any]:
+    """Poll Trakt once for device approval.
+
+    The frontend calls this repeatedly at the cadence Trakt returned. On
+    approval the refresh token is saved and ``connected: true`` is returned;
+    otherwise the current poll ``status`` is returned. This handler performs a
+    single poll and never blocks on a server-side loop.
+    """
+    config = get_config()
+    storage = get_storage()
+
+    if not config:
+        raise HTTPException(status_code=500, detail="Config not initialized")
+    if not storage:
+        raise HTTPException(status_code=500, detail="Storage not initialized")
+
+    try:
+        client_id, client_secret = resolve_trakt_client_credentials(
+            config, storage, user_id=user_id
+        )
+        result = poll_device_token(request.device_code, client_id, client_secret)
+    except TraktAuthError as error:
+        logger.warning("Trakt device-approval poll failed: %s", error)
+        raise HTTPException(
+            status_code=400, detail="Trakt authentication failed"
+        ) from error
+
+    status = result.status
+    match status:
+        case DevicePollStatus.SUCCESS:
+            if result.refresh_token is None:
+                logger.error("Trakt poll reported success without a refresh token")
+                raise HTTPException(
+                    status_code=500, detail="Trakt authentication failed"
+                )
+            save_trakt_token(storage, result.refresh_token, user_id=user_id)
+            logger.info("Successfully connected Trakt account for user %s", user_id)
+            return {
+                "connected": True,
+                "message": (
+                    "Trakt account connected successfully! "
+                    "You can now sync your Trakt library."
+                ),
+            }
+        case (
+            DevicePollStatus.PENDING
+            | DevicePollStatus.SLOW_DOWN
+            | DevicePollStatus.EXPIRED
+            | DevicePollStatus.DENIED
+        ):
+            return {
+                "connected": False,
+                "status": status.value,
+                "message": _TRAKT_POLL_MESSAGES[status],
+            }
+        case _:  # pragma: no cover - exhaustiveness guard for new enum members
+            assert_never(status)
+
+
+@router.delete("/trakt/token")
+async def disconnect_trakt(user_id: int = Query(1, ge=1)) -> dict[str, Any]:
+    """Disconnect Trakt by deleting the stored refresh token.
+
+    Mirrors the CLI `auth disconnect --source trakt` command.
+    """
+    storage = get_storage()
+    if not storage:
+        raise HTTPException(status_code=500, detail="Storage not initialized")
+
+    deleted = storage.delete_credential(user_id, "trakt", "refresh_token")
+    if not deleted:
+        raise HTTPException(status_code=404, detail="No active Trakt connection found")
+    logger.info("Disconnected Trakt account for user %s", user_id)
+    return {"success": True, "message": "Trakt disconnected."}
