@@ -30,6 +30,7 @@ from src.web.sync_manager import (
     get_sync_manager,
     reset_sync_manager,
 )
+from src.web.trakt_auth import DevicePollResult, DevicePollStatus, TraktAuthError
 
 
 @pytest.fixture
@@ -3096,3 +3097,320 @@ class TestAuthDisconnectEndpoints:
         response = client.delete("/api/epic/token")
 
         assert response.status_code == 404
+
+    def test_trakt_disconnect_success(self, client, mock_components):
+        """DELETE /api/trakt/token removes the stored Trakt refresh token."""
+        storage = mock_components["storage"]
+        storage.delete_credential.return_value = True
+
+        response = client.delete("/api/trakt/token")
+
+        assert response.status_code == 200
+        assert response.json() == {"success": True, "message": "Trakt disconnected."}
+        storage.delete_credential.assert_called_once_with(1, "trakt", "refresh_token")
+
+    def test_trakt_disconnect_not_connected(self, client, mock_components):
+        """DELETE /api/trakt/token returns 404 when no credential exists."""
+        mock_components["storage"].delete_credential.return_value = False
+
+        response = client.delete("/api/trakt/token")
+
+        assert response.status_code == 404
+
+
+class TestTraktStatus:
+    """Tests for GET /api/trakt/status."""
+
+    def test_enabled_and_connected(self, client, mock_components) -> None:
+        """Configured client creds + stored token returns enabled+connected."""
+        with (
+            patch(
+                "src.web.api.resolve_trakt_client_credentials",
+                return_value=("cid", "secret"),
+            ),
+            patch("src.web.api.is_trakt_connected", return_value=True),
+        ):
+            response = client.get("/api/trakt/status")
+
+        assert response.status_code == 200
+        assert response.json() == {"enabled": True, "connected": True}
+
+    def test_not_configured(self, client, mock_components) -> None:
+        """Missing client creds returns enabled=False, connected=False."""
+        with (
+            patch(
+                "src.web.api.resolve_trakt_client_credentials",
+                side_effect=TraktAuthError("not configured"),
+            ),
+            patch("src.web.api.is_trakt_connected", return_value=False),
+        ):
+            response = client.get("/api/trakt/status")
+
+        assert response.status_code == 200
+        assert response.json() == {"enabled": False, "connected": False}
+
+    def test_stored_token_but_creds_removed_is_not_connected(
+        self, client, mock_components
+    ) -> None:
+        """A stored token with unresolvable creds reports connected=False.
+
+        If client credentials are removed after connecting, the source can no
+        longer be used, so the status must stay coherent: not enabled implies
+        not connected, even though a refresh token is still in storage.
+        """
+        with (
+            patch(
+                "src.web.api.resolve_trakt_client_credentials",
+                side_effect=TraktAuthError("not configured"),
+            ),
+            patch("src.web.api.is_trakt_connected", return_value=True),
+        ):
+            response = client.get("/api/trakt/status")
+
+        assert response.status_code == 200
+        assert response.json() == {"enabled": False, "connected": False}
+
+    def test_no_storage_returns_not_connected(self, client, mock_components) -> None:
+        """Status degrades to connected=False (not a 500) when storage is None."""
+        app_state.storage = None
+
+        with patch(
+            "src.web.api.resolve_trakt_client_credentials",
+            side_effect=TraktAuthError("not configured"),
+        ):
+            response = client.get("/api/trakt/status")
+
+        assert response.status_code == 200
+        assert response.json() == {"enabled": False, "connected": False}
+
+
+class TestTraktStartDeviceFlow:
+    """Tests for POST /api/trakt/start-device-flow."""
+
+    def test_returns_user_code_and_url(self, client, mock_components) -> None:
+        """Start returns the user code/verification URL, never the secret."""
+        with (
+            patch(
+                "src.web.api.resolve_trakt_client_credentials",
+                return_value=("cid", "secret"),
+            ),
+            patch(
+                "src.web.api.start_device_auth_flow",
+                return_value={
+                    "device_code": "dev123",
+                    "user_code": "ABCD1234",
+                    "verification_url": "https://trakt.tv/activate",
+                    "expires_in": 600,
+                    "interval": 5,
+                },
+            ),
+        ):
+            response = client.post("/api/trakt/start-device-flow")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data == {
+            "user_code": "ABCD1234",
+            "verification_url": "https://trakt.tv/activate",
+            "device_code": "dev123",
+            "expires_in": 600,
+            "interval": 5,
+        }
+        assert "secret" not in response.text
+
+    def test_not_configured_returns_400(self, client, mock_components) -> None:
+        """Start returns 400 with a generic message when creds are missing.
+
+        The raw resolver error (which can name config internals) must never
+        reach the client; only the generic message is surfaced.
+        """
+        with patch(
+            "src.web.api.resolve_trakt_client_credentials",
+            side_effect=TraktAuthError("Trakt is not configured."),
+        ):
+            response = client.post("/api/trakt/start-device-flow")
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Trakt authentication failed"
+
+    def test_no_storage_returns_500(self, client, mock_components) -> None:
+        """Start returns 500 'Storage not initialized' when storage is None."""
+        app_state.storage = None
+
+        response = client.post("/api/trakt/start-device-flow")
+
+        assert response.status_code == 500
+        assert response.json()["detail"] == "Storage not initialized"
+
+
+class TestTraktPollDeviceApproval:
+    """Tests for POST /api/trakt/poll-device-approval."""
+
+    def test_success_saves_token(self, client, mock_components) -> None:
+        """A SUCCESS poll saves the refresh token and reports connected."""
+        with (
+            patch(
+                "src.web.api.resolve_trakt_client_credentials",
+                return_value=("cid", "secret"),
+            ),
+            patch(
+                "src.web.api.poll_device_token",
+                return_value=DevicePollResult(DevicePollStatus.SUCCESS, "refresh-xyz"),
+            ),
+            patch("src.web.api.save_trakt_token") as mock_save,
+        ):
+            response = client.post(
+                "/api/trakt/poll-device-approval", json={"device_code": "dev1234567"}
+            )
+
+        assert response.status_code == 200
+        assert response.json()["connected"] is True
+        mock_save.assert_called_once_with(
+            mock_components["storage"], "refresh-xyz", user_id=1
+        )
+
+    def test_pending_returns_status(self, client, mock_components) -> None:
+        """A PENDING poll returns connected=False with the status."""
+        with (
+            patch(
+                "src.web.api.resolve_trakt_client_credentials",
+                return_value=("cid", "secret"),
+            ),
+            patch(
+                "src.web.api.poll_device_token",
+                return_value=DevicePollResult(DevicePollStatus.PENDING),
+            ),
+            patch("src.web.api.save_trakt_token") as mock_save,
+        ):
+            response = client.post(
+                "/api/trakt/poll-device-approval", json={"device_code": "dev1234567"}
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["connected"] is False
+        assert data["status"] == "pending"
+        mock_save.assert_not_called()
+
+    def test_invalid_device_code_returns_400(self, client, mock_components) -> None:
+        """A poll error (e.g. invalid device code) returns 400."""
+        with (
+            patch(
+                "src.web.api.resolve_trakt_client_credentials",
+                return_value=("cid", "secret"),
+            ),
+            patch(
+                "src.web.api.poll_device_token",
+                side_effect=TraktAuthError("invalid"),
+            ),
+        ):
+            response = client.post(
+                "/api/trakt/poll-device-approval", json={"device_code": "badbadbad1"}
+            )
+
+        assert response.status_code == 400
+
+    @pytest.mark.parametrize(
+        "status",
+        [
+            DevicePollStatus.SLOW_DOWN,
+            DevicePollStatus.EXPIRED,
+            DevicePollStatus.DENIED,
+        ],
+    )
+    def test_non_terminal_statuses_return_message(
+        self, client, mock_components, status
+    ) -> None:
+        """SLOW_DOWN/EXPIRED/DENIED polls return connected=False with a message.
+
+        The endpoint must surface a human-readable message for every documented
+        device-poll status, not just PENDING — the frontend renders it verbatim.
+        """
+        with (
+            patch(
+                "src.web.api.resolve_trakt_client_credentials",
+                return_value=("cid", "secret"),
+            ),
+            patch(
+                "src.web.api.poll_device_token",
+                return_value=DevicePollResult(status),
+            ),
+            patch("src.web.api.save_trakt_token") as mock_save,
+        ):
+            response = client.post(
+                "/api/trakt/poll-device-approval", json={"device_code": "dev1234567"}
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["connected"] is False
+        assert data["status"] == status.value
+        assert isinstance(data["message"], str) and data["message"]
+        mock_save.assert_not_called()
+
+    def test_success_without_refresh_token_returns_500(
+        self, client, mock_components
+    ) -> None:
+        """A SUCCESS result missing a refresh token fails closed with a 500.
+
+        The endpoint must not save an empty credential or 200 a non-connection;
+        an explicit check (not a stripped assert) guards this.
+        """
+        with (
+            patch(
+                "src.web.api.resolve_trakt_client_credentials",
+                return_value=("cid", "secret"),
+            ),
+            patch(
+                "src.web.api.poll_device_token",
+                return_value=DevicePollResult(DevicePollStatus.SUCCESS, None),
+            ),
+            patch("src.web.api.save_trakt_token") as mock_save,
+        ):
+            response = client.post(
+                "/api/trakt/poll-device-approval", json={"device_code": "dev1234567"}
+            )
+
+        assert response.status_code == 500
+        assert response.json()["detail"] == "Trakt authentication failed"
+        mock_save.assert_not_called()
+
+    def test_poll_error_message_is_generic(self, client, mock_components) -> None:
+        """A poll TraktAuthError surfaces only the generic message, never raw."""
+        with (
+            patch(
+                "src.web.api.resolve_trakt_client_credentials",
+                return_value=("cid", "secret"),
+            ),
+            patch(
+                "src.web.api.poll_device_token",
+                side_effect=TraktAuthError("invalid device code 0xdeadbeef"),
+            ),
+        ):
+            response = client.post(
+                "/api/trakt/poll-device-approval", json={"device_code": "dev1234567"}
+            )
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Trakt authentication failed"
+
+    def test_short_device_code_rejected(self, client, mock_components) -> None:
+        """A device_code shorter than the min length is rejected before polling."""
+        with patch("src.web.api.poll_device_token") as mock_poll:
+            response = client.post(
+                "/api/trakt/poll-device-approval", json={"device_code": "short"}
+            )
+
+        assert response.status_code == 422
+        mock_poll.assert_not_called()
+
+    def test_no_storage_returns_500(self, client, mock_components) -> None:
+        """Poll returns 500 'Storage not initialized' when storage is None."""
+        app_state.storage = None
+
+        response = client.post(
+            "/api/trakt/poll-device-approval", json={"device_code": "dev1234567"}
+        )
+
+        assert response.status_code == 500
+        assert response.json()["detail"] == "Storage not initialized"
