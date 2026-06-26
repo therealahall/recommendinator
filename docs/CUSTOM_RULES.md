@@ -26,7 +26,7 @@ python3.11 -m src.cli preferences custom-rules interpret "prefer sci-fi"
 ### Web UI
 
 1. Go to the **Preferences** tab
-2. Scroll to **Custom Rules** section
+2. Scroll to the **Rules** section and find **Custom rules**
 3. Type your rule and click **Add Rule**
 4. Click **Save Preferences** to apply
 

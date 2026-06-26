@@ -65,26 +65,26 @@ benefit-of-the-doubt score rather than being penalized.
 
 ## Variety after completion
 
-Set the **"Variety after completion"** preference above `0.0` (web UI slider, or
-`preferences set-variety <0.0-0.8>` in the CLI) to stop the recommender from
+Set the **"Variety After Completion"** preference above `0.0` (web UI slider, or
+`preferences set-variety <0.0-5.0>` in the CLI) to stop the recommender from
 marching through the next entry in a genre you just finished — for example,
 finishing a fantasy book no longer makes the next fantasy book your automatic #1.
 
-`variety_penalty` is a number in **0.0–0.8**. `0.0` turns the feature **off**;
-any value above zero becomes the **top penalty** at the head of the ladder, so a
-higher number demotes recently finished genres more aggressively. The cap of
-`0.8` is what guarantees a fully-penalized candidate keeps at least **20%** of
-its score (the penalty multiplies the score, so `0.8` leaves `0.2`) — a
-genre-homogeneous library never produces an empty list.
+`variety_penalty` is a number in **0.0–5.0**, the same scale as the scorer
+weights. `0.0` turns the feature **off**; higher values demote recently finished
+genres more aggressively. Internally the preference is divided by its `5.0`
+maximum to derive the top penalty *fraction* applied to a just-finished genre, so
+`4.0` reproduces the legacy full-strength behavior (a `0.8` fraction) and `5.0`
+is full strength — a just-finished genre's same-type candidates are zeroed
+entirely. There is **no score floor**.
 
 The genres you most recently *completed* are penalized on a stepped ladder by
 recency. The most recently finished genre cluster takes the full penalty you set,
-and the penalty decays over your last **5 distinct** finished genres. With the
-maximum `0.8` that ladder is 80% → 64% → 48% → 32% → 16%, then nothing; a smaller
-value scales the whole ladder down (e.g. `0.4` gives 40% → 32% → 24% → 16% → 8%).
+and the penalty decays over your last **5 distinct** finished genres. At the
+maximum `5.0` that ladder is 100% → 80% → 60% → 40% → 20%, then nothing; a smaller
+value scales the whole ladder down (e.g. `2.0` gives 40% → 32% → 24% → 16% → 8%).
 A candidate is penalized by its freshest matching genre, and the penalty
-multiplies its final score, so a heavily-penalized item still keeps a fraction of
-its score rather than disappearing.
+multiplies its final score.
 
 The penalty is **per content type** — finishing a fantasy *book* varies your book
 recommendations but leaves fantasy *movies* and *games* untouched. Each
