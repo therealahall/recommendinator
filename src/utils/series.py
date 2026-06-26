@@ -454,6 +454,7 @@ def expand_tv_shows_to_seasons(items: list[ContentItem]) -> list[ContentItem]:
             expanded.append(
                 ContentItem(
                     id=season_id,
+                    db_id=item.db_id,
                     title=season_title,
                     author=item.author,
                     content_type=ContentType.TV_SHOW,
