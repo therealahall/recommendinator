@@ -809,6 +809,10 @@ async def list_items(
         description="Filter by enrichment state: enriched or not_enriched",
     ),
     search: str | None = Query(None, description="Search term for title/creator"),
+    needs_rating: bool = Query(
+        False,
+        description="Only return completed items that have no rating yet",
+    ),
 ) -> list[ContentItemResponse]:
     """List content items with optional filters.
 
@@ -822,6 +826,8 @@ async def list_items(
         include_ignored: Whether to include ignored items (default: False).
         enrichment: Optional enrichment-state filter (enriched/not_enriched).
         search: Optional search term matched against title and creator.
+        needs_rating: When True, return only completed items with no rating.
+            Forces status to completed (overriding any status param).
 
     Returns:
         List of content items.
@@ -857,10 +863,16 @@ async def list_items(
             detail="Invalid sort_by. Valid options: created_at, rating, title, updated_at",
         )
 
+    # needs_rating means "completed AND unrated": completed status is implied
+    # and takes precedence over any explicitly-passed status param.
+    if needs_rating:
+        consumption_status = ConsumptionStatus.COMPLETED
+
     items = storage.get_content_items(
         user_id=user_id,
         content_type=content_type,
         status=consumption_status,
+        unrated_only=needs_rating,
         limit=limit,
         offset=offset,
         sort_by=sort_by.lower(),
