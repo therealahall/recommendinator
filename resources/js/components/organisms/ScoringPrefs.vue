@@ -32,7 +32,6 @@ function shouldShow(key: string): boolean {
         @update:model-value="prefs.setWeight(key, $event)"
       />
     </template>
-    <div class="pref-divider"></div>
     <ScorerSlider
       label="Variety After Completion"
       :tooltip="VARIETY_PENALTY_TOOLTIP"
