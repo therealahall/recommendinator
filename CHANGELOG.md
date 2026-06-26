@@ -1,6 +1,35 @@
 # CHANGELOG
 
 
+## v0.13.0 (2026-06-26)
+
+### Bug Fixes
+
+- **a11y**: Keep slider tooltip text in the accessibility tree
+  ([`61a53e8`](https://github.com/therealahall/recommendinator/commit/61a53e80a41a3dc0f731cffd9d882d4ffbf24eaf))
+
+### Code Style
+
+- **preferences**: Drop the divider above the variety slider
+  ([`98cc7f6`](https://github.com/therealahall/recommendinator/commit/98cc7f692846d920fff31948721ff3951c5d517d))
+
+### Documentation
+
+- Describe the 0-5 variety penalty scale and Scoring/Rules layout
+  ([`93325cb`](https://github.com/therealahall/recommendinator/commit/93325cb0b372bd8a850bbddbacedc6d49c313223))
+
+- Describe the variety penalty slider
+  ([`f13d245`](https://github.com/therealahall/recommendinator/commit/f13d245068ee7f07ca16a4a9980ea088babcedcf))
+
+### Features
+
+- **preferences**: Make variety after completion a strength slider
+  ([`7d9a907`](https://github.com/therealahall/recommendinator/commit/7d9a9078d63b0a36479067e84a57136bbdcf5f93))
+
+- **preferences**: Put variety penalty on the 0-5 scorer scale
+  ([`5410a75`](https://github.com/therealahall/recommendinator/commit/5410a75d7bf3ff5bb5f5351a22617431cf99b3ca))
+
+
 ## v0.12.3 (2026-06-26)
 
 ### Bug Fixes
