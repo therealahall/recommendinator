@@ -709,11 +709,6 @@ input[type="checkbox"] {
   color: var(--text-primary);
 }
 
-.pref-divider {
-  border-top: 1px solid var(--border-subtle);
-  margin: var(--space-4) 0;
-}
-
 .pref-section h4 {
   font-size: var(--text-sm);
   font-weight: 600;

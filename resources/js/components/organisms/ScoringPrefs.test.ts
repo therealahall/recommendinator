@@ -37,7 +37,7 @@ describe('ScoringPrefs', () => {
     const wrapper = mount(ScoringPrefs)
 
     // 8 scorer sliders (semantic_similarity is gated off when AI is disabled)
-    // plus 1 variety slider after the divider = 9.
+    // plus 1 variety slider = 9.
     const sliders = wrapper.findAll('input[type="range"]')
     expect(sliders).toHaveLength(9)
     // Every slider now uses the shared 0–5 ScorerSlider scale.
@@ -53,11 +53,8 @@ describe('ScoringPrefs', () => {
     expect(labelStartsWith(mount(ScoringPrefs), 'Semantic Similarity')).toBe(true)
   })
 
-  it('renders the variety slider as a 0–5 ScorerSlider after the divider', () => {
+  it('renders the variety slider as a 0–5 ScorerSlider after the scorer weights', () => {
     const wrapper = mount(ScoringPrefs)
-
-    const divider = wrapper.find('.pref-divider')
-    expect(divider.exists()).toBe(true)
 
     // The variety slider is the last ScorerSlider; assert its label prop exactly
     // so a longer string like "Variety After Completion Strength" would fail.
@@ -65,13 +62,14 @@ describe('ScoringPrefs', () => {
     const varietySlider = scorerSliders[scorerSliders.length - 1]
     expect(varietySlider.props('label')).toBe('Variety After Completion')
 
-    // The variety slider is rendered last, after the divider.
     const sliders = wrapper.findAll('input[type="range"]')
     const variety = sliders[sliders.length - 1]
     expect(variety.attributes('max')).toBe('5')
     expect(variety.attributes('aria-valuetext')).toBe('0.0')
 
-    const position = divider.element.compareDocumentPosition(variety.element)
+    // It renders after the scorer-weight sliders.
+    const lastWeight = sliders[sliders.length - 2]
+    const position = lastWeight.element.compareDocumentPosition(variety.element)
     expect(position & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
