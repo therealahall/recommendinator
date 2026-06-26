@@ -8,6 +8,7 @@ describe('LibraryFilters', () => {
     statusFilter: '',
     enrichmentFilter: '',
     showIgnored: false,
+    needsRating: false,
     searchQuery: '',
     searchLoading: false,
   }
@@ -162,7 +163,7 @@ describe('LibraryFilters', () => {
   it('emits filterChange for showIgnored on toggle click', async () => {
     const wrapper = mount(LibraryFilters, { props: defaultProps })
 
-    await wrapper.find('.toggle-switch').trigger('click')
+    await wrapper.find('button[aria-label="Show ignored"]').trigger('click')
 
     expect(wrapper.emitted('filterChange')).toEqual([['showIgnored', true]])
   })
@@ -172,9 +173,58 @@ describe('LibraryFilters', () => {
       props: { ...defaultProps, showIgnored: true },
     })
 
-    await wrapper.find('.toggle-switch').trigger('click')
+    await wrapper.find('button[aria-label="Show ignored"]').trigger('click')
 
     expect(wrapper.emitted('filterChange')).toEqual([['showIgnored', false]])
+  })
+
+  it('renders the Needs rating toggle', () => {
+    const wrapper = mount(LibraryFilters, { props: defaultProps })
+
+    expect(wrapper.find('button[aria-label="Needs rating"]').exists()).toBe(true)
+  })
+
+  it('emits filterChange for needsRating on toggle click', async () => {
+    const wrapper = mount(LibraryFilters, { props: defaultProps })
+
+    await wrapper.find('button[aria-label="Needs rating"]').trigger('click')
+
+    expect(wrapper.emitted('filterChange')).toEqual([['needsRating', true]])
+  })
+
+  it('emits filterChange with false when toggling off needsRating', async () => {
+    const wrapper = mount(LibraryFilters, {
+      props: { ...defaultProps, needsRating: true },
+    })
+
+    await wrapper.find('button[aria-label="Needs rating"]').trigger('click')
+
+    expect(wrapper.emitted('filterChange')).toEqual([['needsRating', false]])
+  })
+
+  it('disables and displays Completed without mutating an empty statusFilter', () => {
+    const wrapper = mount(LibraryFilters, {
+      props: { ...defaultProps, needsRating: true, statusFilter: '' },
+    })
+
+    const select = wrapper.find('select[aria-label="Status"]')
+    expect(select.attributes('disabled')).toBeDefined()
+    // Display-only: the select shows Completed even though statusFilter is ''.
+    expect((select.element as HTMLSelectElement).value).toBe('completed')
+    expect(select.attributes('aria-describedby')).toBe('status-locked-hint')
+    expect(wrapper.find('#status-locked-hint').classes()).toContain('sr-only')
+  })
+
+  it('shows the real statusFilter and is editable when needsRating is inactive', () => {
+    const wrapper = mount(LibraryFilters, {
+      props: { ...defaultProps, statusFilter: 'unread' },
+    })
+
+    const select = wrapper.find('select[aria-label="Status"]')
+    expect(select.attributes('disabled')).toBeUndefined()
+    expect((select.element as HTMLSelectElement).value).toBe('unread')
+    expect(select.attributes('aria-describedby')).toBeUndefined()
+    expect(wrapper.find('#status-locked-hint').exists()).toBe(false)
   })
 
   it('renders export dropdown button with title', () => {

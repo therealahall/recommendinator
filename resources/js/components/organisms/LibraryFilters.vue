@@ -10,13 +10,14 @@ const props = defineProps<{
   statusFilter: string
   enrichmentFilter: string
   showIgnored: boolean
+  needsRating: boolean
   searchQuery: string
   searchLoading: boolean
 }>()
 
 const emit = defineEmits<{
   filterChange: [
-    key: 'type' | 'status' | 'enrichment' | 'showIgnored' | 'search',
+    key: 'type' | 'status' | 'enrichment' | 'showIgnored' | 'search' | 'needsRating',
     value: string | boolean,
   ]
   export: [format: 'csv' | 'json']
@@ -87,12 +88,20 @@ onUnmounted(() => {
           :model-value="typeFilter"
           @update:model-value="emit('filterChange', 'type', $event)"
         />
-        <select class="toolbar-select" aria-label="Status" :value="statusFilter" @change="emit('filterChange', 'status', ($event.target as HTMLSelectElement).value)">
+        <select
+          class="toolbar-select"
+          aria-label="Status"
+          :value="needsRating ? 'completed' : statusFilter"
+          :disabled="needsRating"
+          :aria-describedby="needsRating ? 'status-locked-hint' : undefined"
+          @change="emit('filterChange', 'status', ($event.target as HTMLSelectElement).value)"
+        >
           <option value="">All Statuses</option>
           <option value="unread">{{ unreadLabel }}</option>
           <option value="currently_consuming">In Progress</option>
           <option value="completed">Completed</option>
         </select>
+        <span v-if="needsRating" id="status-locked-hint" class="sr-only">Locked to Completed while Needs rating is on.</span>
         <select class="toolbar-select" aria-label="Enrichment" :value="enrichmentFilter" @change="emit('filterChange', 'enrichment', ($event.target as HTMLSelectElement).value)">
           <option value="">All Items</option>
           <option value="enriched">Enriched</option>
@@ -104,6 +113,11 @@ onUnmounted(() => {
 
       <!-- Ignored toggle + Export (mobile: row 2; desktop: inline in toolbar) -->
       <div class="lib-actions-row">
+        <ToggleSwitch
+          :model-value="needsRating"
+          label="Needs rating"
+          @update:model-value="emit('filterChange', 'needsRating', $event)"
+        />
         <ToggleSwitch
           :model-value="showIgnored"
           label="Show ignored"

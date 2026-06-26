@@ -67,6 +67,7 @@ onUnmounted(() => {
       :status-filter="lib.statusFilter"
       :enrichment-filter="lib.enrichmentFilter"
       :show-ignored="lib.showIgnored"
+      :needs-rating="lib.needsRating"
       :search-query="lib.searchQuery"
       :search-loading="lib.searchLoading"
       @filter-change="lib.setFilter"
@@ -79,21 +80,24 @@ onUnmounted(() => {
       Failed to load library: {{ lib.error }}
     </div>
 
-    <div
-      v-if="lib.items.length === 0 && !lib.loading && lib.searchQuery"
-      class="empty-state empty-state-search"
-    >
-      <svg class="empty-state-icon" aria-hidden="true" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <circle cx="11" cy="11" r="8" />
-        <line x1="21" y1="21" x2="16.65" y2="16.65" />
-      </svg>
-      <p class="empty-state-title">No items match “{{ lib.searchQuery }}”</p>
-      <p class="empty-state-hint">Try a different title, or check your spelling.</p>
-      <button class="btn btn-secondary" @click="lib.setFilter('search', '')">Clear search</button>
-    </div>
+    <div aria-live="polite" aria-atomic="true">
+      <div
+        v-if="lib.items.length === 0 && !lib.loading && lib.searchQuery"
+        class="empty-state empty-state-search"
+      >
+        <svg class="empty-state-icon" aria-hidden="true" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="11" cy="11" r="8" />
+          <line x1="21" y1="21" x2="16.65" y2="16.65" />
+        </svg>
+        <p class="empty-state-title">No items match “{{ lib.searchQuery }}”</p>
+        <p class="empty-state-hint">Try a different title, or check your spelling.</p>
+        <button class="btn btn-secondary" @click="lib.setFilter('search', '')">Clear search</button>
+      </div>
 
-    <div v-else-if="lib.items.length === 0 && !lib.loading" class="empty-state">
-      No items found. Try syncing your sources.
+      <div v-else-if="lib.items.length === 0 && !lib.loading" class="empty-state">
+        <template v-if="lib.needsRating">Nothing needs a rating. All your completed items are rated.</template>
+        <template v-else>No items found. Try syncing your sources.</template>
+      </div>
     </div>
 
     <div v-if="lib.items.length > 0" class="library-grid">

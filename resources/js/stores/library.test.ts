@@ -30,6 +30,7 @@ describe('useLibraryStore', () => {
     expect(store.loading).toBe(false)
     expect(store.typeFilter).toBe('')
     expect(store.statusFilter).toBe('')
+    expect(store.needsRating).toBe(false)
   })
 
   it('resetAndLoad fetches items', async () => {
@@ -305,6 +306,64 @@ describe('useLibraryStore', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('setFilter needsRating sends needs_rating, omits status, and leaves statusFilter untouched', async () => {
+    mockGet.mockResolvedValue([])
+    const store = useLibraryStore()
+
+    await store.setFilter('needsRating', true)
+
+    expect(store.needsRating).toBe(true)
+    // statusFilter is independent — the toggle must not mutate it.
+    expect(store.statusFilter).toBe('')
+    const params = mockGet.mock.lastCall![1] as Record<string, unknown>
+    expect(params.needs_rating).toBe(true)
+    expect(params.status).toBeUndefined()
+    expect(store.offset).toBe(0)
+  })
+
+  it('needsRating composes with the type filter and still omits status', async () => {
+    mockGet.mockResolvedValue([])
+    const store = useLibraryStore()
+
+    await store.setFilter('type', 'book')
+    await store.setFilter('needsRating', true)
+
+    const params = mockGet.mock.lastCall![1] as Record<string, unknown>
+    expect(params.type).toBe('book')
+    expect(params.needs_rating).toBe(true)
+    expect(params.status).toBeUndefined()
+  })
+
+  it('needsRating composes with showIgnored and still omits status', async () => {
+    mockGet.mockResolvedValue([])
+    const store = useLibraryStore()
+
+    await store.setFilter('showIgnored', true)
+    await store.setFilter('needsRating', true)
+
+    const params = mockGet.mock.lastCall![1] as Record<string, unknown>
+    expect(params.needs_rating).toBe(true)
+    expect(params.include_ignored).toBe(true)
+    expect(params.status).toBeUndefined()
+  })
+
+  it('toggling needsRating off restores the user\'s prior status filter', async () => {
+    mockGet.mockResolvedValue([])
+    const store = useLibraryStore()
+
+    // User picks a real status, then toggles needsRating on and back off.
+    await store.setFilter('status', 'unread')
+    await store.setFilter('needsRating', true)
+    await store.setFilter('needsRating', false)
+
+    expect(store.needsRating).toBe(false)
+    // The orthogonal redesign means the prior status survives the round-trip.
+    expect(store.statusFilter).toBe('unread')
+    const params = mockGet.mock.lastCall![1] as Record<string, unknown>
+    expect(params.needs_rating).toBeUndefined()
+    expect(params.status).toBe('unread')
   })
 
   it('saveEdit updates item in list', async () => {
