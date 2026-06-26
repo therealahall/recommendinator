@@ -22,6 +22,7 @@ export const useLibraryStore = defineStore('library', () => {
   const statusFilter = ref('')
   const enrichmentFilter = ref('')
   const showIgnored = ref(false)
+  const needsRating = ref(false)
 
   // Search
   const searchQuery = ref('')
@@ -71,7 +72,14 @@ export const useLibraryStore = defineStore('library', () => {
         offset: offset.value,
       }
       if (typeFilter.value) params.type = typeFilter.value
-      if (statusFilter.value) params.status = statusFilter.value
+      if (needsRating.value) {
+        // The backend forces completed items for needs-rating, so the user's
+        // own status filter is irrelevant here — omit it to avoid a redundant
+        // or contradictory param.
+        params.needs_rating = true
+      } else if (statusFilter.value) {
+        params.status = statusFilter.value
+      }
       if (enrichmentFilter.value) params.enrichment = enrichmentFilter.value
       if (showIgnored.value) params.include_ignored = true
       if (searchQuery.value) params.search = searchQuery.value
@@ -134,7 +142,7 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   function setFilter(
-    key: 'type' | 'status' | 'enrichment' | 'showIgnored' | 'search',
+    key: 'type' | 'status' | 'enrichment' | 'showIgnored' | 'search' | 'needsRating',
     value: string | boolean,
   ) {
     if (key === 'search') {
@@ -150,6 +158,7 @@ export const useLibraryStore = defineStore('library', () => {
     else if (key === 'status') statusFilter.value = value as string
     else if (key === 'enrichment') enrichmentFilter.value = value as string
     else if (key === 'showIgnored') showIgnored.value = value as boolean
+    else if (key === 'needsRating') needsRating.value = value as boolean
     return resetAndLoad()
   }
 
@@ -234,6 +243,7 @@ export const useLibraryStore = defineStore('library', () => {
     statusFilter,
     enrichmentFilter,
     showIgnored,
+    needsRating,
     searchQuery,
     searchLoading,
     searchAnnouncement,
