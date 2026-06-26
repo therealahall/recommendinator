@@ -193,6 +193,178 @@ def test_get_content_items_with_filters(temp_db: SQLiteDB) -> None:
     assert len(books) == 6
 
 
+def test_get_content_items_unrated_only(temp_db: SQLiteDB) -> None:
+    """unrated_only should return only items with rating IS NULL."""
+    items = [
+        ContentItem(
+            id="completed_rated",
+            title="Completed Rated",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+        ),
+        ContentItem(
+            id="completed_unrated",
+            title="Completed Unrated",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=None,
+        ),
+        ContentItem(
+            id="unread_unrated",
+            title="Unread Unrated",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+            rating=None,
+        ),
+    ]
+    for item in items:
+        temp_db.save_content_item(item)
+
+    # rating IS NULL across all statuses when status is not constrained
+    unrated = temp_db.get_content_items(unrated_only=True)
+    assert {item.id for item in unrated} == {"completed_unrated", "unread_unrated"}
+
+    # Composes with status: only completed + unrated
+    completed_unrated = temp_db.get_content_items(
+        status=ConsumptionStatus.COMPLETED, unrated_only=True
+    )
+    assert {item.id for item in completed_unrated} == {"completed_unrated"}
+
+    # Composes with content_type
+    movie_unrated = temp_db.get_content_items(
+        content_type=ContentType.MOVIE, unrated_only=True
+    )
+    assert {item.id for item in movie_unrated} == {"unread_unrated"}
+
+
+def test_get_content_items_unrated_only_respects_ignored(temp_db: SQLiteDB) -> None:
+    """unrated_only must still honor the ignored filter, not bypass it.
+
+    The web/CLI needs-rating path passes include_ignored=False by default, so an
+    ignored completed+unrated item must not leak into that set; it only surfaces
+    when ignored items are explicitly requested. unrated_only composes with the
+    ignored filter rather than overriding it.
+    """
+    visible = ContentItem(
+        id="visible_unrated",
+        title="Visible Unrated",
+        content_type=ContentType.BOOK,
+        status=ConsumptionStatus.COMPLETED,
+        rating=None,
+        ignored=False,
+    )
+    hidden = ContentItem(
+        id="ignored_unrated",
+        title="Ignored Unrated",
+        content_type=ContentType.BOOK,
+        status=ConsumptionStatus.COMPLETED,
+        rating=None,
+        ignored=True,
+    )
+    temp_db.save_content_item(visible)
+    temp_db.save_content_item(hidden)
+
+    # include_ignored=False (what the web/CLI default to): ignored item excluded.
+    visible_only = temp_db.get_content_items(
+        status=ConsumptionStatus.COMPLETED, unrated_only=True, include_ignored=False
+    )
+    assert {item.id for item in visible_only} == {"visible_unrated"}
+
+    # include_ignored=True: ignored item is surfaced alongside the visible one.
+    with_ignored = temp_db.get_content_items(
+        status=ConsumptionStatus.COMPLETED, unrated_only=True, include_ignored=True
+    )
+    assert {item.id for item in with_ignored} == {
+        "visible_unrated",
+        "ignored_unrated",
+    }
+
+
+def test_get_content_items_unrated_only_pagination(temp_db: SQLiteDB) -> None:
+    """unrated_only composes with limit/offset for paginated needs-rating views."""
+    for letter in ("A", "B", "C"):
+        temp_db.save_content_item(
+            ContentItem(
+                id=f"unrated_{letter}",
+                title=f"Title {letter}",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                rating=None,
+            )
+        )
+
+    first_page = temp_db.get_content_items(
+        status=ConsumptionStatus.COMPLETED, unrated_only=True, limit=2, offset=0
+    )
+    assert [item.id for item in first_page] == ["unrated_A", "unrated_B"]
+
+    second_page = temp_db.get_content_items(
+        status=ConsumptionStatus.COMPLETED, unrated_only=True, limit=2, offset=2
+    )
+    assert [item.id for item in second_page] == ["unrated_C"]
+
+
+def test_get_content_items_unrated_only_sql_paginated_sort(temp_db: SQLiteDB) -> None:
+    """unrated_only composes with SQL LIMIT/OFFSET under a non-title sort.
+
+    The default "title" sort paginates in Python; "updated_at"/"created_at"/
+    "rating" apply LIMIT/OFFSET in SQL, a separate code path. This pins that
+    path: rated completed items must never leak across pages, and the unrated
+    items must paginate in the requested updated_at DESC order. updated_at is
+    set explicitly per row so the ordering is deterministic (the schema default
+    CURRENT_TIMESTAMP has only second granularity and would tie within a test).
+    """
+    # external_id -> (rating, updated_at). Newest updated_at sorts first.
+    # Rated rows are interleaved by timestamp to prove they are filtered, not
+    # merely paginated off the end.
+    rows = {
+        "unrated_1": (None, "2025-01-06 00:00:00"),
+        "rated_1": (4, "2025-01-05 00:00:00"),
+        "unrated_2": (None, "2025-01-04 00:00:00"),
+        "unrated_3": (None, "2025-01-03 00:00:00"),
+        "rated_2": (5, "2025-01-02 00:00:00"),
+        "unrated_4": (None, "2025-01-01 00:00:00"),
+    }
+    for external_id, (rating, _) in rows.items():
+        temp_db.save_content_item(
+            ContentItem(
+                id=external_id,
+                title=external_id.replace("_", " ").title(),
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                rating=rating,
+            )
+        )
+
+    with temp_db.connection() as conn:
+        cursor = conn.cursor()
+        for external_id, (_, updated_at) in rows.items():
+            cursor.execute(
+                "UPDATE content_items SET updated_at = ? WHERE external_id = ?",
+                (updated_at, external_id),
+            )
+        conn.commit()
+
+    first_page = temp_db.get_content_items(
+        status=ConsumptionStatus.COMPLETED,
+        unrated_only=True,
+        sort_by="updated_at",
+        limit=2,
+        offset=0,
+    )
+    assert [item.id for item in first_page] == ["unrated_1", "unrated_2"]
+
+    second_page = temp_db.get_content_items(
+        status=ConsumptionStatus.COMPLETED,
+        unrated_only=True,
+        sort_by="updated_at",
+        limit=2,
+        offset=2,
+    )
+    assert [item.id for item in second_page] == ["unrated_3", "unrated_4"]
+
+
 def test_get_unconsumed_items(temp_db: SQLiteDB) -> None:
     """Test getting unconsumed items (UNREAD + CURRENTLY_CONSUMING)."""
     items = [

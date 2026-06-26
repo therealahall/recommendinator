@@ -797,6 +797,7 @@ class SQLiteDB:
         content_type: ContentType | None = None,
         status: ConsumptionStatus | list[ConsumptionStatus] | None = None,
         min_rating: int | None = None,
+        unrated_only: bool = False,
         limit: int | None = None,
         offset: int = 0,
         sort_by: str = "title",
@@ -812,6 +813,8 @@ class SQLiteDB:
             status: Filter by consumption status (single value or list for
                 IN-clause filtering)
             min_rating: Minimum rating (inclusive)
+            unrated_only: When True, only return items with no rating set
+                (rating IS NULL)
             limit: Maximum number of results
             offset: Number of results to skip (for pagination)
             sort_by: Sort order - "title" (default, ignores articles),
@@ -878,6 +881,9 @@ class SQLiteDB:
             if min_rating is not None:
                 query += " AND ci.rating >= ?"
                 params.append(min_rating)
+
+            if unrated_only:
+                query += " AND ci.rating IS NULL"
 
             if not include_ignored:
                 query += " AND (ci.ignored = 0 OR ci.ignored IS NULL)"
