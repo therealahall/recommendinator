@@ -258,6 +258,7 @@ class StorageManager:
         content_type: ContentType | None = None,
         status: ConsumptionStatus | list[ConsumptionStatus] | None = None,
         min_rating: int | None = None,
+        unrated_only: bool = False,
         limit: int | None = None,
         offset: int = 0,
         sort_by: str = "title",
@@ -273,6 +274,8 @@ class StorageManager:
             status: Filter by consumption status (single value or list for
                 IN-clause filtering)
             min_rating: Minimum rating (inclusive)
+            unrated_only: When True, only return items with no rating set
+                (rating IS NULL)
             limit: Maximum number of results
             offset: Number of results to skip (for pagination)
             sort_by: Sort order - "title" (default, ignores articles),
@@ -291,6 +294,7 @@ class StorageManager:
             content_type=content_type,
             status=status,
             min_rating=min_rating,
+            unrated_only=unrated_only,
             limit=limit,
             offset=offset,
             sort_by=sort_by,
