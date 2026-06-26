@@ -303,6 +303,92 @@ class TestLibraryList:
         assert call_kwargs["offset"] == 10
         assert call_kwargs["include_ignored"] is True
 
+    def test_list_needs_rating_forces_completed_unrated(
+        self, cli_runner: CliRunner
+    ) -> None:
+        """--needs-rating lists completed items with no rating."""
+        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage.get_content_items.return_value = []
+
+        result = _invoke_with_mocks(
+            cli_runner, ["library", "list", "--needs-rating"], mock_storage
+        )
+
+        assert result.exit_code == 0
+        call_kwargs = mock_storage.get_content_items.call_args[1]
+        assert call_kwargs["status"] == ConsumptionStatus.COMPLETED
+        assert call_kwargs["unrated_only"] is True
+
+    def test_list_needs_rating_overrides_explicit_status(
+        self, cli_runner: CliRunner
+    ) -> None:
+        """--needs-rating takes precedence over an explicit --status."""
+        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage.get_content_items.return_value = []
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["library", "list", "--needs-rating", "--status", "unread"],
+            mock_storage,
+        )
+
+        assert result.exit_code == 0
+        call_kwargs = mock_storage.get_content_items.call_args[1]
+        assert call_kwargs["status"] == ConsumptionStatus.COMPLETED
+        assert call_kwargs["unrated_only"] is True
+
+    def test_list_needs_rating_composes_with_type(self, cli_runner: CliRunner) -> None:
+        """--needs-rating composes with --type, forwarding both filters."""
+        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage.get_content_items.return_value = []
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["library", "list", "--needs-rating", "--type", "book"],
+            mock_storage,
+        )
+
+        assert result.exit_code == 0
+        call_kwargs = mock_storage.get_content_items.call_args[1]
+        assert call_kwargs["content_type"] == ContentType.BOOK
+        assert call_kwargs["status"] == ConsumptionStatus.COMPLETED
+        assert call_kwargs["unrated_only"] is True
+
+    def test_list_without_needs_rating_does_not_force(
+        self, cli_runner: CliRunner
+    ) -> None:
+        """Without --needs-rating, status is not forced and unrated_only is False."""
+        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage.get_content_items.return_value = []
+
+        result = _invoke_with_mocks(cli_runner, ["library", "list"], mock_storage)
+
+        assert result.exit_code == 0
+        call_kwargs = mock_storage.get_content_items.call_args[1]
+        assert call_kwargs["status"] is None
+        assert call_kwargs["unrated_only"] is False
+
+    def test_list_needs_rating_composes_with_limit_and_offset(
+        self, cli_runner: CliRunner
+    ) -> None:
+        """--needs-rating forwards limit/offset alongside the forced filters."""
+        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage.get_content_items.return_value = []
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["library", "list", "--needs-rating", "--limit", "10", "--offset", "5"],
+            mock_storage,
+        )
+
+        assert result.exit_code == 0
+        mock_storage.get_content_items.assert_called_once()
+        call_kwargs = mock_storage.get_content_items.call_args[1]
+        assert call_kwargs["limit"] == 10
+        assert call_kwargs["offset"] == 5
+        assert call_kwargs["status"] == ConsumptionStatus.COMPLETED
+        assert call_kwargs["unrated_only"] is True
+
 
 class TestLibraryShow:
     """Tests for library show command."""
