@@ -373,10 +373,11 @@ python3.11 -m src.cli preferences set-length video_game long
 
 ```bash
 # Demote genres you've recently finished so recommendations vary (per content
-# type). The value (0.0-0.8) is the penalty strength; 0.0 turns it off. The next
-# entry in a series you're actively reading gets a softened (halved) penalty, so
-# it's nudged down but not buried under unrelated content.
-python3.11 -m src.cli preferences set-variety 0.8
+# type). The value (0.0-5.0, same scale as scorer weights) is the penalty
+# strength; 0.0 turns it off and 5.0 is full strength. The next entry in a series
+# you're actively reading gets a softened (halved) penalty, so it's nudged down
+# but not buried under unrelated content.
+python3.11 -m src.cli preferences set-variety 4.0
 ```
 
 ## Optional: Enable AI Features

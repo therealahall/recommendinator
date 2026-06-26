@@ -114,8 +114,8 @@ python3.11 -m src.cli preferences set-length book short
 # Toggle boolean preferences (series_in_order)
 python3.11 -m src.cli preferences set-toggle series_in_order off
 
-# Set the variety-after-completion penalty (0.0-0.8; 0.0 = off)
-python3.11 -m src.cli preferences set-variety 0.8
+# Set the variety-after-completion penalty (0.0-5.0; 0.0 = off, 5.0 = full strength)
+python3.11 -m src.cli preferences set-variety 4.0
 
 # Reset all preferences to defaults
 python3.11 -m src.cli preferences reset
