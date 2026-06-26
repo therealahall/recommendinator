@@ -1107,6 +1107,96 @@ def test_list_items_include_ignored_true(client, mock_components):
     assert call_kwargs["include_ignored"] is True
 
 
+def test_list_items_needs_rating_forces_completed_and_unrated(client, mock_components):
+    """GET /api/items?needs_rating=true forwards status=completed + unrated_only."""
+    mock_components["storage"].get_content_items.return_value = []
+
+    response = client.get("/api/items?user_id=1&needs_rating=true")
+    assert response.status_code == 200
+
+    mock_components["storage"].get_content_items.assert_called_once()
+    call_kwargs = mock_components["storage"].get_content_items.call_args[1]
+    assert call_kwargs["status"] == ConsumptionStatus.COMPLETED
+    assert call_kwargs["unrated_only"] is True
+
+
+def test_list_items_needs_rating_overrides_explicit_status(client, mock_components):
+    """needs_rating forces completed status even when a different status is passed."""
+    mock_components["storage"].get_content_items.return_value = []
+
+    response = client.get("/api/items?user_id=1&status=unread&needs_rating=true")
+    assert response.status_code == 200
+
+    call_kwargs = mock_components["storage"].get_content_items.call_args[1]
+    assert call_kwargs["status"] == ConsumptionStatus.COMPLETED
+    assert call_kwargs["unrated_only"] is True
+
+
+def test_list_items_default_does_not_filter_unrated(client, mock_components):
+    """GET /api/items without needs_rating passes unrated_only=False to storage."""
+    mock_components["storage"].get_content_items.return_value = []
+
+    response = client.get("/api/items?user_id=1")
+    assert response.status_code == 200
+
+    call_kwargs = mock_components["storage"].get_content_items.call_args[1]
+    assert call_kwargs["unrated_only"] is False
+
+
+def test_list_items_needs_rating_returns_only_completed_unrated(
+    client, mock_components
+):
+    """needs_rating returns the completed+unrated set the storage layer produces.
+
+    Storage applies the actual filter (covered by storage-layer tests); the
+    endpoint must return whatever that filtered query yields unmodified.
+    """
+    completed_unrated = ContentItem(
+        id="1",
+        title="Completed Unrated",
+        content_type=ContentType.BOOK,
+        status=ConsumptionStatus.COMPLETED,
+        rating=None,
+    )
+    mock_components["storage"].get_content_items.return_value = [completed_unrated]
+
+    response = client.get("/api/items?user_id=1&needs_rating=true")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["title"] == "Completed Unrated"
+    assert data[0]["status"] == "completed"
+    assert data[0]["rating"] is None
+
+
+def test_list_items_needs_rating_composes_with_type(client, mock_components):
+    """needs_rating + type forwards content_type, completed status, and unrated_only."""
+    mock_components["storage"].get_content_items.return_value = []
+
+    response = client.get("/api/items?user_id=1&needs_rating=true&type=book")
+    assert response.status_code == 200
+
+    mock_components["storage"].get_content_items.assert_called_once()
+    call_kwargs = mock_components["storage"].get_content_items.call_args[1]
+    assert call_kwargs["content_type"] == ContentType.BOOK
+    assert call_kwargs["status"] == ConsumptionStatus.COMPLETED
+    assert call_kwargs["unrated_only"] is True
+
+
+def test_list_items_needs_rating_composes_with_include_ignored(client, mock_components):
+    """needs_rating + include_ignored forwards both flags plus completed status."""
+    mock_components["storage"].get_content_items.return_value = []
+
+    response = client.get("/api/items?user_id=1&needs_rating=true&include_ignored=true")
+    assert response.status_code == 200
+
+    mock_components["storage"].get_content_items.assert_called_once()
+    call_kwargs = mock_components["storage"].get_content_items.call_args[1]
+    assert call_kwargs["status"] == ConsumptionStatus.COMPLETED
+    assert call_kwargs["unrated_only"] is True
+    assert call_kwargs["include_ignored"] is True
+
+
 def test_recommendations_include_db_id(client, mock_components):
     """GET /api/recommendations includes db_id in response."""
     mock_item = ContentItem(
