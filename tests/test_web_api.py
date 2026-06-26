@@ -757,7 +757,7 @@ def test_put_user_preferences_full(client, mock_components):
         json={
             "scorer_weights": {"genre_match": 5.0},
             "series_in_order": False,
-            "variety_penalty": 0.8,
+            "variety_penalty": 4.0,
             "custom_rules": ["no horror"],
         },
     )
@@ -765,14 +765,12 @@ def test_put_user_preferences_full(client, mock_components):
     data = response.json()
     assert data["scorer_weights"] == {"genre_match": 5.0}
     assert data["series_in_order"] is False
-    assert data["variety_penalty"] == 0.8
+    assert data["variety_penalty"] == 4.0
     assert data["custom_rules"] == ["no horror"]
 
 
-def test_put_user_preferences_rejects_out_of_range_variety_penalty(
-    client, mock_components
-):
-    """variety_penalty above the 0.8 cap is rejected with a 422."""
+def test_put_user_preferences_accepts_max_variety_penalty(client, mock_components):
+    """variety_penalty at the 5.0 maximum is accepted and saved."""
     mock_components["storage"].get_user_preference_config = Mock(
         return_value=UserPreferenceConfig()
     )
@@ -780,7 +778,41 @@ def test_put_user_preferences_rejects_out_of_range_variety_penalty(
 
     response = client.put(
         "/api/users/1/preferences",
-        json={"variety_penalty": 1.5},
+        json={"variety_penalty": 5.0},
+    )
+    assert response.status_code == 200
+    assert response.json()["variety_penalty"] == 5.0
+    mock_components["storage"].save_user_preference_config.assert_called_once()
+
+
+def test_put_user_preferences_accepts_zero_variety_penalty(client, mock_components):
+    """variety_penalty at the 0.0 minimum is accepted and saved (penalty off)."""
+    mock_components["storage"].get_user_preference_config = Mock(
+        return_value=UserPreferenceConfig()
+    )
+    mock_components["storage"].save_user_preference_config = Mock()
+
+    response = client.put(
+        "/api/users/1/preferences",
+        json={"variety_penalty": 0.0},
+    )
+    assert response.status_code == 200
+    assert response.json()["variety_penalty"] == 0.0
+    mock_components["storage"].save_user_preference_config.assert_called_once()
+
+
+def test_put_user_preferences_rejects_out_of_range_variety_penalty(
+    client, mock_components
+):
+    """variety_penalty above the 5.0 maximum is rejected with a 422."""
+    mock_components["storage"].get_user_preference_config = Mock(
+        return_value=UserPreferenceConfig()
+    )
+    mock_components["storage"].save_user_preference_config = Mock()
+
+    response = client.put(
+        "/api/users/1/preferences",
+        json={"variety_penalty": 6.0},
     )
     assert response.status_code == 422
     mock_components["storage"].save_user_preference_config.assert_not_called()

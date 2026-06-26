@@ -709,6 +709,19 @@ input[type="checkbox"] {
   color: var(--text-primary);
 }
 
+.pref-divider {
+  border-top: 1px solid var(--border-subtle);
+  margin: var(--space-4) 0;
+}
+
+.pref-section h4 {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-top: var(--space-5);
+  margin-bottom: var(--space-3);
+}
+
 .slider-row {
   display: flex;
   align-items: center;
@@ -717,19 +730,25 @@ input[type="checkbox"] {
 }
 
 .slider-label {
-  width: 160px;
+  width: 12rem;
   font-size: var(--text-sm);
   color: var(--text-secondary);
   flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  gap: 6px;
+  white-space: nowrap;
 }
 
+/* The help trigger is a chrome-less button so the "?" icon renders identically
+   to a plain glyph. It sits as a sibling immediately after the fixed-width
+   .slider-label, so every "?" lines up in a single column just left of the
+   sliders, regardless of label length. */
 .scorer-tooltip-wrap {
   position: relative;
   display: inline-flex;
   align-items: center;
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  padding: 0;
   cursor: help;
 }
 
@@ -757,7 +776,9 @@ input[type="checkbox"] {
 
 /* Hidden from sighted users but kept in the accessibility tree so the
    aria-describedby association resolves for screen readers (display: none
-   would drop the element from the a11y tree). Revealed on hover/focus below. */
+   would drop the element from the a11y tree). Revealed on hover/focus below.
+   Note: no pointer-events: none — WCAG 1.4.13 Hoverable requires the pointer
+   to be able to move onto the tooltip without it disappearing. */
 .scorer-tooltip-text {
   opacity: 0;
   visibility: hidden;
@@ -775,8 +796,19 @@ input[type="checkbox"] {
   line-height: 1.45;
   box-shadow: var(--shadow-tooltip);
   z-index: 100;
-  pointer-events: none;
   white-space: normal;
+}
+
+/* Transparent bridge over the 8px gap between the trigger and the tooltip so
+   the pointer can travel onto the tooltip without crossing dead space and
+   collapsing it (WCAG 1.4.13 Hoverable). */
+.scorer-tooltip-text::before {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 0;
+  width: 100%;
+  height: 8px;
 }
 
 .scorer-tooltip-text::after {
@@ -790,9 +822,17 @@ input[type="checkbox"] {
 }
 
 .scorer-tooltip-wrap:hover .scorer-tooltip-text,
-.scorer-tooltip-wrap:focus .scorer-tooltip-text {
+.scorer-tooltip-wrap:focus-within .scorer-tooltip-text,
+.scorer-tooltip-text:hover {
   opacity: 1;
   visibility: visible;
+}
+
+/* WCAG 1.4.13 Dismissable: Escape sets .tooltip-dismissed, which must win over
+   the hover/focus reveal above until the pointer/focus leaves and resets it. */
+.scorer-tooltip-wrap.tooltip-dismissed .scorer-tooltip-text {
+  opacity: 0;
+  visibility: hidden;
 }
 
 .slider-row input[type="range"] {
@@ -862,6 +902,12 @@ input[type="checkbox"] {
   color: var(--text-muted);
   font-style: italic;
   padding: var(--space-2) 0;
+}
+
+.rule-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
 }
 
 .rule-item {
@@ -1429,5 +1475,21 @@ input[type="checkbox"] {
     padding: var(--space-4);
     padding-top: calc(var(--space-4) + 44px);
     padding-left: calc(var(--space-4) + 36px);
+  }
+
+  /* The wider desktop label column would crush the sliders on narrow screens,
+     so let slider rows wrap and give the label and control their own line. */
+  .slider-row {
+    flex-wrap: wrap;
+  }
+
+  .slider-label {
+    width: 100%;
+    white-space: normal;
+  }
+
+  .slider-row input[type="range"] {
+    flex: 1 1 100%;
+    width: 100%;
   }
 }

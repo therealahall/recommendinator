@@ -41,8 +41,11 @@ export const SCORER_TOOLTIPS: Record<string, string> = {
   series_affinity: "Boosts items from franchises you've rated highly (avg 4+ stars). Keeps recommending series you love. Default: 1.0",
 }
 
+// The "5.0 at full strength" mirrors the backend UserPreferenceConfig.MAX_VARIETY_PENALTY.
+// There is no runtime way to reference that Python constant from TS, so if the
+// backend maximum changes, update this copy to match.
 export const VARIETY_PENALTY_TOOLTIP =
-  'After you finish something, applies this penalty to further recommendations of the same content type, encouraging variety. 0% turns it off; higher values push harder, and the penalty decays as you complete more. Recommendations always keep at least 20% of their score, so your list never empties out.'
+  'After you finish something, demotes further recommendations of the same content type, encouraging variety. 0 turns it off; higher values push harder, up to 5.0 at full strength. The penalty is strongest on the genre you just finished and decays as you complete more.'
 
 export const CONTENT_TYPES = ['book', 'movie', 'tv_show', 'video_game'] as const
 export const LENGTH_OPTIONS = ['any', 'short', 'medium', 'long'] as const

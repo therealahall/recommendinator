@@ -74,14 +74,14 @@ class TestUserPreferenceConfig:
 
     def test_from_dict_keeps_variety_penalty_at_max_boundary(self) -> None:
         """The maximum value passes through unchanged (boundary, not clamped)."""
-        config = UserPreferenceConfig.from_dict({"variety_penalty": 0.8})
-        assert config.variety_penalty == 0.8
+        config = UserPreferenceConfig.from_dict({"variety_penalty": 5.0})
+        assert config.variety_penalty == 5.0
 
     def test_from_dict_clamps_variety_penalty_above_max(self) -> None:
         """An out-of-range high value is clamped to the maximum penalty."""
-        config = UserPreferenceConfig.from_dict({"variety_penalty": 5.0})
+        config = UserPreferenceConfig.from_dict({"variety_penalty": 7.5})
         # Anchor to the literal cap so the test fails loudly if the constant moves.
-        assert config.variety_penalty == 0.8
+        assert config.variety_penalty == 5.0
         assert config.variety_penalty == UserPreferenceConfig.MAX_VARIETY_PENALTY
 
     def test_from_dict_clamps_negative_variety_penalty(self) -> None:
@@ -112,17 +112,17 @@ class TestVarietyPenaltyMigrationRegression:
     Root cause: ``from_dict`` keyed only on the new field, so legacy JSON would
     have resolved to the default (disabled) regardless of the old toggle.
     Fix: ``from_dict`` migrates a legacy ``variety_after_completion`` key when
-    no ``variety_penalty`` is present — ``True`` -> the maximum penalty (the
-    old "on" behaviour), ``False`` -> ``0.0`` — while a present
-    ``variety_penalty`` always wins.
+    no ``variety_penalty`` is present — ``True`` -> ``LEGACY_VARIETY_ON`` (4.0 on
+    the 0.0-5.0 scale, reproducing the old full-strength 0.8 penalty fraction),
+    ``False`` -> ``0.0`` — while a present ``variety_penalty`` always wins.
     """
 
     def test_legacy_true_maps_to_max_penalty_regression(self) -> None:
-        """Old "on" preference migrates to the maximum penalty (old behaviour)."""
+        """Old "on" preference migrates to the full-strength scale value (4.0)."""
         config = UserPreferenceConfig.from_dict({"variety_after_completion": True})
-        # Anchor to the literal cap so the test fails loudly if the constant moves.
-        assert config.variety_penalty == 0.8
-        assert config.variety_penalty == UserPreferenceConfig.MAX_VARIETY_PENALTY
+        # 4.0/5.0 == the old fixed 0.8 top penalty fraction, so behaviour is kept.
+        assert config.variety_penalty == 4.0
+        assert config.variety_penalty == UserPreferenceConfig.LEGACY_VARIETY_ON
 
     def test_legacy_false_maps_to_zero_regression(self) -> None:
         """Old "off" preference migrates to a disabled penalty."""

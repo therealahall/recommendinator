@@ -602,7 +602,7 @@ def preferences_set_weight(
 
 
 # Boolean preference toggles settable from the CLI, mirroring the web UI's
-# TogglePrefs section.  Each name is also the UserPreferenceConfig attribute.
+# Rules section.  Each name is also the UserPreferenceConfig attribute.
 _TOGGLE_NAMES: tuple[str, ...] = ("series_in_order",)
 
 
@@ -653,10 +653,11 @@ def preferences_set_toggle(
 def preferences_set_variety(ctx: click.Context, penalty: float, user_id: int) -> None:
     """Set the variety-after-completion penalty for a user.
 
-    PENALTY is the strength of the genre-fatigue penalty (0.0-0.8). 0.0 turns
-    it off; higher values more strongly demote genres you have recently
-    finished so recommendations vary instead of marching through the next entry
-    in a just-completed series.
+    PENALTY is the strength of the genre-fatigue penalty (0.0-5.0, the same
+    scale as scorer weights). 0.0 turns it off; higher values more strongly
+    demote genres you have recently finished so recommendations vary instead of
+    marching through the next entry in a just-completed series, up to 5.0 which
+    fully zeroes a just-finished genre. The penalty decays as you finish more.
     """
     storage = ctx.obj["storage"]
     preference_config = storage.get_user_preference_config(user_id)

@@ -18,17 +18,23 @@ function onKeypress(event: KeyboardEvent) {
 </script>
 
 <template>
-  <div class="pref-section">
-    <h3>Custom Rules</h3>
+  <div>
+    <h4>Custom rules</h4>
     <p class="help-text">Natural language rules like "avoid horror" or "prefer sci-fi".</p>
-    <div id="customRulesList">
+    <div>
       <div v-if="prefs.customRules.length === 0" class="empty-rules">
         No custom rules defined
       </div>
-      <div v-for="(rule, index) in prefs.customRules" :key="index" class="rule-item">
-        <span class="rule-text">{{ rule }}</span>
-        <button class="btn btn-small btn-danger" @click="prefs.removeRule(index)">Remove</button>
-      </div>
+      <ul v-else class="rule-list" role="list">
+        <li v-for="(rule, index) in prefs.customRules" :key="index" class="rule-item">
+          <span class="rule-text">{{ rule }}</span>
+          <button
+            class="btn btn-small btn-danger"
+            :aria-label="`Remove rule: ${rule}`"
+            @click="prefs.removeRule(index)"
+          >Remove</button>
+        </li>
+      </ul>
     </div>
     <div class="add-rule-form">
       <label for="new-rule-input" class="sr-only">New custom rule</label>

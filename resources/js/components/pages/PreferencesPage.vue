@@ -3,10 +3,8 @@ import { onMounted, watch } from 'vue'
 import { usePreferencesStore } from '@/stores/preferences'
 import { useAppStore } from '@/stores/app'
 import ThemeSelector from '@/components/organisms/ThemeSelector.vue'
-import ScorerWeights from '@/components/organisms/ScorerWeights.vue'
-import TogglePrefs from '@/components/organisms/TogglePrefs.vue'
-import LengthPrefs from '@/components/organisms/LengthPrefs.vue'
-import CustomRules from '@/components/organisms/CustomRules.vue'
+import ScoringPrefs from '@/components/organisms/ScoringPrefs.vue'
+import RulesPrefs from '@/components/organisms/RulesPrefs.vue'
 
 const prefs = usePreferencesStore()
 const app = useAppStore()
@@ -26,14 +24,12 @@ watch(() => app.currentUserId, () => {
       <h2>Preferences</h2>
       <p class="page-description">Customize how recommendations are generated.</p>
     </div>
-    <div class="card">
+    <div class="card" :aria-busy="prefs.loading || undefined">
       <div v-if="prefs.loading" class="empty-state">Loading preferences...</div>
       <template v-else>
         <ThemeSelector v-model="prefs.pendingTheme" />
-        <ScorerWeights />
-        <TogglePrefs />
-        <LengthPrefs />
-        <CustomRules />
+        <ScoringPrefs />
+        <RulesPrefs />
         <div class="pref-actions">
           <button class="btn btn-primary" :disabled="prefs.saving" @click="prefs.save()">
             {{ prefs.saving ? 'Saving...' : 'Save Preferences' }}
