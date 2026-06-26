@@ -14,7 +14,11 @@ from src.models.content import (
     get_enum_value,
 )
 from src.models.user_preferences import UserPreferenceConfig
-from src.recommendations.engine import RecommendationEngine, _shuffle_close_scores
+from src.recommendations.engine import (
+    RecommendationEngine,
+    _collapse_duplicate_db_ids,
+    _shuffle_close_scores,
+)
 from src.recommendations.preferences import PreferenceAnalyzer, UserPreferences
 from src.recommendations.variety import (
     VARIETY_LADDER_STEPS,
@@ -999,6 +1003,432 @@ class TestIgnoredItems:
 
         # No recommendations should be returned
         assert recommendations == []
+
+
+class TestTvRecommendationCarriesDbIdRegression:
+    """Regression test: TV recommendations must keep the show's db_id.
+
+    Bug reported: TV show recommendations rendered without the "Mark complete"
+    and "Ignore" buttons.  The card only shows those actions when the rec has a
+    non-null ``db_id``.
+
+    Root cause: TV shows are expanded into season-level candidates by
+    ``expand_tv_shows_to_seasons``, which built each season ``ContentItem``
+    without ``db_id``, so the recommendation payload serialized ``db_id: null``.
+
+    Fix: season items now inherit the parent show's ``db_id`` (the library
+    tracks TV at show level), so the recommendation stays actionable.
+    """
+
+    @pytest.fixture
+    def breaking_bad_consumed(self) -> ContentItem:
+        """Completed TV show used as shared taste context across these scenarios."""
+        return ContentItem(
+            id="1",
+            db_id=1,
+            title="Breaking Bad",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            metadata={"genres": ["Drama", "Crime"]},
+        )
+
+    @pytest.fixture
+    def expanse_show(self) -> ContentItem:
+        """Unconsumed three-season Expanse show shared across these scenarios."""
+        return ContentItem(
+            id="tvdb:280619",
+            db_id=42,
+            title="The Expanse",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"total_seasons": 3, "genres": ["Drama", "Sci-Fi"]},
+        )
+
+    def test_tv_show_recommendation_has_non_null_db_id_regression(
+        self, non_ai_engine, mock_storage, breaking_bad_consumed, expanse_show
+    ) -> None:
+        """An expanded TV-show recommendation keeps the parent show's db_id."""
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: [breaking_bad_consumed]
+        )
+        mock_storage.get_unconsumed_items = Mock(return_value=[expanse_show])
+
+        recommendations = non_ai_engine.generate_recommendations(
+            content_type=ContentType.TV_SHOW,
+            count=5,
+        )
+
+        # The series rules surface only the next-unwatched season, so the show
+        # yields exactly one actionable card carrying the show's db_id.
+        assert len(recommendations) == 1
+        assert recommendations[0]["item"].db_id == 42
+
+    def test_next_unwatched_season_carries_parent_db_id_regression(
+        self, non_ai_engine, mock_storage, breaking_bad_consumed
+    ) -> None:
+        """A partially-watched show surfaces its next season with the show db_id.
+
+        Edge case: when ``seasons_watched`` already contains season 1, the
+        engine should surface season 2 as the next actionable card, and that
+        card must still carry the parent show's ``db_id`` (the library tracks
+        TV at show level) so "Mark complete" / "Ignore" resolve correctly.
+        """
+        unconsumed_show = ContentItem(
+            id="tvdb:280619",
+            db_id=42,
+            title="The Expanse",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            metadata={
+                "total_seasons": 3,
+                "seasons_watched": [1],
+                "genres": ["Drama", "Sci-Fi"],
+            },
+        )
+
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: [breaking_bad_consumed]
+        )
+        mock_storage.get_unconsumed_items = Mock(return_value=[unconsumed_show])
+
+        recommendations = non_ai_engine.generate_recommendations(
+            content_type=ContentType.TV_SHOW,
+            count=5,
+        )
+
+        # Season 1 is watched, so the next surfaced season is season 2.
+        assert len(recommendations) == 1
+        rec_item = recommendations[0]["item"]
+        assert rec_item.title == "The Expanse (Season 2)"
+        assert rec_item.db_id == 42
+
+    def test_series_rules_surface_one_season_per_show_regression(
+        self, non_ai_engine, mock_storage, breaking_bad_consumed
+    ) -> None:
+        """With series rules on, a multi-season show yields exactly one card.
+
+        Guards against the frontend collision risk: the recommendation card
+        keys on ``rec.db_id`` and removal/actions are keyed by ``db_id``, so two
+        season cards sharing one show's ``db_id`` would collide.  The series
+        ordering rules (``should_recommend_item``) must surface only the single
+        next-unwatched season, keeping each show to one db_id in the output.
+        """
+        unconsumed_show = ContentItem(
+            id="tvdb:280619",
+            db_id=42,
+            title="The Expanse",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"total_seasons": 5, "genres": ["Drama", "Sci-Fi"]},
+        )
+
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: [breaking_bad_consumed]
+        )
+        mock_storage.get_unconsumed_items = Mock(return_value=[unconsumed_show])
+
+        recommendations = non_ai_engine.generate_recommendations(
+            content_type=ContentType.TV_SHOW,
+            count=5,
+        )
+
+        # Despite 5 expanded seasons, only the next-unwatched one survives, so
+        # the single show contributes exactly one db_id to the output.
+        db_ids = [rec["item"].db_id for rec in recommendations]
+        assert db_ids == [42]
+
+    def test_series_in_order_false_collapses_seasons_to_one_card_regression(
+        self, non_ai_engine, mock_storage, breaking_bad_consumed, expanse_show
+    ) -> None:
+        """With series order off, a multi-season show yields exactly one card.
+
+        When the user sets ``series_in_order=False`` the engine skips series
+        filtering, so a multi-season show would otherwise surface several
+        season-level candidates that all carry the same parent ``db_id`` (their
+        ``item.id`` differs but the library db_id is shared).  The frontend keys
+        cards and targets Mark-complete / Ignore actions by ``db_id``, so those
+        co-occurring cards would collide.  The engine collapses them down to the
+        single highest-ranked season, keeping each show to one db_id.
+        """
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: [breaking_bad_consumed]
+        )
+        mock_storage.get_unconsumed_items = Mock(return_value=[expanse_show])
+
+        recommendations = non_ai_engine.generate_recommendations(
+            content_type=ContentType.TV_SHOW,
+            count=5,
+            user_preference_config=UserPreferenceConfig(series_in_order=False),
+        )
+
+        # The three expanded seasons collapse to a single actionable card that
+        # carries the parent show's db_id.
+        assert len(recommendations) == 1
+        rec_item = recommendations[0]["item"]
+        assert rec_item.db_id == 42
+        # The survivor's id is asserted with ``in {season ids}`` rather than a
+        # specific season because the three seasons score identically and pass
+        # through ``_shuffle_close_scores``, so which one survives is
+        # non-deterministic at this integration level.  The deterministic
+        # "first/highest-ranked entry survives" contract is pinned by the
+        # ``TestCollapseDuplicateDbIds`` unit test.
+        assert rec_item.id in {"tvdb:280619:s1", "tvdb:280619:s2", "tvdb:280619:s3"}
+
+    def test_series_in_order_false_keeps_distinct_shows_and_backfills_regression(
+        self, non_ai_engine, mock_storage, breaking_bad_consumed, expanse_show
+    ) -> None:
+        """Collapsing duplicate db_ids never drops distinct shows.
+
+        With series order off, two multi-season shows each collapse to one card
+        (so different shows still appear), and the freed slots are backfilled by
+        the other show rather than left empty.
+        """
+        foundation = ContentItem(
+            id="tvdb:355567",
+            db_id=99,
+            title="Foundation",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"total_seasons": 2, "genres": ["Drama", "Sci-Fi"]},
+        )
+
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: [breaking_bad_consumed]
+        )
+        mock_storage.get_unconsumed_items = Mock(
+            return_value=[expanse_show, foundation]
+        )
+
+        recommendations = non_ai_engine.generate_recommendations(
+            content_type=ContentType.TV_SHOW,
+            count=5,
+            user_preference_config=UserPreferenceConfig(series_in_order=False),
+        )
+
+        # Both distinct shows survive, each exactly once, despite five expanded
+        # seasons between them.
+        db_ids = sorted(rec["item"].db_id for rec in recommendations)
+        assert db_ids == [42, 99]
+
+    def test_none_db_id_show_seasons_not_collapsed_regression(
+        self, non_ai_engine, mock_storage, breaking_bad_consumed
+    ) -> None:
+        """A db_id=None show's seasons are NOT collapsed (None is not an identity).
+
+        Guards the bug-class where a missing db_id is mistaken for a shared
+        identity: ``_collapse_duplicate_db_ids`` never merges None ids, so a TV
+        show that lacks a library db_id keeps every expanded season candidate
+        instead of dropping to one card.  This documents the actual behaviour
+        through ``generate_recommendations`` so a future change cannot silently
+        start collapsing — and discarding — distinct None-id candidates.
+        """
+        show_without_db_id = ContentItem(
+            id="tvdb:280619",
+            db_id=None,
+            title="The Expanse",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"total_seasons": 3, "genres": ["Drama", "Sci-Fi"]},
+        )
+
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: [breaking_bad_consumed]
+        )
+        mock_storage.get_unconsumed_items = Mock(return_value=[show_without_db_id])
+
+        recommendations = non_ai_engine.generate_recommendations(
+            content_type=ContentType.TV_SHOW,
+            count=5,
+            user_preference_config=UserPreferenceConfig(series_in_order=False),
+        )
+
+        # All three seasons survive — None is never a shared collapse identity —
+        # and every surviving card carries the None db_id.
+        assert len(recommendations) == 3
+        assert all(rec["item"].db_id is None for rec in recommendations)
+
+    def test_collapse_is_noop_for_books_with_distinct_db_ids_regression(
+        self, non_ai_engine, mock_storage
+    ) -> None:
+        """Non-TV recs with distinct db_ids pass through the collapse unchanged.
+
+        Forward-guard behavioural test: it already passes without this branch's
+        change (books each have a unique db_id, so the collapse is a no-op), so
+        its role is to guard against a future regression that breaks the no-op
+        property for distinct-db_id content.
+        """
+        consumed = ContentItem(
+            id="1",
+            db_id=1,
+            title="Dune",
+            author="Frank Herbert",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            metadata={"genres": ["Science Fiction"]},
+        )
+        book_a = ContentItem(
+            id="2",
+            db_id=10,
+            title="Hyperion",
+            author="Dan Simmons",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genres": ["Science Fiction"]},
+        )
+        book_b = ContentItem(
+            id="3",
+            db_id=11,
+            title="Neuromancer",
+            author="William Gibson",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genres": ["Science Fiction"]},
+        )
+
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: [consumed]
+        )
+        mock_storage.get_unconsumed_items = Mock(return_value=[book_a, book_b])
+
+        recommendations = non_ai_engine.generate_recommendations(
+            content_type=ContentType.BOOK,
+            count=5,
+            user_preference_config=UserPreferenceConfig(series_in_order=False),
+        )
+
+        db_ids = sorted(rec["item"].db_id for rec in recommendations)
+        assert db_ids == [10, 11]
+
+    def test_collapse_is_noop_with_series_in_order_regression(
+        self, non_ai_engine, mock_storage, breaking_bad_consumed, expanse_show
+    ) -> None:
+        """With series order on, a multi-season show already yields one card.
+
+        Forward-guard behavioural test: it already passes without this branch's
+        change (series rules surface a single season, so the collapse has
+        nothing to merge), so its role is to guard against a future regression
+        that breaks the no-op property when series ordering is enabled.
+        """
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: [breaking_bad_consumed]
+        )
+        mock_storage.get_unconsumed_items = Mock(return_value=[expanse_show])
+
+        recommendations = non_ai_engine.generate_recommendations(
+            content_type=ContentType.TV_SHOW,
+            count=5,
+            user_preference_config=UserPreferenceConfig(series_in_order=True),
+        )
+
+        assert len(recommendations) == 1
+        assert recommendations[0]["item"].db_id == 42
+
+    def test_fallback_collapses_entries_sharing_db_id_regression(
+        self, non_ai_engine
+    ) -> None:
+        """The fallback path emits at most one card per parent show db_id.
+
+        For TV the fallback builds recs directly from the expanded season items,
+        which share their parent show's ``db_id``.  The fallback must collapse
+        those to one card per show just like the scored path does.
+        """
+        season_one = ContentItem(
+            id="tvdb:280619:s1",
+            db_id=42,
+            title="The Expanse",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genres": ["Drama", "Sci-Fi"]},
+        )
+        season_two = ContentItem(
+            id="tvdb:280619:s2",
+            db_id=42,
+            title="The Expanse",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genres": ["Drama", "Sci-Fi"]},
+        )
+        other_show = ContentItem(
+            id="tvdb:355567:s1",
+            db_id=99,
+            title="Foundation",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genres": ["Drama", "Sci-Fi"]},
+        )
+
+        recommendations = non_ai_engine._build_fallback_recommendations(
+            [season_one, season_two, other_show],
+            series_tracking={},
+            count=5,
+        )
+
+        # The two seasons of one show collapse to its first occurrence; the
+        # distinct show is preserved.
+        db_ids = [rec["item"].db_id for rec in recommendations]
+        assert db_ids == [42, 99]
+        assert recommendations[0]["item"].id == "tvdb:280619:s1"
+
+
+class TestCollapseDuplicateDbIds:
+    """Unit tests for the ``_collapse_duplicate_db_ids`` contract.
+
+    The engine relies on this helper to (a) keep the *first* entry among
+    duplicate non-null db_ids and (b) never merge None-db_id entries together.
+    The engine calls it on the already-ranked (descending) list, so "first"
+    means "highest-ranked".  These tests pin that contract directly rather than
+    inferring it through the scored path, where same-show seasons score
+    identically and cannot force a deterministic survivor.
+    """
+
+    def test_keeps_first_occurrence_among_duplicates_preserving_order(self) -> None:
+        """The earliest (highest-ranked) entry per db_id survives, in order."""
+        entries = [
+            (42, "expanse-s2"),  # highest-ranked season of show 42
+            (99, "foundation-s1"),
+            (42, "expanse-s1"),  # lower-ranked duplicate of show 42 -> dropped
+            (99, "foundation-s2"),  # lower-ranked duplicate of show 99 -> dropped
+            (7, "standalone"),
+        ]
+
+        collapsed = _collapse_duplicate_db_ids(entries, lambda entry: entry[0])
+
+        # Only the first occurrence of each db_id is kept, original order intact.
+        assert collapsed == [
+            (42, "expanse-s2"),
+            (99, "foundation-s1"),
+            (7, "standalone"),
+        ]
+
+    def test_none_db_ids_are_never_collapsed_together(self) -> None:
+        """Entries with db_id None are each kept — None is not a shared identity.
+
+        A missing db_id must not act as a collapse key, otherwise distinct
+        recommendations that happen to lack a db_id would silently drop to one.
+        """
+        entries = [
+            (None, "no-id-a"),
+            (None, "no-id-b"),
+            (5, "has-id"),
+            (None, "no-id-c"),
+        ]
+
+        collapsed = _collapse_duplicate_db_ids(entries, lambda entry: entry[0])
+
+        # All three None entries survive alongside the single id'd entry.
+        assert collapsed == entries
+
+    def test_single_entry_with_db_id_returned_unchanged(self) -> None:
+        """A one-entry list with a non-null db_id returns that entry unchanged."""
+        entries = [(42, "only")]
+        assert _collapse_duplicate_db_ids(entries, lambda entry: entry[0]) == entries
+
+    def test_empty_input_returns_empty(self) -> None:
+        """Collapsing an empty list yields an empty list."""
+        entries: list[tuple[int | None, str]] = []
+        assert _collapse_duplicate_db_ids(entries, lambda entry: entry[0]) == []
 
 
 class TestContributingReferenceItemsRegression:

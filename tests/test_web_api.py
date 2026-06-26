@@ -1639,6 +1639,73 @@ def test_recommendations_count_at_max_is_allowed(client, mock_components):
     assert response.status_code == 200
 
 
+def _rec_dict(item: ContentItem) -> dict:
+    """Wrap a ContentItem in the recommendation dict shape the engine emits."""
+    return {
+        "item": item,
+        "score": 0.85,
+        "similarity_score": 0.8,
+        "preference_score": 0.7,
+        "reasoning": "Rule-based reasoning",
+        "score_breakdown": {"genre_match": 0.9},
+        "contributing_items": [],
+    }
+
+
+def test_recommendations_tv_season_payload_includes_db_id(client, mock_components):
+    """GET /api/recommendations serializes a TV season rec with a non-null db_id.
+
+    A season-expanded TV candidate carries its parent show's db_id (id is
+    ``tvdb:42:s1`` but db_id is the show-level row).  The response must surface
+    that db_id so the card renders the Mark complete / Ignore actions.
+    """
+    season_item = ContentItem(
+        id="tvdb:42:s1",
+        db_id=42,
+        title="The Expanse (Season 1)",
+        author=None,
+        content_type=ContentType.TV_SHOW,
+        status=ConsumptionStatus.UNREAD,
+        parent_id="tvdb:42",
+    )
+    mock_components["engine"].generate_recommendations.return_value = [
+        _rec_dict(season_item)
+    ]
+    mock_components["storage"].get_user_preference_config.return_value = None
+
+    response = client.get("/api/recommendations?type=tv_show&count=5")
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == 1
+    assert body[0]["title"] == "The Expanse (Season 1)"
+    assert body[0]["db_id"] == 42
+
+
+def test_recommendations_non_tv_payload_preserves_db_id(client, mock_components):
+    """GET /api/recommendations keeps a book/movie/game rec's own db_id.
+
+    Non-TV content is not season-expanded, so the payload db_id is the item's
+    own library id, unchanged by the TV fix.
+    """
+    book_item = ContentItem(
+        id="ol:1",
+        db_id=7,
+        title="Foundation",
+        author="Isaac Asimov",
+        content_type=ContentType.BOOK,
+        status=ConsumptionStatus.UNREAD,
+    )
+    mock_components["engine"].generate_recommendations.return_value = [
+        _rec_dict(book_item)
+    ]
+    mock_components["storage"].get_user_preference_config.return_value = None
+
+    response = client.get("/api/recommendations?type=book&count=5")
+    assert response.status_code == 200
+    body = response.json()
+    assert body[0]["db_id"] == 7
+
+
 # ---------------------------------------------------------------------------
 # Export Endpoint Tests (8E)
 # ---------------------------------------------------------------------------
@@ -2057,6 +2124,49 @@ class TestSSEStreamingEndpoint:
         assert items[0]["llm_reasoning"] is None
         assert items[0]["score"] == 0.85
         assert items[0]["score_breakdown"] == {"genre_match": 0.9}
+
+    def test_phase1_tv_season_includes_db_id(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """SSE phase 1 serializes a TV season rec with its parent show db_id.
+
+        The streaming path shares ``_recommendation_payload`` with the sync
+        endpoint, so a season-expanded candidate (id ``tvdb:42:s1``, db_id 42)
+        must stream with a non-null db_id and keep the card actionable.
+        """
+        season_item = ContentItem(
+            id="tvdb:42:s1",
+            db_id=42,
+            title="The Expanse (Season 1)",
+            author=None,
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            parent_id="tvdb:42",
+        )
+        rec = {
+            "item": season_item,
+            "score": 0.85,
+            "similarity_score": 0.8,
+            "preference_score": 0.7,
+            "reasoning": "Rule-based reasoning",
+            "score_breakdown": {"genre_match": 0.9},
+            "contributing_items": [],
+        }
+        mock_components["engine"].generate_recommendations.return_value = [rec]
+        mock_components["engine"].generate_blurb_for_item.return_value = None
+        mock_components["storage"].get_user_preference_config.return_value = None
+        mock_components["storage"].get_completed_items.return_value = []
+
+        with client.stream(
+            "GET", "/api/recommendations/stream?type=tv_show&count=1"
+        ) as response:
+            body = response.read().decode()
+
+        events = _parse_sse_events(body)
+        rec_events = [e for e in events if e["type"] == "recommendations"]
+        assert len(rec_events) == 1
+        items = rec_events[0]["items"]
+        assert items[0]["db_id"] == 42
 
     def test_blurb_events_streamed(
         self, client: TestClient, mock_components: dict
