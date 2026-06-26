@@ -89,6 +89,7 @@ def test_expand_tv_shows_to_seasons():
     """Test expanding TV shows into season-level items for recommendations."""
     show_with_seasons = ContentItem(
         id="tvdb:280619",
+        db_id=42,
         title="The Expanse",
         content_type=ContentType.TV_SHOW,
         status=ConsumptionStatus.UNREAD,
@@ -96,6 +97,7 @@ def test_expand_tv_shows_to_seasons():
     )
     show_without_seasons = ContentItem(
         id="tvdb:999",
+        db_id=99,
         title="Unknown Show",
         content_type=ContentType.TV_SHOW,
         status=ConsumptionStatus.UNREAD,
@@ -116,6 +118,27 @@ def test_expand_tv_shows_to_seasons():
     assert expanded[6].title == "Unknown Show"
     assert expanded[6].id == "tvdb:999"
     assert expanded[6].parent_id is None  # passthrough items have no parent
+
+    # Every season item carries the parent show's db_id so recommendation
+    # actions (mark complete / ignore) resolve to the show-level library row.
+    for season_item in expanded[:6]:
+        assert season_item.db_id == 42
+    # Passthrough items keep their own db_id.
+    assert expanded[6].db_id == 99
+
+    # A show whose db_id is None propagates None (not a default) to its season
+    # items, proving the db_id=item.db_id passthrough preserves a missing id.
+    show_without_db_id = ContentItem(
+        id="tvdb:555",
+        db_id=None,
+        title="Orphan Show",
+        content_type=ContentType.TV_SHOW,
+        status=ConsumptionStatus.UNREAD,
+        metadata={"total_seasons": 2},
+    )
+    none_expanded = expand_tv_shows_to_seasons([show_without_db_id])
+    assert len(none_expanded) == 2
+    assert all(season.db_id is None for season in none_expanded)
 
 
 def test_get_series_name():
