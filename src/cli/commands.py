@@ -1210,6 +1210,11 @@ def library() -> None:
     help="Filter by enrichment state (default: all)",
 )
 @click.option(
+    "--needs-rating",
+    is_flag=True,
+    help="Only completed items with no rating (overrides --status)",
+)
+@click.option(
     "--limit",
     type=click.IntRange(min=1, max=200),
     default=50,
@@ -1244,6 +1249,7 @@ def library_list(
     search: str | None,
     show_ignored: bool,
     enrichment_str: str | None,
+    needs_rating: bool,
     limit: int | None,
     offset: int,
     output_format: str,
@@ -1260,10 +1266,16 @@ def library_list(
         cast(EnrichmentFilter, enrichment_str.lower()) if enrichment_str else None
     )
 
+    # needs_rating means "completed AND unrated": completed status is implied
+    # and takes precedence over any explicitly-passed --status (matches web API).
+    if needs_rating:
+        consumption_status = ConsumptionStatus.COMPLETED
+
     items: list[ContentItem] = storage.get_content_items(
         user_id=user_id,
         content_type=content_type,
         status=consumption_status,
+        unrated_only=needs_rating,
         sort_by=sort_by,
         search=search,
         include_ignored=show_ignored,
