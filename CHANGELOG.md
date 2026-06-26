@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.12.3 (2026-06-26)
+
+### Bug Fixes
+
+- **sorting**: Require word boundaries when matching similar titles
+  ([`5cf3113`](https://github.com/therealahall/recommendinator/commit/5cf3113402c3b43a1c52fac308815a2b13a3871c))
+
+
 ## v0.12.2 (2026-06-26)
 
 ### Bug Fixes
