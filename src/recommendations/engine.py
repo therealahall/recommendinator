@@ -2,7 +2,8 @@
 
 import logging
 import random
-from typing import Any
+from collections.abc import Callable
+from typing import Any, TypeVar
 
 from src.llm.embeddings import EmbeddingGenerator
 from src.llm.recommendations import RecommendationGenerator
@@ -54,6 +55,43 @@ from src.utils.series import (
 from src.utils.sorting import get_sort_title, titles_similar
 
 logger = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
+
+
+def _collapse_duplicate_db_ids(
+    entries: list[_T], db_id_of: Callable[[_T], int | None]
+) -> list[_T]:
+    """Keep at most one entry per non-null ``db_id``, preserving order.
+
+    TV shows are expanded to season-level candidates that all share the parent
+    show's ``db_id`` (the library tracks TV at show level).  When series
+    ordering is disabled the engine skips series filtering, so several seasons
+    of one show can co-occur in the ranked list — producing multiple cards that
+    collide on the frontend, which keys cards and targets actions by ``db_id``.
+    Collapsing keeps the first (highest-ranked) entry per show and lets other
+    content backfill the freed slots.
+
+    Entries whose ``db_id`` is ``None`` are each kept — a missing id is not a
+    shared identity, so they are never collapsed together.
+
+    Args:
+        entries: Ordered entries (best-first) to deduplicate.
+        db_id_of: Extracts the entry's ``db_id``.
+
+    Returns:
+        The entries with duplicate non-null ``db_id``s removed, order preserved.
+    """
+    seen: set[int] = set()
+    collapsed: list[_T] = []
+    for entry in entries:
+        db_id = db_id_of(entry)
+        if db_id is not None:
+            if db_id in seen:
+                continue
+            seen.add(db_id)
+        collapsed.append(entry)
+    return collapsed
 
 
 # Human-readable labels for content types used in recommendation reasoning.
@@ -389,6 +427,15 @@ class RecommendationEngine:
                 top_penalty=user_preference_config.variety_penalty
                 / UserPreferenceConfig.MAX_VARIETY_PENALTY,
             )
+
+        # Collapse season-level candidates that share a parent show's db_id
+        # down to their single highest-ranked representative (issue #44).  This
+        # runs before the slice so freed slots backfill with other content.  It
+        # is a no-op when series ordering is on (one season per show already)
+        # and for non-TV content (every library item has a unique db_id).
+        ranked_items = _collapse_duplicate_db_ids(
+            ranked_items, lambda entry: entry[0].db_id
+        )
 
         top_recommendations = ranked_items[:count]
 
@@ -875,16 +922,27 @@ class RecommendationEngine:
     ) -> list[dict[str, Any]]:
         """Build fallback recommendations when no scored recommendations exist.
 
-        Returns unconsumed items that pass series ordering checks.
+        Returns unconsumed items that pass series ordering checks, collapsed to
+        one entry per non-null ``db_id`` so the result matches the scored path
+        (see :func:`_collapse_duplicate_db_ids`).  For TV, ``unconsumed_items``
+        is the already-season-expanded list, so several season entries can share
+        a parent show's ``db_id``; collapsing keeps each show to one card.
 
         Args:
-            unconsumed_items: Available unconsumed items.
+            unconsumed_items: Available unconsumed items (season-expanded for TV).
             series_tracking: Series name to consumed item numbers.
             count: Maximum number to return.
 
         Returns:
             List of fallback recommendation dictionaries.
         """
+        # Collect ALL qualifying candidates before collapsing — do not early-exit
+        # at ``count``.  The season entries of one show share a db_id and collapse
+        # to a single card, so stopping at ``count`` un-collapsed items could let
+        # one show's seasons fill every slot, leaving nothing to backfill and
+        # yielding fewer than ``count`` distinct shows after collapse.  Gathering
+        # every candidate first guarantees the freed slots are backfilled.  This
+        # is a correctness constraint, not an oversight: do not re-add a break.
         recommendations: list[dict[str, Any]] = []
         for item in unconsumed_items:
             if should_recommend_item(
@@ -901,9 +959,12 @@ class RecommendationEngine:
                         "variety_penalty": 0.0,
                     }
                 )
-                if len(recommendations) >= count:
-                    break
-        return recommendations
+        # Collapse expanded TV seasons sharing a show's db_id before slicing, so
+        # each show contributes at most one card and the freed slots backfill.
+        recommendations = _collapse_duplicate_db_ids(
+            recommendations, lambda rec: rec["item"].db_id
+        )
+        return recommendations[:count]
 
     # ------------------------------------------------------------------
     # Private helpers
