@@ -1,5 +1,10 @@
 <script setup lang="ts">
-import { usePreferencesStore, SCORER_KEYS, SCORER_TOOLTIPS } from '@/stores/preferences'
+import {
+  usePreferencesStore,
+  SCORER_KEYS,
+  SCORER_TOOLTIPS,
+  VARIETY_PENALTY_TOOLTIP,
+} from '@/stores/preferences'
 import { useAppStore } from '@/stores/app'
 import { formatScorerName } from '@/utils/format'
 import ScorerSlider from '@/components/atoms/ScorerSlider.vue'
@@ -17,7 +22,7 @@ function shouldShow(key: string): boolean {
 
 <template>
   <div class="pref-section">
-    <h3>Scorer Weights</h3>
+    <h3>Scoring</h3>
     <template v-for="key in SCORER_KEYS" :key="key">
       <ScorerSlider
         v-if="shouldShow(key)"
@@ -27,5 +32,12 @@ function shouldShow(key: string): boolean {
         @update:model-value="prefs.setWeight(key, $event)"
       />
     </template>
+    <div class="pref-divider"></div>
+    <ScorerSlider
+      label="Variety After Completion"
+      :tooltip="VARIETY_PENALTY_TOOLTIP"
+      :model-value="prefs.varietyPenalty"
+      @update:model-value="prefs.varietyPenalty = $event"
+    />
   </div>
 </template>

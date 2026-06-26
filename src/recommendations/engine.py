@@ -374,7 +374,9 @@ class RecommendationEngine:
         # automatically tops the list.  The ladder is built from completed
         # items of the *same* content type, so finishing a fantasy book does
         # not suppress fantasy movies or games — each type varies independently.
-        # The user's variety_penalty becomes the ladder's top rung.
+        # The user's variety_penalty (0.0-5.0) is mapped onto a 0.0-1.0 penalty
+        # fraction by dividing by MAX_VARIETY_PENALTY, so the slider's full value
+        # zeroes a just-finished genre while 4.0 reproduces the legacy 0.8 top.
         if (
             user_preference_config is not None
             and user_preference_config.variety_penalty > 0.0
@@ -384,7 +386,8 @@ class RecommendationEngine:
                 consumed_items_of_type,
                 series_tracking,
                 unconsumed_items,
-                top_penalty=user_preference_config.variety_penalty,
+                top_penalty=user_preference_config.variety_penalty
+                / UserPreferenceConfig.MAX_VARIETY_PENALTY,
             )
 
         top_recommendations = ranked_items[:count]
@@ -648,8 +651,9 @@ class RecommendationEngine:
             series_tracking: Series name -> consumed item numbers, used to
                 detect active series continuations.
             unconsumed_items: Candidate items, used for series ordering checks.
-            top_penalty: The user's variety_penalty, used as the ladder's top
-                rung — the penalty for the most recently finished genre.
+            top_penalty: The penalty *fraction* (0.0-1.0) for the most recently
+                finished genre, derived from the user's variety_penalty by
+                dividing by ``MAX_VARIETY_PENALTY``. Used as the ladder's top rung.
 
         Returns:
             Re-sorted ``(item, score, metadata)`` tuples with the penalty

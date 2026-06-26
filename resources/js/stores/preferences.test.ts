@@ -79,6 +79,22 @@ describe('usePreferencesStore', () => {
     expect(store.varietyPenalty).toBe(0)
   })
 
+  it('load reads varietyPenalty at the max (5.0)', async () => {
+    mockGet.mockResolvedValue({
+      scorer_weights: {},
+      series_in_order: true,
+      variety_penalty: 5.0,
+      content_length_preferences: {},
+      custom_rules: [],
+      theme: '',
+    })
+
+    const store = usePreferencesStore()
+    await store.load()
+
+    expect(store.varietyPenalty).toBe(5.0)
+  })
+
   it('load applies saved theme and sets pendingTheme', async () => {
     mockGet.mockResolvedValue({
       scorer_weights: {},
@@ -194,17 +210,17 @@ describe('usePreferencesStore', () => {
     expect(store.saveStatus).toBe('saved')
   })
 
-  it('save sends varietyPenalty at the max (0.8)', async () => {
+  it('save sends varietyPenalty at the max (5.0)', async () => {
     mockPut.mockResolvedValue({})
 
     const store = usePreferencesStore()
-    store.varietyPenalty = 0.8
+    store.varietyPenalty = 5.0
 
     await store.save()
 
     expect(mockPut).toHaveBeenCalledWith(
       '/users/1/preferences',
-      expect.objectContaining({ variety_penalty: 0.8 }),
+      expect.objectContaining({ variety_penalty: 5.0 }),
     )
   })
 

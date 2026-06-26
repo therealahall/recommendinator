@@ -883,17 +883,17 @@ def test_preferences_set_variety(mock_components):
     mock_components["storage"].save_user_preference_config = Mock()
 
     runner = CliRunner()
-    result = runner.invoke(cli, ["preferences", "set-variety", "0.8"])
+    result = runner.invoke(cli, ["preferences", "set-variety", "5.0"])
 
     assert result.exit_code == 0
-    assert "Set variety_penalty to 0.8" in result.output
-    assert config.variety_penalty == 0.8
+    assert "Set variety_penalty to 5.0" in result.output
+    assert config.variety_penalty == 5.0
     mock_components["storage"].save_user_preference_config.assert_called_once()
 
 
 def test_preferences_set_variety_off(mock_components):
     """Setting variety to 0.0 disables the penalty."""
-    config = UserPreferenceConfig(variety_penalty=0.8)
+    config = UserPreferenceConfig(variety_penalty=4.0)
     mock_components["storage"].get_user_preference_config = Mock(return_value=config)
     mock_components["storage"].save_user_preference_config = Mock()
 
@@ -921,19 +921,37 @@ def test_preferences_get_includes_variety_penalty(mock_components):
 
 
 def test_preferences_set_variety_rejects_out_of_range(mock_components):
-    """A value above the 0.8 cap is rejected with a non-zero exit and no save."""
+    """A value above the 5.0 maximum is rejected with a non-zero exit and no save."""
     mock_components["storage"].get_user_preference_config = Mock(
         return_value=UserPreferenceConfig()
     )
     mock_components["storage"].save_user_preference_config = Mock()
 
     runner = CliRunner()
-    result = runner.invoke(cli, ["preferences", "set-variety", "1.5"])
+    result = runner.invoke(cli, ["preferences", "set-variety", "6.0"])
 
     assert result.exit_code != 0
     # The rejection must name both ends of the accepted range.
     assert "0.0" in result.output
-    assert "0.8" in result.output
+    assert "5.0" in result.output
+    mock_components["storage"].save_user_preference_config.assert_not_called()
+
+
+def test_preferences_set_variety_rejects_negative(mock_components):
+    """A value below the 0.0 minimum is rejected with a non-zero exit and no save."""
+    mock_components["storage"].get_user_preference_config = Mock(
+        return_value=UserPreferenceConfig()
+    )
+    mock_components["storage"].save_user_preference_config = Mock()
+
+    runner = CliRunner()
+    # "--" stops option parsing so the negative number reaches the argument.
+    result = runner.invoke(cli, ["preferences", "set-variety", "--", "-0.5"])
+
+    assert result.exit_code != 0
+    # The rejection must name both ends of the accepted range.
+    assert "0.0" in result.output
+    assert "5.0" in result.output
     mock_components["storage"].save_user_preference_config.assert_not_called()
 
 

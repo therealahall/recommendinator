@@ -3,7 +3,9 @@
 When the user's ``variety_penalty`` preference is non-zero, recently finished
 genres are penalised on a stepped ladder so the recommender hops between genres
 instead of marching through the next entry in the genre/series just finished.
-That preference value becomes the ladder's ``top_penalty`` — the strongest rung.
+The engine derives the ladder's ``top_penalty`` fraction from that preference by
+dividing it by the preference scale's maximum, so the slider's full value yields
+the strongest rung.
 
 The ladder is built from the user's COMPLETED items ordered by completion date
 (newest first). Each distinct thematic genre cluster encountered claims the
@@ -12,10 +14,10 @@ and the penalty decays linearly to zero over :data:`VARIETY_LADDER_STEPS`
 rungs. A candidate is penalised by the strongest penalty among the clusters it
 shares with the ladder (i.e. its freshest matching genre).
 
-The penalty is multiplicative on a candidate's final score: a penalty of
-``0.8`` multiplies the score by ``0.2``. Because the top penalty is below
-``1.0``, a fully-penalised candidate still keeps a fraction of its score, so a
-genre-homogeneous library never produces an empty recommendation list.
+The penalty is multiplicative on a candidate's final score: a penalty fraction
+of ``0.8`` multiplies the score by ``0.2``. At the full strength fraction of
+``1.0`` a just-finished genre's same-type candidates are zeroed entirely — there
+is no score floor.
 """
 
 from __future__ import annotations
@@ -23,16 +25,15 @@ from __future__ import annotations
 from datetime import date
 
 from src.models.content import ConsumptionStatus, ContentItem
-from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.genre_clusters import get_clusters_for_terms
 from src.recommendations.genre_normalizer import extract_and_normalize_genres
 
-# Strongest penalty, applied to the most recently finished genre cluster.
-# 0.8 => candidates in that cluster keep 20% of their score: a hard but not
-# total suppression, so genre-homogeneous libraries never return an empty list.
-# Single-sourced from the user-preference cap so the ladder's top rung and the
-# preference upper bound can never drift apart.
-VARIETY_TOP_PENALTY = UserPreferenceConfig.MAX_VARIETY_PENALTY
+# Full-strength penalty fraction, applied to the most recently finished genre
+# cluster when the user sets ``variety_penalty`` to its maximum. ``1.0`` zeroes
+# that cluster's same-type candidates entirely (no score floor). The engine
+# scales it down for lower preference values; it is the default top rung for
+# callers that build a ladder directly.
+VARIETY_TOP_PENALTY = 1.0
 
 # Number of distinct recently finished clusters the penalty ladder spans.
 # Penalty decays linearly: rung 0 = TOP, rung STEPS-1 = TOP/STEPS, rung STEPS+ = 0.

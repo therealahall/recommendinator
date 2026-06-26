@@ -66,7 +66,7 @@ class TestBuildVarietyLadder:
         assert ladder == {"fantasy": pytest.approx(VARIETY_TOP_PENALTY)}
 
     def test_stepped_percentages_descend_by_recency(self) -> None:
-        """The documented ladder: 80 / 64 / 48 / 32 / 16 percent."""
+        """The full-strength ladder: 100 / 80 / 60 / 40 / 20 percent."""
         items = [
             _completed("Bio", ["Biography"], completed_on=date(2026, 1, 5)),
             _completed("Crime", ["Mystery"], completed_on=date(2026, 1, 4)),
@@ -77,11 +77,11 @@ class TestBuildVarietyLadder:
         ladder = build_variety_ladder(items)
 
         # Newest first: biography strongest, western weakest.
-        assert ladder["nonfiction_documentary"] == pytest.approx(0.80)
-        assert ladder["crime_thriller"] == pytest.approx(0.64)
-        assert ladder["science_fiction"] == pytest.approx(0.48)
-        assert ladder["fantasy"] == pytest.approx(0.32)
-        assert ladder["western"] == pytest.approx(0.16)
+        assert ladder["nonfiction_documentary"] == pytest.approx(1.00)
+        assert ladder["crime_thriller"] == pytest.approx(0.80)
+        assert ladder["science_fiction"] == pytest.approx(0.60)
+        assert ladder["fantasy"] == pytest.approx(0.40)
+        assert ladder["western"] == pytest.approx(0.20)
 
     def test_ladder_capped_at_step_count(self) -> None:
         """A sixth distinct cluster is beyond the ladder and is not recorded."""
@@ -116,7 +116,9 @@ class TestBuildVarietyLadder:
         assert len(ladder) == 2
         assert ladder["fantasy"] == pytest.approx(VARIETY_TOP_PENALTY)
         # Sci-fi is the second *distinct* cluster -> rung 1, not rung 2.
-        assert ladder["science_fiction"] == pytest.approx(0.64)
+        assert ladder["science_fiction"] == pytest.approx(
+            VARIETY_TOP_PENALTY * (VARIETY_LADDER_STEPS - 1) / VARIETY_LADDER_STEPS
+        )
 
     def test_db_id_breaks_ties_for_same_completion_date(self) -> None:
         """With equal dates, the higher db_id is treated as the most recent."""
@@ -128,7 +130,9 @@ class TestBuildVarietyLadder:
         ]
         ladder = build_variety_ladder(items)
         assert ladder["science_fiction"] == pytest.approx(VARIETY_TOP_PENALTY)
-        assert ladder["fantasy"] == pytest.approx(0.64)
+        assert ladder["fantasy"] == pytest.approx(
+            VARIETY_TOP_PENALTY * (VARIETY_LADDER_STEPS - 1) / VARIETY_LADDER_STEPS
+        )
 
     def test_unread_items_excluded(self) -> None:
         """Only COMPLETED items contribute to the ladder."""
@@ -169,7 +173,9 @@ class TestBuildVarietyLadder:
         ladder = build_variety_ladder(items)
         # Dated sci-fi is freshest -> top penalty; undated fantasy is rung 1.
         assert ladder["science_fiction"] == pytest.approx(VARIETY_TOP_PENALTY)
-        assert ladder["fantasy"] == pytest.approx(0.64)
+        assert ladder["fantasy"] == pytest.approx(
+            VARIETY_TOP_PENALTY * (VARIETY_LADDER_STEPS - 1) / VARIETY_LADDER_STEPS
+        )
 
     def test_custom_steps_and_top_penalty(self) -> None:
         items = [

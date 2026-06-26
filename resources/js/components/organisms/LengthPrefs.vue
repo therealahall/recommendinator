@@ -14,8 +14,8 @@ function setLength(type: string, value: string) {
 </script>
 
 <template>
-  <div class="pref-section">
-    <h3>Length Preferences</h3>
+  <div>
+    <h4>Length</h4>
     <p class="help-text">Prefer short, medium, or long content per type.</p>
     <div v-for="type in CONTENT_TYPES" :key="type" class="dropdown-row">
       <label :for="`length-pref-${type}`" class="dropdown-label">{{ formatContentType(type) }}</label>

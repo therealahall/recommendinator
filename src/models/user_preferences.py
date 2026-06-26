@@ -16,10 +16,12 @@ class UserPreferenceConfig:
             default."
         series_in_order: Whether to prefer recommending series in order.
         variety_penalty: Strength of the genre-fatigue penalty applied after
-            completing content (0.0-0.8). ``0.0`` disables it; higher values
-            demote candidates whose genre the user recently finished more
-            strongly. The value is the ladder's top penalty (see
-            ``src/recommendations/variety.py``). Default 0.0 (disabled).
+            completing content, on the same 0.0-5.0 scale as the scorer
+            weights. ``0.0`` disables it; higher values demote candidates whose
+            genre the user recently finished more strongly. The engine divides
+            it by ``MAX_VARIETY_PENALTY`` to derive the ladder's top penalty
+            fraction (see ``src/recommendations/variety.py``), so ``5.0`` fully
+            zeroes a just-finished genre. Default 0.0 (disabled).
         custom_rules: Free-form rule descriptions interpreted by the
             pattern-based or LLM-powered preference interpreter.
         content_length_preferences: Per-content-type length preference.
@@ -43,9 +45,17 @@ class UserPreferenceConfig:
     diversity_weight: float = 0.0
     theme: str = ""
 
-    #: Strongest variety penalty a user may set. Caps the genre-fatigue ladder's
-    #: top rung so a fully penalised candidate keeps at least 20% of its score.
-    MAX_VARIETY_PENALTY: ClassVar[float] = 0.8
+    #: Highest variety strength a user may set, on the same 0.0-5.0 scale as the
+    #: scorer weights. The engine divides this preference by ``MAX_VARIETY_PENALTY``
+    #: to get the ladder's top penalty fraction, so ``5.0`` yields a 1.0 fraction
+    #: that fully zeroes a just-finished genre (no score floor).
+    MAX_VARIETY_PENALTY: ClassVar[float] = 5.0
+
+    #: Strength a legacy ``variety_after_completion = true`` migrates to. The old
+    #: boolean applied a fixed 0.8 top-penalty fraction; on the 0.0-5.0 scale that
+    #: same full-strength fraction is ``0.8 * MAX_VARIETY_PENALTY == 4.0``, so
+    #: migrated users keep the exact behaviour they had before the slider existed.
+    LEGACY_VARIETY_ON: ClassVar[float] = 0.8 * MAX_VARIETY_PENALTY
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a dictionary for JSON storage.
@@ -60,9 +70,10 @@ class UserPreferenceConfig:
         """Deserialize from a dictionary.
 
         Migrates the legacy boolean ``variety_after_completion`` field: stored
-        JSON written before the slider existed maps ``True`` -> the maximum
-        penalty and ``False`` -> ``0.0``. A present ``variety_penalty`` always
-        wins and is clamped into ``[0.0, MAX_VARIETY_PENALTY]``.
+        JSON written before the slider existed maps ``True`` -> ``LEGACY_VARIETY_ON``
+        (the old full-strength behaviour) and ``False`` -> ``0.0``. A present
+        ``variety_penalty`` always wins and is clamped into
+        ``[0.0, MAX_VARIETY_PENALTY]``.
 
         Args:
             data: Dictionary representation (e.g. from JSON).
@@ -94,5 +105,5 @@ class UserPreferenceConfig:
             penalty = float(data["variety_penalty"])
             return max(0.0, min(cls.MAX_VARIETY_PENALTY, penalty))
         if data.get("variety_after_completion"):
-            return cls.MAX_VARIETY_PENALTY
+            return cls.LEGACY_VARIETY_ON
         return 0.0

@@ -17,8 +17,8 @@ from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.engine import RecommendationEngine, _shuffle_close_scores
 from src.recommendations.preferences import PreferenceAnalyzer, UserPreferences
 from src.recommendations.variety import (
+    VARIETY_LADDER_STEPS,
     VARIETY_SERIES_CONTINUATION_FACTOR,
-    VARIETY_TOP_PENALTY,
 )
 from src.storage.manager import StorageManager
 from src.storage.vector_db import VectorDB
@@ -1585,16 +1585,18 @@ def _variety_rank_of(recs: list[dict], item_id: str) -> int:
 class TestVarietyAfterCompletion:
     """Behavioural tests for the variety_penalty genre-fatigue penalty.
 
-    The ``variety_penalty`` preference (0.0-0.8) drives a stepped penalty that
-    demotes candidates whose genre cluster the user recently finished, using the
-    preference value as the ladder's top rung. The issue #74 bug regression
-    lives in :class:`TestVarietyAfterCompletionRegression`.
+    The ``variety_penalty`` preference (0.0-5.0) drives a stepped penalty that
+    demotes candidates whose genre cluster the user recently finished. The
+    engine divides it by ``MAX_VARIETY_PENALTY`` to get the ladder's top penalty
+    fraction, so a preference of 4.0 yields the legacy 0.8 top fraction. The
+    issue #74 bug regression lives in
+    :class:`TestVarietyAfterCompletionRegression`.
     """
 
     def test_variety_penalty_demotes_recently_finished_genre(
         self, non_ai_engine, mock_storage
     ) -> None:
-        """A max variety_penalty lowers a just-finished genre's candidate score."""
+        """A 4.0 variety_penalty lowers a just-finished genre's candidate score."""
         consumed = ContentItem(
             id="consumed_1",
             title="Dune",
@@ -1625,14 +1627,15 @@ class TestVarietyAfterCompletion:
         recs_on = non_ai_engine.generate_recommendations(
             content_type=ContentType.BOOK,
             count=1,
-            user_preference_config=UserPreferenceConfig(variety_penalty=0.8),
+            user_preference_config=UserPreferenceConfig(variety_penalty=4.0),
         )
 
         score_off = _variety_score_for(recs_off, "same_genre")
         score_on = _variety_score_for(recs_on, "same_genre")
-        # Top penalty 0.8 => ~20% of the original score retained.
-        assert score_on == pytest.approx(score_off * 0.2, rel=1e-6)
-        assert recs_on[0]["variety_penalty"] == pytest.approx(0.8)
+        # 4.0 / 5.0 == 0.8 top fraction => (1 - top_fraction) of the score retained.
+        top_fraction = 4.0 / UserPreferenceConfig.MAX_VARIETY_PENALTY
+        assert score_on == pytest.approx(score_off * (1 - top_fraction), rel=1e-6)
+        assert recs_on[0]["variety_penalty"] == pytest.approx(top_fraction)
         assert recs_off[0]["variety_penalty"] == 0.0
 
     def test_variety_penalty_steps_by_recency(
@@ -1640,9 +1643,10 @@ class TestVarietyAfterCompletion:
     ) -> None:
         """The most recently finished genre is penalised more than an older one.
 
-        Finishing fantasy then sci-fi puts sci-fi on the top rung (0.8) and
-        fantasy on the next rung (0.64), so a fantasy candidate outranks a
-        sci-fi candidate even though sci-fi was also recently finished.
+        With variety_penalty 4.0 (a 0.8 top fraction), finishing fantasy then
+        sci-fi puts sci-fi on the top rung (0.8) and fantasy on the next rung
+        (0.64), so a fantasy candidate outranks a sci-fi candidate even though
+        sci-fi was also recently finished.
         """
         finished_fantasy = ContentItem(
             id="finished_fantasy",
@@ -1690,7 +1694,7 @@ class TestVarietyAfterCompletion:
         recs = non_ai_engine.generate_recommendations(
             content_type=ContentType.BOOK,
             count=2,
-            user_preference_config=UserPreferenceConfig(variety_penalty=0.8),
+            user_preference_config=UserPreferenceConfig(variety_penalty=4.0),
         )
 
         # Sci-fi finished most recently => stronger penalty => ranked lower.
@@ -1707,17 +1711,24 @@ class TestVarietyAfterCompletion:
             for rec in recs
             if rec["item"].id == "scifi_candidate"
         )
-        assert scifi_penalty == pytest.approx(0.8)
-        assert fantasy_penalty == pytest.approx(0.64)
+        top_fraction = (
+            UserPreferenceConfig.LEGACY_VARIETY_ON
+            / UserPreferenceConfig.MAX_VARIETY_PENALTY
+        )
+        # Sci-fi takes the top rung; fantasy the next rung down the ladder.
+        assert scifi_penalty == pytest.approx(top_fraction)
+        assert fantasy_penalty == pytest.approx(
+            top_fraction * (VARIETY_LADDER_STEPS - 1) / VARIETY_LADDER_STEPS
+        )
 
     def test_intermediate_variety_penalty_scales_top_rung(
         self, non_ai_engine, mock_storage
     ) -> None:
-        """A mid-range preference (0.4) becomes the ladder's top penalty.
+        """A mid-range preference (2.0) becomes the ladder's top penalty.
 
-        The decay shape is unchanged; only the top value is user-driven, so the
-        most recently finished genre is penalised by exactly the preference
-        value (here 0.4, retaining 60% of the score).
+        The decay shape is unchanged; only the top value is user-driven. The
+        preference is divided by ``MAX_VARIETY_PENALTY``, so 2.0 yields a 0.4 top
+        fraction and the most recently finished genre retains 60% of its score.
         """
         consumed = ContentItem(
             id="consumed_1",
@@ -1749,14 +1760,15 @@ class TestVarietyAfterCompletion:
         recs_mid = non_ai_engine.generate_recommendations(
             content_type=ContentType.BOOK,
             count=1,
-            user_preference_config=UserPreferenceConfig(variety_penalty=0.4),
+            user_preference_config=UserPreferenceConfig(variety_penalty=2.0),
         )
 
         score_off = _variety_score_for(recs_off, "same_genre")
         score_mid = _variety_score_for(recs_mid, "same_genre")
-        # Penalty 0.4 => 60% of the original score retained.
-        assert score_mid == pytest.approx(score_off * 0.6, rel=1e-6)
-        assert recs_mid[0]["variety_penalty"] == pytest.approx(0.4)
+        # 2.0 / 5.0 == 0.4 top fraction => (1 - top_fraction) of the score retained.
+        top_fraction = 2.0 / UserPreferenceConfig.MAX_VARIETY_PENALTY
+        assert score_mid == pytest.approx(score_off * (1 - top_fraction), rel=1e-6)
+        assert recs_mid[0]["variety_penalty"] == pytest.approx(top_fraction)
 
     def test_variety_penalty_is_per_content_type(
         self, non_ai_engine, mock_storage
@@ -1796,7 +1808,7 @@ class TestVarietyAfterCompletion:
         recs = non_ai_engine.generate_recommendations(
             content_type=ContentType.VIDEO_GAME,
             count=1,
-            user_preference_config=UserPreferenceConfig(variety_penalty=0.8),
+            user_preference_config=UserPreferenceConfig(variety_penalty=4.0),
         )
 
         # No completed games => empty ladder => the fantasy game is untouched.
@@ -1839,9 +1851,9 @@ class TestVarietyAfterCompletion:
     ) -> None:
         """Any variety_penalty above 0.0 builds a ladder and penalises matches.
 
-        Guards the ``> 0.0`` gate distinct from the larger 0.4/0.8 cases: a
-        barely-positive 0.05 still flows through as the ladder's top rung, so a
-        same-genre candidate receives that exact penalty rather than 0.0.
+        Guards the ``> 0.0`` gate distinct from the larger 2.0/4.0 cases: a
+        barely-positive 0.25 still flows through to a 0.05 top fraction, so a
+        same-genre candidate receives that penalty rather than 0.0.
         """
         consumed = ContentItem(
             id="consumed_1",
@@ -1868,19 +1880,75 @@ class TestVarietyAfterCompletion:
         recs = non_ai_engine.generate_recommendations(
             content_type=ContentType.BOOK,
             count=1,
-            user_preference_config=UserPreferenceConfig(variety_penalty=0.05),
+            user_preference_config=UserPreferenceConfig(variety_penalty=0.25),
         )
+        # 0.25 / 5.0 == 0.05 top fraction.
         assert recs[0]["variety_penalty"] == pytest.approx(0.05)
 
-    def test_max_penalty_matches_legacy_constant_behaviour(
+    def test_four_matches_legacy_constant_behaviour(
         self, non_ai_engine, mock_storage
     ) -> None:
-        """variety_penalty=0.8 reproduces the old constant-driven penalty exactly.
+        """LEGACY_VARIETY_ON reproduces the old constant-driven penalty exactly.
 
-        Before the slider, the ladder's top rung was the hardcoded
-        ``VARIETY_TOP_PENALTY`` (0.8) and the boolean toggle either applied it
-        or not. Setting ``variety_penalty`` to that constant must yield the
-        identical applied penalty, proving the conversion preserves behaviour.
+        Before the 0.0-5.0 slider, the ladder's top rung was a fixed 0.8 fraction
+        and the boolean toggle either applied it or not. On the new scale that
+        same fraction is ``LEGACY_VARIETY_ON / MAX_VARIETY_PENALTY``, so the
+        migrated strength must yield the identical applied penalty, proving the
+        migration preserves behaviour.
+        """
+        consumed = ContentItem(
+            id="consumed_1",
+            title="Dune",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            date_completed=date(2026, 1, 1),
+            metadata={"genres": ["Science Fiction"]},
+        )
+        same_genre = ContentItem(
+            id="same_genre",
+            title="Foundation",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genres": ["Science Fiction"]},
+        )
+
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: [consumed]
+        )
+        mock_storage.get_unconsumed_items = Mock(return_value=[same_genre])
+
+        recs_off = non_ai_engine.generate_recommendations(
+            content_type=ContentType.BOOK,
+            count=1,
+            user_preference_config=UserPreferenceConfig(variety_penalty=0.0),
+        )
+        recs = non_ai_engine.generate_recommendations(
+            content_type=ContentType.BOOK,
+            count=1,
+            user_preference_config=UserPreferenceConfig(
+                variety_penalty=UserPreferenceConfig.LEGACY_VARIETY_ON
+            ),
+        )
+        top_fraction = (
+            UserPreferenceConfig.LEGACY_VARIETY_ON
+            / UserPreferenceConfig.MAX_VARIETY_PENALTY
+        )
+        assert recs[0]["variety_penalty"] == pytest.approx(top_fraction)
+        # The migrated strength must preserve the legacy score impact, not just
+        # the reported penalty: the same-genre candidate retains (1 - top_fraction)
+        # of the score it has with variety disabled.
+        score_off = _variety_score_for(recs_off, "same_genre")
+        score_on = _variety_score_for(recs, "same_genre")
+        assert score_on == pytest.approx(score_off * (1 - top_fraction), rel=1e-6)
+
+    def test_full_throttle_variety_zeroes_finished_genre(
+        self, non_ai_engine, mock_storage
+    ) -> None:
+        """variety_penalty=5.0 applies a 1.0 fraction, zeroing a finished genre.
+
+        Removing the old 0.8 cap means the maximum preference fully suppresses a
+        just-finished genre's same-type candidate — there is no score floor.
         """
         consumed = ContentItem(
             id="consumed_1",
@@ -1908,10 +1976,11 @@ class TestVarietyAfterCompletion:
             content_type=ContentType.BOOK,
             count=1,
             user_preference_config=UserPreferenceConfig(
-                variety_penalty=VARIETY_TOP_PENALTY
+                variety_penalty=UserPreferenceConfig.MAX_VARIETY_PENALTY
             ),
         )
-        assert recs[0]["variety_penalty"] == pytest.approx(VARIETY_TOP_PENALTY)
+        assert recs[0]["variety_penalty"] == pytest.approx(1.0)
+        assert _variety_score_for(recs, "same_genre") == pytest.approx(0.0)
 
 
 class TestVarietyAfterCompletionRegression:
@@ -1984,7 +2053,9 @@ class TestVarietyAfterCompletionRegression:
         recs_on = non_ai_engine.generate_recommendations(
             content_type=ContentType.BOOK,
             count=2,
-            user_preference_config=UserPreferenceConfig(variety_penalty=0.8),
+            user_preference_config=UserPreferenceConfig(
+                variety_penalty=UserPreferenceConfig.LEGACY_VARIETY_ON
+            ),
         )
         assert recs_on[0]["item"].id == "mystery_book"
         assert _variety_rank_of(recs_on, "mystery_book") < _variety_rank_of(
@@ -2051,7 +2122,9 @@ class TestVarietyAfterCompletionRegression:
         recs = non_ai_engine.generate_recommendations(
             content_type=ContentType.BOOK,
             count=10,
-            user_preference_config=UserPreferenceConfig(variety_penalty=0.8),
+            user_preference_config=UserPreferenceConfig(
+                variety_penalty=UserPreferenceConfig.LEGACY_VARIETY_ON
+            ),
         )
 
         rec_ids = [rec["item"].id for rec in recs]
@@ -2063,12 +2136,18 @@ class TestVarietyAfterCompletionRegression:
 
         # The variety layer fired too: Caliban's War shares the just-finished
         # sci-fi cluster, but as an active series continuation its penalty is
-        # softened (halved), not applied at full strength.
+        # softened (halved), not applied at full strength. The legacy-on
+        # strength gives a 0.8 top fraction, so the softened penalty is
+        # 0.8 * the factor.
+        top_fraction = (
+            UserPreferenceConfig.LEGACY_VARIETY_ON
+            / UserPreferenceConfig.MAX_VARIETY_PENALTY
+        )
         book_two_rec = next(rec for rec in recs if rec["item"].id == "exp2")
         assert book_two_rec["variety_penalty"] == pytest.approx(
-            VARIETY_TOP_PENALTY * VARIETY_SERIES_CONTINUATION_FACTOR
+            top_fraction * VARIETY_SERIES_CONTINUATION_FACTOR
         )
-        assert book_two_rec["variety_penalty"] < VARIETY_TOP_PENALTY
+        assert book_two_rec["variety_penalty"] < top_fraction
 
 
 class TestEngineSeriesSubstitutionRegression:
