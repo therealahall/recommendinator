@@ -1,6 +1,22 @@
 # CHANGELOG
 
 
+## v0.12.2 (2026-06-26)
+
+### Bug Fixes
+
+- **sorting**: Only strip English articles when sorting titles
+  ([`056286d`](https://github.com/therealahall/recommendinator/commit/056286de68dd721859fa4191473133b353078fba))
+
+### Documentation
+
+- Add OAuth setup guides to GOG and Epic plugin READMEs
+  ([`985d95f`](https://github.com/therealahall/recommendinator/commit/985d95f41bfdfcb67411f0cf129bfa722b2228c3))
+
+- Slim README into a landing page with per-topic guides
+  ([`11edc7e`](https://github.com/therealahall/recommendinator/commit/11edc7e9356d6f828677acf238f82d2c2f5958eb))
+
+
 ## v0.12.1 (2026-06-05)
 
 ### Bug Fixes
