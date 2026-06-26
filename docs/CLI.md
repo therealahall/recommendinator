@@ -45,6 +45,11 @@ python3.11 -m src.cli library list --enrichment not_enriched
 # combines with the type/status filters.
 python3.11 -m src.cli library list --search "die hard"
 
+# Surface completed items you haven't rated yet (forces completed status,
+# overriding --status; composes with --type). Rate them with `library edit`.
+python3.11 -m src.cli library list --needs-rating
+python3.11 -m src.cli library list --needs-rating --type movie
+
 # Show item details
 python3.11 -m src.cli library show --id 42
 
