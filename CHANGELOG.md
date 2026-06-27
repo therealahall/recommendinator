@@ -1,6 +1,37 @@
 # CHANGELOG
 
 
+## v0.14.0 (2026-06-27)
+
+### Bug Fixes
+
+- **recommendations**: Make TV show recommendations actionable
+  ([`42133f4`](https://github.com/therealahall/recommendinator/commit/42133f4ac5077fb299f9633f289b8055bce4392e))
+
+### Documentation
+
+- **recommendations**: Describe the recommendation card actions
+  ([`a2f1989`](https://github.com/therealahall/recommendinator/commit/a2f1989c73608cf89c0f15c1a46e075240dac9eb))
+
+### Features
+
+- **recommendations**: Add mark complete action with edit modal
+  ([`e0497b3`](https://github.com/therealahall/recommendinator/commit/e0497b3ec4743531ae88a4cfa5a728d17c4c041d))
+
+### Refactoring
+
+- **web**: Remove the legacy static web UI
+  ([`67e5831`](https://github.com/therealahall/recommendinator/commit/67e5831945fb2d9cf4afabf8e2d54a0993a045e4))
+
+### Testing
+
+- **recommendations**: Cover the mark complete action
+  ([`91e227e`](https://github.com/therealahall/recommendinator/commit/91e227e9f60d25d538b0470e5c2d85cd5a478e0c))
+
+- **recommendations**: Cover TV show db_id handling
+  ([`e65e317`](https://github.com/therealahall/recommendinator/commit/e65e317437bb71ef6f9ea8da265a5059aa2ce1ef))
+
+
 ## v0.13.0 (2026-06-26)
 
 ### Bug Fixes
