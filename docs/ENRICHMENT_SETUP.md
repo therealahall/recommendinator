@@ -201,7 +201,7 @@ Automatic enrichment covers most of your library, but some items never match a p
 
 An item counts as enriched only when a provider matched it cleanly (a real provider, no error, not marked "not found", and not pending re-enrichment). Everything else is unenriched.
 
-- **Web:** on the **Library** page, use the **Enrichment** filter in the toolbar to show only **Not enriched** items (or only **Enriched** ones). Unenriched items also display a "Not enriched" indicator on their library card.
+- **Web:** on the **Library** page, use the **Enrichment** filter in the toolbar to show only **Not enriched** items (or only **Enriched** ones). Unenriched items also carry a "Not enriched" badge on their library card.
 - **CLI:** `python3.11 -m src.cli library list --enrichment not_enriched` lists the items still missing metadata. The `library list` table includes an **Enriched** column, and `library show --id <id>` displays the item's enriched state alongside its genres, tags, and description.
 
 ### Editing metadata in the web edit modal
@@ -212,7 +212,7 @@ On the **Library** page, open an item's edit modal. Under **Enrichment metadata*
 - **Tags** — add or remove tag chips
 - **Description** — free text
 
-Save the modal to write the values. If the item was unenriched, saving these fields marks it enriched and clears its "Not enriched" indicator.
+Save the modal to write the values. If the item was unenriched, saving these fields marks it enriched and clears its "Not enriched" badge.
 
 ### Editing metadata from the CLI
 
@@ -231,7 +231,7 @@ Repeated `--genre` and `--tag` values replace the existing lists rather than app
 
 Manual genres, tags, and descriptions **overwrite** the existing detail values (unlike the gap-filling merge that sync and automatic enrichment use). Providing any one of them marks the item enriched with the provider `"manual"`. That has two effects:
 
-- The item drops out of the `not_enriched` filter (and stops showing the "Not enriched" indicator).
+- The item drops out of the `not_enriched` filter (and stops showing the "Not enriched" badge).
 - Automatic enrichment never re-queues the item, so your manual values are not overwritten on a later enrichment run.
 
 ## Troubleshooting
