@@ -1,6 +1,28 @@
 # CHANGELOG
 
 
+## v0.17.0 (2026-06-28)
+
+### Documentation
+
+- **cli**: Document the --needs-rating flag
+  ([`f9fd3ca`](https://github.com/therealahall/recommendinator/commit/f9fd3caa2247884f2268f4b53342fbded6ecca8e))
+
+### Features
+
+- **cli**: Add --needs-rating flag to library list
+  ([`eecdf01`](https://github.com/therealahall/recommendinator/commit/eecdf019327af30ecd8be71ff2889022727d8d68))
+
+- **storage**: Add unrated_only filter for items with no rating
+  ([`eddf176`](https://github.com/therealahall/recommendinator/commit/eddf1767cc25e8cef6108c71637c4c616d0d1149))
+
+- **ui**: Add Needs rating toggle to the library view
+  ([`537dc6c`](https://github.com/therealahall/recommendinator/commit/537dc6c4f8d6541b7fbb9e8f1a5be96644e9be1b))
+
+- **web**: Add needs_rating param to the items endpoint
+  ([`dc86002`](https://github.com/therealahall/recommendinator/commit/dc86002ec766588b3b12adfd322d5ebdf4cc8e1d))
+
+
 ## v0.16.1 (2026-06-28)
 
 ### Bug Fixes
