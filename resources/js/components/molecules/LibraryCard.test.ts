@@ -22,12 +22,36 @@ const baseItem = {
 }
 
 describe('LibraryCard', () => {
-  it('renders the type and status pills in the left meta zone', () => {
+  it('renders the type and status pills in the primary meta row', () => {
     const wrapper = mount(LibraryCard, { props: { item: baseItem } })
-    const tags = wrapper.find('.library-meta-tags')
-    expect(tags.exists()).toBe(true)
-    expect(tags.find('.badge-type').text()).toBe('Book')
-    expect(tags.find('.badge-status').text()).toBe('Unread')
+    const meta = wrapper.find('.library-meta')
+    expect(meta.exists()).toBe(true)
+    expect(meta.find('.badge-type').text()).toBe('Book')
+    expect(meta.find('.badge-status').text()).toBe('Unread')
+    expect(meta.find('.badge-status').classes()).toContain('unread')
+  })
+
+  it('renders a "Not enriched" pill in the primary meta row only for unenriched items', () => {
+    const notEnriched = mount(LibraryCard, { props: { item: { ...baseItem, enriched: false } } })
+    const pill = notEnriched.find('.library-meta .badge-enrichment')
+    expect(pill.exists()).toBe(true)
+    expect(pill.text()).toBe('Not enriched')
+
+    const enriched = mount(LibraryCard, { props: { item: baseItem } })
+    expect(enriched.find('.badge-enrichment').exists()).toBe(false)
+  })
+
+  it('renders both the "Not enriched" and "Ignored" markers when an item is both', () => {
+    const wrapper = mount(LibraryCard, {
+      props: { item: { ...baseItem, enriched: false, ignored: true } },
+    })
+    const meta = wrapper.find('.library-meta')
+    expect(meta.exists()).toBe(true)
+    expect(meta.find('.badge-enrichment').text()).toBe('Not enriched')
+
+    const secondary = wrapper.find('.library-meta-secondary')
+    expect(secondary.exists()).toBe(true)
+    expect(secondary.find('.badge-ignored').text()).toBe('Ignored')
   })
 
   it('renders the rating as a non-badge element with five star slots', () => {
@@ -36,7 +60,10 @@ describe('LibraryCard', () => {
     // Rating is no longer a badge.
     expect(wrapper.find('.badge-rating').exists()).toBe(false)
 
-    const rating = wrapper.find('.rating-stars')
+    // For a rated, non-ignored item the rating lives inside the secondary row.
+    const secondary = wrapper.find('.library-meta-secondary')
+    expect(secondary.exists()).toBe(true)
+    const rating = secondary.find('.rating-stars')
     expect(rating.exists()).toBe(true)
 
     const stars = rating.findAll('.star')
@@ -94,41 +121,39 @@ describe('LibraryCard', () => {
   it('renders no rating element for an unrated item', () => {
     const wrapper = mount(LibraryCard, { props: { item: { ...baseItem, rating: null } } })
     expect(wrapper.find('.rating-stars').exists()).toBe(false)
-    // The meta row still renders with its pills.
-    expect(wrapper.find('.library-meta-tags .badge-type').exists()).toBe(true)
+    // The primary meta row still renders with its pills.
+    expect(wrapper.find('.library-meta .badge-type').exists()).toBe(true)
   })
 
-  it('shows the "Not enriched" marker in the state caption line, not the pill row', () => {
-    const wrapper = mount(LibraryCard, { props: { item: { ...baseItem, enriched: false } } })
-    const state = wrapper.find('.library-state.not-enriched')
-    expect(state.exists()).toBe(true)
-    // The decorative .dot span carries no text, so the label is deterministic.
-    expect(state.text()).toBe('Not enriched')
-    // Not a badge.
-    expect(wrapper.find('.badge-enrichment').exists()).toBe(false)
-  })
-
-  it('shows the "Ignored" marker in the state caption line', () => {
-    const wrapper = mount(LibraryCard, { props: { item: { ...baseItem, ignored: true } } })
-    const state = wrapper.find('.library-state.ignored')
-    expect(state.exists()).toBe(true)
-    expect(state.text()).toBe('Ignored')
+  it('renders no "Ignored" pill for a non-ignored item', () => {
+    const wrapper = mount(LibraryCard, { props: { item: { ...baseItem, ignored: false } } })
     expect(wrapper.find('.badge-ignored').exists()).toBe(false)
   })
 
-  it('shows both state markers together when the item is not enriched and ignored', () => {
+  it('renders both the rating and the Ignored pill in the secondary row together', () => {
     const wrapper = mount(LibraryCard, {
-      props: { item: { ...baseItem, enriched: false, ignored: true } },
+      props: { item: { ...baseItem, rating: 3, ignored: true } },
     })
-    expect(wrapper.find('.library-state.not-enriched').text()).toBe('Not enriched')
-    expect(wrapper.find('.library-state.ignored').text()).toBe('Ignored')
+    const secondary = wrapper.find('.library-meta-secondary')
+    expect(secondary.exists()).toBe(true)
+    expect(secondary.find('.rating-stars').exists()).toBe(true)
+    expect(secondary.find('.badge-ignored').text()).toBe('Ignored')
   })
 
-  it('renders no rating and no state line for an enriched, non-ignored, unrated item', () => {
+  it('renders the secondary row with the Ignored pill but no rating when ignored and unrated', () => {
+    const wrapper = mount(LibraryCard, {
+      props: { item: { ...baseItem, rating: null, ignored: true } },
+    })
+    const secondary = wrapper.find('.library-meta-secondary')
+    expect(secondary.exists()).toBe(true)
+    expect(secondary.find('.rating-stars').exists()).toBe(false)
+    expect(secondary.find('.badge-ignored').text()).toBe('Ignored')
+  })
+
+  it('renders no secondary meta row for an unrated, non-ignored item', () => {
     const wrapper = mount(LibraryCard, { props: { item: baseItem } })
     expect(wrapper.find('.rating-stars').exists()).toBe(false)
-    expect(wrapper.find('.library-state-lines').exists()).toBe(false)
-    expect(wrapper.find('.library-state').exists()).toBe(false)
+    expect(wrapper.find('.library-meta-secondary').exists()).toBe(false)
   })
 
   it('emits edit with the db_id when the Edit button is clicked', async () => {
@@ -147,6 +172,7 @@ describe('LibraryCard', () => {
     const buttons = wrapper.findAll('.library-item-actions button')
     const action = buttons.find((b) => b.text() === 'Ignore')
     expect(action).toBeDefined()
+    expect(action!.classes()).toContain('btn-ignore')
     await action!.trigger('click')
     expect(wrapper.emitted('toggleIgnore')).toEqual([[1, true]])
   })
@@ -158,6 +184,7 @@ describe('LibraryCard', () => {
     const buttons = wrapper.findAll('.library-item-actions button')
     const action = buttons.find((b) => b.text() === 'Unignore')
     expect(action).toBeDefined()
+    expect(action!.classes()).toContain('btn-unignore')
     await action!.trigger('click')
     expect(wrapper.emitted('toggleIgnore')).toEqual([[1, false]])
   })
