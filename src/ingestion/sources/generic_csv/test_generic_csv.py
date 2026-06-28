@@ -45,12 +45,13 @@ class TestCsvImportPluginProperties:
     def test_requires_network(self, plugin: CsvImportPlugin) -> None:
         assert plugin.requires_network is False
 
-    def test_config_schema(self, plugin: CsvImportPlugin) -> None:
-        schema = plugin.get_config_schema()
-        assert len(schema) == 2
-        names = [field.name for field in schema]
-        assert "path" in names
-        assert "content_type" in names
+    def test_is_file_import(self, plugin: CsvImportPlugin) -> None:
+        assert plugin.is_file_import is True
+
+    def test_config_schema_has_no_path(self, plugin: CsvImportPlugin) -> None:
+        """Path is injected by the import service; only content_type remains."""
+        names = [field.name for field in plugin.get_config_schema()]
+        assert names == ["content_type"]
 
     def test_get_source_identifier(self, plugin: CsvImportPlugin) -> None:
         assert plugin.get_source_identifier() == "csv_import"
@@ -61,60 +62,36 @@ class TestCsvImportPluginProperties:
         assert info.display_name == "CSV Import"
         assert info.requires_api_key is False
         assert info.requires_network is False
+        assert info.is_file_import is True
 
 
 class TestCsvImportPluginValidation:
     """Tests for CsvImportPlugin config validation."""
 
-    def test_validate_valid_config(
-        self, plugin: CsvImportPlugin, tmp_path: Path
-    ) -> None:
-        csv_file = tmp_path / "books.csv"
-        csv_file.write_text("title\n")
-        errors = plugin.validate_config({"path": str(csv_file), "content_type": "book"})
-        assert errors == []
+    def test_validate_valid_config(self, plugin: CsvImportPlugin) -> None:
+        assert plugin.validate_config({"content_type": "book"}) == []
 
-    def test_validate_missing_csv_path(self, plugin: CsvImportPlugin) -> None:
-        errors = plugin.validate_config({"content_type": "book"})
-        assert any("path" in error for error in errors)
-
-    def test_validate_empty_csv_path(self, plugin: CsvImportPlugin) -> None:
-        errors = plugin.validate_config({"path": "", "content_type": "book"})
-        assert any("path" in error for error in errors)
-
-    def test_validate_nonexistent_file(self, plugin: CsvImportPlugin) -> None:
-        errors = plugin.validate_config(
-            {"path": "/nonexistent/path.csv", "content_type": "book"}
+    def test_validate_does_not_require_path(self, plugin: CsvImportPlugin) -> None:
+        """validate_config no longer requires a path — the service injects it."""
+        assert plugin.validate_config({"content_type": "book"}) == []
+        assert (
+            plugin.validate_config(
+                {"path": "/nonexistent/path.csv", "content_type": "book"}
+            )
+            == []
         )
-        assert any("not found" in error for error in errors)
 
-    def test_validate_missing_content_type(
-        self, plugin: CsvImportPlugin, tmp_path: Path
-    ) -> None:
-        csv_file = tmp_path / "books.csv"
-        csv_file.write_text("title\n")
-        errors = plugin.validate_config({"path": str(csv_file)})
+    def test_validate_missing_content_type(self, plugin: CsvImportPlugin) -> None:
+        errors = plugin.validate_config({})
         assert any("content_type" in error for error in errors)
 
-    def test_validate_invalid_content_type(
-        self, plugin: CsvImportPlugin, tmp_path: Path
-    ) -> None:
-        csv_file = tmp_path / "books.csv"
-        csv_file.write_text("title\n")
-        errors = plugin.validate_config(
-            {"path": str(csv_file), "content_type": "podcast"}
-        )
+    def test_validate_invalid_content_type(self, plugin: CsvImportPlugin) -> None:
+        errors = plugin.validate_config({"content_type": "podcast"})
         assert any("Invalid content_type" in error for error in errors)
 
-    def test_validate_all_content_types(
-        self, plugin: CsvImportPlugin, tmp_path: Path
-    ) -> None:
-        csv_file = tmp_path / "data.csv"
-        csv_file.write_text("title\n")
+    def test_validate_all_content_types(self, plugin: CsvImportPlugin) -> None:
         for content_type in ContentType:
-            errors = plugin.validate_config(
-                {"path": str(csv_file), "content_type": content_type.value}
-            )
+            errors = plugin.validate_config({"content_type": content_type.value})
             assert errors == [], f"Failed for content_type={content_type.value}"
 
 

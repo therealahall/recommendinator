@@ -12,6 +12,12 @@ from src.ingestion.plugin_base import (
     SourceError,
     SourcePlugin,
 )
+from src.ingestion.sources.generic_csv.generic_csv import CsvImportPlugin
+from src.ingestion.sources.generic_json.generic_json import JsonImportPlugin
+from src.ingestion.sources.goodreads.goodreads import GoodreadsPlugin
+from src.ingestion.sources.markdown.markdown import MarkdownImportPlugin
+from src.ingestion.sources.roms.roms import RomScannerPlugin
+from src.ingestion.sources.steam.steam import SteamPlugin
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 
 
@@ -204,6 +210,10 @@ class TestSourcePlugin:
         assert file_plugin.requires_network is False
         assert api_plugin.requires_network is True
 
+    def test_is_file_import_defaults_false(self) -> None:
+        """Plugins are syncable sources unless they opt into file import."""
+        assert MockPlugin().is_file_import is False
+
     def test_get_config_schema(self) -> None:
         """Test getting configuration schema."""
         plugin = MockPlugin()
@@ -257,6 +267,7 @@ class TestSourcePlugin:
         assert info.content_types == [ContentType.BOOK]
         assert info.requires_api_key is False
         assert info.requires_network is False
+        assert info.is_file_import is False
         assert len(info.config_schema) == 2
 
 
@@ -331,6 +342,7 @@ class TestPluginInfo:
         assert ContentType.MOVIE in info.content_types
         assert info.requires_api_key is True
         assert info.config_schema == []
+        assert info.is_file_import is False
 
     def test_plugin_info_with_schema(self) -> None:
         """Test PluginInfo with config schema."""
@@ -348,3 +360,22 @@ class TestPluginInfo:
 
         assert len(info.config_schema) == 1
         assert info.config_schema[0].name == "url"
+
+
+class TestFileImportPluginFlags:
+    """The four single-file import plugins opt into ``is_file_import``;
+    directory-scan and API sources stay syncable (``is_file_import`` False).
+    """
+
+    def test_file_import_plugins_marked(self) -> None:
+        for plugin in (
+            GoodreadsPlugin(),
+            CsvImportPlugin(),
+            JsonImportPlugin(),
+            MarkdownImportPlugin(),
+        ):
+            assert plugin.is_file_import is True, plugin.name
+
+    def test_directory_scan_and_api_sources_not_marked(self) -> None:
+        assert RomScannerPlugin().is_file_import is False
+        assert SteamPlugin().is_file_import is False

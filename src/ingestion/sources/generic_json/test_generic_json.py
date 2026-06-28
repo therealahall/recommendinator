@@ -41,56 +41,43 @@ class TestJsonImportPluginProperties:
     def test_requires_network(self, plugin: JsonImportPlugin) -> None:
         assert plugin.requires_network is False
 
-    def test_config_schema(self, plugin: JsonImportPlugin) -> None:
-        schema = plugin.get_config_schema()
-        assert len(schema) == 2
-        names = [field.name for field in schema]
-        assert "path" in names
-        assert "content_type" in names
+    def test_is_file_import(self, plugin: JsonImportPlugin) -> None:
+        assert plugin.is_file_import is True
+
+    def test_config_schema_has_no_path(self, plugin: JsonImportPlugin) -> None:
+        """Path is injected by the import service; only content_type remains."""
+        names = [field.name for field in plugin.get_config_schema()]
+        assert names == ["content_type"]
 
     def test_get_source_identifier(self, plugin: JsonImportPlugin) -> None:
         assert plugin.get_source_identifier() == "json_import"
+
+    def test_get_info_is_file_import(self, plugin: JsonImportPlugin) -> None:
+        assert plugin.get_info().is_file_import is True
 
 
 class TestJsonImportPluginValidation:
     """Tests for JsonImportPlugin config validation."""
 
-    def test_validate_valid_config(
-        self, plugin: JsonImportPlugin, tmp_path: Path
-    ) -> None:
-        json_file = tmp_path / "books.json"
-        json_file.write_text("[]")
-        errors = plugin.validate_config(
-            {"path": str(json_file), "content_type": "book"}
+    def test_validate_valid_config(self, plugin: JsonImportPlugin) -> None:
+        assert plugin.validate_config({"content_type": "book"}) == []
+
+    def test_validate_does_not_require_path(self, plugin: JsonImportPlugin) -> None:
+        """validate_config no longer requires a path — the service injects it."""
+        assert plugin.validate_config({"content_type": "book"}) == []
+        assert (
+            plugin.validate_config(
+                {"path": "/nonexistent/path.json", "content_type": "book"}
+            )
+            == []
         )
-        assert errors == []
 
-    def test_validate_missing_json_path(self, plugin: JsonImportPlugin) -> None:
-        errors = plugin.validate_config({"content_type": "book"})
-        assert any("path" in error for error in errors)
-
-    def test_validate_nonexistent_file(self, plugin: JsonImportPlugin) -> None:
-        errors = plugin.validate_config(
-            {"path": "/nonexistent/path.json", "content_type": "book"}
-        )
-        assert any("not found" in error for error in errors)
-
-    def test_validate_missing_content_type(
-        self, plugin: JsonImportPlugin, tmp_path: Path
-    ) -> None:
-        json_file = tmp_path / "data.json"
-        json_file.write_text("[]")
-        errors = plugin.validate_config({"path": str(json_file)})
+    def test_validate_missing_content_type(self, plugin: JsonImportPlugin) -> None:
+        errors = plugin.validate_config({})
         assert any("content_type" in error for error in errors)
 
-    def test_validate_invalid_content_type(
-        self, plugin: JsonImportPlugin, tmp_path: Path
-    ) -> None:
-        json_file = tmp_path / "data.json"
-        json_file.write_text("[]")
-        errors = plugin.validate_config(
-            {"path": str(json_file), "content_type": "podcast"}
-        )
+    def test_validate_invalid_content_type(self, plugin: JsonImportPlugin) -> None:
+        errors = plugin.validate_config({"content_type": "podcast"})
         assert any("Invalid content_type" in error for error in errors)
 
 

@@ -43,14 +43,15 @@ class TestGoodreadsPluginProperties:
         """Test that plugin does not require network access."""
         assert plugin.requires_network is False
 
-    def test_config_schema(self, plugin: GoodreadsPlugin) -> None:
-        """Test configuration schema defines csv_path."""
+    def test_is_file_import(self, plugin: GoodreadsPlugin) -> None:
+        """Test that Goodreads is a one-shot file-import plugin."""
+        assert plugin.is_file_import is True
+
+    def test_config_schema_has_no_path(self, plugin: GoodreadsPlugin) -> None:
+        """Path is injected by the import service, not configured on the plugin."""
         schema = plugin.get_config_schema()
 
-        assert len(schema) == 1
-        assert schema[0].name == "path"
-        assert schema[0].field_type is str
-        assert schema[0].required is True
+        assert [field.name for field in schema] == []
 
     def test_get_source_identifier(self, plugin: GoodreadsPlugin) -> None:
         """Test source identifier matches plugin name."""
@@ -65,42 +66,16 @@ class TestGoodreadsPluginProperties:
         assert info.content_types == [ContentType.BOOK]
         assert info.requires_api_key is False
         assert info.requires_network is False
+        assert info.is_file_import is True
 
 
 class TestGoodreadsPluginValidation:
     """Tests for GoodreadsPlugin config validation."""
 
-    def test_validate_valid_config(
-        self, plugin: GoodreadsPlugin, tmp_path: Path
-    ) -> None:
-        """Test validation passes with valid CSV path."""
-        csv_file = tmp_path / "books.csv"
-        csv_file.write_text("header\n")
-
-        errors = plugin.validate_config({"path": str(csv_file)})
-
-        assert errors == []
-
-    def test_validate_missing_path(self, plugin: GoodreadsPlugin) -> None:
-        """Test validation fails when path is missing."""
-        errors = plugin.validate_config({})
-
-        assert len(errors) == 1
-        assert "'path' is required" in errors[0]
-
-    def test_validate_empty_path(self, plugin: GoodreadsPlugin) -> None:
-        """Test validation fails when path is empty."""
-        errors = plugin.validate_config({"path": ""})
-
-        assert len(errors) == 1
-        assert "'path' is required" in errors[0]
-
-    def test_validate_nonexistent_file(self, plugin: GoodreadsPlugin) -> None:
-        """Test validation fails when CSV file does not exist."""
-        errors = plugin.validate_config({"path": "/nonexistent/books.csv"})
-
-        assert len(errors) == 1
-        assert "CSV file not found" in errors[0]
+    def test_validate_does_not_require_path(self, plugin: GoodreadsPlugin) -> None:
+        """validate_config no longer requires a path — the service injects it."""
+        assert plugin.validate_config({}) == []
+        assert plugin.validate_config({"path": "/nonexistent/books.csv"}) == []
 
 
 class TestGoodreadsPluginFetch:

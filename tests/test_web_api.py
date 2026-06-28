@@ -50,9 +50,10 @@ def mock_config():
             "port": 8000,
         },
         "inputs": {
-            "goodreads": {
-                "plugin": "goodreads",
-                "path": "inputs/goodreads_library_export.csv",
+            "sonarr": {
+                "plugin": "sonarr",
+                "url": "http://localhost:8989",
+                "api_key": "x",
                 "enabled": True,
             }
         },
@@ -337,12 +338,12 @@ def test_sync_sources_endpoint(client, mock_config):
     assert response.status_code == 200
     sources = response.json()
     assert isinstance(sources, list)
-    # mock_config has exactly goodreads enabled
+    # mock_config has exactly sonarr enabled
     assert len(sources) == 1
-    goodreads = next((s for s in sources if s["id"] == "goodreads"), None)
-    assert goodreads is not None
-    assert goodreads["display_name"] == "Goodreads"
-    assert goodreads["plugin_display_name"] == "Goodreads"
+    sonarr = next((s for s in sources if s["id"] == "sonarr"), None)
+    assert sonarr is not None
+    assert sonarr["display_name"] == "Sonarr"
+    assert sonarr["plugin_display_name"] == "Sonarr"
 
 
 def test_sync_sources_lists_all_with_enabled_flag(client):
@@ -351,6 +352,9 @@ def test_sync_sources_lists_all_with_enabled_flag(client):
     The UI renders disabled sources in a muted state instead of hiding them
     entirely, so the listing endpoint must surface them. ``resolve_inputs``
     is the gate that filters to enabled-only for sync execution.
+
+    File-import plugins (here ``goodreads``) are never syncable sources, so
+    they must be omitted from this listing even when present in YAML.
     """
     app_state.config = {
         "inputs": {
@@ -385,7 +389,7 @@ def test_sync_sources_lists_all_with_enabled_flag(client):
     sources = response.json()
     by_id = {s["id"]: s for s in sources}
 
-    assert by_id["goodreads"]["enabled"] is True
+    assert "goodreads" not in by_id
     assert by_id["sonarr"]["enabled"] is True
     assert by_id["steam"]["enabled"] is False
     assert by_id["radarr"]["enabled"] is False
@@ -482,11 +486,11 @@ def test_update_endpoint(client, mock_components):
 
     with (
         patch(
-            "src.ingestion.sources.goodreads.GoodreadsPlugin.fetch",
+            "src.ingestion.sources.sonarr.sonarr.SonarrPlugin.fetch",
             return_value=iter([mock_item]),
         ),
         patch(
-            "src.ingestion.sources.goodreads.GoodreadsPlugin.validate_config",
+            "src.ingestion.sources.sonarr.sonarr.SonarrPlugin.validate_config",
             return_value=[],
         ),
     ):
@@ -495,7 +499,7 @@ def test_update_endpoint(client, mock_components):
         ] * 768
         mock_components["storage"].save_content_item.return_value = 1
 
-        response = client.post("/api/update", json={"source": "goodreads"})
+        response = client.post("/api/update", json={"source": "sonarr"})
 
         assert response.status_code == 200
         data = response.json()
@@ -626,11 +630,11 @@ def test_update_endpoint_all_sources(client, mock_components):
 
     with (
         patch(
-            "src.ingestion.sources.goodreads.GoodreadsPlugin.fetch",
+            "src.ingestion.sources.sonarr.sonarr.SonarrPlugin.fetch",
             return_value=iter([mock_book]),
         ),
         patch(
-            "src.ingestion.sources.goodreads.GoodreadsPlugin.validate_config",
+            "src.ingestion.sources.sonarr.sonarr.SonarrPlugin.validate_config",
             return_value=[],
         ),
         patch(
@@ -654,7 +658,7 @@ def test_update_endpoint_all_sources(client, mock_components):
         # New async behavior: returns sync started message with sources list
         assert "message" in data
         assert "sources" in data
-        assert "goodreads" in data["sources"]
+        assert "sonarr" in data["sources"]
         assert "steam" in data["sources"]
 
 
@@ -2192,21 +2196,21 @@ class TestUpdateEndpoint409Conflict:
             mock_manager = Mock(spec=SyncManager)
             mock_manager.start_sync.return_value = (
                 False,
-                "Sync already in progress for Goodreads",
+                "Sync already in progress for Sonarr",
             )
             mock_get_sync_manager.return_value = mock_manager
 
             with patch(
-                "src.ingestion.sources.goodreads.GoodreadsPlugin.validate_config",
+                "src.ingestion.sources.sonarr.sonarr.SonarrPlugin.validate_config",
                 return_value=[],
             ):
-                response = client.post("/api/update", json={"source": "goodreads"})
+                response = client.post("/api/update", json={"source": "sonarr"})
 
             assert response.status_code == 409
             detail = response.json()["detail"]
             assert "Sync already in progress" in detail
-            assert "Goodreads" in detail
-            assert mock_manager.start_sync.call_args.args[0] == "Goodreads"
+            assert "Sonarr" in detail
+            assert mock_manager.start_sync.call_args.args[0] == "Sonarr"
 
     def test_update_allows_different_sources_concurrently(
         self, client: TestClient, mock_components: dict
@@ -2214,7 +2218,7 @@ class TestUpdateEndpoint409Conflict:
         """A second source is accepted while a different source is running.
 
         Plants a real RUNNING job for Steam in the global SyncManager
-        before triggering a Goodreads sync. The endpoint must reject
+        before triggering a Sonarr sync. The endpoint must reject
         only when the SAME label is running — different labels return
         200 even with another sync still in flight.
         """
@@ -2230,23 +2234,23 @@ class TestUpdateEndpoint409Conflict:
         assert manager.is_running("Steam") is True
 
         with patch(
-            "src.ingestion.sources.goodreads.GoodreadsPlugin.validate_config",
+            "src.ingestion.sources.sonarr.sonarr.SonarrPlugin.validate_config",
             return_value=[],
         ):
             # Drop the captured execute_multi_source_sync into a no-op so
             # the second sync's daemon doesn't try to actually run.
             with patch(
                 "src.web.api.execute_multi_source_sync",
-                return_value=[SyncJob(source="Goodreads", status=SyncStatus.RUNNING)],
+                return_value=[SyncJob(source="Sonarr", status=SyncStatus.RUNNING)],
             ):
-                response = client.post("/api/update", json={"source": "goodreads"})
+                response = client.post("/api/update", json={"source": "sonarr"})
 
         assert response.status_code == 200, response.text
         assert "Sync started" in response.json()["message"]
         # Manager now tracks both jobs; the Steam one is still running
-        # and the Goodreads one was added on top.
+        # and the Sonarr one was added on top.
         assert manager.is_running("Steam") is True
-        assert "Goodreads" in {job["source"] for job in manager.get_status()["jobs"]}
+        assert "Sonarr" in {job["source"] for job in manager.get_status()["jobs"]}
 
 
 class TestUpdateEndpointParallelSync:
@@ -2297,7 +2301,7 @@ class TestUpdateEndpointParallelSync:
                 side_effect=self._make_capture(captured_kwargs, completion),
             ),
             patch(
-                "src.ingestion.sources.goodreads.GoodreadsPlugin.validate_config",
+                "src.ingestion.sources.sonarr.sonarr.SonarrPlugin.validate_config",
                 return_value=[],
             ),
         ):
@@ -2321,7 +2325,7 @@ class TestUpdateEndpointParallelSync:
                 side_effect=self._make_capture(captured_kwargs, completion),
             ),
             patch(
-                "src.ingestion.sources.goodreads.GoodreadsPlugin.validate_config",
+                "src.ingestion.sources.sonarr.sonarr.SonarrPlugin.validate_config",
                 return_value=[],
             ),
         ):
@@ -2345,7 +2349,7 @@ class TestUpdateEndpointParallelSync:
                 side_effect=self._make_capture(captured_kwargs, completion),
             ),
             patch(
-                "src.ingestion.sources.goodreads.GoodreadsPlugin.validate_config",
+                "src.ingestion.sources.sonarr.sonarr.SonarrPlugin.validate_config",
                 return_value=[],
             ),
         ):

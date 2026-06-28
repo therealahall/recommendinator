@@ -56,15 +56,12 @@ class GoodreadsPlugin(SourcePlugin):
     def requires_network(self) -> bool:
         return False
 
+    @property
+    def is_file_import(self) -> bool:
+        return True
+
     def get_config_schema(self) -> list[ConfigField]:
-        return [
-            ConfigField(
-                name="path",
-                field_type=str,
-                required=True,
-                description="Path to Goodreads CSV export file",
-            ),
-        ]
+        return []
 
     def validate_config(
         self,
@@ -72,13 +69,7 @@ class GoodreadsPlugin(SourcePlugin):
         storage: StorageManager | None = None,
         user_id: int = 1,
     ) -> list[str]:
-        errors = []
-        path = config.get("path")
-        if not path:
-            errors.append("'path' is required")
-        elif not Path(path).exists():
-            errors.append(f"CSV file not found: {path}")
-        return errors
+        return []
 
     def fetch(
         self,

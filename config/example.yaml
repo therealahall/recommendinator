@@ -66,13 +66,11 @@ ingestion:
 # all subsequent edits go through the web UI / source CLI commands and
 # write to the source_configs / credentials tables. See the "Source
 # configuration precedence" section in ARCHITECTURE.md.
+# File imports (Goodreads, CSV, JSON, Markdown) are no longer configured here.
+# Upload the file in the web UI (Data tab) or run
+# `python3.11 -m src.cli import --file <path>` instead — there is no
+# persistent source to sync for one-shot file imports.
 inputs:
-  goodreads:
-    plugin: goodreads
-    path: "inputs/goodreads_library_export.csv"
-    content_type: "book"  # Content type for enrichment (book, movie, tv_show, video_game)
-    enabled: true
-
   steam:
     plugin: steam
     # Steam Web API configuration
@@ -107,27 +105,6 @@ inputs:
   epic_games:
     plugin: epic_games
     content_type: "video_game"
-    enabled: false
-
-  # Generic CSV import — use templates from templates/ directory
-  csv_movies:
-    plugin: csv_import
-    path: "inputs/my_movies.csv"  # Path to your CSV file
-    content_type: "movie"  # book, movie, tv_show, or video_game
-    enabled: false
-
-  # Generic JSON import — use templates from templates/ directory
-  json_books:
-    plugin: json_import
-    path: "inputs/my_books.json"  # Path to your JSON or JSONL file
-    content_type: "book"  # book, movie, tv_show, or video_game
-    enabled: false
-
-  # Generic Markdown import — use templates from templates/ directory
-  md_tv_shows:
-    plugin: markdown_import
-    path: "inputs/my_tv_shows.md"  # Path to your Markdown file
-    content_type: "tv_show"  # book, movie, tv_show, or video_game
     enabled: false
 
   # Sonarr integration (TV show library manager)
@@ -173,12 +150,8 @@ inputs:
     extra_strip_patterns: []
     enabled: false
 
-  # You can add multiple instances of the same plugin. For example:
-  # tv_shows_json:
-  #   plugin: json_import
-  #   path: "inputs/tv_shows.json"
-  #   content_type: "tv_show"
-  #   enabled: true
+  # You can add multiple instances of the same plugin. For example, two Sonarr
+  # servers under different keys, each with its own url/api_key.
 
 # Web interface configuration
 web:

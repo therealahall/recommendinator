@@ -164,6 +164,45 @@ class FakeCredentialPlugin(SourcePlugin):
         )
 
 
+class FakeFileImportPlugin(SourcePlugin):
+    """Fake one-shot file-import plugin (not a syncable source)."""
+
+    @property
+    def name(self) -> str:
+        return "fake_file"
+
+    @property
+    def display_name(self) -> str:
+        return "Fake File"
+
+    @property
+    def content_types(self) -> list[ContentType]:
+        return [ContentType.BOOK]
+
+    @property
+    def requires_api_key(self) -> bool:
+        return False
+
+    @property
+    def is_file_import(self) -> bool:
+        return True
+
+    def get_config_schema(self) -> list[ConfigField]:
+        return []
+
+    def validate_config(self, config: dict[str, Any], **kwargs: Any) -> list[str]:
+        return []
+
+    def fetch(self, config: dict[str, Any]) -> Iterator[ContentItem]:
+        yield ContentItem(
+            id="file_1",
+            title="Fake File Item",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            source=self.get_source_identifier(config),
+        )
+
+
 @pytest.fixture()
 def _registry_with_fakes() -> Iterator[None]:
     """Set up a registry with fake plugins for testing."""
@@ -173,6 +212,7 @@ def _registry_with_fakes() -> Iterator[None]:
     registry.register(FakeBookPlugin())
     registry.register(FakeGamePlugin())
     registry.register(FakeCredentialPlugin())
+    registry.register(FakeFileImportPlugin())
     yield
     PluginRegistry.reset_instance()
 
@@ -344,6 +384,94 @@ class TestResolveInputs:
         assert len(resolved) == 2
         source_ids = {entry.source_id for entry in resolved}
         assert source_ids == {"my_books", "more_books"}
+
+
+@pytest.mark.usefixtures("_registry_with_fakes")
+class TestFileImportExcludedFromSync:
+    """File-import plugins are one-shot uploads, never syncable sources.
+
+    Regression: legacy ``config.yaml`` files may still carry path-based
+    ``inputs:`` blocks for the file-import plugins (goodreads, csv_import,
+    json_import, markdown_import). ``resolve_inputs`` and
+    ``get_available_sync_sources`` must skip them — with a clear, non-fatal
+    warning on the resolve path — rather than treat them as syncable or crash.
+    """
+
+    def test_resolve_inputs_skips_file_import_plugin(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        config = {
+            "inputs": {
+                "legacy_books": {
+                    "plugin": "fake_file",
+                    "enabled": True,
+                    "path": "inputs/old_export.csv",
+                },
+            }
+        }
+
+        with caplog.at_level("WARNING", logger="src.web.sync_sources"):
+            resolved = resolve_inputs(config)
+
+        assert resolved == []
+        assert any(
+            "legacy_books" in message and "import --file" in message
+            for message in caplog.messages
+        )
+
+    def test_resolve_inputs_skips_file_import_without_path(self) -> None:
+        """A legacy block with no path at all is still skipped, not crashed."""
+        config = {
+            "inputs": {
+                "legacy_books": {
+                    "plugin": "fake_file",
+                    "enabled": True,
+                },
+            }
+        }
+
+        assert resolve_inputs(config) == []
+
+    def test_resolve_inputs_keeps_syncable_alongside_file_import(self) -> None:
+        """A file-import block is dropped while a real source still resolves."""
+        config = {
+            "inputs": {
+                "legacy_books": {
+                    "plugin": "fake_file",
+                    "enabled": True,
+                    "path": "inputs/old.csv",
+                },
+                "my_books": {
+                    "plugin": "fake_books",
+                    "enabled": True,
+                    "path": "/data/books.csv",
+                },
+            }
+        }
+
+        resolved = resolve_inputs(config)
+
+        assert [entry.source_id for entry in resolved] == ["my_books"]
+
+    def test_get_available_sync_sources_excludes_file_import(self) -> None:
+        config = {
+            "inputs": {
+                "legacy_books": {
+                    "plugin": "fake_file",
+                    "enabled": True,
+                    "path": "inputs/old.csv",
+                },
+                "my_books": {
+                    "plugin": "fake_books",
+                    "enabled": True,
+                    "path": "/data/books.csv",
+                },
+            }
+        }
+
+        ids = {source.id for source in get_available_sync_sources(config)}
+
+        assert ids == {"my_books"}
 
 
 @pytest.mark.usefixtures("_registry_with_fakes")

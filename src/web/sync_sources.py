@@ -153,6 +153,14 @@ def resolve_inputs(
             )
             continue
 
+        if plugin.is_file_import:
+            logger.warning(
+                "path-based import for '%s' has been removed; "
+                "use the web upload or `import --file`",
+                source_id,
+            )
+            continue
+
         plugin_config = dict(raw_fields)
         plugin_config["_source_id"] = source_id
 
@@ -231,6 +239,10 @@ def get_available_sync_sources(
 
         plugin = registry.get_plugin(plugin_name)
         if plugin is None:
+            continue
+
+        # File-import plugins are one-shot uploads, not syncable sources.
+        if plugin.is_file_import:
             continue
 
         sources.append(
