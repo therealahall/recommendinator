@@ -11,10 +11,6 @@ const emit = defineEmits<{
   toggleIgnore: [dbId: number, ignored: boolean]
 }>()
 
-function renderStars(rating: number): string {
-  return '★'.repeat(rating)
-}
-
 function statusClass(status: string): string {
   const valid = ['unread', 'currently_consuming', 'completed']
   return valid.includes(status) ? status : 'unknown'
@@ -25,14 +21,35 @@ function statusClass(status: string): string {
   <div class="library-item" :class="{ ignored: item.ignored }">
     <h3>{{ item.title }}</h3>
     <div v-if="item.author" class="item-author">{{ item.author }}</div>
-    <div class="library-item-badges">
-      <span class="badge badge-type">{{ formatContentType(item.content_type) }}</span>
-      <span class="badge badge-status" :class="statusClass(item.status)">
-        {{ formatStatusForContentType(item.status, item.content_type) }}
+    <div class="library-meta">
+      <div class="library-meta-tags">
+        <span class="badge badge-type">{{ formatContentType(item.content_type) }}</span>
+        <span class="badge badge-status" :class="statusClass(item.status)">
+          {{ formatStatusForContentType(item.status, item.content_type) }}
+        </span>
+      </div>
+      <span v-if="item.rating !== null" class="rating-stars">
+        <span aria-hidden="true">
+          <span
+            v-for="star in 5"
+            :key="star"
+            class="star"
+            :class="star <= item.rating ? 'filled' : 'empty'"
+          >{{ star <= item.rating ? '★' : '☆' }}</span>
+        </span>
+        <span class="value" aria-hidden="true">{{ item.rating }}/5</span>
+        <span class="sr-only">Rated {{ item.rating }} out of 5</span>
       </span>
-      <span v-if="item.rating" class="badge badge-rating">{{ renderStars(item.rating) }}</span>
-      <span v-if="!item.enriched" class="badge badge-enrichment">Not enriched</span>
-      <span v-if="item.ignored" class="badge badge-ignored">Ignored</span>
+    </div>
+    <div v-if="!item.enriched || item.ignored" class="library-state-lines">
+      <span v-if="!item.enriched" class="library-state not-enriched">
+        <span class="dot" aria-hidden="true"></span>
+        Not enriched
+      </span>
+      <span v-if="item.ignored" class="library-state ignored">
+        <span class="dot" aria-hidden="true"></span>
+        Ignored
+      </span>
     </div>
     <div v-if="item.db_id" class="library-item-actions">
       <button class="btn btn-small btn-secondary" @click="emit('edit', item.db_id!)">Edit</button>
