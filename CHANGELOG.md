@@ -1,6 +1,34 @@
 # CHANGELOG
 
 
+## v0.16.0 (2026-06-28)
+
+### Documentation
+
+- Document the library search
+  ([`41f6f91`](https://github.com/therealahall/recommendinator/commit/41f6f91dc085cbc7fe6bcca5f4b13ca1aab29e7f))
+
+### Features
+
+- **cli**: Add a search option to library list
+  ([`078f23c`](https://github.com/therealahall/recommendinator/commit/078f23cb0a5e34031093b04072e44b97f1db86c4))
+
+- **enrichment**: Populate movie director from TMDB
+  ([`e45333b`](https://github.com/therealahall/recommendinator/commit/e45333be64d1c7e6260d8cefb3d9ce04461ba023))
+
+- **storage**: Add fuzzy title and creator search
+  ([`d5ec1a3`](https://github.com/therealahall/recommendinator/commit/d5ec1a36c7e96e6c976b9f5230c0f0d72b18b0b2))
+
+- **storage**: Filter library items by title or creator
+  ([`062d022`](https://github.com/therealahall/recommendinator/commit/062d02215ef771a05c1affb1c5f24da90ad865a0))
+
+- **web**: Add a search box to the library view
+  ([`2ba6f66`](https://github.com/therealahall/recommendinator/commit/2ba6f666e5d928fb4aa25205ddf53f144e59cc7a))
+
+- **web**: Add a search parameter to the items endpoint
+  ([`1b8879d`](https://github.com/therealahall/recommendinator/commit/1b8879d6d5284182d64e06cdcda672b0c3197e6c))
+
+
 ## v0.15.0 (2026-06-28)
 
 ### Bug Fixes
