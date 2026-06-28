@@ -77,7 +77,7 @@ Override these variables in `colors.css` using a `:root` selector. You only need
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `--accent` | `#81a1c1` | Primary accent (buttons, links, active states) |
-| `--accent-light` | `#88c0d0` | Light accent (highlights, ratings) |
+| `--accent-light` | `#88c0d0` | Light accent (highlights) |
 | `--accent-teal` | `#8fbcbb` | Teal accent (supplementary) |
 
 ### Border Colors
@@ -93,7 +93,7 @@ Override these variables in `colors.css` using a `:root` selector. You only need
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `--color-success` | `#a3be8c` | Success states (completed, unignore) |
-| `--color-warning` | `#ebcb8b` | Warning states (unread badges) |
+| `--color-warning` | `#ebcb8b` | Warning states (unread status badge, rating stars, ignored indicator) |
 | `--color-error` | `#bf616a` | Error states (danger buttons, failures) |
 | `--color-info` | `var(--accent)` | Info states (loading, sync) |
 
