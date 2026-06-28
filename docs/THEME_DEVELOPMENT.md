@@ -93,7 +93,7 @@ Override these variables in `colors.css` using a `:root` selector. You only need
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `--color-success` | `#a3be8c` | Success states (completed, unignore) |
-| `--color-warning` | `#ebcb8b` | Warning states (unread status badge, rating stars, ignored indicator) |
+| `--color-warning` | `#ebcb8b` | Warning states (unread status badge, rating stars, ignored badge) |
 | `--color-error` | `#bf616a` | Error states (danger buttons, failures) |
 | `--color-info` | `var(--accent)` | Info states (loading, sync) |
 
