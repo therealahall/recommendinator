@@ -17,6 +17,10 @@ function makeItem(overrides: Partial<ContentItemResponse> = {}): ContentItemResp
     ignored: false,
     seasons_watched: null,
     total_seasons: null,
+    enriched: true,
+    genres: [],
+    tags: [],
+    description: null,
     ...overrides,
   }
 }
