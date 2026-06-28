@@ -1,6 +1,33 @@
 # CHANGELOG
 
 
+## v0.16.1 (2026-06-28)
+
+### Bug Fixes
+
+- **enrichment**: Redact API keys from enrichment status and logs
+  ([`41ebf84`](https://github.com/therealahall/recommendinator/commit/41ebf841eaa6b08c0c18973d1e6b5bd72853e56d))
+
+- **enrichment**: Redact the RAWG API key from error messages
+  ([`990e5a3`](https://github.com/therealahall/recommendinator/commit/990e5a3f94451da4a16326d244f43064c3286921))
+
+- **enrichment**: Redact the TMDB API key from error messages
+  ([`db3b6a6`](https://github.com/therealahall/recommendinator/commit/db3b6a60eac5bf8b9df6581bcd0fcd13c5a183ac))
+
+- **utils**: Add helper to scrub secrets from request errors
+  ([`2864625`](https://github.com/therealahall/recommendinator/commit/28646258c989beaa16f42de24c7794b3427ab79e))
+
+### Documentation
+
+- Tell plugin authors to scrub request errors
+  ([`4f4a3f6`](https://github.com/therealahall/recommendinator/commit/4f4a3f68081f0db0a5235b7674418bfb817b0220))
+
+### Refactoring
+
+- **steam**: Use the shared request error scrubber
+  ([`fccd5f9`](https://github.com/therealahall/recommendinator/commit/fccd5f9a4c91b860c61d87dbb550212c2c49443f))
+
+
 ## v0.16.0 (2026-06-28)
 
 ### Documentation
