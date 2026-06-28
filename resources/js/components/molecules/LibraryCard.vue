@@ -22,12 +22,13 @@ function statusClass(status: string): string {
     <h3>{{ item.title }}</h3>
     <div v-if="item.author" class="item-author">{{ item.author }}</div>
     <div class="library-meta">
-      <div class="library-meta-tags">
-        <span class="badge badge-type">{{ formatContentType(item.content_type) }}</span>
-        <span class="badge badge-status" :class="statusClass(item.status)">
-          {{ formatStatusForContentType(item.status, item.content_type) }}
-        </span>
-      </div>
+      <span class="badge badge-type">{{ formatContentType(item.content_type) }}</span>
+      <span class="badge badge-status" :class="statusClass(item.status)">
+        {{ formatStatusForContentType(item.status, item.content_type) }}
+      </span>
+      <span v-if="!item.enriched" class="badge badge-enrichment">Not enriched</span>
+    </div>
+    <div v-if="item.rating !== null || item.ignored" class="library-meta-secondary">
       <span v-if="item.rating !== null" class="rating-stars">
         <span aria-hidden="true">
           <span
@@ -40,16 +41,7 @@ function statusClass(status: string): string {
         <span class="value" aria-hidden="true">{{ item.rating }}/5</span>
         <span class="sr-only">Rated {{ item.rating }} out of 5</span>
       </span>
-    </div>
-    <div v-if="!item.enriched || item.ignored" class="library-state-lines">
-      <span v-if="!item.enriched" class="library-state not-enriched">
-        <span class="dot" aria-hidden="true"></span>
-        Not enriched
-      </span>
-      <span v-if="item.ignored" class="library-state ignored">
-        <span class="dot" aria-hidden="true"></span>
-        Ignored
-      </span>
+      <span v-if="item.ignored" class="badge badge-ignored">Ignored</span>
     </div>
     <div v-if="item.db_id" class="library-item-actions">
       <button class="btn btn-small btn-secondary" @click="emit('edit', item.db_id!)">Edit</button>

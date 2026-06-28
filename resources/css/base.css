@@ -977,6 +977,21 @@ input[type="checkbox"] {
   border-color: color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
+.badge-ignored {
+  background: color-mix(in srgb, var(--color-warning) 10%, transparent);
+  color: var(--color-warning);
+  border-color: color-mix(in srgb, var(--color-warning) 30%, transparent);
+}
+
+/* Neutral marker for items lacking enrichment metadata. Uses the readable
+   --text-secondary token (not --text-muted) to clear 4.5:1 contrast on the
+   elevated background across themes. */
+.badge-enrichment {
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  border-color: var(--border-default);
+}
+
 .badge-score {
   background: color-mix(in srgb, var(--accent) 20%, transparent);
   color: var(--accent-light);
@@ -1190,19 +1205,36 @@ input[type="checkbox"] {
   margin-bottom: var(--space-2);
 }
 
-/* Primary meta row: categorical pills anchored left, rating anchored right.
-   The fixed two-zone structure keeps every permutation visually balanced. */
+/* Primary meta row: three categorical pills anchored left on a single line.
+   nowrap + flex-shrink:0 + the reduced pill size guarantee the type, status,
+   and Not enriched pills never wrap even at the 280px minimum card width. */
 .library-meta {
   display: flex;
+  flex-wrap: nowrap;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  margin: var(--space-2) 0 var(--space-3);
+  gap: var(--space-1);
+  margin-top: var(--space-2);
 }
 
-.library-meta-tags {
+.library-meta .badge {
+  flex-shrink: 0;
+  white-space: nowrap;
+  padding: 2px 6px;
+  font-size: 11px;
+}
+
+/* Secondary meta row: rating anchored left, Ignored pinned right via
+   margin-left:auto so it stays right-aligned with or without a rating. */
+.library-meta-secondary {
   display: flex;
-  gap: var(--space-1);
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+  margin-bottom: var(--space-1);
+}
+
+.library-meta-secondary .badge-ignored {
+  margin-left: auto;
 }
 
 /* Rating is a plain value (no badge chrome): filled/outlined stars convey the
@@ -1230,38 +1262,6 @@ input[type="checkbox"] {
   margin-left: var(--space-1);
 }
 
-/* Quiet caption line for non-categorical states (not-enriched, ignored).
-   Both can coexist and wrap as text; dots are supplementary to the labels. */
-.library-state-lines {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  margin-bottom: var(--space-3);
-}
-
-.library-state {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  font-size: var(--text-xs);
-  color: var(--text-secondary);
-}
-
-.library-state .dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.library-state.not-enriched .dot {
-  background: var(--text-muted);
-}
-
-.library-state.ignored .dot {
-  background: var(--color-warning);
-}
-
 .library-item-actions {
   margin-top: auto;
   padding-top: var(--space-3);
@@ -1274,8 +1274,21 @@ input[type="checkbox"] {
   flex: 1;
 }
 
+/* Ignored items are de-emphasized without dimming text. A dashed, muted border
+   marks the card as set aside / excluded from recommendations while every label
+   stays at full opacity, so all text keeps its normal >= 4.5:1 contrast
+   (WCAG 1.4.3). Replaces the former opacity: 0.5, which composited the whole card
+   toward the page background and halved as-rendered text contrast. The dashed
+   border is a non-text indicator and clears 3:1 against both surfaces in both
+   themes (WCAG 1.4.11). */
 .library-item.ignored {
-  opacity: 0.5;
+  border-style: dashed;
+  border-color: var(--text-muted);
+}
+
+/* Ignored cards keep their de-emphasized read on hover (no accent-border highlight). */
+.library-item.ignored:hover {
+  border-color: var(--text-muted);
 }
 
 .library-load-more {
