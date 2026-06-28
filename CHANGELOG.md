@@ -1,6 +1,53 @@
 # CHANGELOG
 
 
+## v0.15.0 (2026-06-28)
+
+### Bug Fixes
+
+- **web**: Lay the library card metadata out in two rows
+  ([`633143a`](https://github.com/therealahall/recommendinator/commit/633143a03b4ec94b9828017034c0d343f427d60a))
+
+- **web**: Live-update enrichment progress on the data view after sync
+  ([`7ddc775`](https://github.com/therealahall/recommendinator/commit/7ddc7758074ecc176d4d50021a8fc68d07f8f34a))
+
+### Documentation
+
+- Align library card wording and theme tokens with the redesign
+  ([`b5fdd76`](https://github.com/therealahall/recommendinator/commit/b5fdd766e87116f5abf007519fcd8b2d12690094))
+
+- Document surfacing and manually editing enrichment metadata
+  ([`c0419a7`](https://github.com/therealahall/recommendinator/commit/c0419a7a6d480aaf4af8415fd606521cfd6e6594))
+
+- Refer to the enrichment and ignored markers as badges
+  ([`d7b5f90`](https://github.com/therealahall/recommendinator/commit/d7b5f90b1bae2eb1e73ed109db75637137669dea))
+
+### Features
+
+- **cli**: Add enrichment filter and manual metadata editing to library commands
+  ([`0eeb977`](https://github.com/therealahall/recommendinator/commit/0eeb9777b57816f828e551dd9f7768cc0b07a148))
+
+- **enrichment**: Filter the library by enrichment state and persist manual metadata
+  ([`6bec7d8`](https://github.com/therealahall/recommendinator/commit/6bec7d8e3af90a5d85a56b4ba0eb479130d90e51))
+
+- **web**: Redesign library card metadata into an anchored meta bar
+  ([`a16c03e`](https://github.com/therealahall/recommendinator/commit/a16c03ec9ce1d1fbfe5ae846802e306c81c644f8))
+
+- **web**: Surface enrichment state and manual metadata editing in the library
+  ([`8c57187`](https://github.com/therealahall/recommendinator/commit/8c57187c93b0832b3f2566b5a8edaa57fa1131d7))
+
+### Testing
+
+- **web**: Add ContentItemResponse fields to recommendation fixtures
+  ([`35ab423`](https://github.com/therealahall/recommendinator/commit/35ab4236a1d87ff0525a3ed558bd2b48b9880bbf))
+
+- **web**: Cover the redesigned library card metadata and rating
+  ([`fd8dcdd`](https://github.com/therealahall/recommendinator/commit/fd8dcddcc70d3aa8438e3ab33abe3e5fed96af19))
+
+- **web**: Cover the two-row library card metadata layout
+  ([`1d1ee10`](https://github.com/therealahall/recommendinator/commit/1d1ee10d519cf7404c0f14a2d833c155dc65684d))
+
+
 ## v0.14.0 (2026-06-27)
 
 ### Bug Fixes
