@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypeGuard
 
 from src.ingestion.plugin_base import SourcePlugin
 from src.ingestion.registry import get_registry
+from src.models.config_field import ConfigField
 from src.utils.text import humanize_source_id
 
 if TYPE_CHECKING:
@@ -362,6 +363,22 @@ def field_type_name(field_type: type) -> str:
     return "str"
 
 
+def _field_view(field: ConfigField) -> dict[str, Any]:
+    """Serialise one ``ConfigField`` to the wire shape used by every schema view.
+
+    ``default`` is masked to ``None`` for sensitive fields so a plugin that
+    hard-codes a placeholder credential as the default never leaks it.
+    """
+    return {
+        "name": field.name,
+        "field_type": field_type_name(field.field_type),
+        "required": field.required,
+        "default": None if field.sensitive else field.default,
+        "description": field.description,
+        "sensitive": field.sensitive,
+    }
+
+
 def resolve_source_plugin(
     source_id: str,
     config: dict[str, Any] | None,
@@ -411,17 +428,7 @@ def build_schema_view(source_id: str, plugin: SourcePlugin) -> dict[str, Any]:
         "source_id": source_id,
         "plugin": plugin.name,
         "plugin_display_name": plugin.display_name,
-        "fields": [
-            {
-                "name": field.name,
-                "field_type": field_type_name(field.field_type),
-                "required": field.required,
-                "default": None if field.sensitive else field.default,
-                "description": field.description,
-                "sensitive": field.sensitive,
-            }
-            for field in plugin.get_config_schema()
-        ],
+        "fields": [_field_view(field) for field in plugin.get_config_schema()],
     }
 
 
@@ -687,19 +694,33 @@ def list_available_plugins() -> list[dict[str, Any]]:
                 "content_types": [str(ct.value) for ct in plugin.content_types],
                 "requires_api_key": plugin.requires_api_key,
                 "requires_network": plugin.requires_network,
-                # Sensitive defaults are masked — a stray placeholder credential
-                # in a plugin schema would otherwise leak via this endpoint.
-                "fields": [
-                    {
-                        "name": field.name,
-                        "field_type": field_type_name(field.field_type),
-                        "required": field.required,
-                        "default": None if field.sensitive else field.default,
-                        "description": field.description,
-                        "sensitive": field.sensitive,
-                    }
-                    for field in plugin.get_config_schema()
-                ],
+                "fields": [_field_view(field) for field in plugin.get_config_schema()],
+            }
+        )
+    return plugins
+
+
+def list_importable_plugins() -> list[dict[str, Any]]:
+    """Return metadata for every file-import plugin, sorted by name.
+
+    Drives the web upload form (``GET /api/import/sources``) and the CLI
+    ``import --source list`` listing: only plugins whose ``is_file_import``
+    is True are included, each with the option schema the user fills in
+    alongside the uploaded file. Non-file-import (syncable) plugins are
+    excluded.
+    """
+    registry = get_registry()
+    plugins = []
+    for name, plugin in sorted(registry.get_all_plugins().items()):
+        if not plugin.is_file_import:
+            continue
+        plugins.append(
+            {
+                "name": name,
+                "display_name": plugin.display_name,
+                "description": plugin.description,
+                "content_types": [str(ct.value) for ct in plugin.content_types],
+                "fields": [_field_view(field) for field in plugin.get_config_schema()],
             }
         )
     return plugins

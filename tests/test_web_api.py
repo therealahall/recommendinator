@@ -10,6 +10,7 @@ from unittest.mock import Mock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from src.ingestion.import_service import FileImportError
 from src.ingestion.sync import SyncResult
 from src.llm.client import OllamaClient
 from src.llm.embeddings import EmbeddingGenerator
@@ -3100,3 +3101,133 @@ class TestAuthDisconnectEndpoints:
         response = client.delete("/api/epic/token")
 
         assert response.status_code == 404
+
+
+# Goodreads CSV export header recognised by the goodreads plugin.
+_GOODREADS_CSV = (
+    "Title,Author,My Rating,Exclusive Shelf,Date Read\n"
+    "Dune,Frank Herbert,5,read,2020/01/01\n"
+    "Neuromancer,William Gibson,4,read,2020/02/01\n"
+)
+
+
+class TestImportSourcesEndpoint:
+    """Tests for GET /api/import/sources."""
+
+    def test_lists_only_file_import_plugins_with_schema(self, client):
+        """The listing returns the four file-import plugins, excluding syncables."""
+        response = client.get("/api/import/sources")
+        assert response.status_code == 200
+        data = response.json()
+        names = [plugin["name"] for plugin in data]
+        assert names == ["csv_import", "goodreads", "json_import", "markdown_import"]
+        # Syncable sources (sonarr is configured in mock_config) are excluded.
+        assert "sonarr" not in names
+
+        csv_plugin = next(p for p in data if p["name"] == "csv_import")
+        assert [f["name"] for f in csv_plugin["fields"]] == ["content_type"]
+
+        goodreads_plugin = next(p for p in data if p["name"] == "goodreads")
+        assert goodreads_plugin["fields"] == []
+
+
+class TestImportEndpoint:
+    """Tests for POST /api/import."""
+
+    def test_goodreads_happy_path(self, client, mock_components):
+        """A Goodreads CSV upload imports every parsed book."""
+        mock_components["storage"].save_content_item.return_value = 1
+        response = client.post(
+            "/api/import",
+            data={"source": "goodreads"},
+            files={"file": ("books.csv", _GOODREADS_CSV, "text/csv")},
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["items_synced"] == 2
+        assert body["total_items"] == 2
+        assert body["source"] == "Import: Goodreads"
+        assert body["errors"] == []
+
+    def test_csv_import_happy_path_with_content_type_option(
+        self, client, mock_components
+    ):
+        """A generic CSV upload uses the content_type form field as an option."""
+        mock_components["storage"].save_content_item.return_value = 1
+        csv_content = "title,author,status,rating\nDune,Frank Herbert,read,5\n"
+        response = client.post(
+            "/api/import",
+            data={"source": "csv_import", "content_type": "book"},
+            files={"file": ("books.csv", csv_content, "text/csv")},
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["items_synced"] == 1
+        assert body["total_items"] == 1
+        assert body["source"] == "Import: CSV Import"
+
+    def test_unknown_plugin_rejected(self, client):
+        """An unregistered source name is a 422 client error."""
+        response = client.post(
+            "/api/import",
+            data={"source": "does_not_exist"},
+            files={"file": ("x.csv", "ignored", "text/csv")},
+        )
+        assert response.status_code == 422
+
+    def test_non_file_import_source_rejected(self, client):
+        """A syncable (non-file-import) source is a 422 client error."""
+        response = client.post(
+            "/api/import",
+            data={"source": "sonarr"},
+            files={"file": ("x.csv", "ignored", "text/csv")},
+        )
+        assert response.status_code == 422
+
+    def test_corrupt_file_returns_client_error(self, client):
+        """A FileImportError from the service maps to a 400 with its message."""
+        with patch(
+            "src.web.api.import_file",
+            side_effect=FileImportError("Failed to import file with 'csv_import': bad"),
+        ):
+            response = client.post(
+                "/api/import",
+                data={"source": "csv_import", "content_type": "book"},
+                files={"file": ("x.csv", "garbage", "text/csv")},
+            )
+        assert response.status_code == 400
+        assert "Failed to import file" in response.json()["detail"]
+
+    def test_temp_file_cleaned_up_on_failure(self, client):
+        """The streamed temp file is removed even when the import fails."""
+        captured: dict[str, Path] = {}
+
+        def fail(**kwargs: Path) -> None:
+            captured["file_path"] = kwargs["file_path"]
+            raise FileImportError("boom")
+
+        with patch("src.web.api.import_file", side_effect=fail):
+            response = client.post(
+                "/api/import",
+                data={"source": "csv_import", "content_type": "book"},
+                files={"file": ("x.csv", "garbage", "text/csv")},
+            )
+        assert response.status_code == 400
+        assert "file_path" in captured
+        assert not captured["file_path"].exists()
+
+    def test_progress_observable_via_status_endpoint(self, client, mock_components):
+        """A completed import is reported as a job via GET /api/sync/status."""
+        mock_components["storage"].save_content_item.return_value = 1
+        response = client.post(
+            "/api/import",
+            data={"source": "goodreads"},
+            files={"file": ("books.csv", _GOODREADS_CSV, "text/csv")},
+        )
+        assert response.status_code == 200
+
+        status = client.get("/api/sync/status").json()
+        jobs = {job["source"]: job for job in status["jobs"]}
+        assert "Import: Goodreads" in jobs
+        assert jobs["Import: Goodreads"]["status"] == "completed"
+        assert jobs["Import: Goodreads"]["items_processed"] == 2

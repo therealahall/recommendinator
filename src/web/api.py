@@ -2,20 +2,27 @@
 
 import json
 import logging
+import os
+import shutil
+import tempfile
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Annotated, Any, cast
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from src import __version__ as APP_VERSION
 from src.cli.config import get_feature_flags
+from src.ingestion.import_service import FileImportError, import_file
 from src.ingestion.plugin_base import SourcePlugin
+from src.ingestion.registry import get_registry
 from src.ingestion.sync import (
     MAX_WORKERS_CEILING,
+    SyncResult,
     execute_multi_source_sync,
     resolve_max_workers,
 )
@@ -58,7 +65,7 @@ from src.web.state import (
     get_storage,
     reload_config,
 )
-from src.web.sync_manager import SyncJob, get_sync_manager
+from src.web.sync_manager import SyncInProgressError, SyncJob, get_sync_manager
 from src.web.sync_sources import (
     SourceConfigError,
     build_config_view,
@@ -68,6 +75,7 @@ from src.web.sync_sources import (
     delete_source,
     get_available_sync_sources,
     list_available_plugins,
+    list_importable_plugins,
     migrate_source,
     resolve_inputs,
     resolve_source_plugin,
@@ -471,6 +479,26 @@ class PluginInfoResponse(BaseModel):
     requires_api_key: bool
     requires_network: bool
     fields: list[SourceFieldSchema]
+
+
+class ImportSourceResponse(BaseModel):
+    """One file-import plugin's metadata and option schema for the upload form."""
+
+    name: str
+    display_name: str
+    description: str
+    content_types: list[str]
+    fields: list[SourceFieldSchema]
+
+
+class ImportResultResponse(BaseModel):
+    """Result of a one-shot file import."""
+
+    message: str
+    source: str
+    items_synced: int
+    total_items: int
+    errors: list[str] = Field(default_factory=list)
 
 
 class SourceCreateRequest(BaseModel):
@@ -1332,6 +1360,145 @@ async def update_data(request: UpdateRequest) -> dict[str, Any]:
         "message": f"Sync started for {source_label}. Use GET /api/sync/status to monitor progress.",
         "sources": sources_to_sync,
     }
+
+
+@router.get("/import/sources", response_model=list[ImportSourceResponse])
+async def get_import_sources() -> list[ImportSourceResponse]:
+    """List file-import plugins and their option schema for the upload form.
+
+    The frontend renders the upload form fields from each plugin's
+    ``fields`` schema. Only file-import plugins (Goodreads, CSV, JSON,
+    Markdown) are returned; syncable sources are excluded.
+    """
+    return [ImportSourceResponse(**info) for info in list_importable_plugins()]
+
+
+@router.post("/import", response_model=ImportResultResponse)
+async def import_data(
+    request: Request,
+    source: str = Form(..., description="File-import plugin name"),
+    file: UploadFile = File(..., description="The file to import"),
+) -> ImportResultResponse:
+    """Import a single uploaded file through a file-import plugin.
+
+    The upload is streamed to a temp file, run through the import pipeline
+    (tracked as a job so ``GET /sync/status`` reports progress), and the
+    temp file is always removed afterwards. Per-import options are read from
+    the multipart form by the plugin's config-schema field names (e.g.
+    ``content_type``).
+
+    Args:
+        request: The multipart request, used to read per-import option fields.
+        source: The file-import plugin name (e.g. ``goodreads``, ``csv_import``).
+        file: The uploaded file.
+
+    Returns:
+        The import result with item counts and any per-item errors.
+    """
+    storage = get_storage()
+    embedding_gen = get_embedding_gen()
+    config = get_config()
+
+    if not storage or not config:
+        raise HTTPException(status_code=500, detail="Components not initialized")
+
+    plugin = get_registry().get_plugin(source)
+    if plugin is None or not plugin.is_file_import:
+        raise HTTPException(
+            status_code=422, detail="Unknown or unsupported import source"
+        )
+
+    form = await request.form()
+    options: dict[str, Any] = {
+        field.name: form[field.name]
+        for field in plugin.get_config_schema()
+        if field.name in form
+    }
+
+    use_embeddings = get_feature_flags(config)["use_embeddings"]
+    enrichment_config = config.get("enrichment", {})
+    auto_enrich = enrichment_config.get("enabled", False) and enrichment_config.get(
+        "auto_enrich_on_sync", False
+    )
+
+    import_content_type: ContentType | None = None
+    content_type_value = options.get("content_type")
+    if content_type_value:
+        try:
+            import_content_type = ContentType(content_type_value)
+        except ValueError:
+            import_content_type = None
+
+    sync_manager = get_sync_manager()
+    job_label = f"Import: {plugin.display_name}"
+
+    suffix = Path(file.filename or "").suffix
+    fd, tmp_name = tempfile.mkstemp(suffix=suffix)
+    temp_path = Path(tmp_name)
+
+    captured: dict[str, SyncResult] = {}
+
+    def run_import(job: SyncJob) -> int:
+        def progress_callback(
+            items_processed: int,
+            total_items: int | None,
+            current_item: str | None,
+            current_source: str | None,
+        ) -> None:
+            sync_manager.update_progress(
+                source=job_label,
+                items_processed=items_processed,
+                total_items=total_items,
+                current_item=current_item,
+            )
+
+        result = import_file(
+            plugin_name=source,
+            file_path=temp_path,
+            options=options,
+            storage_manager=storage,
+            embedding_generator=embedding_gen,
+            use_embeddings=use_embeddings,
+            progress_callback=progress_callback,
+            mark_for_enrichment=auto_enrich,
+        )
+        for error in result.errors:
+            sync_manager.add_error(job_label, error)
+        captured["result"] = result
+        return result.items_synced
+
+    def on_complete() -> None:
+        if auto_enrich:
+            enrichment_manager = get_enrichment_manager()
+            enrichment_manager.start_enrichment(
+                storage_manager=storage,
+                config=config,
+                content_type=import_content_type,
+            )
+
+    try:
+        with os.fdopen(fd, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        await run_in_threadpool(
+            sync_manager.run_import, job_label, run_import, on_complete
+        )
+    except FileImportError as error:
+        # FileImportError messages are constructed strings (no stack traces);
+        # safe to surface so the user can fix the file or options.
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except SyncInProgressError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+    result = captured["result"]
+    return ImportResultResponse(
+        message=f"Imported {result.items_synced} item(s) from {plugin.display_name}.",
+        source=job_label,
+        items_synced=result.items_synced,
+        total_items=result.total_items,
+        errors=result.errors,
+    )
 
 
 @router.get("/status", response_model=StatusResponse)
