@@ -25,7 +25,8 @@ Responsible for parsing and normalizing data from various sources.
 **Design:**
 - Plugin-based architecture (`SourcePlugin` ABC in `plugin_base.py`)
 - Auto-discovered from `src/ingestion/sources/` via `PluginRegistry`
-- **Named source instances**: Each entry under `inputs:` has a user-defined key name (e.g., `my_books`, `tv_shows`) with a `plugin:` field specifying the plugin type. Multiple instances of the same plugin are supported (e.g., two `json_import` sources with different files). The `resolve_inputs()` function in `src/web/sync_sources.py` is the central resolver that maps config entries to `(source_id, plugin, config)` tuples.
+- **Named source instances**: Each entry under `inputs:` has a user-defined key name (e.g., `my_movies`, `tv_shows`) with a `plugin:` field specifying the plugin type. Multiple instances of the same plugin are supported (e.g., two `sonarr` sources pointed at different servers). The `resolve_inputs()` function in `src/web/sync_sources.py` is the central resolver that maps config entries to `(source_id, plugin, config)` tuples; it skips file-import plugins (see below) so they never appear as syncable sources.
+- **One-shot file imports**: Goodreads and the generic CSV/JSON/Markdown plugins set `is_file_import = True` (on `SourcePlugin`). They have no persistent `inputs:` config — a file is supplied at invocation time (a web upload or the CLI `import --file` flag), run through the pipeline once by `src/ingestion/import_service.py` (`import_file`), and discarded. They are exposed via `GET /api/import/sources` / `import --source list` and driven by `POST /api/import` / the CLI `import` command, not the sync path. A leftover path-based `inputs:` block for one of them logs a non-fatal warning in `resolve_inputs` and is skipped.
 - `ContentItem.source` reflects the user-defined key name, not the plugin name, enabling per-instance tracking
 - Each plugin handles config validation, fetching, and rating normalization
 - Shared sync executor (`execute_multi_source_sync`) used by both CLI and web
@@ -195,7 +196,7 @@ view your profile). New capabilities are expected to land in both interfaces; th
 
 #### CLI (`src/cli/`)
 - Click-based command structure
-- Commands: `status`, `recommend`, `update`, `complete`, `source`, `preferences`, `enrichment`, `library`, `auth`, `memory`, `profile`, `chat` (full reference: [docs/CLI.md](docs/CLI.md))
+- Commands: `status`, `recommend`, `update`, `import`, `complete`, `source`, `preferences`, `enrichment`, `library`, `auth`, `memory`, `profile`, `chat` (full reference: [docs/CLI.md](docs/CLI.md))
 - Supports batch operations and multiple output formats
 
 #### Web (`src/web/` + `resources/`)
@@ -242,19 +243,19 @@ Configuration files in `config/`:
 
 Key sections: `features`, `ollama`, `storage`, `inputs`, `web`, `recommendations`, `conversation`, `enrichment`, `logging`.
 
-The `inputs` section uses **named source instances**: each key is a user-defined name and must include a `plugin:` field to identify the plugin type. This allows multiple instances of the same plugin (e.g., separate JSON imports for books and movies). File-based plugins use a standardized `path` field. Example:
+The `inputs` section uses **named source instances**: each key is a user-defined name and must include a `plugin:` field to identify the plugin type. This allows multiple instances of the same plugin (e.g., two Sonarr servers under different keys). Only syncable sources live here; one-shot file imports (Goodreads, CSV, JSON, Markdown) are not configured in `inputs:` — they are uploaded through the web **Data** tab or the CLI `import --file` command (see [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md#importing-from-a-file)). Example:
 
 ```yaml
 inputs:
-  my_books:
-    plugin: json_import
-    path: "inputs/books.json"
-    content_type: "book"
+  shows_main:
+    plugin: sonarr
+    url: "http://localhost:8989"
+    content_type: "tv_show"
     enabled: true
-  my_movies:
-    plugin: json_import
-    path: "inputs/movies.json"
-    content_type: "movie"
+  shows_anime:
+    plugin: sonarr
+    url: "http://localhost:8990"
+    content_type: "tv_show"
     enabled: true
 ```
 

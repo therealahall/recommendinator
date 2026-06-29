@@ -108,17 +108,23 @@ features:
   embeddings_enabled: false
   llm_reasoning_enabled: false
 
-# Configure your data sources (see each source's setup guide for fields)
+# Configure your syncable data sources (see each source's setup guide for fields)
 inputs:
-  goodreads:
-    plugin: goodreads
-    path: "inputs/goodreads_library_export.csv"
+  steam:
+    plugin: steam
+    api_key: "your-steam-api-key"
+    steam_id: "your-steam-id"
     enabled: true
 
 # Conflict resolution when an item is imported from multiple sources
 ingestion:
   conflict_strategy: "last_write_wins"  # or "source_priority" or "keep_existing"
 ```
+
+Goodreads, CSV, JSON, and Markdown are one-shot **file imports**, not entries
+under `inputs:`. Upload the file from the web **Data** tab (**Import from file**)
+or run `python3.11 -m src.cli import --file <path>` — see
+[docs/DATA_SOURCES.md](docs/DATA_SOURCES.md#importing-from-a-file).
 
 `config/example.yaml` documents every option (scorer weights, sync workers,
 enrichment providers, conversation tuning). Scorer weights are explained in
@@ -135,7 +141,8 @@ merged additively.
 The CLI is a full peer to the web UI. A taste:
 
 ```bash
-python3.11 -m src.cli update --source all          # import everything
+python3.11 -m src.cli update --source all          # sync every configured source
+python3.11 -m src.cli import --source goodreads --file goodreads_export.csv  # one-shot file import
 python3.11 -m src.cli recommend --type book --count 10
 python3.11 -m src.cli library list --type book --status completed --sort rating
 python3.11 -m src.cli library list --search "die hard"   # fuzzy title/creator search

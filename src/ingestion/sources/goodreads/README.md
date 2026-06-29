@@ -8,17 +8,16 @@ Imports books from a Goodreads CSV export.
 ## Requirements
 - A Goodreads CSV export. Generate one at https://www.goodreads.com/review/import.
 
-## Configuration
+## Importing
 
-```yaml
-inputs:
-  goodreads:
-    path: "/path/to/goodreads_export.csv"
+This is a one-shot file import, not a syncable `inputs:` source. Upload the CSV
+from the web **Data** tab (**Import from file**) or run:
+
+```bash
+python3.11 -m src.cli import --source goodreads --file /path/to/goodreads_export.csv
 ```
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `path` | str | yes | Path to the Goodreads CSV export file. |
+Goodreads takes no import options (it is always books).
 
 ## Notes
 - No API key or network access required — pure file import.

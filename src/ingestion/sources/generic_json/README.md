@@ -8,19 +8,18 @@ Imports content items from a JSON array or newline-delimited JSON file. Mirrors 
 ## Requirements
 - A `.json` (array of objects) or `.jsonl` (one object per line) file.
 
-## Configuration
+## Importing
 
-```yaml
-inputs:
-  json_import:
-    path: "/path/to/library.json"
-    content_type: "book"   # or movie, tv_show, video_game
+This is a one-shot file import, not a syncable `inputs:` source. Upload the file
+from the web **Data** tab (**Import from file**) or run:
+
+```bash
+python3.11 -m src.cli import --source json_import --file /path/to/library.json --content-type book
 ```
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `path` | str | yes | Path to the JSON or JSONL file. |
-| `content_type` | str | yes | One of: `book`, `movie`, `tv_show`, `video_game`. |
+| Option | Required | Description |
+|--------|----------|-------------|
+| `content_type` | yes | One of: `book`, `movie`, `tv_show`, `video_game`. |
 
 ## Notes
 - Field names match the [generic CSV](../generic_csv/README.md) plugin.

@@ -25,6 +25,39 @@ Import file examples live in the `templates/` directory. Templates support the
 use a `seasons_watched` list (e.g., `1,2,5,6` in CSV or `[1,2,5,6]` in JSON) to
 track specific seasons watched.
 
+**Goodreads, CSV, JSON, and Markdown are one-shot file imports, not syncable
+sources.** You hand the file to the app once — through the web **Data** tab's
+**Import from file** button or the CLI `import --file` command — and it runs
+through the ingestion pipeline immediately. There is nothing to configure under
+`inputs:` and nothing to re-sync. The remaining sources (Steam, GOG, Epic,
+Sonarr, Radarr, ROM Library) are configured once and synced repeatedly. See
+[Importing from a file](#importing-from-a-file) below.
+
+## Importing from a file
+
+> **Breaking change:** the path-based YAML config for the Goodreads, CSV
+> (`csv_import`), JSON (`json_import`), and Markdown (`markdown_import`) sources
+> has been removed. They no longer appear under `inputs:` and are not listed as
+> syncable sources. A leftover `inputs:` block for one of them logs a non-fatal
+> warning at startup and is skipped. Import those files through the web upload or
+> the CLI `import --file` flag instead. (ROM Library still scans directories and
+> is configured the old way.)
+
+**Web UI:** open the **Data** tab and click **Import from file**. Pick the
+source, choose the file, and set any options the source needs — the three generic
+formats require a `content_type` (book, movie, tv_show, or video_game); Goodreads
+takes no options because it is always books. Submit to import. The import is
+tracked as a job, so progress shows in the same place as a sync.
+
+**CLI:** use the `import` command — see
+[CLI.md](CLI.md#importing-from-a-file). For example:
+
+```bash
+python3.11 -m src.cli import --source goodreads --file inputs/goodreads_library_export.csv
+python3.11 -m src.cli import --source csv_import --file my_movies.csv --content-type movie
+python3.11 -m src.cli import --source list   # show importable sources and their options
+```
+
 ## Adding, editing, and removing sources in the UI
 
 The **Data** tab renders every configured source as an accordion. Both enabled
@@ -43,13 +76,15 @@ There are two ways to create a source:
   in the source's expanded panel to copy the YAML entry into the database. After
   migration the YAML entry is ignored — all edits go through the UI.
 
+This applies to syncable sources only — the file-import sources (Goodreads, CSV,
+JSON, Markdown) are not configured here; see [Importing from a file](#importing-from-a-file).
+
 Once a source is in the database, every field defined in its plugin's config
 schema is editable inline from the web UI or via the
 `python3.11 -m src.cli source` CLI commands. The exact set of fields differs per
-plugin (e.g. Steam exposes `api_key` and `vanity_url`; Goodreads exposes `path`);
-the generic CSV / JSON / Markdown plugins also expose `content_type`. Run
-`python3.11 -m src.cli source schema <id>` to see what is editable for a given
-source.
+plugin (e.g. Steam exposes `api_key` and `vanity_url`; Sonarr exposes `url` and
+`api_key`). Run `python3.11 -m src.cli source schema <id>` to see what is editable
+for a given source.
 
 Each source has an Enable/Disable toggle in its action row. Disabled sources stay
 in the list but are skipped during sync — `Sync All` and the per-source Sync
@@ -93,8 +128,10 @@ Export your library data from the web UI:
 4. Click **Export** to download.
 
 Exported files match the import template format, so you can edit them (e.g., mark
-items as `ignored`, update `seasons_watched`) and re-import via CSV or JSON sync.
-The CLI equivalent is `python3.11 -m src.cli library export` — see [CLI.md](CLI.md#library-management).
+items as `ignored`, update `seasons_watched`) and re-import via the CSV or JSON
+file import (web **Import from file** button or `import --file`). The CLI
+equivalent of export is `python3.11 -m src.cli library export` — see
+[CLI.md](CLI.md#library-management).
 
 ## Credential storage
 

@@ -336,28 +336,30 @@ python3.11 -m src.cli update --help  # Should show your source in the list
 
 ## Configuration Format
 
-Each input source in `config.yaml` uses a **named instance** model. The config key is a user-defined name, and the `plugin:` field specifies which plugin to use. This allows multiple instances of the same plugin:
+Each **syncable** source in `config.yaml` uses a **named instance** model. The config key is a user-defined name, and the `plugin:` field specifies which plugin to use. This allows multiple instances of the same plugin:
 
 ```yaml
 inputs:
-  # User-defined name "my_books" using the csv_import plugin
-  my_books:
-    plugin: csv_import
-    path: "inputs/books.csv"
-    content_type: "book"
+  # User-defined name "shows_main" using the sonarr plugin
+  shows_main:
+    plugin: sonarr
+    url: "http://localhost:8989"
+    content_type: "tv_show"
     enabled: true
 
-  # A second instance of csv_import with a different name
-  classic_movies:
-    plugin: csv_import
-    path: "inputs/classic_movies.csv"
-    content_type: "movie"
+  # A second instance of sonarr with a different name
+  shows_anime:
+    plugin: sonarr
+    url: "http://localhost:8990"
+    content_type: "tv_show"
     enabled: true
 ```
 
-File-based plugins use a standardized `path` field (not `csv_path`, `json_path`, or `markdown_path`).
-
 When your plugin's `fetch()` method is called, the config dict includes a `_source_id` key containing the user-defined name. The base class method `get_source_identifier(config)` returns this value, which is stored in `ContentItem.source`. This means items are tracked by user-defined name, not plugin name.
+
+### One-shot file-import plugins
+
+A plugin that imports a single user-supplied file (rather than syncing a persistent source) overrides `is_file_import` to return `True`. File-import plugins are **not** configured under `inputs:` — the file is supplied at invocation time (a web upload or the CLI `import --file` flag) and run through the ingestion pipeline once by `src/ingestion/import_service.py`. `resolve_inputs` skips them so they never appear as syncable sources, and they are listed via `GET /api/import/sources` / `import --source list` instead. The file path is injected by the import service as the config `path` key, so the plugin's `fetch()` reads `config["path"]`; declare any other per-import options (e.g. `content_type`) in `get_config_schema()` and the upload form / CLI will collect them. The bundled Goodreads, CSV, JSON, and Markdown plugins work this way.
 
 ## Testing Your Plugin
 
