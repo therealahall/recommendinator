@@ -13,6 +13,21 @@ _GOODREADS_CSV = (
     "Neuromancer,William Gibson,4,read,2020/02/01\n"
 )
 
+# Generic JSON array recognised by the json_import plugin.
+_JSON_BOOKS = json.dumps(
+    [
+        {"title": "Dune", "author": "Frank Herbert", "status": "completed"},
+        {"title": "Neuromancer", "author": "William Gibson", "status": "read"},
+    ]
+)
+
+# Markdown export recognised by the markdown_import plugin.
+_MARKDOWN_BOOKS = (
+    "## Completed\n"
+    "- **Dune** by Frank Herbert | Rating: 5\n"
+    "- **Neuromancer** by William Gibson | Rating: 4\n"
+)
+
 
 class TestImportCommand:
     """Tests for ``recommendinator import``."""
@@ -93,6 +108,70 @@ class TestImportCommand:
         )
         assert result.exit_code == 0, result.output
         assert "Imported 1/1 items from csv_import." in result.output
+
+    def test_json_import_success(self, cli_runner, tmp_path):
+        """A JSON file imports every parsed entry (criterion 2: JSON format)."""
+        storage = MagicMock(spec=StorageManager)
+        storage.save_content_item.return_value = 1
+        data_file = tmp_path / "books.json"
+        data_file.write_text(_JSON_BOOKS)
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            [
+                "import",
+                "--source",
+                "json_import",
+                "--file",
+                str(data_file),
+                "--content-type",
+                "book",
+            ],
+            storage,
+        )
+        assert result.exit_code == 0, result.output
+        assert "Imported 2/2 items from json_import." in result.output
+
+    def test_markdown_import_success(self, cli_runner, tmp_path):
+        """A markdown file imports every parsed entry (criterion 2: markdown)."""
+        storage = MagicMock(spec=StorageManager)
+        storage.save_content_item.return_value = 1
+        data_file = tmp_path / "books.md"
+        data_file.write_text(_MARKDOWN_BOOKS)
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            [
+                "import",
+                "--source",
+                "markdown_import",
+                "--file",
+                str(data_file),
+                "--content-type",
+                "book",
+            ],
+            storage,
+        )
+        assert result.exit_code == 0, result.output
+        assert "Imported 2/2 items from markdown_import." in result.output
+
+    def test_missing_required_option_errors(self, cli_runner, tmp_path):
+        """Omitting content_type for a generic format exits non-zero, no traceback.
+
+        csv_import requires content_type; without it the service raises
+        FileImportError and the CLI must abort with a readable message.
+        """
+        storage = MagicMock(spec=StorageManager)
+        data_file = tmp_path / "books.csv"
+        data_file.write_text("title\nDune\n")
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["import", "--source", "csv_import", "--file", str(data_file)],
+            storage,
+        )
+        assert result.exit_code != 0
+        assert "content_type" in result.output
 
     def test_invalid_option_format_errors(self, cli_runner, tmp_path):
         """An --option without '=' is rejected before importing."""

@@ -3231,3 +3231,187 @@ class TestImportEndpoint:
         assert "Import: Goodreads" in jobs
         assert jobs["Import: Goodreads"]["status"] == "completed"
         assert jobs["Import: Goodreads"]["items_processed"] == 2
+
+    def test_json_import_happy_path(self, client, mock_components):
+        """A generic JSON upload imports every entry (criterion 1: JSON format)."""
+        mock_components["storage"].save_content_item.return_value = 1
+        json_content = json.dumps(
+            [
+                {"title": "Dune", "author": "Frank Herbert", "status": "completed"},
+                {"title": "Neuromancer", "author": "William Gibson", "status": "read"},
+            ]
+        )
+        response = client.post(
+            "/api/import",
+            data={"source": "json_import", "content_type": "book"},
+            files={"file": ("books.json", json_content, "application/json")},
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["items_synced"] == 2
+        assert body["total_items"] == 2
+        assert body["source"] == "Import: JSON Import"
+        assert body["errors"] == []
+
+    def test_markdown_import_happy_path(self, client, mock_components):
+        """A markdown upload imports every entry (criterion 1: markdown format)."""
+        mock_components["storage"].save_content_item.return_value = 1
+        md_content = (
+            "## Completed\n"
+            "- **Dune** by Frank Herbert | Rating: 5\n"
+            "- **Neuromancer** by William Gibson | Rating: 4\n"
+        )
+        response = client.post(
+            "/api/import",
+            data={"source": "markdown_import", "content_type": "book"},
+            files={"file": ("books.md", md_content, "text/markdown")},
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["items_synced"] == 2
+        assert body["total_items"] == 2
+        assert body["source"] == "Import: Markdown Import"
+        assert body["errors"] == []
+
+    def test_temp_file_cleaned_up_on_success(self, client):
+        """The streamed temp file is removed on the success path (criterion 7).
+
+        The existing suite only proves cleanup on failure; this locks in that
+        the ``finally`` block also runs after a successful import so uploads
+        never accumulate on disk.
+        """
+        captured: dict[str, Path] = {}
+
+        def succeed(**kwargs: Path) -> SyncResult:
+            file_path = kwargs["file_path"]
+            captured["file_path"] = file_path
+            # The temp file must still exist while the import runs.
+            assert file_path.exists()
+            return SyncResult(source_name="csv_import", items_synced=1, total_items=1)
+
+        with patch("src.web.api.import_file", side_effect=succeed):
+            response = client.post(
+                "/api/import",
+                data={"source": "csv_import", "content_type": "book"},
+                files={"file": ("x.csv", "title\nDune\n", "text/csv")},
+            )
+        assert response.status_code == 200, response.text
+        assert "file_path" in captured
+        assert not captured["file_path"].exists()
+
+    def test_missing_required_option_returns_400(self, client, mock_components):
+        """Omitting content_type for a generic format is a 400, not a 500.
+
+        csv_import requires a content_type option; without it the plugin's
+        validate_config fails, the service raises FileImportError, and the
+        endpoint must surface a clean 400.
+        """
+        mock_components["storage"].save_content_item.return_value = 1
+        response = client.post(
+            "/api/import",
+            data={"source": "csv_import"},
+            files={"file": ("x.csv", "title\nDune\n", "text/csv")},
+        )
+        assert response.status_code == 400
+        assert "content_type" in response.json()["detail"]
+
+    def test_empty_file_imports_zero_items(self, client, mock_components):
+        """An empty upload is a clean 200 with zero items, not an error.
+
+        An empty file yields no rows; the import completes successfully with
+        zero counts rather than failing or raising.
+        """
+        mock_components["storage"].save_content_item.return_value = 1
+        response = client.post(
+            "/api/import",
+            data={"source": "csv_import", "content_type": "book"},
+            files={"file": ("empty.csv", "", "text/csv")},
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["items_synced"] == 0
+        assert body["total_items"] == 0
+        assert body["errors"] == []
+
+    def test_wrong_format_file_returns_400(self, client, mock_components):
+        """A JSON file sent to csv_import surfaces a clean 400, not a 500.
+
+        The CSV parser sees no ``title`` column in the JSON content and raises
+        a SourceError, which the service wraps into a FileImportError -> 400.
+        """
+        mock_components["storage"].save_content_item.return_value = 1
+        json_content = json.dumps([{"name": "Dune"}, {"name": "Neuromancer"}], indent=2)
+        response = client.post(
+            "/api/import",
+            data={"source": "csv_import", "content_type": "book"},
+            files={"file": ("books.json", json_content, "application/json")},
+        )
+        assert response.status_code == 400
+        assert "Failed to import file" in response.json()["detail"]
+
+    def test_per_item_errors_surfaced_when_some_rows_fail(
+        self, client, mock_components
+    ):
+        """A file that parses but whose rows partially fail to save reports them.
+
+        The first item's save raises; the second succeeds. The endpoint must
+        return 200 with the surviving count and a safe per-item error string
+        (no raw exception text) for the failed row.
+        """
+        mock_components["storage"].save_content_item.side_effect = [
+            RuntimeError("db write failed"),
+            1,
+        ]
+        response = client.post(
+            "/api/import",
+            data={"source": "goodreads"},
+            files={"file": ("books.csv", _GOODREADS_CSV, "text/csv")},
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["items_synced"] == 1
+        assert body["total_items"] == 2
+        assert body["errors"] == ["Failed to process 'Dune'"]
+        # The raw exception text must never leak to the client.
+        assert "db write failed" not in json.dumps(body)
+
+    def test_concurrent_import_returns_409(self, client, mock_components):
+        """A second import for the same label while one runs is a 409.
+
+        Plants a RUNNING job under the import's label in the global
+        SyncManager, then posts an import that maps to the same label. The
+        endpoint must reject it with 409 rather than starting a duplicate.
+        """
+        mock_components["storage"].save_content_item.return_value = 1
+        manager = get_sync_manager()
+        with patch("src.web.sync_manager.threading.Thread"):
+            manager.start_sync(source="Import: Goodreads", sync_function=lambda _job: 0)
+        assert manager.is_running("Import: Goodreads") is True
+
+        response = client.post(
+            "/api/import",
+            data={"source": "goodreads"},
+            files={"file": ("books.csv", _GOODREADS_CSV, "text/csv")},
+        )
+        assert response.status_code == 409
+
+
+class TestRomsRemainsSyncable:
+    """The roms plugin is untouched by the file-import migration."""
+
+    def test_roms_not_importable_and_not_file_import(self, client):
+        """roms is excluded from file-import sources and is not a file import.
+
+        Criterion: roms keeps its directory-scan config and stays a syncable
+        source rather than being routed through the one-shot import flow.
+        """
+        from src.ingestion.registry import get_registry
+
+        roms = get_registry().get_plugin("roms")
+        assert roms is not None
+        assert roms.is_file_import is False
+        # Directory config (paths) is still part of its schema.
+        assert "paths" in {field.name for field in roms.get_config_schema()}
+
+        importable = client.get("/api/import/sources").json()
+        assert "roms" not in {plugin["name"] for plugin in importable}
