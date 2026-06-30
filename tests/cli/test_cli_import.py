@@ -98,6 +98,62 @@ class TestImportCommand:
         assert result.exit_code == 0, result.output
         assert "Imported 2/2 items from goodreads." in result.output
 
+    def test_per_item_error_warning_in_table_output(self, cli_runner, tmp_path):
+        """A row that fails to save surfaces a per-item warning in table output.
+
+        The first book's save raises and the second succeeds, so the import
+        completes with one item and prints a per-item warning for the failed
+        row (without leaking the raw exception text).
+        """
+        storage = MagicMock(spec=StorageManager)
+        storage.save_content_item.side_effect = [RuntimeError("db write failed"), 1]
+        data_file = tmp_path / "books.csv"
+        data_file.write_text(GOODREADS_CSV)
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["import", "--source", "goodreads", "--file", str(data_file)],
+            storage,
+        )
+        assert result.exit_code == 0, result.output
+        assert "Imported 1/2 items from goodreads." in result.output
+        assert "Warning: Failed to process 'Dune'" in result.output
+        # The raw exception text must never leak to the user.
+        assert "db write failed" not in result.output
+
+    def test_per_item_error_populates_json_errors(self, cli_runner, tmp_path):
+        """--format json surfaces failed rows in the errors array.
+
+        Mirrors the web POST /api/import per-item error contract: a partially
+        failing import still exits 0, reports the surviving count, and lists the
+        safe per-item error string for the failed row.
+        """
+        storage = MagicMock(spec=StorageManager)
+        storage.save_content_item.side_effect = [RuntimeError("db write failed"), 1]
+        data_file = tmp_path / "books.csv"
+        data_file.write_text(GOODREADS_CSV)
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            [
+                "import",
+                "--source",
+                "goodreads",
+                "--file",
+                str(data_file),
+                "--format",
+                "json",
+            ],
+            storage,
+        )
+        assert result.exit_code == 0, result.output
+        body = json.loads(result.output)
+        assert body["items_synced"] == 1
+        assert body["total_items"] == 2
+        assert body["errors"] == ["Failed to process 'Dune'"]
+        # The raw exception text must never leak to the user.
+        assert "db write failed" not in result.output
+
     def test_csv_import_passes_content_type_option(self, cli_runner, tmp_path):
         """--content-type is forwarded as the import option and drives parsing."""
         storage = MagicMock(spec=StorageManager)

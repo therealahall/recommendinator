@@ -3483,7 +3483,12 @@ class TestImportEndpoint:
         assert secret_path not in detail
 
     def test_auto_enrich_triggers_enrichment_on_success(self, client, mock_components):
-        """With auto-enrich configured, a successful import starts enrichment."""
+        """With auto-enrich configured, a successful import starts enrichment.
+
+        The completion callback must forward the live storage_manager and
+        config. A Goodreads upload carries no content_type form field, so the
+        enrichment run is unscoped (content_type is None) and covers all types.
+        """
         mock_components["storage"].save_content_item.return_value = 1
         app_state.config["enrichment"] = {
             "enabled": True,
@@ -3496,7 +3501,11 @@ class TestImportEndpoint:
                 files={"file": ("books.csv", GOODREADS_CSV, "text/csv")},
             )
         assert response.status_code == 200, response.text
-        mock_get.return_value.start_enrichment.assert_called_once()
+        mock_get.return_value.start_enrichment.assert_called_once_with(
+            storage_manager=mock_components["storage"],
+            config=app_state.config,
+            content_type=None,
+        )
 
 
 class TestRomsRemainsSyncable:

@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from src.ingestion.plugin_base import ConfigField, SourcePlugin
+from src.ingestion.plugin_base import ConfigField, ProgressCallback, SourcePlugin
 from src.ingestion.registry import PluginRegistry
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.manager import StorageManager
@@ -193,7 +193,11 @@ class FakeFileImportPlugin(SourcePlugin):
     def validate_config(self, config: dict[str, Any], **kwargs: Any) -> list[str]:
         return []
 
-    def fetch(self, config: dict[str, Any]) -> Iterator[ContentItem]:
+    def fetch(
+        self,
+        config: dict[str, Any],
+        progress_callback: ProgressCallback | None = None,
+    ) -> Iterator[ContentItem]:
         yield ContentItem(
             id="file_1",
             title="Fake File Item",

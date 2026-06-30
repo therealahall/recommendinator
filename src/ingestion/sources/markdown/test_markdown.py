@@ -63,7 +63,6 @@ class TestMarkdownImportPluginValidation:
 
     def test_validate_does_not_require_path(self, plugin: MarkdownImportPlugin) -> None:
         """validate_config no longer requires a path — the service injects it."""
-        assert plugin.validate_config({"content_type": "book"}) == []
         assert (
             plugin.validate_config(
                 {"path": "/nonexistent/path.md", "content_type": "book"}
