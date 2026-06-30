@@ -5,13 +5,7 @@ from unittest.mock import MagicMock
 
 from src.storage.manager import StorageManager
 from tests.cli.conftest import _invoke_with_mocks
-
-# Goodreads CSV export header recognised by the goodreads plugin.
-_GOODREADS_CSV = (
-    "Title,Author,My Rating,Exclusive Shelf,Date Read\n"
-    "Dune,Frank Herbert,5,read,2020/01/01\n"
-    "Neuromancer,William Gibson,4,read,2020/02/01\n"
-)
+from tests.import_test_data import GOODREADS_CSV
 
 # Generic JSON array recognised by the json_import plugin.
 _JSON_BOOKS = json.dumps(
@@ -41,17 +35,60 @@ class TestImportCommand:
         )
         assert result.exit_code == 0, result.output
         data = json.loads(result.output)
-        names = [plugin["name"] for plugin in data]
-        assert names == ["csv_import", "goodreads", "json_import", "markdown_import"]
+        names = {plugin["name"] for plugin in data}
+        # Subset (not equality) so adding a fifth file-import plugin later does
+        # not break this test; the contract is that these four are importable.
+        assert {"csv_import", "goodreads", "json_import", "markdown_import"} <= names
+        # Syncable sources are excluded from the importable listing.
+        assert "roms" not in names
         csv_plugin = next(p for p in data if p["name"] == "csv_import")
         assert [f["name"] for f in csv_plugin["fields"]] == ["content_type"]
+
+    def test_import_result_json_matches_web_fields(self, cli_runner, tmp_path):
+        """--format json on a real import emits the web ImportResultResponse shape.
+
+        The CLI previously honoured --format only for --source list; an actual
+        import always printed prose. This pins the JSON result path so a JSON
+        consumer gets the same fields (including errors) from either interface.
+        """
+        storage = MagicMock(spec=StorageManager)
+        storage.save_content_item.return_value = 1
+        data_file = tmp_path / "books.csv"
+        data_file.write_text(GOODREADS_CSV)
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            [
+                "import",
+                "--source",
+                "goodreads",
+                "--file",
+                str(data_file),
+                "--format",
+                "json",
+            ],
+            storage,
+        )
+        assert result.exit_code == 0, result.output
+        body = json.loads(result.output)
+        assert set(body) == {
+            "message",
+            "source",
+            "items_synced",
+            "total_items",
+            "errors",
+        }
+        assert body["source"] == "goodreads"
+        assert body["items_synced"] == 2
+        assert body["total_items"] == 2
+        assert body["errors"] == []
 
     def test_goodreads_import_success(self, cli_runner, tmp_path):
         """A Goodreads CSV file imports every parsed book."""
         storage = MagicMock(spec=StorageManager)
         storage.save_content_item.return_value = 1
         data_file = tmp_path / "books.csv"
-        data_file.write_text(_GOODREADS_CSV)
+        data_file.write_text(GOODREADS_CSV)
 
         result = _invoke_with_mocks(
             cli_runner,

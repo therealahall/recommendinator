@@ -21,6 +21,7 @@ from src.conversation.engine import ConversationEngine
 from src.conversation.profile import ProfileGenerator
 from src.enrichment.manager import EnrichmentManager
 from src.ingestion.import_service import FileImportError, import_file
+from src.ingestion.registry import get_registry
 from src.ingestion.sync import (
     MAX_WORKERS_CEILING,
     execute_multi_source_sync,
@@ -533,7 +534,7 @@ def _list_importable_sources(output_format: str) -> None:
     "output_format",
     type=click.Choice(["table", "json"], case_sensitive=False),
     default="table",
-    help="Output format for --source list",
+    help="Output format for the source listing and the import result",
 )
 @click.pass_context
 def import_data(
@@ -604,6 +605,27 @@ def import_data(
     except FileImportError as error:
         click.echo(f"Error: {error}", err=True)
         raise click.Abort() from error
+
+    if output_format == "json":
+        # Mirror the fields POST /api/import returns so JSON consumers get the
+        # same shape (including per-item errors) from either interface.
+        imported_plugin = get_registry().get_plugin(source)
+        display_name = imported_plugin.display_name if imported_plugin else source
+        click.echo(
+            json.dumps(
+                {
+                    "message": (
+                        f"Imported {result.items_synced} item(s) from {display_name}."
+                    ),
+                    "source": source,
+                    "items_synced": result.items_synced,
+                    "total_items": result.total_items,
+                    "errors": result.errors,
+                },
+                indent=2,
+            )
+        )
+        return
 
     click.echo(
         f"Imported {result.items_synced}/{result.total_items} items from {source}."
