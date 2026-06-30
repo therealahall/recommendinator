@@ -39,6 +39,7 @@ class PluginInfo:
     requires_api_key: bool
     requires_network: bool
     config_schema: list[ConfigField] = field(default_factory=list)
+    is_file_import: bool = False
 
 
 class SourceError(Exception):
@@ -186,6 +187,22 @@ class SourcePlugin(ABC):
             True if network access is required, False otherwise
         """
         return self.requires_api_key
+
+    @property
+    def is_file_import(self) -> bool:
+        """Whether this plugin imports a single user-supplied file.
+
+        File-import plugins (Goodreads, CSV, JSON, Markdown) are not
+        persistent syncable sources: a file is supplied at invocation
+        time (a web upload or the CLI ``import --file`` flag), run
+        through the ingestion pipeline once, and discarded. ``True`` here
+        keeps the plugin out of the syncable-source list and routes it
+        through the one-shot import service instead.
+
+        Returns:
+            True for one-shot file-import plugins, False otherwise.
+        """
+        return False
 
     @abstractmethod
     def get_config_schema(self) -> list[ConfigField]:
@@ -337,4 +354,5 @@ class SourcePlugin(ABC):
             requires_api_key=self.requires_api_key,
             requires_network=self.requires_network,
             config_schema=self.get_config_schema(),
+            is_file_import=self.is_file_import,
         )

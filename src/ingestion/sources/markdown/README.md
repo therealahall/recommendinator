@@ -8,19 +8,18 @@ Imports content items from a single Markdown file using a prescriptive list-per-
 ## Requirements
 - A `.md` file with `## Status` section headings and `- **Title** by Creator | metadata` list items.
 
-## Configuration
+## Importing
 
-```yaml
-inputs:
-  markdown_import:
-    path: "/path/to/library.md"
-    content_type: "book"   # or movie, tv_show, video_game
+This is a one-shot file import, not a syncable `inputs:` source. Upload the file
+from the web **Data** tab (**Import from file**) or run:
+
+```bash
+python3.11 -m src.cli import --source markdown_import --file /path/to/library.md --content-type book
 ```
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `path` | str | yes | Path to the Markdown file. |
-| `content_type` | str | yes | One of: `book`, `movie`, `tv_show`, `video_game`. |
+| Option | Required | Description |
+|--------|----------|-------------|
+| `content_type` | yes | One of: `book`, `movie`, `tv_show`, `video_game`. |
 
 ## File format
 

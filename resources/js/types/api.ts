@@ -145,6 +145,24 @@ export interface SourceCreateRequest {
   enabled: boolean
 }
 
+// --- File import ---
+
+export interface ImportSourceResponse {
+  name: string
+  display_name: string
+  description: string
+  content_types: string[]
+  fields: SourceFieldSchema[]
+}
+
+export interface ImportResultResponse {
+  message: string
+  source: string
+  items_synced: number
+  total_items: number
+  errors: string[]
+}
+
 export interface SyncSourceProgressResponse {
   source: string
   items_processed: number

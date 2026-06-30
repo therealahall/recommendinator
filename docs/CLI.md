@@ -7,13 +7,13 @@ Commands are organized into groups.
 All commands are run as `python3.11 -m src.cli <command>`. Most read-only
 commands accept `--format json` for scripting.
 
-## Import & recommend
+## Sync & recommend
 
 ```bash
-# Import data
-python3.11 -m src.cli update --source goodreads
+# Sync data from configured (syncable) sources
 python3.11 -m src.cli update --source steam
 python3.11 -m src.cli update --source all
+python3.11 -m src.cli update --source list   # show configured sources
 
 # Get recommendations
 python3.11 -m src.cli recommend --type book --count 10
@@ -22,6 +22,48 @@ python3.11 -m src.cli recommend --type video_game --count 5
 # Mark content as completed
 python3.11 -m src.cli complete --type book --title "Project Hail Mary" --rating 5
 ```
+
+`update` drives the syncable sources (Steam, GOG, Epic, Sonarr, Radarr, ROM
+Library). One-shot file imports (Goodreads, CSV, JSON, Markdown) use the separate
+`import` command below.
+
+## Importing from a file
+
+The `import` command runs a single file through a file-import plugin — the CLI
+peer of the web **Data** tab's **Import from file** button (`POST /api/import`).
+It reads a real path off disk, runs the file through the ingestion pipeline,
+streams progress, prints the item counts, and exits non-zero on failure.
+
+The CLI reads local files directly with no size cap. The web upload is capped
+at 50 MB — files over the cap are rejected with HTTP 413. The cap applies only
+to the web upload, not the CLI.
+
+```bash
+# Import a Goodreads CSV export (Goodreads takes no extra options)
+python3.11 -m src.cli import --source goodreads --file inputs/goodreads_library_export.csv
+
+# Import a generic CSV/JSON/Markdown file (content type is required for these)
+python3.11 -m src.cli import --source csv_import --file my_movies.csv --content-type movie
+python3.11 -m src.cli import --source json_import --file my_books.json --content-type book
+python3.11 -m src.cli import --source markdown_import --file my_shows.md --content-type tv_show
+
+# List importable sources and the options each one accepts
+python3.11 -m src.cli import --source list
+python3.11 -m src.cli import --source list --format json   # matches GET /api/import/sources
+```
+
+Flags:
+
+- `--source` — the file-import plugin name (`goodreads`, `csv_import`,
+  `json_import`, `markdown_import`), or `list` to show importable sources.
+- `--file` — path to the file to import (required unless `--source list`).
+- `--content-type` — `book`, `movie`, `tv_show`, or `video_game`; required by the
+  three generic formats, ignored by Goodreads.
+- `--option KEY=VALUE` — additional import option, repeatable (for plugin options
+  beyond `content-type`).
+- `--format table|json` — output format (default `table`) for both the source
+  listing (`--source list`) and the final import result. In `json`, an import
+  emits `{message, source, items_synced, total_items, errors}`.
 
 ## System status
 
@@ -88,24 +130,27 @@ these marks the item enriched via the `manual` provider, so it drops out of the
 Add, edit, enable/disable, and remove data sources without editing YAML. Sources
 can live in YAML (bootstrap), in the database (created or migrated), or both.
 
+The `source` group manages syncable sources only — file imports (Goodreads, CSV,
+JSON, Markdown) have no persistent config and are handled by `import` above.
+
 ```bash
 # Create a brand-new source directly in the database (no YAML edit needed)
 python3.11 -m src.cli source plugins             # see what plugins are available
-python3.11 -m src.cli source create my_books goodreads
-python3.11 -m src.cli source set-secret my_books api_key   # add credentials
+python3.11 -m src.cli source create my_steam steam
+python3.11 -m src.cli source set-secret my_steam api_key   # add credentials
 
 # Move an existing YAML source into the database (one-time, idempotent)
-python3.11 -m src.cli source migrate goodreads
+python3.11 -m src.cli source migrate steam
 
 # Inspect / edit fields after migration or creation
-python3.11 -m src.cli source show goodreads
-python3.11 -m src.cli source schema goodreads           # list editable fields
-python3.11 -m src.cli source set goodreads path inputs/new_export.csv
-python3.11 -m src.cli source disable goodreads          # disabled sources are skipped during sync
-python3.11 -m src.cli source enable goodreads
+python3.11 -m src.cli source show steam
+python3.11 -m src.cli source schema steam               # list editable fields
+python3.11 -m src.cli source set steam vanity_url my-handle
+python3.11 -m src.cli source disable steam              # disabled sources are skipped during sync
+python3.11 -m src.cli source enable steam
 
 # Remove a DB-backed source entirely (clears stored secrets too)
-python3.11 -m src.cli source remove my_books
+python3.11 -m src.cli source remove my_steam
 ```
 
 All `source` subcommands except `set-secret` and `clear-secret` accept
@@ -114,8 +159,8 @@ updates (the CLI equivalent of `PUT /api/sync/sources/<id>/config`), use
 `source apply` with a JSON dict from a file or stdin:
 
 ```bash
-echo '{"path": "inputs/new.csv", "content_type": "book"}' \
-  | python3.11 -m src.cli source apply my_csv --from-json -
+echo '{"url": "http://localhost:8989", "content_type": "tv_show"}' \
+  | python3.11 -m src.cli source apply my_sonarr --from-json -
 ```
 
 For non-interactive secret rotation (Docker entrypoints, CI), set

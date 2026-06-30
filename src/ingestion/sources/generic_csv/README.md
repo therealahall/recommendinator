@@ -8,19 +8,18 @@ Imports content items from a generic CSV file. Each input maps to a single conte
 ## Requirements
 - A CSV file with at minimum a `title` column for the configured content type.
 
-## Configuration
+## Importing
 
-```yaml
-inputs:
-  csv_import:
-    path: "/path/to/library.csv"
-    content_type: "book"   # or movie, tv_show, video_game
+This is a one-shot file import, not a syncable `inputs:` source. Upload the CSV
+from the web **Data** tab (**Import from file**) or run:
+
+```bash
+python3.11 -m src.cli import --source csv_import --file /path/to/library.csv --content-type book
 ```
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `path` | str | yes | Path to the CSV file. |
-| `content_type` | str | yes | One of: `book`, `movie`, `tv_show`, `video_game`. |
+| Option | Required | Description |
+|--------|----------|-------------|
+| `content_type` | yes | One of: `book`, `movie`, `tv_show`, `video_game`. |
 
 ## Recognized columns
 - Universal: `title`, `status`, `rating`, `date_completed`, `review`, `notes`, `ignored`

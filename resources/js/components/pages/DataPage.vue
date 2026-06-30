@@ -3,10 +3,12 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useDataStore } from '@/stores/data'
 import SyncSourceAccordion from '@/components/organisms/SyncSourceAccordion.vue'
 import AddSourceModal from '@/components/organisms/AddSourceModal.vue'
+import ImportFileModal from '@/components/organisms/ImportFileModal.vue'
 import EnrichmentCard from '@/components/organisms/EnrichmentCard.vue'
 
 const data = useDataStore()
 const showAddSourceModal = ref(false)
+const showImportModal = ref(false)
 
 onMounted(() => {
   data.loadSyncSources()
@@ -45,12 +47,21 @@ const orderedSources = computed(() => {
     <div class="card">
       <div class="sync-sources-header">
         <h3>Sync Sources</h3>
-        <button
-          type="button"
-          class="btn btn-primary"
-          data-testid="add-source-btn"
-          @click="showAddSourceModal = true"
-        >+ Add source</button>
+        <div class="sync-sources-header-actions">
+          <button
+            type="button"
+            class="btn btn-primary"
+            data-testid="add-source-btn"
+            @click="showAddSourceModal = true"
+          >+ Add source</button>
+          <button
+            type="button"
+            class="btn btn-secondary"
+            data-testid="import-file-btn"
+            aria-haspopup="dialog"
+            @click="showImportModal = true"
+          >Import from file</button>
+        </div>
       </div>
       <div
         v-if="data.syncMessage"
@@ -108,6 +119,11 @@ const orderedSources = computed(() => {
       @close="showAddSourceModal = false"
       @created="() => (showAddSourceModal = false)"
     />
+
+    <ImportFileModal
+      v-if="showImportModal"
+      @close="showImportModal = false"
+    />
   </div>
 </template>
 
@@ -118,6 +134,12 @@ const orderedSources = computed(() => {
   justify-content: space-between;
   gap: var(--space-3);
   margin-bottom: var(--space-3);
+}
+
+.sync-sources-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
 }
 
 .sync-accordion-list {

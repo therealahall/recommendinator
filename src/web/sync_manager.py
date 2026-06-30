@@ -17,6 +17,19 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+class SyncInProgressError(Exception):
+    """Raised when an inline tracked job starts while one for the same key runs.
+
+    ``run_import`` runs in the calling thread (so the caller can surface an
+    error), unlike the fire-and-forget ``start_sync``; it signals a duplicate
+    via this exception rather than a ``(success, message)`` tuple.
+    """
+
+    def __init__(self, source: str) -> None:
+        super().__init__(f"A job for {source} is already running")
+        self.source = source
+
+
 class SyncStatus(str, Enum):
     """Status of a sync job."""
 
@@ -228,18 +241,7 @@ class SyncManager:
         try:
             count = sync_function(job)
             with self._lock:
-                job.completed_at = datetime.now()
-                job.items_processed = count
-                # A sync that produced zero items but logged errors is a
-                # failure, not a success — plugins like Epic Games catch
-                # their own exceptions and report them via add_error, and
-                # the UI banner branches on the status field.
-                if count == 0 and job.errors:
-                    job.status = SyncStatus.FAILED
-                    job.error_message = job.errors[0]
-                else:
-                    job.status = SyncStatus.COMPLETED
-                final_status = job.status
+                final_status = self._finalize_job_locked(job, count)
                 error_count = len(job.errors)
 
             if final_status == SyncStatus.COMPLETED:
@@ -263,6 +265,84 @@ class SyncManager:
                 job.completed_at = datetime.now()
                 job.error_message = "Sync failed due to an internal error"
             logger.error("Sync failed for %s", source, exc_info=True)
+
+    def _finalize_job_locked(self, job: SyncJob, count: int) -> SyncStatus:
+        """Transition a finished job to COMPLETED/FAILED. Caller holds the lock.
+
+        A job that produced zero items but logged errors is a failure, not a
+        success — plugins like Epic Games catch their own exceptions and
+        report them via ``add_error``, and the UI banner branches on status.
+        """
+        job.completed_at = datetime.now()
+        job.items_processed = count
+        if count == 0 and job.errors:
+            job.status = SyncStatus.FAILED
+            job.error_message = job.errors[0]
+        else:
+            job.status = SyncStatus.COMPLETED
+        return job.status
+
+    def run_import(
+        self,
+        source: str,
+        import_function: Callable[[SyncJob], int],
+        on_complete: Callable[[], None] | None = None,
+    ) -> int:
+        """Run a one-shot import inline, tracked as a job for status polling.
+
+        Unlike :meth:`start_sync` (background, fire-and-forget), this runs in
+        the calling thread and re-raises any exception so the web handler can
+        map a ``FileImportError`` onto an HTTP response. The job is registered
+        and finalised exactly like a background sync, so :meth:`get_status`
+        reports its progress and final state to a polling frontend.
+
+        Args:
+            source: Label that identifies the job (used as the dict key).
+            import_function: Callable that performs the import, accepting the
+                ``SyncJob`` for progress updates and returning the item count.
+            on_complete: Optional callback run after a successful import.
+
+        Returns:
+            The number of items imported.
+
+        Raises:
+            SyncInProgressError: If a job for ``source`` is already running.
+        """
+        with self._lock:
+            existing = self._jobs.get(source)
+            if existing is not None and existing.status == SyncStatus.RUNNING:
+                raise SyncInProgressError(source)
+            job = SyncJob(
+                source=source,
+                status=SyncStatus.RUNNING,
+                started_at=datetime.now(),
+            )
+            self._jobs[source] = job
+            self._evict_history_locked()
+
+        try:
+            count = import_function(job)
+        except Exception as error:
+            with self._lock:
+                job.status = SyncStatus.FAILED
+                job.completed_at = datetime.now()
+                if job.error_message is None:
+                    # Prefer a per-item error; otherwise fall back to the raised
+                    # exception so a failure before any add_error still reports a
+                    # message instead of leaving error_message None.
+                    job.error_message = job.errors[0] if job.errors else str(error)
+            raise
+
+        with self._lock:
+            final_status = self._finalize_job_locked(job, count)
+
+        if final_status == SyncStatus.COMPLETED and on_complete is not None:
+            try:
+                on_complete()
+            except Exception as callback_error:
+                logger.error("Import on_complete callback failed: %s", callback_error)
+
+        return count
 
     def update_progress(
         self,

@@ -10,15 +10,14 @@ body:
         Describe the bug: what you did, what you expected, what happened instead.
         Include reproduction steps and any error output (remove secrets first).
       placeholder: |
-        Syncing my Goodreads library fails after ~50 items.
+        Importing my Goodreads library fails after ~50 items.
         Expected all items to import; instead got a KeyError.
 
         Repro:
-        1. Configure goodreads source in config.yaml
-        2. Run `python3.11 -m src.cli update --source goodreads`
+        1. Run `python3.11 -m src.cli import --source goodreads --file goodreads_library_export.csv`
 
         Traceback (most recent call last):
-          File "src/ingestion/sources/goodreads.py", line 42, in fetch
+          File "src/ingestion/sources/goodreads/goodreads.py", line 42, in fetch
             ...
         KeyError: 'Date Read'
     validations:

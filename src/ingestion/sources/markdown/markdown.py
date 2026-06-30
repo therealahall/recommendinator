@@ -97,14 +97,12 @@ class MarkdownImportPlugin(SourcePlugin):
     def requires_network(self) -> bool:
         return False
 
+    @property
+    def is_file_import(self) -> bool:
+        return True
+
     def get_config_schema(self) -> list[ConfigField]:
         return [
-            ConfigField(
-                name="path",
-                field_type=str,
-                required=True,
-                description="Path to Markdown file in the prescribed format",
-            ),
             ConfigField(
                 name="content_type",
                 field_type=str,
@@ -120,12 +118,6 @@ class MarkdownImportPlugin(SourcePlugin):
         user_id: int = 1,
     ) -> list[str]:
         errors = []
-
-        path = config.get("path")
-        if not path:
-            errors.append("'path' is required")
-        elif not Path(path).resolve().exists():
-            errors.append(f"Markdown file not found: {path}")
 
         content_type = config.get("content_type", "")
         valid_types = [content_type_enum.value for content_type_enum in ContentType]

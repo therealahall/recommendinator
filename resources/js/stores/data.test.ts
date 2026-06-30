@@ -5,6 +5,7 @@ import { ApiError } from '@/composables/useApi'
 
 const mockGet = vi.fn()
 const mockPost = vi.fn()
+const mockPostForm = vi.fn()
 const mockPut = vi.fn()
 const mockDelete = vi.fn()
 
@@ -18,6 +19,7 @@ vi.mock('@/composables/useApi', () => ({
   useApi: () => ({
     get: (...args: unknown[]) => mockGet(...args),
     post: (...args: unknown[]) => mockPost(...args),
+    postForm: (...args: unknown[]) => mockPostForm(...args),
     put: (...args: unknown[]) => mockPut(...args),
     patch: vi.fn(),
     delete: (...args: unknown[]) => mockDelete(...args),
@@ -31,6 +33,7 @@ describe('useDataStore', () => {
     vi.useFakeTimers()
     mockGet.mockReset()
     mockPost.mockReset()
+    mockPostForm.mockReset()
     mockPut.mockReset()
     mockDelete.mockReset()
   })
@@ -46,6 +49,7 @@ describe('useDataStore', () => {
     expect(store.syncJobs).toEqual([])
     expect(store.isSourceIdSyncing('steam')).toBe(false)
     expect(store.enrichmentStats).toBeNull()
+    expect(store.importSources).toEqual([])
   })
 
   it('loadSyncSources fetches sources and auth status', async () => {
@@ -1088,6 +1092,76 @@ describe('useDataStore', () => {
       await expect(store.deleteSource('still_here')).rejects.toBe(error)
       // The listing is untouched so the UI keeps showing the source.
       expect(store.syncSources.map((s) => s.id)).toEqual(['still_here'])
+    })
+  })
+
+  describe('file import flows', () => {
+    it('loadImportSources fetches and caches the importable plugins', async () => {
+      const sources = [
+        {
+          name: 'csv_import',
+          display_name: 'CSV Import',
+          description: 'Import a generic CSV file.',
+          content_types: ['book', 'movie'],
+          fields: [],
+        },
+      ]
+      mockGet.mockResolvedValueOnce(sources)
+
+      const store = useDataStore()
+      const result = await store.loadImportSources()
+
+      expect(mockGet).toHaveBeenCalledWith('/import/sources')
+      expect(result).toEqual(sources)
+      expect(store.importSources).toEqual(sources)
+    })
+
+    it('runImport posts a multipart body and starts sync polling', async () => {
+      const importResult = {
+        message: 'Imported 3 item(s) from CSV Import.',
+        source: 'Import: CSV Import',
+        items_synced: 3,
+        total_items: 3,
+        errors: [],
+      }
+      mockPostForm.mockResolvedValueOnce(importResult)
+
+      const store = useDataStore()
+      const file = new File(['title\nDune'], 'books.csv', { type: 'text/csv' })
+      const result = await store.runImport('csv_import', file, {
+        content_type: 'book',
+      })
+
+      expect(result).toEqual(importResult)
+      expect(mockPostForm).toHaveBeenCalledTimes(1)
+      const [path, body] = mockPostForm.mock.calls[0]
+      expect(path).toBe('/import')
+      expect(body).toBeInstanceOf(FormData)
+      const form = body as FormData
+      expect(form.get('source')).toBe('csv_import')
+      expect(form.get('file')).toBe(file)
+      expect(form.get('content_type')).toBe('book')
+
+      // Polling is live after dispatch — a tick fetches /sync/status.
+      mockGet.mockResolvedValueOnce({ status: 'idle', jobs: [] })
+      await vi.advanceTimersByTimeAsync(2000)
+      expect(mockGet).toHaveBeenCalledWith('/sync/status')
+
+      store.cleanup()
+    })
+
+    it('runImport propagates the ApiError to the caller', async () => {
+      const error = new ApiError(400, 'Bad Request')
+      mockPostForm.mockRejectedValueOnce(error)
+
+      const store = useDataStore()
+      const file = new File(['oops'], 'bad.csv', { type: 'text/csv' })
+
+      await expect(
+        store.runImport('csv_import', file, {}),
+      ).rejects.toBe(error)
+
+      store.cleanup()
     })
   })
 })

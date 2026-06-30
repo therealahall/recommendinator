@@ -104,7 +104,7 @@ volume entry — the application is happy without it.
 |----------------|------|---------|
 | `/app/config` | `rw` | Configuration. Container creates `config.yaml` from `example.yaml` on first run if missing; never overwrites an existing file. **Edit `./config/config.yaml` on the host.** |
 | `/app/data` | `rw` | SQLite database, ChromaDB vectors (AI variant), credential keys, cache. Backed by your host filesystem so it survives container restarts and updates. |
-| `/app/inputs` | `ro` | Source files for ingestion plugins (e.g., `goodreads_library_export.csv`). Read-only because the app shouldn't be modifying your exports. |
+| `/app/inputs` | `ro` | Files for CLI file imports (e.g., `goodreads_library_export.csv` for `import --file /app/inputs/...`). Read-only because the app shouldn't be modifying your exports. Web uploads via the **Import from file** button don't need this mount. |
 | `/app/private` | `ro` | Optional. Private/personal plugin code (gitignored from the repo). Leave the host directory empty if you don't have any. |
 
 ### Ports

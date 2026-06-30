@@ -37,7 +37,12 @@ async function request<T>(path: string, options: ApiOptions = {}): Promise<T> {
   const url = buildUrl(path, params)
 
   const headers: HeadersInit = { ...fetchOptions.headers }
-  if (fetchOptions.body !== undefined) {
+  // FormData sets its own multipart Content-Type (with boundary); only force
+  // JSON for plain-object bodies.
+  if (
+    fetchOptions.body !== undefined &&
+    !(fetchOptions.body instanceof FormData)
+  ) {
     ;(headers as Record<string, string>)['Content-Type'] = 'application/json'
   }
 
@@ -80,6 +85,10 @@ export function useApi() {
         method: 'PATCH',
         body: body !== undefined ? JSON.stringify(body) : undefined,
       })
+    },
+
+    postForm<T>(path: string, body: FormData) {
+      return request<T>(path, { method: 'POST', body })
     },
 
     delete<T>(path: string) {
