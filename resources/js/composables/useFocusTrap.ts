@@ -1,7 +1,7 @@
 import { type Ref, onMounted, onUnmounted, nextTick } from 'vue'
 
 const FOCUSABLE_SELECTOR =
-  'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+  'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary:not([hidden]), a[href], [tabindex]:not([tabindex="-1"])'
 
 /**
  * Only one focus trap should be active at a time in this application.

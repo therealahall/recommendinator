@@ -179,8 +179,27 @@ describe('ImportFileModal', () => {
     const banner = wrapper.find('.sync-status-success')
     expect(banner.exists()).toBe(true)
     expect(banner.text()).toContain('Imported 5 of 6 items.')
+    // Success/progress live on a fixed polite-status node, separate from errors.
+    expect(banner.attributes('role')).toBe('status')
+    expect(banner.attributes('aria-live')).toBe('polite')
     expect(wrapper.find('[data-testid="import-done"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="import-submit"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('moves focus to the Done button after a successful import', async () => {
+    // The Import button is removed when the result arrives; focus must follow
+    // to Done so keyboard users stay inside the trap rather than dropping to
+    // <body> (WCAG 2.4.3).
+    const { wrapper, store } = await setup([csvSource])
+    vi.spyOn(store, 'runImport').mockResolvedValue(importResult())
+    setFile(wrapper)
+    await flushPromises()
+    await wrapper.find('[data-testid="import-submit"]').trigger('click')
+    await flushPromises()
+
+    const done = wrapper.find('[data-testid="import-done"]').element
+    expect(document.activeElement).toBe(done)
     wrapper.unmount()
   })
 
@@ -226,6 +245,23 @@ describe('ImportFileModal', () => {
     expect(banner.attributes('aria-live')).toBe('assertive')
     // A 400 must keep the form populated so the user can retry.
     expect(wrapper.find('#import-file').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('shows a generic error banner when runImport throws a non-ApiError', async () => {
+    const { wrapper, store } = await setup([csvSource])
+    vi.spyOn(store, 'runImport').mockRejectedValue(new Error('boom'))
+    setFile(wrapper)
+    await flushPromises()
+    await wrapper.find('[data-testid="import-submit"]').trigger('click')
+    await flushPromises()
+
+    const banner = wrapper.find('.sync-status-error')
+    expect(banner.exists()).toBe(true)
+    expect(banner.text()).toContain('Something went wrong during the import.')
+    // The error lives on its own fixed-role node so AT re-announces it.
+    expect(banner.attributes('role')).toBe('alert')
+    expect(banner.attributes('aria-live')).toBe('assertive')
     wrapper.unmount()
   })
 

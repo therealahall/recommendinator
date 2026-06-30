@@ -49,6 +49,7 @@ describe('useDataStore', () => {
     expect(store.syncJobs).toEqual([])
     expect(store.isSourceIdSyncing('steam')).toBe(false)
     expect(store.enrichmentStats).toBeNull()
+    expect(store.importSources).toEqual([])
   })
 
   it('loadSyncSources fetches sources and auth status', async () => {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useFocusTrap } from '@/composables/useFocusTrap'
 import { ApiError } from '@/composables/useApi'
 import { useDataStore } from '@/stores/data'
@@ -7,13 +7,14 @@ import { truncate } from '@/utils/format'
 import { CONTENT_TYPE_OPTIONS } from '@/constants/contentTypes'
 import type { ImportResultResponse, ImportSourceResponse } from '@/types/api'
 
-const data = useDataStore()
-const modalContent = ref<HTMLElement | null>(null)
-useFocusTrap(modalContent, () => emit('close'))
-
 const emit = defineEmits<{
   close: []
 }>()
+
+const data = useDataStore()
+const modalContent = ref<HTMLElement | null>(null)
+const doneButton = ref<HTMLButtonElement | null>(null)
+useFocusTrap(modalContent, () => emit('close'))
 
 const sourceName = ref<string>('')
 const file = ref<File | null>(null)
@@ -61,6 +62,17 @@ watch(sourceName, () => {
   resultError.value = ''
 })
 
+// When the result banner arrives it swaps the Cancel/Import buttons for a
+// single Done button, so the focused Import button leaves the DOM and focus
+// would fall to <body>, escaping the trap. Move focus to Done (or the dialog
+// container as a fallback) to keep keyboard users inside the modal (WCAG 2.4.3).
+watch(result, (value) => {
+  if (!value) return
+  void nextTick(() => {
+    ;(doneButton.value ?? modalContent.value)?.focus()
+  })
+})
+
 const contentTypeOptions = computed(() => {
   const allowed = new Set(selectedSource.value?.content_types ?? [])
   return CONTENT_TYPE_OPTIONS.filter(
@@ -68,6 +80,9 @@ const contentTypeOptions = computed(() => {
   )
 })
 
+// The four controlled import plugins encode their format in the plugin name
+// (csv_import, json_import, markdown_import, goodreads → CSV), so we infer the
+// accepted file types from the name rather than widening the API contract.
 const importFormat = computed<'csv' | 'json' | 'markdown'>(() => {
   const name = selectedSource.value?.name ?? ''
   if (name.includes('json')) return 'json'
@@ -104,8 +119,10 @@ const requiredFilled = computed(() =>
   ),
 )
 
-// A sync or import job already running blocks a new import (the server
-// returns 409); disable Import up front rather than letting the request fail.
+// Conservative client-side gate: while ANY sync or import job is running we
+// disable Import to serialize all imports for a simpler UX. This is broader
+// than the server, which only returns 409 when an import with this same label
+// is already running — we intentionally block more to avoid surprising the user.
 const anyJobRunning = computed(() => data.syncStatus === 'running')
 
 const canSubmit = computed(
@@ -151,10 +168,6 @@ const successCounts = computed(() =>
 const skippedCount = computed(() => result.value?.errors.length ?? 0)
 const skippedSummary = computed(
   () => `${skippedCount.value} row${skippedCount.value === 1 ? '' : 's'} skipped`,
-)
-
-const bannerVisible = computed(
-  () => !!resultError.value || !!result.value || submitting.value,
 )
 
 function onFileChange(event: Event): void {
@@ -222,6 +235,7 @@ async function submit(): Promise<void> {
           id="import-source"
           v-model="sourceName"
           :disabled="submitting"
+          :aria-describedby="selectedSource ? 'import-source-desc' : undefined"
         >
           <option
             v-for="source in data.importSources"
@@ -229,7 +243,7 @@ async function submit(): Promise<void> {
             :value="source.name"
           >{{ source.display_name }}</option>
         </select>
-        <p v-if="selectedSource" class="help-text">
+        <p v-if="selectedSource" id="import-source-desc" class="help-text">
           {{ selectedSource.description }}
         </p>
       </div>
@@ -241,9 +255,10 @@ async function submit(): Promise<void> {
           type="file"
           :accept="acceptAttr"
           :disabled="submitting"
+          aria-describedby="import-file-accepted"
           @change="onFileChange"
         />
-        <p class="help-text">{{ acceptedExtensionsText }}</p>
+        <p id="import-file-accepted" class="help-text">{{ acceptedExtensionsText }}</p>
         <p v-if="file" class="help-text">Selected file: {{ file.name }}</p>
       </div>
 
@@ -334,24 +349,30 @@ async function submit(): Promise<void> {
       </div>
 
       <!--
-        Single banner kept mounted via v-show so assistive tech announces the
-        text change. Error uses an assertive alert; info/success are polite.
+        Two banners with FIXED roles, both kept mounted via v-show. Assistive
+        tech may not re-read a node whose role flips, so errors and progress/
+        success live in separate elements (WCAG 4.1.3). Each signals state with
+        text + an icon, never colour alone.
       -->
       <div
-        v-show="bannerVisible"
+        v-show="resultError"
+        class="sync-status-message sync-status-error"
+        role="alert"
+        aria-live="assertive"
+      >
+        <span aria-hidden="true">⚠ </span>{{ resultError }}
+      </div>
+      <div
+        v-show="(result && !resultError) || (submitting && !result)"
         class="sync-status-message"
-        :role="resultError ? 'alert' : 'status'"
-        :aria-live="resultError ? 'assertive' : 'polite'"
+        role="status"
+        aria-live="polite"
         :class="{
-          'sync-status-error': resultError,
           'sync-status-success': result && !resultError,
           'sync-status-info': submitting && !result && !resultError,
         }"
       >
-        <template v-if="resultError">
-          <span aria-hidden="true">⚠ </span>{{ resultError }}
-        </template>
-        <template v-else-if="result">
+        <template v-if="result && !resultError">
           <span aria-hidden="true">✓ </span>{{ result.message }} {{ successCounts }}
         </template>
         <template v-else-if="submitting">Importing…</template>
@@ -368,13 +389,15 @@ async function submit(): Promise<void> {
       </details>
 
       <p
-        v-if="!result && !submitting && disabledReason"
+        v-show="!result && !submitting && disabledReason"
+        id="import-disabled-reason"
         class="help-text"
       >{{ disabledReason }}</p>
 
       <div class="import-modal-actions">
         <template v-if="result">
           <button
+            ref="doneButton"
             type="button"
             class="btn btn-primary"
             data-testid="import-done"
@@ -393,6 +416,7 @@ async function submit(): Promise<void> {
             class="btn btn-primary"
             data-testid="import-submit"
             :disabled="!canSubmit"
+            :aria-describedby="disabledReason ? 'import-disabled-reason' : undefined"
             @click="submit"
           >{{ submitting ? 'Importing…' : 'Import' }}</button>
         </template>

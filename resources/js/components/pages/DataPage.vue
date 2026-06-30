@@ -58,6 +58,7 @@ const orderedSources = computed(() => {
             type="button"
             class="btn btn-secondary"
             data-testid="import-file-btn"
+            aria-haspopup="dialog"
             @click="showImportModal = true"
           >Import from file</button>
         </div>
