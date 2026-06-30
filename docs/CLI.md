@@ -34,6 +34,10 @@ peer of the web **Data** tab's **Import from file** button (`POST /api/import`).
 It reads a real path off disk, runs the file through the ingestion pipeline,
 streams progress, prints the item counts, and exits non-zero on failure.
 
+The CLI reads local files directly with no size cap. The web upload is capped
+at 50 MB — files over the cap are rejected with HTTP 413. The cap applies only
+to the web upload, not the CLI.
+
 ```bash
 # Import a Goodreads CSV export (Goodreads takes no extra options)
 python3.11 -m src.cli import --source goodreads --file inputs/goodreads_library_export.csv
@@ -57,7 +61,9 @@ Flags:
   three generic formats, ignored by Goodreads.
 - `--option KEY=VALUE` — additional import option, repeatable (for plugin options
   beyond `content-type`).
-- `--format table|json` — output format for `--source list`.
+- `--format table|json` — output format (default `table`) for both the source
+  listing (`--source list`) and the final import result. In `json`, an import
+  emits `{message, source, items_synced, total_items, errors}`.
 
 ## System status
 

@@ -47,7 +47,9 @@ Sonarr, Radarr, ROM Library) are configured once and synced repeatedly. See
 source, choose the file, and set any options the source needs — the three generic
 formats require a `content_type` (book, movie, tv_show, or video_game); Goodreads
 takes no options because it is always books. Submit to import. The import is
-tracked as a job, so progress shows in the same place as a sync.
+tracked as a job, so progress shows in the same place as a sync. Web uploads are
+capped at 50 MB — files over the cap are rejected with HTTP 413. (The CLI reads
+local files directly with no size cap.)
 
 **CLI:** use the `import` command — see
 [CLI.md](CLI.md#importing-from-a-file). For example:

@@ -1402,7 +1402,13 @@ async def import_data(
         file: The uploaded file.
 
     Returns:
-        The import result with item counts and any per-item errors.
+        The import result, with fields:
+
+        - ``message``: human-readable summary of the import.
+        - ``source``: the file-import plugin name the caller supplied.
+        - ``items_synced``: count of items successfully imported.
+        - ``total_items``: count of items parsed from the file.
+        - ``errors``: per-item error messages for rows that failed to import.
     """
     storage = get_storage()
     embedding_gen = get_embedding_gen()
