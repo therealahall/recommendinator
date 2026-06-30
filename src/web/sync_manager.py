@@ -322,12 +322,15 @@ class SyncManager:
 
         try:
             count = import_function(job)
-        except Exception:
+        except Exception as error:
             with self._lock:
                 job.status = SyncStatus.FAILED
                 job.completed_at = datetime.now()
-                if job.error_message is None and job.errors:
-                    job.error_message = job.errors[0]
+                if job.error_message is None:
+                    # Prefer a per-item error; otherwise fall back to the raised
+                    # exception so a failure before any add_error still reports a
+                    # message instead of leaving error_message None.
+                    job.error_message = job.errors[0] if job.errors else str(error)
             raise
 
         with self._lock:

@@ -3,7 +3,6 @@
 import json
 import logging
 import os
-import shutil
 import tempfile
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -17,7 +16,11 @@ from pydantic import BaseModel, Field
 
 from src import __version__ as APP_VERSION
 from src.cli.config import get_feature_flags
-from src.ingestion.import_service import FileImportError, import_file
+from src.ingestion.import_service import (
+    FILE_NOT_READABLE_MESSAGE,
+    FileImportError,
+    import_file,
+)
 from src.ingestion.plugin_base import SourcePlugin
 from src.ingestion.registry import get_registry
 from src.ingestion.sync import (
@@ -86,6 +89,12 @@ from src.web.sync_sources import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Upload cap for POST /api/import. Streaming the upload in chunks keeps the
+# event loop responsive and bounds disk use so an oversized upload cannot
+# exhaust the host (it is rejected with 413 once the cap is crossed).
+MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+_UPLOAD_CHUNK_BYTES = 1024 * 1024
 
 router = APIRouter(prefix="/api", tags=["api"])
 
@@ -1409,10 +1418,13 @@ async def import_data(
         )
 
     form = await request.form()
-    options: dict[str, Any] = {
-        field.name: form[field.name]
+    # Only accept string form values for options: a client could send a file
+    # part named like a config field, and an UploadFile must never enter the
+    # options dict passed to the plugin.
+    options: dict[str, str] = {
+        field.name: value
         for field in plugin.get_config_schema()
-        if field.name in form
+        if field.name in form and isinstance(value := form[field.name], str)
     }
 
     use_embeddings = get_feature_flags(config)["use_embeddings"]
@@ -1421,13 +1433,16 @@ async def import_data(
         "auto_enrich_on_sync", False
     )
 
+    # content_type only scopes the enrichment run, so derive it solely on the
+    # auto-enrich path where it is consumed.
     import_content_type: ContentType | None = None
-    content_type_value = options.get("content_type")
-    if content_type_value:
-        try:
-            import_content_type = ContentType(content_type_value)
-        except ValueError:
-            import_content_type = None
+    if auto_enrich:
+        content_type_value = options.get("content_type", "")
+        if content_type_value != "":
+            try:
+                import_content_type = ContentType(content_type_value)
+            except ValueError:
+                import_content_type = None
 
     sync_manager = get_sync_manager()
     job_label = f"Import: {plugin.display_name}"
@@ -1477,14 +1492,33 @@ async def import_data(
             )
 
     try:
+        # Stream the upload in chunks (await keeps the event loop free) and
+        # abort once the byte cap is crossed; the finally block removes the
+        # partial temp file on every exit path, including the 413.
+        total = 0
         with os.fdopen(fd, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+            while chunk := await file.read(_UPLOAD_CHUNK_BYTES):
+                total += len(chunk)
+                if total > MAX_UPLOAD_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=(
+                            f"Upload exceeds the "
+                            f"{MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit."
+                        ),
+                    )
+                buffer.write(chunk)
         await run_in_threadpool(
             sync_manager.run_import, job_label, run_import, on_complete
         )
     except FileImportError as error:
         # FileImportError messages are constructed strings (no stack traces);
-        # safe to surface so the user can fix the file or options.
+        # safe to surface so the user can fix the file or options — except the
+        # not-readable case, whose message embeds the internal temp path.
+        if str(error).startswith(FILE_NOT_READABLE_MESSAGE):
+            raise HTTPException(
+                status_code=400, detail="The uploaded file could not be read"
+            ) from error
         raise HTTPException(status_code=400, detail=str(error)) from error
     except SyncInProgressError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
@@ -1494,7 +1528,9 @@ async def import_data(
     result = captured["result"]
     return ImportResultResponse(
         message=f"Imported {result.items_synced} item(s) from {plugin.display_name}.",
-        source=job_label,
+        # The plugin name the user supplied — what a `source` field should mean.
+        # The internal "Import: <display_name>" job label stays in sync status.
+        source=source,
         items_synced=result.items_synced,
         total_items=result.total_items,
         errors=result.errors,

@@ -5,7 +5,10 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from src.web.sync_manager import (
+    SyncInProgressError,
     SyncJob,
     SyncManager,
     SyncStatus,
@@ -699,6 +702,56 @@ class TestSyncManagerRunSync:
         manager._run_sync("steam", sync_function)
 
         assert manager.get_status()["jobs"][0]["items_processed"] == 99
+
+
+class TestSyncManagerRunImport:
+    """run_import inline execution and failure reporting."""
+
+    def test_failure_without_per_item_errors_sets_error_message(self) -> None:
+        """A raise before any add_error still reports a non-null error_message.
+
+        run_import re-raises so the web handler can map the failure, but the
+        tracked job must still expose a message via get_status — otherwise a
+        polling client sees status=failed with error_message=None.
+        """
+        manager = SyncManager()
+
+        def boom(_job: SyncJob) -> int:
+            raise RuntimeError("import blew up")
+
+        with pytest.raises(RuntimeError, match="import blew up"):
+            manager.run_import("Import: Goodreads", boom)
+
+        job = manager.get_status()["jobs"][0]
+        assert job["status"] == "failed"
+        assert job["error_message"] == "import blew up"
+
+    def test_per_item_error_preferred_over_exception_message(self) -> None:
+        """When the job recorded a per-item error, it wins over the exception."""
+        manager = SyncManager()
+
+        def boom(job: SyncJob) -> int:
+            manager.add_error(job.source, "row 3 failed validation")
+            raise RuntimeError("downstream blew up")
+
+        with pytest.raises(RuntimeError):
+            manager.run_import("Import: Goodreads", boom)
+
+        job = manager.get_status()["jobs"][0]
+        assert job["status"] == "failed"
+        assert job["error_message"] == "row 3 failed validation"
+
+    def test_duplicate_running_label_raises(self) -> None:
+        """A second run_import for a label already running raises."""
+        manager = SyncManager()
+        manager._jobs["Import: Goodreads"] = SyncJob(
+            source="Import: Goodreads",
+            status=SyncStatus.RUNNING,
+            started_at=datetime.now(),
+        )
+
+        with pytest.raises(SyncInProgressError):
+            manager.run_import("Import: Goodreads", lambda _job: 0)
 
 
 class TestSyncManagerThreadCreation:

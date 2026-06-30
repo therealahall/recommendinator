@@ -1,16 +1,18 @@
 """Tests for web API endpoints."""
 
 import json
+import tempfile
 import threading
 from collections.abc import Callable
 from dataclasses import fields
 from pathlib import Path
+from typing import Any
 from unittest.mock import Mock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
-from src.ingestion.import_service import FileImportError
+from src.ingestion.import_service import FILE_NOT_READABLE_MESSAGE, FileImportError
 from src.ingestion.sync import SyncResult
 from src.llm.client import OllamaClient
 from src.llm.embeddings import EmbeddingGenerator
@@ -31,6 +33,7 @@ from src.web.sync_manager import (
     get_sync_manager,
     reset_sync_manager,
 )
+from tests.import_test_data import GOODREADS_CSV
 
 
 @pytest.fixture
@@ -3103,12 +3106,22 @@ class TestAuthDisconnectEndpoints:
         assert response.status_code == 404
 
 
-# Goodreads CSV export header recognised by the goodreads plugin.
-_GOODREADS_CSV = (
-    "Title,Author,My Rating,Exclusive Shelf,Date Read\n"
-    "Dune,Frank Herbert,5,read,2020/01/01\n"
-    "Neuromancer,William Gibson,4,read,2020/02/01\n"
-)
+def _recording_mkstemp(
+    captured: dict[str, Path],
+) -> Callable[..., tuple[int, str]]:
+    """Wrap tempfile.mkstemp so a test can capture and later assert on the path.
+
+    The real temp file is still created (the handler writes the upload into it);
+    its path is recorded under ``captured["path"]`` so cleanup can be verified.
+    """
+    real_mkstemp = tempfile.mkstemp
+
+    def recording(*args: Any, **kwargs: Any) -> tuple[int, str]:
+        fd, name = real_mkstemp(*args, **kwargs)
+        captured["path"] = Path(name)
+        return fd, name
+
+    return recording
 
 
 class TestImportSourcesEndpoint:
@@ -3119,8 +3132,10 @@ class TestImportSourcesEndpoint:
         response = client.get("/api/import/sources")
         assert response.status_code == 200
         data = response.json()
-        names = [plugin["name"] for plugin in data]
-        assert names == ["csv_import", "goodreads", "json_import", "markdown_import"]
+        names = {plugin["name"] for plugin in data}
+        # Subset (not equality) so adding a fifth file-import plugin later does
+        # not break this test; the contract is that these four are importable.
+        assert {"csv_import", "goodreads", "json_import", "markdown_import"} <= names
         # Syncable sources (sonarr is configured in mock_config) are excluded.
         assert "sonarr" not in names
 
@@ -3140,13 +3155,14 @@ class TestImportEndpoint:
         response = client.post(
             "/api/import",
             data={"source": "goodreads"},
-            files={"file": ("books.csv", _GOODREADS_CSV, "text/csv")},
+            files={"file": ("books.csv", GOODREADS_CSV, "text/csv")},
         )
         assert response.status_code == 200, response.text
         body = response.json()
         assert body["items_synced"] == 2
         assert body["total_items"] == 2
-        assert body["source"] == "Import: Goodreads"
+        # source is the plugin name the user passed, not the internal job label.
+        assert body["source"] == "goodreads"
         assert body["errors"] == []
 
     def test_csv_import_happy_path_with_content_type_option(
@@ -3164,7 +3180,7 @@ class TestImportEndpoint:
         body = response.json()
         assert body["items_synced"] == 1
         assert body["total_items"] == 1
-        assert body["source"] == "Import: CSV Import"
+        assert body["source"] == "csv_import"
 
     def test_unknown_plugin_rejected(self, client):
         """An unregistered source name is a 422 client error."""
@@ -3202,7 +3218,7 @@ class TestImportEndpoint:
         """The streamed temp file is removed even when the import fails."""
         captured: dict[str, Path] = {}
 
-        def fail(**kwargs: Path) -> None:
+        def fail(**kwargs: Any) -> None:
             captured["file_path"] = kwargs["file_path"]
             raise FileImportError("boom")
 
@@ -3222,7 +3238,7 @@ class TestImportEndpoint:
         response = client.post(
             "/api/import",
             data={"source": "goodreads"},
-            files={"file": ("books.csv", _GOODREADS_CSV, "text/csv")},
+            files={"file": ("books.csv", GOODREADS_CSV, "text/csv")},
         )
         assert response.status_code == 200
 
@@ -3250,7 +3266,7 @@ class TestImportEndpoint:
         body = response.json()
         assert body["items_synced"] == 2
         assert body["total_items"] == 2
-        assert body["source"] == "Import: JSON Import"
+        assert body["source"] == "json_import"
         assert body["errors"] == []
 
     def test_markdown_import_happy_path(self, client, mock_components):
@@ -3270,7 +3286,7 @@ class TestImportEndpoint:
         body = response.json()
         assert body["items_synced"] == 2
         assert body["total_items"] == 2
-        assert body["source"] == "Import: Markdown Import"
+        assert body["source"] == "markdown_import"
         assert body["errors"] == []
 
     def test_temp_file_cleaned_up_on_success(self, client):
@@ -3282,7 +3298,7 @@ class TestImportEndpoint:
         """
         captured: dict[str, Path] = {}
 
-        def succeed(**kwargs: Path) -> SyncResult:
+        def succeed(**kwargs: Any) -> SyncResult:
             file_path = kwargs["file_path"]
             captured["file_path"] = file_path
             # The temp file must still exist while the import runs.
@@ -3347,7 +3363,9 @@ class TestImportEndpoint:
             files={"file": ("books.json", json_content, "application/json")},
         )
         assert response.status_code == 400
-        assert "Failed to import file" in response.json()["detail"]
+        # Plugin-specific detail: the wrapper names the failing plugin so the
+        # user knows which importer rejected the file, not just that it failed.
+        assert "Failed to import file with 'csv_import'" in response.json()["detail"]
 
     def test_per_item_errors_surfaced_when_some_rows_fail(
         self, client, mock_components
@@ -3365,12 +3383,14 @@ class TestImportEndpoint:
         response = client.post(
             "/api/import",
             data={"source": "goodreads"},
-            files={"file": ("books.csv", _GOODREADS_CSV, "text/csv")},
+            files={"file": ("books.csv", GOODREADS_CSV, "text/csv")},
         )
         assert response.status_code == 200, response.text
         body = response.json()
         assert body["items_synced"] == 1
         assert body["total_items"] == 2
+        # Pins the pipeline's per-item error format ("Failed to process '<title>'"):
+        # a safe, title-only string with no raw exception text.
         assert body["errors"] == ["Failed to process 'Dune'"]
         # The raw exception text must never leak to the client.
         assert "db write failed" not in json.dumps(body)
@@ -3388,12 +3408,95 @@ class TestImportEndpoint:
             manager.start_sync(source="Import: Goodreads", sync_function=lambda _job: 0)
         assert manager.is_running("Import: Goodreads") is True
 
+        captured: dict[str, Path] = {}
+        with patch(
+            "src.web.api.tempfile.mkstemp",
+            side_effect=_recording_mkstemp(captured),
+        ):
+            response = client.post(
+                "/api/import",
+                data={"source": "goodreads"},
+                files={"file": ("books.csv", GOODREADS_CSV, "text/csv")},
+            )
+        assert response.status_code == 409
+        # The streamed temp file must be removed on the 409 path too.
+        assert "path" in captured
+        assert not captured["path"].exists()
+
+    def test_oversized_upload_returns_413_and_cleans_up(self, client, mock_components):
+        """An upload past the byte cap is rejected with 413; the temp file goes.
+
+        The cap is patched low so the test does not have to stream tens of
+        megabytes. The chunked write must abort and the finally block must
+        still remove the partial temp file.
+        """
+        mock_components["storage"].save_content_item.return_value = 1
+        captured: dict[str, Path] = {}
+        with (
+            patch("src.web.api.MAX_UPLOAD_BYTES", 16),
+            patch(
+                "src.web.api.tempfile.mkstemp",
+                side_effect=_recording_mkstemp(captured),
+            ),
+        ):
+            response = client.post(
+                "/api/import",
+                data={"source": "goodreads"},
+                files={"file": ("books.csv", "x" * 1024, "text/csv")},
+            )
+        assert response.status_code == 413
+        assert "exceeds" in response.json()["detail"]
+        assert "path" in captured
+        assert not captured["path"].exists()
+
+    def test_returns_500_when_components_uninitialized(self, client, mock_components):
+        """With storage uninitialized the endpoint is a clean 500, not a crash."""
+        app_state.storage = None
         response = client.post(
             "/api/import",
             data={"source": "goodreads"},
-            files={"file": ("books.csv", _GOODREADS_CSV, "text/csv")},
+            files={"file": ("books.csv", GOODREADS_CSV, "text/csv")},
         )
-        assert response.status_code == 409
+        assert response.status_code == 500
+        assert response.json()["detail"] == "Components not initialized"
+
+    def test_unreadable_file_error_is_masked(self, client):
+        """The not-readable FileImportError never leaks the internal temp path.
+
+        The service embeds the (temp) path in its message for the CLI; the web
+        handler must replace it with a generic detail so the client cannot see
+        server-side filesystem paths.
+        """
+        secret_path = "/tmp/server-secret-upload-xyz.csv"
+        with patch(
+            "src.web.api.import_file",
+            side_effect=FileImportError(f"{FILE_NOT_READABLE_MESSAGE}: {secret_path}"),
+        ):
+            response = client.post(
+                "/api/import",
+                data={"source": "goodreads"},
+                files={"file": ("books.csv", GOODREADS_CSV, "text/csv")},
+            )
+        assert response.status_code == 400
+        detail = response.json()["detail"]
+        assert detail == "The uploaded file could not be read"
+        assert secret_path not in detail
+
+    def test_auto_enrich_triggers_enrichment_on_success(self, client, mock_components):
+        """With auto-enrich configured, a successful import starts enrichment."""
+        mock_components["storage"].save_content_item.return_value = 1
+        app_state.config["enrichment"] = {
+            "enabled": True,
+            "auto_enrich_on_sync": True,
+        }
+        with patch("src.web.api.get_enrichment_manager") as mock_get:
+            response = client.post(
+                "/api/import",
+                data={"source": "goodreads"},
+                files={"file": ("books.csv", GOODREADS_CSV, "text/csv")},
+            )
+        assert response.status_code == 200, response.text
+        mock_get.return_value.start_enrichment.assert_called_once()
 
 
 class TestRomsRemainsSyncable:

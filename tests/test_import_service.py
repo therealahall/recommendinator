@@ -207,6 +207,33 @@ class TestImportFile:
                 storage_manager=storage,
             )
 
+    def test_progress_callback_is_invoked(
+        self, storage: StorageManager, tmp_path: Path
+    ) -> None:
+        """The progress callback is forwarded to the pipeline and called."""
+        data_file = tmp_path / "books.txt"
+        data_file.write_text("Dune\nNeuromancer\n")
+
+        calls: list[tuple[int, int | None, str | None, str | None]] = []
+
+        def record(
+            items_processed: int,
+            total_items: int | None,
+            current_item: str | None,
+            current_source: str | None,
+        ) -> None:
+            calls.append((items_processed, total_items, current_item, current_source))
+
+        import_file(
+            plugin_name="fake_file",
+            file_path=data_file,
+            options={"content_type": "book"},
+            storage_manager=storage,
+            progress_callback=record,
+        )
+
+        assert calls, "expected at least one progress update during import"
+
     def test_path_option_is_injected_not_taken_from_options(
         self, storage: StorageManager, tmp_path: Path
     ) -> None:

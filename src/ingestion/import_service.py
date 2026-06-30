@@ -32,6 +32,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Prefix of the FileImportError message raised when the file is missing or
+# unreadable. The web handler matches on this to mask the (temp) path from the
+# HTTP client while the CLI keeps the full message (a real user path it can fix).
+FILE_NOT_READABLE_MESSAGE = "File not found or not readable"
+
 
 class FileImportError(Exception):
     """Raised when a one-shot file import cannot be completed.
@@ -86,7 +91,7 @@ def import_file(
         raise FileImportError(f"Plugin '{plugin_name}' does not support file import")
 
     if not file_path.is_file():
-        raise FileImportError(f"File not found or not readable: {file_path}")
+        raise FileImportError(f"{FILE_NOT_READABLE_MESSAGE}: {file_path}")
 
     plugin_config: dict[str, Any] = {**options, "path": str(file_path)}
 
