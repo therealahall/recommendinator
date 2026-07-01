@@ -14,7 +14,7 @@ from src.ingestion.sources.trakt.trakt import (
     TraktPlugin,
     _parse_completed_date,
     fetch_list,
-    fetch_show_season_count,
+    fetch_show_season_totals,
     refresh_access_token,
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
@@ -404,6 +404,7 @@ class TestTraktPluginFetch:
         The sync endpoint only returns watched seasons (S1, S3); total_seasons
         comes from the extra /shows/{id}/seasons call, which reports the true
         real-season count (5) so the unwatched later seasons can be recommended.
+        S1 (10/10) and S3 (5/5) are both fully watched, so both are listed.
         """
         payloads = _all_lists(
             watched_shows=[
@@ -423,7 +424,11 @@ class TestTraktPluginFetch:
                 }
             ]
         )
-        items = _run_fetch(payloads, _config(), season_counts={20: 5})
+        items = _run_fetch(
+            payloads,
+            _config(),
+            season_totals={20: {1: 10, 2: 13, 3: 5, 4: 10, 5: 10}},
+        )
 
         item = items[0]
         assert item.status == ConsumptionStatus.CURRENTLY_CONSUMING
@@ -652,14 +657,15 @@ class TestTraktPluginFetch:
 def _run_fetch(
     payloads: dict[str, list[dict[str, Any]]],
     config: dict[str, Any],
-    season_counts: dict[int, int] | None = None,
+    season_totals: dict[int, dict[int, int]] | None = None,
     progress_callback: ProgressCallback | None = None,
 ) -> list[ContentItem]:
     """Run TraktPlugin.fetch with refresh_access_token and fetch_list stubbed.
 
     Single source of truth for the fetch stubbing used by every fetch test.
-    ``season_counts`` maps a show's trakt id to the real-season count the
-    ``/shows/{id}/seasons`` call should return for in-progress shows.
+    ``season_totals`` maps a show's trakt id to the ``season_number ->
+    episode_count`` map the ``/shows/{id}/seasons?extended=full`` call should
+    return for in-progress shows; its length is the show's real-season count.
     ``progress_callback`` is forwarded to fetch so progress tests can observe it.
     """
 
@@ -668,8 +674,10 @@ def _run_fetch(
     ) -> list[dict[str, Any]]:
         return payloads[endpoint]
 
-    def fake_season_count(trakt_id: int, *args: object, **kwargs: object) -> int:
-        return (season_counts or {}).get(trakt_id, 0)
+    def fake_season_totals(
+        trakt_id: int, *args: object, **kwargs: object
+    ) -> dict[int, int]:
+        return (season_totals or {}).get(trakt_id, {})
 
     with (
         patch(
@@ -681,8 +689,8 @@ def _run_fetch(
             side_effect=fake_fetch_list,
         ),
         patch(
-            "src.ingestion.sources.trakt.trakt.fetch_show_season_count",
-            side_effect=fake_season_count,
+            "src.ingestion.sources.trakt.trakt.fetch_show_season_totals",
+            side_effect=fake_season_totals,
         ),
     ):
         return list(TraktPlugin().fetch(config, progress_callback=progress_callback))
@@ -799,7 +807,11 @@ class TestTraktSeasonExpansionHandoff:
                 }
             ]
         )
-        items = _run_fetch(payloads, _config(), season_counts={20: 5})
+        items = _run_fetch(
+            payloads,
+            _config(),
+            season_totals={20: {1: 10, 2: 13, 3: 13, 4: 13, 5: 13}},
+        )
         assert len(items) == 1
         show = items[0]
         assert show.status == ConsumptionStatus.CURRENTLY_CONSUMING
@@ -838,7 +850,11 @@ class TestTraktSeasonExpansionHandoff:
                 }
             ]
         )
-        items = _run_fetch(payloads, _config(), season_counts={20: 5})
+        items = _run_fetch(
+            payloads,
+            _config(),
+            season_totals={20: {1: 10, 2: 13, 3: 5, 4: 10, 5: 10}},
+        )
         show = items[0]
         assert show.metadata["seasons_watched"] == [1, 3]
         assert show.metadata["total_seasons"] == 5
@@ -850,6 +866,93 @@ class TestTraktSeasonExpansionHandoff:
             "The Expanse (Season 4)",
             "The Expanse (Season 5)",
         ]
+
+    def test_partially_watched_first_season_still_surfaces_regression(self) -> None:
+        """Regression test: the Solitary bug end to end — a partial S1 is NOT
+        hidden by season expansion.
+
+        Bug reported: "Solitary" (4 seasons), user on episode 7 of 8 of season
+        1, season 1 wrongly marked watched and hidden from recommendations.
+
+        Root cause: ``_show_season_progress`` marked any season with watched
+        episodes as complete, so the in-progress S1 landed in
+        ``seasons_watched`` and ``expand_tv_shows_to_seasons`` skipped it.
+
+        Fix: with the per-season-total comparison, S1 (7/8) is not in
+        ``seasons_watched``, so the expansion surfaces it (and the later
+        seasons) as candidates.
+
+        This is the integration-layer counterpart to the unit-level
+        ``test_partially_watched_season_not_marked_watched_regression`` in
+        ``TestTraktPartialSeasonRegression``; both reproduce the same 7/8
+        scenario at different layers.
+        """
+        payloads = _all_lists(
+            watched_shows=[
+                {
+                    "last_watched_at": "2022-06-01T00:00:00.000Z",
+                    "show": _show(50, "Solitary", aired_episodes=34),
+                    "seasons": [
+                        {
+                            "number": 1,
+                            "episodes": [{"number": n} for n in range(1, 8)],
+                        }
+                    ],
+                }
+            ]
+        )
+        items = _run_fetch(
+            payloads,
+            _config(),
+            season_totals={50: {1: 8, 2: 8, 3: 8, 4: 10}},
+        )
+        show = items[0]
+        assert show.status == ConsumptionStatus.CURRENTLY_CONSUMING
+        assert show.metadata["seasons_watched"] == []
+        assert show.metadata["total_seasons"] == 4
+
+        expanded = expand_tv_shows_to_seasons(items)
+        season_titles = sorted(item.title for item in expanded)
+        # The partial S1 is surfaced, not skipped, alongside the unwatched rest.
+        assert season_titles == [
+            "Solitary (Season 1)",
+            "Solitary (Season 2)",
+            "Solitary (Season 3)",
+            "Solitary (Season 4)",
+        ]
+
+    def test_fully_watched_multiseason_show_lists_every_season(self) -> None:
+        """A fully-watched multi-season show lists all its seasons and expands to none.
+
+        No per-season totals call fires for a COMPLETED show; every watched
+        season is complete by definition, so all real seasons land in
+        ``seasons_watched`` and the expansion leaves nothing to recommend.
+        """
+        payloads = _all_lists(
+            watched_shows=[
+                {
+                    "last_watched_at": "2022-01-01T00:00:00.000Z",
+                    "show": _show(60, "The Wire", aired_episodes=26),
+                    "seasons": [
+                        {
+                            "number": 1,
+                            "episodes": [{"number": n} for n in range(1, 14)],
+                        },
+                        {
+                            "number": 2,
+                            "episodes": [{"number": n} for n in range(1, 13)],
+                        },
+                        {"number": 3, "episodes": [{"number": 1}]},
+                    ],
+                }
+            ]
+        )
+        items = _run_fetch(payloads, _config())
+        show = items[0]
+        assert show.status == ConsumptionStatus.COMPLETED
+        assert show.metadata["seasons_watched"] == [1, 2, 3]
+        assert show.metadata["total_seasons"] == 3
+        assert expand_tv_shows_to_seasons(items) == []
 
     def test_fully_watched_single_season_expands_to_nothing(self) -> None:
         """A fully-watched 1-season show leaves no unwatched seasons to recommend."""
@@ -888,7 +991,11 @@ class TestTraktSpecialsOnly:
                 }
             ]
         )
-        items = _run_fetch(payloads, _config(), season_counts={21: 13})
+        items = _run_fetch(
+            payloads,
+            _config(),
+            season_totals={21: dict.fromkeys(range(1, 14), 8)},
+        )
         assert len(items) == 1
         item = items[0]
         assert item.status == ConsumptionStatus.CURRENTLY_CONSUMING
@@ -1019,42 +1126,315 @@ class TestTraktRatedWatchlistedItem:
         assert items[0].status == ConsumptionStatus.COMPLETED
 
 
-class TestFetchShowSeasonCount:
-    """Tests for the /shows/{id}/seasons real-season-count helper."""
+class TestTraktPartialSeasonRegression:
+    """Regression: a partially-watched season must not be marked watched.
+
+    Reported symptom: a season the user has not finished (e.g. "Solitary" S1,
+    7 of 8 episodes watched) was hidden from recommendations as already watched.
+
+    Root cause: ``_show_season_progress`` used a bare truthy check on the
+    season's ``episodes`` array. The /sync/watched/shows endpoint lists ONLY
+    watched episodes, so any partially-watched season has a non-empty array and
+    was wrongly marked fully watched.
+
+    Fix: fetch each season's true episode total via
+    /shows/{id}/seasons?extended=full and mark a season watched only when the
+    watched-episode count reaches that total (and the total is known and > 0).
+    """
+
+    def test_partially_watched_season_not_marked_watched_regression(self) -> None:
+        """Regression test: a partially-watched season is not marked watched.
+
+        Bug reported: "Solitary" S1, 7 of 8 episodes watched, was hidden from
+        recommendations as already watched.
+
+        Root cause: ``_show_season_progress`` treated any season with a
+        non-empty ``episodes`` array as fully watched, but the sync endpoint
+        lists only watched episodes, so a partial season also has a non-empty
+        array.
+
+        Fix: mark a season watched only when its watched-episode count reaches
+        the true episode total from ``fetch_show_season_totals``.
+
+        The same 7/8 scenario is exercised end to end through
+        ``expand_tv_shows_to_seasons`` by
+        ``test_partially_watched_first_season_still_surfaces_regression``.
+        """
+        payloads = _all_lists(
+            watched_shows=[
+                {
+                    "last_watched_at": "2022-06-01T00:00:00.000Z",
+                    "show": _show(50, "Solitary", aired_episodes=18),
+                    "seasons": [
+                        {
+                            "number": 1,
+                            "episodes": [{"number": n} for n in range(1, 8)],
+                        }
+                    ],
+                }
+            ]
+        )
+        items = _run_fetch(payloads, _config(), season_totals={50: {1: 8, 2: 10}})
+
+        item = items[0]
+        assert item.status == ConsumptionStatus.CURRENTLY_CONSUMING
+        assert item.metadata["seasons_watched"] == []
+        assert item.metadata["total_seasons"] == 2
+
+    def test_fully_watched_season_still_marked_watched_regression(self) -> None:
+        """Regression test: the fix must not over-correct a complete season.
+
+        Bug reported: same partial-season fix as above.
+
+        Root cause / fix: comparing watched-episode count against the true
+        season total must still count a season as watched when the user has
+        actually seen every episode.
+
+        Guard: a season watched to its full episode total stays in
+        ``seasons_watched`` so a finished season is not wrongly re-surfaced.
+        """
+        payloads = _all_lists(
+            watched_shows=[
+                {
+                    "last_watched_at": "2022-06-01T00:00:00.000Z",
+                    "show": _show(51, "Halt and Catch Fire", aired_episodes=100),
+                    "seasons": [
+                        {
+                            "number": 1,
+                            "episodes": [{"number": n} for n in range(1, 11)],
+                        }
+                    ],
+                }
+            ]
+        )
+        items = _run_fetch(payloads, _config(), season_totals={51: {1: 10, 2: 5}})
+
+        item = items[0]
+        assert item.status == ConsumptionStatus.CURRENTLY_CONSUMING
+        assert item.metadata["seasons_watched"] == [1]
+
+    def test_mixed_seasons_only_complete_one_listed_regression(self) -> None:
+        """Regression test: with one complete and one partial season, only the
+        complete season is listed as watched.
+
+        Bug reported: same partial-season fix as above.
+
+        Root cause: the old truthy ``episodes`` check marked both seasons
+        watched.
+
+        Fix: per-season total comparison lists only the season watched to its
+        full episode total, leaving the partial one in progress.
+        """
+        payloads = _all_lists(
+            watched_shows=[
+                {
+                    "last_watched_at": "2022-06-01T00:00:00.000Z",
+                    "show": _show(52, "Westworld", aired_episodes=100),
+                    "seasons": [
+                        {
+                            "number": 1,
+                            "episodes": [{"number": n} for n in range(1, 11)],
+                        },
+                        {
+                            "number": 2,
+                            "episodes": [{"number": n} for n in range(1, 4)],
+                        },
+                    ],
+                }
+            ]
+        )
+        items = _run_fetch(payloads, _config(), season_totals={52: {1: 10, 2: 8}})
+
+        assert items[0].metadata["seasons_watched"] == [1]
+
+    def test_unknown_season_total_not_marked_watched_regression(self) -> None:
+        """Regression test: a season absent from the totals map stays in-progress.
+
+        Bug reported: partial seasons hidden as watched (see the class
+        docstring); this case guards the missing-total branch specifically.
+
+        Root cause: when the ``/shows/{id}/seasons`` response omits a season
+        the user has watched episodes for, its total is unknown, and any
+        default other than "in progress" risks re-hiding an unfinished season.
+
+        Fix: ``_show_season_progress`` uses ``season_totals.get(number, 0)`` and
+        the ``season_total > 0`` guard, so an unknown total leaves the season in
+        progress rather than marking it watched.
+        """
+        payloads = _all_lists(
+            watched_shows=[
+                {
+                    "last_watched_at": "2022-06-01T00:00:00.000Z",
+                    "show": _show(53, "Carnivale", aired_episodes=100),
+                    "seasons": [
+                        {
+                            "number": 1,
+                            "episodes": [{"number": n} for n in range(1, 6)],
+                        }
+                    ],
+                }
+            ]
+        )
+        items = _run_fetch(payloads, _config(), season_totals={53: {2: 8, 3: 8}})
+
+        assert items[0].metadata["seasons_watched"] == []
+
+    def test_rewatched_episodes_do_not_inflate_partial_season_regression(self) -> None:
+        """Regression test: re-watches must not mark a partial season watched.
+
+        Bug reported: partial seasons hidden as watched (see the class
+        docstring); this case guards against a plays-based recount.
+
+        Root cause: the /sync/watched/shows endpoint reports one entry per
+        *distinct* watched episode carrying a ``plays`` counter, never one entry
+        per play; summing plays would inflate a partial season past its total.
+
+        Fix: ``_show_season_progress`` counts distinct watched episodes, so 7
+        distinct episodes of an 8-episode season — each watched multiple times —
+        is still 7 watched and the season stays in progress.
+        """
+        payloads = _all_lists(
+            watched_shows=[
+                {
+                    "last_watched_at": "2022-06-01T00:00:00.000Z",
+                    "show": _show(54, "Twin Peaks", aired_episodes=18),
+                    "seasons": [
+                        {
+                            "number": 1,
+                            "episodes": [
+                                {"number": n, "plays": 3} for n in range(1, 8)
+                            ],
+                        }
+                    ],
+                }
+            ]
+        )
+        items = _run_fetch(payloads, _config(), season_totals={54: {1: 8, 2: 10}})
+
+        item = items[0]
+        assert item.status == ConsumptionStatus.CURRENTLY_CONSUMING
+        assert item.metadata["seasons_watched"] == []
+
+    def test_episode_count_zero_leaves_season_in_progress_regression(self) -> None:
+        """Regression test: a zero episode_count leaves the season in-progress.
+
+        Bug reported: partial seasons hidden as watched (see the class
+        docstring); this case guards the zero-total branch specifically.
+
+        Root cause: ``fetch_show_season_totals`` maps an absent or 0
+        ``episode_count`` to 0, and treating 0 as "complete" would hide a season
+        of unknown size.
+
+        Fix: the ``season_total > 0`` guard refuses to mark a season watched
+        when its total is 0, so it is re-surfaced rather than wrongly hidden.
+        """
+        payloads = _all_lists(
+            watched_shows=[
+                {
+                    "last_watched_at": "2022-06-01T00:00:00.000Z",
+                    "show": _show(55, "Deadwood", aired_episodes=36),
+                    "seasons": [
+                        {
+                            "number": 1,
+                            "episodes": [{"number": n} for n in range(1, 13)],
+                        }
+                    ],
+                }
+            ]
+        )
+        items = _run_fetch(payloads, _config(), season_totals={55: {1: 0, 2: 12}})
+
+        item = items[0]
+        assert item.status == ConsumptionStatus.CURRENTLY_CONSUMING
+        assert item.metadata["seasons_watched"] == []
+        assert item.metadata["total_seasons"] == 2
+
+    def test_negative_episode_count_leaves_season_in_progress_regression(self) -> None:
+        """Regression test: a negative episode_count leaves the season in-progress.
+
+        Bug reported: partial seasons hidden as watched (see the class
+        docstring); this case guards the negative-total edge of the same branch.
+
+        Root cause: a garbled ``episode_count`` (e.g. -1) is still an ``int``,
+        so it survives into ``season_totals``; treating any non-zero total as
+        "complete" would hide a season of unknown size.
+
+        Fix: the ``season_total > 0`` guard rejects negative totals just as it
+        rejects 0, so the season stays in progress rather than being hidden.
+        """
+        payloads = _all_lists(
+            watched_shows=[
+                {
+                    "last_watched_at": "2022-06-01T00:00:00.000Z",
+                    "show": _show(56, "Rome", aired_episodes=22),
+                    "seasons": [
+                        {
+                            "number": 1,
+                            "episodes": [{"number": n} for n in range(1, 13)],
+                        }
+                    ],
+                }
+            ]
+        )
+        items = _run_fetch(payloads, _config(), season_totals={56: {1: -1, 2: 12}})
+
+        item = items[0]
+        assert item.status == ConsumptionStatus.CURRENTLY_CONSUMING
+        assert item.metadata["seasons_watched"] == []
+        assert item.metadata["total_seasons"] == 2
+
+
+class TestFetchShowSeasonTotals:
+    """Tests for the /shows/{id}/seasons per-season episode-total helper."""
 
     @patch("src.ingestion.sources.trakt.trakt.requests.get")
-    def test_counts_real_seasons_excluding_specials(self, mock_get: Mock) -> None:
-        """Season 0 (specials) is excluded from the real-season count."""
+    def test_maps_episode_counts_excluding_specials(self, mock_get: Mock) -> None:
+        """Season 0 (specials) is excluded; real seasons map to episode_count."""
         mock_response = Mock(spec=requests.Response)
         mock_response.json.return_value = [
-            {"number": 0},
-            {"number": 1},
-            {"number": 2},
-            {"number": 3},
+            {"number": 0, "episode_count": 5},
+            {"number": 1, "episode_count": 10},
+            {"number": 2, "episode_count": 13},
+            {"number": 3, "episode_count": 8},
         ]
         mock_get.return_value = mock_response
 
-        assert fetch_show_season_count(20, "access", "cid") == 3
+        assert fetch_show_season_totals(20, "access", "cid") == {1: 10, 2: 13, 3: 8}
 
         call_args = mock_get.call_args
         assert "/shows/20/seasons" in call_args[0][0]
+        assert call_args[1]["params"]["extended"] == "full"
         assert call_args[1]["headers"]["trakt-api-version"] == "2"
         assert call_args[1]["headers"]["trakt-api-key"] == "cid"
         assert call_args[1]["headers"]["Authorization"] == "Bearer access"
 
     @patch("src.ingestion.sources.trakt.trakt.requests.get")
     def test_ignores_malformed_season_numbers(self, mock_get: Mock) -> None:
-        """Seasons with a missing or non-integer number are not counted."""
+        """Seasons with a missing or non-integer number are excluded."""
         mock_response = Mock(spec=requests.Response)
         mock_response.json.return_value = [
-            {"number": 1},
-            {"number": None},
+            {"number": 1, "episode_count": 10},
+            {"number": None, "episode_count": 4},
             {"foo": "bar"},
+            {"number": 2, "episode_count": 8},
+        ]
+        mock_get.return_value = mock_response
+
+        assert fetch_show_season_totals(20, "access", "cid") == {1: 10, 2: 8}
+
+    @patch("src.ingestion.sources.trakt.trakt.requests.get")
+    def test_missing_episode_count_defaults_to_zero(self, mock_get: Mock) -> None:
+        """A real season with no episode_count maps to 0 but still counts."""
+        mock_response = Mock(spec=requests.Response)
+        mock_response.json.return_value = [
+            {"number": 1, "episode_count": 10},
             {"number": 2},
         ]
         mock_get.return_value = mock_response
 
-        assert fetch_show_season_count(20, "access", "cid") == 2
+        totals = fetch_show_season_totals(20, "access", "cid")
+        assert totals == {1: 10, 2: 0}
+        assert len(totals) == 2
 
     @patch("src.ingestion.sources.trakt.trakt.requests.get")
     def test_api_error_raises(self, mock_get: Mock) -> None:
@@ -1062,16 +1442,31 @@ class TestFetchShowSeasonCount:
         mock_get.side_effect = requests.RequestException("500")
 
         with pytest.raises(TraktAPIError, match="Failed to fetch /shows/20/seasons"):
-            fetch_show_season_count(20, "access", "cid")
+            fetch_show_season_totals(20, "access", "cid")
+
+    @patch("src.ingestion.sources.trakt.trakt.requests.get")
+    def test_non_list_response_raises(self, mock_get: Mock) -> None:
+        """A 200 response whose body is not a list of seasons raises TraktAPIError.
+
+        A dict (or a list of non-dicts) would otherwise raise a raw
+        AttributeError from the parse loop; the guard surfaces the same
+        TraktAPIError type callers already handle for a failed request.
+        """
+        mock_response = Mock(spec=requests.Response)
+        mock_response.json.return_value = {"error": "unexpected shape"}
+        mock_get.return_value = mock_response
+
+        with pytest.raises(TraktAPIError, match="Failed to fetch /shows/20/seasons"):
+            fetch_show_season_totals(20, "access", "cid")
 
 
-class TestSeasonCountCallScope:
-    """The extra season-count call fires only for in-progress shows."""
+class TestSeasonTotalsCallScope:
+    """The extra season-totals call fires only for in-progress shows."""
 
     def _run_fetch_tracking_calls(
         self, payloads: dict[str, list[dict[str, Any]]], config: dict[str, Any]
     ) -> list[int]:
-        """Run fetch and return the trakt ids passed to fetch_show_season_count."""
+        """Run fetch and return the trakt ids passed to fetch_show_season_totals."""
         called_ids: list[int] = []
 
         def fake_fetch_list(
@@ -1079,9 +1474,11 @@ class TestSeasonCountCallScope:
         ) -> list[dict[str, Any]]:
             return payloads[endpoint]
 
-        def fake_season_count(trakt_id: int, *args: object, **kwargs: object) -> int:
+        def fake_season_totals(
+            trakt_id: int, *args: object, **kwargs: object
+        ) -> dict[int, int]:
             called_ids.append(trakt_id)
-            return 5
+            return {1: 10, 2: 10, 3: 10, 4: 10, 5: 10}
 
         with (
             patch(
@@ -1093,15 +1490,15 @@ class TestSeasonCountCallScope:
                 side_effect=fake_fetch_list,
             ),
             patch(
-                "src.ingestion.sources.trakt.trakt.fetch_show_season_count",
-                side_effect=fake_season_count,
+                "src.ingestion.sources.trakt.trakt.fetch_show_season_totals",
+                side_effect=fake_season_totals,
             ),
         ):
             list(TraktPlugin().fetch(config))
         return called_ids
 
     def test_not_called_for_fully_watched_show(self) -> None:
-        """A COMPLETED (fully-watched) show makes no extra season-count call."""
+        """A COMPLETED (fully-watched) show makes no extra season-totals call."""
         payloads = _all_lists(
             watched_shows=[
                 {
@@ -1119,7 +1516,7 @@ class TestSeasonCountCallScope:
         assert self._run_fetch_tracking_calls(payloads, _config()) == []
 
     def test_not_called_for_watchlist_only_show(self) -> None:
-        """A watchlist-only (UNREAD) show makes no extra season-count call."""
+        """A watchlist-only (UNREAD) show makes no extra season-totals call."""
         payloads = _all_lists(
             watchlist_shows=[{"show": _show(30, "Andor", aired_episodes=12)}],
         )
@@ -1154,8 +1551,8 @@ class TestSeasonCountCallScope:
         )
         assert self._run_fetch_tracking_calls(payloads, _config()) == [20]
 
-    def test_season_count_error_raises_source_error(self) -> None:
-        """A failure in the season-count call surfaces as SourceError."""
+    def test_season_totals_error_raises_source_error(self) -> None:
+        """A failure in the season-totals call surfaces as SourceError."""
         payloads = _all_lists(
             watched_shows=[
                 {
@@ -1186,7 +1583,7 @@ class TestSeasonCountCallScope:
                 side_effect=fake_fetch_list,
             ),
             patch(
-                "src.ingestion.sources.trakt.trakt.fetch_show_season_count",
+                "src.ingestion.sources.trakt.trakt.fetch_show_season_totals",
                 side_effect=TraktAPIError("seasons fetch failed"),
             ),
         ):

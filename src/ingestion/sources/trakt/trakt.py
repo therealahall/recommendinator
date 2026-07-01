@@ -172,17 +172,19 @@ def fetch_list(
     return results
 
 
-def fetch_show_season_count(
+def fetch_show_season_totals(
     trakt_id: int,
     access_token: str,
     client_id: str,
-) -> int:
-    """Fetch a show's true number of real seasons (excluding specials).
+) -> dict[int, int]:
+    """Fetch each real season's total episode count for a show.
 
-    Calls ``GET /shows/{id}/seasons``, which returns one object per season with
-    a ``number`` field (season 0 is specials). The watched-shows sync endpoint
-    only returns seasons the user has already watched, so this extra call is the
-    only way to learn how many seasons exist for a partially-watched show.
+    Calls ``GET /shows/{id}/seasons?extended=full``, which returns one object
+    per season with ``number`` and ``episode_count`` fields (season 0 is
+    specials). The watched-shows sync endpoint only reports the episodes the
+    user has watched, with no per-season totals, so this extra call is the only
+    way to tell a fully-watched season from a partially-watched one — and to
+    learn how many seasons exist for a partially-watched show.
 
     Args:
         trakt_id: The show's Trakt id.
@@ -190,7 +192,10 @@ def fetch_show_season_count(
         client_id: Trakt API application client id (sent as trakt-api-key).
 
     Returns:
-        Count of seasons whose ``number`` is >= 1 (specials excluded).
+        Map of ``season_number -> episode_count`` for every season whose
+        ``number`` is >= 1 (specials excluded). A season with no reported
+        episode count maps to 0. The map's length is the show's real-season
+        count.
 
     Raises:
         TraktAPIError: If the request fails.
@@ -200,6 +205,7 @@ def fetch_show_season_count(
     try:
         response = requests.get(
             f"{TRAKT_API_URL}{endpoint}",
+            params={"extended": "full"},
             headers=headers,
             timeout=30,
         )
@@ -211,11 +217,25 @@ def fetch_show_season_count(
             f"Failed to fetch {endpoint}: {type(error).__name__}"
         ) from error
 
-    return sum(
-        1
-        for season in seasons
-        if isinstance(season.get("number"), int) and season["number"] >= 1
-    )
+    totals: dict[int, int] = {}
+    try:
+        for season in seasons:
+            number = season.get("number")
+            if not isinstance(number, int) or number < 1:
+                continue
+            episode_count = season.get("episode_count")
+            totals[number] = episode_count if isinstance(episode_count, int) else 0
+    except (AttributeError, TypeError) as error:
+        # A well-formed response is a list of season objects; a dict or a list
+        # of non-dicts raises here. Surface it as TraktAPIError so callers see
+        # the same error type as a failed request, not a raw AttributeError.
+        logger.error(
+            "Error parsing Trakt %s response: %s", endpoint, type(error).__name__
+        )
+        raise TraktAPIError(
+            f"Failed to fetch {endpoint}: {type(error).__name__}"
+        ) from error
+    return totals
 
 
 def _parse_completed_date(raw: str | None) -> date | None:
@@ -228,28 +248,52 @@ def _parse_completed_date(raw: str | None) -> date | None:
         return None
 
 
-def _show_season_progress(seasons: list[dict[str, Any]]) -> tuple[list[int], int]:
-    """Compute watched seasons and the highest watched season number for a show.
+def _show_season_progress(
+    seasons: list[dict[str, Any]],
+    season_totals: dict[int, int],
+    fully_watched: bool,
+) -> tuple[list[int], int]:
+    """Compute fully-watched seasons and the highest of them for a show.
 
-    Season 0 (specials) is excluded from both values.
+    Season 0 (specials) is excluded from both values. A season counts as watched
+    only when the user has watched every episode in it: the watched-shows sync
+    endpoint lists only the episodes the user has seen, so a partially-watched
+    season has a non-empty ``episodes`` array and must be checked against its
+    true episode total. ``season_totals`` carries those totals (from
+    ``fetch_show_season_totals``); when the show as a whole is fully watched the
+    map is empty and every season with watched episodes is complete by
+    definition.
 
     Args:
         seasons: The ``seasons`` array from a watched-show entry.
+        season_totals: Map of ``season_number -> total episode count``.
+        fully_watched: Whether the whole show has been fully watched.
 
     Returns:
-        Tuple of (sorted watched season numbers, highest watched season number).
+        Tuple of (sorted fully-watched season numbers, highest such number).
         The second value is NOT the true season total — the watched-shows sync
         endpoint only reports seasons the user has watched. It is a placeholder
         used only for COMPLETED shows, which are excluded from season expansion;
-        in-progress shows overwrite it with the true count from
-        ``fetch_show_season_count``.
+        in-progress shows derive the true count from ``season_totals``.
     """
     watched: list[int] = []
     for season in seasons:
         number = season.get("number")
         if not isinstance(number, int) or number < 1:
             continue
-        if season.get("episodes"):
+        watched_count = len(season.get("episodes") or [])
+        if watched_count == 0:
+            continue
+        if fully_watched:
+            watched.append(number)
+            continue
+        # Compare against the season's TOTAL episodes (episode_count), not aired
+        # episodes: a currently-airing season the user is caught up on still has
+        # more episodes coming, so it stays in-progress. If the total is unknown
+        # (absent from the map or <= 0) leave the season in-progress — better to
+        # re-surface a finished season than to hide an unfinished one.
+        season_total = season_totals.get(number, 0)
+        if season_total > 0 and watched_count >= season_total:
             watched.append(number)
     watched.sort()
     highest_watched_season = max(watched) if watched else 0
@@ -530,22 +574,29 @@ class TraktPlugin(SourcePlugin):
                 continue
 
             seasons = entry.get("seasons") or []
-            seasons_watched, highest_watched_season = _show_season_progress(seasons)
             aired_episodes = show.get("aired_episodes") or 0
             watched_episodes = _watched_episode_count(seasons)
             fully_watched = aired_episodes > 0 and watched_episodes >= aired_episodes
 
-            # The sync endpoint only returns watched seasons, so the high-water
-            # mark cannot see the user's unwatched later seasons. For an
-            # in-progress show, fetch the true real-season count so season
-            # expansion can recommend the next seasons. Completed shows are
-            # excluded from expansion, so they reuse the high-water mark.
+            # The sync endpoint reports only watched episodes with no per-season
+            # totals, so an in-progress show needs the per-season episode counts
+            # to tell a fully-watched season from a partially-watched one and to
+            # learn its true real-season count. Completed shows skip the call:
+            # every watched season is complete and they are excluded from season
+            # expansion, so they reuse the high-water mark.
             if fully_watched:
-                total_seasons = highest_watched_season
+                season_totals: dict[int, int] = {}
             else:
-                total_seasons = fetch_show_season_count(
+                season_totals = fetch_show_season_totals(
                     int(trakt_id), access_token, client_id
                 )
+
+            seasons_watched, highest_watched_season = _show_season_progress(
+                seasons, season_totals, fully_watched
+            )
+            total_seasons = (
+                highest_watched_season if fully_watched else len(season_totals)
+            )
 
             metadata = _media_metadata(show)
             metadata["seasons_watched"] = seasons_watched
