@@ -1,6 +1,41 @@
 # CHANGELOG
 
 
+## v0.18.0 (2026-07-01)
+
+### Bug Fixes
+
+- **ingestion**: Only mark a Trakt season watched once you finish it
+  ([`b0cc72c`](https://github.com/therealahall/recommendinator/commit/b0cc72cb7b0a618954eaba39e48f357b68cf951a))
+
+- **ui**: Keep screen reader labels out of copied text
+  ([`8511f0e`](https://github.com/therealahall/recommendinator/commit/8511f0e072fee16e645be02f87886a3d8508e884))
+
+### Chores
+
+- **config**: Add Trakt example configuration
+  ([`2edd4e1`](https://github.com/therealahall/recommendinator/commit/2edd4e19e86b0d501bc7dcb816fbb37ba0549801))
+
+### Documentation
+
+- Add Trakt to source documentation
+  ([`afd7d59`](https://github.com/therealahall/recommendinator/commit/afd7d59fc1091f7242a3aad2e8e7646b978411ad))
+
+- **ingestion**: Explain Trakt fully watched season tracking
+  ([`9209ca6`](https://github.com/therealahall/recommendinator/commit/9209ca699a988ed72dcebd0ffdea248c8b9ff9fc))
+
+### Features
+
+- **auth**: Add Trakt OAuth device-code authentication
+  ([`081cc7f`](https://github.com/therealahall/recommendinator/commit/081cc7f379ed629173bf3cf5184e729e8f037fdf))
+
+- **ingestion**: Add Trakt TV and movie source plugin
+  ([`d9d924d`](https://github.com/therealahall/recommendinator/commit/d9d924d39b0203385f87ccc9d51190e429e91a26))
+
+- **ui**: Add Trakt device-code connection flow
+  ([`e81c5da`](https://github.com/therealahall/recommendinator/commit/e81c5dadaaf820822d70cb2da81d63e9366ff337))
+
+
 ## v0.17.0 (2026-06-28)
 
 ### Documentation
