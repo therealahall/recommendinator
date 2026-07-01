@@ -40,6 +40,7 @@ from src.ingestion.plugin_base import (
     SourcePlugin,
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.utils.dates import parse_iso_timestamp
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
@@ -240,12 +241,8 @@ def fetch_show_season_totals(
 
 def _parse_completed_date(raw: str | None) -> date | None:
     """Parse a Trakt ISO 8601 timestamp into a date, or None if absent/invalid."""
-    if not raw:
-        return None
-    try:
-        return datetime.fromisoformat(raw.replace("Z", "+00:00")).date()
-    except ValueError:
-        return None
+    parsed = parse_iso_timestamp(raw)
+    return parsed.date() if parsed else None
 
 
 def _show_season_progress(
@@ -298,6 +295,35 @@ def _show_season_progress(
     watched.sort()
     highest_watched_season = max(watched) if watched else 0
     return watched, highest_watched_season
+
+
+def _season_watched_dates(
+    seasons: list[dict[str, Any]],
+    watched_numbers: list[int],
+) -> dict[str, str]:
+    """Map each fully-watched season to its latest episode watch time.
+
+    The value is the max ``last_watched_at`` (normalized ISO 8601) across the
+    season's watched episodes — the moment the user finished that season, used
+    as the variety ladder's recency key. Seasons absent from *watched_numbers*
+    and seasons with no parseable episode dates are omitted.
+    """
+    watched = set(watched_numbers)
+    result: dict[str, str] = {}
+    for season in seasons:
+        number = season.get("number")
+        if not isinstance(number, int) or number not in watched:
+            continue
+        latest: datetime | None = None
+        for episode in season.get("episodes") or []:
+            parsed = parse_iso_timestamp(episode.get("last_watched_at"))
+            if parsed is None:
+                continue
+            if latest is None or parsed > latest:
+                latest = parsed
+        if latest is not None:
+            result[str(number)] = latest.isoformat()
+    return result
 
 
 def _watched_episode_count(seasons: list[dict[str, Any]]) -> int:
@@ -601,6 +627,9 @@ class TraktPlugin(SourcePlugin):
             metadata = _media_metadata(show)
             metadata["seasons_watched"] = seasons_watched
             metadata["total_seasons"] = total_seasons
+            season_dates = _season_watched_dates(seasons, seasons_watched)
+            if season_dates:
+                metadata["seasons_watched_dates"] = season_dates
 
             items[(ContentType.TV_SHOW, int(trakt_id))] = ContentItem(
                 id=f"trakt:{trakt_id}",
