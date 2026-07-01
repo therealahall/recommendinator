@@ -3,7 +3,8 @@
 These tests document the stepped penalty ladder built from recently completed
 content and the penalty looked up for a candidate. They cover completion-date
 ordering, distinct-cluster stepping, the exact stepped percentages, and the
-COMPLETED-only filter.
+completion-event filter (a fully COMPLETED item, or an ongoing TV show with
+at least one finished season).
 """
 
 from __future__ import annotations
@@ -50,6 +51,23 @@ def _candidate(title: str, genres: list[str]) -> ContentItem:
         content_type=ContentType.BOOK,
         status=ConsumptionStatus.UNREAD,
         metadata={"genres": genres},
+    )
+
+
+def _ongoing_show(
+    title: str, genres: list[str], season_dates: dict[str, str]
+) -> ContentItem:
+    """Build an ongoing TV show with one finished season carrying *season_dates*."""
+    return ContentItem(
+        id=title,
+        title=title,
+        content_type=ContentType.TV_SHOW,
+        status=ConsumptionStatus.CURRENTLY_CONSUMING,
+        metadata={
+            "genres": genres,
+            "seasons_watched": [1],
+            "seasons_watched_dates": season_dates,
+        },
     )
 
 
@@ -260,3 +278,55 @@ class TestVarietySeriesContinuationRegression:
         )
         # Softening only lowers; it never raises the penalty.
         assert softened < full
+
+
+class TestOngoingTvShowFinishedSeasons:
+    """A finished season of an ongoing TV show counts as a completion event."""
+
+    def test_finished_season_of_ongoing_show_enters_ladder(self) -> None:
+        show = _ongoing_show("Wheel", ["Fantasy"], {"1": "2026-05-01T00:00:00+00:00"})
+        ladder = build_variety_ladder([show], top_penalty=1.0)
+        assert ladder.get("fantasy") == pytest.approx(1.0)
+
+    def test_ongoing_show_without_seasons_does_not_enter_ladder(self) -> None:
+        show = ContentItem(
+            id="x",
+            title="X",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.CURRENTLY_CONSUMING,
+            metadata={"genres": ["Fantasy"], "seasons_watched": []},
+        )
+        assert build_variety_ladder([show], top_penalty=1.0) == {}
+
+    def test_next_season_of_same_show_gets_halved_continuation_penalty(self) -> None:
+        show = _ongoing_show("Wheel", ["Fantasy"], {"1": "2026-05-01T00:00:00+00:00"})
+        ladder = build_variety_ladder([show], top_penalty=1.0)
+        next_season = ContentItem(
+            id="Wheel:s2",
+            title="Wheel (Season 2)",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genres": ["Fantasy"]},
+        )
+        full = variety_penalty_for(next_season, ladder, is_series_continuation=False)
+        softened = variety_penalty_for(next_season, ladder, is_series_continuation=True)
+        # The finished season must have actually claimed the top rung, or this
+        # test would pass vacuously with full == softened == 0.
+        assert full == pytest.approx(VARIETY_TOP_PENALTY)
+        assert softened == pytest.approx(full * VARIETY_SERIES_CONTINUATION_FACTOR)
+
+    def test_undated_finished_season_sorts_below_dated_completions(self) -> None:
+        dated = _completed("A", ["Crime"], completed_on=date(2026, 6, 1))
+        undated_ongoing = _ongoing_show("B", ["Fantasy"], {})  # no parseable date
+
+        # Admitted alone, the undated finished season still claims the rung —
+        # proving its later exclusion is a lost recency tiebreak, not a
+        # failure to ever be admitted to the ladder.
+        solo_ladder = build_variety_ladder([undated_ongoing], steps=1, top_penalty=1.0)
+        assert solo_ladder.get("fantasy") == pytest.approx(1.0)
+
+        ladder = build_variety_ladder(
+            [undated_ongoing, dated], steps=1, top_penalty=1.0
+        )
+        # The dated completion is fresher, so it claims the single rung.
+        assert set(ladder) == {"crime_thriller"}
