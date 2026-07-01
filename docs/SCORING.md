@@ -97,6 +97,18 @@ so the legit next book is nudged down but not buried. Starting a brand-new serie
 in a just-finished genre still takes the full penalty — that's exactly the
 genre-hop this preference is for.
 
+Finishing a **TV season** counts as a completion too, even while the show as a
+whole is still "currently consuming." A show with at least one fully-watched
+season claims a rung on the ladder for its genres, dated by that season's
+watched date rather than the show's (absent) completion date. That date comes
+from Trakt's per-season last-watched time, or from the timestamp of a manual
+season check-off in the library editor. The show's next season is still a
+series continuation, so it gets the same halved penalty described above —
+finishing season 1 nudges season 2 down without burying it. A finished season
+with no recorded date (e.g. imported via CSV/JSON, or not yet backfilled)
+still claims a rung — it just sorts to the weakest/undated one, so it is
+never silently excluded from the ladder.
+
 ## Diversity bonus (advanced)
 
 Independently of the variety toggle, an explicit per-user `diversity_weight`
