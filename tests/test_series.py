@@ -1,5 +1,7 @@
 """Tests for series detection and filtering utilities."""
 
+from datetime import date
+
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.utils.series import (
     MAX_SEASONS,
@@ -14,6 +16,7 @@ from src.utils.series import (
     inject_seasons_watched_tracking,
     is_active_series_continuation,
     is_first_item_in_series,
+    latest_season_watched_date,
     should_recommend_item,
     strip_series_suffix_from_title,
 )
@@ -1454,3 +1457,56 @@ class TestSeasonBoundsRegression:
         tracking = inject_seasons_watched_tracking([show], {})
         # In-range seasons (including the cap boundary) kept; out-of-range dropped.
         assert tracking["The Show"] == {1, 5, MAX_SEASONS}
+
+
+def _show(dates: dict[str, str]) -> ContentItem:
+    return ContentItem(
+        id="x",
+        title="Show",
+        content_type=ContentType.TV_SHOW,
+        status=ConsumptionStatus.CURRENTLY_CONSUMING,
+        metadata={"seasons_watched": [1, 2], "seasons_watched_dates": dates},
+    )
+
+
+def test_latest_season_watched_date_returns_max():
+    item = _show({"1": "2026-01-05T00:00:00+00:00", "2": "2026-03-10T00:00:00+00:00"})
+    assert latest_season_watched_date(item) == date(2026, 3, 10)
+
+
+def test_latest_season_watched_date_none_when_absent():
+    item = ContentItem(
+        id="x",
+        title="Show",
+        content_type=ContentType.TV_SHOW,
+        status=ConsumptionStatus.CURRENTLY_CONSUMING,
+        metadata={"seasons_watched": [1]},
+    )
+    assert latest_season_watched_date(item) is None
+
+
+def test_latest_season_watched_date_none_when_empty_dict():
+    """An empty seasons_watched_dates map yields None, not a crash on max()."""
+    item = _show({})
+    assert latest_season_watched_date(item) is None
+
+
+def test_latest_season_watched_date_none_when_not_a_dict():
+    """A non-dict seasons_watched_dates value (malformed metadata) yields None."""
+    item = ContentItem(
+        id="x",
+        title="Show",
+        content_type=ContentType.TV_SHOW,
+        status=ConsumptionStatus.CURRENTLY_CONSUMING,
+        metadata={
+            "seasons_watched": [1],
+            "seasons_watched_dates": ["not", "a", "dict"],
+        },
+    )
+    assert latest_season_watched_date(item) is None
+
+
+def test_latest_season_watched_date_none_when_all_unparseable():
+    """A dict whose values are all unparseable dates yields None, not a crash."""
+    item = _show({"1": "not-a-date"})
+    assert latest_season_watched_date(item) is None
