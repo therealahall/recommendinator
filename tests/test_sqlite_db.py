@@ -2,7 +2,7 @@
 
 import json
 import sqlite3
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -2369,6 +2369,76 @@ class TestUpdateItemFromUi:
         assert retrieved is not None
         assert retrieved.metadata is not None
         assert retrieved.metadata.get("seasons_watched") == [1, 2, 3]
+
+    def test_update_seasons_watched_stamps_dates(self, temp_db: SQLiteDB) -> None:
+        """Newly checked-off seasons are stamped with an ISO timestamp."""
+        item = ContentItem(
+            id="ui_5a",
+            title="Test Show",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"seasons": 5},
+        )
+        db_id = temp_db.save_content_item(item)
+
+        temp_db.update_item_from_ui(
+            db_id=db_id, status="currently_consuming", seasons_watched=[1]
+        )
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.metadata is not None
+        dates = retrieved.metadata.get("seasons_watched_dates")
+        assert set(dates.keys()) == {"1"}
+        datetime.fromisoformat(dates["1"].replace("Z", "+00:00"))
+
+    def test_update_seasons_watched_preserves_and_drops_dates(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """Existing stamps survive re-saves; unchecked seasons lose their stamp."""
+        item = ContentItem(
+            id="ui_5b",
+            title="Test Show",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"seasons": 5},
+        )
+        db_id = temp_db.save_content_item(item)
+
+        temp_db.update_item_from_ui(
+            db_id=db_id, status="currently_consuming", seasons_watched=[1]
+        )
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.metadata is not None
+        first_stamp = retrieved.metadata["seasons_watched_dates"]["1"]
+
+        temp_db.update_item_from_ui(
+            db_id=db_id, status="currently_consuming", seasons_watched=[1, 2]
+        )
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.metadata is not None
+        dates = retrieved.metadata["seasons_watched_dates"]
+        assert dates["1"] == first_stamp
+        assert "2" in dates
+
+        temp_db.update_item_from_ui(
+            db_id=db_id, status="currently_consuming", seasons_watched=[2]
+        )
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.metadata is not None
+        dates = retrieved.metadata["seasons_watched_dates"]
+        assert set(dates.keys()) == {"2"}
+
+        # Unchecking every season empties the dates map entirely, not just
+        # the season that was dropped.
+        temp_db.update_item_from_ui(db_id=db_id, status="unread", seasons_watched=[])
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.metadata is not None
+        assert retrieved.metadata["seasons_watched_dates"] == {}
 
     def test_update_auto_derive_status_all_watched(self, temp_db: SQLiteDB) -> None:
         """All seasons watched auto-derives status to completed."""
