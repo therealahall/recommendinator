@@ -2558,6 +2558,76 @@ class TestUpdateItemFromUi:
         assert retrieved.status == ConsumptionStatus.COMPLETED
 
 
+class TestUpdateItemFromUiRegression:
+    """Regression tests for update_item_from_ui bugs."""
+
+    def test_update_seasons_watched_stamps_only_newly_checked_season_regression(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """Only a season newly ticked in this edit is stamped with `now`.
+
+        Bug reported: checking one more season on a show that already had
+        undated watched seasons stamped every undated-but-watched season
+        with the current time, inventing dates for seasons watched long
+        before dates were tracked.
+        Root cause: the dates map was rebuilt as
+        ``{season: existing_dates.get(season, now) for season in
+        seasons_watched}``, which defaults to `now` for *any* undated
+        season in the incoming list — not just ones newly added in this
+        edit.
+        Fix: capture the previous ``seasons_watched`` before overwriting it,
+        and only stamp `now` for a season that is both new to the incoming
+        list and not already dated.
+        """
+        item = ContentItem(
+            id="ui_5c",
+            title="Test Show",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"seasons": 5},
+        )
+        db_id = temp_db.save_content_item(item)
+
+        # Season 1 has an existing date; season 3 was watched but is
+        # undated (e.g. imported before date tracking existed).
+        temp_db.update_item_from_ui(
+            db_id=db_id, status="currently_consuming", seasons_watched=[1]
+        )
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.metadata is not None
+        season_1_stamp = retrieved.metadata["seasons_watched_dates"]["1"]
+
+        with temp_db.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT metadata FROM tv_show_details WHERE content_item_id = ?",
+                (db_id,),
+            )
+            metadata = json.loads(cursor.fetchone()["metadata"])
+            metadata["seasons_watched"] = [1, 3]
+            metadata["seasons_watched_dates"] = {"1": season_1_stamp}
+            cursor.execute(
+                "UPDATE tv_show_details SET metadata = ?" " WHERE content_item_id = ?",
+                (json.dumps(metadata), db_id),
+            )
+            conn.commit()
+
+        # User checks off season 2, leaving season 3 as it was: watched but
+        # undated.
+        temp_db.update_item_from_ui(
+            db_id=db_id, status="currently_consuming", seasons_watched=[1, 2, 3]
+        )
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.metadata is not None
+        dates = retrieved.metadata["seasons_watched_dates"]
+        assert dates["1"] == season_1_stamp  # preserved
+        datetime.fromisoformat(dates["2"].replace("Z", "+00:00"))  # newly stamped
+        assert "3" not in dates  # previously watched but undated: not invented
+
+
 class TestTvSeasonSyncRegression:
     """Tests for TV show status regression when new seasons arrive via sync."""
 
@@ -2713,6 +2783,161 @@ class TestTvSeasonSyncRegression:
         assert retrieved is not None
         # Still completed — no new seasons
         assert retrieved.status == ConsumptionStatus.COMPLETED
+
+    def test_sync_keeps_later_existing_date_over_earlier_incoming_regression(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """Regression test: a sync must not clobber a later date with an earlier one.
+
+        Bug reported: after a Trakt re-sync, a season's watch date could
+        regress to an earlier value, and the whole ``seasons_watched_dates``
+        map could also be frozen at its first written value (dropping a
+        newly-watched season's date entirely).
+        Root cause: ``_save_detail_table``'s remaining-metadata merge treated
+        ``seasons_watched_dates`` either as ordinary existing-wins metadata
+        (freezing the whole dict, so a new season's date never appears) or,
+        in a later revision, as plain incoming-wins (letting a stale sync
+        date overwrite a later known one) — neither compared the two
+        timestamps.
+        Fix: per-season merge via ``later_iso_timestamp`` — the later of the
+        existing and incoming date wins, and a season present on only one
+        side is carried over.
+        """
+        first = ContentItem(
+            id="trakt:show1",
+            title="Regression Show",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.CURRENTLY_CONSUMING,
+            source="trakt",
+            metadata={
+                "seasons_watched": [1],
+                "seasons_watched_dates": {"1": "2026-06-01T00:00:00+00:00"},
+            },
+        )
+        db_id = temp_db.save_content_item(first)
+
+        # A later sync: season 1's incoming date is stale (earlier than what
+        # we already know), and season 2 is newly watched.
+        resync = ContentItem(
+            id="trakt:show1",
+            title="Regression Show",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.CURRENTLY_CONSUMING,
+            source="trakt",
+            metadata={
+                "seasons_watched": [1, 2],
+                "seasons_watched_dates": {
+                    "1": "2026-01-01T00:00:00+00:00",
+                    "2": "2026-06-02T00:00:00+00:00",
+                },
+            },
+        )
+        temp_db.save_content_item(resync)
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.metadata is not None
+        assert retrieved.metadata.get("seasons_watched_dates") == {
+            "1": "2026-06-01T00:00:00+00:00",  # later existing date kept
+            "2": "2026-06-02T00:00:00+00:00",  # new season gap-filled
+        }
+        # seasons_watched stays existing-wins: a Trakt sync must not clobber
+        # manual check-offs.
+        assert retrieved.metadata.get("seasons_watched") == [1]
+
+    def test_sync_updates_to_genuinely_later_incoming_date_regression(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """Regression test: a genuinely newer Trakt watch must still update the date.
+
+        Bug reported: a season's watch date could get stuck at a stale value
+        even when Trakt reported a genuinely more recent watch.
+        Root cause: an existing-wins merge of ``seasons_watched_dates`` never
+        compares timestamps, so it can never move a date forward.
+        Fix: per-season merge via ``later_iso_timestamp`` lets a later
+        incoming date win while still protecting a later existing date (see
+        the sibling regression test above).
+        """
+        first = ContentItem(
+            id="trakt:show2",
+            title="Regression Show 2",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.CURRENTLY_CONSUMING,
+            source="trakt",
+            metadata={
+                "seasons_watched": [1],
+                "seasons_watched_dates": {"1": "2026-01-01T00:00:00+00:00"},
+            },
+        )
+        db_id = temp_db.save_content_item(first)
+
+        resync = ContentItem(
+            id="trakt:show2",
+            title="Regression Show 2",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.CURRENTLY_CONSUMING,
+            source="trakt",
+            metadata={
+                "seasons_watched": [1],
+                "seasons_watched_dates": {"1": "2026-06-01T00:00:00+00:00"},
+            },
+        )
+        temp_db.save_content_item(resync)
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.metadata is not None
+        assert retrieved.metadata.get("seasons_watched_dates") == {
+            "1": "2026-06-01T00:00:00+00:00"
+        }
+
+    def test_sync_gap_fills_dates_onto_pre_feature_row_regression(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """A sync gap-fills seasons_watched_dates onto a row that predates the feature.
+
+        Bug scenario: rows created before ``seasons_watched_dates`` existed
+        (or ingested by a source that never sends it) used to rely on a
+        one-time schema backfill (``_seed_season_watched_dates``) to
+        acquire a date on upgrade. That backfill has been removed, so the
+        ordinary per-season merge in ``_save_detail_table`` must be able to
+        gap-fill dates onto such a row the first time a sync actually sends
+        them — not just onto rows that already carry the key.
+        """
+        item = ContentItem(
+            id="trakt:show3",
+            title="Pre-Feature Show",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.CURRENTLY_CONSUMING,
+            source="trakt",
+            metadata={"seasons_watched": [1]},
+        )
+        db_id = temp_db.save_content_item(item)
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.metadata is not None
+        assert "seasons_watched_dates" not in retrieved.metadata
+
+        resync = ContentItem(
+            id="trakt:show3",
+            title="Pre-Feature Show",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.CURRENTLY_CONSUMING,
+            source="trakt",
+            metadata={
+                "seasons_watched": [1],
+                "seasons_watched_dates": {"1": "2026-06-01T00:00:00+00:00"},
+            },
+        )
+        temp_db.save_content_item(resync)
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.metadata is not None
+        assert retrieved.metadata.get("seasons_watched_dates") == {
+            "1": "2026-06-01T00:00:00+00:00"
+        }
 
 
 class TestDetailTableWhitelist:
@@ -2981,6 +3206,103 @@ class TestCrossSourceDuplicateDetectionRegression:
         assert retrieved.id == "steam-ds"  # Kept row retains its external_id
         assert retrieved.rating == 5
         assert retrieved.review == "Masterpiece"
+
+    def test_merge_unions_seasons_watched_dates_with_later_date_winning_regression(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """Cross-source dedup merge unions seasons_watched_dates per season.
+
+        Bug reported: consolidating a duplicate TV show found by title could
+        drop a season the duplicate has a date for but the kept row doesn't,
+        or freeze a season present in both rows at the kept row's possibly
+        stale date.
+        Root cause: ``_merge_detail_metadata``'s keep-wins metadata merge
+        never compared per-season timestamps, so it could neither gap-fill
+        a dup-only season nor let a genuinely later duplicate date win.
+        Fix: per-season merge via ``later_iso_timestamp`` in
+        ``_merge_detail_metadata``.
+
+        The shared conflict season (2) is set up so the *duplicate* row's
+        date is genuinely later than the kept item's own incoming date for
+        that season. This matters because after ``_merge_duplicate_into``
+        runs, ``save_content_item`` continues on to re-save the (unchanged)
+        ``keep`` item via ``_save_detail_table``, which does its own
+        later-wins re-merge against the DB row. If the conflict season's
+        winner were the kept row's own date (as in an earlier, non-
+        discriminating version of this test), that trailing re-merge would
+        reconstruct the correct answer from ``keep``'s own incoming
+        metadata alone — passing even if ``_merge_detail_metadata`` were
+        broken and dropped the duplicate's data entirely. With the
+        duplicate's date genuinely later, only a correct
+        ``_merge_detail_metadata`` merge persists it to the DB row that the
+        trailing re-merge reads back.
+
+        Both rows are created with different external_ids and matching
+        normalized titles (one via raw SQL, since _insert_raw_item only
+        supports video games) so re-saving the kept item triggers
+        _merge_duplicate_into (this exercises _merge_detail_metadata, not
+        the resync path in _save_detail_table exercised by
+        TestTvSeasonSyncRegression).
+        """
+        keep = ContentItem(
+            id="trakt-show",
+            title="Regression Show",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.CURRENTLY_CONSUMING,
+            source="trakt",
+            metadata={
+                "seasons_watched_dates": {
+                    "1": "2026-01-01T00:00:00+00:00",
+                    "2": "2026-02-01T00:00:00+00:00",
+                }
+            },
+        )
+        keep_id = temp_db.save_content_item(keep)
+
+        with temp_db.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """INSERT INTO content_items
+                   (user_id, external_id, title, normalized_title,
+                    content_type, status, source)
+                   VALUES (1, 'sonarr-show', 'Regression Show',
+                           'regression show', 'tv_show',
+                           'currently_consuming', 'sonarr')""",
+            )
+            dup_id = cursor.lastrowid
+            cursor.execute(
+                """INSERT INTO tv_show_details (content_item_id, metadata)
+                   VALUES (?, ?)""",
+                (
+                    dup_id,
+                    json.dumps(
+                        {
+                            "seasons_watched_dates": {
+                                # Season 2: later than the kept row's date.
+                                "2": "2026-05-01T00:00:00+00:00",
+                                # Season 3: only on the duplicate row.
+                                "3": "2026-03-01T00:00:00+00:00",
+                            }
+                        }
+                    ),
+                ),
+            )
+            conn.commit()
+
+        # Re-save the kept item — triggers the cross-source dedup merge.
+        temp_db.save_content_item(keep)
+
+        all_shows = temp_db.get_content_items(content_type=ContentType.TV_SHOW)
+        assert len(all_shows) == 1
+
+        retrieved = temp_db.get_content_item(keep_id)
+        assert retrieved is not None
+        assert retrieved.metadata is not None
+        assert retrieved.metadata.get("seasons_watched_dates") == {
+            "1": "2026-01-01T00:00:00+00:00",  # Only on the kept row
+            "2": "2026-05-01T00:00:00+00:00",  # Duplicate's later date wins
+            "3": "2026-03-01T00:00:00+00:00",  # Only on the duplicate row
+        }
 
     def test_merge_does_not_overwrite_existing_rating_on_kept_row(
         self, temp_db: SQLiteDB

@@ -30,6 +30,7 @@ from src.storage.schema import (
     get_default_user_id,
     write_enrichment_complete,
 )
+from src.utils.dates import merge_seasons_watched_dates
 from src.utils.list_merge import merge_string_lists
 from src.utils.sorting import get_sort_title, matches_search
 
@@ -516,7 +517,11 @@ class SQLiteDB:
         For existing rows, enrichment is the source of truth:
         - Genres/tags: merged additively (new + existing)
         - All other columns: fill-only (only set if existing value is None)
-        - Remaining metadata JSON: merged additively (existing keys preserved)
+        - Remaining metadata JSON: merged additively (existing keys preserved),
+          except ``seasons_watched_dates``, which merges per season keeping
+          the later watch date (so an earlier sync date never overwrites a
+          later manual/existing date, but a genuinely newer Trakt watch does
+          update it; new seasons are added)
 
         For new rows, all data from ingestion is used as-is.
 
@@ -616,6 +621,18 @@ class SQLiteDB:
                 pass
             # Existing keys take precedence, incoming fills gaps
             merged_remaining = {**remaining_metadata, **existing_remaining}
+            # Exception: seasons_watched_dates merges per season, keeping the
+            # later watch date — an earlier sync date never overwrites a
+            # later manual/existing date, but a genuinely newer Trakt watch
+            # does update it, and new seasons are added.
+            combined_dates = merge_seasons_watched_dates(
+                existing_remaining.get("seasons_watched_dates"),
+                remaining_metadata.get("seasons_watched_dates"),
+            )
+            # A None result (e.g. both sides only had unparseable timestamps)
+            # intentionally leaves the general blob-merge result above in place.
+            if combined_dates is not None:
+                merged_remaining["seasons_watched_dates"] = combined_dates
             metadata_json = json.dumps(merged_remaining) if merged_remaining else None
         else:
             metadata_json = (
@@ -1212,10 +1229,12 @@ class SQLiteDB:
         The auto-derived status overrides the status parameter.
 
         Also stamps ``seasons_watched_dates`` (season -> ISO timestamp) in the
-        detail-table metadata: a season newly present in ``seasons_watched``
-        gets the current time, a season already checked keeps its earlier
-        stamp, and a season no longer in the incoming list is dropped. This is
-        the recency signal the variety ladder uses to date an ongoing show's
+        detail-table metadata: a season newly checked off in this edit (not
+        present in the previous ``seasons_watched``) gets the current time; a
+        season that already has a date keeps it; a season that was already
+        watched but has no date is left undated rather than inventing one; a
+        season no longer in the incoming list is dropped. This is the
+        recency signal the variety ladder uses to date an ongoing show's
         finished-season completion event.
 
         Manual genres/tags/description overwrite the detail-table values
@@ -1292,14 +1311,24 @@ class SQLiteDB:
                     existing_dates = existing_metadata.get("seasons_watched_dates")
                     if not isinstance(existing_dates, dict):
                         existing_dates = {}
-                    # New seasons get `now`; already-checked seasons keep their
-                    # earlier stamp; unchecked seasons fall out (rebuilt from the
-                    # incoming list only).
+                    previously_watched = existing_metadata.get("seasons_watched")
+                    if not isinstance(previously_watched, list):
+                        previously_watched = []
+                    # A season already dated keeps its date. A season newly
+                    # ticked in this edit (not in the previous list) gets
+                    # `now`. A season that was already watched but has no
+                    # date is left undated rather than inventing one.
+                    # Unchecked seasons fall out (rebuilt from the incoming
+                    # list only).
+                    new_dates: dict[str, str] = {}
+                    for season in seasons_watched:
+                        key = str(season)
+                        if key in existing_dates:
+                            new_dates[key] = existing_dates[key]
+                        elif season not in previously_watched:
+                            new_dates[key] = now_iso
                     existing_metadata["seasons_watched"] = seasons_watched
-                    existing_metadata["seasons_watched_dates"] = {
-                        str(season): existing_dates.get(str(season), now_iso)
-                        for season in seasons_watched
-                    }
+                    existing_metadata["seasons_watched_dates"] = new_dates
                     cursor.execute(
                         "UPDATE tv_show_details SET metadata = ?"
                         " WHERE content_item_id = ?",

@@ -11,6 +11,7 @@ import re
 import sqlite3
 from typing import Any
 
+from src.utils.dates import merge_seasons_watched_dates
 from src.utils.list_merge import merge_string_lists
 
 # ---------------------------------------------------------------------------
@@ -293,7 +294,9 @@ def _merge_detail_metadata(
     Precondition: both arguments must be non-None sqlite3.Row objects.
     The caller (_merge_detail_tables) guards against None before calling.
 
-    Merge rule: existing keys take precedence; incoming fills gaps.
+    Merge rule: existing keys take precedence; incoming fills gaps — except
+    ``seasons_watched_dates``, which merges per season keeping the later
+    watch date (see below).
     """
     assert keep_detail is not None and dup_detail is not None
     dup_meta_raw = dup_detail["metadata"]
@@ -319,6 +322,19 @@ def _merge_detail_metadata(
 
     # Existing keys take precedence; incoming fills gaps
     merged = {**dup_meta, **keep_meta}
+
+    # Exception: seasons_watched_dates merges per season, keeping the later
+    # watch date — a season only the duplicate has a date for is folded in,
+    # a season both have keeps whichever date is later, and the kept row's
+    # date is never overwritten by an earlier duplicate date.
+    combined_dates = merge_seasons_watched_dates(
+        keep_meta.get("seasons_watched_dates"), dup_meta.get("seasons_watched_dates")
+    )
+    # A None result (e.g. both sides only had unparseable timestamps)
+    # intentionally leaves the general blob-merge result above in place.
+    if combined_dates is not None:
+        merged["seasons_watched_dates"] = combined_dates
+
     return json.dumps(merged)
 
 
@@ -328,7 +344,9 @@ def _merge_detail_tables(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -
     For each detail table (book_details, movie_details, etc.):
     - If only the duplicate has a row, move it to the kept item.
     - If both have rows, merge genres/tags additively and fill nulls.
-    - Metadata JSON is merged additively (existing keys preserved).
+    - Metadata JSON is merged additively (existing keys preserved), except
+      ``seasons_watched_dates``, which merges per season keeping the later
+      watch date across the two rows (see ``_merge_detail_metadata``).
 
     Column names are sourced from the compile-time ``_DETAIL_TABLE_COLUMNS``
     constant — never from live database schema enumeration.
