@@ -13,6 +13,7 @@ from src.ingestion.sources.trakt.trakt import (
     TraktAPIError,
     TraktPlugin,
     _parse_completed_date,
+    _season_watched_dates,
     fetch_list,
     fetch_show_season_totals,
     refresh_access_token,
@@ -192,6 +193,44 @@ class TestParseCompletedDate:
     def test_malformed_string_returns_none(self) -> None:
         """A non-ISO string yields None instead of raising."""
         assert _parse_completed_date("not-a-date") is None
+
+
+class TestSeasonWatchedDates:
+    """Tests for mapping fully-watched seasons to their latest episode date."""
+
+    def test_season_watched_dates_uses_latest_episode(self) -> None:
+        """Each watched season maps to the max last_watched_at in its episodes."""
+        seasons = [
+            {
+                "number": 1,
+                "episodes": [
+                    {"number": 1, "last_watched_at": "2026-01-01T00:00:00Z"},
+                    {"number": 2, "last_watched_at": "2026-01-05T00:00:00Z"},
+                ],
+            },
+            {
+                "number": 2,
+                "episodes": [
+                    {"number": 1, "last_watched_at": "2026-02-10T00:00:00Z"},
+                ],
+            },
+        ]
+        dates = _season_watched_dates(seasons, [1, 2])
+        assert dates["1"] == "2026-01-05T00:00:00+00:00"
+        assert dates["2"] == "2026-02-10T00:00:00+00:00"
+
+    def test_season_watched_dates_skips_unwatched_and_dateless(self) -> None:
+        """Seasons outside watched_numbers and undated seasons are omitted."""
+        seasons = [
+            {"number": 0, "episodes": [{"last_watched_at": "2026-01-01T00:00:00Z"}]},
+            {"number": 1, "episodes": [{"number": 1, "last_watched_at": None}]},
+            {
+                "number": 2,
+                "episodes": [{"number": 1, "last_watched_at": "2026-03-01T00:00:00Z"}],
+            },
+        ]
+        dates = _season_watched_dates(seasons, [2])  # only season 2 fully watched
+        assert dates == {"2": "2026-03-01T00:00:00+00:00"}
 
 
 class TestTraktPluginProperties:
@@ -435,6 +474,63 @@ class TestTraktPluginFetch:
         assert item.date_completed is None
         assert item.metadata["seasons_watched"] == [1, 3]
         assert item.metadata["total_seasons"] == 5
+
+    def test_fetch_populates_seasons_watched_dates(self) -> None:
+        """Test seasons_watched_dates is keyed by season number, max episode date.
+
+        Closes the gap that ``_season_watched_dates`` is only unit-tested in
+        isolation: every other fetch fixture uses episodes with no
+        ``last_watched_at``, so the map wired into ``_add_watched_shows`` is
+        never exercised end-to-end.
+        """
+        payloads = _all_lists(
+            watched_shows=[
+                {
+                    "last_watched_at": "2022-06-01T00:00:00.000Z",
+                    "show": _show(20, "The Expanse", aired_episodes=20),
+                    "seasons": [
+                        {
+                            "number": 1,
+                            "episodes": [
+                                {
+                                    "number": n,
+                                    "last_watched_at": f"2022-01-0{n}T00:00:00.000Z",
+                                }
+                                for n in range(1, 10)
+                            ]
+                            + [
+                                {
+                                    "number": 10,
+                                    "last_watched_at": "2022-01-10T00:00:00.000Z",
+                                }
+                            ],
+                        },
+                        {
+                            "number": 3,
+                            "episodes": [
+                                {
+                                    "number": n,
+                                    "last_watched_at": f"2022-05-0{n}T00:00:00.000Z",
+                                }
+                                for n in range(1, 6)
+                            ],
+                        },
+                    ],
+                }
+            ]
+        )
+        items = _run_fetch(
+            payloads,
+            _config(),
+            season_totals={20: {1: 10, 2: 13, 3: 5, 4: 10, 5: 10}},
+        )
+
+        item = items[0]
+        assert item.metadata["seasons_watched"] == [1, 3]
+        assert item.metadata["seasons_watched_dates"] == {
+            "1": "2022-01-10T00:00:00+00:00",
+            "3": "2022-05-05T00:00:00+00:00",
+        }
 
     def test_fetch_show_excludes_specials_season_zero(self) -> None:
         """Test season 0 (specials) is excluded from seasons_watched."""
