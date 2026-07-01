@@ -117,6 +117,10 @@ textarea:focus:not(:focus-visible) {
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border-width: 0;
+  /* Keep screen-reader-only scaffolding out of text selections so copying
+     visible content (e.g. an activation code) never pulls in hidden labels. */
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 /* Base */

@@ -16,7 +16,7 @@
     "paths": {
       "@/*": ["resources/js/*"]
     },
-    "types": ["vitest/globals"]
+    "types": ["vitest/globals", "node"]
   },
   "include": ["resources/**/*.ts", "resources/**/*.vue", "env.d.ts"],
   "exclude": ["node_modules"]

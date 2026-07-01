@@ -23,6 +23,7 @@
   "devDependencies": {
     "@pinia/testing": "^0.1.7",
     "@tailwindcss/vite": "^4.1.4",
+    "@types/node": "^26.0.1",
     "@vitejs/plugin-vue": "^5.2.3",
     "@vue/test-utils": "^2.4.6",
     "jsdom": "^26.0.0",
