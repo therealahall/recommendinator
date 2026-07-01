@@ -4,7 +4,7 @@ import json
 import sqlite3
 from collections.abc import Generator
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -1211,6 +1211,13 @@ class SQLiteDB:
         0 watched = unread, all watched = completed, partial = currently_consuming.
         The auto-derived status overrides the status parameter.
 
+        Also stamps ``seasons_watched_dates`` (season -> ISO timestamp) in the
+        detail-table metadata: a season newly present in ``seasons_watched``
+        gets the current time, a season already checked keeps its earlier
+        stamp, and a season no longer in the incoming list is dropped. This is
+        the recency signal the variety ladder uses to date an ongoing show's
+        finished-season completion event.
+
         Manual genres/tags/description overwrite the detail-table values
         (rather than the additive merge used by sync/enrichment) and mark the
         item enriched via the ``manual`` provider so it drops out of the
@@ -1281,7 +1288,18 @@ class SQLiteDB:
                                 existing_metadata = parsed
                         except (json.JSONDecodeError, TypeError):
                             pass
+                    now_iso = datetime.now(UTC).isoformat()
+                    existing_dates = existing_metadata.get("seasons_watched_dates")
+                    if not isinstance(existing_dates, dict):
+                        existing_dates = {}
+                    # New seasons get `now`; already-checked seasons keep their
+                    # earlier stamp; unchecked seasons fall out (rebuilt from the
+                    # incoming list only).
                     existing_metadata["seasons_watched"] = seasons_watched
+                    existing_metadata["seasons_watched_dates"] = {
+                        str(season): existing_dates.get(str(season), now_iso)
+                        for season in seasons_watched
+                    }
                     cursor.execute(
                         "UPDATE tv_show_details SET metadata = ?"
                         " WHERE content_item_id = ?",
