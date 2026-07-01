@@ -105,9 +105,10 @@ from Trakt's per-season last-watched time, or from the timestamp of a manual
 season check-off in the library editor. The show's next season is still a
 series continuation, so it gets the same halved penalty described above —
 finishing season 1 nudges season 2 down without burying it. A finished season
-with no recorded date (e.g. imported via CSV/JSON, or not yet backfilled)
-still claims a rung — it just sorts to the weakest/undated one, so it is
-never silently excluded from the ladder.
+with no recorded date (e.g. imported via CSV/JSON, watched before this
+project started tracking per-season dates, or Trakt has no per-episode watch
+timestamp for that season) still claims a rung — it just sorts to the
+weakest/undated one, so it is never silently excluded from the ladder.
 
 ## Diversity bonus (advanced)
 

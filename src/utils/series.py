@@ -397,9 +397,9 @@ def latest_season_watched_date(item: ContentItem) -> date | None:
     """Most recent watched-season date for a TV show, or None if unknown.
 
     Reads the ``seasons_watched_dates`` metadata map (season -> ISO timestamp)
-    written on manual season check-off, Trakt sync, or the upgrade seed, and
-    returns the latest date. Used by the variety ladder to date an ongoing
-    show's genre-completion event. Returns None when no parseable date exists.
+    written on manual season check-off or Trakt sync, and returns the latest
+    date. Used by the variety ladder to date an ongoing show's
+    genre-completion event. Returns None when no parseable date exists.
     """
     dates = item.metadata.get("seasons_watched_dates")
     if not isinstance(dates, dict) or not dates:
