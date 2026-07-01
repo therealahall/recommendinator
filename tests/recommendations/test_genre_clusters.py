@@ -176,3 +176,29 @@ class TestNewClusters:
             ["cosmic horror", "mystery"], ["eldritch", "survival horror"]
         )
         assert score > 0.0
+
+
+class TestSixNewClusters:
+    """Tests for the reality, sports, superhero, music, animation, and sim clusters."""
+
+    def test_reality_competition_cluster(self) -> None:
+        assert "reality_competition" in get_clusters_for_terms(["reality tv"])
+        assert "reality_competition" in get_clusters_for_terms(["game show"])
+
+    def test_sports_cluster_cross_type(self) -> None:
+        assert "sports" in get_clusters_for_terms(["sports drama"])
+        assert "sports" in get_clusters_for_terms(["racing game"])
+
+    def test_superhero_comic_cluster(self) -> None:
+        assert "superhero_comic" in get_clusters_for_terms(["superhero"])
+
+    def test_music_musical_cluster(self) -> None:
+        assert "music_musical" in get_clusters_for_terms(["musical"])
+
+    def test_animation_family_cluster(self) -> None:
+        assert "animation_family" in get_clusters_for_terms(["anime"])
+
+    def test_simulation_maps_to_sandbox_not_scifi(self) -> None:
+        clusters = get_clusters_for_terms(["simulation"])
+        assert "simulation_sandbox" in clusters
+        assert "science_fiction" not in clusters
