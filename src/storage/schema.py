@@ -2,7 +2,6 @@
 
 import json
 import sqlite3
-from datetime import UTC
 from typing import Any, TypedDict
 
 from src.storage.merge import (
@@ -10,13 +9,6 @@ from src.storage.merge import (
     _merge_scalar_columns,
     normalize_title_for_matching,
 )
-from src.utils.dates import parse_iso_timestamp
-
-# Number of shows the one-time seasons_watched_dates backfill stamps (see
-# _seed_season_watched_dates). Intentionally mirrors VARIETY_LADDER_STEPS in
-# src/recommendations/variety.py (the ladder has five rungs) but is not
-# imported from there — storage must not depend on recommendations.
-_BACKFILL_SEED_COUNT = 5
 
 
 class EnrichmentStatusDict(TypedDict):
@@ -354,9 +346,6 @@ def create_schema(conn: sqlite3.Connection) -> None:
     # Merge any duplicates exposed by the corrected normalization
     _deduplicate_inline(cursor)
 
-    # Seed per-season watched dates so the variety ladder is populated on upgrade
-    _seed_season_watched_dates(cursor)
-
     # Core memories: significant preference signals
     cursor.execute(
         """
@@ -471,66 +460,6 @@ def _renormalize_titles(cursor: sqlite3.Cursor) -> None:
         cursor.execute(
             "UPDATE content_items SET normalized_title = ? WHERE id = ?",
             (normalized, row["id"]),
-        )
-
-
-def _seed_season_watched_dates(cursor: sqlite3.Cursor) -> None:
-    """Seed per-season watched dates so the variety ladder is populated on upgrade.
-
-    One-time and idempotent: if any TV show already carries a non-empty
-    ``seasons_watched_dates`` (from this seed, a manual edit, or a Trakt sync)
-    the step does nothing. Otherwise it stamps the highest watched season of the
-    ``_BACKFILL_SEED_COUNT`` most-recently-updated shows (those with finished
-    seasons) with that show's ``updated_at`` — the ladder has that many rungs,
-    so seeding only that many shows fills it without dating the whole back
-    catalogue. Shows with no finished season are ignored. ``updated_at`` comes
-    from SQLite as ``"YYYY-MM-DD HH:MM:SS"`` (not real ISO 8601); it is parsed
-    and re-emitted via ``.isoformat()`` (attaching UTC, since SQLite's
-    ``CURRENT_TIMESTAMP`` is UTC) so the stamp matches the format written by
-    the other two callers of ``seasons_watched_dates``. A row whose
-    ``updated_at`` fails to parse is skipped.
-    """
-    cursor.execute("SELECT content_item_id, metadata FROM tv_show_details")
-    candidates: list[tuple[int, dict[str, Any], list[int]]] = []
-    for row in cursor.fetchall():
-        try:
-            meta = json.loads(row["metadata"]) if row["metadata"] else {}
-        except (json.JSONDecodeError, TypeError):
-            meta = {}
-        if not isinstance(meta, dict):
-            continue
-        if meta.get("seasons_watched_dates"):
-            return  # already seeded / dated anywhere -> no-op forever
-        watched = meta.get("seasons_watched")
-        if isinstance(watched, list) and any(isinstance(s, int) for s in watched):
-            candidates.append((row["content_item_id"], meta, watched))
-
-    if not candidates:
-        return
-
-    ids = [c[0] for c in candidates]
-    placeholders = ",".join("?" for _ in ids)
-    cursor.execute(
-        f"SELECT id, updated_at FROM content_items WHERE id IN ({placeholders})",
-        ids,
-    )
-    updated_at = {r["id"]: r["updated_at"] for r in cursor.fetchall()}
-
-    candidates.sort(key=lambda c: updated_at.get(c[0]) or "", reverse=True)
-    for content_item_id, meta, watched in candidates[:_BACKFILL_SEED_COUNT]:
-        stamp = updated_at.get(content_item_id)
-        if not stamp:
-            continue
-        parsed_stamp = parse_iso_timestamp(stamp)
-        if parsed_stamp is None:
-            continue  # Malformed updated_at: skip rather than stamp garbage.
-        if parsed_stamp.tzinfo is None:
-            parsed_stamp = parsed_stamp.replace(tzinfo=UTC)
-        highest = max(s for s in watched if isinstance(s, int))
-        meta["seasons_watched_dates"] = {str(highest): parsed_stamp.isoformat()}
-        cursor.execute(
-            "UPDATE tv_show_details SET metadata = ? WHERE content_item_id = ?",
-            (json.dumps(meta), content_item_id),
         )
 
 
