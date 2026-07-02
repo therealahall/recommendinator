@@ -115,6 +115,25 @@ describe('Accordion', () => {
     expect(panel.attributes('id')).toBe('accordion-steam_source-panel')
   })
 
+  it('wraps the trigger in an h3 heading by default', () => {
+    const wrapper = mount(Accordion, {
+      props: { id: 'src-x', expanded: false },
+      slots: { header: 'h', default: 'b' },
+    })
+
+    expect(wrapper.find('h3.accordion-heading button.accordion-trigger').exists()).toBe(true)
+  })
+
+  it('renders the trigger under the requested heading level', () => {
+    const wrapper = mount(Accordion, {
+      props: { id: 'src-x', expanded: false, headingLevel: 4 },
+      slots: { header: 'h', default: 'b' },
+    })
+
+    expect(wrapper.find('h4.accordion-heading button.accordion-trigger').exists()).toBe(true)
+    expect(wrapper.find('h3.accordion-heading').exists()).toBe(false)
+  })
+
   it('renders header-actions slot as siblings outside the trigger button', () => {
     const wrapper = mount(Accordion, {
       props: { id: 'src-x', expanded: false },

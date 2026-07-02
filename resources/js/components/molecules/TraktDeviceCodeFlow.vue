@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
 import { useDataStore } from '@/stores/data'
 import type { TraktPollResponse } from '@/types/api'
 
@@ -18,6 +18,12 @@ const props = withDefaults(
 )
 
 const data = useDataStore()
+
+// The device-flow POST returns 400 until both the Trakt client ID and client
+// secret resolve server-side. traktStatus.enabled reflects exactly that, so
+// gate the connect action on it instead of surfacing the failure only after a
+// click.
+const canConnect = computed(() => data.traktStatus.enabled)
 
 type FlowState = 'idle' | 'starting' | 'awaiting' | 'connected' | 'error'
 const state = ref<FlowState>('idle')
@@ -41,6 +47,7 @@ function clearPoll(): void {
 }
 
 async function startFlow(): Promise<void> {
+  if (!canConnect.value) return
   state.value = 'starting'
   message.value = 'Requesting a device code from Trakt…'
   try {
@@ -126,14 +133,23 @@ onBeforeUnmount(clearPoll)
 
 <template>
   <div class="trakt-flow">
-    <button
-      v-if="state === 'idle'"
-      ref="startButton"
-      type="button"
-      class="btn btn-primary"
-      data-testid="trakt-connect-btn"
-      @click="startFlow"
-    >Connect Trakt Account</button>
+    <template v-if="state === 'idle'">
+      <button
+        ref="startButton"
+        type="button"
+        class="btn btn-primary trakt-flow-connect"
+        data-testid="trakt-connect-btn"
+        :disabled="!canConnect"
+        :aria-describedby="canConnect ? undefined : 'trakt-connect-hint'"
+        @click="startFlow"
+      >Connect Trakt Account</button>
+      <p
+        v-if="!canConnect"
+        id="trakt-connect-hint"
+        class="trakt-flow-hint"
+        data-testid="trakt-connect-hint"
+      >Add the Trakt client ID and client secret in the settings below before you can connect.</p>
+    </template>
 
     <div
       v-show="state === 'awaiting'"
@@ -193,6 +209,21 @@ onBeforeUnmount(clearPoll)
 </template>
 
 <style scoped>
+/* Disabled connect button: convey "unavailable" via reduced emphasis + the
+   not-allowed cursor. The native ``disabled`` attribute announces the state to
+   assistive tech and the adjacent hint states why, so colour is never the sole
+   signal (WCAG 1.4.1). */
+.trakt-flow-connect:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.trakt-flow-hint {
+  margin-top: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
 .trakt-flow-panel:focus {
   outline: none;
 }

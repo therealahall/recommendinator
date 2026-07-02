@@ -83,4 +83,20 @@ describe('TagInput', () => {
     await wrapper.find('.add-rule-form button').trigger('click')
     expect(wrapper.emitted('update:modelValue')).toBeUndefined()
   })
+
+  it('forwards aria-describedby and aria-invalid to the draft input', () => {
+    const wrapper = mountInput({
+      describedBy: 'help-cors err-cors',
+      invalid: true,
+    })
+
+    const input = wrapper.find('#edit-genres')
+    expect(input.attributes('aria-describedby')).toBe('help-cors err-cors')
+    expect(input.attributes('aria-invalid')).toBe('true')
+  })
+
+  it('omits aria-invalid on the draft input when not invalid', () => {
+    const wrapper = mountInput({ invalid: false })
+    expect(wrapper.find('#edit-genres').attributes('aria-invalid')).toBeUndefined()
+  })
 })

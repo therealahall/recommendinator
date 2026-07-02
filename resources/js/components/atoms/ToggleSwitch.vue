@@ -2,6 +2,10 @@
 defineProps<{
   modelValue: boolean
   label: string
+  /** id/aria hooks so a wrapping control can wire the switch to help/error text. */
+  id?: string
+  describedBy?: string
+  invalid?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -12,11 +16,14 @@ const emit = defineEmits<{
 <template>
   <label class="toggle-switch-label">
     <button
+      :id="id"
       type="button"
       role="switch"
       class="toggle-switch"
       :aria-checked="modelValue"
       :aria-label="label"
+      :aria-describedby="describedBy"
+      :aria-invalid="invalid || undefined"
       @click="emit('update:modelValue', !modelValue)"
     />
     <span class="toggle-switch-text">{{ label }}</span>
