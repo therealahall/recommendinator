@@ -22,8 +22,8 @@ def _cli_patches():
 
     The real ``migrate_config_settings`` boot hook is NOT stubbed — it runs
     against the mocked StorageManager, whose settings store behaves like an
-    empty database (see ``_invoke_with_mocks``) so seeding/overlay is a no-op
-    and config stays YAML-driven without leaking state across tests.
+    empty database (see ``_invoke_with_mocks``) so the DB overlay is a no-op
+    and config resolves from const/YAML without leaking state across tests.
     """
     return (
         patch("src.cli.main.load_config"),

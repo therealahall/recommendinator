@@ -24,17 +24,17 @@ def test_cli_help_via_runner() -> None:
     assert "Recommendinator CLI" in result.output
 
 
-def test_cli_boot_seeds_and_overlays_db_settings(tmp_path: Path) -> None:
-    """CLI boot runs the real settings migration against an isolated DB.
+def test_cli_boot_overlays_db_settings_without_seeding(tmp_path: Path) -> None:
+    """CLI boot assembles the effective config against an isolated DB.
 
     Drives the *real* ``migrate_config_settings`` hook with a real temp-DB
-    StorageManager (no stub): boot must seed YAML leaves into the settings
-    table and overlay DB leaves back so config is DB-backed afterwards.
+    StorageManager (no stub): a stored DB leaf must win over the YAML value,
+    and boot must not write anything else to the settings table.
     """
     runner = CliRunner()
     config = {"web": {"port": 18473}}
     storage = StorageManager(sqlite_path=tmp_path / "test.db")
-    # Pre-seed a DB leaf that must win over the YAML value on boot.
+    # A DB leaf the operator set must win over the YAML value on boot.
     storage.set_setting("web.port", 9999)
 
     with (
@@ -48,3 +48,5 @@ def test_cli_boot_seeds_and_overlays_db_settings(tmp_path: Path) -> None:
     assert result.exit_code == 0
     # Real hook overlaid the DB leaf onto the in-memory config (DB wins).
     assert config["web"]["port"] == 9999
+    # Boot seeded nothing: only the pre-existing leaf remains in the DB.
+    assert storage.list_settings() == {"web.port": 9999}

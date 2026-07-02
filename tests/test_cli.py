@@ -58,7 +58,7 @@ def mock_components(mock_config):
         mock_storage_manager.get_credentials_for_source.return_value = {}
         mock_storage_manager.list_source_configs.return_value = []
         # Let the real migrate_config_settings boot hook run against an empty
-        # settings store (no stub) — seeding/overlay is a no-op and nothing
+        # settings store (no stub) — the DB overlay is a no-op and nothing
         # leaks across tests.
         back_mock_settings_store(mock_storage_manager)
         mock_storage.return_value = mock_storage_manager

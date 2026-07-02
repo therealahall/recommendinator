@@ -113,7 +113,7 @@ def _invoke_recommend_with_engine(
         mock_storage = MagicMock(spec=StorageManager)
         mock_storage.get_user_preference_config.return_value = MagicMock()
         # Real migrate_config_settings boot hook runs against an empty settings
-        # store (no stub) — no seeding/overlay, no cross-test leak.
+        # store (no stub) — DB overlay is a no-op, no cross-test leak.
         back_mock_settings_store(mock_storage)
         mock_storage_fn.return_value = mock_storage
         mock_llm.return_value = (
