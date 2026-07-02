@@ -12,6 +12,7 @@ import watchfiles
 
 from src.cli.config import load_config
 from src.storage.credential_migration import migrate_config_credentials
+from src.storage.global_secrets import migrate_config_secrets
 from src.storage.settings_migration import migrate_config_settings
 from src.storage.source_migration import (
     migrate_source_config_plugins,
@@ -153,9 +154,9 @@ def reload_config() -> bool:
 
     try:
         config = load_config(Path(config_path))
-        # Re-apply DB-backed config on hot-reload. Mutates config in place:
-        # settings overlay the DB onto config (DB wins), and sensitive fields
-        # are popped after credential migration.
+        # Re-assemble the effective config on hot-reload. Mutates config in
+        # place: in-scope sections are rebuilt from const/YAML/DB layers (DB
+        # wins), and sensitive fields are popped after credential migration.
         if app_state.storage is not None:
             migrate_config_settings(config, app_state.storage)
             migrate_config_credentials(config, app_state.storage)
@@ -163,6 +164,7 @@ def reload_config() -> bool:
             # plugin rename
             migrate_source_labels(app_state.storage)
             migrate_source_config_plugins(app_state.storage)
+            migrate_config_secrets(config, app_state.storage)
         app_state.config = config
         logger.info("Reloaded config from %s", config_path)
         return True

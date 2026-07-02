@@ -1,15 +1,16 @@
-"""Tests for config-to-DB settings migration and overlay.
+"""Tests for the boot config assembly (const default < YAML < DB).
 
-``migrate_config_settings`` seeds the ``settings`` table from the loaded
-YAML config on boot (in-scope global/system sections only), then overlays the
-DB values back onto the in-memory config dict so the DB wins over YAML.
+``migrate_config_settings`` rebuilds each in-scope global/system section by
+starting from the registry const defaults, deep-merging the YAML section on top
+(YAML overrides consts), then overlaying the database ``settings`` leaves (the
+DB is authoritative). It never writes to the database — the ``settings`` table
+holds only leaves a user explicitly set later, so a fresh install boots on
+const defaults (plus whatever YAML the operator kept) with an empty table.
 
-Granularity is **key-level**: each section is flattened to dotted leaf paths
-(e.g. ``"web.port"``, ``"recommendations.scorer_weights.genre_match"``) and
-each leaf is a separate ``settings`` row. Seeding never overwrites a leaf
-already in the DB, and the overlay deep-merges DB leaves on top of the YAML
-section so new YAML leaves still flow through while DB leaves win per-key.
-Out-of-scope sections (``storage``, ``inputs``) are left untouched.
+Granularity is **key-level**: DB leaves are dotted paths (e.g. ``"web.port"``,
+``"recommendations.scorer_weights.genre_match"``) overlaid onto the merged
+section, so a stored leaf wins at its own path while unstored leaves resolve
+from YAML/const. Out-of-scope sections (``storage``, ``inputs``) are untouched.
 """
 
 from pathlib import Path
@@ -17,246 +18,213 @@ from typing import Any
 
 import pytest
 
+from src.settings.metadata import default_config
 from src.storage.manager import StorageManager
 from src.storage.settings_migration import IN_SCOPE_SECTIONS, migrate_config_settings
 
 
 class TestMigrateConfigSettings:
-    """Tests for migrate_config_settings."""
+    """Tests for migrate_config_settings assembly."""
 
     @pytest.fixture()
     def storage(self, tmp_path: Path) -> StorageManager:
         """Create a StorageManager with a temp DB."""
         return StorageManager(sqlite_path=tmp_path / "test.db")
 
-    def test_seeds_missing_leaves_to_db(self, storage: StorageManager) -> None:
-        """In-scope leaves absent from the DB are written as dotted keys."""
-        config: dict[str, Any] = {
-            "sync": {"max_workers": 8},
-            "logging": {"level": "DEBUG"},
-        }
-
-        migrate_config_settings(config, storage)
-
-        assert storage.get_setting("sync.max_workers") == 8
-        assert storage.get_setting("logging.level") == "DEBUG"
-
-    def test_seeds_nested_structures_as_dotted_leaves(
+    def test_fresh_install_uses_defaults_and_leaves_db_empty(
         self, storage: StorageManager
     ) -> None:
-        """Nested dicts are flattened to dotted leaf keys; lists stay whole."""
-        config: dict[str, Any] = {
-            "recommendations": {
-                "default_count": 5,
-                "scorer_weights": {"genre_match": 2.0, "tag_overlap": 1.0},
-                "source_priority": ["goodreads", "steam"],
-            }
-        }
+        """Empty config + empty DB → effective config equals registry defaults.
 
-        migrate_config_settings(config, storage)
-
-        assert storage.get_setting("recommendations.default_count") == 5
-        assert storage.get_setting("recommendations.scorer_weights.genre_match") == 2.0
-        assert storage.get_setting("recommendations.scorer_weights.tag_overlap") == 1.0
-        # Lists are leaves — stored whole, not descended into.
-        assert storage.get_setting("recommendations.source_priority") == [
-            "goodreads",
-            "steam",
-        ]
-
-    def test_never_overwrites_existing_db_leaf(self, storage: StorageManager) -> None:
-        """A leaf already in the DB is preserved against the config value."""
-        storage.set_setting("web.port", 9999)
-
-        config: dict[str, Any] = {"web": {"port": 18473}}
-
-        migrate_config_settings(config, storage)
-
-        assert storage.get_setting("web.port") == 9999
-
-    def test_overlays_db_leaves_onto_config(self, storage: StorageManager) -> None:
-        """After migration, DB leaves win on the in-memory config dict."""
-        storage.set_setting("web.port", 9999)
-        storage.set_setting("web.host", "0.0.0.0")
-
-        config: dict[str, Any] = {"web": {"port": 18473, "host": "127.0.0.1"}}
-
-        migrate_config_settings(config, storage)
-
-        assert config["web"] == {"port": 9999, "host": "0.0.0.0"}
-
-    def test_new_yaml_key_flows_through_already_seeded_section(
-        self, storage: StorageManager
-    ) -> None:
-        """A NEW YAML key added to an already-seeded section is seeded + overlaid.
-
-        This is the core key-level guarantee the section-level design failed:
-        an older DB has only the original leaf, but a newer app version adds a
-        leaf to the same section in example.yaml. That new leaf must be seeded
-        and must appear in the overlaid config (it is not silently dropped).
+        The core no-seed guarantee: boot writes nothing to the ``settings``
+        table, and every in-scope section resolves from the const defaults.
         """
-        # First boot: only "port" existed in YAML and got seeded.
-        first_config: dict[str, Any] = {"web": {"port": 18473}}
-        migrate_config_settings(first_config, storage)
+        config: dict[str, Any] = {}
 
-        # Second boot of a newer version: YAML now also has "host".
-        second_config: dict[str, Any] = {"web": {"port": 18473, "host": "127.0.0.1"}}
-        migrate_config_settings(second_config, storage)
+        migrate_config_settings(config, storage)
 
-        # The new leaf was seeded...
-        assert storage.get_setting("web.host") == "127.0.0.1"
-        # ...and it flows through into the overlaid running config.
-        assert second_config["web"] == {"port": 18473, "host": "127.0.0.1"}
+        defaults = default_config()
+        for section in IN_SCOPE_SECTIONS:
+            assert config[section] == defaults[section]
+        # Nothing was written to the database on boot.
+        assert storage.list_settings() == {}
+
+    def test_yaml_overrides_const_default(self, storage: StorageManager) -> None:
+        """A YAML leaf overrides the registry const default for that leaf."""
+        # Const default for web.port is 18473.
+        config: dict[str, Any] = {"web": {"port": 20000}}
+
+        migrate_config_settings(config, storage)
+
+        assert config["web"]["port"] == 20000
+        # Sibling leaves still resolve from const defaults.
+        assert config["web"]["host"] == default_config()["web"]["host"]
+        assert storage.list_settings() == {}
+
+    def test_db_leaf_overrides_yaml_and_const(self, storage: StorageManager) -> None:
+        """A stored DB leaf wins over both the YAML value and the const default."""
+        storage.set_setting("web.port", 9999)
+        config: dict[str, Any] = {"web": {"port": 20000}}
+
+        migrate_config_settings(config, storage)
+
+        assert config["web"]["port"] == 9999
+
+    def test_section_absent_from_yaml_resolves_from_defaults(
+        self, storage: StorageManager
+    ) -> None:
+        """An in-scope section missing from the YAML still resolves fully.
+
+        A user may trim config.yaml to bootstrap-only; the const defaults must
+        supply every in-scope section so the app still works.
+        """
+        config: dict[str, Any] = {"storage": {"database_path": "data/x.db"}}
+
+        migrate_config_settings(config, storage)
+
+        assert config["conversation"]["enabled"] is True
+        assert config["sync"]["max_workers"] == 4
+        assert config["recommendations"]["default_count"] == 5
+
+    def test_db_leaf_resolves_section_absent_from_yaml(
+        self, storage: StorageManager
+    ) -> None:
+        """A DB leaf overlays even when its section is absent from the YAML.
+
+        Regression: the old overlay only touched sections present in the YAML,
+        so a stored leaf in an omitted section never resolved. It must now win
+        over the const default regardless of the YAML shape.
+        """
+        storage.set_setting("conversation.enabled", False)
+        config: dict[str, Any] = {}
+
+        migrate_config_settings(config, storage)
+
+        assert config["conversation"]["enabled"] is False
+
+    def test_new_yaml_leaf_not_in_db_flows_through(
+        self, storage: StorageManager
+    ) -> None:
+        """A YAML leaf with no DB row flows into the effective config."""
+        config: dict[str, Any] = {"recommendations": {"default_count": 12}}
+
+        migrate_config_settings(config, storage)
+
+        assert config["recommendations"]["default_count"] == 12
+        # Other recommendation leaves still resolve from const defaults.
+        assert config["recommendations"]["max_count"] == 20
+        assert storage.list_settings() == {}
+
+    def test_nested_yaml_leaf_deep_merges_over_defaults(
+        self, storage: StorageManager
+    ) -> None:
+        """A nested YAML leaf overrides its default while siblings persist."""
+        config: dict[str, Any] = {
+            "recommendations": {"scorer_weights": {"genre_match": 5.0}}
+        }
+
+        migrate_config_settings(config, storage)
+
+        weights = config["recommendations"]["scorer_weights"]
+        assert weights["genre_match"] == 5.0
+        # Untouched sibling weights keep their const defaults.
+        assert weights["creator_match"] == 1.5
 
     def test_db_leaf_wins_while_new_yaml_leaf_appears(
         self, storage: StorageManager
     ) -> None:
-        """A DB-stored leaf wins over a changed YAML leaf in the same section,
-        while OTHER new YAML leaves in that section still appear.
-
-        Combines the two halves: per-leaf DB-wins AND new-key flow-through must
-        hold simultaneously within a single section.
-        """
-        # User edited "port" into the DB at some point.
+        """A DB leaf wins per-key while other YAML leaves still flow through."""
         storage.set_setting("web.port", 9999)
-        # YAML also already had "port" seeded? No — DB leaf pre-exists, so the
-        # seed must skip it. YAML now carries a changed port AND a brand-new
-        # "host" leaf the DB has never seen.
-        config: dict[str, Any] = {"web": {"port": 18473, "host": "0.0.0.0"}}
+        config: dict[str, Any] = {"web": {"port": 20000, "host": "0.0.0.0"}}
 
         migrate_config_settings(config, storage)
 
-        # DB leaf wins for "port"...
         assert config["web"]["port"] == 9999
-        # ...but the brand-new YAML leaf "host" still flows through.
         assert config["web"]["host"] == "0.0.0.0"
-        # And it got seeded into the DB for next boot.
-        assert storage.get_setting("web.host") == "0.0.0.0"
+        # Still no writes — only the pre-existing leaf lives in the DB.
+        assert storage.list_settings() == {"web.port": 9999}
 
-    def test_seeded_value_overlaid_back(self, storage: StorageManager) -> None:
-        """A freshly seeded section is overlaid back onto config unchanged."""
-        config: dict[str, Any] = {"sync": {"max_workers": 4}}
+    def test_unknown_legacy_db_leaf_overlays(self, storage: StorageManager) -> None:
+        """A DB leaf with no registry entry still overlays onto its section."""
+        storage.set_setting("web.legacy_option", "kept")
+        config: dict[str, Any] = {}
 
         migrate_config_settings(config, storage)
 
-        assert config["sync"] == {"max_workers": 4}
+        assert config["web"]["legacy_option"] == "kept"
 
-    def test_idempotent_reboot_no_duplicate_or_clobber(
-        self, storage: StorageManager
-    ) -> None:
-        """Running migration twice does not duplicate rows or change values."""
-        config: dict[str, Any] = {"sync": {"max_workers": 4}}
+    def test_idempotent_reboot(self, storage: StorageManager) -> None:
+        """Running assembly twice keeps the DB empty and the config stable."""
+        config: dict[str, Any] = {"sync": {"max_workers": 8}}
         migrate_config_settings(config, storage)
 
-        # Simulate a second boot with a different YAML value
-        config2: dict[str, Any] = {"sync": {"max_workers": 99}}
+        config2: dict[str, Any] = {"sync": {"max_workers": 8}}
         migrate_config_settings(config2, storage)
 
-        # DB still holds the first-seeded leaf; reboot overlays it
-        assert storage.get_setting("sync.max_workers") == 4
-        assert config2["sync"] == {"max_workers": 4}
+        assert config2["sync"]["max_workers"] == 8
+        assert storage.list_settings() == {}
 
-    def test_out_of_scope_storage_not_seeded(self, storage: StorageManager) -> None:
-        """The ``storage`` bootstrap section is never written to the DB."""
+    def test_out_of_scope_sections_untouched(self, storage: StorageManager) -> None:
+        """The ``storage`` and ``inputs`` sections are left exactly as-is."""
         config: dict[str, Any] = {
-            "storage": {"database_path": "data/recommendations.db"}
+            "storage": {"database_path": "data/recommendations.db"},
+            "inputs": {"steam": {"plugin": "steam"}},
         }
 
         migrate_config_settings(config, storage)
 
+        assert config["storage"] == {"database_path": "data/recommendations.db"}
+        assert config["inputs"] == {"steam": {"plugin": "steam"}}
         assert storage.list_settings() == {}
 
-    def test_out_of_scope_inputs_not_seeded(self, storage: StorageManager) -> None:
-        """The ``inputs`` section is owned by source migration, not this hook."""
-        config: dict[str, Any] = {"inputs": {"steam": {"plugin": "steam"}}}
-
-        migrate_config_settings(config, storage)
-
-        assert storage.list_settings() == {}
-
-    def test_missing_section_not_seeded(self, storage: StorageManager) -> None:
-        """Sections absent from config are not created in the DB."""
-        migrate_config_settings({}, storage)
-
-        assert storage.list_settings() == {}
-
-    def test_only_in_scope_sections_seeded(self, storage: StorageManager) -> None:
-        """Every seeded key belongs to a recognised in-scope section."""
-        config: dict[str, Any] = {
-            "features": {"ai_enabled": False},
-            "ollama": {"model": "mistral:7b"},
-            "ingestion": {"conflict_strategy": "last_write_wins"},
-            "recommendations": {"default_count": 5},
-            "conversation": {"enabled": True},
-            "sync": {"max_workers": 4},
-            "enrichment": {"enabled": False},
-            "web": {"port": 18473},
-            "logging": {"level": "INFO"},
-            "storage": {"database_path": "x"},
-            "inputs": {"steam": {}},
-        }
-
-        migrate_config_settings(config, storage)
-
-        seeded_sections = {key.split(".", 1)[0] for key in storage.list_settings()}
-        assert seeded_sections == set(IN_SCOPE_SECTIONS)
-        assert "storage" not in seeded_sections
-        assert "inputs" not in seeded_sections
-
-    def test_empty_section_seeds_nothing_then_new_leaf_flows(
+    def test_non_dict_yaml_section_falls_back_to_defaults_and_db(
         self, storage: StorageManager
     ) -> None:
-        """An empty in-scope section seeds nothing and overlays to ``{}``; a leaf
-        added to that section on a later boot is seeded and overlaid."""
-        first_config: dict[str, Any] = {"web": {}}
-        migrate_config_settings(first_config, storage)
+        """A malformed non-dict YAML section resolves from const defaults + DB.
 
-        assert storage.list_settings() == {}
-        assert first_config["web"] == {}
-
-        # Newer version adds a leaf to the previously empty section.
-        second_config: dict[str, Any] = {"web": {"port": 18473}}
-        migrate_config_settings(second_config, storage)
-
-        assert storage.get_setting("web.port") == 18473
-        assert second_config["web"] == {"port": 18473}
-
-    def test_overlay_rebuilds_non_dict_intermediate(
-        self, storage: StorageManager
-    ) -> None:
-        """The overlay clobbers a non-dict YAML intermediate to place a DB leaf.
-
-        Exercises the ``_set_leaf`` branch where the YAML section value is not a
-        dict (here ``"broken"``) but a DB leaf (``web.port``) must be written:
-        the intermediate dict is built and the leaf lands without raising.
+        The section cannot deep-merge onto a dict, so it falls back to the const
+        defaults, and any DB leaf still overlays without raising.
         """
         storage.set_setting("web.port", 9999)
-
         config: dict[str, Any] = {"web": "broken"}
+
         migrate_config_settings(config, storage)
 
         assert config["web"]["port"] == 9999
+        assert config["web"]["host"] == default_config()["web"]["host"]
+
+    def test_does_not_mutate_shared_default_config(
+        self, storage: StorageManager
+    ) -> None:
+        """Assembly must not leak edits back into the const default registry."""
+        config: dict[str, Any] = {
+            "recommendations": {"scorer_weights": {"genre_match": 99.0}}
+        }
+
+        migrate_config_settings(config, storage)
+
+        # A fresh defaults snapshot is unaffected by the previous assembly.
+        assert (
+            default_config()["recommendations"]["scorer_weights"]["genre_match"] == 2.0
+        )
 
 
-class TestSensitiveLeafExclusion:
-    """Sensitive leaves (API keys) must never reach the plaintext settings table."""
+class TestSensitiveLeafHandling:
+    """Sensitive leaves (API keys) never reach the plaintext settings table."""
 
     @pytest.fixture()
     def storage(self, tmp_path: Path) -> StorageManager:
         """Create a StorageManager with a temp DB."""
         return StorageManager(sqlite_path=tmp_path / "test.db")
 
-    def test_api_keys_excluded_from_db_but_survive_in_config(
+    def test_api_key_stays_out_of_db_and_keeps_yaml_value(
         self, storage: StorageManager
     ) -> None:
-        """Provider api_key leaves stay in YAML config and never hit the DB.
+        """Provider api_key leaves stay in the running config and never hit the DB.
 
-        Regression: ``migrate_config_settings`` flattened the whole
-        ``enrichment`` section, seeding ``...tmdb.api_key`` /
-        ``...rawg.api_key`` as plaintext rows in the unencrypted ``settings``
-        table — leaking real API keys. Fix: the sensitive-leaf denylist skips
-        those keys at flatten time. They remain only in config.yaml, so the
-        overlay leaves the YAML value intact in the running config.
+        Boot writes nothing, so the plaintext ``settings`` table cannot leak a
+        real API key. The secret comes from YAML and survives the assembly in
+        the effective config, while non-sensitive siblings resolve normally.
         """
         config: dict[str, Any] = {
             "enrichment": {
@@ -270,19 +238,15 @@ class TestSensitiveLeafExclusion:
 
         migrate_config_settings(config, storage)
 
-        stored = storage.list_settings()
-        # The sensitive leaf keys are absent from the settings table...
-        assert "enrichment.providers.tmdb.api_key" not in stored
-        assert "enrichment.providers.rawg.api_key" not in stored
-        # ...and the secret values appear nowhere in the stored values.
-        assert "tmdb-secret" not in stored.values()
-        assert "rawg-secret" not in stored.values()
+        # Nothing was written — no secret can reach the plaintext table.
+        assert storage.list_settings() == {}
 
-        # Non-sensitive leaves in the same section ARE seeded.
-        assert storage.get_setting("enrichment.enabled") is True
-        assert storage.get_setting("enrichment.providers.tmdb.enabled") is True
-        assert storage.get_setting("enrichment.providers.rawg.enabled") is True
+        # The api_key values survive in the running config (YAML-sourced).
+        providers = config["enrichment"]["providers"]
+        assert providers["tmdb"]["api_key"] == "tmdb-secret"
+        assert providers["rawg"]["api_key"] == "rawg-secret"
 
-        # The overlay leaves the api_key values intact in the running config.
-        assert config["enrichment"]["providers"]["tmdb"]["api_key"] == "tmdb-secret"
-        assert config["enrichment"]["providers"]["rawg"]["api_key"] == "rawg-secret"
+        # Non-sensitive siblings resolve from YAML too.
+        assert config["enrichment"]["enabled"] is True
+        assert providers["tmdb"]["enabled"] is True
+        assert providers["rawg"]["enabled"] is True
