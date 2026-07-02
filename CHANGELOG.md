@@ -1,6 +1,51 @@
 # CHANGELOG
 
 
+## v0.19.0 (2026-07-02)
+
+### Bug Fixes
+
+- **storage**: Merge season watch dates by recency, keep manual edits
+  ([`26a661c`](https://github.com/therealahall/recommendinator/commit/26a661c43d9f06184162c905d679049eef70186c))
+
+- **storage**: Remove one-time seasons_watched_dates backfill
+  ([`d7e5a05`](https://github.com/therealahall/recommendinator/commit/d7e5a05f151199d380dd280f53a68079f9a454e3))
+
+- **utils**: Add later-date helpers for season watch dates
+  ([`6eaefed`](https://github.com/therealahall/recommendinator/commit/6eaefed6a0923ad3e3db9526d3b30bc9bc2c7bf3))
+
+### Documentation
+
+- Document TV season completions and new clusters
+  ([`c5edb6e`](https://github.com/therealahall/recommendinator/commit/c5edb6e3671f9a339288bd203aa4e610e410f43e))
+
+- Update season-date merge rule and drop backfill mentions
+  ([`d6883ba`](https://github.com/therealahall/recommendinator/commit/d6883bae886e2c6bce08713f3d672b17e533658c))
+
+### Features
+
+- **ingestion**: Record per-season watched dates from Trakt
+  ([`1247309`](https://github.com/therealahall/recommendinator/commit/1247309f8eea9a89a4c9ca40ed22ed5bd6118af3))
+
+- **recommendations**: Add six new genre clusters
+  ([`8c68adc`](https://github.com/therealahall/recommendinator/commit/8c68adce22c64eac983a5ee49f4e4988542e8cc1))
+
+- **recommendations**: Count finished seasons in variety ladder
+  ([`72a3c3c`](https://github.com/therealahall/recommendinator/commit/72a3c3c3e969dc520706b83e71f938ee5080f4e0))
+
+- **storage**: Seed season watched dates on upgrade
+  ([`178d2aa`](https://github.com/therealahall/recommendinator/commit/178d2aadda31b39bbef6ac593c7ddea389473b69))
+
+- **storage**: Stamp per-season watched dates on manual edits
+  ([`6d16197`](https://github.com/therealahall/recommendinator/commit/6d1619781d16646725a6d29d7f860f8ea4d5cf53))
+
+- **utils**: Add latest_season_watched_date helper
+  ([`3bcd2bd`](https://github.com/therealahall/recommendinator/commit/3bcd2bd542cff5a72f40034520370e27fb0f2545))
+
+- **utils**: Add parse_iso_timestamp helper
+  ([`dd786c6`](https://github.com/therealahall/recommendinator/commit/dd786c614dfa3e8bfc0c26d6bb157dded1b56954))
+
+
 ## v0.18.0 (2026-07-01)
 
 ### Bug Fixes
