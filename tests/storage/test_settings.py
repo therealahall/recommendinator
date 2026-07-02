@@ -1,9 +1,9 @@
 """Tests for the DB-backed settings store (schema functions + StorageManager).
 
 The ``settings`` table persists global/system configuration as namespaced
-key -> JSON-encoded value pairs. Once a key exists in the DB it becomes the
-source of truth; the YAML config seeds missing keys on boot but never
-overwrites a value already present.
+key -> JSON-encoded value pairs. The table holds only leaves a user explicitly
+set; boot never writes to it. When a leaf is present it wins over the YAML/const
+layers during config assembly.
 """
 
 import sqlite3
@@ -14,10 +14,9 @@ import pytest
 from src.storage.manager import StorageManager
 from src.storage.schema import (
     create_schema,
+    delete_setting,
     get_setting,
-    has_setting,
     list_settings,
-    seed_setting,
     set_setting,
 )
 
@@ -44,12 +43,6 @@ class TestSettingsCRUD:
         """Returns None for a key that has never been written."""
         assert get_setting(conn, "missing") is None
 
-    def test_has_setting(self, conn: sqlite3.Connection) -> None:
-        """has_setting reflects row presence without returning the value."""
-        assert has_setting(conn, "web") is False
-        set_setting(conn, "web", "{}")
-        assert has_setting(conn, "web") is True
-
     def test_set_setting_overwrites(self, conn: sqlite3.Connection) -> None:
         """Writing the same key again replaces the stored value (UPSERT)."""
         set_setting(conn, "web", '{"port": 1}')
@@ -70,18 +63,21 @@ class TestSettingsCRUD:
         """Returns an empty dict when no settings are stored."""
         assert list_settings(conn) == {}
 
-    def test_seed_setting_inserts_when_absent(self, conn: sqlite3.Connection) -> None:
-        """seed_setting writes a value for a key that does not exist yet."""
-        seed_setting(conn, "web.port", "18473")
+    def test_delete_setting_removes_row(self, conn: sqlite3.Connection) -> None:
+        """delete_setting drops the stored leaf so it reads back as missing."""
+        set_setting(conn, "web.port", "18473")
 
-        assert get_setting(conn, "web.port") == "18473"
+        delete_setting(conn, "web.port")
 
-    def test_seed_setting_never_overwrites(self, conn: sqlite3.Connection) -> None:
-        """seed_setting leaves an existing value untouched (INSERT OR IGNORE)."""
-        set_setting(conn, "web.port", "9999")
-        seed_setting(conn, "web.port", "18473")
+        assert get_setting(conn, "web.port") is None
 
-        assert get_setting(conn, "web.port") == "9999"
+    def test_delete_setting_missing_is_noop(self, conn: sqlite3.Connection) -> None:
+        """Deleting an absent key raises nothing and leaves the table unchanged."""
+        set_setting(conn, "web.port", "18473")
+
+        delete_setting(conn, "never.stored")
+
+        assert list_settings(conn) == {"web.port": "18473"}
 
 
 class TestStorageManagerSettings:
@@ -114,12 +110,6 @@ class TestStorageManagerSettings:
         """Returns None for an unset key."""
         assert storage.get_setting("missing") is None
 
-    def test_has_setting(self, storage: StorageManager) -> None:
-        """has_setting reports presence."""
-        assert storage.has_setting("web") is False
-        storage.set_setting("web", {"port": 18473})
-        assert storage.has_setting("web") is True
-
     def test_list_settings_parses_values(self, storage: StorageManager) -> None:
         """list_settings returns decoded Python values for every key."""
         storage.set_setting("web", {"port": 18473})
@@ -136,18 +126,19 @@ class TestStorageManagerSettings:
 
         assert storage.list_settings() == {"web": {"port": 2}}
 
-    def test_stored_null_is_present_but_reads_as_none(
+    def test_stored_null_reads_as_none_but_appears_in_list(
         self, storage: StorageManager
     ) -> None:
-        """A stored ``None`` is present (has_setting True) yet reads back as None.
+        """A stored ``None`` reads back as None yet still appears in list_settings.
 
         get_setting returns None for both a missing key and a stored null, so
-        presence must be checked with has_setting — this asserts both halves.
+        the null-valued leaf is only observable via list_settings — which the
+        config overlay relies on to apply a deliberately-nulled leaf.
         """
         storage.set_setting("ollama.conversation_model", None)
 
-        assert storage.has_setting("ollama.conversation_model") is True
         assert storage.get_setting("ollama.conversation_model") is None
+        assert storage.list_settings() == {"ollama.conversation_model": None}
 
     def test_falsy_values_round_trip(self, storage: StorageManager) -> None:
         """Falsy scalars (False, 0) round-trip without being lost or coerced."""
@@ -157,9 +148,19 @@ class TestStorageManagerSettings:
         assert storage.get_setting("features.ai_enabled") is False
         assert storage.get_setting("sync.max_workers") == 0
 
-    def test_seed_setting_never_overwrites(self, storage: StorageManager) -> None:
-        """seed_setting inserts a missing key but preserves an existing one."""
-        storage.seed_setting("web.port", 18473)
-        storage.seed_setting("web.port", 9999)
+    def test_delete_setting_falls_back_to_missing(
+        self, storage: StorageManager
+    ) -> None:
+        """delete_setting removes an override so the leaf reads back as unset."""
+        storage.set_setting("web.port", 65000)
 
-        assert storage.get_setting("web.port") == 18473
+        storage.delete_setting("web.port")
+
+        assert storage.get_setting("web.port") is None
+        assert storage.list_settings() == {}
+
+    def test_delete_setting_absent_key_is_noop(self, storage: StorageManager) -> None:
+        """Deleting a never-stored key is a silent no-op."""
+        storage.delete_setting("web.port")
+
+        assert storage.list_settings() == {}

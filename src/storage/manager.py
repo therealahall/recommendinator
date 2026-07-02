@@ -22,6 +22,7 @@ from src.models.content import (
     get_enum_value,
 )
 from src.models.user_preferences import UserPreferenceConfig
+from src.storage.global_secrets import GLOBAL_SECRET_USER_ID, secret_ref
 from src.storage.schema import (
     ConversationMessageDict,
     CoreMemoryDict,
@@ -33,6 +34,7 @@ from src.storage.schema import (
     credential_row_exists,
     delete_core_memory,
     delete_credential,
+    delete_setting,
     delete_source_config,
     get_all_users,
     get_cached_preference_interpretation,
@@ -46,7 +48,6 @@ from src.storage.schema import (
     get_setting,
     get_source_config,
     get_user_by_id,
-    has_setting,
     list_settings,
     list_source_configs,
     mark_enrichment_complete,
@@ -58,7 +59,6 @@ from src.storage.schema import (
     save_core_memory,
     save_credential,
     save_preference_profile,
-    seed_setting,
     set_setting,
     set_source_config_enabled,
     update_core_memory,
@@ -1102,6 +1102,47 @@ class StorageManager:
         with self.sqlite_db.connection() as conn:
             return delete_credential(conn, user_id, source_id, key)
 
+    # Global secret methods (encrypted; write-only surface for settings UI/CLI)
+
+    def set_global_secret(self, key: str, value: str) -> None:
+        """Encrypt and store a global settings secret by its registry key.
+
+        Routes through the encrypted ``credentials`` table under the reserved
+        ``settings:`` namespace (see :mod:`src.storage.global_secrets`).
+
+        Args:
+            key: Dotted registry leaf key (e.g. ``enrichment.providers.tmdb.api_key``).
+            value: Plaintext secret to encrypt and store.
+        """
+        source_id, credential_key = secret_ref(key)
+        self.save_credential(GLOBAL_SECRET_USER_ID, source_id, credential_key, value)
+
+    def clear_global_secret(self, key: str) -> bool:
+        """Delete a global settings secret.
+
+        Args:
+            key: Dotted registry leaf key.
+
+        Returns:
+            True if a stored secret was removed, False if none existed.
+        """
+        source_id, credential_key = secret_ref(key)
+        return self.delete_credential(GLOBAL_SECRET_USER_ID, source_id, credential_key)
+
+    def has_global_secret(self, key: str) -> bool:
+        """Return True when a global settings secret is stored (no decryption).
+
+        Args:
+            key: Dotted registry leaf key.
+
+        Returns:
+            True if a credential row exists for the secret.
+        """
+        source_id, credential_key = secret_ref(key)
+        return self.credential_row_exists(
+            GLOBAL_SECRET_USER_ID, source_id, credential_key
+        )
+
     # Source config methods (DB-backed per-source config after migration)
 
     @staticmethod
@@ -1167,8 +1208,8 @@ class StorageManager:
     def get_setting(self, key: str) -> Any | None:
         """Return the decoded value for a settings key, or ``None`` if unset.
 
-        Returns ``None`` for BOTH a missing key and a stored null value — use
-        ``has_setting`` to distinguish presence from a stored ``None``.
+        Returns ``None`` for BOTH a missing key and a stored null value; a
+        stored null is still returned by ``list_settings``.
         """
         with self.sqlite_db.connection() as conn:
             value_json = get_setting(conn, key)
@@ -1180,23 +1221,16 @@ class StorageManager:
         with self.sqlite_db.connection() as conn:
             set_setting(conn, key, value_json)
 
-    def seed_setting(self, key: str, value: Any) -> None:
-        """JSON-encode and insert a settings value only if the key is absent.
-
-        Never overwrites an existing leaf (INSERT OR IGNORE). Encoding matches
-        ``set_setting`` so a later overwrite compares equal.
-        """
-        value_json = json.dumps(value, sort_keys=True)
-        with self.sqlite_db.connection() as conn:
-            seed_setting(conn, key, value_json)
-
-    def has_setting(self, key: str) -> bool:
-        """Return True when a settings key exists in the database."""
-        with self.sqlite_db.connection() as conn:
-            return has_setting(conn, key)
-
     def list_settings(self) -> dict[str, Any]:
         """Return every stored setting as a key -> decoded value mapping."""
         with self.sqlite_db.connection() as conn:
             raw = list_settings(conn)
         return {key: json.loads(value_json) for key, value_json in raw.items()}
+
+    def delete_setting(self, key: str) -> None:
+        """Delete a settings leaf so it falls back to the YAML/const layers.
+
+        No-op when the key is not stored — used to reset a leaf to default.
+        """
+        with self.sqlite_db.connection() as conn:
+            delete_setting(conn, key)
