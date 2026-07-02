@@ -8,6 +8,7 @@ from click.testing import CliRunner
 from src.cli.main import cli
 from src.llm.embeddings import EmbeddingGenerator
 from src.llm.recommendations import RecommendationGenerator
+from tests.factories import back_mock_settings_store
 
 
 @pytest.fixture
@@ -17,7 +18,13 @@ def cli_runner() -> CliRunner:
 
 
 def _cli_patches():
-    """Context manager stack for CLI patches."""
+    """Context manager stack for CLI patches.
+
+    The real ``migrate_config_settings`` boot hook is NOT stubbed — it runs
+    against the mocked StorageManager, whose settings store behaves like an
+    empty database (see ``_invoke_with_mocks``) so seeding/overlay is a no-op
+    and config stays YAML-driven without leaking state across tests.
+    """
     return (
         patch("src.cli.main.load_config"),
         patch("src.cli.main.create_storage_manager"),
@@ -52,6 +59,7 @@ def _invoke_with_mocks(
         p_engine,
     ):
         mock_load.return_value = config or {}
+        back_mock_settings_store(mock_storage)
         mock_storage_fn.return_value = mock_storage
         mock_llm.return_value = (
             llm_client,

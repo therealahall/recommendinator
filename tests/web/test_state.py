@@ -12,6 +12,7 @@ import pytest
 
 from src.conversation.engine import ConversationEngine
 from src.llm.client import OllamaClient
+from src.storage.manager import StorageManager
 from src.web.state import (
     AppState,
     ConfigWatcher,
@@ -74,6 +75,29 @@ class TestReloadConfig:
             reload_config()
 
         assert "Cannot reload config" in caplog.text
+
+    def test_reload_reapplies_settings_overlay(self, tmp_path: Path) -> None:
+        """Hot-reload re-runs the real settings migration/overlay against the DB.
+
+        Regression: DB-backed global config must survive a config file edit —
+        the watcher reloads YAML, so the overlay has to re-apply or the YAML
+        value would silently win until the next restart. Drives the real hook
+        against an isolated temp-DB StorageManager (no stub).
+        """
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("web:\n  port: 18473\n")
+
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+        # A DB leaf the operator edited must win over the reloaded YAML value.
+        storage.set_setting("web.port", 9999)
+
+        app_state.config_path = str(config_file)
+        app_state.storage = storage
+
+        result = reload_config()
+
+        assert result is True
+        assert app_state.config["web"]["port"] == 9999
 
     def test_reload_config_load_raises_returns_false(self) -> None:
         """reload_config returns False when load_config raises an exception.

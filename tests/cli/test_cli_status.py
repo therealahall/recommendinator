@@ -10,6 +10,7 @@ from src.llm.embeddings import EmbeddingGenerator
 from src.llm.recommendations import RecommendationGenerator
 from src.recommendations.engine import RecommendationEngine
 from src.storage.manager import StorageManager
+from tests.factories import back_mock_settings_store
 
 from .conftest import _cli_patches
 
@@ -28,6 +29,7 @@ def _status_invoke(
     """Invoke the status command with version patch and full LLM control."""
     p_config, p_storage, p_llm, p_engine = _cli_patches()
     mock_storage = MagicMock(spec=StorageManager)
+    back_mock_settings_store(mock_storage)
     with (
         p_config as mock_load,
         p_storage as mock_storage_fn,

@@ -425,6 +425,22 @@ def create_schema(conn: sqlite3.Connection) -> None:
         """
     )
 
+    # Global/system settings: dotted leaf key -> JSON-encoded value. Holds the
+    # global config sections (features, ollama, web, logging, etc.) migrated
+    # from config.yaml at key-level granularity — one row per leaf, keyed by
+    # its dotted path (e.g. "web.port"). Once a leaf exists here the database
+    # is the source of truth; the YAML config only seeds leaves that are
+    # missing. Per-source config and credentials keep their own tables above.
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value_json TEXT NOT NULL,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+
     # Indexes for conversation tables
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_core_memories_user " "ON core_memories(user_id)"
@@ -1713,3 +1729,69 @@ def list_source_configs(
         (user_id,),
     )
     return [_row_to_source_config(row) for row in cursor.fetchall()]
+
+
+# Settings functions (global/system config, key -> JSON-encoded value)
+
+
+def get_setting(conn: sqlite3.Connection, key: str) -> str | None:
+    """Get the raw JSON-encoded value for a settings key.
+
+    Returns ``None`` when the key has not been stored — callers should fall
+    back to the YAML config in that case.
+    """
+    cursor = conn.cursor()
+    cursor.execute("SELECT value_json FROM settings WHERE key = ?", (key,))
+    row = cursor.fetchone()
+    return row[0] if row else None
+
+
+def set_setting(conn: sqlite3.Connection, key: str, value_json: str) -> None:
+    """Insert or update a settings value (UPSERT).
+
+    *value_json* must be a JSON-encoded string; the caller owns serialisation.
+    """
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO settings (key, value_json, updated_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(key) DO UPDATE SET
+            value_json = excluded.value_json,
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        (key, value_json),
+    )
+    conn.commit()
+
+
+def seed_setting(conn: sqlite3.Connection, key: str, value_json: str) -> None:
+    """Insert a settings value only if the key is absent (INSERT OR IGNORE).
+
+    Atomic never-overwrite seed: an existing leaf is preserved, a missing one
+    is created. *value_json* must be a JSON-encoded string; the caller owns
+    serialisation. Use ``set_setting`` to deliberately overwrite a value.
+    """
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT OR IGNORE INTO settings (key, value_json, updated_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+        """,
+        (key, value_json),
+    )
+    conn.commit()
+
+
+def has_setting(conn: sqlite3.Connection, key: str) -> bool:
+    """Check whether a settings key exists without decoding its value."""
+    cursor = conn.cursor()
+    cursor.execute("SELECT 1 FROM settings WHERE key = ?", (key,))
+    return cursor.fetchone() is not None
+
+
+def list_settings(conn: sqlite3.Connection) -> dict[str, str]:
+    """Return every stored setting as a key -> raw JSON string mapping."""
+    cursor = conn.cursor()
+    cursor.execute("SELECT key, value_json FROM settings")
+    return {row[0]: row[1] for row in cursor.fetchall()}

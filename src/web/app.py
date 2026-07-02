@@ -23,6 +23,7 @@ from src.cli.config import (
 from src.conversation.engine import create_conversation_engine
 from src.conversation.memory import MemoryManager
 from src.storage.credential_migration import migrate_config_credentials
+from src.storage.settings_migration import migrate_config_settings
 from src.web.api import APP_VERSION
 from src.web.api import router as api_router
 from src.web.chat_api import router as chat_router
@@ -113,13 +114,21 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         logger.error("Config file not found: %s", error)
         raise
 
-    # Configure logging from config
-    configure_logging(config)
-    logger.info("Logging configured from application config")
-
     # Initialize components
     try:
+        # Storage must come first: global settings (incl. logging and web
+        # host/port) are seeded into and overlaid back from the database
+        # before anything reads them.
         storage = create_storage_manager(config)
+
+        # Seed global config into the DB and overlay DB values onto config so
+        # the database wins over YAML for the rest of the process.
+        migrate_config_settings(config, storage)
+
+        # Configure logging from the (now DB-overlaid) config
+        configure_logging(config)
+        logger.info("Logging configured from application config")
+
         llm_client, embedding_gen, rec_gen = create_llm_components(config)
         engine = create_recommendation_engine(storage, embedding_gen, rec_gen, config)
 

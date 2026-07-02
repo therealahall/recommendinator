@@ -12,6 +12,7 @@ import watchfiles
 
 from src.cli.config import load_config
 from src.storage.credential_migration import migrate_config_credentials
+from src.storage.settings_migration import migrate_config_settings
 
 if TYPE_CHECKING:
     from src.conversation.engine import ConversationEngine
@@ -148,9 +149,11 @@ def reload_config() -> bool:
 
     try:
         config = load_config(Path(config_path))
-        # Migrate any new sensitive credentials to encrypted DB storage.
-        # Mutates config in place: sensitive fields are popped after migration.
+        # Re-apply DB-backed config on hot-reload. Mutates config in place:
+        # settings overlay the DB onto config (DB wins), and sensitive fields
+        # are popped after credential migration.
         if app_state.storage is not None:
+            migrate_config_settings(config, app_state.storage)
             migrate_config_credentials(config, app_state.storage)
         app_state.config = config
         logger.info("Reloaded config from %s", config_path)

@@ -18,6 +18,7 @@ from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.engine import RecommendationEngine
 from src.storage.manager import StorageManager
+from src.storage.settings_migration import migrate_config_settings
 from src.utils.series import MAX_SEASONS
 from src.web.api import APP_VERSION, _item_to_response
 from src.web.app import create_app
@@ -31,6 +32,18 @@ from src.web.sync_manager import (
     reset_sync_manager,
 )
 from src.web.trakt_auth import DevicePollResult, DevicePollStatus, TraktAuthError
+from tests.factories import back_mock_settings_store
+
+
+def _reset_app_state() -> None:
+    """Reset the global ``app_state`` singleton to AppState defaults.
+
+    Tests that drive ``create_app`` share the module-level ``app_state``; this
+    copies a fresh ``AppState()`` field-by-field so no state leaks between tests.
+    """
+    fresh = AppState()
+    for f in fields(fresh):
+        setattr(app_state, f.name, getattr(fresh, f.name))
 
 
 @pytest.fixture
@@ -80,6 +93,10 @@ def mock_components(mock_config):
         mock_storage_manager = Mock(spec=StorageManager)
         mock_storage_manager.get_credentials_for_source.return_value = {}
         mock_storage_manager.list_source_configs.return_value = []
+        # Let the real migrate_config_settings boot hook run against an empty
+        # settings store (no stub) — seeding/overlay is a no-op and nothing
+        # leaks across tests.
+        back_mock_settings_store(mock_storage_manager)
         mock_storage.return_value = mock_storage_manager
 
         mock_client = Mock(spec=OllamaClient)
@@ -92,9 +109,7 @@ def mock_components(mock_config):
         mock_engine.return_value = mock_engine_instance
 
         # Reset app state to defaults
-        fresh = AppState()
-        for f in fields(fresh):
-            setattr(app_state, f.name, getattr(fresh, f.name))
+        _reset_app_state()
 
         # Create app
         app = create_app()
@@ -120,6 +135,83 @@ def mock_components(mock_config):
 def client(mock_components):
     """Create test client."""
     return TestClient(mock_components["app"])
+
+
+class TestCreateAppSettingsMigration:
+    """create_app seeds/overlays DB settings before reading global config."""
+
+    def test_create_app_overlays_db_settings_onto_config(self, mock_config, tmp_path):
+        """create_app runs the real settings migration against an isolated DB.
+
+        Drives the *real* ``migrate_config_settings`` hook with a real temp-DB
+        StorageManager (no stub): a pre-seeded DB leaf must win over the YAML
+        value on the running config that create_app stores in app_state.
+        """
+        reset_sync_manager()
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        # Pre-seed a DB leaf that must win over the YAML "web.port" on boot.
+        storage_manager.set_setting("web.port", 65000)
+        with (
+            patch("src.web.app.load_config", return_value=mock_config),
+            patch(
+                "src.web.app.create_storage_manager",
+                return_value=storage_manager,
+            ),
+            patch("src.web.app.create_llm_components", return_value=(None, None, None)),
+            patch("src.web.app.create_recommendation_engine"),
+            patch("src.web.app.migrate_config_credentials"),
+            patch("src.web.app.configure_logging"),
+        ):
+            _reset_app_state()
+
+            create_app()
+
+            # Real hook overlaid the DB leaf onto the in-memory config.
+            assert app_state.config["web"]["port"] == 65000
+            # And a YAML-only leaf was seeded into the DB for next boot.
+            assert storage_manager.get_setting("web.host") == mock_config["web"]["host"]
+        reset_sync_manager()
+
+    def test_logging_configured_after_settings_overlay(self, mock_config, tmp_path):
+        """configure_logging runs after migrate_config_settings (overlay first).
+
+        Spies on the real hook with ``wraps`` so it still runs (no stub) while
+        recording call order against configure_logging.
+        """
+        reset_sync_manager()
+        order: list[str] = []
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+
+        def _record_settings(config, storage):
+            order.append("settings")
+            migrate_config_settings(config, storage)
+
+        with (
+            patch("src.web.app.load_config", return_value=mock_config),
+            patch(
+                "src.web.app.create_storage_manager",
+                return_value=storage_manager,
+            ),
+            patch("src.web.app.create_llm_components", return_value=(None, None, None)),
+            patch("src.web.app.create_recommendation_engine"),
+            patch("src.web.app.migrate_config_credentials"),
+            patch(
+                "src.web.app.migrate_config_settings",
+                side_effect=_record_settings,
+            ),
+            patch(
+                "src.web.app.configure_logging",
+                side_effect=lambda *a, **k: order.append("logging"),
+            ),
+        ):
+            _reset_app_state()
+
+            create_app()
+
+        assert order == ["settings", "logging"]
+        # The real hook ran via the spy: a YAML leaf reached the DB.
+        assert storage_manager.get_setting("web.port") == mock_config["web"]["port"]
+        reset_sync_manager()
 
 
 class TestRootEndpoint:
