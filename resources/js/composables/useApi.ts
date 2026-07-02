@@ -8,6 +8,9 @@ export class ApiError extends Error {
   constructor(
     public status: number,
     public statusText: string,
+    /** Parsed error response body, when the server returned JSON (e.g. a 422
+     *  `{ detail: { key, reason } }` validation payload). Undefined otherwise. */
+    public body?: unknown,
   ) {
     super(`${status} ${statusText}`)
     this.name = 'ApiError'
@@ -44,7 +47,13 @@ async function request<T>(path: string, options: ApiOptions = {}): Promise<T> {
   const response = await fetch(url, { ...fetchOptions, headers })
 
   if (!response.ok) {
-    throw new ApiError(response.status, response.statusText)
+    let body: unknown
+    try {
+      body = await response.json()
+    } catch {
+      body = undefined
+    }
+    throw new ApiError(response.status, response.statusText, body)
   }
 
   const contentType = response.headers.get('content-type')

@@ -8,6 +8,10 @@ const props = withDefaults(defineProps<{
   min?: number
   max?: number
   step?: number
+  /** id/aria hooks so a wrapping control can wire the input to help/error text. */
+  id?: string
+  describedBy?: string
+  invalid?: boolean
 }>(), {
   min: 1,
   max: 100,
@@ -62,6 +66,7 @@ function onInput(event: Event) {
       </svg>
     </button>
     <input
+      :id="id"
       type="number"
       class="stepper-input"
       :value="modelValue"
@@ -69,6 +74,8 @@ function onInput(event: Event) {
       :max="max"
       :step="step"
       :aria-label="resolvedLabel"
+      :aria-describedby="describedBy"
+      :aria-invalid="invalid || undefined"
       @input="onInput"
     >
     <button

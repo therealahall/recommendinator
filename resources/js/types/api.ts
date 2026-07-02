@@ -328,3 +328,68 @@ export interface EnrichmentStartRequest {
   user_id?: number
   retry_not_found?: boolean
 }
+
+// --- Settings (global database-backed config) ---
+
+export type SettingType = 'bool' | 'int' | 'float' | 'string' | 'list' | 'enum'
+export type SettingWidget = 'toggle' | 'number' | 'text' | 'tags' | 'select'
+
+export interface SettingValidation {
+  min: number | null
+  max: number | null
+  max_length: number | null
+  pattern: string | null
+}
+
+// Discriminated by `sensitive`. Non-sensitive carry `value` + `db_overridden`;
+// sensitive carry `has_secret` and no value.
+interface SettingViewBase {
+  key: string
+  section: string
+  label: string
+  help: string
+  type: SettingType
+  widget: SettingWidget
+  choices: string[] | null
+  validation: SettingValidation | null
+  advanced: boolean
+  restart_required: boolean
+  sensitive: boolean
+}
+
+export interface SettingViewValue extends SettingViewBase {
+  sensitive: false
+  value: string | number | boolean | string[] | null
+  db_overridden: boolean
+}
+
+export interface SettingViewSecret extends SettingViewBase {
+  sensitive: true
+  has_secret: boolean
+}
+
+export type SettingView = SettingViewValue | SettingViewSecret
+
+export interface SettingsSection {
+  section: string
+  settings: SettingView[]
+}
+
+export interface SettingsResponse {
+  sections: SettingsSection[]
+}
+
+export interface SettingsUpdateRequest {
+  updates: Record<string, unknown>
+}
+
+export interface SettingSecretRequest {
+  key: string
+  value: string
+}
+
+/** Body of a 422 from PUT /settings: which key failed and why. */
+export interface SettingValidationError {
+  key: string
+  reason: string
+}

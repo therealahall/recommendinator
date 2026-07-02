@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import TraktDeviceCodeFlow from './TraktDeviceCodeFlow.vue'
+import { useDataStore } from '@/stores/data'
 
 const mockGet = vi.fn()
 const mockPost = vi.fn()
@@ -76,6 +77,9 @@ describe('TraktDeviceCodeFlow', () => {
     mockGet.mockReset()
     mockPost.mockReset()
     mockDelete.mockReset()
+    // Client credentials resolve by default so the connect action is live;
+    // the gating tests below flip this off explicitly.
+    useDataStore().traktStatus.enabled = true
   })
 
   it('renders the connect trigger initially', () => {
@@ -83,6 +87,43 @@ describe('TraktDeviceCodeFlow', () => {
     expect(wrapper.get('[data-testid="trakt-connect-btn"]').text()).toBe(
       'Connect Trakt Account',
     )
+  })
+
+  it('enables the connect button and omits the hint when credentials resolve', () => {
+    const wrapper = mountFlow(makeTimer())
+    const button = wrapper.get('[data-testid="trakt-connect-btn"]')
+    expect((button.element as HTMLButtonElement).disabled).toBe(false)
+    expect(button.attributes('aria-describedby')).toBeUndefined()
+    expect(wrapper.find('[data-testid="trakt-connect-hint"]').exists()).toBe(
+      false,
+    )
+  })
+
+  it('disables connect and shows an accessible hint when credentials are missing', () => {
+    useDataStore().traktStatus.enabled = false
+    const wrapper = mountFlow(makeTimer())
+
+    const button = wrapper.get('[data-testid="trakt-connect-btn"]')
+    expect((button.element as HTMLButtonElement).disabled).toBe(true)
+
+    const hint = wrapper.get('[data-testid="trakt-connect-hint"]')
+    expect(hint.text()).toContain('client ID')
+    expect(hint.text()).toContain('client secret')
+
+    // The hint is programmatically associated with the disabled button so a
+    // screen reader announces "why" alongside the control.
+    expect(button.attributes('aria-describedby')).toBe('trakt-connect-hint')
+    expect(hint.attributes('id')).toBe('trakt-connect-hint')
+  })
+
+  it('does not start the device flow while connect is disabled', async () => {
+    useDataStore().traktStatus.enabled = false
+    const wrapper = mountFlow(makeTimer())
+
+    await wrapper.get('[data-testid="trakt-connect-btn"]').trigger('click')
+    await flushPromises()
+
+    expect(mockPost).not.toHaveBeenCalled()
   })
 
   it('shows the user code and verification link after starting', async () => {

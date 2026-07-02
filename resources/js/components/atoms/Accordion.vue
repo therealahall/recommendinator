@@ -1,11 +1,17 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
-const props = defineProps<{
-  /** Stable id used to derive trigger/panel ids — must be unique per page. */
-  id: string
-  expanded: boolean
-}>()
+const props = withDefaults(
+  defineProps<{
+    /** Stable id used to derive trigger/panel ids — must be unique per page. */
+    id: string
+    expanded: boolean
+    /** Heading level for the trigger, so it nests correctly under the
+     *  surrounding section heading (defaults to h3). */
+    headingLevel?: 2 | 3 | 4 | 5 | 6
+  }>(),
+  { headingLevel: 3 },
+)
 
 const emit = defineEmits<{
   'update:expanded': [value: boolean]
@@ -22,7 +28,7 @@ function toggle(): void {
 <template>
   <div class="accordion" :class="{ 'accordion--expanded': expanded }">
     <div class="accordion-row">
-      <h3 class="accordion-heading">
+      <component :is="`h${headingLevel}`" class="accordion-heading">
         <button
           :id="triggerId"
           type="button"
@@ -34,7 +40,7 @@ function toggle(): void {
           <slot name="header" />
           <span class="accordion-chevron" aria-hidden="true">▾</span>
         </button>
-      </h3>
+      </component>
       <div v-if="$slots['header-actions']" class="accordion-header-actions">
         <slot name="header-actions" />
       </div>
