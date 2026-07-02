@@ -94,7 +94,7 @@ def mock_components(mock_config):
         mock_storage_manager.get_credentials_for_source.return_value = {}
         mock_storage_manager.list_source_configs.return_value = []
         # Let the real migrate_config_settings boot hook run against an empty
-        # settings store (no stub) — seeding/overlay is a no-op and nothing
+        # settings store (no stub) — the DB overlay is a no-op and nothing
         # leaks across tests.
         back_mock_settings_store(mock_storage_manager)
         mock_storage.return_value = mock_storage_manager
@@ -138,18 +138,19 @@ def client(mock_components):
 
 
 class TestCreateAppSettingsMigration:
-    """create_app seeds/overlays DB settings before reading global config."""
+    """create_app assembles DB-overlaid settings before reading global config."""
 
     def test_create_app_overlays_db_settings_onto_config(self, mock_config, tmp_path):
-        """create_app runs the real settings migration against an isolated DB.
+        """create_app runs the real settings assembly against an isolated DB.
 
         Drives the *real* ``migrate_config_settings`` hook with a real temp-DB
-        StorageManager (no stub): a pre-seeded DB leaf must win over the YAML
-        value on the running config that create_app stores in app_state.
+        StorageManager (no stub): a stored DB leaf must win over the YAML value
+        on the running config that create_app stores in app_state, and boot
+        must not write anything to the settings table.
         """
         reset_sync_manager()
         storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
-        # Pre-seed a DB leaf that must win over the YAML "web.port" on boot.
+        # A stored DB leaf must win over the YAML "web.port" on boot.
         storage_manager.set_setting("web.port", 65000)
         with (
             patch("src.web.app.load_config", return_value=mock_config),
@@ -168,15 +169,15 @@ class TestCreateAppSettingsMigration:
 
             # Real hook overlaid the DB leaf onto the in-memory config.
             assert app_state.config["web"]["port"] == 65000
-            # And a YAML-only leaf was seeded into the DB for next boot.
-            assert storage_manager.get_setting("web.host") == mock_config["web"]["host"]
+            # Boot seeded nothing: only the pre-existing leaf remains in the DB.
+            assert storage_manager.list_settings() == {"web.port": 65000}
         reset_sync_manager()
 
     def test_logging_configured_after_settings_overlay(self, mock_config, tmp_path):
         """configure_logging runs after migrate_config_settings (overlay first).
 
-        Spies on the real hook with ``wraps`` so it still runs (no stub) while
-        recording call order against configure_logging.
+        Spies on the real hook so it still runs (no stub) while recording call
+        order against configure_logging.
         """
         reset_sync_manager()
         order: list[str] = []
@@ -209,8 +210,47 @@ class TestCreateAppSettingsMigration:
             create_app()
 
         assert order == ["settings", "logging"]
-        # The real hook ran via the spy: a YAML leaf reached the DB.
-        assert storage_manager.get_setting("web.port") == mock_config["web"]["port"]
+        # The real hook ran via the spy but wrote nothing to the DB.
+        assert storage_manager.list_settings() == {}
+        reset_sync_manager()
+
+    def test_create_app_migrates_config_secret_into_storage(self, tmp_path) -> None:
+        """create_app sweeps a YAML provider secret into encrypted storage.
+
+        Regression: the ``migrate_config_secrets`` boot hook must actually run
+        during ``create_app`` — asserted end-to-end against a real temp-DB (no
+        stub). The plaintext api_key must land in encrypted storage and be
+        stripped from the running config held in app_state.
+        """
+        reset_sync_manager()
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        config = {
+            "storage": {"database_path": str(tmp_path / "test.db")},
+            "enrichment": {"providers": {"tmdb": {"api_key": "tmdb-secret"}}},
+        }
+        with (
+            patch("src.web.app.load_config", return_value=config),
+            patch(
+                "src.web.app.create_storage_manager",
+                return_value=storage_manager,
+            ),
+            patch("src.web.app.create_llm_components", return_value=(None, None, None)),
+            patch("src.web.app.create_recommendation_engine"),
+            patch("src.web.app.migrate_config_credentials"),
+            patch("src.web.app.configure_logging"),
+        ):
+            _reset_app_state()
+
+            create_app()
+
+            # The secret was encrypted into storage on boot.
+            assert (
+                storage_manager.has_global_secret("enrichment.providers.tmdb.api_key")
+                is True
+            )
+            # And stripped from the running config, so no plaintext lingers.
+            providers = app_state.config["enrichment"]["providers"]
+            assert providers.get("tmdb", {}).get("api_key") is None
         reset_sync_manager()
 
 
@@ -3506,3 +3546,269 @@ class TestTraktPollDeviceApproval:
 
         assert response.status_code == 500
         assert response.json()["detail"] == "Storage not initialized"
+
+
+# Sensitive and non-sensitive leaves reused across the settings endpoint tests.
+_SETTINGS_SECRET_KEY = "enrichment.providers.tmdb.api_key"
+_SETTINGS_INT_KEY = "recommendations.default_count"
+
+
+class TestSettingsEndpoints:
+    """Global settings API: grouped view, updates + live-apply, reset, secrets.
+
+    Drives ``create_app`` with a real isolated temp-DB StorageManager (mirrors
+    the per-source config suite) so persistence and secret masking are exercised
+    end-to-end without mocks.
+    """
+
+    @pytest.fixture()
+    def settings_env(self, tmp_path: Path):
+        reset_sync_manager()
+        storage = StorageManager(sqlite_path=tmp_path / "settings.db")
+        config = {
+            "storage": {"database_path": str(tmp_path / "settings.db")},
+            "recommendations": {"default_count": 5, "max_count": 20},
+            "web": {"host": "127.0.0.1", "port": 18473},
+        }
+        with (
+            patch("src.web.app.load_config", return_value=config),
+            patch("src.web.app.create_storage_manager", return_value=storage),
+            patch("src.web.app.create_llm_components", return_value=(None, None, None)),
+            patch("src.web.app.create_recommendation_engine"),
+            patch("src.web.app.migrate_config_credentials"),
+            patch("src.web.app.configure_logging"),
+        ):
+            _reset_app_state()
+            app = create_app()
+            app_state.config = config
+            app_state.storage = storage
+            yield TestClient(app), storage, config
+        _reset_app_state()
+        reset_sync_manager()
+
+    def _find(self, body: dict, key: str) -> dict:
+        for section in body["sections"]:
+            for setting in section["settings"]:
+                if setting["key"] == key:
+                    return setting
+        raise AssertionError(f"{key} not in settings body")
+
+    def test_get_grouped_shape_and_masked_secret(self, settings_env) -> None:
+        client, _storage, _config = settings_env
+
+        response = client.get("/api/settings")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["sections"][0]["section"] == "features"
+
+        numeric = self._find(body, _SETTINGS_INT_KEY)
+        assert numeric["value"] == 5
+        assert numeric["db_overridden"] is False
+        assert "has_secret" not in numeric
+
+        secret = self._find(body, _SETTINGS_SECRET_KEY)
+        assert secret["sensitive"] is True
+        assert secret["has_secret"] is False
+        assert "value" not in secret
+        assert "db_overridden" not in secret
+
+    def test_put_persists_and_live_applies(self, settings_env) -> None:
+        client, storage, config = settings_env
+
+        response = client.put("/api/settings", json={"updates": {_SETTINGS_INT_KEY: 7}})
+
+        assert response.status_code == 200
+        assert storage.get_setting(_SETTINGS_INT_KEY) == 7
+        # Live-applied to the running config held in app_state.
+        assert config["recommendations"]["default_count"] == 7
+        setting = self._find(response.json(), _SETTINGS_INT_KEY)
+        assert setting["value"] == 7
+        assert setting["db_overridden"] is True
+
+    def test_put_invalid_returns_422_no_partial_write(self, settings_env) -> None:
+        client, storage, config = settings_env
+
+        response = client.put(
+            "/api/settings",
+            json={"updates": {_SETTINGS_INT_KEY: 9, "recommendations.max_count": 0}},
+        )
+
+        assert response.status_code == 422
+        assert response.json()["detail"]["key"] == "recommendations.max_count"
+        # Nothing persisted and the running config is untouched.
+        assert storage.list_settings() == {}
+        assert config["recommendations"]["default_count"] == 5
+
+    def test_put_restart_required_persists_but_flagged(self, settings_env) -> None:
+        client, storage, config = settings_env
+
+        response = client.put("/api/settings", json={"updates": {"web.port": 9000}})
+
+        assert response.status_code == 200
+        assert storage.get_setting("web.port") == 9000
+        # Restart-required: persisted but the running config is unchanged.
+        assert config["web"]["port"] == 18473
+        setting = self._find(response.json(), "web.port")
+        assert setting["restart_required"] is True
+        assert setting["db_overridden"] is True
+        assert setting["value"] == 18473
+
+    def test_delete_resets_to_default(self, settings_env) -> None:
+        client, storage, config = settings_env
+        client.put("/api/settings", json={"updates": {_SETTINGS_INT_KEY: 7}})
+
+        response = client.delete(f"/api/settings/{_SETTINGS_INT_KEY}")
+
+        assert response.status_code == 200
+        assert storage.get_setting(_SETTINGS_INT_KEY) is None
+        assert config["recommendations"]["default_count"] == 5
+        setting = self._find(response.json(), _SETTINGS_INT_KEY)
+        assert setting["db_overridden"] is False
+        assert setting["value"] == 5
+
+    def test_delete_unknown_key_returns_404(self, settings_env) -> None:
+        client, _storage, _config = settings_env
+
+        response = client.delete("/api/settings/web.nonsense")
+
+        assert response.status_code == 404
+
+    def test_delete_sensitive_key_is_graceful_not_500(self, settings_env) -> None:
+        """DELETE /api/settings/{key} on a sensitive key must not 500.
+
+        Reported: resetting a secret leaf via the web returns 500 Internal
+        Server Error, while the CLI ``settings reset <secret>`` rejects it
+        cleanly (exit != 0) — a CLI/UI parity break and an ungraceful crash.
+
+        Root cause: ``reset_setting_endpoint`` only guards ``get_entry(key) is
+        None`` (404). A sensitive key IS registered, so it falls through to
+        ``reset_setting``, which raises ``SettingsValidationError`` ("use the
+        secret endpoint for secrets"). That exception is uncaught in the DELETE
+        handler (unlike the PUT and secret handlers), so FastAPI returns 500.
+
+        Expected fix: map the sensitive-key rejection to 422 with the offending
+        key + reason, mirroring the PUT ``/api/settings`` handler so the settings
+        API has one uniform ``SettingsValidationError`` -> HTTP contract. This
+        test asserts that exact 422 shape and that no server crash leaks.
+        """
+        client, _storage, _config = settings_env
+
+        # The defect surfaces either as an uncaught exception (TestClient
+        # re-raises) or, with raise_server_exceptions off, a 500. Both are
+        # failures; the fix should yield a graceful 422 instead.
+        try:
+            response = client.delete(f"/api/settings/{_SETTINGS_SECRET_KEY}")
+        except Exception as error:  # noqa: BLE001 - defect: unhandled in handler
+            pytest.fail(
+                "resetting a sensitive key raised an uncaught server error "
+                f"instead of a graceful 422: {error!r}"
+            )
+
+        assert response.status_code == 422, (
+            "resetting a sensitive key should map to 422, "
+            f"got {response.status_code}"
+        )
+        assert response.json()["detail"] == {
+            "key": _SETTINGS_SECRET_KEY,
+            "reason": "use the secret endpoint for secrets",
+        }
+
+    def test_secret_put_and_delete_are_masked(self, settings_env) -> None:
+        client, storage, _config = settings_env
+
+        put = client.put(
+            "/api/settings/secret",
+            json={"key": _SETTINGS_SECRET_KEY, "value": "tmdb-key"},
+        )
+
+        assert put.status_code == 204
+        assert storage.has_global_secret(_SETTINGS_SECRET_KEY) is True
+        # The secret is never persisted in the plaintext settings table.
+        assert storage.list_settings() == {}
+        # And it surfaces only as has_secret, never as a value.
+        secret = self._find(client.get("/api/settings").json(), _SETTINGS_SECRET_KEY)
+        assert secret["has_secret"] is True
+        assert "value" not in secret
+
+        delete = client.delete(f"/api/settings/secret/{_SETTINGS_SECRET_KEY}")
+
+        assert delete.status_code == 204
+        assert storage.has_global_secret(_SETTINGS_SECRET_KEY) is False
+
+    def test_secret_put_rejects_non_sensitive_key(self, settings_env) -> None:
+        client, storage, _config = settings_env
+
+        response = client.put(
+            "/api/settings/secret",
+            json={"key": _SETTINGS_INT_KEY, "value": "nope"},
+        )
+
+        assert response.status_code == 400
+        assert storage.list_settings() == {}
+
+    def test_secret_delete_rejects_non_sensitive_key(self, settings_env) -> None:
+        client, _storage, _config = settings_env
+
+        response = client.delete(f"/api/settings/secret/{_SETTINGS_INT_KEY}")
+
+        assert response.status_code == 400
+
+    def test_get_returns_503_when_config_unavailable(self, settings_env) -> None:
+        client, _storage, _config = settings_env
+        app_state.config = None
+
+        assert client.get("/api/settings").status_code == 503
+
+    def test_get_returns_503_when_storage_unavailable(self, settings_env) -> None:
+        client, _storage, _config = settings_env
+        app_state.storage = None
+
+        assert client.get("/api/settings").status_code == 503
+
+    def test_put_returns_503_when_config_unavailable(self, settings_env) -> None:
+        client, _storage, _config = settings_env
+        app_state.config = None
+
+        response = client.put("/api/settings", json={"updates": {_SETTINGS_INT_KEY: 7}})
+        assert response.status_code == 503
+
+    def test_put_returns_503_when_storage_unavailable(self, settings_env) -> None:
+        client, _storage, _config = settings_env
+        app_state.storage = None
+
+        response = client.put("/api/settings", json={"updates": {_SETTINGS_INT_KEY: 7}})
+        assert response.status_code == 503
+
+    def test_delete_returns_503_when_config_unavailable(self, settings_env) -> None:
+        client, _storage, _config = settings_env
+        app_state.config = None
+
+        assert client.delete(f"/api/settings/{_SETTINGS_INT_KEY}").status_code == 503
+
+    def test_delete_returns_503_when_storage_unavailable(self, settings_env) -> None:
+        client, _storage, _config = settings_env
+        app_state.storage = None
+
+        assert client.delete(f"/api/settings/{_SETTINGS_INT_KEY}").status_code == 503
+
+    def test_secret_put_returns_503_when_storage_unavailable(
+        self, settings_env
+    ) -> None:
+        client, _storage, _config = settings_env
+        app_state.storage = None
+
+        response = client.put(
+            "/api/settings/secret",
+            json={"key": _SETTINGS_SECRET_KEY, "value": "x"},
+        )
+        assert response.status_code == 503
+
+    def test_secret_delete_returns_503_when_storage_unavailable(
+        self, settings_env
+    ) -> None:
+        client, _storage, _config = settings_env
+        app_state.storage = None
+
+        response = client.delete(f"/api/settings/secret/{_SETTINGS_SECRET_KEY}")
+        assert response.status_code == 503

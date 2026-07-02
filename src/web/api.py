@@ -27,6 +27,15 @@ from src.models.content import (
     get_enum_value,
 )
 from src.models.user_preferences import UserPreferenceConfig
+from src.settings.metadata import get_entry
+from src.settings.service import (
+    SettingsValidationError,
+    apply_settings,
+    build_settings_view,
+    clear_secret,
+    reset_setting,
+    set_secret,
+)
 from src.storage.manager import VALID_SORT_OPTIONS, StorageManager
 from src.utils.item_serialization import item_to_dict
 from src.utils.series import MAX_SEASONS
@@ -500,6 +509,65 @@ class SourceCreateRequest(BaseModel):
     plugin: str = Field(..., max_length=128)
     values: dict[str, Any] = Field(default_factory=dict)
     enabled: bool = True
+
+
+class SettingValidationView(BaseModel):
+    """Validation constraints for a setting (any field may be null)."""
+
+    min: float | None = None
+    max: float | None = None
+    max_length: int | None = None
+    pattern: str | None = None
+
+
+class SettingView(BaseModel):
+    """One global setting's metadata plus its value/secret state.
+
+    ``value`` and ``db_overridden`` are present only for non-sensitive
+    settings; ``has_secret`` is present only for sensitive ones. The omitted
+    fields are dropped from the response via ``response_model_exclude_unset``.
+    """
+
+    key: str
+    section: str
+    label: str
+    help: str
+    type: str
+    widget: str
+    choices: list[str] | None
+    validation: SettingValidationView | None
+    advanced: bool
+    restart_required: bool
+    sensitive: bool
+    value: Any = None
+    db_overridden: bool | None = None
+    has_secret: bool | None = None
+
+
+class SettingsSection(BaseModel):
+    """A group of settings sharing a top-level section."""
+
+    section: str
+    settings: list[SettingView]
+
+
+class SettingsResponse(BaseModel):
+    """Every in-scope setting grouped by section."""
+
+    sections: list[SettingsSection]
+
+
+class SettingsUpdateRequest(BaseModel):
+    """Bulk update of non-sensitive settings (validated all-or-nothing)."""
+
+    updates: dict[str, Any]
+
+
+class SettingSecretRequest(BaseModel):
+    """Set or rotate a single sensitive setting's value."""
+
+    key: str
+    value: str
 
 
 def discover_themes(themes_dir: Path) -> list[ThemeResponse]:
@@ -1539,6 +1607,13 @@ def _require_storage() -> StorageManager:
     return storage
 
 
+def _require_config() -> dict[str, Any]:
+    config = get_config()
+    if config is None:
+        raise HTTPException(status_code=503, detail="Config unavailable")
+    return config
+
+
 def _config_error_to_http(error: SourceConfigError) -> HTTPException:
     # error.kind is controlled internally; error.message embeds caller-supplied
     # values so it stays out of the log to prevent log injection.
@@ -1633,6 +1708,101 @@ async def set_source_enabled_endpoint(
     return SourceConfigResponse(
         **build_config_view(source_id, plugin, get_config(), storage)
     )
+
+
+# Global settings endpoints. Business logic lives in ``src.settings.service``
+# (shared with the CLI ``settings`` group); the routes below adapt those
+# framework-agnostic helpers to FastAPI / Pydantic.
+
+
+@router.get(
+    "/settings",
+    response_model=SettingsResponse,
+    response_model_exclude_unset=True,
+)
+async def get_settings() -> SettingsResponse:
+    """Return every in-scope setting grouped by section (secrets masked)."""
+    config = _require_config()
+    storage = _require_storage()
+    return SettingsResponse(**build_settings_view(config, storage))
+
+
+@router.put(
+    "/settings",
+    response_model=SettingsResponse,
+    response_model_exclude_unset=True,
+)
+async def update_settings(request: SettingsUpdateRequest) -> SettingsResponse:
+    """Validate and apply a batch of non-sensitive setting updates.
+
+    Validation is all-or-nothing: an invalid key or value returns 422 (with the
+    offending key + reason) and nothing is written. Non-restart settings are
+    live-applied to the running config; restart-required settings persist and
+    apply on next boot.
+    """
+    config = _require_config()
+    storage = _require_storage()
+    try:
+        apply_settings(config, storage, request.updates)
+    except SettingsValidationError as error:
+        raise HTTPException(
+            status_code=422,
+            detail={"key": error.key, "reason": error.reason},
+        ) from error
+    return SettingsResponse(**build_settings_view(config, storage))
+
+
+@router.delete(
+    "/settings/{key}",
+    response_model=SettingsResponse,
+    response_model_exclude_unset=True,
+)
+async def reset_setting_endpoint(key: str) -> SettingsResponse:
+    """Reset a setting to its default by dropping the DB override.
+
+    Returns 404 for a key that is not in the settings registry, and 422 (with
+    the offending key + reason) when the key is registered but cannot be reset
+    this way — e.g. a sensitive leaf, which must go through the secret endpoint.
+    """
+    config = _require_config()
+    storage = _require_storage()
+    if get_entry(key) is None:
+        logger.info("Settings reset miss for key=%s", _sanitize_for_log(key))
+        raise HTTPException(status_code=404, detail="Unknown setting.")
+    try:
+        reset_setting(config, storage, key)
+    except SettingsValidationError as error:
+        raise HTTPException(
+            status_code=422,
+            detail={"key": error.key, "reason": error.reason},
+        ) from error
+    return SettingsResponse(**build_settings_view(config, storage))
+
+
+@router.put("/settings/secret", status_code=204)
+async def set_setting_secret(request: SettingSecretRequest) -> Response:
+    """Store a sensitive setting's value in the encrypted secret store."""
+    storage = _require_storage()
+    try:
+        set_secret(storage, request.key, request.value)
+    except SettingsValidationError as error:
+        raise HTTPException(
+            status_code=400, detail="Not a configurable secret."
+        ) from error
+    return Response(status_code=204)
+
+
+@router.delete("/settings/secret/{key}", status_code=204)
+async def clear_setting_secret(key: str) -> Response:
+    """Delete a sensitive setting's stored secret."""
+    storage = _require_storage()
+    try:
+        clear_secret(storage, key)
+    except SettingsValidationError as error:
+        raise HTTPException(
+            status_code=400, detail="Not a configurable secret."
+        ) from error
+    return Response(status_code=204)
 
 
 @router.get("/sync/status", response_model=SyncStatusResponse)
