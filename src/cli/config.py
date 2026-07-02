@@ -21,7 +21,9 @@ from src.recommendations.scorers import (
     SeriesOrderScorer,
     TagOverlapScorer,
 )
+from src.settings.metadata import default_config, default_of
 from src.storage.manager import StorageManager
+from src.utils.deep_merge import deep_merge
 
 logger = logging.getLogger(__name__)
 
@@ -54,13 +56,26 @@ def resolve_config_path(config_path: Path | None = None) -> Path:
 
 
 def load_config(config_path: Path | None = None) -> dict[str, Any]:
-    """Load configuration from YAML file.
+    """Load configuration from YAML file, layered over the const defaults.
+
+    The registry const defaults (:func:`src.settings.metadata.default_config`)
+    are deep-merged UNDER the parsed YAML, so every in-scope global section
+    resolves fully even from a bootstrap-only config. This is the const layer
+    only — the database overlay is applied later by
+    :func:`src.storage.settings_migration.migrate_config_settings`, keeping the
+    end-to-end precedence const default < YAML < DB.
+
+    ``migrate_config_settings`` re-merges the same const defaults so it stays
+    independently callable/testable without ``load_config`` first. The overlap
+    is deliberate and idempotent (an identical merge changes nothing), not an
+    accident — do not drop the const layer from either site.
 
     Args:
         config_path: Path to config file (default: config/config.yaml)
 
     Returns:
-        Configuration dictionary
+        Configuration dictionary with const defaults resolved for in-scope
+        sections.
 
     Raises:
         FileNotFoundError: If config file doesn't exist
@@ -68,7 +83,16 @@ def load_config(config_path: Path | None = None) -> dict[str, Any]:
     resolved = resolve_config_path(config_path)
 
     with open(resolved) as f:
-        config: dict[str, Any] = yaml.safe_load(f)
+        raw = yaml.safe_load(f)
+
+    yaml_config = raw if isinstance(raw, dict) else {}
+
+    # Layer the registry const defaults UNDER the parsed YAML (const default <
+    # YAML) so a minimal, bootstrap-only config still yields a complete
+    # effective config for every in-scope global section. This is the const
+    # layer only; the database overlay (migrate_config_settings) still wins on
+    # top of this at boot, preserving const default < YAML < DB.
+    config: dict[str, Any] = deep_merge(default_config(), yaml_config)
 
     return config
 
@@ -86,12 +110,18 @@ def get_feature_flags(config: dict[str, Any] | None) -> dict[str, bool]:
         llm_reasoning_enabled, use_embeddings.
     """
     features_config = config.get("features", {}) if config else {}
-    ai_enabled: bool = features_config.get("ai_enabled", False)
-    embeddings_enabled: bool = features_config.get("embeddings_enabled", False)
+    ai_enabled: bool = features_config.get(
+        "ai_enabled", default_of("features.ai_enabled")
+    )
+    embeddings_enabled: bool = features_config.get(
+        "embeddings_enabled", default_of("features.embeddings_enabled")
+    )
     return {
         "ai_enabled": ai_enabled,
         "embeddings_enabled": embeddings_enabled,
-        "llm_reasoning_enabled": features_config.get("llm_reasoning_enabled", False),
+        "llm_reasoning_enabled": features_config.get(
+            "llm_reasoning_enabled", default_of("features.llm_reasoning_enabled")
+        ),
         "use_embeddings": ai_enabled and embeddings_enabled,
     }
 
@@ -138,10 +168,14 @@ def create_llm_components(
         return None, None, None
 
     ollama_config = config.get("ollama", {})
-    base_url = ollama_config.get("base_url", "http://ollama:11434")
-    model = ollama_config.get("model", "mistral:7b")
-    embedding_model = ollama_config.get("embedding_model", "nomic-embed-text")
-    conversation_model = ollama_config.get("conversation_model", "")
+    base_url = ollama_config.get("base_url", default_of("ollama.base_url"))
+    model = ollama_config.get("model", default_of("ollama.model"))
+    embedding_model = ollama_config.get(
+        "embedding_model", default_of("ollama.embedding_model")
+    )
+    conversation_model = ollama_config.get(
+        "conversation_model", default_of("ollama.conversation_model")
+    )
 
     try:
         client = OllamaClient(
@@ -221,9 +255,17 @@ def create_recommendation_engine(
         RecommendationEngine instance
     """
     rec_config = config.get("recommendations", {})
-    min_rating = rec_config.get("min_rating_for_preference", 4)
+    min_rating = rec_config.get(
+        "min_rating_for_preference",
+        default_of("recommendations.min_rating_for_preference"),
+    )
     scorer_weights = rec_config.get("scorer_weights", {})
-    semantic_similarity_weight = float(scorer_weights.get("semantic_similarity", 1.5))
+    semantic_similarity_weight = float(
+        scorer_weights.get(
+            "semantic_similarity",
+            default_of("recommendations.scorer_weights.semantic_similarity"),
+        )
+    )
 
     scorers = build_scorers_from_config(config)
 

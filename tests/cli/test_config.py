@@ -19,6 +19,9 @@ from src.cli.config import (
     load_config,
 )
 from src.recommendations.scorers import SCORER_NAME_MAP, Scorer
+from src.settings.metadata import default_config
+from src.storage.manager import StorageManager
+from src.storage.settings_migration import IN_SCOPE_SECTIONS, migrate_config_settings
 
 # These scorers are instantiated directly by RecommendationEngine, not via
 # _SCORER_CONFIG_MAP. They require special construction (embeddings client,
@@ -30,6 +33,61 @@ _ENGINE_MANAGED_SCORERS = {"semantic_similarity", "custom_preference"}
 def example_config() -> dict[str, Any]:
     """Load the example config for tests."""
     return load_config(Path("config/example.yaml"))
+
+
+class TestLoadConfigDefaults:
+    """load_config layers the registry const defaults UNDER the parsed YAML.
+
+    The trimmed, bootstrap-only ``example.yaml`` omits every in-scope global
+    section; loading it must still yield a complete, usable config for each
+    section from the const defaults (const default < YAML), before any DB
+    overlay runs. The DB overlay (``migrate_config_settings``) still wins on
+    top, so end to end the precedence stays const default < YAML < DB.
+    """
+
+    def test_trimmed_example_resolves_all_in_scope_sections(
+        self, example_config: dict[str, Any]
+    ) -> None:
+        """Every in-scope section resolves to the registry default from example.yaml.
+
+        example.yaml no longer carries these sections, so this proves the const
+        layer alone (no DB overlay) produces a complete effective config.
+        """
+        defaults = default_config()
+        for section in IN_SCOPE_SECTIONS:
+            assert example_config[section] == defaults[section]
+
+    def test_bootstrap_sections_pass_through(
+        self, example_config: dict[str, Any]
+    ) -> None:
+        """The bootstrap storage paths and inputs sources survive the merge."""
+        assert example_config["storage"]["database_path"] == "data/recommendations.db"
+        assert "trakt" in example_config["inputs"]
+
+    def test_yaml_overrides_const_default(self, tmp_path: Path) -> None:
+        """A YAML leaf overrides the registry const default; siblings resolve."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text("web:\n  port: 20000\n")
+
+        config = load_config(config_path)
+
+        assert config["web"]["port"] == 20000
+        # A sibling the YAML omits still resolves from the const default.
+        assert config["web"]["host"] == default_config()["web"]["host"]
+
+    def test_db_overlay_wins_over_loaded_defaults(self, tmp_path: Path) -> None:
+        """End to end: DB overlay wins over the const-defaulted, loaded config."""
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+        storage.set_setting("web.port", 9999)
+
+        config = load_config(Path("config/example.yaml"))
+        # Const layer resolved web.port to the registry default (no DB yet).
+        assert config["web"]["port"] == default_config()["web"]["port"]
+
+        migrate_config_settings(config, storage)
+
+        # DB overlay wins on top: const default < YAML < DB.
+        assert config["web"]["port"] == 9999
 
 
 class TestScorerConfigMap:
