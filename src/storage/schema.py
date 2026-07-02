@@ -128,6 +128,12 @@ _ALLOWED_ENRICHMENT_JOINS: frozenset[str] = frozenset(
 # Whitelist of SQL filter suffixes allowed in enrichment queries.
 _ALLOWED_ENRICHMENT_FILTERS: frozenset[str] = frozenset({"", " AND ci.user_id = ?"})
 
+# Schema version tracked in SQLite's ``PRAGMA user_version``. Bumped when a
+# non-idempotent, one-time upgrade must run exactly once per database. The plain
+# ``CREATE TABLE IF NOT EXISTS`` / ``ALTER`` migrations in create_schema stay
+# idempotent and run unconditionally; only version-guarded steps consult this.
+_SCHEMA_VERSION = 1
+
 
 def create_schema(conn: sqlite3.Connection) -> None:
     """Create the database schema.
@@ -441,6 +447,9 @@ def create_schema(conn: sqlite3.Connection) -> None:
         """
     )
 
+    # One-time cleanup of settings rows left behind by the removed seed-on-boot.
+    _clear_seeded_settings(cursor)
+
     # Indexes for conversation tables
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_core_memories_user " "ON core_memories(user_id)"
@@ -459,6 +468,32 @@ def create_schema(conn: sqlite3.Connection) -> None:
     )
 
     conn.commit()
+
+
+def _clear_seeded_settings(cursor: sqlite3.Cursor) -> None:
+    """One-time cleanup: drop every pre-existing ``settings`` row on upgrade.
+
+    An earlier iteration of the database-backed config seeded the ``settings``
+    table on every boot — both dotted-leaf rows (``features.ai_enabled``) and
+    stale whole-section JSON-blob rows (``features`` -> a dict). Seed-on-boot
+    has since been removed; the table now holds only leaves a user explicitly
+    sets via the settings UI/CLI. Because that feature is unreleased, no
+    pre-existing row is genuine user input — every one is a seed artifact — so
+    the whole table is cleared once on the first upgrade.
+
+    Guarded by ``PRAGMA user_version``: the clear runs only while the database
+    is below :data:`_SCHEMA_VERSION`, then advances the version so it never
+    fires again. A leaf a user sets after the upgrade therefore survives every
+    later init. On a fresh database the ``DELETE`` is a harmless no-op that
+    still advances the version.
+    """
+    cursor.execute("PRAGMA user_version")
+    if cursor.fetchone()[0] >= _SCHEMA_VERSION:
+        return
+    cursor.execute("DELETE FROM settings")
+    # PRAGMA statements cannot be parameterised; the value is a validated
+    # module-level integer constant, not caller input.
+    cursor.execute(f"PRAGMA user_version = {int(_SCHEMA_VERSION)}")
 
 
 def _renormalize_titles(cursor: sqlite3.Cursor) -> None:
@@ -1765,33 +1800,15 @@ def set_setting(conn: sqlite3.Connection, key: str, value_json: str) -> None:
     conn.commit()
 
 
-def seed_setting(conn: sqlite3.Connection, key: str, value_json: str) -> None:
-    """Insert a settings value only if the key is absent (INSERT OR IGNORE).
-
-    Atomic never-overwrite seed: an existing leaf is preserved, a missing one
-    is created. *value_json* must be a JSON-encoded string; the caller owns
-    serialisation. Use ``set_setting`` to deliberately overwrite a value.
-    """
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        INSERT OR IGNORE INTO settings (key, value_json, updated_at)
-        VALUES (?, ?, CURRENT_TIMESTAMP)
-        """,
-        (key, value_json),
-    )
-    conn.commit()
-
-
-def has_setting(conn: sqlite3.Connection, key: str) -> bool:
-    """Check whether a settings key exists without decoding its value."""
-    cursor = conn.cursor()
-    cursor.execute("SELECT 1 FROM settings WHERE key = ?", (key,))
-    return cursor.fetchone() is not None
-
-
 def list_settings(conn: sqlite3.Connection) -> dict[str, str]:
     """Return every stored setting as a key -> raw JSON string mapping."""
     cursor = conn.cursor()
     cursor.execute("SELECT key, value_json FROM settings")
     return {row[0]: row[1] for row in cursor.fetchall()}
+
+
+def delete_setting(conn: sqlite3.Connection, key: str) -> None:
+    """Delete a settings row by key. No error if the key is absent."""
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM settings WHERE key = ?", (key,))
+    conn.commit()
