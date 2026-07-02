@@ -69,6 +69,18 @@ function onUserChange(event: Event) {
         </svg>
         Preferences
       </button>
+      <!-- Settings -->
+      <button class="nav-item" :class="{ active: isActive('settings') }" :aria-current="isActive('settings') ? 'page' : undefined" @click="navigate('settings')">
+        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="4" y1="6" x2="20" y2="6" />
+          <circle cx="9" cy="6" r="2" />
+          <line x1="4" y1="12" x2="20" y2="12" />
+          <circle cx="15" cy="12" r="2" />
+          <line x1="4" y1="18" x2="20" y2="18" />
+          <circle cx="9" cy="18" r="2" />
+        </svg>
+        Settings
+      </button>
     </nav>
     <div class="sidebar-footer">
       <label for="userSelect">User</label>

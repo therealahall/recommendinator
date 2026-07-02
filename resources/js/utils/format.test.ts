@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   formatContentType, formatStatus, formatScore, formatElapsed,
   formatStatusForContentType, formatScorerName, formatDate, capitalize, truncate,
+  humanizeSection,
 } from './format'
 
 describe('formatContentType', () => {
@@ -102,6 +103,23 @@ describe('capitalize', () => {
 
   it('handles already capitalized strings', () => {
     expect(capitalize('World')).toBe('World')
+  })
+})
+
+describe('humanizeSection', () => {
+  it('title-cases a plain section key', () => {
+    expect(humanizeSection('web')).toBe('Web')
+  })
+
+  it('keeps allow-listed acronyms fully uppercase', () => {
+    expect(humanizeSection('llm')).toBe('LLM')
+    expect(humanizeSection('cors')).toBe('CORS')
+    expect(humanizeSection('api')).toBe('API')
+  })
+
+  it('splits underscores and hyphens into words', () => {
+    expect(humanizeSection('ai_features')).toBe('AI Features')
+    expect(humanizeSection('log-level')).toBe('Log Level')
   })
 })
 

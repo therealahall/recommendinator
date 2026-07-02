@@ -55,6 +55,26 @@ export function formatScorerName(key: string): string {
   return key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
+/** Acronyms that stay fully uppercase in humanized section headings. */
+const SECTION_ACRONYMS: Record<string, string> = {
+  llm: 'LLM',
+  ai: 'AI',
+  api: 'API',
+  url: 'URL',
+  cors: 'CORS',
+  db: 'DB',
+}
+
+/** Humanize a settings section key (e.g. "web" -> "Web", "llm" -> "LLM"). */
+export function humanizeSection(section: string): string {
+  return section
+    .replace(/[_-]+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .map((word) => SECTION_ACRONYMS[word.toLowerCase()] ?? capitalize(word))
+    .join(' ')
+}
+
 /** Capitalize first letter */
 export function capitalize(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1)

@@ -482,6 +482,55 @@ input[type="checkbox"] {
   border-color: var(--border-focus);
 }
 
+/* Settings / source-config form primitives — shared by SourceConfigForm,
+   SettingControl, SettingSecret, and SettingsSection so a single definition
+   drives the field/label/help layout and the Secrets fieldset. */
+.source-form-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.source-form-label {
+  font-weight: 600;
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.source-form-help {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  margin: 0;
+  font-style: italic;
+}
+
+.source-form-secrets {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.source-form-secrets legend {
+  padding: 0 var(--space-2);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.secret-status-row,
+.secret-edit-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
 /* Buttons */
 .btn {
   display: inline-flex;

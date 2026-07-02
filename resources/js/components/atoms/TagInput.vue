@@ -8,6 +8,9 @@ const props = withDefaults(defineProps<{
   addButtonLabel?: string
   placeholder?: string
   emptyText?: string
+  /** aria hooks so a wrapping control can wire the draft input to help/error text. */
+  describedBy?: string
+  invalid?: boolean
 }>(), {
   addButtonLabel: 'Add',
   placeholder: '',
@@ -68,6 +71,8 @@ function onKeypress(event: KeyboardEvent) {
         v-model="draft"
         :placeholder="placeholder"
         :maxlength="MAX_LENGTH"
+        :aria-describedby="describedBy"
+        :aria-invalid="invalid || undefined"
         @keypress="onKeypress"
       >
       <button type="button" class="btn btn-small btn-primary" @click="add">{{ addButtonLabel }}</button>
