@@ -99,6 +99,30 @@ class TestReloadConfig:
         assert result is True
         assert app_state.config["web"]["port"] == 9999
 
+    def test_reload_sweeps_config_secret_into_storage(self, tmp_path: Path) -> None:
+        """Hot-reload re-runs the secret sweep against the DB.
+
+        Regression: an edited YAML that reintroduces a provider api_key must be
+        swept into encrypted storage and stripped from the running config on
+        reload — otherwise a plaintext secret would linger in app_state until
+        the next restart. Drives the real hook against an isolated temp-DB.
+        """
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            "enrichment:\n  providers:\n    tmdb:\n      api_key: tmdb-secret\n"
+        )
+
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+        app_state.config_path = str(config_file)
+        app_state.storage = storage
+
+        result = reload_config()
+
+        assert result is True
+        assert storage.has_global_secret("enrichment.providers.tmdb.api_key") is True
+        providers = app_state.config["enrichment"]["providers"]
+        assert providers.get("tmdb", {}).get("api_key") is None
+
     def test_reload_config_load_raises_returns_false(self) -> None:
         """reload_config returns False when load_config raises an exception.
 
