@@ -1,6 +1,8 @@
 # Enrichment Setup Guide
 
-**Note:** Enrichment is **disabled by default**. You must explicitly enable it and configure providers in your `config.yaml` before enrichment will run. Do this immediately after your first data import.
+**Note:** Enrichment is **disabled by default**. You must explicitly enable it and configure providers before enrichment will run. Do this immediately after your first data import.
+
+Enrichment settings are part of the global/system config: they live in the database and are managed from the web **Settings** page or the `settings` CLI group, not `config.yaml`. Provider API keys are stored encrypted in the `credentials` table (via `settings set-secret`), never in plaintext. The `settings set` / `settings set-secret` commands below are equivalent to the corresponding controls on the Settings page.
 
 ## Why Enrichment is Critical
 
@@ -43,14 +45,9 @@ OpenLibrary is the easiest provider to set up — no API key needed. It matches 
 
 **Setup:**
 
-Add to your `config.yaml` under the `enrichment` section:
-
-```yaml
-enrichment:
-  enabled: true
-  providers:
-    openlibrary:
-      enabled: true
+```bash
+python3.11 -m src.cli settings set enrichment.enabled true
+python3.11 -m src.cli settings set enrichment.providers.openlibrary.enabled true
 ```
 
 That's it. No API key, no account creation.
@@ -85,21 +82,23 @@ TMDB provides comprehensive metadata for movies and TV shows. It's the backbone 
 
 **Setup:**
 
-```yaml
-enrichment:
-  enabled: true
-  providers:
-    tmdb:
-      api_key: "your-tmdb-api-key-here"
-      enabled: true
+```bash
+python3.11 -m src.cli settings set enrichment.enabled true
+python3.11 -m src.cli settings set enrichment.providers.tmdb.enabled true
+python3.11 -m src.cli settings set-secret enrichment.providers.tmdb.api_key
 ```
 
-**Optional settings:**
+`set-secret` prompts for the key with hidden input (or reads
+`RECOMMENDINATOR_SECRET_VALUE`) and stores it encrypted.
+
+**Optional settings:** the TMDB provider also honors two tuning fields that are
+not surfaced on the Settings page. Set them under the provider in `config.yaml`
+if you need to change them (they flow through as YAML overrides):
 
 ```yaml
+enrichment:
+  providers:
     tmdb:
-      api_key: "your-tmdb-api-key-here"
-      enabled: true
       language: "en-US"          # Language for results (default: en-US)
       include_keywords: true     # Fetch keywords as tags (default: true, costs 1 extra API call per item)
 ```
@@ -132,37 +131,33 @@ RAWG provides detailed video game metadata. It's particularly good at matching g
 
 **Setup:**
 
-```yaml
-enrichment:
-  enabled: true
-  providers:
-    rawg:
-      api_key: "your-rawg-api-key-here"
-      enabled: true
+```bash
+python3.11 -m src.cli settings set enrichment.enabled true
+python3.11 -m src.cli settings set enrichment.providers.rawg.enabled true
+python3.11 -m src.cli settings set-secret enrichment.providers.rawg.api_key
 ```
 
 ## Full Configuration Example
 
 Here's a complete enrichment configuration with all three providers enabled:
 
-```yaml
-enrichment:
-  enabled: true
-  auto_enrich_on_sync: true    # Recommended: auto-enrich after every sync
-  batch_size: 50               # Items processed per batch
+```bash
+python3.11 -m src.cli settings set enrichment.enabled true
+python3.11 -m src.cli settings set enrichment.auto_enrich_on_sync true   # Recommended
+python3.11 -m src.cli settings set enrichment.batch_size 50              # Items per batch
 
-  providers:
-    tmdb:
-      api_key: "your-tmdb-api-key-here"
-      enabled: true
+python3.11 -m src.cli settings set enrichment.providers.tmdb.enabled true
+python3.11 -m src.cli settings set-secret enrichment.providers.tmdb.api_key
 
-    openlibrary:
-      enabled: true
+python3.11 -m src.cli settings set enrichment.providers.openlibrary.enabled true
 
-    rawg:
-      api_key: "your-rawg-api-key-here"
-      enabled: true
+python3.11 -m src.cli settings set enrichment.providers.rawg.enabled true
+python3.11 -m src.cli settings set-secret enrichment.providers.rawg.api_key
 ```
+
+The same values can be set from the web **Settings** page (Enrichment section),
+including the masked API-key controls. `settings list --section enrichment`
+shows the current state.
 
 **Tip:** Set up enrichment *before* your first data import and enable `auto_enrich_on_sync`. That way, every time you sync a data source, enrichment runs automatically — no extra step needed.
 
@@ -192,7 +187,7 @@ The **Data** page is where you run and monitor enrichment jobs. To see and filte
 
 ### Auto-Enrichment
 
-Set `auto_enrich_on_sync: true` in your config to automatically queue enrichment after every data sync. This is convenient if you want a hands-off workflow — sync your sources and enrichment runs immediately after.
+Run `python3.11 -m src.cli settings set enrichment.auto_enrich_on_sync true` (or toggle it on the Settings page) to automatically queue enrichment after every data sync. This is convenient if you want a hands-off workflow — sync your sources and enrichment runs immediately after.
 
 ## Manual Enrichment Editing
 
@@ -239,11 +234,11 @@ Manual genres, tags, and descriptions **overwrite** the existing detail values (
 
 ### "No providers for [content type]"
 
-This means no enrichment provider is enabled for that content type. Check your config:
+This means no enrichment provider is enabled for that content type. Check your settings with `python3.11 -m src.cli settings list --section enrichment`:
 
-- Books need `openlibrary.enabled: true`
-- Movies and TV shows need `tmdb.enabled: true` (with a valid API key)
-- Video games need `rawg.enabled: true` (with a valid API key)
+- Books need `enrichment.providers.openlibrary.enabled` on
+- Movies and TV shows need `enrichment.providers.tmdb.enabled` on (with a stored API key)
+- Video games need `enrichment.providers.rawg.enabled` on (with a stored API key)
 
 ### Items showing as "not found"
 

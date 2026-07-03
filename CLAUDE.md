@@ -38,7 +38,8 @@ src/
 ├── ingestion/        # Data ingestion
 │   └── sources/      # Source plugins (folder-per-plugin: <name>/<name>.py + README.md + test_<name>.py)
 ├── llm/              # Ollama interaction
-├── storage/          # SQLite + ChromaDB
+├── storage/          # SQLite + ChromaDB (settings table, global_secrets, settings_migration)
+├── settings/         # Global-config registry (metadata.py) + service (list/get/set/reset/secrets)
 ├── recommendations/  # Recommendation engine (scorers, pipeline, ranking, genre_clusters)
 ├── enrichment/       # Background metadata enrichment
 │   └── providers/    # Enrichment providers (folder-per-provider, same layout as sources)
@@ -188,8 +189,8 @@ The main agent's context is precious. Avoid burning it on greps, file reads, and
 
 **Delegation rules:**
 
-- **2+ grep/find queries on a topic** → spawn `Explore` (or `cavecrew-investigator` for compressed output). Subagent returns a summary; raw search output stays out of main context.
-- **"Where is X defined / what calls Y / list uses of Z"** → `cavecrew-investigator`. Returns file:line table, ~60% smaller than vanilla Explore.
+- **2+ grep/find queries on a topic** → spawn `Explore`. Subagent returns a summary; raw search output stays out of main context.
+- **"Where is X defined / what calls Y / list uses of Z"** → `Explore`. Returns a file:line summary without dumping raw search output into main context.
 - **Single targeted lookup with a known path/symbol** → use `Read`/`Grep` directly. Don't spawn a subagent for one query.
 - **`mcp__ide__getDiagnostics` for type/reference info** when LSP can answer faster than grep.
 

@@ -19,6 +19,7 @@ from src.enrichment.provider_base import EnrichmentResult, ProviderError
 from src.enrichment.rate_limiter import RateLimiter
 from src.enrichment.registry import EnrichmentRegistry, get_enrichment_registry
 from src.models.content import ContentItem, ContentType, get_enum_value
+from src.storage.global_secrets import read_secret
 from src.utils.request_errors import scrub_request_error
 
 if TYPE_CHECKING:
@@ -148,6 +149,11 @@ class EnrichmentManager:
 
         # Rate limiters per provider
         self._rate_limiters: dict[str, RateLimiter] = {}
+
+        # Resolved global secrets, keyed by dotted registry key. Each secret is
+        # a SQLite query + Fernet decrypt, so it is read once per manager
+        # instance (one per run) and reused across every processed item.
+        self._secret_cache: dict[str, str | None] = {}
 
     def start_enrichment(
         self,
@@ -508,16 +514,46 @@ class EnrichmentManager:
     def _get_provider_config(self, provider_name: str) -> dict[str, Any]:
         """Get configuration for a specific provider.
 
+        Non-sensitive provider settings come from the assembled config; each
+        sensitive field (e.g. ``api_key``) is overlaid from the encrypted
+        ``credentials`` table, where it lives after boot migration instead of
+        plaintext config. A missing secret leaves the field absent so the
+        provider degrades gracefully.
+
         Args:
             provider_name: Provider name
 
         Returns:
-            Provider-specific config dict
+            Provider-specific config dict (a fresh copy — never mutates config)
         """
         enrichment_config: dict[str, Any] = self.config.get("enrichment", {})
         providers_config: dict[str, Any] = enrichment_config.get("providers", {})
-        provider_config: dict[str, Any] = providers_config.get(provider_name, {})
+        provider_config: dict[str, Any] = dict(providers_config.get(provider_name, {}))
+
+        provider = self.registry.get_provider(provider_name)
+        if provider is not None:
+            for config_field in provider.get_config_schema():
+                if not config_field.sensitive:
+                    continue
+                secret = self._read_cached_secret(
+                    f"enrichment.providers.{provider_name}.{config_field.name}"
+                )
+                if secret is not None:
+                    provider_config[config_field.name] = secret
         return provider_config
+
+    def _read_cached_secret(self, key: str) -> str | None:
+        """Return the decrypted global secret for *key*, reading it at most once.
+
+        Enrichment resolves each provider's secrets for every content item, and
+        each read is a SQLite query plus a Fernet decrypt. Caching the result
+        (including a missing ``None``) keeps that cost off the per-item hot loop.
+        The manager is short-lived — one per run — so the cache never outlives
+        the settings it captured.
+        """
+        if key not in self._secret_cache:
+            self._secret_cache[key] = read_secret(self.storage_manager, key)
+        return self._secret_cache[key]
 
     def _apply_enrichment(
         self,

@@ -38,6 +38,16 @@ from src.recommendations.preference_interpreter import (
     PatternBasedInterpreter,
 )
 from src.recommendations.scorers import SCORER_NAME_MAP
+from src.settings.metadata import SettingMetadata, get_entry
+from src.settings.service import (
+    SettingsValidationError,
+    apply_settings,
+    build_settings_view,
+    clear_secret,
+    reset_setting,
+    set_secret,
+    setting_view,
+)
 from src.storage.credential_migration import migrate_config_credentials
 from src.storage.manager import StorageManager
 from src.utils.item_serialization import item_to_dict
@@ -2883,3 +2893,294 @@ def source_remove(ctx: click.Context, source_id: str, skip_confirm: bool) -> Non
     except SourceConfigError as error:
         _abort_with(error.message)
     click.echo(f"Removed source '{source_id}'.")
+
+
+# ---------------------------------------------------------------------------
+# Global settings command group
+# ---------------------------------------------------------------------------
+#
+# Mirrors the /api/settings endpoints. All business logic lives in
+# ``src.settings.service`` (shared with the web API) so the two interfaces
+# stay in lockstep; the commands below only parse input and render output.
+
+
+def _parse_setting_value(entry: SettingMetadata, raw: str) -> Any:
+    """Parse a CLI string argument into *entry*'s value type.
+
+    Booleans accept true/false/1/0/yes/no/on/off; lists are comma-separated;
+    ints and floats are parsed as written; enums and strings pass through
+    verbatim (the service validates choices/pattern). Raises
+    :class:`SettingsValidationError` for a value the type cannot represent.
+    """
+    setting_type = entry.type
+    if setting_type == "bool":
+        lowered = raw.strip().lower()
+        if lowered in {"true", "1", "yes", "on"}:
+            return True
+        if lowered in {"false", "0", "no", "off"}:
+            return False
+        raise SettingsValidationError(entry.key, "expected true or false")
+    if setting_type == "int":
+        try:
+            return int(raw)
+        except ValueError as error:
+            raise SettingsValidationError(entry.key, "expected an integer") from error
+    if setting_type == "float":
+        try:
+            return float(raw)
+        except ValueError as error:
+            raise SettingsValidationError(entry.key, "expected a number") from error
+    if setting_type == "list":
+        return [item.strip() for item in raw.split(",") if item.strip()]
+    return raw
+
+
+def _format_setting_value(view: dict[str, Any]) -> str:
+    """Render a setting's value for human output; never reveal a secret."""
+    if view["sensitive"]:
+        return "********" if view["has_secret"] else "(not set)"
+    value = view["value"]
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, list):
+        return ", ".join(str(item) for item in value)
+    return str(value)
+
+
+def _setting_flags(view: dict[str, Any]) -> str:
+    """Render the ``overridden``/``restart``/``advanced`` markers for a setting."""
+    flags = []
+    if view.get("db_overridden"):
+        flags.append("overridden")
+    if view["restart_required"]:
+        flags.append("restart")
+    if view["advanced"]:
+        flags.append("advanced")
+    return ", ".join(flags)
+
+
+@click.group()
+def settings() -> None:
+    """Manage global application settings (mirrors /api/settings)."""
+
+
+@settings.command("list")
+@click.option("--section", "section_name", default=None, help="Limit to one section.")
+@click.option(
+    "--advanced",
+    is_flag=True,
+    help="Include advanced (infra/security) settings in the human listing.",
+)
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    help="Emit the full settings view as JSON (matches GET /api/settings).",
+)
+@click.pass_context
+def settings_list(
+    ctx: click.Context, section_name: str | None, advanced: bool, as_json: bool
+) -> None:
+    """List every global setting grouped by section.
+
+    Secrets show presence only (never their value). Advanced infra/security
+    settings are hidden from the human listing unless --advanced is given or a
+    specific --section is requested. --json always emits the complete view.
+    """
+    config = ctx.obj["config"]
+    storage = _require_storage(ctx)
+    view = build_settings_view(config, storage)
+
+    if as_json:
+        click.echo(json.dumps(view, indent=2))
+        return
+
+    sections = view["sections"]
+    if section_name is not None:
+        sections = [s for s in sections if s["section"] == section_name]
+        if not sections:
+            _abort_with(f"Unknown section: {section_name}")
+
+    show_advanced = advanced or section_name is not None
+    for section in sections:
+        rows = [
+            [
+                setting["label"],
+                setting["key"],
+                _format_setting_value(setting),
+                _setting_flags(setting),
+            ]
+            for setting in section["settings"]
+            if show_advanced or not setting["advanced"]
+        ]
+        if not rows:
+            continue
+        click.echo(f"\n{section['section']}")
+        click.echo(
+            tabulate(
+                rows,
+                headers=["Setting", "Key", "Value", "Flags"],
+                tablefmt="grid",
+            )
+        )
+
+
+@settings.command("get")
+@click.argument("key")
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    help="Emit the setting view as JSON (secrets show presence only).",
+)
+@click.pass_context
+def settings_get(ctx: click.Context, key: str, as_json: bool) -> None:
+    """Show one setting's metadata and current value.
+
+    KEY is the dotted registry leaf (e.g. recommendations.default_count). A
+    sensitive KEY shows only whether a secret is stored, never its value.
+    """
+    config = ctx.obj["config"]
+    storage = _require_storage(ctx)
+    entry = get_entry(key)
+    if entry is None:
+        _abort_with(f"Unknown setting: {key}")
+    view = setting_view(entry, config, storage)
+
+    if as_json:
+        click.echo(json.dumps(view, indent=2))
+        return
+
+    rows = [
+        ["Setting", view["label"]],
+        ["Key", view["key"]],
+        ["Section", view["section"]],
+        ["Type", view["type"]],
+        ["Value", _format_setting_value(view)],
+        ["Flags", _setting_flags(view) or "-"],
+        ["Help", view["help"]],
+    ]
+    click.echo(tabulate(rows, tablefmt="grid"))
+
+
+@settings.command("set")
+@click.argument("key")
+@click.argument("value")
+@click.pass_context
+def settings_set(ctx: click.Context, key: str, value: str) -> None:
+    """Set a non-sensitive setting.
+
+    KEY is the dotted registry leaf; VALUE is parsed to its type (booleans
+    accept true/false, lists are comma-separated, numbers and strings are
+    parsed as written). Use ``settings set-secret`` for sensitive keys.
+    """
+    config = ctx.obj["config"]
+    storage = _require_storage(ctx)
+    entry = get_entry(key)
+    if entry is None:
+        _abort_with(f"Unknown setting: {key}")
+    if entry.sensitive:
+        _abort_with(f"{key} is a secret; use 'settings set-secret {key}'.")
+
+    try:
+        parsed = _parse_setting_value(entry, value)
+        apply_settings(config, storage, {key: parsed})
+    except SettingsValidationError as error:
+        _abort_with(error.reason)
+
+    click.echo(
+        f"Set {key} = {_format_setting_value(setting_view(entry, config, storage))}."
+    )
+    if entry.restart_required:
+        click.echo("This change takes effect after a restart.")
+
+
+@settings.command("apply")
+@click.option(
+    "--from-json",
+    "from_json",
+    required=True,
+    help=(
+        "Path to a JSON file containing an updates dict, or '-' to read from "
+        "stdin. Mirrors PUT /api/settings — applies every key atomically."
+    ),
+)
+@click.pass_context
+def settings_apply(ctx: click.Context, from_json: str) -> None:
+    """Apply a JSON object of {dotted.key: value} atomically (bulk update).
+
+    Mirrors the web ``PUT /api/settings`` endpoint: every update is validated
+    up front through a single ``apply_settings`` call, so one bad key leaves
+    nothing written (all-or-nothing). Sensitive keys are rejected — store them
+    with ``settings set-secret``. Non-restart settings take effect immediately;
+    restart-required settings apply on the next boot.
+    """
+    config = ctx.obj["config"]
+    storage = _require_storage(ctx)
+    updates = _read_json_payload(from_json)
+    try:
+        apply_settings(config, storage, updates)
+    except SettingsValidationError as error:
+        _abort_with(f"{error.key}: {error.reason}")
+    click.echo(f"Applied {len(updates)} setting(s).")
+
+
+@settings.command("reset")
+@click.argument("key")
+@click.pass_context
+def settings_reset(ctx: click.Context, key: str) -> None:
+    """Reset a setting to its default by dropping the database override."""
+    config = ctx.obj["config"]
+    storage = _require_storage(ctx)
+    # Mirror the web DELETE /api/settings/{key} 404 wording for an unknown key.
+    if get_entry(key) is None:
+        _abort_with("Unknown setting.")
+    try:
+        reset_setting(config, storage, key)
+    except SettingsValidationError as error:
+        _abort_with(error.reason)
+    click.echo(f"Reset {key} to its default.")
+
+
+@settings.command("set-secret")
+@click.argument("key")
+@click.pass_context
+def settings_set_secret(ctx: click.Context, key: str) -> None:
+    """Store a sensitive setting's value in the encrypted secret store.
+
+    Reads from the ``RECOMMENDINATOR_SECRET_VALUE`` environment variable for
+    non-interactive use (env vars are not exposed in shell history or in the
+    process list to other users); otherwise prompts with hidden input. Rejects
+    non-sensitive keys.
+    """
+    storage = _require_storage(ctx)
+    entry = get_entry(key)
+    if entry is None or not entry.sensitive:
+        _abort_with(f"{key} is not a configurable secret.")
+
+    value = os.environ.get(_SECRET_VALUE_ENV)
+    if value is None:
+        value = click.prompt(
+            f"New value for {key}",
+            hide_input=True,
+            confirmation_prompt=False,
+        )
+
+    set_secret(storage, key, value)
+    click.echo(f"Stored secret for {key}.")
+
+
+@settings.command("clear-secret")
+@click.argument("key")
+@click.pass_context
+def settings_clear_secret(ctx: click.Context, key: str) -> None:
+    """Delete a sensitive setting's stored secret."""
+    storage = _require_storage(ctx)
+    entry = get_entry(key)
+    if entry is None or not entry.sensitive:
+        _abort_with(f"{key} is not a configurable secret.")
+
+    if clear_secret(storage, key):
+        click.echo(f"Cleared secret for {key}.")
+    else:
+        click.echo(f"No secret was set for {key}.")

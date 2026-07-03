@@ -93,4 +93,22 @@ describe('NumberStepper', () => {
     expect(wrapper.find('.stepper-decrement').attributes('aria-label')).toBe('Decrease Number')
     expect(wrapper.find('.stepper-increment').attributes('aria-label')).toBe('Increase Number')
   })
+
+  it('forwards id, aria-describedby, and aria-invalid to the number input', () => {
+    const wrapper = mountStepper({
+      id: 'setting-web.port',
+      describedBy: 'help-web.port err-web.port',
+      invalid: true,
+    })
+
+    const input = wrapper.find('input')
+    expect(input.attributes('id')).toBe('setting-web.port')
+    expect(input.attributes('aria-describedby')).toBe('help-web.port err-web.port')
+    expect(input.attributes('aria-invalid')).toBe('true')
+  })
+
+  it('omits aria-invalid on the input when not invalid', () => {
+    const wrapper = mountStepper({ invalid: false })
+    expect(wrapper.find('input').attributes('aria-invalid')).toBeUndefined()
+  })
 })

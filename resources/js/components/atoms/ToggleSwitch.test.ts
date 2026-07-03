@@ -54,4 +54,29 @@ describe('ToggleSwitch', () => {
     expect(toggle.exists()).toBe(true)
     expect(toggle.attributes('aria-label')).toBe('My Toggle')
   })
+
+  it('forwards id, aria-describedby, and aria-invalid to the switch button', () => {
+    const wrapper = mount(ToggleSwitch, {
+      props: {
+        modelValue: false,
+        label: 'Debug',
+        id: 'setting-web.debug',
+        describedBy: 'help-web.debug err-web.debug',
+        invalid: true,
+      },
+    })
+
+    const toggle = wrapper.find('[role="switch"]')
+    expect(toggle.attributes('id')).toBe('setting-web.debug')
+    expect(toggle.attributes('aria-describedby')).toBe('help-web.debug err-web.debug')
+    expect(toggle.attributes('aria-invalid')).toBe('true')
+  })
+
+  it('omits aria-invalid when not invalid', () => {
+    const wrapper = mount(ToggleSwitch, {
+      props: { modelValue: false, label: 'Debug', invalid: false },
+    })
+
+    expect(wrapper.find('[role="switch"]').attributes('aria-invalid')).toBeUndefined()
+  })
 })

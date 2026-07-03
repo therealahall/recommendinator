@@ -22,13 +22,49 @@ from src.cli.config import (
 )
 from src.conversation.engine import create_conversation_engine
 from src.conversation.memory import MemoryManager
+from src.settings.metadata import default_of
 from src.storage.credential_migration import migrate_config_credentials
+from src.storage.global_secrets import migrate_config_secrets
+from src.storage.settings_migration import migrate_config_settings
 from src.web.api import APP_VERSION
 from src.web.api import router as api_router
 from src.web.chat_api import router as chat_router
 from src.web.state import app_state
 
 logger = logging.getLogger(__name__)
+
+# Every log file must live under this directory. ``logging.file`` is settable
+# over the network Settings API, so a resolved path escaping this base is
+# refused before a FileHandler ever opens it (see ``_safe_log_path``).
+_LOG_BASE_DIR = Path("logs")
+
+
+def _safe_log_path(log_file: str) -> Path:
+    """Resolve *log_file*, refusing any path that escapes the ``logs/`` directory.
+
+    ``logging.file`` is a network-settable string. A registry ``pattern`` blocks
+    obvious traversal/absolute values at the Settings API, but the char class
+    still admits ``..`` segments, so this is the defense-in-depth backstop before
+    a ``FileHandler`` creates/appends a file. Any path resolving outside
+    ``logs/`` falls back to the registry default, so logging never writes to an
+    arbitrary location (fail safe).
+
+    Args:
+        log_file: Configured log file path (relative or absolute).
+
+    Returns:
+        The resolved, contained path, or the resolved registry default when the
+        configured path escapes ``logs/``.
+    """
+    base = _LOG_BASE_DIR.resolve()
+    resolved = Path(log_file).resolve()
+    if resolved == base or base in resolved.parents:
+        return resolved
+    logger.warning(
+        "Log file %r resolves outside the logs/ directory; using the default.",
+        log_file,
+    )
+    return Path(default_of("logging.file")).resolve()
 
 
 def configure_logging(config: dict) -> None:
@@ -38,14 +74,14 @@ def configure_logging(config: dict) -> None:
         config: Application configuration dictionary
     """
     logging_config = config.get("logging", {})
-    log_level_str = logging_config.get("level", "INFO").upper()
-    log_file = logging_config.get("file", "logs/recommendations.log")
+    log_level_str = logging_config.get("level", default_of("logging.level")).upper()
+    log_file = logging_config.get("file", default_of("logging.file"))
 
     # Map string to logging level
     log_level = getattr(logging, log_level_str, logging.INFO)
 
-    # Create log directory if needed
-    log_path = Path(log_file)
+    # Contain the (network-settable) log path under logs/ before opening it.
+    log_path = _safe_log_path(log_file)
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Configure root logger with both file and console handlers
@@ -57,7 +93,7 @@ def configure_logging(config: dict) -> None:
         root_logger.removeHandler(handler)
 
     # File handler with detailed format
-    file_handler = logging.FileHandler(log_file)
+    file_handler = logging.FileHandler(log_path)
     file_handler.setLevel(log_level)
     file_format = logging.Formatter(
         "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
@@ -113,13 +149,21 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         logger.error("Config file not found: %s", error)
         raise
 
-    # Configure logging from config
-    configure_logging(config)
-    logger.info("Logging configured from application config")
-
     # Initialize components
     try:
+        # Storage must come first: the effective global settings (incl. logging
+        # and web host/port) are assembled from const/YAML/DB layers before
+        # anything reads them.
         storage = create_storage_manager(config)
+
+        # Assemble the effective global config (const default < YAML < DB) so
+        # the database wins over YAML for the rest of the process.
+        migrate_config_settings(config, storage)
+
+        # Configure logging from the (now DB-overlaid) config
+        configure_logging(config)
+        logger.info("Logging configured from application config")
+
         llm_client, embedding_gen, rec_gen = create_llm_components(config)
         engine = create_recommendation_engine(storage, embedding_gen, rec_gen, config)
 
@@ -131,6 +175,10 @@ def create_app(config_path: Path | None = None) -> FastAPI:
 
         # Migrate sensitive config credentials to encrypted DB storage
         migrate_config_credentials(config, storage)
+
+        # Relocate global provider secrets (api keys) into encrypted storage,
+        # stripping them from the in-memory plaintext config.
+        migrate_config_secrets(config, storage)
 
         # Store in app state
         app_state.config = config
@@ -164,7 +212,7 @@ def create_app(config_path: Path | None = None) -> FastAPI:
     web_config = config.get("web", {})
 
     # Create FastAPI app
-    debug_mode = web_config.get("debug", False)
+    debug_mode = web_config.get("debug", default_of("web.debug"))
     app = FastAPI(
         title="Recommendinator API",
         description="API for personalized content recommendations",
@@ -175,7 +223,9 @@ def create_app(config_path: Path | None = None) -> FastAPI:
     )
 
     # Configure CORS (default to localhost only)
-    allowed_origins = web_config.get("allowed_origins", ["http://localhost:18473"])
+    allowed_origins = web_config.get(
+        "allowed_origins", default_of("web.allowed_origins")
+    )
 
     # Disable credentials when wildcard origin is used (browser requirement)
     allow_credentials = "*" not in allowed_origins

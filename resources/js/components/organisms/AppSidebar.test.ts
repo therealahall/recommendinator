@@ -22,6 +22,7 @@ function createTestRouter() {
       { path: '/chat', name: 'chat', component: { template: '<div />' } },
       { path: '/data', name: 'data', component: { template: '<div />' } },
       { path: '/preferences', name: 'preferences', component: { template: '<div />' } },
+      { path: '/settings', name: 'settings', component: { template: '<div />' } },
     ],
   })
 }
@@ -45,7 +46,7 @@ describe('AppSidebar', () => {
 
     const navItems = wrapper.findAll('.nav-item')
     const labels = navItems.map((n) => n.text().trim())
-    expect(labels).toEqual(['Recommendations', 'Library', 'Chat', 'Data', 'Preferences'])
+    expect(labels).toEqual(['Recommendations', 'Library', 'Chat', 'Data', 'Preferences', 'Settings'])
   })
 
   it('hides chat when AI is disabled', async () => {

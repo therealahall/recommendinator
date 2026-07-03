@@ -351,24 +351,12 @@ function isSecretSet(name: string): boolean {
 </template>
 
 <style scoped>
+/* .source-form-field/-label/-help, .source-form-secrets (+ its legend), and
+   .secret-status-row/.secret-edit-row are shared primitives in base.css. */
 .source-form {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
-}
-
-.source-form-field {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.source-form-label {
-  font-weight: 600;
-  font-size: var(--text-sm);
-  color: var(--text-primary);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
 }
 
 .source-form-field input[type="text"],
@@ -396,38 +384,6 @@ function isSecretSet(name: string): boolean {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
-}
-
-.source-form-help {
-  font-size: var(--text-xs);
-  color: var(--text-secondary);
-  margin: 0;
-  font-style: italic;
-}
-
-.source-form-secrets {
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
-  padding: var(--space-3);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.source-form-secrets legend {
-  padding: 0 var(--space-2);
-  font-size: var(--text-sm);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.secret-status-row,
-.secret-edit-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex-wrap: wrap;
 }
 
 .secret-status-badge {

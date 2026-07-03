@@ -11,6 +11,7 @@ from src.llm.recommendations import RecommendationGenerator
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.recommendations.engine import RecommendationEngine
 from src.storage.manager import StorageManager
+from tests.factories import back_mock_settings_store
 
 from .conftest import _invoke_with_mocks
 
@@ -111,6 +112,9 @@ def _invoke_recommend_with_engine(
         mock_load.return_value = config or {}
         mock_storage = MagicMock(spec=StorageManager)
         mock_storage.get_user_preference_config.return_value = MagicMock()
+        # Real migrate_config_settings boot hook runs against an empty settings
+        # store (no stub) — DB overlay is a no-op, no cross-test leak.
+        back_mock_settings_store(mock_storage)
         mock_storage_fn.return_value = mock_storage
         mock_llm.return_value = (
             None,

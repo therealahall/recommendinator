@@ -4,52 +4,33 @@
 # (docker compose up), the container's entrypoint copies this file to
 # config.yaml automatically on first run if config.yaml is missing — so
 # edit ./config/config.yaml on the host directly, not example.yaml.
-
-# Feature flags - control optional functionality
-features:
-  # Master toggle for all AI features
-  # When false, the system uses only content-based and rule-based scoring
-  ai_enabled: false
-
-  # Vector embeddings for semantic similarity (requires ai_enabled)
-  # Uses ChromaDB to find semantically similar content
-  embeddings_enabled: false
-
-  # LLM-powered recommendation reasoning (requires ai_enabled)
-  # Uses Ollama to generate natural language explanations
-  llm_reasoning_enabled: false
-
-# Ollama configuration (only used if features.ai_enabled is true)
-ollama:
-  base_url: "http://ollama:11434"
-  model: "mistral:7b"  # Model for recommendations (text generation)
-  embedding_model: "nomic-embed-text"  # Model for generating embeddings
-  # Separate model for conversation chat (defaults to main model when empty).
-  # Use a smaller model (e.g., "qwen2.5:3b") for faster chat responses on
-  # constrained hardware while keeping the larger model for recommendations.
-  conversation_model: ""
-  # Note: Install embedding model with: ollama pull nomic-embed-text
-  # See docs/MODEL_RECOMMENDATIONS.md for model selection guide
+#
+# This file is intentionally minimal: it only needs the `storage` paths that
+# bootstrap the database plus the `inputs` source examples below.
+#
+# The global config sections (features, ollama, ingestion, recommendations,
+# conversation, sync, enrichment, web, logging) are OPTIONAL. They ship with
+# built-in code defaults and are edited from the Settings page or the
+# `settings` CLI, which write to the database. Precedence is:
+#
+#     const default < YAML < database
+#
+# You MAY still add any of those sections here to override the code defaults on
+# a fresh boot (before anything is saved to the database), but you no longer
+# need to — omitting them just uses the built-in defaults. Do NOT put secrets
+# (api keys, tokens) in this file; those live in the encrypted credentials
+# table and are entered via the Settings page or connect flows.
 
 # Storage configuration
 storage:
   # SQLite database path
   database_path: "data/recommendations.db"
-  
+
   # Vector database (ChromaDB) path
   vector_db_path: "data/chroma_db"
-  
+
   # Cache directory
   cache_dir: "data/cache"
-
-# Ingestion settings
-ingestion:
-  # Conflict resolution strategy when the same item is imported from multiple sources.
-  # Options: last_write_wins, source_priority, keep_existing
-  conflict_strategy: "last_write_wins"
-  # Source priority ordering (highest priority first).
-  # Only used with source_priority strategy.
-  source_priority: ["goodreads", "steam"]
 
 # Input sources configuration
 # Each entry is a user-defined name with a 'plugin' field specifying the plugin type.
@@ -194,147 +175,3 @@ inputs:
   #   path: "inputs/tv_shows.json"
   #   content_type: "tv_show"
   #   enabled: true
-
-# Web interface configuration
-web:
-  # SECURITY: "127.0.0.1" binds to localhost only (recommended).
-  # Change to "0.0.0.0" to allow LAN access — but note there is NO authentication,
-  # so anyone on your network can view/modify your data.
-  host: "127.0.0.1"
-  port: 18473  # Non-standard port to avoid collisions with other services
-  debug: false  # Set to true for development (enables auto-reload on file changes)
-  # CORS allowed origins — defaults to localhost only for security.
-  # Set to ["*"] to allow all origins (not recommended for production).
-  allowed_origins:
-    - "http://localhost:18473"
-
-# Recommendation settings
-recommendations:
-  default_count: 5
-  max_count: 20
-  min_rating_for_preference: 4  # Only consider items rated 4+ as "liked"
-
-  # Scorer weights for the non-AI recommendation pipeline.
-  # Higher weight = more influence on final ranking.
-  # Set a weight to 0 to disable a scorer entirely.
-  scorer_weights:
-    genre_match: 2.0
-    creator_match: 1.5
-    tag_overlap: 1.0
-    series_order: 1.5
-    rating_pattern: 1.0
-    semantic_similarity: 1.5  # Only active when ai_enabled is true
-    content_length: 1.0  # Soft penalty for items not matching length preferences
-    continuation: 2.0  # Boost items you're currently consuming (e.g., in-progress TV shows)
-    series_affinity: 1.0  # Boost items in franchises you've rated well (avg >= 4)
-    custom_preference: 1.0  # Apply user-defined natural language preference rules
-
-  # Content length preferences apply a soft scoring penalty to candidates.
-  # Set per content type: "any" (no penalty), "short", "medium", or "long".
-  # Non-matching items still appear but rank lower. Items without metadata
-  # receive a small benefit-of-the-doubt score.
-  #
-  # Thresholds:
-  #   book:       short <250 pages,   medium 250-500,  long 500+
-  #   movie:      short <90 min,      medium 90-150,   long 150+
-  #   tv_show:    short <3 seasons,   medium 3-6,      long 6+
-  #   video_game: short <10 hours,    medium 10-40,    long 40+
-  #
-  # These are stored per-user in the database (users.settings JSON).
-  # Example user preferences (set via CLI or Web UI):
-  #   content_length_preferences:
-  #     book: "short"
-  #     movie: "any"
-  #     tv_show: "medium"
-  #     video_game: "long"
-
-  # Diversity bonus — encourages genre-hopping in recommendations.
-  # When > 0, candidates whose genres differ from recently completed items
-  # receive a score boost (Jaccard distance on normalized genre sets).
-  # Set per-user via the diversity_weight field in user preferences.
-  # 0.0 = disabled (default), 0.1-0.3 = subtle variety, 0.5+ = strong diversity.
-  # diversity_weight: 0.0
-
-# Conversation AI configuration
-# Enables the chat interface for natural language interactions
-conversation:
-  # Enable the chat feature (requires ai_enabled in features)
-  enabled: true
-
-  # Maximum conversation messages to keep in context
-  max_history_messages: 50
-
-  # Extract memories/preferences from conversations automatically
-  memory_extraction_enabled: true
-
-  # Hours between automatic preference profile regeneration (0 to disable)
-  profile_regeneration_interval: 24
-
-  # LLM settings for conversation
-  llm:
-    # Temperature for response generation (0.0-1.0, higher = more creative)
-    temperature: 0.7
-    # Maximum tokens in response
-    max_tokens: 2000
-    # Context window size override for Ollama (num_ctx).
-    # Set this when using a small model (3B) to avoid excessive memory use.
-    # Recommended: 4096 for 3B models, 8192 for 7B models. Leave unset for default.
-    # context_window_size: 4096
-
-  # Context assembly settings
-  context:
-    # Maximum items to retrieve via semantic search for context
-    max_relevant_items: 10
-    # Maximum unconsumed/backlog items to include in context
-    max_unconsumed_items: 20
-    # Include algorithmic recommendations in context
-    include_algorithmic_recs: true
-    # Compact mode reduces prompt size by ~60-70% for use with small (3B) models.
-    # Uses a condensed system prompt, fewer context items, and pre-LLM intent
-    # detection. Enable when using conversation_model with a 3B parameter model.
-    compact_mode: false
-
-# Sync (data ingestion) configuration
-sync:
-  # Number of data sources to sync in parallel. Each enabled source runs
-  # on its own worker thread inside execute_multi_source_sync, so total
-  # sync time scales with the slowest source rather than the sum of all
-  # sources. Set to 1 for sequential (legacy) behaviour. The CLI flag
-  # `--workers N` overrides this value per invocation.
-  max_workers: 4
-
-# Metadata enrichment configuration
-# Enriches content items with additional metadata (genres, tags, descriptions)
-# from external APIs in a background process.
-enrichment:
-  # Enable enrichment feature
-  enabled: false
-
-  # Automatically queue new items for enrichment after sync
-  auto_enrich_on_sync: false
-
-  # Number of items to process per batch
-  batch_size: 50
-
-  # Provider-specific configuration
-  providers:
-    # TMDB - The Movie Database (movies and TV shows)
-    # Get API key from: https://www.themoviedb.org/settings/api
-    tmdb:
-      api_key: ""
-      enabled: false
-
-    # Open Library (books) - No API key required
-    openlibrary:
-      enabled: false
-
-    # RAWG - Video Game Database
-    # Get API key from: https://rawg.io/apidocs
-    rawg:
-      api_key: ""
-      enabled: false
-
-# Logging
-logging:
-  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
-  file: "logs/recommendations.log"
