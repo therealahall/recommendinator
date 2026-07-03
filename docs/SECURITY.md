@@ -31,7 +31,7 @@ Sensitive credentials (OAuth tokens, API keys) are encrypted at rest using Ferne
 - **Encryption key** is stored at `data/.credential_key` (or the path set by `RECOMMENDINATOR_KEY_PATH`)
 - **Key file permissions** are set to `0600` (owner-only) on creation, and verified on every load — the app refuses to start if the key file is group- or world-readable
 - **Key directory permissions** are set to `0700` when created
-- **Auto-migration**: On startup, sensitive fields from `config.yaml` (e.g., `refresh_token`, `api_key`) are automatically migrated to the encrypted database. The plaintext is scrubbed from in-memory config after migration
+- **Auto-migration**: On startup, sensitive fields from `config.yaml` are automatically migrated to the encrypted database and scrubbed from the in-memory config. This covers both per-source credentials (e.g., a source's `refresh_token`/`api_key`) and global provider secrets (the settings-registry leaves flagged sensitive, e.g. `enrichment.providers.tmdb.api_key` and `enrichment.providers.rawg.api_key`). Global secrets are keyed in the `credentials` table under a reserved `settings:` namespace so they never collide with a real source
 - **Stale credential recovery**: If the encryption key changes, stale credentials are automatically re-encrypted from config values or purged if no config fallback exists
 - **Automatic token rotation**: When OAuth-based sources (GOG, Epic Games) receive a rotated refresh token during sync, the new token is automatically persisted to the encrypted credentials table. Users do not need to manually reconnect when servers rotate tokens
 - **Credentials are write-only from the API** — no endpoint returns credential values
@@ -40,22 +40,28 @@ If you move the database to a new host, copy `data/.credential_key` along with i
 
 ## API Key Security
 
+All API keys and OAuth tokens — per-source credentials and global enrichment
+provider keys alike — are stored encrypted in the `credentials` table, never in
+plaintext. Enter them in-app rather than in `config.yaml`:
+
+- **Source secrets** (Steam, Sonarr, Radarr, etc.): the web **Data** tab or
+  `python3.11 -m src.cli source set-secret <source> <key>`.
+- **Global provider secrets** (`enrichment.providers.tmdb.api_key`,
+  `enrichment.providers.rawg.api_key`): the web **Settings** page or
+  `python3.11 -m src.cli settings set-secret <key>`.
+
+Anything placed in `config.yaml` for bootstrap is swept into the encrypted store
+on startup and stripped from the in-memory config, so a secret never lingers in
+plaintext.
+
 ### Steam API Key
 
 - Obtain from: https://steamcommunity.com/dev/apikey
-- Store only in `config/config.yaml` (git-ignored)
+- Enter it via `source set-secret steam api_key` (or the Data tab); a value put
+  in `config/config.yaml` for bootstrap is migrated to the encrypted database on
+  startup
 - Key allows read access to your Steam library
-- Rotate if compromised
-
-### Best Practices
-
-```yaml
-# config/config.yaml - NEVER COMMIT THIS FILE
-inputs:
-  steam:
-    api_key: "YOUR_ACTUAL_KEY_HERE"  # Keep secret!
-    steam_id: "YOUR_STEAM_ID"
-```
+- Rotate if compromised — re-run `source set-secret` to replace it
 
 ## Network Security
 

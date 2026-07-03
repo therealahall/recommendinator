@@ -127,6 +127,77 @@ RECOMMENDINATOR_SECRET_VALUE="$STEAM_API_KEY" \
   python3.11 -m src.cli source set-secret steam api_key
 ```
 
+## Global settings
+
+Manage the global/system config (the sections that used to live in
+`config.yaml`: `features`, `ollama`, `ingestion`, `recommendations`,
+`conversation`, `sync`, `enrichment`, `web`, `logging`). These commands mirror
+the web **Settings** page and the `/api/settings` endpoints; both call the same
+`src/settings/service.py`, so behaviour is identical. Values persist to the
+`settings` table, which wins over `config.yaml` and the built-in defaults
+(precedence: **const default < YAML < database**).
+
+```bash
+# List every setting grouped by section (secrets show presence only).
+# Advanced infra/security settings (web.host/port, CORS, logging) are hidden
+# unless --advanced is given or a specific --section is requested.
+python3.11 -m src.cli settings list
+python3.11 -m src.cli settings list --advanced
+python3.11 -m src.cli settings list --section recommendations
+python3.11 -m src.cli settings list --json          # full view, matches GET /api/settings
+
+# Show one setting's metadata and current value (dotted registry key)
+python3.11 -m src.cli settings get recommendations.default_count
+python3.11 -m src.cli settings get ingestion.conflict_strategy --json
+
+# Set a non-sensitive setting. The value is parsed to the setting's type:
+# booleans accept true/false, lists are comma-separated, numbers/strings/enums
+# are parsed as written. Validation (bounds, choices) is enforced.
+python3.11 -m src.cli settings set recommendations.default_count 8
+python3.11 -m src.cli settings set features.ai_enabled true
+python3.11 -m src.cli settings set ingestion.source_priority "goodreads, steam"
+
+# Reset a setting to its default by dropping the database override
+python3.11 -m src.cli settings reset recommendations.default_count
+```
+
+Non-restart settings take effect immediately; restart-required settings
+(`features.*`, `web.*`, `logging.*`) persist and apply on the next boot — the
+CLI tells you when a change needs a restart.
+
+For atomic multi-key updates (the CLI equivalent of `PUT /api/settings`), use
+`settings apply` with a JSON object of `{"<dotted.key>": <value>}` from a file
+or stdin. Every key is validated up front through a single service call, so one
+bad key rejects the whole batch and nothing is written (all-or-nothing) — the
+offending key and reason are printed and the command exits non-zero. Sensitive
+keys are rejected here too; store them with `settings set-secret`.
+
+```bash
+echo '{"recommendations.default_count": 8, "recommendations.max_count": 30}' \
+  | python3.11 -m src.cli settings apply --from-json -
+```
+
+### Secrets
+
+Sensitive settings (provider API keys like `enrichment.providers.tmdb.api_key`)
+are stored encrypted in the `credentials` table, never in plaintext. `settings
+set` refuses them; use the write-only secret commands instead:
+
+```bash
+# Store or rotate a secret. Prompts with hidden input, or reads
+# RECOMMENDINATOR_SECRET_VALUE for non-interactive use (Docker entrypoints, CI)
+# — this keeps the value out of shell history and the visible process list.
+python3.11 -m src.cli settings set-secret enrichment.providers.tmdb.api_key
+RECOMMENDINATOR_SECRET_VALUE="$TMDB_KEY" \
+  python3.11 -m src.cli settings set-secret enrichment.providers.tmdb.api_key
+
+# Delete a stored secret
+python3.11 -m src.cli settings clear-secret enrichment.providers.tmdb.api_key
+```
+
+`settings list`/`get` never print a secret's value — they show only whether one
+is set.
+
 ## Preferences
 
 ```bash

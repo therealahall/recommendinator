@@ -86,25 +86,27 @@ All three providers are **free**:
 2. **RAWG** (games) — Get API key from [rawg.io/apidocs](https://rawg.io/apidocs)
 3. **OpenLibrary** (books) — No API key needed
 
-Add this to your `config/config.yaml`:
+Enrichment settings live in the database and are managed from the web
+**Settings** page or the `settings` CLI (not `config.yaml`). Turn on enrichment
+and each provider, then store the API keys — they go into the encrypted
+`credentials` table, never plaintext:
 
-```yaml
-enrichment:
-  enabled: true
-  auto_enrich_on_sync: true   # Automatically enrich after every data sync
+```bash
+python3.11 -m src.cli settings set enrichment.enabled true
+python3.11 -m src.cli settings set enrichment.auto_enrich_on_sync true
 
-  providers:
-    tmdb:
-      api_key: "your-tmdb-key"
-      enabled: true
-    openlibrary:
-      enabled: true
-    rawg:
-      api_key: "your-rawg-key"
-      enabled: true
+python3.11 -m src.cli settings set enrichment.providers.tmdb.enabled true
+python3.11 -m src.cli settings set-secret enrichment.providers.tmdb.api_key
+
+python3.11 -m src.cli settings set enrichment.providers.rawg.enabled true
+python3.11 -m src.cli settings set-secret enrichment.providers.rawg.api_key
+
+python3.11 -m src.cli settings set enrichment.providers.openlibrary.enabled true
 ```
 
-With `auto_enrich_on_sync: true`, enrichment runs automatically every time you sync data — no extra step needed. See [docs/ENRICHMENT_SETUP.md](docs/ENRICHMENT_SETUP.md) for the full setup guide.
+With `enrichment.auto_enrich_on_sync` on, enrichment runs automatically every
+time you sync data — no extra step needed. See
+[docs/ENRICHMENT_SETUP.md](docs/ENRICHMENT_SETUP.md) for the full setup guide.
 
 ## Import Your Data
 
@@ -336,7 +338,7 @@ python3.11 -m src.cli profile regenerate
 python3.11 -m src.web
 ```
 
-Open http://localhost:18473 in your browser. The web UI provides browsing, syncing, recommendations, and (with AI enabled) a conversational chat interface. The version number in the sidebar (e.g., "v0.3.0") shows the running application version. If a new version becomes available while you have the page open, a banner will prompt you to reload.
+Open http://localhost:18473 in your browser. The web UI provides browsing, syncing, recommendations, a **Settings** page for the global/system config (feature flags, enrichment, scorer defaults, provider secrets, and advanced infra/security options), and (with AI enabled) a conversational chat interface. The version number in the sidebar (e.g., "v0.3.0") shows the running application version. If a new version becomes available while you have the page open, a banner will prompt you to reload.
 
 Each card on the Recommendations view has two actions:
 
@@ -398,13 +400,14 @@ If you want semantic similarity and LLM-powered explanations:
 1. Install Ollama: https://ollama.ai
 2. Pull a model: `ollama pull mistral:7b`
 3. Pull an embedding model: `ollama pull nomic-embed-text`
-4. Enable in `config/config.yaml`:
-   ```yaml
-   features:
-     ai_enabled: true
-     embeddings_enabled: true
-     llm_reasoning_enabled: true
+4. Turn on the AI feature flags from the web **Settings** page (Features section)
+   or the CLI:
+   ```bash
+   python3.11 -m src.cli settings set features.ai_enabled true
+   python3.11 -m src.cli settings set features.embeddings_enabled true
+   python3.11 -m src.cli settings set features.llm_reasoning_enabled true
    ```
+   These are restart-required — restart the app after enabling them.
 
 See [docs/MODEL_RECOMMENDATIONS.md](docs/MODEL_RECOMMENDATIONS.md) for model guidance.
 
