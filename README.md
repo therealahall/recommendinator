@@ -100,14 +100,14 @@ See [Enabling AI features](#enabling-ai-features) below.
 
 ## Configuration
 
-Copy `config/example.yaml` to `config/config.yaml` and customize. The essentials:
+Copy `config/example.yaml` to `config/config.yaml`. This file is now minimal —
+it only needs the `storage` paths that bootstrap the database plus your `inputs`
+sources:
 
 ```yaml
-# AI is disabled by default
-features:
-  ai_enabled: false
-  embeddings_enabled: false
-  llm_reasoning_enabled: false
+# Where the database, vector store, and cache live
+storage:
+  database_path: "data/recommendations.db"
 
 # Configure your data sources (see each source's setup guide for fields)
 inputs:
@@ -115,15 +115,26 @@ inputs:
     plugin: goodreads
     path: "inputs/goodreads_library_export.csv"
     enabled: true
-
-# Conflict resolution when an item is imported from multiple sources
-ingestion:
-  conflict_strategy: "last_write_wins"  # or "source_priority" or "keep_existing"
 ```
 
-`config/example.yaml` documents every option (scorer weights, sync workers,
-enrichment providers, conversation tuning). Scorer weights are explained in
-[docs/SCORING.md](docs/SCORING.md).
+Everything else — AI toggles, scorer weights, sync workers, enrichment
+providers, conversation tuning, and the web/logging settings — has built-in
+defaults and is managed from the **Settings** page in the web UI or the
+`settings` CLI group, which persist to the database. Precedence is
+**const default < `config.yaml` < database**, so you MAY still add any of those
+sections to `config.yaml` to override the defaults, but you no longer need to.
+
+```bash
+python3.11 -m src.cli settings list                       # see every setting
+python3.11 -m src.cli settings set features.ai_enabled true
+python3.11 -m src.cli settings set-secret enrichment.providers.tmdb.api_key
+```
+
+Provider API keys and OAuth tokens are stored encrypted in the database — enter
+them from the Settings page or `settings set-secret`, not in `config.yaml`. See
+[docs/SCORING.md](docs/SCORING.md) for what each scorer weight does and
+[ARCHITECTURE.md](ARCHITECTURE.md#global-configuration-precedence) for the full
+precedence model.
 
 **Conflict strategies:** when the same item is imported from multiple sources,
 `conflict_strategy` controls which data wins. `last_write_wins` (default) uses
@@ -153,8 +164,10 @@ explanations:
 - **Docker:** `docker compose --profile ai up -d app-ai` — Ollama and models are
   set up automatically.
 - **Local:** install [Ollama](https://ollama.ai), `ollama pull mistral:7b`, then
-  set `ai_enabled`, `embeddings_enabled`, and `llm_reasoning_enabled` to `true`
-  in `config.yaml`.
+  turn on `features.ai_enabled`, `features.embeddings_enabled`, and
+  `features.llm_reasoning_enabled` from the Settings page (or
+  `settings set features.ai_enabled true`). These are restart-required, so
+  restart the app after toggling them.
 
 See [docs/MODEL_RECOMMENDATIONS.md](docs/MODEL_RECOMMENDATIONS.md) for model
 selection guidance.

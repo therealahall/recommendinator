@@ -46,9 +46,9 @@ Manages persistent storage of processed data and embeddings.
 - `users` table with per-user settings (JSON)
 - `content_items` table scoped by `user_id`
 - Type-specific detail tables (`book_details`, `movie_details`, `tv_show_details`, `video_game_details`)
-- `credentials` table for encrypted OAuth tokens and API keys (auto-migrated from config on startup)
+- `credentials` table for encrypted OAuth tokens and API keys — both per-source secrets and global provider secrets (e.g. `enrichment.providers.tmdb.api_key`), auto-migrated out of `config.yaml` on startup; see [Global configuration precedence](#global-configuration-precedence) below
 - `source_configs` table for non-sensitive per-source config that has been migrated from `config.yaml` via the web UI ("Migrate to DB" button); see [Source configuration precedence](#source-configuration-precedence) below
-- `settings` table for global/system config (namespaced key -> JSON value), seeded from `config.yaml` on boot; see [Global configuration precedence](#global-configuration-precedence) below
+- `settings` table for global/system config (dotted leaf key -> JSON value). It holds **only** the leaves a user explicitly set via the Settings page or `settings` CLI — nothing is seeded on boot; see [Global configuration precedence](#global-configuration-precedence) below
 - `enrichment_status` for tracking metadata enrichment
 - `core_memories`, `conversation_messages`, `preference_profiles` for chat system
 
@@ -64,7 +64,19 @@ Listing endpoints (`GET /api/sync/sources`, `recommendinator source list`) retur
 Sensitive fields (any `ConfigField` with `sensitive=True`) always live in the encrypted `credentials` table regardless of which side owns the rest of the config. `resolve_inputs` merges encrypted credentials over the rest of the config at sync time. The migration endpoint (`POST /api/sync/sources/<id>/migrate`) splits a YAML entry into both tables on first call and is idempotent on subsequent calls. The create endpoint (`POST /api/sync/sources`) skips YAML entirely and writes only the non-sensitive values; sensitive fields are set afterwards via `PUT /api/sync/sources/<id>/secret/<key>`.
 
 **Global configuration precedence:**
-The global/system config sections (`features`, `ollama`, `ingestion`, `recommendations`, `conversation`, `sync`, `enrichment`, `web`, `logging`) are seeded into the `settings` table on every boot by `migrate_config_settings`. Granularity is **key-level**: each section is flattened to dotted leaf paths (e.g. `web.port`, `recommendations.scorer_weights.genre_match`) and each leaf is a separate `settings` row — scalars, lists and `null` are stored whole, only nested dicts are descended into. Seeding only writes leaves that are missing from the DB — a leaf already in the database is never overwritten by YAML. After seeding, each section is rebuilt by deep-merging the DB leaves on top of the YAML/default section, so a DB-stored leaf wins per-key while any *new* YAML leaf (added by a later app version) still flows through to the running config instead of being silently dropped. Existing `config[section][key]` read sites are unchanged. The same overlay re-runs on config hot-reload. The `storage` section (database/vector/cache paths) is the one exception: it bootstraps the database itself and therefore stays YAML/env only and is never written to the DB. `inputs` (sources) and credentials are owned by the `source_configs` / `credentials` migrations instead.
+The global/system config sections (`features`, `ollama`, `ingestion`, `recommendations`, `conversation`, `sync`, `enrichment`, `web`, `logging`) resolve with three layers, lowest to highest:
+
+1. **Const defaults** — the hardcoded fallback for every in-scope leaf, declared once in the registry `src/settings/metadata.py` (`default_config()`).
+2. **YAML** — `config.yaml`, now optional beyond bootstrap. Any in-scope section a user keeps is deep-merged on top of the const defaults.
+3. **Database** — the `settings` table, authoritative. It stores only the leaves a user explicitly set via the Settings page / `settings` CLI, keyed by dotted leaf path (e.g. `web.port`, `recommendations.scorer_weights.genre_match`).
+
+`migrate_config_settings` performs this assembly on every boot (and on config hot-reload): for each in-scope section it deep-merges the YAML section over the const defaults, then overlays the DB leaves for that section on top, and replaces `config[section]` in place so existing `config[section][key]` read sites resolve the layered value. **Nothing is written to the database here** — on a fresh install the `settings` table is empty and the app runs purely on const defaults plus whatever the operator kept in `config.yaml`. A section absent from YAML still resolves fully from the const defaults, so a user may trim `config.yaml` to bootstrap-only.
+
+The `storage` section (database/vector/cache paths) is out of scope: it bootstraps the database itself and stays YAML/env only. `inputs` (sources) and credentials are owned by the `source_configs` / `credentials` migrations instead.
+
+**Secrets are never stored plaintext.** Global provider secrets — registry leaves flagged `sensitive` (today `enrichment.providers.tmdb.api_key` and `enrichment.providers.rawg.api_key`) — are never written to `config.yaml` long-term nor to the plaintext `settings` table. After the config assembly, `migrate_config_secrets` (`src/storage/global_secrets.py`) sweeps any such value out of the in-memory config into the encrypted `credentials` table (under a reserved `settings:` `source_id` namespace) and strips it from the running config. At runtime the enrichment layer reads these keys back from `credentials`; the Settings page / `settings` CLI manage them through a write-only masked-secret surface. Per-source secrets (Trakt/GOG/Epic tokens, etc.) already live in `credentials` via their own connect flows and migrations.
+
+**One-time cleanup migration.** An earlier iteration seeded the `settings` table on every boot. That design was removed before release, so on upgrade a `PRAGMA user_version`-guarded step in `create_schema` (`_clear_seeded_settings`) clears every pre-existing `settings` row exactly once — every such row is a seed artifact, never genuine user input. The version bump guarantees the clear fires once and never again, so a leaf a user sets after upgrading survives every later init.
 
 **Cross-Source Deduplication:**
 Items imported from different sources (e.g., Steam and a personal blog) are automatically deduplicated by normalized title. When saving an item, the system first looks up an existing row by `(user_id, external_id, content_type)`. If found, it then checks for a *different* row with the same `(user_id, content_type, normalized_title)` and merges any such duplicate into the kept row. If no external_id match exists, it falls back to a direct normalized_title lookup to merge items from different sources. Merge rules: rating/review are filled from the duplicate only if the kept row is null; `date_completed` keeps the later date; genres/tags are merged additively; monotonic columns (seasons/episodes) keep the higher value; detail-table metadata is merged existing-wins — except `seasons_watched_dates`, which merges per season keeping the later watch date on both the normal-save/sync path and duplicate-row consolidation, so an earlier ingestion date never overrides a later user date, a newer Trakt watch still updates it, and new seasons are added. Schema migrations re-normalize all titles and merge any duplicates exposed by the corrected normalization.
@@ -121,9 +133,13 @@ RecommendationEngine
 ```
 
 **Weight Resolution Order (last wins):**
-1. Scorer class defaults (hardcoded: GenreMatch=2.0, etc.)
-2. `config.yaml` scorer_weights section
-3. Per-user DB settings (`users.settings` JSON → `"preference_config"` key)
+1. Registry const defaults (`src/settings/metadata.py`, e.g. `recommendations.scorer_weights.genre_match` = 2.0)
+2. `config.yaml` `recommendations.scorer_weights` section (optional)
+3. Global `settings` table leaves (the DB-backed defaults edited from the Settings page / `settings` CLI)
+
+Layers 1–3 are assembled by `migrate_config_settings` into the effective global `recommendations.*`, which is the fallback a user inherits when they have **not** set their own preference. A per-user override then wins per-key on top:
+
+4. Per-user DB settings (`users.settings` JSON → `"preference_config"` key). The per-user Preferences page overrides `scorer_weights` per-key; an unset key keeps the global default. (`min_rating_for_preference` and the counts have no per-user field — they resolve purely from the assembled global.)
 
 **Process:**
 1. Analyze user's consumed content (ratings, reviews) **across ALL content types**
@@ -200,7 +216,7 @@ view your profile). New capabilities are expected to land in both interfaces; th
 
 #### CLI (`src/cli/`)
 - Click-based command structure
-- Commands: `status`, `recommend`, `update`, `complete`, `source`, `preferences`, `enrichment`, `library`, `auth`, `memory`, `profile`, `chat` (full reference: [docs/CLI.md](docs/CLI.md))
+- Commands: `status`, `recommend`, `update`, `complete`, `source`, `settings`, `preferences`, `enrichment`, `library`, `auth`, `memory`, `profile`, `chat` (full reference: [docs/CLI.md](docs/CLI.md))
 - Supports batch operations and multiple output formats
 
 #### Web (`src/web/` + `resources/`)
@@ -209,7 +225,8 @@ view your profile). New capabilities are expected to land in both interfaces; th
   - Source: `resources/js/` (Vue components, Pinia stores, composables, router) and `resources/css/` (CSS variables, Tailwind config)
   - Build output: `src/web/static/dist/` (Vite generates content-hashed asset bundles)
   - Dev server: Vite on `:5173` proxies `/api/*` and `/static/themes/*` to FastAPI on `:18473`
-- Tabbed UI: Recommendations, Library, Chat, Data, Preferences (Chat hidden when AI is disabled)
+- Tabbed UI: Recommendations, Library, Chat, Data, Preferences, Settings (Chat hidden when AI is disabled)
+  - **Settings** page (`/settings`) manages the global/system config: sections of controls (toggle/number/text/tags/select) with curated labels/help and per-setting validation, an **Advanced** group for infra/security leaves (`web.host`/`port`, `web.allowed_origins` CORS, `logging.*`) badged **restart required**, per-setting **reset to default**, and masked **write-only** controls for provider secrets. It is the UI peer of the `settings` CLI group, backed by the shared `src/settings/service.py`.
   - Recommendations cards offer two actions: **ignore** (excludes the item from future recommendations and removes its card) and **mark complete** (opens the shared edit dialog to set status/rating/review, saves to the library, and removes the card). Neither regenerates the list.
 - SSE streaming for chat responses and AI recommendation blurbs
 - Library export: `GET /api/items/export?type=book&format=csv` (CSV or JSON download)
@@ -242,18 +259,23 @@ Enrichment (background)           Recommendation Engine
 ## Configuration
 
 Configuration files in `config/`:
-- `config.yaml`: Main configuration (git-ignored, contains secrets)
-- `example.yaml`: Template with all options documented
+- `config.yaml`: Bootstrap configuration (git-ignored). Holds the `storage` paths and `inputs` sources; may carry secrets for first-boot migration, which are then swept into encrypted storage
+- `example.yaml`: Minimal template (`storage` + `inputs`)
 
-Key sections: `features`, `ollama`, `storage`, `inputs`, `web`, `recommendations`, `conversation`, `enrichment`, `logging`.
+The global/system sections (`features`, `ollama`, `ingestion`, `recommendations`, `conversation`, `sync`, `enrichment`, `web`, `logging`) are optional in YAML — they have const defaults and are managed via the Settings page / `settings` CLI. `storage` and `inputs` are the bootstrap sections that stay in YAML.
 
-**These files only bootstrap configuration.** On boot, the global/system
+**`config.yaml` is minimal and mostly optional beyond bootstrap.** The global/system
 sections (`features`, `ollama`, `ingestion`, `recommendations`, `conversation`,
-`sync`, `enrichment`, `web`, `logging`) are seeded into the `settings` table and
-the database becomes authoritative for them — see [Global configuration precedence](#global-configuration-precedence).
-The `storage` paths stay YAML-only (they bootstrap the database itself), and
-sensitive fields such as provider `api_key` are never written to the database;
-they remain in `config.yaml`.
+`sync`, `enrichment`, `web`, `logging`) all ship with const defaults and are
+managed from the Settings page / `settings` CLI, which write to the `settings`
+table; precedence is **const default < YAML < database** — see
+[Global configuration precedence](#global-configuration-precedence). A user MAY
+still add any of those sections to `config.yaml` to override the const defaults
+on a fresh boot, but need not. The `storage` paths stay YAML-only (they bootstrap
+the database itself). Provider secrets such as `enrichment.providers.*.api_key`
+are **not** required in `config.yaml`: any value found there is swept into the
+encrypted `credentials` table on boot and stripped from the plaintext config, and
+they are otherwise entered in-app via the Settings page / `settings set-secret`.
 
 The `inputs` section uses **named source instances**: each key is a user-defined name and must include a `plugin:` field to identify the plugin type. This allows multiple instances of the same plugin (e.g., separate JSON imports for books and movies). File-based plugins use a standardized `path` field. Example:
 
@@ -382,7 +404,7 @@ the `curl -L .../latest/download/docker-compose.yml` flow for end users.
 - All processing happens locally
 - External API calls limited to: data source APIs (Steam, GOG, Epic, Sonarr, Radarr, Trakt), enrichment APIs (TMDB, OpenLibrary, RAWG), and Ollama (local)
 - Web interface accessible on internal network only
-- API keys stored in git-ignored `config/config.yaml`
+- API keys and OAuth tokens are stored encrypted in the `credentials` table, not in plaintext; any secret placed in git-ignored `config/config.yaml` for bootstrap is swept into encrypted storage on startup
 - See `docs/SECURITY.md` for details
 
 ## Future Enhancements
