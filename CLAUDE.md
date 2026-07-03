@@ -38,7 +38,8 @@ src/
 ├── ingestion/        # Data ingestion
 │   └── sources/      # Source plugins (folder-per-plugin: <name>/<name>.py + README.md + test_<name>.py)
 ├── llm/              # Ollama interaction
-├── storage/          # SQLite + ChromaDB
+├── storage/          # SQLite + ChromaDB (settings table, global_secrets, settings_migration)
+├── settings/         # Global-config registry (metadata.py) + service (list/get/set/reset/secrets)
 ├── recommendations/  # Recommendation engine (scorers, pipeline, ranking, genre_clusters)
 ├── enrichment/       # Background metadata enrichment
 │   └── providers/    # Enrichment providers (folder-per-provider, same layout as sources)
