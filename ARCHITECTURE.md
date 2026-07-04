@@ -14,6 +14,7 @@ Responsible for parsing and normalizing data from various sources.
 
 **Current Sources:**
 - Goodreads CSV exports (books)
+- The StoryGraph CSV exports (books)
 - Steam Web API (video games)
 - GOG OAuth API (video games)
 - Epic Games via Legendary (video games)
