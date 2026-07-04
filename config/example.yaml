@@ -73,6 +73,15 @@ inputs:
     content_type: "book"  # Content type for enrichment (book, movie, tv_show, video_game)
     enabled: true
 
+  # The StoryGraph — CSV export from your library (no API; pure file import).
+  # Generate the file at Manage Account -> Manage Your Data ->
+  # Export StoryGraph Library.
+  storygraph_csv:
+    plugin: storygraph_csv
+    path: "inputs/storygraph_export.csv"
+    content_type: "book"
+    enabled: false
+
   steam:
     plugin: steam
     # Steam Web API configuration
