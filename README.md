@@ -67,6 +67,7 @@ rest.
 | Source | Type | Setup |
 |--------|------|-------|
 | **Goodreads** | Books | [goodreads](src/ingestion/sources/goodreads/README.md) |
+| **The StoryGraph** | Books | [storygraph_csv](src/ingestion/sources/storygraph_csv/README.md) |
 | **Steam** | Games | [steam](src/ingestion/sources/steam/README.md) |
 | **GOG** | Games | [gog](src/ingestion/sources/gog/README.md) |
 | **Epic Games** | Games | [epic_games](src/ingestion/sources/epic_games/README.md) |
