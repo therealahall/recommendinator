@@ -994,6 +994,7 @@ class SQLiteDB:
         user_id: int | None = None,
         content_type: ContentType | None = None,
         limit: int | None = None,
+        include_ignored: bool = True,
     ) -> list[ContentItem]:
         """Get unconsumed items (status = UNREAD or CURRENTLY_CONSUMING).
 
@@ -1001,6 +1002,7 @@ class SQLiteDB:
             user_id: Filter by user ID
             content_type: Filter by content type
             limit: Maximum number of results
+            include_ignored: Whether to include ignored items (default True)
 
         Returns:
             List of unconsumed ContentItem objects
@@ -1010,6 +1012,7 @@ class SQLiteDB:
             content_type=content_type,
             status=[ConsumptionStatus.UNREAD, ConsumptionStatus.CURRENTLY_CONSUMING],
             limit=limit,
+            include_ignored=include_ignored,
         )
 
     def get_completed_items(
@@ -1018,6 +1021,7 @@ class SQLiteDB:
         content_type: ContentType | None = None,
         min_rating: int | None = None,
         limit: int | None = None,
+        include_ignored: bool = True,
     ) -> list[ContentItem]:
         """Get completed items (status = COMPLETED or CURRENTLY_CONSUMING).
 
@@ -1026,6 +1030,7 @@ class SQLiteDB:
             content_type: Filter by content type
             min_rating: Minimum rating (inclusive)
             limit: Maximum number of results
+            include_ignored: Whether to include ignored items (default True)
 
         Returns:
             List of completed ContentItem objects
@@ -1036,6 +1041,7 @@ class SQLiteDB:
             status=[ConsumptionStatus.COMPLETED, ConsumptionStatus.CURRENTLY_CONSUMING],
             min_rating=min_rating,
             limit=limit,
+            include_ignored=include_ignored,
         )
 
     # Configuration for reading detail table columns back into metadata.

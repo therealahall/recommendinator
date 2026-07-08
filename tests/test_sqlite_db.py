@@ -4552,3 +4552,78 @@ class TestCrossSourceDuplicateDetectionRegression:
             (dup_id,),
         )
         assert cursor.fetchone()[0] == 0
+
+
+class TestIgnoredSignalFetchRegression:
+    """Ignored items must be excludable from recommendation-signal fetches.
+
+    Bug (issue #99): ``get_completed_items`` / ``get_unconsumed_items`` had no
+    way to exclude ignored items, so ignored content leaked into the
+    recommendation signal (preferences, scoring, similarity, explanations).
+
+    Root cause: both wrappers always delegated to ``get_content_items`` with
+    the default ``include_ignored=True``.
+
+    Fix: both wrappers accept ``include_ignored`` and thread it through, so the
+    engine can fetch a clean signal set while library views keep seeing
+    ignored items.
+    """
+
+    @pytest.mark.parametrize("ignored_rating", [5, None])
+    def test_get_completed_items_excludes_ignored_when_flag_false_regression(
+        self, temp_db: SQLiteDB, ignored_rating: int | None
+    ) -> None:
+        """include_ignored=False drops ignored completed items regardless of rating.
+
+        The ``None`` case covers an item that is both ignored *and* unrated —
+        it must still be excluded via the ignored flag.
+        """
+        kept = ContentItem(
+            id="kept",
+            title="Kept Book",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+        )
+        ignored = ContentItem(
+            id="ignored",
+            title="Ignored Book",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=ignored_rating,
+        )
+        temp_db.save_content_item(kept)
+        ignored_db_id = temp_db.save_content_item(ignored)
+        temp_db.set_item_ignored(ignored_db_id, True)
+
+        default_titles = {i.title for i in temp_db.get_completed_items()}
+        assert default_titles == {"Kept Book", "Ignored Book"}
+
+        filtered = temp_db.get_completed_items(include_ignored=False)
+        assert {i.title for i in filtered} == {"Kept Book"}
+
+    def test_get_unconsumed_items_excludes_ignored_when_flag_false_regression(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """include_ignored=False drops ignored unconsumed items."""
+        kept = ContentItem(
+            id="kept",
+            title="Kept Game",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+        )
+        ignored = ContentItem(
+            id="ignored",
+            title="Ignored Game",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+        )
+        temp_db.save_content_item(kept)
+        ignored_db_id = temp_db.save_content_item(ignored)
+        temp_db.set_item_ignored(ignored_db_id, True)
+
+        default_titles = {i.title for i in temp_db.get_unconsumed_items()}
+        assert default_titles == {"Kept Game", "Ignored Game"}
+
+        filtered = temp_db.get_unconsumed_items(include_ignored=False)
+        assert {i.title for i in filtered} == {"Kept Game"}
