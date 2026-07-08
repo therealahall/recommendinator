@@ -122,14 +122,14 @@ RecommendationEngine
 3. Per-user DB settings (`users.settings` JSON → `"preference_config"` key)
 
 **Process:**
-1. Analyze user's consumed content (ratings, reviews) **across ALL content types**
-2. Extract preferences and patterns (genres, themes, authors) from all consumed content
+1. Analyze the user's **taste-signal set across ALL content types** — completed items that are **rated** and **not ignored**. Ignored items and completed-but-unrated items carry no reliable taste signal and never shape recommendations (preferences, scoring, similarity, or explanations)
+2. Extract preferences and patterns (genres, themes, authors) from that signal set
 3. Load per-user preference config (if available), apply scorer weight overrides
 4. Score all unconsumed candidates through the scoring pipeline
 5. Optionally blend vector-similarity scores when AI is enabled
 6. Apply series filtering with substitution (when `series_in_order` is enabled): candidates that fail series ordering rules are replaced with the earliest recommendable entry from the same series, using the substitute's own pipeline score. Duplicate substitutions per series are prevented. Also apply diversity bonus (genre-hopping) and ranking adjustments
 7. Apply the variety penalty (when `variety_penalty` > 0): build a stepped genre-fatigue ladder from the user's recently completed items **of the recommended content type**, deriving the ladder's top rung from the user's `variety_penalty` (0.0-5.0) divided by its `5.0` maximum (so `4.0` reproduces the legacy `0.8` top fraction and `5.0` fully zeroes a just-finished genre), then multiply each candidate's final score by `1 - penalty` where the penalty is the strongest among the candidate's recently finished genre clusters (`variety.py`). A finished season of an otherwise in-progress TV show also counts as a completion event for the ladder, dated by that season's watch timestamp rather than the show's (absent) `date_completed` — see [SCORING.md](docs/SCORING.md#variety-after-completion). The penalty is softened (halved) for an item that continues a series the user is actively progressing through (`is_active_series_continuation`), so the next book in an unfinished series is not buried by genre fatigue. The applied penalty is surfaced per recommendation
-8. Filter out items marked as `ignored`
+8. Exclude candidates that are already consumed or marked as `ignored` (ignored items are filtered from the candidate pool at fetch time, the same way they are excluded from the signal set)
 9. Generate ranked recommendations with score breakdowns
 
 **Cross-Content-Type Recommendations:**
