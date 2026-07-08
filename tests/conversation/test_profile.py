@@ -745,3 +745,55 @@ class TestProfileRegression:
         # because TV shows have no fantasy data at all
         for pattern in profile.cross_media_patterns:
             assert "fantasy" not in pattern.lower() or "but not" not in pattern.lower()
+
+
+class TestProfileIgnoredSignalRegression:
+    """Bug reported: ignored items shaped the conversational preference profile.
+
+    Bug reported: ``generate_profile`` analyzed the user's whole completed
+    library, so items the user marked ``ignored`` still influenced the chat
+    assistant's genre affinities and theme preferences.
+    Root cause: it fetched via ``get_completed_items`` with the default
+    ``include_ignored=True``.
+    Fix: it routes through ``get_signal_items`` (completed, rated, not
+    ignored).
+    """
+
+    def test_ignored_items_excluded_from_profile_regression(
+        self, profile_generator: ProfileGenerator, storage_manager: StorageManager
+    ) -> None:
+        """A distinctive genre only present on ignored items never enters the profile."""
+        # Two normal signal items so their genre clears MIN_ITEMS_PER_GENRE and
+        # the profile is non-empty.
+        for index, title in enumerate(("Dune", "Foundation")):
+            storage_manager.save_content_item(
+                ContentItem(
+                    id=f"signal{index}",
+                    title=title,
+                    content_type=ContentType.BOOK,
+                    status=ConsumptionStatus.COMPLETED,
+                    rating=5,
+                    metadata={"genres": ["sci-fi"]},
+                ),
+                user_id=1,
+            )
+        # Two high-rated westerns, both ignored — enough to clear the
+        # per-genre minimum, so only the ignore filter can keep them out.
+        for index in range(2):
+            db_id = storage_manager.save_content_item(
+                ContentItem(
+                    id=f"western{index}",
+                    title=f"Western {index}",
+                    content_type=ContentType.BOOK,
+                    status=ConsumptionStatus.COMPLETED,
+                    rating=5,
+                    metadata={"genres": ["western"]},
+                ),
+                user_id=1,
+            )
+            storage_manager.set_item_ignored(db_id, True, user_id=1)
+
+        profile = profile_generator.generate_profile(user_id=1)
+
+        assert "western" not in profile.genre_affinities
+        assert "science fiction" in profile.genre_affinities

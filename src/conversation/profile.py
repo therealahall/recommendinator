@@ -223,7 +223,9 @@ class ProfileGenerator:
         Returns:
             PreferenceProfile with computed preferences
         """
-        completed_items = self.storage.get_completed_items(user_id=user_id, limit=1000)
+        # Only rated, non-ignored items carry a taste signal for the profile;
+        # ignored/unrated content must not shape chat preferences (issue #99).
+        completed_items = self.storage.get_signal_items(user_id=user_id, limit=1000)
 
         genre_affinities = self._calculate_genre_affinities(completed_items)
 

@@ -2051,3 +2051,84 @@ class TestContextBlockHallucinationRegression:
         assert "No Recommendations Available" in block
         assert "Do NOT invent" in block
         assert "backlog is empty" not in block
+
+
+class TestContextIgnoredSignalRegression:
+    """Bug reported: ignored items leaked into the conversational RAG context.
+
+    Bug reported: the chat assistant's fallback taste references and backlog
+    both surfaced items the user had marked ``ignored`` — high-rated ignored
+    items appeared as "you enjoyed" references and ignored backlog items were
+    offered as suggestions.
+    Root cause: ``_get_high_rated_items`` fetched with the default
+    ``include_ignored=True`` and ``_get_unconsumed_items_fallback`` filtered
+    ignored items in Python after the fetch rather than at the fetch.
+    Fix: both fetch with ``include_ignored=False``.
+    """
+
+    def test_high_rated_references_exclude_ignored_regression(
+        self,
+        context_assembler: ContextAssembler,
+        storage_manager: StorageManager,
+    ) -> None:
+        """Ignored high-rated items never appear as RAG taste references."""
+        storage_manager.save_content_item(
+            ContentItem(
+                id="kept",
+                title="Loved Book",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+            ),
+            user_id=1,
+        )
+        ignored_db_id = storage_manager.save_content_item(
+            ContentItem(
+                id="ignored",
+                title="Ignored Favorite",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+            ),
+            user_id=1,
+        )
+        storage_manager.set_item_ignored(ignored_db_id, True, user_id=1)
+
+        titles = {
+            item.title for item in context_assembler._get_high_rated_items(user_id=1)
+        }
+        assert "Loved Book" in titles
+        assert "Ignored Favorite" not in titles
+
+    def test_unconsumed_fallback_excludes_ignored_regression(
+        self,
+        context_assembler: ContextAssembler,
+        storage_manager: StorageManager,
+    ) -> None:
+        """Ignored backlog items are never offered as fallback suggestions."""
+        storage_manager.save_content_item(
+            ContentItem(
+                id="kept",
+                title="Backlog Book",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            ),
+            user_id=1,
+        )
+        ignored_db_id = storage_manager.save_content_item(
+            ContentItem(
+                id="ignored",
+                title="Ignored Backlog",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            ),
+            user_id=1,
+        )
+        storage_manager.set_item_ignored(ignored_db_id, True, user_id=1)
+
+        titles = {
+            item.title
+            for item in context_assembler._get_unconsumed_items_fallback(user_id=1)
+        }
+        assert "Backlog Book" in titles
+        assert "Ignored Backlog" not in titles
