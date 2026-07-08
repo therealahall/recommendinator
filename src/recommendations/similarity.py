@@ -35,6 +35,7 @@ class SimilarityMatcher:
         exclude_ids: list[str] | None = None,
         limit: int = 20,
         user_id: int | None = None,
+        include_ignored: bool = True,
     ) -> list[tuple[ContentItem, float]]:
         """Find items similar to reference items.
 
@@ -44,6 +45,9 @@ class SimilarityMatcher:
             exclude_ids: Optional list of IDs to exclude
             limit: Maximum number of results
             user_id: User ID to scope item lookup (defaults to default user)
+            include_ignored: Whether ignored items may appear in the result
+                lookup table (default True). Recommendation callers pass False
+                so ignored items are never surfaced as similar candidates.
 
         Returns:
             List of (ContentItem, similarity_score) tuples, sorted by score
@@ -121,6 +125,7 @@ class SimilarityMatcher:
                 user_id=user_id,
                 content_type=content_type,
                 limit=_MAX_SIMILARITY_CANDIDATES,
+                include_ignored=include_ignored,
             )
             items_by_id = {item.id: item for item in all_items if item.id}
 
