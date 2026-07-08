@@ -241,11 +241,14 @@ class ContextAssembler:
         Returns:
             List of high-rated ContentItem objects
         """
+        # High-rated (4+) items are used as taste references, so ignored items
+        # must be excluded; min_rating already drops unrated items (issue #99).
         return self.storage.get_completed_items(
             user_id=user_id,
             content_type=content_type,
             min_rating=4,
             limit=limit,
+            include_ignored=False,
         )
 
     def _get_recommendation_briefs_from_pipeline(
@@ -330,16 +333,18 @@ class ContextAssembler:
         Returns:
             List of unconsumed ContentItem objects
         """
-        # Fetch all unconsumed items for accurate series filtering
+        # Fetch all unconsumed, non-ignored items for accurate series
+        # filtering. Ignored items are excluded at the fetch (issue #99).
         items = self.storage.get_unconsumed_items(
             user_id=user_id,
             content_type=content_type,
+            include_ignored=False,
         )
 
-        # Filter out ignored items
-        non_ignored = [item for item in items if not item.ignored]
-
-        # Build series tracking from completed items to enforce series order
+        # Build series tracking from the full completed set. Series ordering
+        # asks whether the user has *consumed* an earlier entry — a fact
+        # independent of rating or ignore state — so this must not use the
+        # signal set (issue #99).
         completed_items = self.storage.get_completed_items(
             user_id=user_id,
             content_type=content_type,
@@ -349,10 +354,8 @@ class ContextAssembler:
         # Filter by series ordering rules
         recommendable = [
             item
-            for item in non_ignored
-            if should_recommend_item(
-                item, series_tracking, unconsumed_items=non_ignored
-            )
+            for item in items
+            if should_recommend_item(item, series_tracking, unconsumed_items=items)
         ]
 
         return recommendable[:limit]
