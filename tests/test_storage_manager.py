@@ -537,3 +537,122 @@ class TestConcurrentSaveContentItem:
             row = conn.execute("PRAGMA busy_timeout").fetchone()
         assert row is not None
         assert row[0] >= 5000
+
+
+class TestGetSignalItemsRegression:
+    """Bug reported: ignored/unrated items leaked into the recommendation signal.
+
+    Bug reported: every recommendation surface re-derived "completed, rated,
+    and not ignored" (or forgot to), so ignored items and completed-but-unrated
+    items contaminated preferences, scoring, similarity, and explanations.
+    Root cause: there was no single accessor for the taste-signal set; call
+    sites used ``get_completed_items`` with default filters.
+    Fix: ``StorageManager.get_signal_items`` centralizes the three-part filter
+    (completed AND rated AND not ignored) so every consumer routes through it.
+    """
+
+    @staticmethod
+    def _book(item_id, title, status, rating):
+        return ContentItem(
+            id=item_id,
+            title=title,
+            content_type=ContentType.BOOK,
+            status=status,
+            rating=rating,
+        )
+
+    def test_signal_items_keeps_only_completed_rated_non_ignored_regression(
+        self, temp_storage_manager: StorageManager
+    ) -> None:
+        """get_signal_items returns completed, rated, non-ignored items only."""
+        keep = self._book("keep", "Signal Book", ConsumptionStatus.COMPLETED, rating=5)
+        unrated = self._book(
+            "unrated", "Unrated Book", ConsumptionStatus.COMPLETED, rating=None
+        )
+        unread = self._book("unread", "Backlog Book", ConsumptionStatus.UNREAD, None)
+        ignored = self._book(
+            "ignored", "Ignored Book", ConsumptionStatus.COMPLETED, rating=5
+        )
+
+        temp_storage_manager.save_content_item(keep)
+        temp_storage_manager.save_content_item(unrated)
+        temp_storage_manager.save_content_item(unread)
+        ignored_db_id = temp_storage_manager.save_content_item(ignored)
+        temp_storage_manager.set_item_ignored(ignored_db_id, True)
+
+        titles = {item.title for item in temp_storage_manager.get_signal_items()}
+        assert titles == {"Signal Book"}
+
+    def test_signal_items_excludes_item_that_is_both_ignored_and_unrated_regression(
+        self, temp_storage_manager: StorageManager
+    ) -> None:
+        """An item that is both ignored and unrated is excluded."""
+        keep = self._book("keep", "Signal Book", ConsumptionStatus.COMPLETED, 4)
+        ignored_unrated = self._book(
+            "combo", "Ignored Unrated", ConsumptionStatus.COMPLETED, rating=None
+        )
+        temp_storage_manager.save_content_item(keep)
+        combo_db_id = temp_storage_manager.save_content_item(ignored_unrated)
+        temp_storage_manager.set_item_ignored(combo_db_id, True)
+
+        titles = {item.title for item in temp_storage_manager.get_signal_items()}
+        assert titles == {"Signal Book"}
+
+    def test_signal_items_empty_when_all_unrated_regression(
+        self, temp_storage_manager: StorageManager
+    ) -> None:
+        """The accessor returns [] when every completed item is unrated."""
+        for index in range(2):
+            temp_storage_manager.save_content_item(
+                self._book(
+                    f"u{index}",
+                    f"Unrated {index}",
+                    ConsumptionStatus.COMPLETED,
+                    rating=None,
+                )
+            )
+
+        assert temp_storage_manager.get_signal_items() == []
+
+    def test_signal_items_empty_when_all_ignored_regression(
+        self, temp_storage_manager: StorageManager
+    ) -> None:
+        """The accessor returns [] when every completed item is ignored."""
+        for index in range(2):
+            db_id = temp_storage_manager.save_content_item(
+                self._book(
+                    f"i{index}",
+                    f"Ignored {index}",
+                    ConsumptionStatus.COMPLETED,
+                    rating=5,
+                )
+            )
+            temp_storage_manager.set_item_ignored(db_id, True)
+
+        assert temp_storage_manager.get_signal_items() == []
+
+    def test_signal_items_forwards_params_to_get_completed_items_regression(
+        self, temp_storage_manager: StorageManager
+    ) -> None:
+        """user_id, content_type, limit, and include_ignored are forwarded intact.
+
+        Guards against a user_id/content_type delegation swap and confirms the
+        ignore filter is expressed via the SQL flag.
+        """
+        captured: dict[str, object] = {}
+
+        def fake_completed(**kwargs: object) -> list[ContentItem]:
+            captured.update(kwargs)
+            return []
+
+        temp_storage_manager.get_completed_items = fake_completed  # type: ignore[method-assign]
+
+        result = temp_storage_manager.get_signal_items(
+            user_id=7, content_type=ContentType.MOVIE, limit=3
+        )
+
+        assert result == []
+        assert captured["user_id"] == 7
+        assert captured["content_type"] == ContentType.MOVIE
+        assert captured["limit"] == 3
+        assert captured["include_ignored"] is False

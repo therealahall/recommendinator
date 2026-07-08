@@ -308,6 +308,7 @@ class StorageManager:
         user_id: int | None = None,
         content_type: ContentType | None = None,
         limit: int | None = None,
+        include_ignored: bool = True,
     ) -> list[ContentItem]:
         """Get unconsumed items (status = UNREAD or CURRENTLY_CONSUMING).
 
@@ -315,12 +316,16 @@ class StorageManager:
             user_id: Filter by user ID
             content_type: Filter by content type
             limit: Maximum number of results
+            include_ignored: Whether to include ignored items (default True)
 
         Returns:
             List of unconsumed ContentItem objects
         """
         return self.sqlite_db.get_unconsumed_items(
-            user_id=user_id, content_type=content_type, limit=limit
+            user_id=user_id,
+            content_type=content_type,
+            limit=limit,
+            include_ignored=include_ignored,
         )
 
     def get_completed_items(
@@ -329,6 +334,7 @@ class StorageManager:
         content_type: ContentType | None = None,
         min_rating: int | None = None,
         limit: int | None = None,
+        include_ignored: bool = True,
     ) -> list[ContentItem]:
         """Get completed items (status = COMPLETED or CURRENTLY_CONSUMING).
 
@@ -337,6 +343,7 @@ class StorageManager:
             content_type: Filter by content type
             min_rating: Minimum rating (inclusive)
             limit: Maximum number of results
+            include_ignored: Whether to include ignored items (default True)
 
         Returns:
             List of completed ContentItem objects
@@ -346,7 +353,49 @@ class StorageManager:
             content_type=content_type,
             min_rating=min_rating,
             limit=limit,
+            include_ignored=include_ignored,
         )
+
+    def get_signal_items(
+        self,
+        user_id: int | None = None,
+        content_type: ContentType | None = None,
+        limit: int | None = None,
+    ) -> list[ContentItem]:
+        """Get taste-signal items: completed, rated, and not ignored.
+
+        This is the single source of truth for the set of items that may
+        shape recommendations — preference analysis, scoring, similarity
+        seeds, and explanation references. Ignored items are excluded by the
+        user, and completed-but-unrated items carry no taste signal, so
+        neither may shape recommendations (issue #99). The "not ignored"
+        constraint is expressed once, via the SQL ``include_ignored=False``
+        predicate; only the rating floor is applied in Python because it has
+        no dedicated query parameter.
+
+        This is deliberately distinct from series-ordering fetches: whether
+        the user has *consumed* an earlier series entry is a fact independent
+        of rating or ignore state, so series tracking must use the full
+        completed set, not this signal set.
+
+        Args:
+            user_id: Filter by user ID
+            content_type: Filter by content type
+            limit: Maximum number of completed (non-ignored) items to consider.
+                Applied by ``get_completed_items`` before the Python rating
+                filter, so a caller passing ``limit`` may receive fewer than
+                ``limit`` signal items when some are unrated.
+
+        Returns:
+            List of completed, rated, non-ignored ContentItem objects
+        """
+        completed = self.get_completed_items(
+            user_id=user_id,
+            content_type=content_type,
+            limit=limit,
+            include_ignored=False,
+        )
+        return [item for item in completed if item.rating is not None]
 
     def search_similar(
         self,
