@@ -1,6 +1,28 @@
 # CHANGELOG
 
 
+## v0.19.1 (2026-07-08)
+
+### Bug Fixes
+
+- **conversation**: Exclude ignored and unrated items from chat signal
+  ([`62c6239`](https://github.com/therealahall/recommendinator/commit/62c62395ca7c89c22bfd3ec0ea1375c0623dce55))
+
+- **recommendations**: Route engine and similarity through the signal set
+  ([`153ab50`](https://github.com/therealahall/recommendinator/commit/153ab5032ed81ec4c160d979b10ae2631f839e85))
+
+- **storage**: Add signal-set accessor for taste-shaping items
+  ([`1a2c132`](https://github.com/therealahall/recommendinator/commit/1a2c132b00c7bc9b644751e0a74d5c857465fd09))
+
+- **web**: Use the signal set for streaming recommendation blurbs
+  ([`71fcee4`](https://github.com/therealahall/recommendinator/commit/71fcee4701d313d553d504461fb4206d5a7a0caf))
+
+### Documentation
+
+- Explain the taste-signal set and ignored-item handling
+  ([`f9757a8`](https://github.com/therealahall/recommendinator/commit/f9757a8bfe351a3d3a3548bb8e63252251def130))
+
+
 ## v0.19.0 (2026-07-02)
 
 ### Bug Fixes
