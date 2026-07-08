@@ -124,4 +124,18 @@ Items can be marked as `ignored` to permanently exclude them from
 recommendations. Set `ignored: true` when importing via CSV or JSON templates, or
 use the **Ignore** button in the web UI's Library page (CLI:
 `library ignore --id <id>`). Ignored items remain in your library but are
-filtered out before recommendations are generated.
+excluded from **all** recommendation processing — they never feed preference
+analysis, scoring, similarity search, or the "since you enjoyed X" explanation
+references, and they are never surfaced as candidates. The same exclusion
+applies to completed-but-unrated items in the *signal* set: an item you finished
+but never rated carries no taste signal, so it does not shape recommendations
+(though unrated items still appear as candidates — the backlog you might consume
+next is unrated by nature). This filtering is centralized in the storage
+layer's signal-set accessor, so every surface that shapes recommendations —
+the ranking engine, the conversational assistant, and the web's streaming
+blurbs — respects it uniformly.
+
+Series *ordering* is the one deliberate exception: whether you have already
+consumed an earlier entry in a series is a consumption fact independent of
+rating or ignore state, so an ignored or unrated earlier entry still counts for
+"recommend book #1 before book #3" purposes.
