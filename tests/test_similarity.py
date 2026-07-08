@@ -400,3 +400,51 @@ class TestFindSimilarExceptionHandling:
 
         results = matcher.find_similar([ref])
         assert results == []
+
+
+class TestFindSimilarIgnoredRegression:
+    """Ignored items must not appear in the similarity lookup table.
+
+    Bug (issue #99): find_similar built its content_id -> item lookup with
+    ``get_content_items`` at the default ``include_ignored=True``, so an
+    ignored item returned by the vector search could be surfaced as a similar
+    candidate feeding recommendation scoring.
+
+    Root cause: find_similar did not expose or thread an ``include_ignored``
+    flag to its lookup fetch.
+
+    Fix: find_similar accepts ``include_ignored`` and passes it to
+    ``get_content_items``; recommendation callers pass False.
+    """
+
+    def test_threads_include_ignored_to_lookup_fetch_regression(
+        self, matcher: SimilarityMatcher, mock_storage: Mock
+    ) -> None:
+        """include_ignored is forwarded to the get_content_items lookup."""
+        ref = make_item(item_id="ref1", title="Reference Book")
+        mock_storage.search_similar.return_value = [{"content_id": "a", "score": 0.9}]
+        mock_storage.get_content_items.return_value = [
+            make_item(item_id="a", title="Book A")
+        ]
+
+        matcher.find_similar([ref], include_ignored=False)
+
+        assert (
+            mock_storage.get_content_items.call_args.kwargs["include_ignored"] is False
+        )
+
+    def test_defaults_to_including_ignored(
+        self, matcher: SimilarityMatcher, mock_storage: Mock
+    ) -> None:
+        """The lookup defaults to include_ignored=True for other callers."""
+        ref = make_item(item_id="ref1", title="Reference Book")
+        mock_storage.search_similar.return_value = [{"content_id": "a", "score": 0.9}]
+        mock_storage.get_content_items.return_value = [
+            make_item(item_id="a", title="Book A")
+        ]
+
+        matcher.find_similar([ref])
+
+        assert (
+            mock_storage.get_content_items.call_args.kwargs["include_ignored"] is True
+        )

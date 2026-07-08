@@ -217,15 +217,20 @@ class RecommendationEngine:
         Returns:
             List of recommendation dictionaries.
         """
-        # Get consumed items from ALL content types for preference analysis
-        all_consumed_items = self.storage.get_completed_items(
-            content_type=None, min_rating=None
-        )
+        # Taste-signal items (completed, rated, not ignored) shape every
+        # recommendation: preference analysis, scoring, similarity seeds, and
+        # explanation references (issue #99).
+        all_consumed_items = self.storage.get_signal_items(content_type=None)
 
-        # Get consumed items of the requested type for series tracking
+        # Full completed set of the requested type for series ordering.
+        # Deliberately NOT the signal set: whether the user consumed an earlier
+        # series entry is a consumption fact independent of rating or ignore
+        # state, so an ignored/unrated earlier entry must still block a later
+        # one. The signal subset below drives taste-shaped ranking instead.
         consumed_items_of_type = self.storage.get_completed_items(
             content_type=content_type, min_rating=None
         )
+        signal_items_of_type = self.storage.get_signal_items(content_type=content_type)
 
         if not all_consumed_items:
             logger.warning(
@@ -241,11 +246,8 @@ class RecommendationEngine:
         # (e.g., "The Black Unicorn #2" sorts before "Magic Kingdom... #1" when
         # ignoring articles). The scoring pipeline limits results after scoring.
         unconsumed_items = self.storage.get_unconsumed_items(
-            content_type=content_type, limit=None
+            content_type=content_type, limit=None, include_ignored=False
         )
-
-        # Filter out ignored items - they should not be recommended
-        unconsumed_items = [item for item in unconsumed_items if not item.ignored]
 
         if not unconsumed_items:
             logger.warning("No unconsumed items found for %s", content_type.value)
@@ -402,7 +404,7 @@ class RecommendationEngine:
             preferences=preferences,
             content_type=content_type,
             adaptations_map=adaptations_map,
-            recently_completed=consumed_items_of_type,
+            recently_completed=signal_items_of_type,
         )
 
         # Apply the stepped genre-fatigue variety penalty (issue #74) when the
@@ -421,7 +423,7 @@ class RecommendationEngine:
         ):
             ranked_items = self._apply_variety_penalty(
                 ranked_items,
-                consumed_items_of_type,
+                signal_items_of_type,
                 series_tracking,
                 unconsumed_items,
                 top_penalty=user_preference_config.variety_penalty
@@ -480,7 +482,8 @@ class RecommendationEngine:
         content, then searches for similar unconsumed items via embeddings.
 
         Args:
-            all_consumed_items: All consumed items across content types.
+            all_consumed_items: The taste-signal set across content types
+                (completed, rated, not ignored).
             content_type: Target content type for recommendations.
             candidate_count: Upper bound on similarity search results,
                 set to the number of unconsumed candidates so no candidate
@@ -492,14 +495,19 @@ class RecommendationEngine:
         if self.similarity_matcher is None:
             return {}
 
-        rated_items = [item for item in all_consumed_items if item.rating is not None]
-        rated_items.sort(key=lambda item: item.rating or 0, reverse=True)
-
+        # all_consumed_items is the signal set, so every item is already rated.
+        sorted_by_rating = sorted(
+            all_consumed_items, key=lambda item: item.rating or 0, reverse=True
+        )
         high_rated_refs = [
-            item for item in rated_items if item.rating is not None and item.rating >= 4
+            item
+            for item in sorted_by_rating
+            if item.rating is not None and item.rating >= 4
         ][:5]
         low_rated_refs = [
-            item for item in rated_items if item.rating is not None and item.rating < 3
+            item
+            for item in sorted_by_rating
+            if item.rating is not None and item.rating < 3
         ][:3]
 
         reference_items = high_rated_refs + low_rated_refs
@@ -515,6 +523,7 @@ class RecommendationEngine:
             content_type=content_type,
             exclude_ids=exclude_ids,
             limit=capped_limit,
+            include_ignored=False,
         )
 
         if similar_candidates:
@@ -978,9 +987,12 @@ class RecommendationEngine:
         An adaptation is when the same title/author exists in a different content type.
         For example, "Lord of the Rings" book -> "Lord of the Rings" movie.
 
+        Only adaptations the user rated 4+ are surfaced. Callers pass the
+        taste-signal set, so every item is already rated and not ignored.
+
         Args:
             item: Item to check for adaptations.
-            consumed_items: List of consumed items to check against.
+            consumed_items: Signal-set items to check against (all rated).
 
         Returns:
             List of consumed items that are adaptations of this item.
@@ -1032,9 +1044,10 @@ class RecommendationEngine:
         items that don't genuinely relate to the candidate are omitted
         rather than padded.
 
-        Items rated below 3 are excluded — they represent content the user
-        disliked and should never appear as "you liked".  Unrated items
-        (``rating is None``) are kept (benefit of the doubt).
+        Callers pass the taste-signal set, so every item is already rated and
+        not ignored. Items rated below 3 are still excluded here — they
+        represent content the user disliked and should never appear as
+        "you liked".
 
         For same-type items, raw genre Jaccard is used (works well since
         the same vocabulary is shared).  For cross-type items, thematic
@@ -1043,7 +1056,7 @@ class RecommendationEngine:
 
         Args:
             candidate: The recommended item.
-            all_consumed_items: All consumed items.
+            all_consumed_items: The taste-signal set (all rated, not ignored).
 
         Returns:
             Contributing consumed items grouped by type: up to 3 same-type,
@@ -1071,8 +1084,7 @@ class RecommendationEngine:
                 continue
 
             # Skip items the user actively disliked — they should never
-            # appear as "recommended because you liked".  Unrated items
-            # (rating is None) are kept.
+            # appear as "recommended because you liked".
             if consumed.rating is not None and consumed.rating < 3:
                 continue
 
@@ -1127,7 +1139,7 @@ class RecommendationEngine:
                 overlap += 0.5
 
             # Boost highly-rated items so they surface as references more
-            # often, but don't exclude lower-rated or unrated items.
+            # often, without excluding lower-rated ones.
             if consumed.rating and consumed.rating >= 4:
                 overlap += 0.15
 

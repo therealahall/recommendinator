@@ -30,11 +30,26 @@ from src.storage.vector_db import VectorDB
 
 @pytest.fixture
 def mock_storage():
-    """Create a mock storage manager."""
+    """Create a mock storage manager.
+
+    ``get_signal_items`` mirrors the real accessor (completed, rated, not
+    ignored) by filtering whatever ``get_completed_items`` a test sets up, so
+    existing tests only need to stub ``get_completed_items``. The real
+    accessor's own filtering is covered in ``tests/test_storage_manager.py``.
+    """
     storage = Mock(spec=StorageManager)
     storage.vector_db = Mock(spec=VectorDB)
     storage.vector_db.has_embedding = Mock(return_value=False)
     storage.vector_db.get_embedding = Mock(return_value=None)
+    storage.get_signal_items = Mock(
+        side_effect=lambda user_id=None, content_type=None, limit=None, **kwargs: [
+            item
+            for item in storage.get_completed_items(
+                user_id=user_id, content_type=content_type, limit=limit, **kwargs
+            )
+            if item.rating is not None and not item.ignored
+        ]
+    )
     return storage
 
 
@@ -66,6 +81,49 @@ def non_ai_engine(mock_storage):
         recommendation_generator=None,
         min_rating=4,
     )
+
+
+@pytest.fixture
+def real_storage(tmp_path):
+    """Create a real StorageManager backed by a temporary SQLite database."""
+    return StorageManager(tmp_path / "engine_signal.db", ai_enabled=False)
+
+
+@pytest.fixture
+def real_engine(real_storage):
+    """Create a non-AI RecommendationEngine over real storage."""
+    return RecommendationEngine(
+        storage_manager=real_storage,
+        embedding_generator=None,
+        recommendation_generator=None,
+        min_rating=4,
+    )
+
+
+def _save_book(
+    storage,
+    *,
+    item_id,
+    title,
+    status,
+    rating=None,
+    ignored=False,
+    genre="Science Fiction",
+):
+    """Persist a book, optionally marking it ignored; return its db_id."""
+    db_id = storage.save_content_item(
+        ContentItem(
+            id=item_id,
+            title=title,
+            content_type=ContentType.BOOK,
+            status=status,
+            rating=rating,
+            metadata={"genre": genre},
+        )
+    )
+    if ignored:
+        storage.set_item_ignored(db_id, True)
+    return db_id
 
 
 # ---------------------------------------------------------------------------
@@ -907,47 +965,34 @@ class TestSeriesOrderingRegression:
 
 
 class TestIgnoredItems:
-    """Tests for ignored items filtering in recommendations."""
+    """Tests for ignored items filtering in recommendations (real storage)."""
 
     def test_ignored_items_filtered_from_recommendations(
-        self, non_ai_engine, mock_storage
+        self, real_engine, real_storage
     ):
         """Ignored unconsumed items should not appear in recommendations."""
-        consumed = ContentItem(
-            id="1",
+        _save_book(
+            real_storage,
+            item_id="1",
             title="Consumed Book",
-            content_type=ContentType.BOOK,
             status=ConsumptionStatus.COMPLETED,
             rating=5,
-            metadata={"genre": "Science Fiction"},
         )
-
-        normal_item = ContentItem(
-            id="2",
+        _save_book(
+            real_storage,
+            item_id="2",
             title="Normal Book",
-            content_type=ContentType.BOOK,
             status=ConsumptionStatus.UNREAD,
-            ignored=False,
-            metadata={"genre": "Science Fiction"},
         )
-
-        ignored_item = ContentItem(
-            id="3",
+        _save_book(
+            real_storage,
+            item_id="3",
             title="Ignored Book",
-            content_type=ContentType.BOOK,
             status=ConsumptionStatus.UNREAD,
             ignored=True,
-            metadata={"genre": "Science Fiction"},
         )
 
-        mock_storage.get_completed_items = Mock(
-            side_effect=lambda content_type=None, **kwargs: [consumed]
-        )
-        mock_storage.get_unconsumed_items = Mock(
-            return_value=[normal_item, ignored_item]
-        )
-
-        recommendations = non_ai_engine.generate_recommendations(
+        recommendations = real_engine.generate_recommendations(
             content_type=ContentType.BOOK,
             count=5,
         )
@@ -960,43 +1005,34 @@ class TestIgnoredItems:
         # Ignored item should NOT be recommended
         assert "Ignored Book" not in recommended_titles
 
-    def test_all_ignored_items_returns_empty(self, non_ai_engine, mock_storage):
+    def test_all_ignored_items_returns_empty(self, real_engine, real_storage):
         """If all unconsumed items are ignored, return empty recommendations."""
-        consumed = ContentItem(
-            id="1",
+        _save_book(
+            real_storage,
+            item_id="1",
             title="Consumed Book",
-            content_type=ContentType.BOOK,
             status=ConsumptionStatus.COMPLETED,
             rating=5,
-            metadata={"genre": "Drama"},
+            genre="Drama",
         )
-
-        ignored_item_1 = ContentItem(
-            id="2",
+        _save_book(
+            real_storage,
+            item_id="2",
             title="Ignored Book 1",
-            content_type=ContentType.BOOK,
             status=ConsumptionStatus.UNREAD,
             ignored=True,
-            metadata={"genre": "Drama"},
+            genre="Drama",
         )
-
-        ignored_item_2 = ContentItem(
-            id="3",
+        _save_book(
+            real_storage,
+            item_id="3",
             title="Ignored Book 2",
-            content_type=ContentType.BOOK,
             status=ConsumptionStatus.UNREAD,
             ignored=True,
-            metadata={"genre": "Drama"},
+            genre="Drama",
         )
 
-        mock_storage.get_completed_items = Mock(
-            side_effect=lambda content_type=None, **kwargs: [consumed]
-        )
-        mock_storage.get_unconsumed_items = Mock(
-            return_value=[ignored_item_1, ignored_item_2]
-        )
-
-        recommendations = non_ai_engine.generate_recommendations(
+        recommendations = real_engine.generate_recommendations(
             content_type=ContentType.BOOK,
             count=5,
         )
@@ -3548,3 +3584,589 @@ class TestInProgressItemsExcludedFromBasisRegression:
             "LLM-only fallback must receive only completed items as taste "
             "context — in-progress items must be filtered out"
         )
+
+
+class TestIgnoredAndUnratedSignalRegression:
+    """Bug reported: ignored and completed-but-unrated items shaped recs.
+
+    Bug reported: ignored items were only filtered at the final candidate
+    stage, so they still fed preference analysis, scoring, similarity seeds,
+    and "since you enjoyed X" explanation references; completed-but-unrated
+    items leaked the same way because the signal was fetched with
+    min_rating=None.
+    Root cause: the engine fetched its signal set with the default
+    include_ignored=True and min_rating=None, never narrowing to rated items.
+    Fix: the engine draws its signal set from StorageManager.get_signal_items
+    (completed, rated, not ignored) and its candidate pool with
+    include_ignored=False. Verified end-to-end against real storage so the
+    assertions exercise the actual filtering, not mock wiring.
+    """
+
+    def test_ignored_and_unrated_excluded_from_signal_regression(
+        self, real_engine, real_storage
+    ):
+        """Ignored/unrated completed items never seed candidates or references."""
+        _save_book(
+            real_storage,
+            item_id="dune",
+            title="Dune",
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+        )
+        _save_book(
+            real_storage,
+            item_id="neuro",
+            title="Neuromancer",
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            ignored=True,
+        )
+        _save_book(
+            real_storage,
+            item_id="snow",
+            title="Snow Crash",
+            status=ConsumptionStatus.COMPLETED,
+            rating=None,
+        )
+        _save_book(
+            real_storage,
+            item_id="hyp",
+            title="Hyperion",
+            status=ConsumptionStatus.UNREAD,
+        )
+        _save_book(
+            real_storage,
+            item_id="saga",
+            title="Ignored Saga",
+            status=ConsumptionStatus.UNREAD,
+            ignored=True,
+        )
+
+        recs = real_engine.generate_recommendations(
+            content_type=ContentType.BOOK, count=5
+        )
+
+        titles = {rec["item"].title for rec in recs}
+        # Candidate pool: the unrated candidate is still recommended (backlog
+        # is unrated by nature); the ignored candidate is not.
+        assert "Hyperion" in titles
+        assert "Ignored Saga" not in titles
+
+        hyperion = next(rec for rec in recs if rec["item"].title == "Hyperion")
+        contributing = {item.title for item in hyperion["contributing_items"]}
+        # The rated, non-ignored signal item is cited; the ignored and the
+        # completed-but-unrated items never appear as "you liked" references.
+        assert "Dune" in contributing
+        assert "Neuromancer" not in contributing
+        assert "Snow Crash" not in contributing
+
+    def test_all_unrated_completed_yields_empty_regression(
+        self, real_engine, real_storage
+    ):
+        """Completed-but-unrated-only libraries produce a graceful empty result."""
+        _save_book(
+            real_storage,
+            item_id="u1",
+            title="Unrated One",
+            status=ConsumptionStatus.COMPLETED,
+            rating=None,
+        )
+        _save_book(
+            real_storage,
+            item_id="cand",
+            title="Candidate",
+            status=ConsumptionStatus.UNREAD,
+        )
+
+        recs = real_engine.generate_recommendations(
+            content_type=ContentType.BOOK, count=5
+        )
+
+        assert recs == []
+
+    def test_all_ignored_completed_yields_empty_regression(
+        self, real_engine, real_storage
+    ):
+        """Libraries whose only completed items are ignored return no recs."""
+        _save_book(
+            real_storage,
+            item_id="i1",
+            title="Ignored One",
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            ignored=True,
+        )
+        _save_book(
+            real_storage,
+            item_id="cand",
+            title="Candidate",
+            status=ConsumptionStatus.UNREAD,
+        )
+
+        recs = real_engine.generate_recommendations(
+            content_type=ContentType.BOOK, count=5
+        )
+
+        assert recs == []
+
+
+class TestSimilaritySeedIgnoredRegression:
+    """Bug reported: ignored completed items seeded AI similarity search.
+
+    Bug reported: in AI mode the similarity seeds (reference items whose
+    embeddings form the query vector) were drawn from the unfiltered consumed
+    set, so an ignored completed item could steer the vector search toward
+    content the user explicitly rejected.
+    Root cause: ``_compute_similarity_scores`` seeded from the consumed set
+    without excluding ignored items, and the lookup fetch defaulted to
+    ``include_ignored=True``.
+    Fix: seeds are drawn from ``get_signal_items`` (completed, rated, not
+    ignored) and ``find_similar`` is called with ``include_ignored=False``.
+    This exercises the AI path (embedding_generator set) that the non-AI
+    ``real_engine`` regressions cannot reach.
+    """
+
+    def test_ignored_completed_item_not_used_as_similarity_seed_regression(
+        self, engine, mock_storage, mock_embedding_gen
+    ):
+        """An ignored completed item never has its embedding generated as a seed."""
+        liked = ContentItem(
+            id="liked",
+            title="Dune",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            metadata={"genre": "Science Fiction"},
+        )
+        ignored = ContentItem(
+            id="ign",
+            title="Ignored Favorite",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            ignored=True,
+            metadata={"genre": "Science Fiction"},
+        )
+        candidate = ContentItem(
+            id="cand",
+            title="Hyperion",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genre": "Science Fiction"},
+        )
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: [liked, ignored]
+        )
+        mock_storage.get_unconsumed_items = Mock(return_value=[candidate])
+        mock_storage.search_similar = Mock(
+            return_value=[{"content_id": "cand", "score": 0.9}]
+        )
+        mock_storage.get_content_items = Mock(return_value=[candidate])
+
+        engine.generate_recommendations(content_type=ContentType.BOOK, count=1)
+
+        # find_similar embeds each reference (seed) item; the ignored item must
+        # never be embedded, while the rated signal item is used as a seed.
+        seeded_titles = {
+            call.args[0].title
+            for call in mock_embedding_gen.generate_content_embedding.call_args_list
+            if call.args
+        }
+        assert "Dune" in seeded_titles
+        assert "Ignored Favorite" not in seeded_titles
+
+        # The similarity lookup itself is fetched without ignored items.
+        assert any(
+            call.kwargs.get("include_ignored") is False
+            for call in mock_storage.get_content_items.call_args_list
+        )
+
+
+class TestConsumedItemsOfTypeRankingLeakRegression:
+    """Bug reported: ignored/unrated same-type completed items reordered recs.
+
+    Bug reported: ``consumed_items_of_type`` (passed to
+    ``ranker.rank(recently_completed=...)`` and the variety penalty) was
+    fetched unfiltered, so an ignored or completed-but-unrated book's genre
+    entered the ranker's always-on diversity bonus (``diversity_weight=0.1``)
+    and demoted an otherwise-top candidate sharing that genre.
+    Root cause: the full same-type completed set was reused for taste-shaped
+    ranking, not just for series ordering.
+    Fix: ranking draws from a signal subset (``get_signal_items(content_type)``)
+    while series ordering keeps the full completed set. Adapted from QA's
+    reproduction probe and run against real storage so the ranker path is
+    genuinely exercised.
+    """
+
+    @staticmethod
+    def _order(engine):
+        recs = engine.generate_recommendations(content_type=ContentType.BOOK, count=5)
+        return [rec["item"].title for rec in recs]
+
+    @staticmethod
+    def _seed_baseline(storage):
+        _save_book(
+            storage,
+            item_id="sig",
+            title="Gone Girl",
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            genre="Mystery",
+        )
+        _save_book(
+            storage,
+            item_id="cf",
+            title="Fantasy Candidate",
+            status=ConsumptionStatus.UNREAD,
+            genre="Fantasy",
+        )
+        _save_book(
+            storage,
+            item_id="cs",
+            title="SciFi Candidate",
+            status=ConsumptionStatus.UNREAD,
+            genre="Science Fiction",
+        )
+
+    def test_ignored_completed_item_does_not_reorder_regression(
+        self, real_engine, real_storage
+    ):
+        """An ignored completed book must not reorder recommendations."""
+        self._seed_baseline(real_storage)
+        baseline = self._order(real_engine)
+
+        _save_book(
+            real_storage,
+            item_id="fan",
+            title="Ignored Fantasy",
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            ignored=True,
+            genre="Fantasy",
+        )
+        after = self._order(real_engine)
+
+        assert after == baseline, (
+            "An ignored completed item changed recommendation order via the "
+            "ranker diversity bonus — issue #99 leak in ranking"
+        )
+
+    def test_unrated_completed_item_does_not_reorder_regression(
+        self, real_engine, real_storage
+    ):
+        """A completed-but-unrated book must not reorder recommendations."""
+        self._seed_baseline(real_storage)
+        baseline = self._order(real_engine)
+
+        _save_book(
+            real_storage,
+            item_id="fan",
+            title="Unrated Fantasy",
+            status=ConsumptionStatus.COMPLETED,
+            rating=None,
+            genre="Fantasy",
+        )
+        after = self._order(real_engine)
+
+        assert after == baseline, (
+            "A completed-but-unrated item changed recommendation order via the "
+            "ranker diversity bonus — issue #99 leak in ranking"
+        )
+
+    def test_rated_completion_reorders_positive_control(
+        self, real_engine, real_storage
+    ):
+        """Positive control: a rated, non-ignored completion DOES change order.
+
+        Proves the seed set genuinely drives ranking, so the "order unchanged"
+        assertions above are meaningful rather than vacuous. Two rated
+        completions matching the trailing candidate's genre push it up the
+        ranking via the (strongly weighted) preference signal.
+        """
+        self._seed_baseline(real_storage)
+        baseline = self._order(real_engine)
+
+        genre_by_title = {
+            "Fantasy Candidate": "Fantasy",
+            "SciFi Candidate": "Science Fiction",
+        }
+        trailing_genre = genre_by_title[baseline[-1]]
+        for index in range(2):
+            _save_book(
+                real_storage,
+                item_id=f"pref{index}",
+                title=f"Loved {index}",
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+                genre=trailing_genre,
+            )
+        after = self._order(real_engine)
+
+        assert after != baseline, (
+            "A rated, non-ignored completion should reorder recommendations — "
+            "if it does not, the negative regressions above prove nothing"
+        )
+
+
+class TestVarietyPenaltySignalRegression:
+    """Bug reported: ignored/unrated items leaked into the variety penalty.
+
+    Bug reported: with a non-zero ``variety_penalty`` the genre-fatigue ladder
+    was built from the full same-type completed set, so an ignored or
+    completed-but-unrated book still marked its genre "recently finished" and
+    demoted an otherwise-unpenalised candidate sharing that genre.
+    Root cause: ``_apply_variety_penalty`` received the unfiltered
+    ``consumed_items_of_type`` set.
+    Fix: the engine passes the signal subset (``get_signal_items(content_type)``)
+    to the variety penalty, so only rated, non-ignored completions build the
+    ladder. Exercised end-to-end against real storage with a ``variety_penalty``
+    config (the path the ranker-diversity regression above does not cover). A
+    positive control confirms the ladder is genuinely live for these genres so
+    the "penalty stays zero" assertions are meaningful, not vacuous.
+    """
+
+    # variety_penalty == MAX gives a top-rung penalty fraction of 1.0, which
+    # fully zeroes a just-finished genre — the strongest, most observable rung.
+    _CONFIG = UserPreferenceConfig(
+        variety_penalty=UserPreferenceConfig.MAX_VARIETY_PENALTY
+    )
+
+    @staticmethod
+    def _seed_baseline(storage):
+        # A rated, non-ignored Mystery signal item makes recommendations exist
+        # and seeds the ladder with Mystery (a cluster none of the candidates
+        # share, so baseline candidate penalties are zero).
+        _save_book(
+            storage,
+            item_id="sig",
+            title="Gone Girl",
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            genre="Mystery",
+        )
+        _save_book(
+            storage,
+            item_id="cf",
+            title="Fantasy Candidate",
+            status=ConsumptionStatus.UNREAD,
+            genre="Fantasy",
+        )
+        _save_book(
+            storage,
+            item_id="cs",
+            title="SciFi Candidate",
+            status=ConsumptionStatus.UNREAD,
+            genre="Science Fiction",
+        )
+
+    def _fantasy_penalty(self, engine):
+        recs = engine.generate_recommendations(
+            content_type=ContentType.BOOK,
+            count=5,
+            user_preference_config=self._CONFIG,
+        )
+        fantasy = next(rec for rec in recs if rec["item"].title == "Fantasy Candidate")
+        return fantasy["variety_penalty"]
+
+    def test_baseline_fantasy_candidate_unpenalised(self, real_engine, real_storage):
+        """With only a Mystery signal item, the Fantasy candidate has no penalty."""
+        self._seed_baseline(real_storage)
+        assert self._fantasy_penalty(real_engine) == 0.0
+
+    def test_rated_completed_fantasy_penalises_positive_control(
+        self, real_engine, real_storage
+    ):
+        """Positive control: a rated, non-ignored Fantasy completion penalises it.
+
+        Proves the ladder recognises the Fantasy cluster and applies a penalty,
+        so the ignored/unrated "stays zero" assertions below are meaningful.
+        """
+        self._seed_baseline(real_storage)
+        _save_book(
+            real_storage,
+            item_id="fan",
+            title="Rated Fantasy",
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            genre="Fantasy",
+        )
+        assert self._fantasy_penalty(real_engine) > 0.0
+
+    def test_ignored_completed_fantasy_does_not_penalise_regression(
+        self, real_engine, real_storage
+    ):
+        """An ignored Fantasy completion must not enter the variety ladder."""
+        self._seed_baseline(real_storage)
+        _save_book(
+            real_storage,
+            item_id="fan",
+            title="Ignored Fantasy",
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            ignored=True,
+            genre="Fantasy",
+        )
+        assert self._fantasy_penalty(real_engine) == 0.0, (
+            "An ignored completed item entered the variety ladder and "
+            "penalised a same-genre candidate — issue #99 leak in variety penalty"
+        )
+
+    def test_unrated_completed_fantasy_does_not_penalise_regression(
+        self, real_engine, real_storage
+    ):
+        """A completed-but-unrated Fantasy book must not enter the ladder."""
+        self._seed_baseline(real_storage)
+        _save_book(
+            real_storage,
+            item_id="fan",
+            title="Unrated Fantasy",
+            status=ConsumptionStatus.COMPLETED,
+            rating=None,
+            genre="Fantasy",
+        )
+        assert self._fantasy_penalty(real_engine) == 0.0, (
+            "A completed-but-unrated item entered the variety ladder and "
+            "penalised a same-genre candidate — issue #99 leak in variety penalty"
+        )
+
+
+class TestSeriesTrackingFullSetRegression:
+    """Series ordering must use the FULL completed set, not the signal set.
+
+    Bug guarded: issue #99 narrows taste-shaped inputs to the signal set
+    (completed, rated, not ignored). Series ordering must NOT be narrowed the
+    same way — whether the user has *consumed* an earlier entry is a fact
+    independent of rating or ignore state. If series tracking used the signal
+    set, an ignored or completed-but-unrated middle entry would vanish from
+    the consumed positions and strand the series: the next entry would be held
+    behind an entry the user has actually finished (and which can never
+    reappear as a candidate). The engine deliberately builds series tracking
+    from the full ``consumed_items_of_type``; these tests lock that in against
+    real storage.
+    """
+
+    @staticmethod
+    def _titles(engine):
+        recs = engine.generate_recommendations(content_type=ContentType.BOOK, count=5)
+        return [rec["item"].title for rec in recs]
+
+    def test_completed_rated_first_entry_unlocks_second(
+        self, real_engine, real_storage
+    ):
+        """Completing (and rating) #1 recommends #2 and holds #3."""
+        _save_book(
+            real_storage,
+            item_id="s1",
+            title="Foundation (Signal Saga #1)",
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+        )
+        _save_book(
+            real_storage,
+            item_id="s2",
+            title="Foundation and Empire (Signal Saga #2)",
+            status=ConsumptionStatus.UNREAD,
+        )
+        _save_book(
+            real_storage,
+            item_id="s3",
+            title="Second Foundation (Signal Saga #3)",
+            status=ConsumptionStatus.UNREAD,
+        )
+
+        titles = self._titles(real_engine)
+
+        assert any(
+            "Foundation and Empire" in t for t in titles
+        ), "#2 should be recommended after completing #1"
+        assert not any(
+            "Second Foundation" in t for t in titles
+        ), "#3 must stay held until #2 is consumed"
+
+    def test_ignored_middle_entry_does_not_strand_series_regression(
+        self, real_engine, real_storage
+    ):
+        """An ignored completed #2 still counts, so #3 is recommended (not stranded).
+
+        If series tracking used the signal set, ignored #2 would drop out of the
+        consumed positions, #3 would be held behind an entry the user already
+        finished, and the series would strand.
+        """
+        _save_book(
+            real_storage,
+            item_id="s1",
+            title="Foundation (Signal Saga #1)",
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+        )
+        _save_book(
+            real_storage,
+            item_id="s2",
+            title="Foundation and Empire (Signal Saga #2)",
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            ignored=True,
+        )
+        _save_book(
+            real_storage,
+            item_id="s3",
+            title="Second Foundation (Signal Saga #3)",
+            status=ConsumptionStatus.UNREAD,
+        )
+        _save_book(
+            real_storage,
+            item_id="s4",
+            title="Foundation's Edge (Signal Saga #4)",
+            status=ConsumptionStatus.UNREAD,
+        )
+
+        titles = self._titles(real_engine)
+
+        assert any("Second Foundation" in t for t in titles), (
+            "#3 must be recommended even when the finished #2 was ignored — "
+            "series tracking must use the full completed set (issue #99)"
+        )
+        assert not any(
+            "Foundation's Edge" in t for t in titles
+        ), "#4 must stay held until #3 is consumed"
+
+    def test_unrated_middle_entry_does_not_strand_series_regression(
+        self, real_engine, real_storage
+    ):
+        """A completed-but-unrated #2 still counts, so #3 is recommended."""
+        _save_book(
+            real_storage,
+            item_id="s1",
+            title="Foundation (Signal Saga #1)",
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+        )
+        _save_book(
+            real_storage,
+            item_id="s2",
+            title="Foundation and Empire (Signal Saga #2)",
+            status=ConsumptionStatus.COMPLETED,
+            rating=None,
+        )
+        _save_book(
+            real_storage,
+            item_id="s3",
+            title="Second Foundation (Signal Saga #3)",
+            status=ConsumptionStatus.UNREAD,
+        )
+        _save_book(
+            real_storage,
+            item_id="s4",
+            title="Foundation's Edge (Signal Saga #4)",
+            status=ConsumptionStatus.UNREAD,
+        )
+
+        titles = self._titles(real_engine)
+
+        assert any("Second Foundation" in t for t in titles), (
+            "#3 must be recommended even when the finished #2 was unrated — "
+            "series tracking must use the full completed set (issue #99)"
+        )
+        assert not any(
+            "Foundation's Edge" in t for t in titles
+        ), "#4 must stay held until #3 is consumed"
