@@ -3414,3 +3414,73 @@ class TestTraktPollDeviceApproval:
 
         assert response.status_code == 500
         assert response.json()["detail"] == "Storage not initialized"
+
+
+class TestStreamRecommendationsSignalRegression:
+    """Bug reported: streaming blurbs cited ignored/unrated items as taste refs.
+
+    Bug reported: ``/recommendations/stream`` fetched the LLM blurb "taste
+    reference" list via ``get_completed_items(min_rating=None)`` with no
+    ignored/unrated filter, so a streamed "since you enjoyed X" blurb could
+    cite an ignored or completed-but-unrated item.
+    Root cause: ``generate_sse`` called ``get_completed_items`` directly
+    instead of the shared signal accessor.
+    Fix: it now calls ``get_signal_items``, so the blurb generator only ever
+    receives the taste-signal set.
+    """
+
+    def test_blurb_generation_receives_signal_items_regression(
+        self, client, mock_components
+    ) -> None:
+        """The blurb generator is fed the signal set, not the full completed set."""
+        engine = mock_components["engine"]
+        storage = mock_components["storage"]
+
+        candidate = ContentItem(
+            id="cand",
+            title="Hyperion",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        )
+        engine.generate_recommendations.return_value = [
+            {
+                "item": candidate,
+                "score": 0.9,
+                "similarity_score": 0.0,
+                "preference_score": 0.0,
+                "reasoning": "because sci-fi",
+                "score_breakdown": {},
+                "variety_penalty": 0.0,
+                "contributing_items": [],
+            }
+        ]
+
+        signal_item = ContentItem(
+            id="sig",
+            title="Dune",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+        )
+        ignored_item = ContentItem(
+            id="ign",
+            title="Ignored Favorite",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            ignored=True,
+        )
+        storage.get_signal_items.return_value = [signal_item]
+        storage.get_completed_items.return_value = [signal_item, ignored_item]
+        storage.get_user_preference_config.return_value = None
+        engine.generate_blurb_for_item.return_value = "a blurb"
+
+        response = client.get("/api/recommendations/stream?type=book&count=1")
+
+        assert response.status_code == 200
+        assert engine.generate_blurb_for_item.called
+        # generate_blurb_for_item(content_type, item, consumed_items, refs)
+        consumed_arg = engine.generate_blurb_for_item.call_args.args[2]
+        consumed_titles = {item.title for item in consumed_arg}
+        assert consumed_titles == {"Dune"}
+        assert "Ignored Favorite" not in consumed_titles

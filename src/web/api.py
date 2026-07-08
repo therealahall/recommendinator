@@ -718,10 +718,11 @@ async def stream_recommendations(
             }
             yield f"data: {json.dumps(event)}\n\n"
 
-            # Phase 2: generate blurbs per item, stream as they complete
-            consumed_items = engine.storage.get_completed_items(
-                content_type=None, min_rating=None
-            )
+            # Phase 2: generate blurbs per item, stream as they complete.
+            # Blurbs cite consumed items as taste context, so they must draw
+            # from the signal set only — never ignored or unrated items
+            # (issue #99).
+            consumed_items = engine.storage.get_signal_items(content_type=None)
 
             items_with_index: list[tuple[int, ContentItem, list[ContentItem]]] = []
             for idx, rec in enumerate(recommendations):
