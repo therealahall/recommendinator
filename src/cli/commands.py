@@ -346,7 +346,8 @@ def update(ctx: click.Context, source: str, workers: int | None) -> None:
             click.echo(f"  {source_id:20s} plugin={plugin_name} [{status}]")
         return
 
-    # Migrate any config-file credentials to encrypted DB storage
+    # Migrate any config-file credentials to encrypted DB storage. The source
+    # label and plugin migrations run once in the top-level ``cli`` callback.
     migrate_config_credentials(config, storage)
 
     # Check if embeddings are enabled

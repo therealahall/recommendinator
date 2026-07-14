@@ -17,12 +17,18 @@ def cli_runner() -> CliRunner:
 
 
 def _cli_patches():
-    """Context manager stack for CLI patches."""
+    """Context manager stack for CLI patches.
+
+    The top-level ``cli`` callback runs the source migrations on every command,
+    so they are patched here to keep them off the MagicMock storage in tests.
+    """
     return (
         patch("src.cli.main.load_config"),
         patch("src.cli.main.create_storage_manager"),
         patch("src.cli.main.create_llm_components"),
         patch("src.cli.main.create_recommendation_engine"),
+        patch("src.cli.main.migrate_source_labels"),
+        patch("src.cli.main.migrate_source_config_plugins"),
     )
 
 
@@ -44,12 +50,14 @@ def _invoke_with_mocks(
         input_text: Simulated stdin input
         llm_client: Optional LLM client mock (default: None/AI disabled)
     """
-    p_config, p_storage, p_llm, p_engine = _cli_patches()
+    p_config, p_storage, p_llm, p_engine, p_labels, p_plugins = _cli_patches()
     with (
         p_config as mock_load,
         p_storage as mock_storage_fn,
         p_llm as mock_llm,
         p_engine,
+        p_labels,
+        p_plugins,
     ):
         mock_load.return_value = config or {}
         mock_storage_fn.return_value = mock_storage

@@ -572,7 +572,8 @@ enrichment:
 
 ## Existing Plugins to Reference
 
-- `src/ingestion/sources/goodreads/goodreads.py` - File-based CSV parser
+- `src/ingestion/sources/goodreads_csv/goodreads_csv.py` - File-based CSV parser
+- `src/ingestion/sources/goodreads_rss/goodreads_rss.py` - Simple GET + pagination, no auth
 - `src/ingestion/sources/steam/steam.py` - API-based with rate limiting
 - `src/ingestion/sources/gog/gog.py` - OAuth-based API with token refresh
 - `src/ingestion/sources/epic_games/epic_games.py` - OAuth-based API via Legendary

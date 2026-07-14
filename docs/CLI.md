@@ -11,7 +11,7 @@ commands accept `--format json` for scripting.
 
 ```bash
 # Import data
-python3.11 -m src.cli update --source goodreads
+python3.11 -m src.cli update --source goodreads_csv
 python3.11 -m src.cli update --source steam
 python3.11 -m src.cli update --source all
 
@@ -91,18 +91,18 @@ can live in YAML (bootstrap), in the database (created or migrated), or both.
 ```bash
 # Create a brand-new source directly in the database (no YAML edit needed)
 python3.11 -m src.cli source plugins             # see what plugins are available
-python3.11 -m src.cli source create my_books goodreads
+python3.11 -m src.cli source create my_books goodreads_csv
 python3.11 -m src.cli source set-secret my_books api_key   # add credentials
 
 # Move an existing YAML source into the database (one-time, idempotent)
-python3.11 -m src.cli source migrate goodreads
+python3.11 -m src.cli source migrate goodreads_csv
 
 # Inspect / edit fields after migration or creation
-python3.11 -m src.cli source show goodreads
-python3.11 -m src.cli source schema goodreads           # list editable fields
-python3.11 -m src.cli source set goodreads path inputs/new_export.csv
-python3.11 -m src.cli source disable goodreads          # disabled sources are skipped during sync
-python3.11 -m src.cli source enable goodreads
+python3.11 -m src.cli source show goodreads_csv
+python3.11 -m src.cli source schema goodreads_csv           # list editable fields
+python3.11 -m src.cli source set goodreads_csv path inputs/new_export.csv
+python3.11 -m src.cli source disable goodreads_csv          # disabled sources are skipped during sync
+python3.11 -m src.cli source enable goodreads_csv
 
 # Remove a DB-backed source entirely (clears stored secrets too)
 python3.11 -m src.cli source remove my_books

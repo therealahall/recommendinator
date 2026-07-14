@@ -47,7 +47,7 @@ This ensures every plan step is tracked, has clear acceptance criteria, and noth
 ## Adding New Data Sources
 
 1. Create parser in `src/ingestion/sources/`
-2. Follow existing patterns (goodreads.py, steam.py)
+2. Follow existing patterns (goodreads_csv.py, steam.py)
 3. Yield `ContentItem` objects
 4. Add comprehensive tests with mocked APIs
 5. Update CLI/web to support new source

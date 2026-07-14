@@ -33,7 +33,7 @@ class PluginRegistry:
         registry.discover_plugins()
 
         # Get a specific plugin
-        plugin = registry.get_plugin("goodreads")
+        plugin = registry.get_plugin("goodreads_csv")
 
         # Get all enabled plugins based on config
         enabled = registry.get_enabled_plugins(config)
@@ -170,7 +170,7 @@ class PluginRegistry:
 
         Args:
             module: Imported module to scan
-            source: Description of source for logging (e.g., "builtin:goodreads")
+            source: Description of source for logging (e.g., "builtin:goodreads_csv")
         """
         for attr_name in dir(module):
             if attr_name.startswith("_"):

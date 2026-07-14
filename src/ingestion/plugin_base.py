@@ -118,7 +118,7 @@ class SourcePlugin(ABC):
         """Unique identifier for this plugin.
 
         Used in config as inputs.<name>.* and in CLI as --source <name>.
-        Should be lowercase with underscores (e.g., "goodreads", "steam", "generic_csv").
+        Should be lowercase with underscores (e.g., "goodreads_csv", "steam", "generic_csv").
 
         Returns:
             Plugin identifier string

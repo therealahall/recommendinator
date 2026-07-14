@@ -79,6 +79,8 @@ def client(
         patch("src.web.app.create_llm_components") as mock_llm,
         patch("src.web.app.create_recommendation_engine") as mock_engine,
         patch("src.web.app.migrate_config_credentials"),
+        patch("src.web.app.migrate_source_labels"),
+        patch("src.web.app.migrate_source_config_plugins"),
     ):
         mock_llm.return_value = (
             Mock(spec=OllamaClient),

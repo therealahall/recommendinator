@@ -23,6 +23,10 @@ from src.cli.config import (
 from src.conversation.engine import create_conversation_engine
 from src.conversation.memory import MemoryManager
 from src.storage.credential_migration import migrate_config_credentials
+from src.storage.source_migration import (
+    migrate_source_config_plugins,
+    migrate_source_labels,
+)
 from src.web.api import APP_VERSION
 from src.web.api import router as api_router
 from src.web.chat_api import router as chat_router
@@ -131,6 +135,10 @@ def create_app(config_path: Path | None = None) -> FastAPI:
 
         # Migrate sensitive config credentials to encrypted DB storage
         migrate_config_credentials(config, storage)
+        # Relabel stored goodreads source values and plugin names after the
+        # plugin rename
+        migrate_source_labels(storage)
+        migrate_source_config_plugins(storage)
 
         # Store in app state
         app_state.config = config

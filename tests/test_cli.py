@@ -30,7 +30,8 @@ def mock_config():
             "vector_db_path": "data/test_chroma",
         },
         "inputs": {
-            "goodreads": {
+            "goodreads_csv": {
+                "plugin": "goodreads_csv",
                 "path": "inputs/goodreads_library_export.csv",
                 "enabled": True,
             }
@@ -50,6 +51,8 @@ def mock_components(mock_config):
         patch("src.cli.main.create_llm_components") as mock_llm,
         patch("src.cli.main.create_recommendation_engine") as mock_engine,
         patch("src.cli.commands.migrate_config_credentials"),
+        patch("src.cli.main.migrate_source_labels") as mock_migrate_labels,
+        patch("src.cli.main.migrate_source_config_plugins") as mock_migrate_plugins,
     ):
         # Setup mocks
         mock_storage_manager = Mock(spec=StorageManager)
@@ -71,6 +74,8 @@ def mock_components(mock_config):
             "embedding_gen": mock_embedding_gen,
             "rec_gen": mock_rec_gen,
             "engine": mock_engine_instance,
+            "migrate_source_labels": mock_migrate_labels,
+            "migrate_source_config_plugins": mock_migrate_plugins,
         }
 
 
@@ -84,6 +89,22 @@ def test_cli_help():
     assert "recommend" in result.output
     assert "update" in result.output
     assert "complete" in result.output
+
+
+def test_migrations_run_on_cli_startup(mock_components):
+    """Both source migrations run in the top-level cli() callback.
+
+    A CLI-only user who never runs ``update`` must still be migrated, so the
+    label and plugin migrations are invoked once per command with the real
+    storage instance — proving the wiring, not just the migration units.
+    """
+    runner = CliRunner()
+    result = runner.invoke(cli, ["status"])
+
+    assert result.exit_code == 0
+    storage = mock_components["storage"]
+    mock_components["migrate_source_labels"].assert_called_once_with(storage)
+    mock_components["migrate_source_config_plugins"].assert_called_once_with(storage)
 
 
 def test_recommend_command_help(mock_components):
@@ -553,8 +574,8 @@ class TestUpdateWorkersFlag:
                     "steam_id": "76561198000000000",
                     "enabled": True,
                 },
-                "goodreads": {
-                    "plugin": "goodreads",
+                "goodreads_csv": {
+                    "plugin": "goodreads_csv",
                     "path": "/tmp/goodreads.csv",
                     "enabled": True,
                 },
@@ -601,7 +622,7 @@ class TestUpdateWorkersFlag:
                 return_value=[],
             ),
             patch(
-                "src.ingestion.sources.goodreads.GoodreadsPlugin.validate_config",
+                "src.ingestion.sources.goodreads_csv.GoodreadsCsvPlugin.validate_config",
                 return_value=[],
             ),
         ):
@@ -636,7 +657,7 @@ class TestUpdateWorkersFlag:
                 return_value=[],
             ),
             patch(
-                "src.ingestion.sources.goodreads.GoodreadsPlugin.validate_config",
+                "src.ingestion.sources.goodreads_csv.GoodreadsCsvPlugin.validate_config",
                 return_value=[],
             ),
         ):
@@ -671,7 +692,7 @@ class TestUpdateWorkersFlag:
                 return_value=[],
             ),
             patch(
-                "src.ingestion.sources.goodreads.GoodreadsPlugin.validate_config",
+                "src.ingestion.sources.goodreads_csv.GoodreadsCsvPlugin.validate_config",
                 return_value=[],
             ),
         ):
@@ -724,7 +745,7 @@ class TestUpdateWorkersFlag:
                 return_value=[],
             ),
             patch(
-                "src.ingestion.sources.goodreads.GoodreadsPlugin.validate_config",
+                "src.ingestion.sources.goodreads_csv.GoodreadsCsvPlugin.validate_config",
                 return_value=[],
             ),
         ):
@@ -759,7 +780,7 @@ class TestUpdateWorkersFlag:
                 return_value=[],
             ),
             patch(
-                "src.ingestion.sources.goodreads.GoodreadsPlugin.validate_config",
+                "src.ingestion.sources.goodreads_csv.GoodreadsCsvPlugin.validate_config",
                 return_value=[],
             ),
         ):
@@ -794,7 +815,7 @@ class TestUpdateWorkersFlag:
                 return_value=[],
             ),
             patch(
-                "src.ingestion.sources.goodreads.GoodreadsPlugin.validate_config",
+                "src.ingestion.sources.goodreads_csv.GoodreadsCsvPlugin.validate_config",
                 return_value=[],
             ),
         ):

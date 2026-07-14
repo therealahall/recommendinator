@@ -66,7 +66,8 @@ rest.
 
 | Source | Type | Setup |
 |--------|------|-------|
-| **Goodreads** | Books | [goodreads](src/ingestion/sources/goodreads/README.md) |
+| **Goodreads (CSV export)** | Books | [goodreads_csv](src/ingestion/sources/goodreads_csv/README.md) |
+| **Goodreads (public shelves via RSS)** | Books | [goodreads_rss](src/ingestion/sources/goodreads_rss/README.md) |
 | **The StoryGraph** | Books | [storygraph_csv](src/ingestion/sources/storygraph_csv/README.md) |
 | **Steam** | Games | [steam](src/ingestion/sources/steam/README.md) |
 | **GOG** | Games | [gog](src/ingestion/sources/gog/README.md) |
@@ -112,8 +113,8 @@ features:
 
 # Configure your data sources (see each source's setup guide for fields)
 inputs:
-  goodreads:
-    plugin: goodreads
+  goodreads_csv:
+    plugin: goodreads_csv
     path: "inputs/goodreads_library_export.csv"
     enabled: true
 
@@ -131,6 +132,14 @@ enrichment providers, conversation tuning). Scorer weights are explained in
 the most recent import; `source_priority` uses the highest-priority source;
 `keep_existing` only fills missing fields. Metadata (genres, tags) is always
 merged additively.
+
+### Upgrading
+
+The Goodreads CSV plugin was renamed from `goodreads` to `goodreads_csv`.
+Existing Goodreads items and any DB-stored source configs are relabeled from
+`goodreads` to `goodreads_csv` automatically on first startup, so no action is
+needed there. If you configure Goodreads via `config.yaml`, rename
+`plugin: goodreads` to `plugin: goodreads_csv`.
 
 ## CLI usage
 

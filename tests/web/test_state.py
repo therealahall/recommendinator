@@ -6,12 +6,13 @@ from collections.abc import AsyncIterator
 from dataclasses import fields
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
 from src.conversation.engine import ConversationEngine
 from src.llm.client import OllamaClient
+from src.storage.manager import StorageManager
 from src.web.state import (
     AppState,
     ConfigWatcher,
@@ -58,6 +59,30 @@ class TestReloadConfig:
         assert result is True
         assert app_state.config["ollama"]["model"] == "test-model"
         assert "old" not in app_state.config
+
+    def test_reload_config_runs_both_source_migrations(self, tmp_path: Path) -> None:
+        """reload_config runs both source migrations with the stored storage.
+
+        When storage is present, a hot-reload must relabel stored items and DB
+        source configs, mirroring the migrations that run on web startup.
+        """
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("ollama:\n  model: test-model\n")
+
+        app_state.config_path = str(config_file)
+        storage = Mock(spec=StorageManager)
+        app_state.storage = storage
+
+        with (
+            patch("src.web.state.migrate_config_credentials"),
+            patch("src.web.state.migrate_source_labels") as mock_labels,
+            patch("src.web.state.migrate_source_config_plugins") as mock_plugins,
+        ):
+            result = reload_config()
+
+        assert result is True
+        mock_labels.assert_called_once_with(storage)
+        mock_plugins.assert_called_once_with(storage)
 
     def test_reload_config_no_config_path(self) -> None:
         """reload_config returns False when no config_path is stored."""

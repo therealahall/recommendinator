@@ -1,4 +1,4 @@
-"""Goodreads CSV export plugin."""
+"""The Goodreads CSV export plugin."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class GoodreadsPlugin(SourcePlugin):
+class GoodreadsCsvPlugin(SourcePlugin):
     """Plugin for importing books from Goodreads CSV exports.
 
     Goodreads allows exporting your library as a CSV file from:
@@ -34,15 +34,15 @@ class GoodreadsPlugin(SourcePlugin):
 
     @property
     def name(self) -> str:
-        return "goodreads"
+        return "goodreads_csv"
 
     @property
     def display_name(self) -> str:
-        return "Goodreads"
+        return "Goodreads (CSV Export)"
 
     @property
     def description(self) -> str:
-        return "Import books from Goodreads export"
+        return "Import books from a Goodreads library CSV export"
 
     @property
     def content_types(self) -> list[ContentType]:

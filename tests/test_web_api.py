@@ -51,8 +51,8 @@ def mock_config():
             "port": 8000,
         },
         "inputs": {
-            "goodreads": {
-                "plugin": "goodreads",
+            "goodreads_csv": {
+                "plugin": "goodreads_csv",
                 "path": "inputs/goodreads_library_export.csv",
                 "enabled": True,
             }
@@ -75,6 +75,8 @@ def mock_components(mock_config):
         patch("src.web.app.create_llm_components") as mock_llm,
         patch("src.web.app.create_recommendation_engine") as mock_engine,
         patch("src.web.app.migrate_config_credentials"),
+        patch("src.web.app.migrate_source_labels") as mock_migrate_labels,
+        patch("src.web.app.migrate_source_config_plugins") as mock_migrate_plugins,
     ):
         # Setup mocks
         mock_storage_manager = Mock(spec=StorageManager)
@@ -110,6 +112,8 @@ def mock_components(mock_config):
             "storage": mock_storage_manager,
             "embedding_gen": mock_embedding_gen,
             "engine": mock_engine_instance,
+            "migrate_source_labels": mock_migrate_labels,
+            "migrate_source_config_plugins": mock_migrate_plugins,
         }
 
         # Clean up sync manager after test
@@ -120,6 +124,17 @@ def mock_components(mock_config):
 def client(mock_components):
     """Create test client."""
     return TestClient(mock_components["app"])
+
+
+def test_create_app_runs_both_source_migrations(mock_components):
+    """create_app runs both source migrations with the real storage instance.
+
+    Proves the migrations are wired into web startup, not merely unit-tested:
+    a rename must relabel stored items and DB source configs on first boot.
+    """
+    storage = mock_components["storage"]
+    mock_components["migrate_source_labels"].assert_called_once_with(storage)
+    mock_components["migrate_source_config_plugins"].assert_called_once_with(storage)
 
 
 class TestRootEndpoint:
@@ -338,12 +353,12 @@ def test_sync_sources_endpoint(client, mock_config):
     assert response.status_code == 200
     sources = response.json()
     assert isinstance(sources, list)
-    # mock_config has exactly goodreads enabled
+    # mock_config has exactly goodreads_csv enabled
     assert len(sources) == 1
-    goodreads = next((s for s in sources if s["id"] == "goodreads"), None)
+    goodreads = next((s for s in sources if s["id"] == "goodreads_csv"), None)
     assert goodreads is not None
-    assert goodreads["display_name"] == "Goodreads"
-    assert goodreads["plugin_display_name"] == "Goodreads"
+    assert goodreads["display_name"] == "Goodreads CSV"
+    assert goodreads["plugin_display_name"] == "Goodreads (CSV Export)"
 
 
 def test_sync_sources_lists_all_with_enabled_flag(client):
@@ -355,8 +370,8 @@ def test_sync_sources_lists_all_with_enabled_flag(client):
     """
     app_state.config = {
         "inputs": {
-            "goodreads": {
-                "plugin": "goodreads",
+            "goodreads_csv": {
+                "plugin": "goodreads_csv",
                 "path": "inputs/books.csv",
                 "enabled": True,
             },
@@ -386,7 +401,7 @@ def test_sync_sources_lists_all_with_enabled_flag(client):
     sources = response.json()
     by_id = {s["id"]: s for s in sources}
 
-    assert by_id["goodreads"]["enabled"] is True
+    assert by_id["goodreads_csv"]["enabled"] is True
     assert by_id["sonarr"]["enabled"] is True
     assert by_id["steam"]["enabled"] is False
     assert by_id["radarr"]["enabled"] is False
@@ -483,11 +498,11 @@ def test_update_endpoint(client, mock_components):
 
     with (
         patch(
-            "src.ingestion.sources.goodreads.GoodreadsPlugin.fetch",
+            "src.ingestion.sources.goodreads_csv.GoodreadsCsvPlugin.fetch",
             return_value=iter([mock_item]),
         ),
         patch(
-            "src.ingestion.sources.goodreads.GoodreadsPlugin.validate_config",
+            "src.ingestion.sources.goodreads_csv.GoodreadsCsvPlugin.validate_config",
             return_value=[],
         ),
     ):
@@ -496,7 +511,7 @@ def test_update_endpoint(client, mock_components):
         ] * 768
         mock_components["storage"].save_content_item.return_value = 1
 
-        response = client.post("/api/update", json={"source": "goodreads"})
+        response = client.post("/api/update", json={"source": "goodreads_csv"})
 
         assert response.status_code == 200
         data = response.json()
@@ -627,11 +642,11 @@ def test_update_endpoint_all_sources(client, mock_components):
 
     with (
         patch(
-            "src.ingestion.sources.goodreads.GoodreadsPlugin.fetch",
+            "src.ingestion.sources.goodreads_csv.GoodreadsCsvPlugin.fetch",
             return_value=iter([mock_book]),
         ),
         patch(
-            "src.ingestion.sources.goodreads.GoodreadsPlugin.validate_config",
+            "src.ingestion.sources.goodreads_csv.GoodreadsCsvPlugin.validate_config",
             return_value=[],
         ),
         patch(
@@ -655,7 +670,7 @@ def test_update_endpoint_all_sources(client, mock_components):
         # New async behavior: returns sync started message with sources list
         assert "message" in data
         assert "sources" in data
-        assert "goodreads" in data["sources"]
+        assert "goodreads_csv" in data["sources"]
         assert "steam" in data["sources"]
 
 
@@ -2193,21 +2208,21 @@ class TestUpdateEndpoint409Conflict:
             mock_manager = Mock(spec=SyncManager)
             mock_manager.start_sync.return_value = (
                 False,
-                "Sync already in progress for Goodreads",
+                "Sync already in progress for Goodreads CSV",
             )
             mock_get_sync_manager.return_value = mock_manager
 
             with patch(
-                "src.ingestion.sources.goodreads.GoodreadsPlugin.validate_config",
+                "src.ingestion.sources.goodreads_csv.GoodreadsCsvPlugin.validate_config",
                 return_value=[],
             ):
-                response = client.post("/api/update", json={"source": "goodreads"})
+                response = client.post("/api/update", json={"source": "goodreads_csv"})
 
             assert response.status_code == 409
             detail = response.json()["detail"]
             assert "Sync already in progress" in detail
-            assert "Goodreads" in detail
-            assert mock_manager.start_sync.call_args.args[0] == "Goodreads"
+            assert "Goodreads CSV" in detail
+            assert mock_manager.start_sync.call_args.args[0] == "Goodreads CSV"
 
     def test_update_allows_different_sources_concurrently(
         self, client: TestClient, mock_components: dict
@@ -2215,7 +2230,7 @@ class TestUpdateEndpoint409Conflict:
         """A second source is accepted while a different source is running.
 
         Plants a real RUNNING job for Steam in the global SyncManager
-        before triggering a Goodreads sync. The endpoint must reject
+        before triggering a Goodreads CSV sync. The endpoint must reject
         only when the SAME label is running — different labels return
         200 even with another sync still in flight.
         """
@@ -2231,23 +2246,27 @@ class TestUpdateEndpoint409Conflict:
         assert manager.is_running("Steam") is True
 
         with patch(
-            "src.ingestion.sources.goodreads.GoodreadsPlugin.validate_config",
+            "src.ingestion.sources.goodreads_csv.GoodreadsCsvPlugin.validate_config",
             return_value=[],
         ):
             # Drop the captured execute_multi_source_sync into a no-op so
             # the second sync's daemon doesn't try to actually run.
             with patch(
                 "src.web.api.execute_multi_source_sync",
-                return_value=[SyncJob(source="Goodreads", status=SyncStatus.RUNNING)],
+                return_value=[
+                    SyncJob(source="Goodreads CSV", status=SyncStatus.RUNNING)
+                ],
             ):
-                response = client.post("/api/update", json={"source": "goodreads"})
+                response = client.post("/api/update", json={"source": "goodreads_csv"})
 
         assert response.status_code == 200, response.text
         assert "Sync started" in response.json()["message"]
         # Manager now tracks both jobs; the Steam one is still running
-        # and the Goodreads one was added on top.
+        # and the Goodreads CSV one was added on top.
         assert manager.is_running("Steam") is True
-        assert "Goodreads" in {job["source"] for job in manager.get_status()["jobs"]}
+        assert "Goodreads CSV" in {
+            job["source"] for job in manager.get_status()["jobs"]
+        }
 
 
 class TestUpdateEndpointParallelSync:
@@ -2298,7 +2317,7 @@ class TestUpdateEndpointParallelSync:
                 side_effect=self._make_capture(captured_kwargs, completion),
             ),
             patch(
-                "src.ingestion.sources.goodreads.GoodreadsPlugin.validate_config",
+                "src.ingestion.sources.goodreads_csv.GoodreadsCsvPlugin.validate_config",
                 return_value=[],
             ),
         ):
@@ -2322,7 +2341,7 @@ class TestUpdateEndpointParallelSync:
                 side_effect=self._make_capture(captured_kwargs, completion),
             ),
             patch(
-                "src.ingestion.sources.goodreads.GoodreadsPlugin.validate_config",
+                "src.ingestion.sources.goodreads_csv.GoodreadsCsvPlugin.validate_config",
                 return_value=[],
             ),
         ):
@@ -2346,7 +2365,7 @@ class TestUpdateEndpointParallelSync:
                 side_effect=self._make_capture(captured_kwargs, completion),
             ),
             patch(
-                "src.ingestion.sources.goodreads.GoodreadsPlugin.validate_config",
+                "src.ingestion.sources.goodreads_csv.GoodreadsCsvPlugin.validate_config",
                 return_value=[],
             ),
         ):

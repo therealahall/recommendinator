@@ -118,8 +118,8 @@ Each source is configured under `inputs:` in `config/config.yaml`. Enable the on
 
 ```yaml
 inputs:
-  goodreads:
-    plugin: goodreads
+  goodreads_csv:
+    plugin: goodreads_csv
     path: "inputs/goodreads_library_export.csv"
     enabled: true
 
@@ -162,7 +162,7 @@ You can have multiple instances of the same plugin (e.g., two `json_import` sour
 
 ```bash
 # Sync a specific source
-python3.11 -m src.cli update --source goodreads
+python3.11 -m src.cli update --source goodreads_csv
 
 # Sync all enabled sources
 python3.11 -m src.cli update --source all
@@ -182,17 +182,17 @@ database (post-migration or freshly created), or both.
 ```bash
 # Create a brand-new source directly in the database (no YAML edit needed)
 python3.11 -m src.cli source plugins             # see what plugins are available
-python3.11 -m src.cli source create my_books goodreads
+python3.11 -m src.cli source create my_books goodreads_csv
 python3.11 -m src.cli source set-secret my_books api_key   # add credentials
 
 # Move an existing YAML source into the database (one-time, idempotent)
-python3.11 -m src.cli source migrate goodreads
+python3.11 -m src.cli source migrate goodreads_csv
 
 # Inspect / edit fields after migration or creation
-python3.11 -m src.cli source show goodreads
-python3.11 -m src.cli source set goodreads path inputs/new_export.csv
-python3.11 -m src.cli source disable goodreads          # disabled sources are skipped during sync
-python3.11 -m src.cli source enable goodreads
+python3.11 -m src.cli source show goodreads_csv
+python3.11 -m src.cli source set goodreads_csv path inputs/new_export.csv
+python3.11 -m src.cli source disable goodreads_csv          # disabled sources are skipped during sync
+python3.11 -m src.cli source enable goodreads_csv
 python3.11 -m src.cli source set-secret steam api_key   # hidden prompt
 
 # Remove a DB-backed source entirely (clears stored secrets too)
@@ -203,15 +203,15 @@ All `source` subcommands except `set-secret` and `clear-secret` accept
 `--format json` for scripting parity with the web API:
 
 ```bash
-python3.11 -m src.cli source show goodreads --format json
-python3.11 -m src.cli source migrate goodreads --format json
+python3.11 -m src.cli source show goodreads_csv --format json
+python3.11 -m src.cli source migrate goodreads_csv --format json
 ```
 
 For atomic multi-field updates (the CLI equivalent of the web
 `PUT /api/sync/sources/<id>/config` bulk endpoint), use `source apply` with
 a JSON dict of values from a file or stdin. The example below uses
 `generic_csv` because it has both `path` and `content_type` in its schema —
-plugin-specific sources like `goodreads` only expose the fields their
+plugin-specific sources like `goodreads_csv` only expose the fields their
 schema declares (run `python3.11 -m src.cli source schema <id>` to see them):
 
 ```bash

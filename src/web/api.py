@@ -109,7 +109,7 @@ class UpdateRequest(BaseModel):
 
     source: str = Field(
         ...,
-        description="Data source (e.g. goodreads, steam, sonarr, radarr, or 'all')",
+        description="Data source (e.g. goodreads_csv, steam, sonarr, radarr, or 'all')",
     )
     max_workers: int | None = Field(
         None,
