@@ -94,7 +94,7 @@ class ContentItem(BaseModel):
     date_completed: date | None = None
 
     # Source tracking - which plugin/source this came from
-    source: str | None = None  # e.g., "goodreads", "steam", "manual"
+    source: str | None = None  # e.g., "goodreads_csv", "steam", "manual"
 
     # Runtime-only: parent item ID (e.g., TV show ID for a season item).
     # Set during recommendation expansion, not persisted.

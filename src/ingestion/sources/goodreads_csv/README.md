@@ -1,4 +1,4 @@
-# Goodreads
+# Goodreads (CSV Export)
 
 Imports books from a Goodreads CSV export.
 
@@ -12,8 +12,11 @@ Imports books from a Goodreads CSV export.
 
 ```yaml
 inputs:
-  goodreads:
+  goodreads_csv:
+    plugin: goodreads_csv
     path: "/path/to/goodreads_export.csv"
+    content_type: "book"
+    enabled: true
 ```
 
 | Field | Type | Required | Description |
@@ -26,6 +29,6 @@ inputs:
 - Status mapping: `read` → completed, `currently-reading` → currently consuming, anything else → unread.
 
 ## Development
-- Implementation: [`goodreads.py`](goodreads.py)
-- Tests: [`test_goodreads.py`](test_goodreads.py)
-- Plugin class: `GoodreadsPlugin`
+- Implementation: [`goodreads_csv.py`](goodreads_csv.py)
+- Tests: [`test_goodreads_csv.py`](test_goodreads_csv.py)
+- Plugin class: `GoodreadsCsvPlugin`

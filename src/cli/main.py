@@ -25,6 +25,10 @@ from src.cli.config import (
     create_storage_manager,
     load_config,
 )
+from src.storage.source_migration import (
+    migrate_source_config_plugins,
+    migrate_source_labels,
+)
 
 
 @click.group()
@@ -61,6 +65,12 @@ def cli(ctx: click.Context, config: Path | None) -> None:
     except Exception as error:
         click.echo(f"Error initializing components: {error}", err=True)
         sys.exit(1)
+
+    # Relabel stored goodreads source values and plugin names after the plugin
+    # rename. Runs for every CLI command so a CLI-only user is migrated even if
+    # they never run ``update`` (the web app runs both on startup/reload).
+    migrate_source_labels(ctx.obj["storage"])
+    migrate_source_config_plugins(ctx.obj["storage"])
 
 
 # Register commands

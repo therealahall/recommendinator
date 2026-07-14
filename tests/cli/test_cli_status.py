@@ -26,13 +26,15 @@ def _status_invoke(
     version: str = "0.6.0",
 ) -> object:
     """Invoke the status command with version patch and full LLM control."""
-    p_config, p_storage, p_llm, p_engine = _cli_patches()
+    p_config, p_storage, p_llm, p_engine, p_labels, p_plugins = _cli_patches()
     mock_storage = MagicMock(spec=StorageManager)
     with (
         p_config as mock_load,
         p_storage as mock_storage_fn,
         p_llm as mock_llm,
         p_engine as mock_eng,
+        p_labels,
+        p_plugins,
         patch(
             "src.cli.commands.importlib.metadata.version",
             return_value=version,

@@ -446,3 +446,77 @@ class TestPluginRegistryAbstractClassRegression:
         assert (
             warning_records == []
         ), f"Expected no warnings, got: {[r.message for r in warning_records]}"
+
+
+class TestGoodreadsPluginRename:
+    """Real-discovery tests locking in the goodreads -> goodreads_csv rename.
+
+    These exercise the actual built-in plugin discovery (no fakes) so they
+    prove the rename is a true hard rename: the new identifier resolves and
+    the old one does not silently fall back to anything.
+    """
+
+    def test_goodreads_csv_resolves_to_renamed_class(
+        self, clean_registry: PluginRegistry
+    ) -> None:
+        """The renamed plugin resolves under 'goodreads_csv' with correct metadata."""
+        from src.ingestion.sources.goodreads_csv.goodreads_csv import (
+            GoodreadsCsvPlugin,
+        )
+
+        clean_registry.discover_plugins()
+        plugin = clean_registry.get_plugin("goodreads_csv")
+
+        assert isinstance(plugin, GoodreadsCsvPlugin)
+        assert plugin.name == "goodreads_csv"
+        assert plugin.display_name == "Goodreads (CSV Export)"
+
+    def test_old_goodreads_name_no_longer_resolves(
+        self, clean_registry: PluginRegistry
+    ) -> None:
+        """A config referencing the pre-rename 'goodreads' plugin finds nothing.
+
+        Guards against a stray backward-compat alias: the rename must be hard,
+        so the old identifier must not resolve to any plugin.
+        """
+        clean_registry.discover_plugins()
+
+        assert clean_registry.get_plugin("goodreads") is None
+        assert "goodreads" not in clean_registry.get_all_plugins()
+
+    def test_goodreads_rss_resolves(self, clean_registry: PluginRegistry) -> None:
+        """The new RSS sibling plugin resolves under 'goodreads_rss'."""
+        from src.ingestion.sources.goodreads_rss.goodreads_rss import (
+            GoodreadsRssPlugin,
+        )
+
+        clean_registry.discover_plugins()
+        plugin = clean_registry.get_plugin("goodreads_rss")
+
+        assert isinstance(plugin, GoodreadsRssPlugin)
+        assert plugin.name == "goodreads_rss"
+
+    def test_enabled_plugins_ignores_old_goodreads_key(
+        self, clean_registry: PluginRegistry
+    ) -> None:
+        """An input entry with plugin='goodreads' yields no enabled plugin.
+
+        The registry does not fall back to the renamed plugin, so a stale
+        config block silently contributes nothing rather than resolving to
+        goodreads_csv.
+        """
+        clean_registry.discover_plugins()
+
+        config = {
+            "inputs": {
+                "my_books": {
+                    "plugin": "goodreads",
+                    "enabled": True,
+                    "path": "/data/books.csv",
+                },
+            }
+        }
+
+        enabled = clean_registry.get_enabled_plugins(config)
+
+        assert enabled == []

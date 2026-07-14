@@ -12,6 +12,10 @@ import watchfiles
 
 from src.cli.config import load_config
 from src.storage.credential_migration import migrate_config_credentials
+from src.storage.source_migration import (
+    migrate_source_config_plugins,
+    migrate_source_labels,
+)
 
 if TYPE_CHECKING:
     from src.conversation.engine import ConversationEngine
@@ -152,6 +156,10 @@ def reload_config() -> bool:
         # Mutates config in place: sensitive fields are popped after migration.
         if app_state.storage is not None:
             migrate_config_credentials(config, app_state.storage)
+            # Relabel stored goodreads source values and plugin names after the
+            # plugin rename
+            migrate_source_labels(app_state.storage)
+            migrate_source_config_plugins(app_state.storage)
         app_state.config = config
         logger.info("Reloaded config from %s", config_path)
         return True

@@ -181,7 +181,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
             rating INTEGER CHECK (rating >= 1 AND rating <= 5),
             review TEXT,
             date_completed DATE,
-            source TEXT,  -- Which plugin/source this came from (goodreads, steam, etc.)
+            source TEXT,  -- Which plugin/source this came from (goodreads_csv, steam, etc.)
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(user_id, external_id, content_type)

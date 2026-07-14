@@ -107,6 +107,8 @@ def _invoke_recommend_with_engine(
         patch("src.cli.main.create_storage_manager") as mock_storage_fn,
         patch("src.cli.main.create_llm_components") as mock_llm,
         patch("src.cli.main.create_recommendation_engine", return_value=mock_engine),
+        patch("src.cli.main.migrate_source_labels"),
+        patch("src.cli.main.migrate_source_config_plugins"),
     ):
         mock_load.return_value = config or {}
         mock_storage = MagicMock(spec=StorageManager)

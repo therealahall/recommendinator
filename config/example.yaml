@@ -49,7 +49,7 @@ ingestion:
   conflict_strategy: "last_write_wins"
   # Source priority ordering (highest priority first).
   # Only used with source_priority strategy.
-  source_priority: ["goodreads", "steam"]
+  source_priority: ["goodreads_csv", "goodreads_rss", "steam"]
 
 # Input sources configuration
 # Each entry is a user-defined name with a 'plugin' field specifying the plugin type.
@@ -67,11 +67,24 @@ ingestion:
 # write to the source_configs / credentials tables. See the "Source
 # configuration precedence" section in ARCHITECTURE.md.
 inputs:
-  goodreads:
-    plugin: goodreads
+  goodreads_csv:
+    plugin: goodreads_csv
     path: "inputs/goodreads_library_export.csv"
     content_type: "book"  # Content type for enrichment (book, movie, tv_show, video_game)
     enabled: true
+
+  # Goodreads — sync PUBLIC shelves directly via RSS (no CSV export needed).
+  # Requires the profile to be public. Paste your numeric user ID or the
+  # profile URL (e.g. https://www.goodreads.com/user/show/12345-name).
+  goodreads_rss:
+    plugin: goodreads_rss
+    user_id: ""  # Goodreads numeric user ID or public profile URL
+    shelves:
+      - "read"
+      - "currently-reading"
+      - "to-read"
+    content_type: "book"
+    enabled: false
 
   # The StoryGraph — CSV export from your library (no API; pure file import).
   # Generate the file at Manage Account -> Manage Your Data ->
