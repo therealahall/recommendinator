@@ -1,6 +1,24 @@
 # CHANGELOG
 
 
+## v0.20.0 (2026-07-14)
+
+### Chores
+
+- **config**: Add storygraph_csv example input block
+  ([`0446cc7`](https://github.com/therealahall/recommendinator/commit/0446cc71f7c99c9e90fde067df23ca0b61a16d87))
+
+### Documentation
+
+- **sources**: List The StoryGraph as a book source
+  ([`a0e26f7`](https://github.com/therealahall/recommendinator/commit/a0e26f7f3c5e5da33f91da4f14d3aee6000f8f35))
+
+### Features
+
+- **ingestion**: Add StoryGraph CSV source plugin
+  ([`35e61d0`](https://github.com/therealahall/recommendinator/commit/35e61d07433c4730aea20695a73c0f0df46c5927))
+
+
 ## v0.19.1 (2026-07-08)
 
 ### Bug Fixes
