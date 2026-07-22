@@ -18,6 +18,7 @@ from src.recommendations.variety import (
     VARIETY_LADDER_STEPS,
     VARIETY_SERIES_CONTINUATION_FACTOR,
     VARIETY_TOP_PENALTY,
+    _completion_recency,
     build_variety_ladder,
     variety_penalty_for,
 )
@@ -330,3 +331,152 @@ class TestOngoingTvShowFinishedSeasons:
         )
         # The dated completion is fresher, so it claims the single rung.
         assert set(ladder) == {"crime_thriller"}
+
+
+def _completed_show(
+    title: str,
+    genres: list[str],
+    *,
+    completed_on: date | None,
+    season_dates: dict[str, str] | None = None,
+    db_id: int | None = None,
+) -> ContentItem:
+    """Build a COMPLETED TV show carrying *genres* and optional season dates."""
+    metadata: dict[str, object] = {"genres": genres}
+    if season_dates is not None:
+        metadata["seasons_watched_dates"] = season_dates
+    return ContentItem(
+        id=title.lower().replace(" ", "_"),
+        db_id=db_id,
+        title=title,
+        content_type=ContentType.TV_SHOW,
+        status=ConsumptionStatus.COMPLETED,
+        date_completed=completed_on,
+        metadata=metadata,
+    )
+
+
+class TestCompletionRecency:
+    """Tests for :func:`_completion_recency`."""
+
+    def test_completed_tv_show_without_date_uses_latest_season_date(self) -> None:
+        """A completed show with a NULL date_completed falls back to season dates."""
+        show = _completed_show(
+            "DuckTales",
+            ["Animation"],
+            completed_on=None,
+            season_dates={
+                "3": "2026-06-01T00:00:00+00:00",
+                "4": "2026-07-17T00:00:00+00:00",
+            },
+        )
+        assert _completion_recency(show) == date(2026, 7, 17)
+
+    def test_completed_tv_show_with_date_ignores_season_fallback(self) -> None:
+        """A present date_completed wins; the season fallback never overrides it."""
+        show = _completed_show(
+            "DuckTales",
+            ["Animation"],
+            completed_on=date(2026, 1, 1),
+            season_dates={"4": "2026-07-17T00:00:00+00:00"},
+        )
+        assert _completion_recency(show) == date(2026, 1, 1)
+
+    def test_completed_tv_show_without_date_or_season_dates_stays_none(self) -> None:
+        """A completed show with no date and no season dates degrades to None.
+
+        The TV fallback finds no parseable date, so the show remains undated and
+        sorts to the weakest rung just like any other undated completion.
+        """
+        show = _completed_show("No Dates", ["Animation"], completed_on=None)
+        assert _completion_recency(show) is None
+
+    def test_completed_book_without_date_stays_none(self) -> None:
+        """A completed non-TV item never gets the TV season fallback."""
+        book = _completed("Undated Book", ["Fantasy"], completed_on=None)
+        assert _completion_recency(book) is None
+
+    def test_completed_non_tv_ignores_stray_season_dates(self) -> None:
+        """A non-TV item with stray season dates still returns None.
+
+        Pins the ``content_type == ContentType.TV_SHOW`` guard: even malformed
+        metadata carrying ``seasons_watched_dates`` on a movie must not trigger
+        the TV-only season-date fallback.
+        """
+        movie = ContentItem(
+            id="stray_movie",
+            title="Stray Movie",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.COMPLETED,
+            date_completed=None,
+            metadata={
+                "genres": ["Animation"],
+                "seasons_watched_dates": {"1": "2026-07-17T00:00:00+00:00"},
+            },
+        )
+        assert _completion_recency(movie) is None
+
+
+class TestCompletedTvShowSeasonDateFallbackRegression:
+    """Regression tests for completed shows whose finish date is season-only."""
+
+    def test_completed_animated_show_season_date_penalizes_animation(self) -> None:
+        """Regression test: a completed show dated only by season timestamps.
+
+        Bug reported: DuckTales was COMPLETED and rated 4, its genres include
+        Animation, but its ``date_completed`` column was NULL and its finish
+        date lived only in ``metadata['seasons_watched_dates']``. Because
+        ``_completion_recency`` returned only ``date_completed`` for COMPLETED
+        items, DuckTales was treated as undated and sorted below every *dated*
+        completion. With five dated non-animation completions ahead of it, the
+        five-rung ladder filled up before reaching DuckTales, so the
+        animation_family cluster never landed on the ladder and the animated
+        candidate Bob's Burgers took a 0.0 variety penalty.
+        Fix: for a COMPLETED TV show with a NULL date_completed,
+        ``_completion_recency`` falls back to the latest watched-season date, so
+        the show is dated by its most recent season and claims a fresh rung.
+        """
+        ducktales = _completed_show(
+            "DuckTales",
+            ["Animation"],
+            completed_on=None,
+            season_dates={"4": "2026-07-17T00:00:00+00:00"},
+            db_id=1,
+        )
+        # Five dated, non-animation completions. Their completion dates all sit
+        # a little before DuckTales' latest season date (2026-07-17), so once
+        # DuckTales is treated as dated it is the freshest event and claims the
+        # top rung. Before the fix it was treated as *undated* and sorted below
+        # all five, filling every rung and dropping animation_family entirely.
+        other_dated = [
+            _completed_show(
+                "Crime Show", ["Crime"], completed_on=date(2026, 7, 12), db_id=2
+            ),
+            _completed_show(
+                "Space Show",
+                ["Science Fiction"],
+                completed_on=date(2026, 7, 13),
+                db_id=3,
+            ),
+            _completed_show(
+                "Dragon Show", ["Fantasy"], completed_on=date(2026, 7, 14), db_id=4
+            ),
+            _completed_show(
+                "West Show", ["Western"], completed_on=date(2026, 7, 15), db_id=5
+            ),
+            _completed_show(
+                "War Show", ["War"], completed_on=date(2026, 7, 16), db_id=6
+            ),
+        ]
+
+        ladder = build_variety_ladder([ducktales, *other_dated])
+
+        # DuckTales' cluster now lands on the ladder: dating it by its season
+        # timestamp makes it the freshest completion instead of an undated event
+        # that sorts below the five dated shows and off the five-rung ladder.
+        assert "animation_family" in ladder
+
+        bobs_burgers = _candidate("Bob's Burgers", ["Animation", "Comedy"])
+        penalty = variety_penalty_for(bobs_burgers, ladder)
+        # Before the fix this penalty was 0.0 (animation_family never on ladder).
+        assert penalty > 0.0

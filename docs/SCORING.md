@@ -102,7 +102,12 @@ whole is still "currently consuming." A show with at least one fully-watched
 season claims a rung on the ladder for its genres, dated by that season's
 watched date rather than the show's (absent) completion date. That date comes
 from Trakt's per-season last-watched time, or from the timestamp of a manual
-season check-off in the library editor. The show's next season is still a
+season check-off in the library editor. The same season-date fallback also
+covers a **completed** TV show that has no recorded completion date (for
+example one tracked only per-season, so its `date_completed` is absent): it is
+dated by its most recent watched-season timestamp instead of being treated as
+undated, so a show you just finished lands on the freshest rungs rather than
+sinking to the weakest one. The show's next season is still a
 series continuation, so it gets the same halved penalty described above —
 finishing season 1 nudges season 2 down without burying it. A finished season
 with no recorded date (e.g. imported via CSV/JSON, watched before this
