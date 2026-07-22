@@ -9,9 +9,11 @@ the strongest rung.
 
 The ladder is built from the user's completion events ordered by completion
 date (newest first). A completion event is a fully COMPLETED item, or an
-ongoing TV show with at least one finished season — that season's completion
-is dated by its most recent watched-season timestamp rather than
-``date_completed``. Each distinct thematic genre cluster encountered claims
+ongoing TV show with at least one finished season. A completion is normally
+dated by ``date_completed``, but a TV show whose ``date_completed`` is absent
+(a fully-watched show tracked only per-season, or an ongoing show mid-run) is
+dated by its most recent watched-season timestamp instead. Each distinct
+thematic genre cluster encountered claims
 the next rung; the most recently finished cluster receives the strongest
 penalty and the penalty decays linearly to zero over
 :data:`VARIETY_LADDER_STEPS` rungs. A candidate is penalised by the strongest
@@ -74,11 +76,15 @@ def _is_completion_event(item: ContentItem) -> bool:
 def _completion_recency(item: ContentItem) -> date | None:
     """Completion date used for ladder ordering, or None if undated.
 
-    Fully completed items use ``date_completed``; an ongoing show uses its most
-    recent watched-season date. An undated event still lands on the ladder but
-    sorts to the weakest rung.
+    Completed items use ``date_completed``, but a completed TV show whose
+    ``date_completed`` is None (its finish date lives only in season timestamps)
+    falls back to its most recent watched-season date. An ongoing show likewise
+    uses its most recent watched-season date. An undated event still lands on
+    the ladder but sorts to the weakest rung.
     """
     if item.status == ConsumptionStatus.COMPLETED:
+        if item.date_completed is None and item.content_type == ContentType.TV_SHOW:
+            return latest_season_watched_date(item)
         return item.date_completed
     return latest_season_watched_date(item)
 
@@ -111,9 +117,10 @@ def build_variety_ladder(
     Items with status :attr:`ConsumptionStatus.COMPLETED` contribute — items
     the user is actively consuming do not otherwise represent a *finished*
     genre. The one exception is an ongoing TV show with at least one finished
-    season: that season's completion is dated by its most recent watched-season
-    timestamp rather than the show's (absent) ``date_completed``. Items are
-    scanned newest-first; each distinct thematic cluster claims the
+    season. A completion is dated by ``date_completed``, except a TV show
+    lacking one is dated by its most recent watched-season timestamp (covering
+    both an ongoing show and a completed show tracked only per-season). Items
+    are scanned newest-first; each distinct thematic cluster claims the
     next rung until ``steps`` distinct clusters have been recorded. Rung ``i``
     receives penalty ``top_penalty * (steps - i) / steps``.
 
