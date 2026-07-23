@@ -12,6 +12,7 @@ sources in the UI/CLI, parallel sync, and library export.
 | **Goodreads** | Books | [goodreads_csv](../src/ingestion/sources/goodreads_csv/README.md) — CSV export from your Goodreads library |
 | **Goodreads (RSS)** | Books | [goodreads_rss](../src/ingestion/sources/goodreads_rss/README.md) — sync public shelves via RSS (user ID or profile URL; no CSV export) |
 | **The StoryGraph** | Books | [storygraph_csv](../src/ingestion/sources/storygraph_csv/README.md) — CSV export from your StoryGraph library |
+| **Calibre-Web** | Books | [calibre_web](../src/ingestion/sources/calibre_web/README.md) — OPDS import from a Calibre-Web instance |
 | **Steam** | Games | [steam](../src/ingestion/sources/steam/README.md) — automatic import via Steam Web API |
 | **GOG** | Games | [gog](../src/ingestion/sources/gog/README.md) — OAuth; imports library and wishlist |
 | **Epic Games** | Games | [epic_games](../src/ingestion/sources/epic_games/README.md) — OAuth via Legendary |
@@ -38,10 +39,12 @@ enabled-first.
 There are two ways to create a source:
 
 - Click **+ Add source** at the top of the Sync Sources card. Pick a plugin from
-  the dropdown, give the source an id, fill in any non-sensitive fields the
-  plugin's schema declares, and click Create. The source goes straight into the
-  database — no YAML edit required. Add sensitive fields (API keys, OAuth tokens)
-  afterwards using the Replace action in the source's expanded panel.
+  the dropdown, give the source an id, and fill in the plugin's fields — including
+  sensitive fields (passwords, API keys, OAuth tokens), which render as password
+  inputs and are stored encrypted, never written to the plaintext config. Click
+  Create once and the source goes straight into the database, ready to use — no
+  YAML edit and no follow-up secret step required. The Replace action in the
+  source's expanded panel remains available to rotate a secret later.
 - Define the source under `inputs:` in `config.yaml`, then click **Migrate to DB**
   in the source's expanded panel to copy the YAML entry into the database. After
   migration the YAML entry is ignored — all edits go through the UI.

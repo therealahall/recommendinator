@@ -8,6 +8,7 @@ non-sensitive fields, secrets, and the enabled flag.
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Iterator
 from dataclasses import fields
 from pathlib import Path
@@ -17,6 +18,7 @@ from unittest.mock import Mock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from src.ingestion.sync import SyncResult
 from src.llm.client import OllamaClient
 from src.llm.embeddings import EmbeddingGenerator
 from src.llm.recommendations import RecommendationGenerator
@@ -596,10 +598,40 @@ class TestCreateSourceEndpoint:
         )
         assert response.status_code == 409
 
+    def test_accepts_hyphenated_id(
+        self, client: TestClient, storage: StorageManager
+    ) -> None:
+        """A hyphenated id like ``calibre-web`` is a valid source id.
+
+        Hyphens are allowed so the Add-source modal can prefill plugin names
+        (e.g. ``calibre-web``) and users can type ids matching upstream
+        service names without hitting a silently-disabled Create button.
+        """
+        response = client.post(
+            "/api/sync/sources",
+            json={
+                "id": "calibre-web",
+                "plugin": "fake_file",
+                "values": {"path": "/data/cw.csv", "content_type": "book"},
+                "enabled": True,
+            },
+        )
+        assert response.status_code == 201
+        assert response.json()["source_id"] == "calibre-web"
+        assert storage.get_source_config(1, "calibre-web") is not None
+
     def test_rejects_invalid_id(self, client: TestClient) -> None:
         response = client.post(
             "/api/sync/sources",
             json={"id": "Bad-ID!", "plugin": "fake_file", "values": {}},
+        )
+        assert response.status_code == 400
+
+    def test_rejects_id_starting_with_hyphen(self, client: TestClient) -> None:
+        """A hyphen may appear inside an id but never as the first character."""
+        response = client.post(
+            "/api/sync/sources",
+            json={"id": "-nope", "plugin": "fake_file", "values": {}},
         )
         assert response.status_code == 400
 
@@ -660,6 +692,17 @@ class TestDeleteSourceEndpoint:
         response = client.delete("/api/sync/sources/Bad-ID")
         assert response.status_code == 400
 
+    def test_accepts_hyphenated_source_id(
+        self, client: TestClient, storage: StorageManager
+    ) -> None:
+        """A hyphenated id passes the format gate and deletes its DB row."""
+        storage.upsert_source_config(
+            1, "calibre-web", "fake_file", {"path": "/x"}, enabled=True
+        )
+        response = client.delete("/api/sync/sources/calibre-web")
+        assert response.status_code == 204
+        assert storage.get_source_config(1, "calibre-web") is None
+
     def test_drops_row_even_when_plugin_no_longer_registered(
         self, client: TestClient, storage: StorageManager
     ) -> None:
@@ -674,3 +717,105 @@ class TestDeleteSourceEndpoint:
         response = client.delete("/api/sync/sources/ghost")
         assert response.status_code == 204
         assert storage.get_source_config(1, "ghost") is None
+
+
+class TestUpdateEndpointDbOnlySourcesRegression:
+    """Per-source sync (POST /api/update) must resolve DB-only sources.
+
+    Bug: a source created via ``create_source`` / the web Add-source modal
+    lives only in the ``source_configs`` table (plus its secret in
+    ``credentials``) with no YAML ``inputs`` entry. Clicking Sync errored
+    "disabled or not configured" and — because the endpoint answered HTTP 200
+    with a message body — the web UI's Sync button stuck spinning (no SyncJob
+    is created to end the frontend polling).
+
+    Root cause: the single-source ``/update`` branch gated on the YAML
+    ``inputs`` map only (``config.get("inputs", {}).get(source)``), so a DB-only
+    source was invisible to it.
+
+    Fix: the branch resolves through ``resolve_inputs`` (which merges DB
+    sources, injects ``_source_id`` and decrypts credentials) filtered by
+    ``source_id``, and answers 400 when no enabled source matches.
+    """
+
+    def _capture_sync(self) -> tuple[dict[str, Any], threading.Event]:
+        """Patchable stand-in for execute_multi_source_sync.
+
+        Records the ``sources`` list it was called with (so the resolved
+        config can be asserted) and signals an Event so the test can wait for
+        the background sync thread deterministically.
+        """
+        captured: dict[str, Any] = {}
+        done = threading.Event()
+
+        def fake_execute(*, sources: list[Any], **_: Any) -> list[SyncResult]:
+            captured["sources"] = sources
+            done.set()
+            return [SyncResult(source_name=plugin.name) for plugin, _cfg in sources]
+
+        captured["fn"] = fake_execute
+        return captured, done
+
+    def test_enabled_db_only_source_syncs_regression(
+        self, client: TestClient, storage: StorageManager
+    ) -> None:
+        """An enabled DB-only source starts a sync instead of erroring.
+
+        Asserts end to end (not just the returned status): the plugin the sync
+        boundary receives carries the injected ``_source_id`` and the decrypted
+        ``api_key`` credential plus the DB config, proving the single-source
+        path actually resolves and runs the DB source — not merely passes the
+        pre-check.
+        """
+        # Create a DB-only source (no YAML inputs entry) with its secret set.
+        create = client.post(
+            "/api/sync/sources",
+            json={
+                "id": "calibre-web",
+                "plugin": "fake_api",
+                "values": {"user_id": "reader"},
+                "enabled": True,
+            },
+        )
+        assert create.status_code == 201
+        client.put(
+            "/api/sync/sources/calibre-web/secret/api_key",
+            json={"value": "top-secret"},
+        )
+
+        captured, done = self._capture_sync()
+        with patch("src.web.api.execute_multi_source_sync", captured["fn"]):
+            response = client.post("/api/update", json={"source": "calibre-web"})
+            assert response.status_code == 200
+            body = response.json()
+            # Not the old 200 "disabled or not configured" dead-end.
+            assert "disabled or not configured" not in body.get("message", "")
+            assert body["sources"] == ["calibre-web"]
+            assert done.wait(timeout=5)
+
+        # End-to-end: the plugin received the fully-resolved config — the
+        # injected _source_id and the decrypted secret, proving the single
+        # source path runs, not just passes the pre-check.
+        sources = captured["sources"]
+        assert len(sources) == 1
+        _plugin, resolved_config = sources[0]
+        assert resolved_config["_source_id"] == "calibre-web"
+        assert resolved_config["api_key"] == "top-secret"
+        assert resolved_config["user_id"] == "reader"
+
+    def test_disabled_db_only_source_returns_400_regression(
+        self, client: TestClient, storage: StorageManager
+    ) -> None:
+        """A disabled DB-only source answers 4xx, not a 200 dead-end."""
+        storage.upsert_source_config(
+            1, "calibre-web", "fake_api", {"user_id": "reader"}, enabled=False
+        )
+        response = client.post("/api/update", json={"source": "calibre-web"})
+        assert response.status_code == 400
+        assert "disabled or not configured" in response.json()["detail"]
+
+    def test_unknown_source_returns_400_regression(self, client: TestClient) -> None:
+        """A source id that matches nothing answers 4xx, not a 200 dead-end."""
+        response = client.post("/api/update", json={"source": "no_such_source"})
+        assert response.status_code == 400
+        assert "disabled or not configured" in response.json()["detail"]

@@ -652,9 +652,10 @@ def set_source_enabled_state(
 
 
 # Source ids must be safe to use as URL path parameters and YAML keys.
-# Lowercase letters, digits, and underscores only; first character must be
-# a letter so the id never collides with a numeric YAML key.
-_SOURCE_ID_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+# Lowercase letters, digits, underscores, and hyphens only; first character
+# must be a letter so the id never collides with a numeric YAML key. The
+# hyphen is last in the character class so it is a literal, not a range.
+_SOURCE_ID_RE = re.compile(r"^[a-z][a-z0-9_-]*$")
 
 
 def list_available_plugins() -> list[dict[str, Any]]:
@@ -723,7 +724,7 @@ def create_source(
         raise SourceConfigError(
             "invalid_id",
             "Source id must start with a lowercase letter and contain only "
-            "lowercase letters, digits, and underscores",
+            "lowercase letters, digits, underscores, and hyphens",
         )
 
     if storage.get_source_config(user_id, source_id) is not None:
@@ -778,7 +779,7 @@ def delete_source(
         raise SourceConfigError(
             "invalid_id",
             "Source id must start with a lowercase letter and contain only "
-            "lowercase letters, digits, and underscores",
+            "lowercase letters, digits, underscores, and hyphens",
         )
 
     db_row = storage.get_source_config(user_id, source_id)
