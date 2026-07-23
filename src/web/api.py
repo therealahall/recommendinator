@@ -1230,19 +1230,29 @@ async def update_data(request: UpdateRequest) -> dict[str, Any]:
     # pre-check here, so don't bother with one — let start_sync's
     # check-and-set be the single source of truth.
 
-    inputs_config = config.get("inputs", {})
-
-    # Resolve which sources to sync (dynamic from config)
+    # Resolve which sources to sync. ``resolve_inputs`` is the single source
+    # of truth: it merges YAML ``inputs`` with DB-backed ``source_configs``,
+    # injects ``_source_id``, and layers decrypted credentials — so it covers
+    # sources created via the Add-source modal that live only in the database.
     if source == "all":
         resolved = resolve_inputs(config, storage=storage)
     else:
-        # Single source - check it exists and is enabled
-        source_entry = inputs_config.get(source, {})
-        if not isinstance(source_entry, dict) or not source_entry.get("enabled", False):
-            return {
-                "message": f"{source} source is disabled or not configured",
-                "count": 0,
-            }
+        # Single source: select the enabled, resolved entry matching ``source``.
+        # Filtering the resolved list (not the YAML ``inputs`` map) is what lets
+        # a DB-only source sync — and a disabled/unknown source yields no entry.
+        resolved = [
+            entry
+            for entry in resolve_inputs(config, storage=storage)
+            if entry.source_id == source
+        ]
+        if not resolved:
+            # A 4xx (not a 200 "message") is required so the frontend ``catch``
+            # clears the optimistic "syncing" flag; a 200 leaves the Sync button
+            # stuck because no SyncJob is ever created to end the polling.
+            raise HTTPException(
+                status_code=400,
+                detail=f"Source '{source}' is disabled or not configured",
+            )
         validation_errors = validate_source_config(source, config, storage=storage)
         if validation_errors:
             logger.warning(
@@ -1255,11 +1265,6 @@ async def update_data(request: UpdateRequest) -> dict[str, Any]:
                 detail=f"Source '{source}' is not properly configured: "
                 + "; ".join(validation_errors),
             )
-        resolved = [
-            entry
-            for entry in resolve_inputs(config, storage=storage)
-            if entry.source_id == source
-        ]
 
     if not resolved:
         return {"message": "No sources enabled or configured for sync", "count": 0}
