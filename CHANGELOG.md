@@ -1,6 +1,24 @@
 # CHANGELOG
 
 
+## v0.21.0 (2026-07-23)
+
+### Chores
+
+- **agents**: Forbid ephemeral verification in review agents
+  ([`46cc2d5`](https://github.com/therealahall/recommendinator/commit/46cc2d519e9bcd073440a8e6dfdb07401c827ad8))
+
+### Features
+
+- **ingestion**: Split goodreads into goodreads_csv, add goodreads_rss
+  ([`b29d095`](https://github.com/therealahall/recommendinator/commit/b29d095321ad1b72eb24565971dc7b5d5e2073e4))
+
+### Breaking Changes
+
+- **ingestion**: Config that sets `plugin: goodreads` must change to `plugin: goodreads_csv`. Stored
+  data relabels itself on first startup, but you have to update the config file by hand.
+
+
 ## v0.20.1 (2026-07-23)
 
 ### Bug Fixes
