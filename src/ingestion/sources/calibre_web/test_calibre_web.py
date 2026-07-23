@@ -861,6 +861,56 @@ class TestCalibreWebEdgeCases:
         requested_urls = [call.args[0] for call in mock_get.call_args_list]
         assert all("169.254.169.254" not in url for url in requested_urls)
 
+    def test_protocol_relative_next_link_not_followed(
+        self, plugin: CalibreWebPlugin, config: dict[str, object]
+    ) -> None:
+        """SSRF guard: a protocol-relative ``//host`` rel=next is refused.
+
+        A ``//evil.example.com/...`` href inherits the current scheme but
+        swaps the host, so resolving it against the configured origin yields a
+        foreign netloc. The guard must refuse it exactly like a fully-qualified
+        off-host link — the hostile host is never requested and the safe book
+        on page 1 still yields.
+        """
+        page1 = _feed(
+            _entry(entry_id="urn:uuid:safe", title="Safe Book"),
+            next_href="//evil.example.com/opds/new?offset=1",
+        )
+        responses = [_empty_read_feed(), _xml_response(page1)]
+        with patch("requests.get", side_effect=responses) as mock_get:
+            items = list(plugin.fetch(config))
+
+        assert [i.title for i in items] == ["Safe Book"]
+        # read feed + page 1 only; the protocol-relative link is not fetched.
+        assert mock_get.call_count == 2
+        requested_urls = [call.args[0] for call in mock_get.call_args_list]
+        assert all("evil.example.com" not in url for url in requested_urls)
+
+    def test_next_link_with_foreign_userinfo_not_followed(
+        self, plugin: CalibreWebPlugin, config: dict[str, object]
+    ) -> None:
+        """SSRF guard: userinfo can't smuggle the request to a foreign host.
+
+        ``http://user:pass@evil.example.com/...`` targets ``evil.example.com``;
+        the ``user:pass@`` userinfo is part of the netloc, so a netloc equality
+        check (not a substring/host-suffix check) is what correctly rejects it.
+        This pins that the comparison is against the full netloc — the foreign
+        host is never requested and the safe book still yields.
+        """
+        page1 = _feed(
+            _entry(entry_id="urn:uuid:safe", title="Safe Book"),
+            next_href="http://reader:secret@evil.example.com/opds/new?offset=1",
+        )
+        responses = [_empty_read_feed(), _xml_response(page1)]
+        with patch("requests.get", side_effect=responses) as mock_get:
+            items = list(plugin.fetch(config))
+
+        assert [i.title for i in items] == ["Safe Book"]
+        # read feed + page 1 only; the userinfo-carrying link is not fetched.
+        assert mock_get.call_count == 2
+        requested_urls = [call.args[0] for call in mock_get.call_args_list]
+        assert all("evil.example.com" not in url for url in requested_urls)
+
 
 class TestCalibreWebXmlHardening:
     """Tests that OPDS parsing rejects XXE / billion-laughs vectors."""
