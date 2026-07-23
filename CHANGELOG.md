@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.20.1 (2026-07-23)
+
+### Bug Fixes
+
+- **recommendations**: Fall back to latest season date for completed TV shows missing date_completed
+  ([`732017e`](https://github.com/therealahall/recommendinator/commit/732017e949ef8299b023b33edd2f76fbee685641))
+
+
 ## v0.20.0 (2026-07-14)
 
 ### Chores
