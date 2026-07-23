@@ -97,7 +97,12 @@ describe('useDataStore', () => {
     expect(store.isSourceIdSyncing('goodreads')).toBe(false)
   })
 
-  it('triggerSync clears the optimistic trigger on API error', async () => {
+  it('triggerSync clears the optimistic trigger and starts no polling on API error', async () => {
+    // Covers the DB-only-source regression too: the /update backend now
+    // answers 4xx (not a 200 "message") for a disabled/unconfigured source, and
+    // triggerSync's catch does not branch on status, so any error status hits
+    // this path. The button must re-enable AND no poll timer may start (there
+    // is no SyncJob to end it — a leaked timer would leave the button spinning).
     mockPost.mockRejectedValue(new ApiError(503, 'Service Unavailable'))
 
     const store = useDataStore()
@@ -107,6 +112,10 @@ describe('useDataStore', () => {
     expect(store.syncStatus).toBe('failed')
     expect(store.isSourceIdSyncing('steam')).toBe(false)
     expect(store.syncMessage).toContain('server returned 503')
+    // No poll timer left running to spin against a non-existent job.
+    const callsBefore = mockGet.mock.calls.length
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(mockGet.mock.calls.length).toBe(callsBefore)
   })
 
   it('triggerSync clears the optimistic trigger on generic error', async () => {
@@ -119,6 +128,24 @@ describe('useDataStore', () => {
     expect(store.syncStatus).toBe('failed')
     expect(store.isSourceIdSyncing('steam')).toBe(false)
     expect(store.syncMessage).toContain('unexpected failure')
+  })
+
+  it('triggerSync keeps the optimistic flag and starts polling on a successful start', async () => {
+    mockPost.mockResolvedValue({ message: 'Sync started for Steam' })
+    mockGet.mockResolvedValue({ status: 'idle', jobs: [] })
+
+    const store = useDataStore()
+    store.$patch({ syncSources: [steamSource()] })
+    await store.triggerSync('steam')
+
+    expect(store.isSourceIdSyncing('steam')).toBe(true)
+    // Polling started: exactly one tick fires exactly one GET /sync/status.
+    const callsBefore = mockGet.mock.calls.length
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(mockGet.mock.calls.length).toBe(callsBefore + 1)
+    expect(mockGet).toHaveBeenLastCalledWith('/sync/status')
+
+    store.cleanup()
   })
 
   it('triggerSync handles the "all" pseudo-source via the All Sources label', async () => {
