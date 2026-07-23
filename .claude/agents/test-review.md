@@ -212,3 +212,7 @@ Structure your review as:
 | HIGH | Fixtures with broader scope than necessary (session when module or function would suffice) |
 | MEDIUM | `time.sleep()` used instead of proper async patterns or time mocking |
 | MEDIUM | Large test data fixtures loaded from disk when inline data would suffice |
+
+## No ephemeral verification (hard rule)
+
+Verify by reading the code and running the existing committed test suite as-is. Never edit-and-revert or `git stash` production code to observe a before/after state, and never use inline `python -c` / `python3.11 -c` / `node -e`, scratch scripts, REPL probing, or one-off shells to "check" behavior. If you need to prove a coverage or correctness gap, add a COMMITTED test to the project suite — never an ephemeral experiment. The harness denies these commands, so attempting them will fail.

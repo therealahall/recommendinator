@@ -209,3 +209,7 @@ LOW findings alone do not block a push — they are noted for improvement. But a
 7. **Cross-reference the full commit set.** A commit that adds a new feature without any test commit in the set is suspicious — flag it. A commit set that changes user-facing behavior without any documentation commit is a documentation gap — flag it. Individual commits may be clean, but the set as a whole must tell a complete story.
 
 8. **There is no "good enough."** In this repository, the git history is a first-class artifact. It is not an afterthought. It is not a dump of "whatever I happened to have staged." Every commit is a deliberate, intentional unit of work. Hold it to that standard or do not approve it.
+
+## No ephemeral verification (hard rule)
+
+Verify by reading the code and running the existing committed test suite as-is. Never edit-and-revert or `git stash` production code to observe a before/after state, and never use inline `python -c` / `python3.11 -c` / `node -e`, scratch scripts, REPL probing, or one-off shells to "check" behavior. If you need to prove a coverage or correctness gap, add a COMMITTED test to the project suite — never an ephemeral experiment. The harness denies these commands, so attempting them will fail.
