@@ -1,6 +1,7 @@
 """Tests for the enrichment manager."""
 
 import logging
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -317,13 +318,49 @@ class TestEnrichmentManager:
         mock_registry: EnrichmentRegistry,
         config: dict[str, Any],
     ) -> None:
-        """Test starting enrichment when already running returns False."""
+        """Test starting enrichment when already running returns False.
+
+        The first job must be provably still in-flight when the second
+        ``start_enrichment()`` is called, otherwise a no-op job could finish
+        between the two calls and the guard would (wrongly) let the second in.
+        We park the first job inside the provider's ``enrich()`` on an Event so
+        ``running`` is still True for the second call, assert it is rejected,
+        then release the Event so the first job completes for clean teardown.
+        """
+        started_enrich = threading.Event()
+        release_enrich = threading.Event()
+
+        class BlockingProvider(MockProvider):
+            def enrich(
+                self, item: ContentItem, config: dict[str, Any]
+            ) -> EnrichmentResult | None:
+                started_enrich.set()
+                release_enrich.wait(timeout=5.0)
+                return super().enrich(item, config)
+
+        item = ContentItem(
+            id="movie1",
+            title="Movie 1",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+        )
+        mock_storage.get_items_needing_enrichment.side_effect = [[(1, item)], []]
+        mock_storage.count_items_needing_enrichment.return_value = 1
+        mock_registry.register(BlockingProvider())
+
         manager = EnrichmentManager(mock_storage, config, mock_registry)
+        try:
+            assert manager.start_enrichment() is True
+            # Wait until the first job is parked mid-enrich, so it is provably
+            # still running when we make the second call.
+            assert started_enrich.wait(timeout=5.0)
 
-        manager.start_enrichment()
-        result = manager.start_enrichment()
+            result = manager.start_enrichment()
 
-        assert result is False
+            assert result is False
+        finally:
+            release_enrich.set()
+            manager._wait_for_completion()
 
     def test_stop_enrichment(
         self,
