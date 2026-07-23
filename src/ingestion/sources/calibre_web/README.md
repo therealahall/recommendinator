@@ -30,7 +30,10 @@ inputs:
 | `password` | str | yes | Calibre-Web login password. Sensitive — stored encrypted, not in YAML. |
 | `verify_ssl` | bool | no | Verify the TLS certificate (default `true`; set `false` for self-signed instances). |
 
-Set the password from the web UI **Data** tab (Replace action) or the CLI:
+Set the password when you create the source in the web UI **Data** tab — enter it
+directly in the **+ Add source** modal (it renders as a password field and is
+stored encrypted). To set or rotate it later, use the Replace action on the
+source's panel or the CLI:
 
 ```
 python3.11 -m src.cli source set-secret calibre_web password

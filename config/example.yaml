@@ -100,7 +100,7 @@ inputs:
     plugin: calibre_web
     url: "http://localhost:8083"  # Base URL of your Calibre-Web instance
     username: ""  # Calibre-Web login username
-    password: ""  # Sensitive — set via the web UI or `source set-secret` (stored encrypted)
+    password: ""  # Sensitive — set in the web UI Add-source modal at create time, or later via the web UI Replace action / `source set-secret` (stored encrypted)
     verify_ssl: true  # Set false for self-signed TLS certificates
     content_type: "book"
     enabled: false
