@@ -428,7 +428,13 @@ def test_update_command_steam_success(mock_components):
 
 
 def test_update_command_steam_disabled(mock_components):
-    """Test update command with disabled Steam source."""
+    """A disabled source aborts (nonzero exit), not a graceful exit 0.
+
+    The single-source ``update`` branch resolves through ``resolve_inputs``
+    (which drops disabled sources) and aborts "Unknown or disabled source"
+    when nothing matches — mirroring the web ``/update`` 400 so the CLI and web
+    reject a disabled source the same way.
+    """
     mock_config = {
         "ollama": {
             "base_url": "http://localhost:11434",
@@ -456,8 +462,8 @@ def test_update_command_steam_disabled(mock_components):
         runner = CliRunner()
         result = runner.invoke(cli, ["update", "--source", "steam"])
 
-        assert result.exit_code == 0
-        assert "disabled" in result.output.lower()
+        assert result.exit_code != 0
+        assert "Unknown or disabled source 'steam'" in result.output
 
 
 def test_update_command_steam_missing_api_key(mock_components):
