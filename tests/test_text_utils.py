@@ -30,6 +30,27 @@ class TestHumanizeSourceIdBasic:
         """Normal snake_case source IDs are title-cased with spaces."""
         assert humanize_source_id(source_id) == expected
 
+    @pytest.mark.parametrize(
+        ("source_id", "expected"),
+        [
+            ("calibre-web", "Calibre Web"),
+            ("my-books", "My Books"),
+            ("read-only-shelf", "Read Only Shelf"),
+        ],
+    )
+    def test_hyphenated_inputs(self, source_id: str, expected: str) -> None:
+        """Hyphenated source IDs split on hyphens like underscores.
+
+        Hyphens became valid source-id characters so the "Add data source"
+        modal can prefill plugin names such as ``calibre-web``; the humanizer
+        must split on both separators to render "Calibre Web".
+        """
+        assert humanize_source_id(source_id) == expected
+
+    def test_mixed_separators(self) -> None:
+        """A source ID mixing underscores and hyphens splits on both."""
+        assert humanize_source_id("calibre-web_books") == "Calibre Web Books"
+
 
 class TestHumanizeSourceIdAcronyms:
     """Tests for acronym uppercasing in humanize_source_id."""
@@ -116,6 +137,21 @@ class TestHumanizeSourceIdEdgeCases:
         result = humanize_source_id("___")
         # split("_") on "___" gives ["", "", "", ""]
         assert result == "   "
+
+    def test_leading_hyphen(self) -> None:
+        """Leading hyphen produces an empty first segment, mirroring underscore."""
+        # re.split(r"[_-]", "-private-source") gives ["", "private", "source"]
+        assert humanize_source_id("-private-source") == " Private Source"
+
+    def test_trailing_hyphen(self) -> None:
+        """Trailing hyphen produces an empty last segment, mirroring underscore."""
+        # re.split(r"[_-]", "my-source-") gives ["my", "source", ""]
+        assert humanize_source_id("my-source-") == "My Source "
+
+    def test_multiple_consecutive_hyphens(self) -> None:
+        """Consecutive hyphens produce empty segments, mirroring underscore."""
+        # re.split(r"[_-]", "my--books") gives ["my", "", "books"]
+        assert humanize_source_id("my--books") == "My  Books"
 
     def test_non_acronym_short_word(self) -> None:
         """Short words not in the acronym list are title-cased, not uppercased."""

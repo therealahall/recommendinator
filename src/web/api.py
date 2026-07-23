@@ -1509,7 +1509,7 @@ _ERROR_KIND_TO_DETAIL: dict[str, str] = {
     "conflict": "A source with that id already exists.",
     "invalid_id": (
         "Source id must start with a lowercase letter and contain only "
-        "lowercase letters, digits, and underscores."
+        "lowercase letters, digits, underscores, and hyphens."
     ),
     "unknown_plugin": "The requested plugin is not registered.",
 }

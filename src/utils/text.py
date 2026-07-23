@@ -43,8 +43,9 @@ def humanize_source_id(source_id: str) -> str:
         ``gog`` → ``GOG``
         ``my_books`` → ``My Books``
         ``personal_site_games`` → ``Personal Site Games``
+        ``calibre-web`` → ``Calibre Web``
     """
-    words = source_id.split("_")
+    words = re.split(r"[_-]", source_id)
     return " ".join(_UPPERCASE_WORDS.get(word, word.capitalize()) for word in words)
 
 

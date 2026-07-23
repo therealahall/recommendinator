@@ -596,10 +596,40 @@ class TestCreateSourceEndpoint:
         )
         assert response.status_code == 409
 
+    def test_accepts_hyphenated_id(
+        self, client: TestClient, storage: StorageManager
+    ) -> None:
+        """A hyphenated id like ``calibre-web`` is a valid source id.
+
+        Hyphens are allowed so the Add-source modal can prefill plugin names
+        (e.g. ``calibre-web``) and users can type ids matching upstream
+        service names without hitting a silently-disabled Create button.
+        """
+        response = client.post(
+            "/api/sync/sources",
+            json={
+                "id": "calibre-web",
+                "plugin": "fake_file",
+                "values": {"path": "/data/cw.csv", "content_type": "book"},
+                "enabled": True,
+            },
+        )
+        assert response.status_code == 201
+        assert response.json()["source_id"] == "calibre-web"
+        assert storage.get_source_config(1, "calibre-web") is not None
+
     def test_rejects_invalid_id(self, client: TestClient) -> None:
         response = client.post(
             "/api/sync/sources",
             json={"id": "Bad-ID!", "plugin": "fake_file", "values": {}},
+        )
+        assert response.status_code == 400
+
+    def test_rejects_id_starting_with_hyphen(self, client: TestClient) -> None:
+        """A hyphen may appear inside an id but never as the first character."""
+        response = client.post(
+            "/api/sync/sources",
+            json={"id": "-nope", "plugin": "fake_file", "values": {}},
         )
         assert response.status_code == 400
 
@@ -659,6 +689,17 @@ class TestDeleteSourceEndpoint:
         """Malformed path id is rejected before any DB lookup."""
         response = client.delete("/api/sync/sources/Bad-ID")
         assert response.status_code == 400
+
+    def test_accepts_hyphenated_source_id(
+        self, client: TestClient, storage: StorageManager
+    ) -> None:
+        """A hyphenated id passes the format gate and deletes its DB row."""
+        storage.upsert_source_config(
+            1, "calibre-web", "fake_file", {"path": "/x"}, enabled=True
+        )
+        response = client.delete("/api/sync/sources/calibre-web")
+        assert response.status_code == 204
+        assert storage.get_source_config(1, "calibre-web") is None
 
     def test_drops_row_even_when_plugin_no_longer_registered(
         self, client: TestClient, storage: StorageManager
