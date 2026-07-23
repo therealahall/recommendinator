@@ -328,22 +328,20 @@ def update(ctx: click.Context, source: str, workers: int | None) -> None:
     embedding_gen = ctx.obj["embedding_gen"]
     config = ctx.obj["config"]
 
-    inputs_config = config.get("inputs", {})
-
-    # Handle 'list' to show available sources (read-only — no migration needed)
+    # Handle 'list' to show available sources (read-only — no migration needed).
+    # Use the DB-aware helper so sources that live only in the database (created
+    # via ``source create`` or the web Add-source modal, never in config.yaml)
+    # are discoverable — otherwise a user can't find the id to pass to --source.
     if source == "list":
-        if not inputs_config:
+        available = get_available_sync_sources(config, storage=storage)
+        if not available:
             click.echo("No sources configured.")
             return
 
         click.echo("Available sources:")
-        for source_id, entry in inputs_config.items():
-            if not isinstance(entry, dict):
-                continue
-            plugin_name = entry.get("plugin", "?")
-            enabled = entry.get("enabled", False)
-            status = "enabled" if enabled else "disabled"
-            click.echo(f"  {source_id:20s} plugin={plugin_name} [{status}]")
+        for info in available:
+            status = "enabled" if info.enabled else "disabled"
+            click.echo(f"  {info.id:20s} plugin={info.plugin_display_name} [{status}]")
         return
 
     # Migrate any config-file credentials to encrypted DB storage. The source
@@ -368,31 +366,28 @@ def update(ctx: click.Context, source: str, workers: int | None) -> None:
             )
             return
     else:
-        # Look up a single source by its user-defined key
-        entry = inputs_config.get(source)
-        if not isinstance(entry, dict):
+        # Resolve a single source through the DB-aware path (mirrors the web
+        # /update endpoint) so a source that lives only in the database — with
+        # no config.yaml entry — is synced, not rejected as "unknown". The
+        # filter also drops disabled sources (resolve_inputs excludes them).
+        resolved = [
+            resolved_entry
+            for resolved_entry in resolve_inputs(config, storage=storage)
+            if resolved_entry.source_id == source
+        ]
+        if not resolved:
             click.echo(
-                f"Error: Unknown source '{source}'. "
+                f"Error: Unknown or disabled source '{source}'. "
                 "Use --source list to see available sources.",
                 err=True,
             )
             raise click.Abort()
-
-        if not entry.get("enabled", False):
-            click.echo(f"{source} source is disabled in config.")
-            return
 
         validation_errors = validate_source_config(source, config, storage=storage)
         if validation_errors:
             for error in validation_errors:
                 click.echo(f"Error: {error}", err=True)
             raise click.Abort()
-
-        resolved = [
-            resolved_entry
-            for resolved_entry in resolve_inputs(config, storage=storage)
-            if resolved_entry.source_id == source
-        ]
 
     # Filter out resolved entries that fail validation (preserves the
     # per-source error reporting from the legacy sequential path).
