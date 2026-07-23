@@ -540,7 +540,13 @@ def test_update_endpoint_steam(client, mock_components):
 
 
 def test_update_endpoint_steam_disabled(client, mock_components):
-    """Test update endpoint with disabled Steam source."""
+    """A disabled source is rejected with 400, not a 200 dead-end.
+
+    The single-source /update branch must answer 4xx for a disabled or
+    unconfigured source so the web UI's Sync button clears its optimistic
+    "syncing" state. A 200 "message" body left the button stuck spinning
+    because no SyncJob is ever created to end the frontend polling.
+    """
     app_state.config["inputs"]["steam"] = {
         "plugin": "steam",
         "api_key": "test_api_key",
@@ -550,10 +556,9 @@ def test_update_endpoint_steam_disabled(client, mock_components):
 
     response = client.post("/api/update", json={"source": "steam"})
 
-    assert response.status_code == 200
+    assert response.status_code == 400
     data = response.json()
-    assert "disabled" in data["message"].lower()
-    assert data["count"] == 0
+    assert "disabled or not configured" in data["detail"]
 
 
 def test_update_endpoint_steam_missing_api_key(client, mock_components):

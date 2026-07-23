@@ -166,3 +166,175 @@ def test_update_does_not_double_invoke_source_migrations(
     # ``update`` must NOT re-invoke either migration through its own import.
     guard_labels.assert_not_called()
     guard_plugins.assert_not_called()
+
+
+@pytest.mark.usefixtures("registry_with_source_fakes")
+class TestUpdateDbOnlySourceRegression:
+    """``update`` must sync sources that live only in the database.
+
+    Bug: the CLI ``update`` single-source branch gated on the YAML
+    ``inputs`` map (``config.get("inputs", {}).get(source)``) and aborted
+    "Unknown source" before reaching ``resolve_inputs``. A source created via
+    ``source create`` or the web Add-source modal lives only in the
+    ``source_configs`` table (with its secret in ``credentials``) and has no
+    YAML entry, so it could not be synced from the CLI even though the web
+    ``/update`` endpoint had just been fixed to sync it — a CLI/web parity gap.
+    ``update --source list`` had the same YAML-only blind spot, so the id was
+    not even discoverable.
+
+    Root cause: the single-source branch (and ``--source list``) read the YAML
+    ``inputs`` map directly instead of the DB-aware ``resolve_inputs`` /
+    ``get_available_sync_sources`` helpers.
+
+    Fix: resolve the single source through ``resolve_inputs(config,
+    storage=storage)`` filtered by ``source_id`` (mirroring the web branch and
+    the ``--source all`` path), and list via ``get_available_sync_sources``.
+    """
+
+    def _db_only_config(self) -> dict[str, Any]:
+        """Config with an empty ``inputs`` map — the source is DB-only."""
+        return {"inputs": {}, "recommendations": {"min_rating_for_preference": 4}}
+
+    def _seed_db_source(self, storage: StorageManager, enabled: bool = True) -> None:
+        """Create a DB-only ``calibre-web`` source with its secret.
+
+        Uses the ``fake_api`` fake plugin (sensitive ``api_key``) so the
+        resolved config carries the injected ``_source_id`` — mirroring the web
+        regression test. It has no config.yaml entry: the row and its secret
+        live only in the database.
+        """
+        storage.upsert_source_config(
+            1,
+            "calibre-web",
+            "fake_api",
+            {"user_id": "reader"},
+            enabled=enabled,
+        )
+        storage.save_credential(1, "calibre-web", "api_key", "top-secret")
+
+    def _run_update(
+        self,
+        storage: StorageManager,
+        config: dict[str, Any],
+        args: list[str],
+        sync_side_effect: Any,
+    ) -> object:
+        with (
+            patch("src.cli.main.load_config", return_value=config),
+            patch("src.cli.main.create_storage_manager", return_value=storage),
+            patch(
+                "src.cli.main.create_llm_components",
+                return_value=(
+                    None,
+                    MagicMock(spec=EmbeddingGenerator),
+                    MagicMock(spec=RecommendationGenerator),
+                ),
+            ),
+            patch(
+                "src.cli.main.create_recommendation_engine",
+                return_value=MagicMock(spec=RecommendationEngine),
+            ),
+            patch(
+                "src.cli.commands.execute_multi_source_sync",
+                side_effect=sync_side_effect,
+            ),
+        ):
+            return CliRunner().invoke(cli, args)
+
+    def test_enabled_db_only_source_syncs_end_to_end_regression(
+        self, tmp_path: Path
+    ) -> None:
+        """An enabled DB-only source syncs, resolving config + secret + id.
+
+        Asserts end to end (not just that the gate passes): the plugin the sync
+        boundary receives carries the injected ``_source_id`` and the decrypted
+        ``password`` credential plus the DB config, proving the single-source
+        path actually resolves and runs the DB source.
+        """
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+        self._seed_db_source(storage, enabled=True)
+
+        captured: dict[str, Any] = {}
+
+        def _fake_sync(**kwargs: Any) -> list[SyncResult]:
+            captured["sources"] = kwargs.get("sources") or []
+            return [
+                SyncResult(source_name=plugin.display_name)
+                for plugin, _config in captured["sources"]
+            ]
+
+        result = self._run_update(
+            storage,
+            self._db_only_config(),
+            ["update", "--source", "calibre-web"],
+            _fake_sync,
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "Unknown" not in result.output
+        sources = captured["sources"]
+        assert len(sources) == 1
+        _plugin, resolved_config = sources[0]
+        assert resolved_config["_source_id"] == "calibre-web"
+        assert resolved_config["api_key"] == "top-secret"
+        assert resolved_config["user_id"] == "reader"
+
+    def test_disabled_db_only_source_aborts_regression(self, tmp_path: Path) -> None:
+        """A disabled DB-only source aborts with a nonzero exit."""
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+        self._seed_db_source(storage, enabled=False)
+
+        def _never(**_: Any) -> list[SyncResult]:
+            raise AssertionError("sync must not run for a disabled source")
+
+        result = self._run_update(
+            storage,
+            self._db_only_config(),
+            ["update", "--source", "calibre-web"],
+            _never,
+        )
+
+        assert result.exit_code != 0
+        assert "Unknown or disabled source 'calibre-web'" in result.output
+
+    def test_unknown_source_aborts_regression(self, tmp_path: Path) -> None:
+        """A source id that matches nothing aborts with a nonzero exit."""
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+
+        def _never(**_: Any) -> list[SyncResult]:
+            raise AssertionError("sync must not run for an unknown source")
+
+        result = self._run_update(
+            storage,
+            self._db_only_config(),
+            ["update", "--source", "no_such_source"],
+            _never,
+        )
+
+        assert result.exit_code != 0
+        assert "Unknown or disabled source 'no_such_source'" in result.output
+
+    def test_source_list_surfaces_db_only_source_regression(
+        self, tmp_path: Path
+    ) -> None:
+        """``update --source list`` shows a DB-only source id.
+
+        Without the DB-aware ``get_available_sync_sources`` the id never
+        appears, so the user cannot discover the value to pass to ``--source``.
+        """
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+        self._seed_db_source(storage, enabled=True)
+
+        def _never(**_: Any) -> list[SyncResult]:
+            raise AssertionError("list must not run a sync")
+
+        result = self._run_update(
+            storage,
+            self._db_only_config(),
+            ["update", "--source", "list"],
+            _never,
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "calibre-web" in result.output
+        assert "enabled" in result.output
