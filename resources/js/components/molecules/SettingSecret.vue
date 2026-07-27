@@ -95,7 +95,7 @@ watch(
         autocomplete="new-password"
         :aria-label="`New value for ${setting.label}`"
         :value="draft"
-        :disabled="busy"
+        :disabled="disabled || busy"
         @input="draft = ($event.target as HTMLInputElement).value"
       />
       <button
@@ -103,9 +103,13 @@ watch(
         class="btn btn-primary"
         :aria-label="`Save ${setting.label}`"
         :data-testid="`secret-save-${setting.key}`"
-        :disabled="busy"
+        :disabled="disabled || busy"
         @click="save"
       >Save secret</button>
+      <!-- Cancel is deliberately NOT gated on `disabled`: it issues no request,
+           and it is the only way out of the edit row. Locking the escape hatch
+           during a section save would trap a user who opened the row by mistake
+           until an unrelated request finished. -->
       <button
         type="button"
         class="btn btn-secondary"

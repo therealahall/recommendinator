@@ -11,9 +11,10 @@ type SecretProps = Partial<InstanceType<typeof SettingSecret>['$props']>
 
 function secret(overrides: Partial<SettingViewSecret> = {}): SettingViewSecret {
   return {
-    key: 'llm.api_key',
-    section: 'llm',
-    label: 'API Key',
+    key: 'enrichment.providers.tmdb.api_key',
+    // A real registry secret leaf: `llm.api_key` never existed in the registry.
+    section: 'enrichment',
+    label: 'TMDB API key',
     help: 'Used to reach the provider',
     type: 'string',
     widget: 'text',
@@ -30,22 +31,22 @@ function secret(overrides: Partial<SettingViewSecret> = {}): SettingViewSecret {
 describe('SettingSecret', () => {
   it('shows "Set" status and Replace + Clear when a secret exists', () => {
     const wrapper = mount(SettingSecret, { props: { setting: secret({ has_secret: true }) } })
-    expect(wrapper.find('[data-testid="secret-status-llm.api_key"]').text()).toBe('Set')
-    expect(wrapper.find('[data-testid="secret-replace-llm.api_key"]').text()).toBe('Replace')
-    expect(wrapper.find('[data-testid="secret-clear-llm.api_key"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="secret-status-enrichment.providers.tmdb.api_key"]').text()).toBe('Set')
+    expect(wrapper.find('[data-testid="secret-replace-enrichment.providers.tmdb.api_key"]').text()).toBe('Replace')
+    expect(wrapper.find('[data-testid="secret-clear-enrichment.providers.tmdb.api_key"]').exists()).toBe(true)
   })
 
   it('shows "Not set" status and a Set button without Clear when no secret exists', () => {
     const wrapper = mount(SettingSecret, { props: { setting: secret({ has_secret: false }) } })
-    expect(wrapper.find('[data-testid="secret-status-llm.api_key"]').text()).toBe('Not set')
-    expect(wrapper.find('[data-testid="secret-replace-llm.api_key"]').text()).toBe('Set')
-    expect(wrapper.find('[data-testid="secret-clear-llm.api_key"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="secret-status-enrichment.providers.tmdb.api_key"]').text()).toBe('Not set')
+    expect(wrapper.find('[data-testid="secret-replace-enrichment.providers.tmdb.api_key"]').text()).toBe('Set')
+    expect(wrapper.find('[data-testid="secret-clear-enrichment.providers.tmdb.api_key"]').exists()).toBe(false)
   })
 
   it('reveals an empty password input on Replace and never prefills the value', async () => {
     const wrapper = mount(SettingSecret, { props: { setting: secret({ has_secret: true }) } })
-    await wrapper.find('[data-testid="secret-replace-llm.api_key"]').trigger('click')
-    const input = wrapper.find('#secret-input-llm\\.api_key')
+    await wrapper.find('[data-testid="secret-replace-enrichment.providers.tmdb.api_key"]').trigger('click')
+    const input = wrapper.find('#secret-input-enrichment\\.providers\\.tmdb\\.api_key')
     expect(input.attributes('type')).toBe('password')
     expect(input.attributes('autocomplete')).toBe('new-password')
     expect((input.element as HTMLInputElement).value).toBe('')
@@ -53,31 +54,31 @@ describe('SettingSecret', () => {
 
   it('emits set with the entered value on Save secret', async () => {
     const wrapper = mount(SettingSecret, { props: { setting: secret() } })
-    await wrapper.find('[data-testid="secret-replace-llm.api_key"]').trigger('click')
-    await wrapper.find('#secret-input-llm\\.api_key').setValue('sk-123')
-    await wrapper.find('[data-testid="secret-save-llm.api_key"]').trigger('click')
+    await wrapper.find('[data-testid="secret-replace-enrichment.providers.tmdb.api_key"]').trigger('click')
+    await wrapper.find('#secret-input-enrichment\\.providers\\.tmdb\\.api_key').setValue('sk-123')
+    await wrapper.find('[data-testid="secret-save-enrichment.providers.tmdb.api_key"]').trigger('click')
     expect(wrapper.emitted('set')).toEqual([['sk-123']])
   })
 
   it('does not emit set for an empty draft', async () => {
     const wrapper = mount(SettingSecret, { props: { setting: secret() } })
-    await wrapper.find('[data-testid="secret-replace-llm.api_key"]').trigger('click')
-    await wrapper.find('[data-testid="secret-save-llm.api_key"]').trigger('click')
+    await wrapper.find('[data-testid="secret-replace-enrichment.providers.tmdb.api_key"]').trigger('click')
+    await wrapper.find('[data-testid="secret-save-enrichment.providers.tmdb.api_key"]').trigger('click')
     expect(wrapper.emitted('set')).toBeUndefined()
   })
 
   it('closes the input on Cancel without emitting set', async () => {
     const wrapper = mount(SettingSecret, { props: { setting: secret() } })
-    await wrapper.find('[data-testid="secret-replace-llm.api_key"]').trigger('click')
-    await wrapper.find('#secret-input-llm\\.api_key').setValue('partial')
-    await wrapper.find('[data-testid="secret-cancel-llm.api_key"]').trigger('click')
+    await wrapper.find('[data-testid="secret-replace-enrichment.providers.tmdb.api_key"]').trigger('click')
+    await wrapper.find('#secret-input-enrichment\\.providers\\.tmdb\\.api_key').setValue('partial')
+    await wrapper.find('[data-testid="secret-cancel-enrichment.providers.tmdb.api_key"]').trigger('click')
     expect(wrapper.emitted('set')).toBeUndefined()
-    expect(wrapper.find('#secret-input-llm\\.api_key').exists()).toBe(false)
+    expect(wrapper.find('#secret-input-enrichment\\.providers\\.tmdb\\.api_key').exists()).toBe(false)
   })
 
   it('emits clear on Clear', async () => {
     const wrapper = mount(SettingSecret, { props: { setting: secret({ has_secret: true }) } })
-    await wrapper.find('[data-testid="secret-clear-llm.api_key"]').trigger('click')
+    await wrapper.find('[data-testid="secret-clear-enrichment.providers.tmdb.api_key"]').trigger('click')
     expect(wrapper.emitted('clear')).toHaveLength(1)
   })
 
@@ -86,18 +87,18 @@ describe('SettingSecret', () => {
       props: { setting: secret({ has_secret: true, label: 'TMDB API Key' }) },
     })
     expect(
-      wrapper.find('[data-testid="secret-replace-llm.api_key"]').attributes('aria-label'),
+      wrapper.find('[data-testid="secret-replace-enrichment.providers.tmdb.api_key"]').attributes('aria-label'),
     ).toBe('Replace TMDB API Key')
     expect(
-      wrapper.find('[data-testid="secret-clear-llm.api_key"]').attributes('aria-label'),
+      wrapper.find('[data-testid="secret-clear-enrichment.providers.tmdb.api_key"]').attributes('aria-label'),
     ).toBe('Clear TMDB API Key')
 
-    await wrapper.find('[data-testid="secret-replace-llm.api_key"]').trigger('click')
+    await wrapper.find('[data-testid="secret-replace-enrichment.providers.tmdb.api_key"]').trigger('click')
     expect(
-      wrapper.find('[data-testid="secret-save-llm.api_key"]').attributes('aria-label'),
+      wrapper.find('[data-testid="secret-save-enrichment.providers.tmdb.api_key"]').attributes('aria-label'),
     ).toBe('Save TMDB API Key')
     expect(
-      wrapper.find('[data-testid="secret-cancel-llm.api_key"]').attributes('aria-label'),
+      wrapper.find('[data-testid="secret-cancel-enrichment.providers.tmdb.api_key"]').attributes('aria-label'),
     ).toBe('Cancel replacing TMDB API Key')
   })
 
@@ -106,7 +107,7 @@ describe('SettingSecret', () => {
       props: { setting: secret({ has_secret: false, label: 'API Key' }) },
     })
     expect(
-      wrapper.find('[data-testid="secret-replace-llm.api_key"]').attributes('aria-label'),
+      wrapper.find('[data-testid="secret-replace-enrichment.providers.tmdb.api_key"]').attributes('aria-label'),
     ).toBe('Set API Key')
   })
 
@@ -115,10 +116,10 @@ describe('SettingSecret', () => {
       props: { setting: secret({ has_secret: true }) },
       attachTo: document.body,
     })
-    await wrapper.find('[data-testid="secret-replace-llm.api_key"]').trigger('click')
+    await wrapper.find('[data-testid="secret-replace-enrichment.providers.tmdb.api_key"]').trigger('click')
     await nextTick()
 
-    expect(document.activeElement).toBe(wrapper.find('#secret-input-llm\\.api_key').element)
+    expect(document.activeElement).toBe(wrapper.find('#secret-input-enrichment\\.providers\\.tmdb\\.api_key').element)
     wrapper.unmount()
   })
 
@@ -127,13 +128,13 @@ describe('SettingSecret', () => {
       props: { setting: secret({ has_secret: true }) },
       attachTo: document.body,
     })
-    await wrapper.find('[data-testid="secret-replace-llm.api_key"]').trigger('click')
+    await wrapper.find('[data-testid="secret-replace-enrichment.providers.tmdb.api_key"]').trigger('click')
     await nextTick()
-    await wrapper.find('[data-testid="secret-cancel-llm.api_key"]').trigger('click')
+    await wrapper.find('[data-testid="secret-cancel-enrichment.providers.tmdb.api_key"]').trigger('click')
     await nextTick()
 
     expect(document.activeElement).toBe(
-      wrapper.find('[data-testid="secret-replace-llm.api_key"]').element,
+      wrapper.find('[data-testid="secret-replace-enrichment.providers.tmdb.api_key"]').element,
     )
     wrapper.unmount()
   })
@@ -143,10 +144,10 @@ describe('SettingSecret', () => {
       props: { setting: secret({ has_secret: true }) },
       attachTo: document.body,
     })
-    await wrapper.find('[data-testid="secret-replace-llm.api_key"]').trigger('click')
+    await wrapper.find('[data-testid="secret-replace-enrichment.providers.tmdb.api_key"]').trigger('click')
     await nextTick()
-    await wrapper.find('#secret-input-llm\\.api_key').setValue('sk-1')
-    await wrapper.find('[data-testid="secret-save-llm.api_key"]').trigger('click')
+    await wrapper.find('#secret-input-enrichment\\.providers\\.tmdb\\.api_key').setValue('sk-1')
+    await wrapper.find('[data-testid="secret-save-enrichment.providers.tmdb.api_key"]').trigger('click')
     // The parent disables the button for the request; only once busy falls back
     // to false is the button focusable again.
     const startBusy: SecretProps = { busy: true }
@@ -157,7 +158,7 @@ describe('SettingSecret', () => {
     await nextTick()
 
     expect(document.activeElement).toBe(
-      wrapper.find('[data-testid="secret-replace-llm.api_key"]').element,
+      wrapper.find('[data-testid="secret-replace-enrichment.providers.tmdb.api_key"]').element,
     )
     wrapper.unmount()
   })
@@ -167,7 +168,7 @@ describe('SettingSecret', () => {
       props: { setting: secret({ has_secret: true }) },
       attachTo: document.body,
     })
-    await wrapper.find('[data-testid="secret-clear-llm.api_key"]').trigger('click')
+    await wrapper.find('[data-testid="secret-clear-enrichment.providers.tmdb.api_key"]').trigger('click')
     const startBusy: SecretProps = { busy: true }
     await wrapper.setProps(startBusy)
     await nextTick()
@@ -177,8 +178,63 @@ describe('SettingSecret', () => {
     await nextTick()
 
     expect(document.activeElement).toBe(
-      wrapper.find('[data-testid="secret-replace-llm.api_key"]').element,
+      wrapper.find('[data-testid="secret-replace-enrichment.providers.tmdb.api_key"]').element,
     )
     wrapper.unmount()
+  })
+
+  describe('disabled (the section save is in flight)', () => {
+    const KEY = 'enrichment.providers.tmdb.api_key'
+    const INPUT = '#secret-input-enrichment\\.providers\\.tmdb\\.api_key'
+
+    async function mountEditing() {
+      const wrapper = mount(SettingSecret, {
+        props: { setting: secret({ has_secret: true }) },
+      })
+      await wrapper.find(`[data-testid="secret-replace-${KEY}"]`).trigger('click')
+      await nextTick()
+      const lock: SecretProps = { disabled: true }
+      await wrapper.setProps(lock)
+      return wrapper
+    }
+
+    it('locks Replace and Clear', () => {
+      const wrapper = mount(SettingSecret, {
+        props: { setting: secret({ has_secret: true }), disabled: true },
+      })
+
+      expect(
+        wrapper.find(`[data-testid="secret-replace-${KEY}"]`).attributes('disabled'),
+      ).toBeDefined()
+      expect(
+        wrapper.find(`[data-testid="secret-clear-${KEY}"]`).attributes('disabled'),
+      ).toBeDefined()
+    })
+
+    it('locks the draft input and Save secret in the edit row', async () => {
+      // Not merely cosmetic: store.setSecret refreshes the section tree on
+      // success, which would race the in-flight section save's own write of
+      // sections.value.
+      const wrapper = await mountEditing()
+
+      expect(wrapper.find(INPUT).attributes('disabled')).toBeDefined()
+      expect(
+        wrapper.find(`[data-testid="secret-save-${KEY}"]`).attributes('disabled'),
+      ).toBeDefined()
+    })
+
+    it('leaves Cancel operable so the edit row is never a trap', async () => {
+      // Deliberate exception: Cancel issues no request and is the only way out
+      // of the edit row. Locking it would strand a user who opened the row by
+      // mistake until an unrelated section save finished.
+      const wrapper = await mountEditing()
+      const cancel = wrapper.find(`[data-testid="secret-cancel-${KEY}"]`)
+
+      expect(cancel.attributes('disabled')).toBeUndefined()
+
+      await cancel.trigger('click')
+      await nextTick()
+      expect(wrapper.find(INPUT).exists()).toBe(false)
+    })
   })
 })

@@ -36,6 +36,13 @@ export const useSettingsStore = defineStore('settings', () => {
   // Keyed by setting key; populated from a 422 validation failure.
   const fieldErrors = reactive<Record<string, string>>({})
 
+  /** Drop every recorded field error belonging to *section*. */
+  function clearSectionFieldErrors(section: string): void {
+    const sectionSettings =
+      sections.value.find((s) => s.section === section)?.settings ?? []
+    for (const setting of sectionSettings) delete fieldErrors[setting.key]
+  }
+
   /** Fetch the settings view and apply it in place (no `loading` toggle), so the
    *  keyed section tree stays mounted — preserving focus and the Advanced
    *  accordion state across refreshes (WCAG 2.4.3). */
@@ -63,7 +70,12 @@ export const useSettingsStore = defineStore('settings', () => {
     section: string,
     updates: Record<string, unknown>,
   ): Promise<boolean> {
-    for (const key of Object.keys(updates)) delete fieldErrors[key]
+    // Clear the whole section, not just the keys being sent. A field that
+    // errored and was then reverted drops out of `updates`, so a key-scoped
+    // clear would strand its error — and the banner picks the *first* keyed
+    // field as "the offending one", so a stale entry mislabels the next
+    // failure as belonging to a field the user already fixed.
+    clearSectionFieldErrors(section)
     saving[section] = true
     saveStatus[section] = 'saving'
     saveError[section] = ''

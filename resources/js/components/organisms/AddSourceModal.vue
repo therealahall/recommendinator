@@ -100,14 +100,30 @@ const missingRequiredFields = computed(() =>
     .map((field) => field.name),
 )
 
-const canSubmit = computed(
+// Split deliberately from `canSubmit`. Validity can only change on input, so
+// gating native `disabled` on it never steals focus from the user. In-flight
+// state is different: `submitting` flips the instant Create is activated, and
+// natively disabling the button under the user's own focus drops them to
+// <body> (WCAG 2.4.3). Worse here than elsewhere — every field and Cancel are
+// also disabled while submitting, so a native lock on Create would leave the
+// dialog with ZERO focusable elements, useFocusTrap bails (it returns early on
+// an empty list), and Tab escapes behind an aria-modal="true" dialog.
+const isValid = computed(
   () =>
     !!pluginName.value &&
     sourceId.value !== '' &&
     idIsValid.value &&
-    missingRequiredFields.value.length === 0 &&
-    !submitting.value,
+    missingRequiredFields.value.length === 0,
 )
+
+const canSubmit = computed(() => isValid.value && !submitting.value)
+
+// aria-disabled does not block activation the way native disabled does, so
+// Cancel has to drop the click itself rather than closing mid-request.
+function onCancel(): void {
+  if (submitting.value) return
+  emit('close')
+}
 
 async function submit(): Promise<void> {
   errorMessage.value = ''
@@ -341,17 +357,20 @@ async function submit(): Promise<void> {
       >{{ errorMessage }}</p>
 
       <div class="add-source-actions">
+        <!-- Cancel stays focusable while submitting so the dialog always has at
+             least one tabbable element and the focus trap cannot collapse. -->
         <button
           type="button"
           class="btn btn-secondary"
-          :disabled="submitting"
-          @click="emit('close')"
+          :aria-disabled="submitting || undefined"
+          @click="onCancel"
         >Cancel</button>
         <button
           type="button"
           class="btn btn-primary"
           data-testid="add-source-submit"
-          :disabled="!canSubmit"
+          :disabled="!isValid"
+          :aria-disabled="submitting || undefined"
           @click="submit"
         >{{ submitting ? 'Creating…' : 'Create' }}</button>
       </div>

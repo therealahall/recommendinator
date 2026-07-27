@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, nextTick, reactive, ref, watch } from 'vue'
 import type { SourceFieldSchema } from '@/types/api'
 
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
@@ -94,9 +94,25 @@ function addChip(name: string): void {
   chipDrafts[name] = ''
 }
 
-function removeChip(name: string, index: number): void {
+const formRoot = ref<HTMLFormElement | null>(null)
+
+async function removeChip(name: string, index: number): Promise<void> {
+  if (props.disabled) return
   const list = getList(name).filter((_, i) => i !== index)
   formValues[name] = list
+  // The × button the user just pressed unmounts with its chip, dropping focus
+  // to <body> (WCAG 2.4.3). Land on the chip that shifted into this slot, or
+  // the draft input when the last one goes.
+  await nextTick()
+  const target = list.length
+    ? formRoot.value?.querySelector<HTMLElement>(
+        `[data-testid="chip-remove-${name}-${Math.min(index, list.length - 1)}"]`,
+      )
+    : undefined
+  ;(
+    target ??
+    formRoot.value?.querySelector<HTMLElement>(`[data-testid="chip-input-${name}"]`)
+  )?.focus()
 }
 
 function onIntInput(name: string, raw: string): void {
@@ -110,6 +126,10 @@ function onFloatInput(name: string, raw: string): void {
 }
 
 function onSave(): void {
+  // aria-disabled conveys the in-flight state without blurring the button the
+  // user just pressed, but unlike native disabled it does not block activation
+  // — so a second Enter/click has to be dropped here or it double-submits.
+  if (props.saving) return
   const out: Record<string, unknown> = {}
   for (const field of nonSensitiveFields.value) {
     out[field.name] = formValues[field.name]
@@ -148,7 +168,7 @@ function isSecretSet(name: string): boolean {
 </script>
 
 <template>
-  <form class="source-form" @submit.prevent="onSave">
+  <form ref="formRoot" class="source-form" @submit.prevent="onSave">
     <div
       v-for="field in nonSensitiveFields"
       :key="field.name"
@@ -325,7 +345,11 @@ function isSecretSet(name: string): boolean {
           ? (enabled ? 'Disabling…' : 'Enabling…')
           : (enabled ? 'Disable' : 'Enable')
       }}</button>
-      <div class="source-form-save-group" aria-live="polite" aria-atomic="true">
+      <!-- Deliberately NOT a live region: the spans below carry role="status"/
+           role="alert", which are implicit live regions already. Nesting them
+           inside another one double-announces, and aria-atomic here would drag
+           the button label into every announcement. -->
+      <div class="source-form-save-group">
         <span
           v-if="saveStatus === 'saved'"
           class="source-form-save-status source-form-save-status--ok"
@@ -342,7 +366,8 @@ function isSecretSet(name: string): boolean {
           type="button"
           class="btn btn-primary"
           data-testid="form-save"
-          :disabled="saving || disabled"
+          :disabled="disabled"
+          :aria-disabled="saving || undefined"
           @click="onSave"
         >{{ saving ? 'Saving…' : 'Save' }}</button>
       </div>

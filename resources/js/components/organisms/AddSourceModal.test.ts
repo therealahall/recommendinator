@@ -375,4 +375,65 @@ describe('AddSourceModal', () => {
       wrapper.find('[data-testid="add-source-submit"]').attributes('disabled'),
     ).toBeUndefined()
   })
+
+  describe('while a create is in flight', () => {
+    // Mirrors useFocusTrap's own selector. A native `disabled` on every control
+    // removes them all from this set.
+    const FOCUSABLE =
+      'button:not([disabled]), input:not([disabled]), select:not([disabled]),' +
+      ' textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
+    async function mountMidSubmit() {
+      const { wrapper, store } = await mountWithPlugins()
+      // Never resolves: holds the component in the submitting state.
+      vi.spyOn(store, 'createSource').mockReturnValue(new Promise(() => {}))
+      await wrapper.find('#add-source-id').setValue('calibre-web')
+      await wrapper.find('#add-source-field-base_url').setValue('http://cw')
+      await wrapper.find('#add-source-field-username').setValue('me')
+      await wrapper
+        .find('[data-testid="add-source-secret-password"]')
+        .setValue('hunter2')
+      await wrapper.find('[data-testid="add-source-submit"]').trigger('click')
+      await flushPromises()
+      return wrapper
+    }
+
+    it('keeps at least one focusable element so the focus trap cannot collapse', async () => {
+      // Regression: Create was `:disabled="!canSubmit"` with `!submitting`
+      // folded into canSubmit, while every field AND Cancel were
+      // `:disabled="submitting"`. Mid-request the dialog held ZERO focusable
+      // elements, so useFocusTrap returned early on the empty list and Tab
+      // walked out behind an aria-modal="true" dialog (WCAG 2.4.3).
+      const wrapper = await mountMidSubmit()
+
+      expect(wrapper.element.querySelectorAll(FOCUSABLE).length).toBeGreaterThan(0)
+    })
+
+    it('marks Create aria-disabled rather than removing it from the a11y tree', async () => {
+      const button = (await mountMidSubmit()).find('[data-testid="add-source-submit"]')
+
+      expect(button.attributes('aria-disabled')).toBe('true')
+      expect(button.attributes('disabled')).toBeUndefined()
+    })
+
+    it('leaves Cancel focusable but inert', async () => {
+      const wrapper = await mountMidSubmit()
+      const cancel = wrapper.findAll('button').find((b) => b.text() === 'Cancel')!
+
+      expect(cancel.attributes('disabled')).toBeUndefined()
+      expect(cancel.attributes('aria-disabled')).toBe('true')
+      await cancel.trigger('click')
+      expect(wrapper.emitted('close')).toBeFalsy()
+    })
+
+    it('natively disables Create while the form is merely incomplete', async () => {
+      // The other axis: invalid-input state can only change on input, so focus
+      // is never inside the button when this flips.
+      const { wrapper } = await mountWithPlugins()
+
+      expect(
+        wrapper.find('[data-testid="add-source-submit"]').attributes('disabled'),
+      ).toBeDefined()
+    })
+  })
 })

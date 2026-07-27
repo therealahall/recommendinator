@@ -1,3 +1,15 @@
+<script lang="ts">
+// Module scope, not <script setup>: setup runs per component instance, and the
+// Settings page renders one section card per registry section, so a constant map
+// declared there would be rebuilt for each. The caution note is per section
+// because a single shared string ended up warning about CORS origins in the
+// Logging panel, which contains no CORS control.
+const CAUTION_BY_SECTION: Record<string, string> = {
+  web: 'this setting controls who can reach this instance. Widening the allowed CORS origins lets other sites in your browser read and modify your data.',
+  logging: 'these settings control how much this instance records and where it writes it. Verbose levels can capture sensitive request detail on disk.',
+}
+</script>
+
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import Accordion from '@/components/atoms/Accordion.vue'
@@ -38,6 +50,23 @@ const groupId = computed(() => `settings-group-${sectionKey.value}`)
 const headingId = computed(() => `settings-heading-${sectionKey.value}`)
 
 const advancedExpanded = ref(false)
+
+// The service's pattern message is deictic ("see this setting's help"), and the
+// banner sits in the section footer naming no field. Prefix the offending label
+// so the pointer has a referent from here too.
+const saveErrorText = computed(() => {
+  const message = saveError.value || 'failed to save'
+  const offending = valueSettings.value.find(
+    (setting) => store.fieldErrors[setting.key],
+  )
+  return offending ? `${offending.label}: ${message}` : message
+})
+
+const cautionText = computed(
+  () =>
+    CAUTION_BY_SECTION[sectionKey.value] ??
+    'these settings change how this instance runs.',
+)
 
 // Local edit buffer + a snapshot of the server value for change detection.
 // Server truth lives in the store; the buffer is this section's working copy.
@@ -111,8 +140,20 @@ function changedUpdates(): Record<string, unknown> {
 }
 
 async function onSave(): Promise<void> {
+  // `saving` flips true before the await, and the Save button is disabled on it
+  // — disabling the element the user just activated blurs it, dropping focus to
+  // <body>. Guard re-entry here so the button can stay focusable (aria-disabled
+  // does not block activation), which keeps focus where the user left it on the
+  // success path (WCAG 2.4.3). The failure path moves focus deliberately below.
+  if (saving.value) return
   clearSaveTimer()
   const updates = changedUpdates()
+  // Nothing edited: don't PUT an empty object and then claim "Saved ✓", which
+  // tells the user a write happened that did not.
+  if (Object.keys(updates).length === 0) {
+    await announce('No changes to save.')
+    return
+  }
   const ok = await store.saveSection(sectionKey.value, updates)
   if (ok) {
     saveStatusTimer = setTimeout(() => {
@@ -130,18 +171,30 @@ async function onSave(): Promise<void> {
   }
 }
 
+// The store re-throws whatever useApi.request raised (it only catches on the
+// save path), so without these catches a 503, a 400 or a dropped connection
+// produced: the button flipped busy and back, the announce() after the await
+// never ran, the live region stayed empty, and the rejection escaped as an
+// unhandled promise rejection. The user saw a no-op and was told nothing.
+function failureText(error: unknown, fallback: string): string {
+  return error instanceof Error ? `${fallback} ${error.message}` : fallback
+}
+
 async function onReset(key: string): Promise<void> {
   resetting[key] = true
   try {
     await store.resetSetting(key)
     await announce('Reset to default.')
-    // The Reset button disappears once the override clears, so return focus to
-    // the control itself rather than letting it drop to <body> (WCAG 2.4.3).
-    await nextTick()
-    document.getElementById(`setting-${key}`)?.focus()
+  } catch (error) {
+    await announce(failureText(error, 'Reset failed.'))
   } finally {
     resetting[key] = false
   }
+  // Focus moves on BOTH paths: on success the Reset button unmounts with the
+  // override, and on failure it is briefly disabled — either way focus would
+  // otherwise fall to <body> (WCAG 2.4.3).
+  await nextTick()
+  document.getElementById(`setting-${key}`)?.focus()
 }
 
 async function onSetSecret(key: string, value: string): Promise<void> {
@@ -149,6 +202,8 @@ async function onSetSecret(key: string, value: string): Promise<void> {
   try {
     await store.setSecret(key, value)
     await announce('Secret saved.')
+  } catch (error) {
+    await announce(failureText(error, 'Saving the secret failed.'))
   } finally {
     secretBusy[key] = false
   }
@@ -159,6 +214,8 @@ async function onClearSecret(key: string): Promise<void> {
   try {
     await store.clearSecret(key)
     await announce('Secret cleared.')
+  } catch (error) {
+    await announce(failureText(error, 'Clearing the secret failed.'))
   } finally {
     secretBusy[key] = false
   }
@@ -205,10 +262,8 @@ onBeforeUnmount(clearSaveTimer)
       >
         <template #header>Advanced · {{ advanced.length }} setting{{ advanced.length === 1 ? '' : 's' }}</template>
         <p class="settings-caution" role="note">
-          <strong>Caution:</strong> these settings affect how the server binds and who
-          can reach it. Widening CORS allowed origins or changing the bind host can
-          expose this instance on your network. Change these only if you understand
-          the impact.
+          <strong>Caution:</strong> {{ cautionText }} Change these only if you
+          understand the impact.
         </p>
         <SettingControl
           v-for="setting in advanced"
@@ -224,7 +279,13 @@ onBeforeUnmount(clearSaveTimer)
     </div>
 
     <div v-if="valueSettings.length > 0" class="settings-section-actions">
-      <div class="settings-section-save-group" aria-live="polite" aria-atomic="true">
+      <!-- Deliberately NOT a live region. role="status"/role="alert" on the
+           spans below are already implicit live regions; wrapping them in
+           another one nests live regions, and aria-atomic on the wrapper drags
+           the button's own label into every announcement — so toggling Save →
+           Saving… re-reads the whole group, and a save result gets announced
+           twice. Each span owns its announcement. -->
+      <div class="settings-section-save-group">
         <span
           v-if="saveStatus === 'saved'"
           class="settings-save-status settings-save-status--ok"
@@ -236,12 +297,15 @@ onBeforeUnmount(clearSaveTimer)
           class="settings-save-status settings-save-status--err"
           :data-testid="`save-status-${sectionKey}`"
           role="alert"
-        >Error: {{ saveError || 'failed to save' }}</span>
+        >Error: {{ saveErrorText }}</span>
+        <!-- aria-disabled, not disabled: disabling the button the user just
+             activated blurs it and drops focus to <body> for the whole save.
+             onSave guards re-entry instead. -->
         <button
           type="button"
           class="btn btn-primary"
           :data-testid="`save-${sectionKey}`"
-          :disabled="saving"
+          :aria-disabled="saving || undefined"
           @click="onSave"
         >{{ saving ? 'Saving…' : `Save ${title}` }}</button>
       </div>

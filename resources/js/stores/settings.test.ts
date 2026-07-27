@@ -36,27 +36,41 @@ function view(overrides: Record<string, unknown> = {}) {
   return {
     sections: [
       {
-        section: 'web',
+        section: 'recommendations',
         settings: [
           {
-            key: 'web.port',
-            section: 'web',
-            label: 'Port',
+            key: 'recommendations.default_count',
+            section: 'recommendations',
+            label: 'Default count',
             help: '',
             type: 'int',
             widget: 'number',
             choices: null,
-            validation: { min: 1, max: 65535, max_length: null, pattern: null },
+            validation: { min: 1, max: null, max_length: null, pattern: null },
             advanced: false,
-            restart_required: true,
+            restart_required: false,
             sensitive: false,
-            value: 8000,
+            value: 5,
             db_overridden: false,
           },
         ],
       },
     ],
     ...overrides,
+  }
+}
+
+/** A section with two keys, so a save touching one can be checked against the other. */
+function twoSettingView() {
+  const base = view()
+  const first = base.sections[0].settings[0]
+  return {
+    sections: [
+      {
+        section: 'recommendations',
+        settings: [first, { ...first, key: 'recommendations.max_count', label: 'Max count' }],
+      },
+    ],
   }
 }
 
@@ -76,7 +90,7 @@ describe('useSettingsStore', () => {
 
     expect(mockGet).toHaveBeenCalledWith('/settings')
     expect(store.sections).toHaveLength(1)
-    expect(store.sections[0].section).toBe('web')
+    expect(store.sections[0].section).toBe('recommendations')
     expect(store.loadError).toBe('')
   })
 
@@ -95,19 +109,19 @@ describe('useSettingsStore', () => {
       view({
         sections: [
           {
-            section: 'web',
+            section: 'recommendations',
             settings: [
               {
-                key: 'web.port',
-                section: 'web',
-                label: 'Port',
+                key: 'recommendations.default_count',
+                section: 'recommendations',
+                label: 'Default count',
                 help: '',
                 type: 'int',
                 widget: 'number',
                 choices: null,
                 validation: null,
                 advanced: false,
-                restart_required: true,
+                restart_required: false,
                 sensitive: false,
                 value: 9000,
                 db_overridden: true,
@@ -119,68 +133,105 @@ describe('useSettingsStore', () => {
     )
     const store = useSettingsStore()
 
-    const ok = await store.saveSection('web', { 'web.port': 9000 })
+    const ok = await store.saveSection('recommendations', { 'recommendations.default_count': 9000 })
 
     expect(ok).toBe(true)
-    expect(mockPut).toHaveBeenCalledWith('/settings', { updates: { 'web.port': 9000 } })
-    expect(store.saveStatus.web).toBe('saved')
+    expect(mockPut).toHaveBeenCalledWith('/settings', { updates: { 'recommendations.default_count': 9000 } })
+    expect(store.saveStatus.recommendations).toBe('saved')
     expect(store.sections[0].settings[0]).toMatchObject({ value: 9000, db_overridden: true })
   })
 
   it('saveSection maps a 422 body to the offending field error', async () => {
     mockPut.mockRejectedValue(
       new MockApiError(422, 'Unprocessable Entity', {
-        detail: { key: 'web.port', reason: 'must be between 1 and 65535' },
+        detail: { key: 'recommendations.default_count', reason: 'must be >= 1' },
       }),
     )
     const store = useSettingsStore()
 
-    const ok = await store.saveSection('web', { 'web.port': -1 })
+    const ok = await store.saveSection('recommendations', { 'recommendations.default_count': -1 })
 
     expect(ok).toBe(false)
-    expect(store.saveStatus.web).toBe('error')
-    expect(store.fieldErrors['web.port']).toBe('must be between 1 and 65535')
+    expect(store.saveStatus.recommendations).toBe('error')
+    expect(store.fieldErrors['recommendations.default_count']).toBe('must be >= 1')
+  })
+
+  it('saveSection clears stale field errors for keys absent from this save', async () => {
+    // Regression: the clear was scoped to Object.keys(updates), so a field that
+    // errored and was then reverted by the user dropped out of `updates` and
+    // kept its error forever. SettingsSection labels the banner with the FIRST
+    // keyed field in the section, so that ghost renamed every later failure
+    // after a field the user had already fixed.
+    mockGet.mockResolvedValue(twoSettingView())
+    const store = useSettingsStore()
+    await store.load()
+
+    mockPut.mockRejectedValueOnce(
+      new MockApiError(422, 'Unprocessable Entity', {
+        detail: { key: 'recommendations.default_count', reason: 'must be >= 1' },
+      }),
+    )
+    await store.saveSection('recommendations', { 'recommendations.default_count': -1 })
+    expect(store.fieldErrors['recommendations.default_count']).toBe('must be >= 1')
+
+    // The user reverts default_count and saves an unrelated key instead.
+    mockPut.mockResolvedValueOnce(twoSettingView())
+    await store.saveSection('recommendations', { 'recommendations.max_count': 50 })
+
+    expect(store.fieldErrors['recommendations.default_count']).toBeUndefined()
+  })
+
+  it('saveSection leaves another section\'s field errors alone', async () => {
+    mockGet.mockResolvedValue(twoSettingView())
+    const store = useSettingsStore()
+    await store.load()
+    store.fieldErrors['logging.file'] = 'does not match the required format'
+
+    mockPut.mockResolvedValueOnce(twoSettingView())
+    await store.saveSection('recommendations', { 'recommendations.max_count': 50 })
+
+    expect(store.fieldErrors['logging.file']).toBe('does not match the required format')
   })
 
   it('saveSection records the error message when the failure is a plain Error', async () => {
     mockPut.mockRejectedValue(new Error('network down'))
     const store = useSettingsStore()
 
-    const ok = await store.saveSection('web', { 'web.port': 9000 })
+    const ok = await store.saveSection('recommendations', { 'recommendations.default_count': 9000 })
 
     expect(ok).toBe(false)
-    expect(store.saveStatus.web).toBe('error')
-    expect(store.saveError.web).toBe('network down')
-    expect(store.fieldErrors['web.port']).toBeUndefined()
+    expect(store.saveStatus.recommendations).toBe('error')
+    expect(store.saveError.recommendations).toBe('network down')
+    expect(store.fieldErrors['recommendations.default_count']).toBeUndefined()
   })
 
   it('saveSection falls back to the message on a non-422 ApiError', async () => {
     mockPut.mockRejectedValue(new MockApiError(500, 'Internal Server Error'))
     const store = useSettingsStore()
 
-    const ok = await store.saveSection('web', { 'web.port': 9000 })
+    const ok = await store.saveSection('recommendations', { 'recommendations.default_count': 9000 })
 
     expect(ok).toBe(false)
-    expect(store.saveStatus.web).toBe('error')
-    expect(store.saveError.web).toBe('500 Internal Server Error')
+    expect(store.saveStatus.recommendations).toBe('error')
+    expect(store.saveError.recommendations).toBe('500 Internal Server Error')
   })
 
   it('clearSaveStatus resets a section back to idle', () => {
     const store = useSettingsStore()
-    store.saveStatus.web = 'saved'
+    store.saveStatus.recommendations = 'saved'
 
-    store.clearSaveStatus('web')
+    store.clearSaveStatus('recommendations')
 
-    expect(store.saveStatus.web).toBe('idle')
+    expect(store.saveStatus.recommendations).toBe('idle')
   })
 
   it('resetSetting DELETEs the key and applies the refreshed view', async () => {
     mockDelete.mockResolvedValue(view())
     const store = useSettingsStore()
 
-    await store.resetSetting('web.port')
+    await store.resetSetting('recommendations.default_count')
 
-    expect(mockDelete).toHaveBeenCalledWith('/settings/web.port')
+    expect(mockDelete).toHaveBeenCalledWith('/settings/recommendations.default_count')
     expect(store.sections).toHaveLength(1)
   })
 
