@@ -30,7 +30,11 @@ if [ ! -f "$CONFIG_PATH" ]; then
     if [ -f "$EXAMPLE_PATH" ]; then
         cp "$EXAMPLE_PATH" "$CONFIG_PATH"
         echo "[entrypoint] No config.yaml found; copied example.yaml as a starting point."
-        echo "[entrypoint] Edit ./config/config.yaml on the host with your settings, then restart."
+        # Do not advertise web.host/web.port here: the image's CMD passes
+        # --host/--port, and CLI flags beat config.yaml — editing them in this
+        # file under Docker changes nothing. Map the port with APP_PORT instead.
+        echo "[entrypoint] Under Docker it carries only the storage paths and web.debug; the bind comes from --host/--port (set the published port with APP_PORT)."
+        echo "[entrypoint] Data sources, settings, and API keys are managed in the app."
     else
         echo "[entrypoint] WARNING: neither config.yaml nor example.yaml present in $CONFIG_DIR." >&2
         echo "[entrypoint] The application may fail to start. Mount a config directory or rebuild the image." >&2

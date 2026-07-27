@@ -5,23 +5,48 @@
 # config.yaml automatically on first run if config.yaml is missing — so
 # edit ./config/config.yaml on the host directly, not example.yaml.
 #
-# This file is intentionally minimal: it only needs the `storage` paths that
-# bootstrap the database plus the `inputs` source examples below.
+# This file holds ONLY what is needed to stand the app up: where the web server
+# binds, and where the database lives. Both are read before the database is
+# open, which is the sole reason they are still here.
 #
-# The global config sections (features, ollama, ingestion, recommendations,
-# conversation, sync, enrichment, web, logging) are OPTIONAL. They ship with
-# built-in code defaults and are edited from the Settings page or the
-# `settings` CLI, which write to the database. Precedence is:
+# Everything else is managed from inside the app and stored in the database:
 #
-#     const default < YAML < database
+#   * Global settings — features, ollama, recommendations, conversation, sync,
+#     enrichment, logging, and CORS origins. Settings page, or the `settings`
+#     CLI (`python3.11 -m src.cli settings --help`).
+#   * Data sources — Data tab -> "+ Add source", or the `source` CLI
+#     (`python3.11 -m src.cli source create <id> <plugin>`). See
+#     docs/DATA_SOURCES.md for the available plugins and their fields.
+#   * API keys, passwords, and tokens — NEVER in this file. They are stored
+#     encrypted in the credentials table and entered in the Add-source modal, a
+#     connect flow (Data tab), or via `source set-secret` / `settings
+#     set-secret`.
 #
-# You MAY still add any of those sections here to override the code defaults on
-# a fresh boot (before anything is saved to the database), but you no longer
-# need to — omitting them just uses the built-in defaults. Do NOT put secrets
-# (api keys, tokens) in this file; those live in the encrypted credentials
-# table and are entered via the Settings page or connect flows.
+# Global settings resolve as: built-in default < this file < database. You MAY
+# add a global section here to change a value before anything has been saved to
+# the database, but you never need to, and the database wins once it has one.
 
-# Storage configuration
+# Web server bind settings.
+# BOOTSTRAP: read to open the listening socket before the database exists, so
+# these cannot be managed from the Settings page.
+web:
+  # SECURITY: "127.0.0.1" binds to localhost only (recommended).
+  # Change to "0.0.0.0" to allow LAN access — but note there is NO
+  # authentication, so anyone on your network can view and modify your data.
+  host: "127.0.0.1"
+  port: 18473  # Non-standard port to avoid collisions with other services
+  # Development only: enables auto-reload on file changes AND exposes the
+  # OpenAPI docs at /docs and /redoc. Leave false for any reachable instance.
+  debug: false
+#
+# Under Docker `host` and `port` are IGNORED: the image's command line passes
+# --host 0.0.0.0 --port 8000 explicitly, and CLI flags win. Change the published
+# port with the APP_PORT environment variable instead. `debug` IS still honoured
+# in the container — leave it false, or /docs and /redoc get published on that
+# 0.0.0.0 bind. See docs/DOCKER.md.
+
+# Storage paths.
+# BOOTSTRAP: these locate the database itself.
 storage:
   # SQLite database path
   database_path: "data/recommendations.db"
@@ -31,179 +56,3 @@ storage:
 
   # Cache directory
   cache_dir: "data/cache"
-
-# Input sources configuration
-# Each entry is a user-defined name with a 'plugin' field specifying the plugin type.
-# This allows multiple instances of the same plugin (e.g., two json_import sources).
-#
-# YAML is one of three places a source can live:
-#   1. YAML only (this file) — bootstrap path; edit, sync, optionally migrate
-#      to DB later via the data accordion or `python3.11 -m src.cli source migrate <id>`.
-#   2. YAML + DB (post-migration) — DB row is authoritative, YAML entry is ignored.
-#   3. DB only — created via `+ Add source` in the web UI or
-#      `python3.11 -m src.cli source create <id> <plugin>`. Never touches YAML.
-#
-# YAML is therefore optional for new sources. Once a source is in the DB,
-# all subsequent edits go through the web UI / source CLI commands and
-# write to the source_configs / credentials tables. See the "Source
-# configuration precedence" section in ARCHITECTURE.md.
-inputs:
-  goodreads_csv:
-    plugin: goodreads_csv
-    path: "inputs/goodreads_library_export.csv"
-    content_type: "book"  # Content type for enrichment (book, movie, tv_show, video_game)
-    enabled: true
-
-  # Goodreads — sync PUBLIC shelves directly via RSS (no CSV export needed).
-  # Requires the profile to be public. Paste your numeric user ID or the
-  # profile URL (e.g. https://www.goodreads.com/user/show/12345-name).
-  goodreads_rss:
-    plugin: goodreads_rss
-    user_id: ""  # Goodreads numeric user ID or public profile URL
-    shelves:
-      - "read"
-      - "currently-reading"
-      - "to-read"
-    content_type: "book"
-    enabled: false
-
-  # The StoryGraph — CSV export from your library (no API; pure file import).
-  # Generate the file at Manage Account -> Manage Your Data ->
-  # Export StoryGraph Library.
-  storygraph_csv:
-    plugin: storygraph_csv
-    path: "inputs/storygraph_export.csv"
-    content_type: "book"
-    enabled: false
-
-  # Calibre-Web integration (self-hosted ebook library, OPDS)
-  calibre_web:
-    plugin: calibre_web
-    url: "http://localhost:8083"  # Base URL of your Calibre-Web instance
-    username: ""  # Calibre-Web login username
-    password: ""  # Sensitive — set in the web UI Add-source modal at create time, or later via the web UI Replace action / `source set-secret` (stored encrypted)
-    verify_ssl: true  # Set false for self-signed TLS certificates
-    content_type: "book"
-    enabled: false
-
-  steam:
-    plugin: steam
-    # Steam Web API configuration
-    # Get your API key from: https://steamcommunity.com/dev/apikey
-    api_key: ""  # Your Steam Web API key
-    # Either provide steam_id (64-bit Steam ID) or vanity_url (username/custom URL)
-    steam_id: ""  # Your Steam ID (64-bit)
-    vanity_url: ""  # Alternative: Your Steam username or custom URL
-    # Minimum playtime in minutes to include a game (default: 0 = include all)
-    min_playtime_minutes: 0
-    content_type: "video_game"  # Content type for enrichment
-    enabled: false  # Set to true to enable Steam import
-
-  # GOG.com integration (PC game store)
-  gog:
-    plugin: gog
-    # GOG OAuth refresh token for API access.
-    # See "GOG Setup" section in README.md for step-by-step instructions.
-    refresh_token: ""
-    # Import wishlisted games as unread items (default: true)
-    include_wishlist: true
-    # Fetch detailed metadata for wishlisted games from public API (default: true)
-    # Disable to speed up sync if you don't need wishlist metadata
-    enrich_wishlist: true
-    content_type: "video_game"
-    enabled: false
-
-  # Epic Games Store integration
-  # Recommended: connect via web UI (Data tab → Connect Epic Games).
-  # The token is stored in the encrypted credential database automatically.
-  # See "Epic Games Setup" section in README.md for details.
-  epic_games:
-    plugin: epic_games
-    content_type: "video_game"
-    enabled: false
-
-  # Trakt integration (movie and TV show tracker)
-  # Register your OWN Trakt API application to get a client id:
-  #   https://trakt.tv/oauth/applications
-  # The client_secret and refresh_token are entered via the connect flow
-  # (Data tab → Connect Trakt Account, or `auth connect --source trakt`) and
-  # stored in the encrypted credential database — do NOT put them in this file.
-  trakt:
-    plugin: trakt
-    client_id: ""  # Your Trakt API application client id
-    # Import watchlisted titles as unread items (default: true)
-    include_watchlist: true
-    # No content_type key: Trakt imports BOTH movies and TV shows in one sync;
-    # the plugin sets each item's type itself.
-    enabled: false
-
-  # Generic CSV import — use templates from templates/ directory
-  csv_movies:
-    plugin: csv_import
-    path: "inputs/my_movies.csv"  # Path to your CSV file
-    content_type: "movie"  # book, movie, tv_show, or video_game
-    enabled: false
-
-  # Generic JSON import — use templates from templates/ directory
-  json_books:
-    plugin: json_import
-    path: "inputs/my_books.json"  # Path to your JSON or JSONL file
-    content_type: "book"  # book, movie, tv_show, or video_game
-    enabled: false
-
-  # Generic Markdown import — use templates from templates/ directory
-  md_tv_shows:
-    plugin: markdown_import
-    path: "inputs/my_tv_shows.md"  # Path to your Markdown file
-    content_type: "tv_show"  # book, movie, tv_show, or video_game
-    enabled: false
-
-  # Sonarr integration (TV show library manager)
-  sonarr:
-    plugin: sonarr
-    url: "http://localhost:8989"  # Sonarr base URL
-    api_key: ""  # Sonarr API key (Settings > General > API Key)
-    content_type: "tv_show"  # Content type for enrichment
-    enabled: false
-
-  # Radarr integration (Movie library manager)
-  radarr:
-    plugin: radarr
-    url: "http://localhost:7878"  # Radarr base URL
-    api_key: ""  # Radarr API key (Settings > General > API Key)
-    content_type: "movie"  # Content type for enrichment
-    enabled: false
-
-  # ROM Library — scan local directories for emulator ROMs and game files.
-  # Files are filtered by a curated default ROM extension list (.nes, .smc,
-  # .iso, .chd, .nsp, .xci, .zip, .7z, .m3u, etc.). Folders are always
-  # included so disc-image dirs (e.g. "Final Fantasy VII (Disc 1)/") count
-  # as one game. Titles are run through a built-in cleaner that strips
-  # No-Intro / Redump / TOSEC tags (region, language, year, revision, disc,
-  # bracket dump-codes). Multi-disc games collapse to one item.
-  my_roms:
-    plugin: roms
-    paths:
-      - "/path/to/your/roms/snes"  # One scan root per system directory.
-      - "/path/to/your/roms/n64"
-    # Optional: ADD extensions to the default list (case-insensitive).
-    # Example: include .exe to also pick up Windows installers.
-    include_extensions: []
-    # Optional: REMOVE extensions from the default list.
-    # Example: exclude .tgz if your stash has tgz archives that aren't games.
-    exclude_extensions: []
-    # Optional: glob patterns matched against entry names to skip — useful
-    # for emulator junk folders (e.g. "scripts", "mlc01", "model2"). Hidden
-    # dotfiles are always skipped.
-    exclude_names: []
-    # Optional: extra Python regex patterns appended to the built-in title
-    # cleaner via re.sub. Useful for site-specific tags the defaults miss.
-    extra_strip_patterns: []
-    enabled: false
-
-  # You can add multiple instances of the same plugin. For example:
-  # tv_shows_json:
-  #   plugin: json_import
-  #   path: "inputs/tv_shows.json"
-  #   content_type: "tv_show"
-  #   enabled: true

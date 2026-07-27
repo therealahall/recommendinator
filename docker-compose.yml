@@ -16,8 +16,11 @@
 # omitting `app-ai` leaves both variants competing for the same host port.
 #
 # Environment overrides (set in your shell or a .env file next to this file):
-#   IMAGE_TAG  — image tag to pull (default: latest)
-#   APP_PORT   — host port to expose the web UI on (default: 18473)
+#   IMAGE_TAG               — image tag to pull (default: latest)
+#   APP_PORT                — host port to expose the web UI on (default: 18473)
+#   OLLAMA_MODEL            — model the sidecar pulls (default: mistral:7b)
+#   OLLAMA_EMBEDDING_MODEL  — embedding model to pull (default: nomic-embed-text)
+#   OLLAMA_CONVERSATION_MODEL — separate chat model to pull (default: reuse OLLAMA_MODEL)
 #
 # For local development with hot reload, layer docker-compose.dev.yml on top:
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
@@ -27,8 +30,12 @@ x-app-common: &app-common
   ports:
     - "${APP_PORT:-18473}:8000"
   volumes:
-    # config is mounted read-write so the entrypoint can copy example.yaml
-    # to config.yaml on first run. Edit ./config/config.yaml on the host.
+    # config is mounted read-write so the entrypoint can copy example.yaml to
+    # config.yaml on first run. Under Docker it holds only the storage paths
+    # and web.debug — the bind comes from the image's --host/--port CMD, which
+    # beats config.yaml, so set APP_PORT above rather than editing web.port.
+    # Sources, settings, and secrets live in the database under ./data and are
+    # managed from the app.
     # Once config.yaml exists, you can switch this to `./config:/app/config:ro`
     # for a tighter security posture (the app never needs to write to it
     # at steady state).
@@ -64,15 +71,22 @@ services:
         condition: service_healthy
 
   # Ollama LLM sidecar (only starts with --profile ai).
-  # Models are auto-pulled on first start from config/config.yaml (ollama.model
-  # and ollama.embedding_model). Falls back to mistral:7b and nomic-embed-text.
+  # Models are auto-pulled on first start from the environment below. The app's
+  # global config is database-backed, so these are set here rather than read
+  # from config.yaml — keep them in sync with the ollama.model /
+  # ollama.embedding_model settings on the Settings page.
   ollama:
     image: ghcr.io/therealahall/recommendinator-ollama:${IMAGE_TAG:-latest}
     container_name: recommendinator-ollama
     profiles: ["ai"]
+    environment:
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-mistral:7b}
+      - OLLAMA_EMBEDDING_MODEL=${OLLAMA_EMBEDDING_MODEL:-nomic-embed-text}
+      # Only set this if you point ollama.conversation_model at a separate chat
+      # model; empty means the sidecar reuses OLLAMA_MODEL, matching the app.
+      - OLLAMA_CONVERSATION_MODEL=${OLLAMA_CONVERSATION_MODEL:-}
     volumes:
       - ollama-data:/root/.ollama
-      - ./config:/config:ro
     healthcheck:
       test: ["CMD-SHELL", "ollama list > /dev/null 2>&1 && test -f /tmp/models-ready"]
       interval: 10s

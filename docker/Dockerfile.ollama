@@ -1,9 +1,11 @@
 # Recommendinator — Ollama sidecar image.
 #
 # Thin layer on top of ollama/ollama that bakes in the entrypoint script
-# responsible for pulling the configured generation and embedding models on
-# first start. Published so end-users don't need to download a second file
-# alongside docker-compose.yml.
+# responsible for pulling the generation, embedding, and conversation models
+# named by the OLLAMA_MODEL / OLLAMA_EMBEDDING_MODEL / OLLAMA_CONVERSATION_MODEL
+# environment variables on first start.
+# Published so end-users don't need to download a second file alongside
+# docker-compose.yml.
 
 FROM ollama/ollama:0.22.0
 

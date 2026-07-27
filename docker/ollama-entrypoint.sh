@@ -1,48 +1,30 @@
 #!/bin/bash
-# Ollama entrypoint: starts server and pulls models from config on first run.
+# Ollama entrypoint: starts server and pulls the configured models on first run.
 #
-# Reads model names from /config/config.yaml (mounted from host).
-# Falls back to defaults if config is missing or unparseable.
+# Model names come from the environment (set in docker-compose.yml or a .env
+# file), NOT from config.yaml. The application's global config — including
+# ollama.model — is database-backed and editable from the Settings page, so the
+# config file is no longer a reliable source for these values and this container
+# has no access to the database.
+#
+# These MUST agree with the `ollama.model`, `ollama.embedding_model`, and
+# `ollama.conversation_model` settings the app requests. If you change any of
+# them in the Settings page, set the matching OLLAMA_MODEL /
+# OLLAMA_EMBEDDING_MODEL / OLLAMA_CONVERSATION_MODEL here and recreate this
+# container, or the app will request a model that was never pulled.
 
 set -euo pipefail
 
-DEFAULT_MODEL="mistral:7b"
-DEFAULT_EMBEDDING_MODEL="nomic-embed-text"
-
-CONFIG_FILE="/config/config.yaml"
+MODEL="${OLLAMA_MODEL:-mistral:7b}"
+EMBEDDING_MODEL="${OLLAMA_EMBEDDING_MODEL:-nomic-embed-text}"
+# Defaults to the generation model, matching the app: an empty
+# ollama.conversation_model setting falls back to ollama.model. Set this only if
+# you point the Settings page at a separate chat model, or chat will request a
+# model that was never pulled.
+CONVERSATION_MODEL="${OLLAMA_CONVERSATION_MODEL:-$MODEL}"
 
 log() {
     echo "[entrypoint] $*"
-}
-
-# Parse a simple "key: value" from the ollama section of config.yaml.
-# This handles quoted and unquoted values. Falls back to the provided default.
-parse_config_value() {
-    local key="$1"
-    local default="$2"
-
-    if [ ! -f "$CONFIG_FILE" ]; then
-        echo "$default"
-        return
-    fi
-
-    # Extract value after "key:" within the ollama config block.
-    # Handles: model: mistral:7b / model: "mistral:7b" / embedding_model: "nomic-embed-text"
-    local value
-    value=$(sed -n '/^ollama:/,/^[^ ]/p' "$CONFIG_FILE" \
-        | grep -E "^\s+${key}:" \
-        | head -1 \
-        | sed 's/^[^:]*:\s*//' \
-        | sed 's/^"//' \
-        | sed 's/"$//' \
-        | sed 's/\s*#.*//' \
-        | xargs)
-
-    if [ -n "$value" ]; then
-        echo "$value"
-    else
-        echo "$default"
-    fi
 }
 
 # Pull a model with periodic progress logging.
@@ -96,18 +78,9 @@ until ollama list > /dev/null 2>&1; do
 done
 log "Ollama server is ready (started in ${wait_seconds}s)."
 
-# Read models from config
-if [ -f "$CONFIG_FILE" ]; then
-    log "Reading model config from $CONFIG_FILE"
-else
-    log "Config file not found at $CONFIG_FILE, using defaults."
-fi
-
-MODEL=$(parse_config_value "model" "$DEFAULT_MODEL")
-EMBEDDING_MODEL=$(parse_config_value "embedding_model" "$DEFAULT_EMBEDDING_MODEL")
-
 log "Generation model: $MODEL"
 log "Embedding model:  $EMBEDDING_MODEL"
+log "Conversation model: $CONVERSATION_MODEL"
 
 # Pull models if not already present.
 # Escape the only regex metacharacter that appears in real model names ('.')
@@ -115,7 +88,9 @@ log "Embedding model:  $EMBEDDING_MODEL"
 # start of the line — `ollama list` prints the model name as the first column,
 # so anchoring prevents short names from substring-matching longer ones
 # (e.g., MODEL=text incorrectly matching "nomic-embed-text").
-for model_name in "$MODEL" "$EMBEDDING_MODEL"; do
+# CONVERSATION_MODEL defaults to MODEL, so the already-downloaded check below
+# makes the duplicate a no-op rather than a second pull.
+for model_name in "$MODEL" "$EMBEDDING_MODEL" "$CONVERSATION_MODEL"; do
     if ollama list | grep -q "^${model_name//./\\.}"; then
         log "Model $model_name is already downloaded."
     else
