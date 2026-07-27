@@ -125,6 +125,18 @@ def migrate_config_secrets(
         # stale plaintext copy so it does not linger in the running config.
         existing = storage.get_credential(user_id, source_id, credential_key)
         if existing is not None:
+            if has_config_value:
+                # The stored secret wins and the file value is DISCARDED, not
+                # migrated. Say so precisely: telling the user it was saved
+                # would invite them to delete a value that was never persisted.
+                logger.warning(
+                    "DEPRECATED: '%s' is set in config.yaml, but an encrypted "
+                    "secret already exists and takes precedence — the file "
+                    "value is IGNORED, not migrated. To change it use "
+                    "'settings set-secret %s', then delete it from config.yaml.",
+                    entry.key,
+                    entry.key,
+                )
             pop_leaf(config, parts)
             continue
 
@@ -135,8 +147,13 @@ def migrate_config_secrets(
                 storage.save_credential(
                     user_id, source_id, credential_key, str(config_value)
                 )
-                logger.info(
-                    "Re-encrypted stale global secret %s from config", entry.key
+                logger.warning(
+                    "DEPRECATED: '%s' is set in config.yaml. It has been "
+                    "re-encrypted into the database (replacing an undecryptable "
+                    "row) and removed from the running config — you can now "
+                    "delete it from config.yaml. A future release will stop "
+                    "reading secrets from the file.",
+                    entry.key,
                 )
                 pop_leaf(config, parts)
             else:
@@ -153,5 +170,11 @@ def migrate_config_secrets(
             storage.save_credential(
                 user_id, source_id, credential_key, str(config_value)
             )
-            logger.info("Migrated global secret %s to database", entry.key)
+            logger.warning(
+                "DEPRECATED: '%s' is set in config.yaml. It has been moved to "
+                "encrypted storage and removed from the running config — you "
+                "can now delete it from config.yaml. A future release will stop "
+                "reading secrets from the file.",
+                entry.key,
+            )
             pop_leaf(config, parts)

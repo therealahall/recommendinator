@@ -132,7 +132,21 @@ _ALLOWED_ENRICHMENT_FILTERS: frozenset[str] = frozenset({"", " AND ci.user_id = 
 # non-idempotent, one-time upgrade must run exactly once per database. The plain
 # ``CREATE TABLE IF NOT EXISTS`` / ``ALTER`` migrations in create_schema stay
 # idempotent and run unconditionally; only version-guarded steps consult this.
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
+
+# Leaves that were settings-registry entries on an earlier iteration of the
+# database-backed config and no longer are. ``web.host``/``port``/``debug`` moved
+# to bootstrap-only config (the launcher reads them before any database is open)
+# and the ``ingestion`` section was removed with the conflict-resolution code it
+# configured. Rows for these keys are unreachable from the app but would still
+# be overlaid onto config, so they are pruned once on upgrade.
+_ORPHANED_SETTING_KEYS: tuple[str, ...] = (
+    "web.host",
+    "web.port",
+    "web.debug",
+    "ingestion.conflict_strategy",
+    "ingestion.source_priority",
+)
 
 
 def create_schema(conn: sqlite3.Connection) -> None:
@@ -431,12 +445,11 @@ def create_schema(conn: sqlite3.Connection) -> None:
         """
     )
 
-    # Global/system settings: dotted leaf key -> JSON-encoded value. Holds the
-    # global config sections (features, ollama, web, logging, etc.) migrated
-    # from config.yaml at key-level granularity — one row per leaf, keyed by
-    # its dotted path (e.g. "web.port"). Once a leaf exists here the database
-    # is the source of truth; the YAML config only seeds leaves that are
-    # missing. Per-source config and credentials keep their own tables above.
+    # Global/system settings: dotted leaf key -> JSON-encoded value. Holds ONLY
+    # the leaves a user explicitly set via the Settings page / `settings` CLI,
+    # keyed by dotted path (e.g. "recommendations.default_count"). Nothing is
+    # seeded here on boot; a stored leaf wins over YAML and the registry const
+    # default. Per-source config and credentials keep their own tables above.
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS settings (
@@ -447,8 +460,8 @@ def create_schema(conn: sqlite3.Connection) -> None:
         """
     )
 
-    # One-time cleanup of settings rows left behind by the removed seed-on-boot.
-    _clear_seeded_settings(cursor)
+    # Version-guarded one-time settings migrations (see _migrate_settings_table).
+    _migrate_settings_table(cursor)
 
     # Indexes for conversation tables
     cursor.execute(
@@ -470,9 +483,10 @@ def create_schema(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-def _clear_seeded_settings(cursor: sqlite3.Cursor) -> None:
-    """One-time cleanup: drop every pre-existing ``settings`` row on upgrade.
+def _migrate_settings_table(cursor: sqlite3.Cursor) -> None:
+    """Run the version-guarded one-time migrations of the ``settings`` table.
 
+    **Version 1 — drop every pre-existing row.**
     An earlier iteration of the database-backed config seeded the ``settings``
     table on every boot — both dotted-leaf rows (``features.ai_enabled``) and
     stale whole-section JSON-blob rows (``features`` -> a dict). Seed-on-boot
@@ -481,16 +495,36 @@ def _clear_seeded_settings(cursor: sqlite3.Cursor) -> None:
     pre-existing row is genuine user input — every one is a seed artifact — so
     the whole table is cleared once on the first upgrade.
 
-    Guarded by ``PRAGMA user_version``: the clear runs only while the database
-    is below :data:`_SCHEMA_VERSION`, then advances the version so it never
-    fires again. A leaf a user sets after the upgrade therefore survives every
-    later init. On a fresh database the ``DELETE`` is a harmless no-op that
-    still advances the version.
+    Guarded by ``PRAGMA user_version``: each step runs only while the database
+    is below the version that introduced it, then the version is advanced so it
+    never fires again. A leaf a user sets after the upgrade therefore survives
+    every later init. On a fresh database both ``DELETE``\\ s are harmless no-ops
+    that still advance the version.
+
+    **Version 2 — prune only the keys in :data:`_ORPHANED_SETTING_KEYS`.**
+    Unlike version 1 this must SPARE every other row: by now a developer on this
+    branch may have set real values. These five were briefly registry entries and
+    no longer are, leaving rows the app cannot reach — ``settings reset`` and
+    ``DELETE /api/settings`` both refuse a key with no registry entry. The
+    ``web.*`` rows would still be overlaid onto ``config["web"]`` by
+    ``migrate_config_settings``; the ``ingestion.*`` rows cannot be, since that
+    section left ``IN_SCOPE_SECTIONS`` too, and are deleted simply as garbage.
+    Also unreleased, so no row here is genuine user intent either.
     """
     cursor.execute("PRAGMA user_version")
-    if cursor.fetchone()[0] >= _SCHEMA_VERSION:
+    version = cursor.fetchone()[0]
+    if version >= _SCHEMA_VERSION:
         return
-    cursor.execute("DELETE FROM settings")
+
+    if version < 1:
+        cursor.execute("DELETE FROM settings")
+
+    if version < 2:
+        cursor.executemany(
+            "DELETE FROM settings WHERE key = ?",
+            [(key,) for key in _ORPHANED_SETTING_KEYS],
+        )
+
     # PRAGMA statements cannot be parameterised; the value is a validated
     # module-level integer constant, not caller input.
     cursor.execute(f"PRAGMA user_version = {int(_SCHEMA_VERSION)}")
