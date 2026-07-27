@@ -2968,26 +2968,28 @@ def settings() -> None:
     help="Include advanced (infra/security) settings in the human listing.",
 )
 @click.option(
-    "--json",
-    "as_json",
-    is_flag=True,
-    help="Emit the full settings view as JSON (matches GET /api/settings).",
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    default="table",
+    help="Output format (json matches GET /api/settings).",
 )
 @click.pass_context
 def settings_list(
-    ctx: click.Context, section_name: str | None, advanced: bool, as_json: bool
+    ctx: click.Context, section_name: str | None, advanced: bool, output_format: str
 ) -> None:
     """List every global setting grouped by section.
 
     Secrets show presence only (never their value). Advanced infra/security
     settings are hidden from the human listing unless --advanced is given or a
-    specific --section is requested. --json always emits the complete view.
+    specific --section is requested. --format json always emits the complete
+    view.
     """
     config = ctx.obj["config"]
     storage = _require_storage(ctx)
     view = build_settings_view(config, storage)
 
-    if as_json:
+    if output_format == "json":
         click.echo(json.dumps(view, indent=2))
         return
 
@@ -3024,13 +3026,14 @@ def settings_list(
 @settings.command("get")
 @click.argument("key")
 @click.option(
-    "--json",
-    "as_json",
-    is_flag=True,
-    help="Emit the setting view as JSON (secrets show presence only).",
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    default="table",
+    help="Output format (json shows secrets as presence only).",
 )
 @click.pass_context
-def settings_get(ctx: click.Context, key: str, as_json: bool) -> None:
+def settings_get(ctx: click.Context, key: str, output_format: str) -> None:
     """Show one setting's metadata and current value.
 
     KEY is the dotted registry leaf (e.g. recommendations.default_count). A
@@ -3043,7 +3046,7 @@ def settings_get(ctx: click.Context, key: str, as_json: bool) -> None:
         _abort_with(f"Unknown setting: {key}")
     view = setting_view(entry, config, storage)
 
-    if as_json:
+    if output_format == "json":
         click.echo(json.dumps(view, indent=2))
         return
 
@@ -3059,11 +3062,38 @@ def settings_get(ctx: click.Context, key: str, as_json: bool) -> None:
     click.echo(tabulate(rows, tablefmt="grid"))
 
 
+def _emit_settings_view(
+    ctx: click.Context, output_format: str, success_message: str
+) -> None:
+    """Render the post-mutation settings view, mirroring the web response.
+
+    ``PUT /api/settings`` and ``DELETE /api/settings/{key}`` both return the
+    refreshed ``SettingsResponse``, so a scripted CLI caller must be able to get
+    the same body from the same call rather than issuing a second ``settings
+    list`` to reconstruct it. Same shape as ``_emit_config_view`` does for the
+    ``source`` group.
+    """
+    if output_format == "json":
+        storage = _require_storage(ctx)
+        click.echo(
+            json.dumps(build_settings_view(ctx.obj["config"], storage), indent=2)
+        )
+    else:
+        click.echo(success_message)
+
+
 @settings.command("set")
 @click.argument("key")
 @click.argument("value")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    default="table",
+    help="Output format (json emits the refreshed settings view).",
+)
 @click.pass_context
-def settings_set(ctx: click.Context, key: str, value: str) -> None:
+def settings_set(ctx: click.Context, key: str, value: str, output_format: str) -> None:
     """Set a non-sensitive setting.
 
     KEY is the dotted registry leaf; VALUE is parsed to its type (booleans
@@ -3084,10 +3114,14 @@ def settings_set(ctx: click.Context, key: str, value: str) -> None:
     except SettingsValidationError as error:
         _abort_with(error.reason)
 
-    click.echo(
-        f"Set {key} = {_format_setting_value(setting_view(entry, config, storage))}."
+    _emit_settings_view(
+        ctx,
+        output_format,
+        f"Set {key} = {_format_setting_value(setting_view(entry, config, storage))}.",
     )
-    if entry.restart_required:
+    # The restart hint is advice for a human; the JSON view carries the same
+    # fact structurally as `restart_required` on the entry.
+    if entry.restart_required and output_format != "json":
         click.echo("This change takes effect after a restart.")
 
 
@@ -3101,8 +3135,15 @@ def settings_set(ctx: click.Context, key: str, value: str) -> None:
         "stdin. Mirrors PUT /api/settings — applies every key atomically."
     ),
 )
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    default="table",
+    help="Output format (json emits the refreshed settings view).",
+)
 @click.pass_context
-def settings_apply(ctx: click.Context, from_json: str) -> None:
+def settings_apply(ctx: click.Context, from_json: str, output_format: str) -> None:
     """Apply a JSON object of {dotted.key: value} atomically (bulk update).
 
     Mirrors the web ``PUT /api/settings`` endpoint: every update is validated
@@ -3118,13 +3159,20 @@ def settings_apply(ctx: click.Context, from_json: str) -> None:
         apply_settings(config, storage, updates)
     except SettingsValidationError as error:
         _abort_with(f"{error.key}: {error.reason}")
-    click.echo(f"Applied {len(updates)} setting(s).")
+    _emit_settings_view(ctx, output_format, f"Applied {len(updates)} setting(s).")
 
 
 @settings.command("reset")
 @click.argument("key")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    default="table",
+    help="Output format (json emits the refreshed settings view).",
+)
 @click.pass_context
-def settings_reset(ctx: click.Context, key: str) -> None:
+def settings_reset(ctx: click.Context, key: str, output_format: str) -> None:
     """Reset a setting to its default by dropping the database override."""
     config = ctx.obj["config"]
     storage = _require_storage(ctx)
@@ -3135,7 +3183,7 @@ def settings_reset(ctx: click.Context, key: str) -> None:
         reset_setting(config, storage, key)
     except SettingsValidationError as error:
         _abort_with(error.reason)
-    click.echo(f"Reset {key} to its default.")
+    _emit_settings_view(ctx, output_format, f"Reset {key} to its default.")
 
 
 @settings.command("set-secret")

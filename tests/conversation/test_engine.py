@@ -675,6 +675,29 @@ class TestConversationConfig:
         assert engine.context_window_size is None
         assert engine.compact_mode is False
 
+    def test_zero_context_window_size_means_model_default(
+        self,
+        storage_manager: StorageManager,
+        mock_ollama: MagicMock,
+    ) -> None:
+        """``context_window_size: 0`` resolves to None (use the model's num_ctx).
+
+        0 is the settings-registry default for
+        ``conversation.llm.context_window_size``, and the registry materialises
+        every leaf into the assembled config — so 0-present, not key-absent, is
+        what the engine actually receives on a fresh install. The sibling test
+        above only covers the absent case, which is no longer the production
+        shape. If the ``or None`` coercion were dropped, Ollama would be handed
+        ``num_ctx=0``.
+        """
+        engine = ConversationEngine(
+            storage_manager=storage_manager,
+            ollama_client=mock_ollama,
+            conversation_config={"llm": {"context_window_size": 0}},
+        )
+
+        assert engine.context_window_size is None
+
     def test_factory_passes_conversation_config(
         self,
         storage_manager: StorageManager,
