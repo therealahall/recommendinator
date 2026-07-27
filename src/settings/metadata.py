@@ -3,15 +3,15 @@
 Every in-scope global-config leaf (the sections in
 :data:`~src.storage.settings_migration.IN_SCOPE_SECTIONS`) has exactly one
 :class:`SettingMetadata` entry here. The registry pairs each dotted leaf key
-(e.g. ``"web.port"``) with its human label, help text, value type, frontend
-widget hint, validation bounds, and — crucially — the **hardcoded default**
-used as the const fallback when neither the database nor ``config.yaml`` supply
-the leaf.
+(e.g. ``"recommendations.default_count"``) with its human label, help text,
+value type, frontend widget hint, validation bounds, and — crucially — the
+**hardcoded default** used as the const fallback when neither the database nor
+``config.yaml`` supply the leaf.
 
 The dotted-key scheme and the in-scope section list match
-``src.storage.settings_migration`` so the registry, the DB seed, and the config
-overlay all describe the same leaves. Out-of-scope config (``storage.*``,
-``inputs``, per-source config) is intentionally absent.
+``src.storage.settings_migration`` so the registry and the config overlay
+describe the same leaves. Out-of-scope config (``storage.*``, ``inputs``,
+per-source config, and the ``web`` bind settings) is intentionally absent.
 """
 
 from __future__ import annotations
@@ -19,7 +19,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from src.ingestion.conflict import ConflictStrategy
 from src.storage.settings_migration import IN_SCOPE_SECTIONS, SENSITIVE_LEAF_KEYS
 
 SettingType = Literal["bool", "int", "float", "string", "list", "enum"]
@@ -36,7 +35,6 @@ _DEFAULT_WIDGETS: dict[SettingType, Widget] = {
     "enum": "select",
 }
 
-_CONFLICT_STRATEGY_CHOICES: tuple[str, ...] = tuple(s.value for s in ConflictStrategy)
 _LOG_LEVEL_CHOICES: tuple[str, ...] = (
     "DEBUG",
     "INFO",
@@ -183,22 +181,6 @@ _REGISTRY: tuple[SettingMetadata, ...] = (
         help="Ollama model for chat; falls back to the recommendation model when empty.",
         type="string",
         default="",
-    ),
-    # ingestion
-    _entry(
-        "ingestion.conflict_strategy",
-        label="Conflict strategy",
-        help="How to resolve an item imported from multiple sources.",
-        type="enum",
-        default=ConflictStrategy.LAST_WRITE_WINS.value,
-        choices=_CONFLICT_STRATEGY_CHOICES,
-    ),
-    _entry(
-        "ingestion.source_priority",
-        label="Source priority",
-        help="Source ordering (highest first) used by the source_priority strategy.",
-        type="list",
-        default=["goodreads", "steam"],
     ),
     # recommendations
     _entry(
@@ -353,6 +335,17 @@ _REGISTRY: tuple[SettingMetadata, ...] = (
         validation=Validation(min=1),
     ),
     _entry(
+        "conversation.llm.context_window_size",
+        label="Context window size",
+        help="Ollama context window (num_ctx) for chat; 0 uses the model's default.",
+        type="int",
+        # Bounded above deliberately: this becomes Ollama's num_ctx, which sizes
+        # the KV cache, so an unbounded value set over the network could OOM the
+        # server. 131072 covers the largest context length in common models.
+        default=0,
+        validation=Validation(min=0, max=131072),
+    ),
+    _entry(
         "conversation.context.max_relevant_items",
         label="Max relevant items",
         help="Maximum items retrieved via semantic search for chat context.",
@@ -429,6 +422,24 @@ _REGISTRY: tuple[SettingMetadata, ...] = (
         default=False,
     ),
     _entry(
+        "enrichment.providers.tmdb.language",
+        label="TMDB language",
+        help="Language for TMDB results: a lowercase ISO 639-1 code, optionally with an uppercase region (en, en-US, pt-BR).",
+        type="string",
+        default="en-US",
+        # The region is optional — TMDB accepts a bare ISO 639-1 code too, and
+        # rejecting "en" in the UI while config.yaml still accepted it would be
+        # an arbitrary asymmetry.
+        validation=Validation(pattern=r"[a-z]{2}(-[A-Z]{2})?"),
+    ),
+    _entry(
+        "enrichment.providers.tmdb.include_keywords",
+        label="TMDB keywords as tags",
+        help="Fetch TMDB keywords and store them as tags (costs an extra API call).",
+        type="bool",
+        default=True,
+    ),
+    _entry(
         "enrichment.providers.openlibrary.enabled",
         label="Open Library enabled",
         help="Enable the Open Library (books) enrichment provider.",
@@ -449,41 +460,19 @@ _REGISTRY: tuple[SettingMetadata, ...] = (
         type="bool",
         default=False,
     ),
-    # web — server bind and CORS take effect only on restart; infra/security → advanced.
-    _entry(
-        "web.host",
-        label="Bind host",
-        help="Interface the web server binds to (127.0.0.1 is localhost-only).",
-        type="string",
-        default="127.0.0.1",
-        restart_required=True,
-        advanced=True,
-    ),
-    _entry(
-        "web.port",
-        label="Bind port",
-        help="TCP port the web server listens on.",
-        type="int",
-        default=18473,
-        validation=Validation(min=1, max=65535),
-        restart_required=True,
-        advanced=True,
-    ),
-    _entry(
-        "web.debug",
-        label="Debug mode",
-        help="Enable auto-reload on file changes (development only).",
-        type="bool",
-        default=False,
-        restart_required=True,
-        advanced=True,
-    ),
+    # web — CORS takes effect only on restart; infra/security → advanced.
+    # NOTE: web.host / web.port / web.debug are deliberately absent. They are
+    # read by the uvicorn launcher (src/web/main.py) before any database is
+    # open, so a database-backed value could never be honoured — see
+    # BOOTSTRAP_WEB_* in src/cli/config.py.
     _entry(
         "web.allowed_origins",
         label="Allowed CORS origins",
         help='Origins permitted by CORS; set to ["*"] to allow all (not recommended).',
         type="list",
-        default=["http://localhost:18473"],
+        # Stored as a tuple so the registry cannot hand out a mutable it shares
+        # with callers — see _public(). Declared type stays "list".
+        default=("http://localhost:18473",),
         restart_required=True,
         advanced=True,
     ),
@@ -501,10 +490,15 @@ _REGISTRY: tuple[SettingMetadata, ...] = (
     _entry(
         "logging.file",
         label="Log file",
-        help="Path to the application log file, relative to the logs/ directory.",
+        help="Path to the application log file; must sit under logs/ (e.g. logs/recommendations.log).",
         type="string",
         default="logs/recommendations.log",
-        validation=Validation(pattern=r"logs/[A-Za-z0-9_.\-/]+\.log"),
+        # The negative lookahead rejects `..` at the API boundary. Without it the
+        # char class admits `.` and `/`, so `logs/../../tmp/x.log` validated,
+        # persisted, and rendered as the effective log file — then got silently
+        # discarded at boot by _safe_log_path, with the warning written to the
+        # log the user was trying to repoint. Both layers now agree.
+        validation=Validation(pattern=r"logs/(?!.*\.\.)[A-Za-z0-9_.\-/]+\.log"),
         restart_required=True,
         advanced=True,
     ),
@@ -514,7 +508,7 @@ _BY_KEY: dict[str, SettingMetadata] = {entry.key: entry for entry in _REGISTRY}
 
 
 def all_entries() -> tuple[SettingMetadata, ...]:
-    """Return every registry entry in declaration (``example.yaml``) order."""
+    """Return every registry entry in declaration order."""
     return _REGISTRY
 
 
@@ -523,16 +517,31 @@ def get_entry(key: str) -> SettingMetadata | None:
     return _BY_KEY.get(key)
 
 
+def _public(value: Any) -> Any:
+    """Return a caller-safe view of a stored registry default.
+
+    Container defaults are stored immutably (a ``tuple``) and converted to a
+    fresh ``list`` on the way out. Storing them mutably and copying at each
+    accessor is the version that goes wrong: it only takes one new accessor —
+    or one caller reading ``entry.default`` directly — to hand out the shared
+    object, and ``web.allowed_origins`` flows straight into CORSMiddleware.
+    """
+    return list(value) if isinstance(value, tuple) else value
+
+
 def default_of(key: str) -> Any:
     """Return the const default for a registered leaf key.
 
     The single source of truth for a leaf's fallback value, so callers never
     re-hardcode a default the registry already declares.
 
+    Container defaults come back as a fresh mutable via :func:`_public`, so a
+    caller cannot corrupt the registry in place.
+
     Raises:
         KeyError: If *key* is not a registered leaf (a programming error).
     """
-    return _BY_KEY[key].default
+    return _public(_BY_KEY[key].default)
 
 
 def entries_by_section() -> dict[str, list[SettingMetadata]]:
@@ -551,7 +560,7 @@ def entries_by_section() -> dict[str, list[SettingMetadata]]:
 
 def flat_defaults() -> dict[str, Any]:
     """Return the hardcoded defaults as a flat ``{dotted_key: value}`` mapping."""
-    return {entry.key: entry.default for entry in _REGISTRY}
+    return {entry.key: _public(entry.default) for entry in _REGISTRY}
 
 
 def default_config() -> dict[str, Any]:
