@@ -103,14 +103,15 @@ Note: Use `command make check` (not bare `make check`) to bypass a zsh shell sna
 
 ### Agent-Enforced Standards
 
-Code quality rules (naming, DRY, type safety, dead code, imports, mutation), security rules, test standards, regression test format, commit conventions, and documentation completeness are enforced by the subagents. The main agent's job is to write clean code, follow the workflows below, and run the agents before committing. See the agent files for the full rule sets:
+Code quality rules (naming, DRY, type safety, dead code, imports, mutation), security rules, test standards, regression test format, commit conventions, and documentation completeness are enforced by review subagents. Most are project-agnostic and shared across repos at the user level (`~/.claude/agents/`) — they orient by reading this CLAUDE.md and the docs it links, so this project's specifics (Python version, `config.yaml` rules, coverage target, regression-test format, frontend conventions) must live in those docs, not in the agents. `parity-review` is the one project-local agent (`.claude/agents/parity-review.md`). The main agent's job is to write clean code, follow the workflows below, and run the agents before committing. What each covers:
 
-- **code-review** — naming, DRY, type safety, dead code, imports, mutation, over/under-engineering
-- **security-review** — credential exposure, injection, CORS, error disclosure, dependencies
+- **code-review** — naming, DRY, type safety, dead code, imports, mutation, over/under-engineering (frontend/Vue rules in [docs/DEVELOPMENT_PATTERNS.md](docs/DEVELOPMENT_PATTERNS.md))
+- **security-review** — credential exposure, injection, CORS, error disclosure, dependencies (project rules in [docs/SECURITY.md](docs/SECURITY.md))
 - **test-review** — coverage, mock hygiene, regression test format, edge cases, performance
 - **document-review** — accuracy, completeness, cross-document consistency, staleness
 - **commit-hygiene** — atomic commits, conventional format, message quality, documentation gaps
 - **accessibility-review** — WCAG 2.1 AA, semantic HTML, keyboard navigation, ARIA, color/contrast, focus management
+- **parity-review** — CLI/web feature parity (project-local)
 
 ## Security
 
@@ -154,7 +155,7 @@ The project uses **python-semantic-release** for automatic semantic versioning d
 
 ## Claude Code Tooling
 
-The project uses Claude Code plugins and custom agents to maintain code quality and security. Configuration lives in `.claude/settings.json` (plugins) and `.claude/agents/` (agent definitions).
+The project uses Claude Code plugins and custom agents to maintain code quality and security. Configuration lives in `.claude/settings.json` (plugins) and `.claude/agents/` (which now holds only the project-local `parity-review`; the other six review agents are shared, project-agnostic agents at the user level `~/.claude/agents/`).
 
 ### Enabled Plugins
 
@@ -163,12 +164,17 @@ The project uses Claude Code plugins and custom agents to maintain code quality 
 
 ### Custom Agents
 
-- **security-review** — Pre-commit security audit. See `.claude/agents/security-review.md`.
-- **code-review** — Pre-commit code quality review. See `.claude/agents/code-review.md`.
-- **test-review** — Pre-commit test coverage and quality audit. See `.claude/agents/test-review.md`.
-- **document-review** — Documentation accuracy and completeness audit. See `.claude/agents/document-review.md`.
-- **commit-hygiene** — Atomic commit structure and conventional format. See `.claude/agents/commit-hygiene.md`.
-- **accessibility-review** — WCAG 2.1 AA compliance for frontend code. See `.claude/agents/accessibility-review.md`.
+Shared, project-agnostic agents at the user level (`~/.claude/agents/`) — they learn this project's stack and rules by reading this CLAUDE.md and `docs/`:
+
+- **security-review** — Pre-commit security audit.
+- **code-review** — Pre-commit code quality review.
+- **test-review** — Pre-commit test coverage and quality audit.
+- **document-review** — Documentation accuracy and completeness audit.
+- **commit-hygiene** — Atomic commit structure and conventional format.
+- **accessibility-review** — WCAG 2.1 AA compliance for frontend code.
+
+Project-local agent (`.claude/agents/`):
+
 - **parity-review** — CLI/UI parity enforcement. See `.claude/agents/parity-review.md`.
 
 **All agents must approve changes before marking tasks as complete.** Run security-review, code-review, test-review, document-review, parity-review, and accessibility-review before `command make check`. Run commit-hygiene before committing (to plan the split) and before pushing (to verify commit structure). The accessibility-review agent self-gates on frontend file presence — it immediately approves when no frontend files are in the diff.

@@ -160,7 +160,7 @@ uv sync --locked --extra ai
 
 ## Automated Security Review
 
-The project includes a Claude Code security-review agent (`.claude/agents/security-review.md`) that performs automated security audits before commits.
+Claude Code's shared security-review agent (a project-agnostic agent at the user level, `~/.claude/agents/`) performs automated security audits before commits, applying the project-specific rules documented below.
 
 ### What It Checks
 
@@ -184,7 +184,7 @@ The project includes a Claude Code security-review agent (`.claude/agents/securi
 
 ### For Contributors
 
-The agent definition is at `.claude/agents/security-review.md`. When using Claude Code, it runs automatically before commits alongside the **code-review**, **test-review**, **document-review**, and **commit-hygiene** agents. All five agents must approve changes before they are committed. Each security finding includes severity, CWE classification, evidence, impact, and remediation steps.
+security-review is a shared user-level agent (`~/.claude/agents/`); it reads this SECURITY.md and CLAUDE.md to learn the project-specific rules above. When using Claude Code, it runs automatically before commits alongside the **code-review**, **test-review**, **document-review**, and **commit-hygiene** agents. All five agents must approve changes before they are committed. Each security finding includes severity, CWE classification, evidence, impact, and remediation steps.
 
 ## Reporting Security Issues
 

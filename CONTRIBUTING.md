@@ -62,7 +62,7 @@ compose cleanly with one command.
 - **accessibility-review** — Verifies WCAG 2.1 AA compliance for frontend components (semantic HTML, ARIA attributes, keyboard navigation, focus management, color contrast). Self-gates on frontend file presence.
 - **commit-hygiene** — Enforces atomic commit structure and conventional commit format.
 
-All six agents must approve changes before they are committed. Agent definitions live in `.claude/agents/`. Contributors can expect feedback on PRs touching security-sensitive areas (authentication, configuration, network requests) as well as general code quality, test coverage, and documentation accuracy concerns.
+All six agents must approve changes before they are committed. These six are project-agnostic agents shared across repos, so their definitions live at the user level (`~/.claude/agents/`) rather than in this repository — they pick up the project's rules by reading `CLAUDE.md` and `docs/`. Only the project-local `parity-review` agent (CLI/web feature parity) is checked in, under `.claude/agents/`. Contributors can expect feedback on PRs touching security-sensitive areas (authentication, configuration, network requests) as well as general code quality, test coverage, and documentation accuracy concerns.
 
 ## Quality Checks
 
@@ -236,7 +236,7 @@ tests/                # Cross-cutting tests (CLI, web, storage, recommendations,
 config/               # Configuration files
 templates/            # Import file templates (CSV, JSON, Markdown)
 docs/                 # Additional documentation
-.claude/agents/       # Claude Code review agent definitions
+.claude/agents/       # Project-local Claude Code agents (parity-review)
 ```
 
 ## UI Themes

@@ -312,7 +312,11 @@ which write back to `source_configs` (non-sensitive fields) and `credentials`
 - **Accessibility-Review Agent** — Pre-commit accessibility audit agent that verifies WCAG 2.1 Level AA compliance for frontend code (semantic HTML, ARIA attributes, keyboard navigation, focus management, color contrast). Self-gates on frontend file presence — immediately approves backend-only changes.
 - **Commit-Hygiene Agent** — Atomic commit structure and conventional format enforcement agent that plans commit splits and verifies message quality.
 
-Plugin configuration: `.claude/settings.json` | Agent definitions: `.claude/agents/`
+- **Parity-Review Agent** — CLI/web feature parity enforcement agent that flags capabilities exposed in one interface but not the other.
+
+The six review agents above are project-agnostic and shared across repos, so their definitions live at the user level (`~/.claude/agents/`); they read `CLAUDE.md` and `docs/` to pick up this project's rules. Parity-Review is project-local and checked in.
+
+Plugin configuration: `.claude/settings.json` | Project-local agents: `.claude/agents/` | Shared agents: `~/.claude/agents/`
 
 ## Container Artifacts
 
