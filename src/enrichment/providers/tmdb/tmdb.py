@@ -53,6 +53,14 @@ def clean_media_title_for_search(title: str) -> str:
     return cleaned if cleaned else title
 
 
+# The provider's own defaults, consumed by BOTH get_config_schema() and enrich()
+# so the two cannot drift. The settings-registry copies in src/settings/metadata.py
+# are pinned against these by
+# tests/settings/test_service.py::test_tmdb_registry_defaults_match_the_provider_schema.
+_DEFAULT_LANGUAGE = "en-US"
+_DEFAULT_INCLUDE_KEYWORDS = True
+
+
 class TMDBProvider(EnrichmentProvider):
     """Enrichment provider using The Movie Database (TMDB) API.
 
@@ -102,14 +110,14 @@ class TMDBProvider(EnrichmentProvider):
                 name="language",
                 field_type=str,
                 required=False,
-                default="en-US",
+                default=_DEFAULT_LANGUAGE,
                 description="Language for results (e.g., 'en-US', 'de-DE')",
             ),
             ConfigField(
                 name="include_keywords",
                 field_type=bool,
                 required=False,
-                default=True,
+                default=_DEFAULT_INCLUDE_KEYWORDS,
                 description="Fetch keywords as tags (requires extra API call)",
             ),
         ]
@@ -136,8 +144,8 @@ class TMDBProvider(EnrichmentProvider):
             ProviderError: If API request fails
         """
         api_key = config.get("api_key", "")
-        language = config.get("language", "en-US")
-        include_keywords = config.get("include_keywords", True)
+        language = config.get("language", _DEFAULT_LANGUAGE)
+        include_keywords = config.get("include_keywords", _DEFAULT_INCLUDE_KEYWORDS)
 
         content_type = (
             item.content_type

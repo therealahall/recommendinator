@@ -25,10 +25,12 @@ from __future__ import annotations
 
 import re
 from typing import TYPE_CHECKING, Any, assert_never
+from urllib.parse import urlsplit
 
 from src.settings.metadata import (
     SettingMetadata,
     Validation,
+    default_of,
     entries_by_section,
     get_entry,
 )
@@ -39,6 +41,15 @@ from src.utils.dotted_path import get_leaf, set_leaf
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
+
+# The CORS allowlist. Its items get an extra, leaf-specific check because the
+# rule they must satisfy is CORS semantics rather than anything generic about
+# lists — see :func:`_validated_cors_origins`.
+_ALLOWED_ORIGINS_KEY = "web.allowed_origins"
+
+# The only schemes a browser puts in an Origin header for a page that could
+# reach this app.
+_ORIGIN_SCHEMES = frozenset({"http", "https"})
 
 
 class SettingsValidationError(Exception):
@@ -61,7 +72,7 @@ def build_settings_view(
     """Return every in-scope setting grouped by section for the API/CLI.
 
     The shape is ``{"sections": [{"section": str, "settings": [view, ...]}]}``
-    with sections and settings in registry (``example.yaml``) order.
+    with sections and settings in registry declaration order.
     """
     return {
         "sections": [
@@ -145,7 +156,9 @@ def reset_setting(config: dict[str, Any], storage: StorageManager, key: str) -> 
         raise SettingsValidationError(key, "use the secret endpoint for secrets")
     storage.delete_setting(key)
     if not entry.restart_required:
-        _apply_live(config, key, entry.default)
+        # default_of, not entry.default: this writes into the running config, so
+        # it must not be the registry's own object.
+        _apply_live(config, key, default_of(key))
 
 
 def set_secret(storage: StorageManager, key: str, value: str) -> None:
@@ -173,8 +186,8 @@ def coerce_and_validate(entry: SettingMetadata, value: Any) -> Any:
 
     Returns the coerced value on success. Raises
     :class:`SettingsValidationError` (with the offending key + reason) on a type
-    mismatch, an out-of-range number, an over-long/non-matching string, or an
-    enum value outside ``choices``.
+    mismatch, an out-of-range number, an over-long/non-matching string, an enum
+    value outside ``choices``, or a CORS origin a browser could never send.
     """
     setting_type = entry.type
     if setting_type == "bool":
@@ -209,8 +222,73 @@ def coerce_and_validate(entry: SettingMetadata, value: Any) -> Any:
             raise SettingsValidationError(entry.key, "expected a list")
         if not all(isinstance(item, str) for item in value):
             raise SettingsValidationError(entry.key, "expected a list of strings")
+        if entry.key == _ALLOWED_ORIGINS_KEY:
+            return _validated_cors_origins(entry, value)
         return value
     assert_never(setting_type)
+
+
+def _validated_cors_origins(entry: SettingMetadata, origins: list[str]) -> list[str]:
+    """Return the CORS allowlist with each entry trimmed and checked.
+
+    Starlette matches with ``origin in self.allow_origins`` — an exact string
+    comparison — so a malformed entry can never match any request and is a
+    silently inert allowance the operator believes is working. ``"null"`` is the
+    dangerous one: a sandboxed iframe and a ``data:``/``file:`` document both
+    send ``Origin: null``, and because ``"null"`` is not ``"*"`` the app keeps
+    ``allow_credentials`` on, so allowing it hands any page the user visits full
+    read/write of a library that ships no authentication.
+
+    Items are trimmed before checking, and the trimmed list is what gets
+    persisted: a pasted origin with a stray space would otherwise validate on
+    its trimmed form and then never match.
+    """
+    trimmed = [origin.strip() for origin in origins]
+    for origin in trimmed:
+        # The documented allow-all escape hatch. create_app turns
+        # allow_credentials off whenever it is present, so it stays supported.
+        if origin == "*":
+            continue
+        if not origin:
+            raise SettingsValidationError(entry.key, "must not contain an empty origin")
+        if origin.lower() == "null":
+            raise SettingsValidationError(
+                entry.key,
+                'must not contain "null" — sandboxed iframes and local file '
+                "documents send that origin, so allowing it would let any page "
+                "read and write your library",
+            )
+        if not _is_browser_origin(origin):
+            raise SettingsValidationError(
+                entry.key,
+                f"{origin!r} is not an origin a browser can send — use "
+                'scheme://host[:port] (for example http://localhost:18473), or "*"',
+            )
+    return trimmed
+
+
+def _is_browser_origin(origin: str) -> bool:
+    """Return True when *origin* has the bare ``scheme://host[:port]`` shape.
+
+    Anything else — a trailing path, a wildcard subdomain, embedded credentials,
+    an unparseable port — never appears in an ``Origin`` header, so it could
+    only ever sit in the allowlist doing nothing.
+    """
+    parsed = urlsplit(origin)
+    try:
+        port_is_usable = parsed.port is None or parsed.port > 0
+    except ValueError:
+        return False
+    return bool(
+        port_is_usable
+        and parsed.scheme in _ORIGIN_SCHEMES
+        and parsed.hostname
+        and not parsed.path
+        and not parsed.query
+        and not parsed.fragment
+        and not parsed.username
+        and not parsed.password
+    )
 
 
 def _coerce_int(entry: SettingMetadata, value: Any) -> int:
@@ -248,7 +326,16 @@ def _check_string_constraints(entry: SettingMetadata, value: str) -> None:
         constraints.pattern is not None
         and re.fullmatch(constraints.pattern, value) is None
     ):
-        raise SettingsValidationError(entry.key, "does not match the required pattern")
+        # Point at the help rather than interpolating the raw regex. This lands
+        # in a role="alert" live region, where a screen reader reads the
+        # metacharacters aloud as a plausible-but-wrong literal path. Both
+        # pattern leaves (logging.file, tmdb.language) carry the required shape
+        # AND a worked example in their help text, which is where the user can
+        # actually recover from.
+        raise SettingsValidationError(
+            entry.key,
+            "does not match the required format — see this setting's help for examples",
+        )
 
 
 def _validation_view(validation: Validation | None) -> dict[str, Any] | None:
@@ -264,8 +351,12 @@ def _validation_view(validation: Validation | None) -> dict[str, Any] | None:
 
 
 def _effective_value(config: dict[str, Any], entry: SettingMetadata) -> Any:
-    """Read the running value at *entry*'s dotted path, else the const default."""
-    return get_leaf(config, tuple(entry.key.split(".")), entry.default)
+    """Read the running value at *entry*'s dotted path, else the const default.
+
+    ``default_of`` rather than ``entry.default``: this value is serialised into
+    API/CLI responses, and must never be the registry's own container.
+    """
+    return get_leaf(config, tuple(entry.key.split(".")), default_of(entry.key))
 
 
 def _apply_live(config: dict[str, Any], key: str, value: Any) -> None:
