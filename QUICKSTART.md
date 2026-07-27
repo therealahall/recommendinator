@@ -28,8 +28,14 @@ docker run -d \
   ghcr.io/therealahall/recommendinator:latest
 ```
 
-The container generates a starter `config/config.yaml` from the bundled example
-on first run — edit it on the host with your API keys and run `docker restart recommendinator`.
+The container generates a starter `config/config.yaml` from the bundled example on
+first run. Under Docker that file only carries the `storage` paths — the bind comes
+from the image's `--host`/`--port` command line, which beats `config.yaml`, so change
+the published port with the `-p` mapping above (or `APP_PORT` under Compose) rather
+than editing `web.port`. Data sources, global
+settings, and all API keys are managed from the UI (the **Data** tab and the
+**Settings** page, or the `source` and `settings` CLI groups) and stored in the
+database, so there is normally nothing to edit by hand.
 
 For AI features (Ollama sidecar with auto model download), use Docker Compose:
 
@@ -110,27 +116,29 @@ time you sync data — no extra step needed. See
 
 ## Import Your Data
 
-The system supports multiple data sources through a plugin architecture. See `config/example.yaml` for the full list of available plugins and their configuration options.
+The system supports multiple data sources through a plugin architecture. See [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md) for the full list of available plugins and their configuration options.
 
 **Available plugins:** Goodreads (books), The StoryGraph (books), Calibre-Web (books), Steam (games), GOG (games), Epic Games (games), Sonarr (TV shows), Radarr (movies), Trakt (TV shows/movies), ROM Library (games), and generic CSV/JSON/Markdown importers for any content type.
 
 ### Configure a source
 
-Each source is configured under `inputs:` in `config/config.yaml`. Enable the ones you want and fill in any required fields (API keys, file paths, etc.):
+Sources are added from the **Data** tab with **+ Add source**, which builds the
+form from the plugin's own field list and takes any secret at create time. The
+equivalent from the CLI:
 
-```yaml
-inputs:
-  goodreads_csv:
-    plugin: goodreads_csv
-    path: "inputs/goodreads_library_export.csv"
-    enabled: true
+```bash
+# A file-based source needs no credentials
+python3.11 -m src.cli source create my_books goodreads_csv
+python3.11 -m src.cli source set my_books path inputs/goodreads_library_export.csv
 
-  steam:
-    plugin: steam
-    api_key: "your-steam-api-key"
-    steam_id: "your-steam-id"
-    enabled: true
+# A source with a secret takes it separately, via a hidden prompt
+python3.11 -m src.cli source create my_steam steam
+python3.11 -m src.cli source set my_steam steam_id 76561198000000000
+python3.11 -m src.cli source set-secret my_steam api_key
 ```
+
+Sources are stored in the database, not `config.yaml` — there is nothing to edit
+by hand and no restart needed.
 
 Some sources (GOG, Epic Games, Trakt) require OAuth setup — see that source's setup guide
 (e.g. [GOG](src/ingestion/sources/gog/README.md), [Epic Games](src/ingestion/sources/epic_games/README.md),
@@ -147,18 +155,15 @@ For sources without a dedicated plugin, use the generic importers. Templates for
 cp templates/movies.csv inputs/my_movies.csv
 ```
 
-Then configure the source in your config:
+Then add the source — from the **Data** tab with **+ Add source**, or from the CLI:
 
-```yaml
-inputs:
-  my_movies:
-    plugin: csv_import
-    path: "inputs/my_movies.csv"
-    content_type: "movie"
-    enabled: true
+```bash
+python3.11 -m src.cli source create my_movies csv_import
+python3.11 -m src.cli source set my_movies path inputs/my_movies.csv
+python3.11 -m src.cli source set my_movies content_type movie
 ```
 
-You can have multiple instances of the same plugin (e.g., two `json_import` sources for different files) — just give each a unique name.
+You can have multiple instances of the same plugin (e.g., two `json_import` sources for different files) — just give each a unique id.
 
 ### Sync your data
 
@@ -185,7 +190,7 @@ database (post-migration or freshly created), or both.
 # Create a brand-new source directly in the database (no YAML edit needed)
 python3.11 -m src.cli source plugins             # see what plugins are available
 python3.11 -m src.cli source create my_books goodreads_csv
-python3.11 -m src.cli source set-secret my_books api_key   # add credentials
+python3.11 -m src.cli source set my_books path inputs/goodreads_library_export.csv
 
 # Move an existing YAML source into the database (one-time, idempotent)
 python3.11 -m src.cli source migrate goodreads_csv
@@ -195,7 +200,7 @@ python3.11 -m src.cli source show goodreads_csv
 python3.11 -m src.cli source set goodreads_csv path inputs/new_export.csv
 python3.11 -m src.cli source disable goodreads_csv          # disabled sources are skipped during sync
 python3.11 -m src.cli source enable goodreads_csv
-python3.11 -m src.cli source set-secret steam api_key   # hidden prompt
+python3.11 -m src.cli source set-secret my_steam api_key   # hidden prompt, sources with secrets only
 
 # Remove a DB-backed source entirely (clears stored secrets too)
 python3.11 -m src.cli source remove my_books
@@ -226,7 +231,7 @@ For non-interactive secret rotation (Docker entrypoints, CI), set
 
 ```bash
 RECOMMENDINATOR_SECRET_VALUE="$STEAM_API_KEY" \
-  python3.11 -m src.cli source set-secret steam api_key
+  python3.11 -m src.cli source set-secret my_steam api_key
 ```
 
 The env-var path keeps the secret out of shell history and the visible

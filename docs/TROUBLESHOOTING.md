@@ -254,8 +254,8 @@ deploy:
 
 **Solution:** Use the **web UI OAuth flow** instead — it works in Docker without any host-side tools:
 
-1. Enable Epic Games in your config.yaml (`inputs.epic_games.enabled: true`)
-2. Open the web UI → Data tab → click **"Connect Epic Games"**
+1. Open the web UI → Data tab → **+ Add source** → Epic Games
+2. In the Epic Games source panel, click **"Connect Epic Games"**
 3. Log into Epic in the new tab, copy the authorization code from the JSON response
 4. Paste the code back into the web UI and click **Connect**
 

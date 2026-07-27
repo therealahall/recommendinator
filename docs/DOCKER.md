@@ -16,7 +16,7 @@ The AI variant pairs with a published Ollama sidecar:
 
 | Image | Purpose |
 |-------|---------|
-| `ghcr.io/therealahall/recommendinator-ollama:latest` | Ollama LLM server pre-configured to pull the models defined in your `config.yaml` on first start. |
+| `ghcr.io/therealahall/recommendinator-ollama:latest` | Ollama LLM server pre-configured to pull the models named by `OLLAMA_MODEL`, `OLLAMA_EMBEDDING_MODEL`, and `OLLAMA_CONVERSATION_MODEL` on first start. |
 
 ## Quick start (CLI)
 
@@ -37,8 +37,13 @@ docker run -d \
 ```
 
 Then open <http://localhost:18473>. The container generates a starter `config/config.yaml`
-on first run from the bundled `example.yaml` — edit it on the host with your API keys
-and `docker restart recommendinator`.
+on first run from the bundled `example.yaml`. That file only carries the `web` bind
+settings and the `storage` paths — data sources, global settings, and all API keys
+are managed from the UI (the **Data** tab and the **Settings** page, or the `source`
+and `settings` CLI groups) and stored in the database, so there is nothing to edit
+by hand. Note the container overrides the `web` bind settings on its command line,
+so editing them in `config.yaml` has no effect — change the `-p 18473:8000`
+mapping above to publish on a different host port.
 
 ## Docker Compose (recommended)
 
@@ -124,6 +129,9 @@ exposed to the host by default — only `app-ai` talks to it.
 | `APP_PORT` | `18473` | Host-side port for the web UI. |
 | `COMPOSE_PROFILES` | (unset) | Optional fallback for `--profile ai`. If you set this instead of using the flag, you still need to name `app-ai` on the up command (`docker compose up -d app-ai`) to skip the default `app` service. |
 | `OLLAMA_BASE_URL` | `http://ollama:11434` | Set inside the AI service automatically. Override only if you're pointing at a remote Ollama instance. |
+| `OLLAMA_MODEL` | `mistral:7b` | Generation model the sidecar pulls on first start. Must match the `ollama.model` setting the app requests. |
+| `OLLAMA_EMBEDDING_MODEL` | `nomic-embed-text` | Embedding model the sidecar pulls on first start. Must match the `ollama.embedding_model` setting. |
+| `OLLAMA_CONVERSATION_MODEL` | (unset — reuses `OLLAMA_MODEL`) | Set only if you point `ollama.conversation_model` at a separate chat model. Leave unset and the sidecar reuses the generation model, matching the app's own fallback. |
 
 ## First run
 
@@ -136,13 +144,18 @@ The first `docker compose up` does three things:
 
    ```
    [entrypoint] No config.yaml found; copied example.yaml as a starting point.
-   [entrypoint] Edit ./config/config.yaml on the host with your settings, then restart.
+   [entrypoint] Under Docker it carries only the storage paths and web.debug; the bind comes from --host/--port (set the published port with APP_PORT).
+   [entrypoint] Data sources, settings, and API keys are managed in the app.
    ```
 
 4. The application starts and serves the UI, but most ingestion sources will be
-   inert until you fill in API keys.
+   inert until you add them and their credentials.
 
-After editing `./config/config.yaml`:
+Sources are added from the **Data** tab (`+ Add source`) and global settings and
+API keys from the **Settings** page; both write to the database, so neither needs
+a config file edit or a restart. `config.yaml` is only for the `web` bind settings
+and the `storage` paths (a legacy file may also carry `inputs` entries, which are
+migrated into the database on boot). If you do edit it:
 
 ```bash
 docker compose restart
@@ -159,9 +172,29 @@ docker compose --profile ai up -d app-ai
 This starts two containers: `recommendinator-ai` (the app with AI extras) and
 `recommendinator-ollama` (the LLM server, pulled in via `depends_on`).
 Naming `app-ai` explicitly is required so the default `app` service does not
-also start and grab the host port. The Ollama sidecar pulls the models named
-in your `config.yaml` (`ollama.model` and `ollama.embedding_model`) on first start —
-this can take 5–15 minutes for a 4 GB model on a typical home connection.
+also start and grab the host port. The Ollama sidecar pulls the models named by
+`OLLAMA_MODEL`, `OLLAMA_EMBEDDING_MODEL`, and `OLLAMA_CONVERSATION_MODEL` on
+first start — this can take 5–15 minutes for a 4 GB model on a typical home
+connection.
+
+Those three variables are the sidecar's only model configuration; it does not
+read `config.yaml` or the database. Keep them in step with the `ollama.model`,
+`ollama.embedding_model`, and `ollama.conversation_model` settings on the
+Settings page — if you switch the app to a model the sidecar never pulled,
+requests to Ollama will fail. `OLLAMA_CONVERSATION_MODEL` is the exception you
+can usually leave unset: it reuses `OLLAMA_MODEL`, which mirrors the app's own
+fallback for an empty `ollama.conversation_model`. To change models:
+
+```bash
+# in .env next to docker-compose.yml
+OLLAMA_MODEL=llama3.1:8b
+```
+
+```bash
+docker compose --profile ai up -d ollama   # recreate the sidecar and pull
+```
+
+then set the matching value on the Settings page.
 
 You can monitor model downloads with:
 
@@ -249,9 +282,13 @@ Python 3.11 wheel ecosystem for ChromaDB is too thin there.
 
 ### Config changes don't take effect
 
-The entrypoint only writes `config.yaml` on first run. After that, edit the file on
-the host and run `docker compose restart` (or `docker restart recommendinator`).
-Hot-reload of config is not supported.
+Global settings changed on the **Settings** page save to the database and apply
+immediately, except those marked "restart required" — for those, run
+`docker compose restart`.
+
+For `config.yaml` itself (the `web` bind settings and the `storage` paths): the
+entrypoint only writes the file on first run, so edit it on the host and run
+`docker compose restart` (or `docker restart recommendinator`) afterwards.
 
 ### Port 18473 collides with another service
 
@@ -271,8 +308,10 @@ Check the sidecar logs:
 docker compose logs -f ollama
 ```
 
-If you see `pull manifest unauthorized` or `connection reset`, the model name in your
-`config.yaml` is likely wrong (typo, missing tag suffix). Run `ollama pull <model>`
+If you see `pull manifest unauthorized` or `connection reset`, one of the
+`OLLAMA_MODEL`, `OLLAMA_EMBEDDING_MODEL`, or `OLLAMA_CONVERSATION_MODEL` values
+is likely wrong (typo, missing tag suffix). The
+sidecar logs the model names it resolved on startup. Run `ollama pull <model>`
 manually inside the sidecar to confirm:
 
 ```bash

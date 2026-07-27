@@ -20,19 +20,14 @@ First, save your `client_id` and `client_secret` so the connect flow can run, th
 
 ### Option 1: Web UI (recommended)
 
-1. Enable Trakt in `config.yaml` with your application's client id:
-   ```yaml
-   inputs:
-     trakt:
-       plugin: trakt
-       client_id: "YOUR_TRAKT_CLIENT_ID"
-       enabled: true
-   ```
-2. Start the web server and open the **Data** tab.
-3. In the Trakt source panel, add your `client_secret` using the **Replace** action (it is stored encrypted).
-4. Click **Connect Trakt Account**.
-5. Go to the verification URL shown (e.g. `https://trakt.tv/activate`) and enter the displayed code.
-6. The app polls Trakt until you approve, then stores the `refresh_token` encrypted automatically.
+1. Start the web server and open the **Data** tab, click **+ Add source**, pick
+   Trakt, and enter your application's `client_id`. (Or from the CLI:
+   `python3.11 -m src.cli source create trakt trakt` then
+   `python3.11 -m src.cli source set trakt client_id <your-trakt-client-id>`.)
+2. In the Trakt source panel, add your `client_secret` using the **Replace** action (it is stored encrypted).
+3. Click **Connect Trakt Account**.
+4. Go to the verification URL shown (e.g. `https://trakt.tv/activate`) and enter the displayed code.
+5. The app polls Trakt until you approve, then stores the `refresh_token` encrypted automatically.
 
 ### Option 2: CLI
 
@@ -56,14 +51,13 @@ If Trakt sync later fails with an authentication error, reconnect via the web UI
 
 ## Configuration
 
-```yaml
-inputs:
-  trakt:
-    plugin: trakt
-    client_id: "YOUR_TRAKT_CLIENT_ID"
-    include_watchlist: true     # Optional, default true
-    enabled: false
+```bash
+python3.11 -m src.cli source set trakt client_id <your-trakt-client-id>
+python3.11 -m src.cli source set trakt include_watchlist true   # Optional, default true
 ```
+
+The `client_id` is a public application identifier, not a secret. Or set both
+from the source's panel in the **Data** tab.
 
 Trakt imports both movies and TV shows in a single sync (the plugin sets each item's type itself), so there is no `content_type` key. `client_secret` and `refresh_token` are entered via the connect flow and stored encrypted — never in YAML.
 

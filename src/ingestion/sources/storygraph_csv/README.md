@@ -12,14 +12,12 @@ Imports books from a The StoryGraph library CSV export.
 
 ## Configuration
 
-```yaml
-inputs:
-  storygraph_csv:
-    plugin: storygraph_csv
-    path: "/path/to/storygraph_export.csv"
-    content_type: "book"
-    enabled: true
+```bash
+python3.11 -m src.cli source create storygraph_csv storygraph_csv
+python3.11 -m src.cli source set storygraph_csv path /path/to/storygraph_export.csv
 ```
+
+Or add it from the **Data** tab with **+ Add source**.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|

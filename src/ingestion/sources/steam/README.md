@@ -11,13 +11,16 @@ Imports owned games and playtime from a Steam library via the [Steam Web API](ht
 
 ## Configuration
 
-```yaml
-inputs:
-  steam:
-    api_key: "YOUR_STEAM_API_KEY"
-    steam_id: "76561198000000000"   # OR vanity_url
-    vanity_url: "yourname"           # OR steam_id
-    min_playtime_minutes: 0          # Optional, default 0
+Add the source from the **Data** tab with **+ Add source**, which prompts for the
+API key at create time, or from the CLI:
+
+```bash
+python3.11 -m src.cli source create steam steam
+python3.11 -m src.cli source set steam steam_id 76561198000000000  # OR vanity_url
+python3.11 -m src.cli source set steam min_playtime_minutes 0      # Optional, default 0
+
+# The API key is a secret: hidden prompt, stored encrypted, never in a file
+python3.11 -m src.cli source set-secret steam api_key
 ```
 
 | Field | Type | Required | Description |

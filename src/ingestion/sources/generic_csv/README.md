@@ -10,12 +10,14 @@ Imports content items from a generic CSV file. Each input maps to a single conte
 
 ## Configuration
 
-```yaml
-inputs:
-  csv_import:
-    path: "/path/to/library.csv"
-    content_type: "book"   # or movie, tv_show, video_game
+```bash
+python3.11 -m src.cli source create my_csv csv_import
+python3.11 -m src.cli source set my_csv path /path/to/library.csv
+python3.11 -m src.cli source set my_csv content_type book   # or movie, tv_show, video_game
 ```
+
+Or add it from the **Data** tab with **+ Add source**. The id (`my_csv` above) is
+yours to choose, so you can have several CSV sources for different files.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|

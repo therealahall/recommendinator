@@ -10,14 +10,15 @@ Fills in metadata for movies and TV shows using [The Movie Database (TMDB)](http
 
 ## Configuration
 
-```yaml
-enrichment:
-  providers:
-    tmdb:
-      enabled: true
-      api_key: "YOUR_TMDB_API_KEY"
-      language: "en-US"        # Optional, default "en-US"
-      include_keywords: true   # Optional, default true
+Set these from the **Settings** page (Enrichment section), or the CLI:
+
+```bash
+python3.11 -m src.cli settings set enrichment.providers.tmdb.enabled true
+python3.11 -m src.cli settings set enrichment.providers.tmdb.language en-US        # Optional, default "en-US"
+python3.11 -m src.cli settings set enrichment.providers.tmdb.include_keywords true # Optional, default true
+
+# The API key is a secret: hidden prompt, stored encrypted, never in a file
+python3.11 -m src.cli settings set-secret enrichment.providers.tmdb.api_key
 ```
 
 | Field | Type | Required | Description |

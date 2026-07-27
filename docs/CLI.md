@@ -92,7 +92,7 @@ can live in YAML (bootstrap), in the database (created or migrated), or both.
 # Create a brand-new source directly in the database (no YAML edit needed)
 python3.11 -m src.cli source plugins             # see what plugins are available
 python3.11 -m src.cli source create my_books goodreads_csv
-python3.11 -m src.cli source set-secret my_books api_key   # add credentials
+python3.11 -m src.cli source set my_books path inputs/goodreads_library_export.csv
 
 # Move an existing YAML source into the database (one-time, idempotent)
 python3.11 -m src.cli source migrate goodreads_csv
@@ -124,14 +124,16 @@ secret out of shell history and the visible process list:
 
 ```bash
 RECOMMENDINATOR_SECRET_VALUE="$STEAM_API_KEY" \
-  python3.11 -m src.cli source set-secret steam api_key
+  python3.11 -m src.cli source set-secret my_steam api_key
 ```
 
 ## Global settings
 
 Manage the global/system config (the sections that used to live in
-`config.yaml`: `features`, `ollama`, `ingestion`, `recommendations`,
-`conversation`, `sync`, `enrichment`, `web`, `logging`). These commands mirror
+`config.yaml`: `features`, `ollama`, `recommendations`, `conversation`, `sync`,
+`enrichment`, `web`, `logging`). `web.host`, `web.port` and `web.debug` are the
+exception — the server reads them to bind its socket before the database is
+open, so they stay in `config.yaml`. These commands mirror
 the web **Settings** page and the `/api/settings` endpoints; both call the same
 `src/settings/service.py`, so behaviour is identical. Values persist to the
 `settings` table, which wins over `config.yaml` and the built-in defaults
@@ -139,27 +141,33 @@ the web **Settings** page and the `/api/settings` endpoints; both call the same
 
 ```bash
 # List every setting grouped by section (secrets show presence only).
-# Advanced infra/security settings (web.host/port, CORS, logging) are hidden
+# Advanced infra/security settings (CORS origins, logging) are hidden
 # unless --advanced is given or a specific --section is requested.
 python3.11 -m src.cli settings list
 python3.11 -m src.cli settings list --advanced
 python3.11 -m src.cli settings list --section recommendations
-python3.11 -m src.cli settings list --json          # full view, matches GET /api/settings
+python3.11 -m src.cli settings list --format json   # full view, matches GET /api/settings
 
 # Show one setting's metadata and current value (dotted registry key)
 python3.11 -m src.cli settings get recommendations.default_count
-python3.11 -m src.cli settings get ingestion.conflict_strategy --json
+python3.11 -m src.cli settings get logging.level --format json
 
 # Set a non-sensitive setting. The value is parsed to the setting's type:
 # booleans accept true/false, lists are comma-separated, numbers/strings/enums
 # are parsed as written. Validation (bounds, choices) is enforced.
 python3.11 -m src.cli settings set recommendations.default_count 8
 python3.11 -m src.cli settings set features.ai_enabled true
-python3.11 -m src.cli settings set ingestion.source_priority "goodreads, steam"
+python3.11 -m src.cli settings set web.allowed_origins "http://localhost:18473"
 
 # Reset a setting to its default by dropping the database override
 python3.11 -m src.cli settings reset recommendations.default_count
 ```
+
+`set`, `apply`, and `reset` also accept `--format json`, which emits the full
+refreshed settings view instead of the one-line confirmation — the same body
+`PUT /api/settings` and `DELETE /api/settings/{key}` return, so a script gets
+the resulting state from the call that changed it rather than a follow-up
+`settings list`.
 
 Non-restart settings take effect immediately; restart-required settings
 (`features.*`, `web.*`, `logging.*`) persist and apply on the next boot — the

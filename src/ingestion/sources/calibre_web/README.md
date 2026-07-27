@@ -12,16 +12,18 @@ Imports books from a [Calibre-Web](https://github.com/janeczku/calibre-web) inst
 
 ## Configuration
 
-```yaml
-inputs:
-  calibre_web:
-    plugin: calibre_web
-    enabled: true
-    url: "http://localhost:8083"
-    username: "reader"
-    # password is set via the web UI / CLI and stored encrypted
-    verify_ssl: true
+```bash
+python3.11 -m src.cli source create calibre_web calibre_web
+python3.11 -m src.cli source set calibre_web url http://localhost:8083
+python3.11 -m src.cli source set calibre_web username reader
+python3.11 -m src.cli source set calibre_web verify_ssl true
+
+# The password is a secret: hidden prompt, stored encrypted, never in a file
+python3.11 -m src.cli source set-secret calibre_web password
 ```
+
+Or add it from the **Data** tab with **+ Add source**, which prompts for the
+password at create time.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|

@@ -73,14 +73,15 @@ The same operations are available from the CLI `source` command group — see
 When syncing multiple sources, each runs on its own worker thread, so the total
 sync time is bounded by the slowest source rather than the sum of all sources.
 Independent sources (e.g. GOG and Radarr) sync simultaneously since they hit
-different APIs. Configure the worker pool in `config.yaml`:
+different APIs. Set the worker pool from the **Settings** page (Sync section), or
+the CLI:
 
-```yaml
-sync:
-  max_workers: 4  # default; set to 1 for sequential
+```bash
+python3.11 -m src.cli settings set sync.max_workers 8   # default 4; 1 for sequential
 ```
 
-The CLI accepts `--workers N` to override per-invocation, e.g.
+The value is stored in the database and wins over any `sync.max_workers` left in
+`config.yaml`. The CLI accepts `--workers N` to override per-invocation, e.g.
 `python3.11 -m src.cli update --workers 8`. Per-source rate limits (e.g. GOG's
 `rate_limit_seconds`) are enforced inside each plugin and remain untouched.
 

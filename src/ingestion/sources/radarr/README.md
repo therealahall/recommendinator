@@ -10,11 +10,15 @@ Imports the movie library from a [Radarr](https://radarr.video) instance.
 
 ## Configuration
 
-```yaml
-inputs:
-  radarr:
-    url: "http://localhost:7878"
-    api_key: "YOUR_RADARR_API_KEY"
+Add the source from the **Data** tab with **+ Add source**, which prompts for the
+API key at create time, or from the CLI:
+
+```bash
+python3.11 -m src.cli source create radarr radarr
+python3.11 -m src.cli source set radarr url http://localhost:7878
+
+# The API key is a secret: hidden prompt, stored encrypted, never in a file
+python3.11 -m src.cli source set-secret radarr api_key
 ```
 
 | Field | Type | Required | Description |

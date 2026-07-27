@@ -44,18 +44,20 @@ Purpose-built for embeddings. No change needed from the project default.
 
 ## Configuration
 
-### config.yaml
+### Settings
 
-```yaml
-features:
-  ai_enabled: true
-  embeddings_enabled: true
-  llm_reasoning_enabled: true
+All of these live in the database, not in `config.yaml`. Set them from the
+**Settings** page, or the `settings` CLI:
 
-ollama:
-  base_url: "http://ollama:11434"  # Docker service name; use localhost:11434 if running Ollama on host
-  model: "qwen2.5:14b"
-  embedding_model: "nomic-embed-text"
+```bash
+python3.11 -m src.cli settings set features.ai_enabled true
+python3.11 -m src.cli settings set features.embeddings_enabled true
+python3.11 -m src.cli settings set features.llm_reasoning_enabled true
+
+# Docker service name; use http://localhost:11434 if Ollama runs on the host
+python3.11 -m src.cli settings set ollama.base_url http://ollama:11434
+python3.11 -m src.cli settings set ollama.model qwen2.5:14b
+python3.11 -m src.cli settings set ollama.embedding_model nomic-embed-text
 ```
 
 ### Pull Models (Docker)
@@ -82,7 +84,14 @@ curl http://localhost:11434/api/embeddings -d '{"model":"nomic-embed-text","prom
 
 ### 2. Enable Feature Flags
 
-Set all three flags to `true` in `config/config.yaml` (see Configuration section above).
+These are database-backed settings. Turn them on from the **Settings** page, or
+the `settings` CLI:
+
+```bash
+python3.11 -m src.cli settings set features.ai_enabled true
+python3.11 -m src.cli settings set features.embeddings_enabled true
+python3.11 -m src.cli settings set features.llm_reasoning_enabled true
+```
 
 ### 3. Re-sync to Generate Embeddings
 
