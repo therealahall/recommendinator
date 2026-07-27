@@ -10,12 +10,14 @@ Imports content items from a JSON array or newline-delimited JSON file. Mirrors 
 
 ## Configuration
 
-```yaml
-inputs:
-  json_import:
-    path: "/path/to/library.json"
-    content_type: "book"   # or movie, tv_show, video_game
+```bash
+python3.11 -m src.cli source create my_json json_import
+python3.11 -m src.cli source set my_json path /path/to/library.json
+python3.11 -m src.cli source set my_json content_type book   # or movie, tv_show, video_game
 ```
+
+Or add it from the **Data** tab with **+ Add source**. The id (`my_json` above) is
+yours to choose, so you can have several JSON sources for different files.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|

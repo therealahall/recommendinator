@@ -10,14 +10,12 @@ Imports books from a Goodreads CSV export.
 
 ## Configuration
 
-```yaml
-inputs:
-  goodreads_csv:
-    plugin: goodreads_csv
-    path: "/path/to/goodreads_export.csv"
-    content_type: "book"
-    enabled: true
+```bash
+python3.11 -m src.cli source create goodreads_csv goodreads_csv
+python3.11 -m src.cli source set goodreads_csv path /path/to/goodreads_export.csv
 ```
+
+Or add it from the **Data** tab with **+ Add source**.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|

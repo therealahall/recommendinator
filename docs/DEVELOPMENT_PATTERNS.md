@@ -51,7 +51,7 @@ This ensures every plan step is tracked, has clear acceptance criteria, and noth
 3. Yield `ContentItem` objects
 4. Add comprehensive tests with mocked APIs
 5. Update CLI/web to support new source
-6. Update docs: ARCHITECTURE.md, README.md, config/example.yaml, docs/PLUGIN_DEVELOPMENT.md
+6. Update docs: ARCHITECTURE.md, README.md, docs/DATA_SOURCES.md, docs/PLUGIN_DEVELOPMENT.md (NOT config/example.yaml — it is bootstrap-only; sources are configured from the Data tab / `source` CLI off the plugin's `get_config_schema()`)
 
 ## Bug Fixes
 

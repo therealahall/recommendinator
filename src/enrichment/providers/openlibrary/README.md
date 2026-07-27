@@ -10,11 +10,10 @@ Fills in metadata for books using the [OpenLibrary](https://openlibrary.org) pub
 
 ## Configuration
 
-```yaml
-enrichment:
-  providers:
-    openlibrary:
-      enabled: true
+Set this from the **Settings** page (Enrichment section), or the CLI:
+
+```bash
+python3.11 -m src.cli settings set enrichment.providers.openlibrary.enabled true
 ```
 
 | Field | Type | Required | Description |

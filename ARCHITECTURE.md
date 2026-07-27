@@ -67,11 +67,11 @@ Listing endpoints (`GET /api/sync/sources`, `recommendinator source list`) retur
 Sensitive fields (any `ConfigField` with `sensitive=True`) always live in the encrypted `credentials` table regardless of which side owns the rest of the config. `resolve_inputs` merges encrypted credentials over the rest of the config at sync time. The migration endpoint (`POST /api/sync/sources/<id>/migrate`) splits a YAML entry into both tables on first call and is idempotent on subsequent calls. The create endpoint (`POST /api/sync/sources`) skips YAML entirely and writes only the non-sensitive values; sensitive fields are set afterwards via `PUT /api/sync/sources/<id>/secret/<key>`.
 
 **Global configuration precedence:**
-The global/system config sections (`features`, `ollama`, `ingestion`, `recommendations`, `conversation`, `sync`, `enrichment`, `web`, `logging`) resolve with three layers, lowest to highest:
+The global/system config sections (`features`, `ollama`, `recommendations`, `conversation`, `sync`, `enrichment`, `web`, `logging`) resolve with three layers, lowest to highest:
 
 1. **Const defaults** — the hardcoded fallback for every in-scope leaf, declared once in the registry `src/settings/metadata.py` (`default_config()`).
 2. **YAML** — `config.yaml`, now optional beyond bootstrap. Any in-scope section a user keeps is deep-merged on top of the const defaults.
-3. **Database** — the `settings` table, authoritative. It stores only the leaves a user explicitly set via the Settings page / `settings` CLI, keyed by dotted leaf path (e.g. `web.port`, `recommendations.scorer_weights.genre_match`).
+3. **Database** — the `settings` table, authoritative. It stores only the leaves a user explicitly set via the Settings page / `settings` CLI, keyed by dotted leaf path (e.g. `recommendations.default_count`, `recommendations.scorer_weights.genre_match`).
 
 `migrate_config_settings` performs this assembly on every boot (and on config hot-reload): for each in-scope section it deep-merges the YAML section over the const defaults, then overlays the DB leaves for that section on top, and replaces `config[section]` in place so existing `config[section][key]` read sites resolve the layered value. **Nothing is written to the database here** — on a fresh install the `settings` table is empty and the app runs purely on const defaults plus whatever the operator kept in `config.yaml`. A section absent from YAML still resolves fully from the const defaults, so a user may trim `config.yaml` to bootstrap-only.
 
@@ -229,7 +229,7 @@ view your profile). New capabilities are expected to land in both interfaces; th
   - Build output: `src/web/static/dist/` (Vite generates content-hashed asset bundles)
   - Dev server: Vite on `:5173` proxies `/api/*` and `/static/themes/*` to FastAPI on `:18473`
 - Tabbed UI: Recommendations, Library, Chat, Data, Preferences, Settings (Chat hidden when AI is disabled)
-  - **Settings** page (`/settings`) manages the global/system config: sections of controls (toggle/number/text/tags/select) with curated labels/help and per-setting validation, an **Advanced** group for infra/security leaves (`web.host`/`port`, `web.allowed_origins` CORS, `logging.*`) badged **restart required**, per-setting **reset to default**, and masked **write-only** controls for provider secrets. It is the UI peer of the `settings` CLI group, backed by the shared `src/settings/service.py`.
+  - **Settings** page (`/settings`) manages the global/system config: sections of controls (toggle/number/text/tags/select) with curated labels/help and per-setting validation, an **Advanced** group for infra/security leaves (`web.allowed_origins` CORS, `logging.*`) badged **restart required**, per-setting **reset to default**, and masked **write-only** controls for provider secrets. It is the UI peer of the `settings` CLI group, backed by the shared `src/settings/service.py`.
   - Recommendations cards offer two actions: **ignore** (excludes the item from future recommendations and removes its card) and **mark complete** (opens the shared edit dialog to set status/rating/review, saves to the library, and removes the card). Neither regenerates the list.
 - SSE streaming for chat responses and AI recommendation blurbs
 - Library export: `GET /api/items/export?type=book&format=csv` (CSV or JSON download)
@@ -262,13 +262,13 @@ Enrichment (background)           Recommendation Engine
 ## Configuration
 
 Configuration files in `config/`:
-- `config.yaml`: Bootstrap configuration (git-ignored). Holds the `storage` paths and `inputs` sources; may carry secrets for first-boot migration, which are then swept into encrypted storage
-- `example.yaml`: Minimal template (`storage` + `inputs`)
+- `config.yaml`: Bootstrap configuration (git-ignored). Holds the `web` bind settings and the `storage` paths. A legacy file may still carry `inputs` sources and secrets; both are migrated into the database on boot, and a secret found here logs a deprecation warning
+- `example.yaml`: Minimal template — `web` + `storage`, nothing else
 
-The global/system sections (`features`, `ollama`, `ingestion`, `recommendations`, `conversation`, `sync`, `enrichment`, `web`, `logging`) are optional in YAML — they have const defaults and are managed via the Settings page / `settings` CLI. `storage` and `inputs` are the bootstrap sections that stay in YAML.
+The global/system sections (`features`, `ollama`, `recommendations`, `conversation`, `sync`, `enrichment`, `web`, `logging`) are optional in YAML — they have const defaults and are managed via the Settings page / `settings` CLI. `storage` and the `web` bind settings (`host`, `port`, `debug`) are the bootstrap config that stays in YAML — they are read before the database is open, so a database-backed value could never be honoured.
 
 **`config.yaml` is minimal and mostly optional beyond bootstrap.** The global/system
-sections (`features`, `ollama`, `ingestion`, `recommendations`, `conversation`,
+sections (`features`, `ollama`, `recommendations`, `conversation`,
 `sync`, `enrichment`, `web`, `logging`) all ship with const defaults and are
 managed from the Settings page / `settings` CLI, which write to the `settings`
 table; precedence is **const default < YAML < database** — see
@@ -280,7 +280,7 @@ are **not** required in `config.yaml`: any value found there is swept into the
 encrypted `credentials` table on boot and stripped from the plaintext config, and
 they are otherwise entered in-app via the Settings page / `settings set-secret`.
 
-The `inputs` section uses **named source instances**: each key is a user-defined name and must include a `plugin:` field to identify the plugin type. This allows multiple instances of the same plugin (e.g., separate JSON imports for books and movies). File-based plugins use a standardized `path` field. Example:
+Sources use **named instances**: each has a user-defined id and a plugin name, so the same plugin can back several sources (e.g., separate JSON imports for books and movies). File-based plugins use a standardized `path` field. Sources are stored in the `source_configs` table; the legacy `inputs` YAML form below expresses the same shape and is still read on boot for migration:
 
 ```yaml
 inputs:

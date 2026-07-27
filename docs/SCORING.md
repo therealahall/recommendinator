@@ -1,8 +1,10 @@
 # How Scoring Works
 
 The recommendation engine scores candidates through multiple weighted factors.
-Each scorer has a configurable weight (set in `config.yaml` or per-user
-preferences); set a weight to `0` to disable a scorer entirely.
+Each scorer has a configurable weight; set a weight to `0` to disable a scorer
+entirely. Weights resolve as **built-in default < `config.yaml` < global
+settings < per-user preferences**, so the global weights below are the baseline
+every user starts from, and a per-user preference overrides them per key.
 
 | Scorer | What it does |
 |--------|--------------|
@@ -17,24 +19,44 @@ preferences); set a weight to `0` to disable a scorer entirely.
 | **Custom Rules** | Applies your explicit preferences ("avoid X", "prefer Y") |
 | **Semantic Similarity** | *(AI only)* Finds conceptually similar content |
 
-Configure weights via `config.yaml`:
+## Setting the global weights
 
-```yaml
-recommendations:
-  scorer_weights:
-    genre_match: 2.0
-    creator_match: 1.5
-    tag_overlap: 1.0
-    series_order: 1.5
-    rating_pattern: 1.0
-    semantic_similarity: 1.5  # Only active when ai_enabled is true
-    content_length: 1.0
-    continuation: 2.0
-    series_affinity: 1.0
-    custom_preference: 1.0
+Set them from the **Settings** page (Recommendations section), or the `settings`
+CLI. Both write to the database and take effect immediately:
+
+```bash
+python3.11 -m src.cli settings set recommendations.scorer_weights.genre_match 3.0
+python3.11 -m src.cli settings set recommendations.scorer_weights.semantic_similarity 0
+
+# See every weight and its current value
+python3.11 -m src.cli settings list --section recommendations
 ```
 
-Or per-invocation via the CLI — see [CLI.md](CLI.md#preferences).
+The built-in defaults, which apply until you change one:
+
+| Scorer weight | Default |
+|---|---|
+| `genre_match` | 2.0 |
+| `creator_match` | 1.5 |
+| `tag_overlap` | 1.0 |
+| `series_order` | 1.5 |
+| `rating_pattern` | 1.0 |
+| `semantic_similarity` | 1.5 (only active when `features.ai_enabled` is true) |
+| `content_length` | 1.0 |
+| `continuation` | 2.0 |
+| `series_affinity` | 1.0 |
+| `custom_preference` | 1.0 |
+
+You *may* also put a `recommendations.scorer_weights` block in `config.yaml` to
+change the baseline before anything is saved to the database, but you never need
+to, and the database wins once it holds a value.
+
+## Per-user overrides
+
+The Preferences page (and the `preferences` CLI — see
+[CLI.md](CLI.md#preferences)) sets weights for one user. That map is **sparse**:
+it overrides only the keys you touch, and every other weight falls back to the
+global value above.
 
 ## Series filtering
 

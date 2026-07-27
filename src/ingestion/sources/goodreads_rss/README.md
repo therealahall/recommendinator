@@ -14,18 +14,15 @@ network.
 
 ## Configuration
 
-```yaml
-inputs:
-  goodreads_rss:
-    plugin: goodreads_rss
-    user_id: "12345"          # numeric ID or full profile URL
-    shelves:
-      - "read"
-      - "currently-reading"
-      - "to-read"
-    content_type: "book"
-    enabled: false
+Add it from the **Data** tab with **+ Add source**, or from the CLI:
+
+```bash
+python3.11 -m src.cli source create goodreads_rss goodreads_rss
+python3.11 -m src.cli source set goodreads_rss user_id 12345   # numeric ID or profile URL
 ```
+
+The `shelves` list defaults to `read`, `currently-reading`, and `to-read`; edit it
+from the source's panel in the **Data** tab if you want a different set.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|

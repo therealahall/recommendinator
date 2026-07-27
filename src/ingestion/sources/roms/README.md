@@ -10,15 +10,15 @@ Imports a video game library from a directory of ROM files (e.g. an EmulationSta
 
 ## Configuration
 
-```yaml
-inputs:
-  roms:
-    paths: ["/path/to/roms", "/another/library"]
-    include_extensions: [".exe"]              # Optional, extends built-in defaults
-    exclude_extensions: [".tgz"]              # Optional, removes from built-in defaults
-    exclude_names: ["scripts", "mlc01"]       # Optional glob patterns to skip
-    extra_strip_patterns: ["\\s*-\\s*demo$"]  # Optional regex patterns appended to the title cleaner
+Add it from the **Data** tab with **+ Add source**, or create it from the CLI:
+
+```bash
+python3.11 -m src.cli source create roms roms
 ```
+
+Then set the scan paths and the optional filters from the source's panel in the
+**Data** tab. All but `paths` are list fields that refine the built-in defaults —
+see the table below for what each one does.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|

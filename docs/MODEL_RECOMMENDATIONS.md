@@ -71,16 +71,21 @@ You should see:
 - `nomic-embed-text` (for embeddings)
 - `mistral:7b` or `deepseek-r1:latest` (for recommendations)
 
-### Step 3: Update Configuration
+### Step 3: Point the App at Them
 
-Edit `config/config.yaml`:
+These are database-backed settings, not file settings. Set them from the
+**Settings** page, or the `settings` CLI:
 
-```yaml
-ollama:
-  base_url: "http://ollama:11434"
-  model: "mistral:7b"  # or "deepseek-r1:latest"
-  embedding_model: "nomic-embed-text"
+```bash
+python3.11 -m src.cli settings set ollama.model mistral:7b          # or deepseek-r1:latest
+python3.11 -m src.cli settings set ollama.embedding_model nomic-embed-text
+python3.11 -m src.cli settings set ollama.base_url http://ollama:11434
 ```
+
+Under Docker, name the same models in your compose environment too — the Ollama
+sidecar reads `OLLAMA_MODEL`, `OLLAMA_EMBEDDING_MODEL`, and
+`OLLAMA_CONVERSATION_MODEL`, and cannot see these settings. See
+[docs/DOCKER.md](DOCKER.md).
 
 ## Model Comparison
 
@@ -97,17 +102,19 @@ If your GPU VRAM is limited (e.g., 2 GB AMD mobile GPU), a 7B+ model will fall b
 
 ### Configuration
 
-```yaml
-ollama:
-  model: "qwen2.5:14b"           # Larger model for recommendation reasoning
-  conversation_model: "qwen2.5:3b"  # Smaller model for fast chat
+Set these from the **Settings** page, or the `settings` CLI:
 
-conversation:
-  llm:
-    context_window_size: 4096     # Limit context for 3B model memory
-  context:
-    compact_mode: true            # Reduces prompt by ~60-70%
+```bash
+python3.11 -m src.cli settings set ollama.model qwen2.5:14b              # Recommendation reasoning
+python3.11 -m src.cli settings set ollama.conversation_model qwen2.5:3b  # Fast chat
+python3.11 -m src.cli settings set conversation.llm.context_window_size 4096
+python3.11 -m src.cli settings set conversation.context.compact_mode true
 ```
+
+Under Docker, name the same models in your compose environment — the Ollama
+sidecar reads `OLLAMA_MODEL`, `OLLAMA_EMBEDDING_MODEL`, and
+`OLLAMA_CONVERSATION_MODEL`, and does not see these settings. See
+[docs/DOCKER.md](DOCKER.md).
 
 ### What `compact_mode` Does
 

@@ -336,7 +336,7 @@ python3.11 -m src.cli update --help  # Should show your source in the list
 
 ## Configuration Format
 
-Each input source in `config.yaml` uses a **named instance** model. The config key is a user-defined name, and the `plugin:` field specifies which plugin to use. This allows multiple instances of the same plugin:
+Sources use a **named instance** model: each source has a user-defined id plus a plugin name, so the same plugin can back several sources. Sources live in the `source_configs` table and are created from the Data tab or the `source` CLI; the YAML below is the legacy bootstrap form of the same shape, shown here because it is the most compact way to see the model:
 
 ```yaml
 inputs:

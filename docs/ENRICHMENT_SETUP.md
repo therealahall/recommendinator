@@ -91,16 +91,15 @@ python3.11 -m src.cli settings set-secret enrichment.providers.tmdb.api_key
 `set-secret` prompts for the key with hidden input (or reads
 `RECOMMENDINATOR_SECRET_VALUE`) and stores it encrypted.
 
-**Optional settings:** the TMDB provider also honors two tuning fields that are
-not surfaced on the Settings page. Set them under the provider in `config.yaml`
-if you need to change them (they flow through as YAML overrides):
+**Optional settings:** the TMDB provider honors two tuning fields, both on the
+Settings page under Enrichment (or via the `settings` CLI):
 
-```yaml
-enrichment:
-  providers:
-    tmdb:
-      language: "en-US"          # Language for results (default: en-US)
-      include_keywords: true     # Fetch keywords as tags (default: true, costs 1 extra API call per item)
+```bash
+# Language for results — ISO 639-1, optionally with a region (default: en-US)
+python3.11 -m src.cli settings set enrichment.providers.tmdb.language de-DE
+
+# Fetch keywords as tags (default: true, costs 1 extra API call per item)
+python3.11 -m src.cli settings set enrichment.providers.tmdb.include_keywords false
 ```
 
 ### RAWG — Video Game Database (Video Games)

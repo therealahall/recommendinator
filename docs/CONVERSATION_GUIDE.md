@@ -7,55 +7,56 @@ The Recommendinator includes a conversational AI chat interface that lets you in
 ## Prerequisites
 
 1. **Ollama installed and running** — See [OLLAMA_SETUP_GUIDE.md](OLLAMA_SETUP_GUIDE.md)
-2. **AI features enabled** in your config:
-   ```yaml
-   features:
-     ai_enabled: true
+2. **AI features enabled** — from the **Settings** page, or the CLI:
+   ```bash
+   python3.11 -m src.cli settings set features.ai_enabled true
    ```
 3. **A conversation model configured** (optional — falls back to your main model):
-   ```yaml
-   ollama:
-     model: "mistral:7b"              # Used for recommendations and chat (default)
-     conversation_model: ""           # Set a separate model for chat if desired
+   ```bash
+   python3.11 -m src.cli settings set ollama.model mistral:7b            # Recommendations and chat
+   python3.11 -m src.cli settings set ollama.conversation_model qwen2.5:3b  # Separate chat model
    ```
 
 ## Configuration
 
-The conversation system is configured under the `conversation:` section of your config file:
+The conversation system is configured from the **Settings** page (Conversation
+section) or the `settings` CLI. Every value below is stored in the database, not
+in a config file:
 
-```yaml
-conversation:
-  enabled: true                        # Master toggle for chat
-  max_history_messages: 50             # Messages kept in context
-  memory_extraction_enabled: true      # Auto-extract preferences from chats
-  profile_regeneration_interval: 24    # Hours between profile regeneration (0 to disable)
+```bash
+python3.11 -m src.cli settings set conversation.enabled true                      # Master toggle for chat
+python3.11 -m src.cli settings set conversation.max_history_messages 50           # Messages kept in context
+python3.11 -m src.cli settings set conversation.memory_extraction_enabled true    # Auto-extract preferences
+python3.11 -m src.cli settings set conversation.profile_regeneration_interval 24  # Hours (0 to disable)
 
-  llm:
-    temperature: 0.7                   # Response creativity (0.0-1.0)
-    max_tokens: 2000                   # Maximum response length
-    # context_window_size: 4096        # Override for small models (see below)
+python3.11 -m src.cli settings set conversation.llm.temperature 0.7               # Response creativity (0.0-2.0)
+python3.11 -m src.cli settings set conversation.llm.max_tokens 2000               # Maximum response length
+python3.11 -m src.cli settings set conversation.llm.context_window_size 4096      # 0 = use the model's default
 
-  context:
-    max_relevant_items: 10             # Items retrieved via semantic search
-    max_unconsumed_items: 20           # Backlog items included in context
-    include_algorithmic_recs: true     # Include scored recommendations in context
-    compact_mode: false                # Enable for 3B parameter models
+python3.11 -m src.cli settings set conversation.context.max_relevant_items 10     # Items via semantic search
+python3.11 -m src.cli settings set conversation.context.max_unconsumed_items 20   # Backlog items in context
+python3.11 -m src.cli settings set conversation.context.include_algorithmic_recs true
+python3.11 -m src.cli settings set conversation.context.compact_mode false        # Enable for 3B models
 ```
+
+Run `settings list --section conversation` to see the current values.
 
 ### Compact Mode (Small Models)
 
 If you're running a 3B parameter model (e.g., `qwen2.5:3b`), enable compact mode to reduce prompt size by 60-70%:
 
-```yaml
-ollama:
-  conversation_model: "qwen2.5:3b"
-
-conversation:
-  llm:
-    context_window_size: 4096          # Limit context for small models
-  context:
-    compact_mode: true                 # Condensed prompts, fewer context items
+```bash
+python3.11 -m src.cli settings set ollama.conversation_model qwen2.5:3b
+python3.11 -m src.cli settings set conversation.llm.context_window_size 4096
+python3.11 -m src.cli settings set conversation.context.compact_mode true
 ```
+
+Note: the Ollama sidecar pulls only the models named in your compose
+environment, and it cannot see these settings. If you point
+`ollama.conversation_model` at a model other than `ollama.model`, set
+`OLLAMA_CONVERSATION_MODEL` to match and recreate the sidecar — left unset, it
+reuses `OLLAMA_MODEL`, which mirrors the app's own fallback. See
+[docs/DOCKER.md](DOCKER.md).
 
 Compact mode uses:
 - A condensed system prompt with examples instead of detailed rules

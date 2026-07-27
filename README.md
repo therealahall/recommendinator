@@ -33,9 +33,11 @@ docker run -d \
   ghcr.io/therealahall/recommendinator:latest
 ```
 
-The container writes a starter `config/config.yaml` on first run. Edit it with
-your API keys, run `docker restart recommendinator`, then open
-**http://localhost:18473**.
+The container writes a starter `config/config.yaml` on first run holding only
+the storage paths — there is nothing in it you need to edit. Open
+**http://localhost:18473** and set everything up from the app: data sources from
+the **Data** tab, and API keys, models, and tuning from the **Settings** page.
+Keys are stored encrypted in the database, never in the config file.
 
 Then, in order:
 
@@ -103,29 +105,34 @@ See [Enabling AI features](#enabling-ai-features) below.
 
 ## Configuration
 
-Copy `config/example.yaml` to `config/config.yaml`. This file is now minimal —
-it only needs the `storage` paths that bootstrap the database plus your `inputs`
-sources:
+Copy `config/example.yaml` to `config/config.yaml`. This file holds only what is
+needed to stand the app up — where the server binds and where the database lives.
+Both are read before the database is open, which is the only reason they are
+still in a file:
 
 ```yaml
+# Where the web server binds
+web:
+  host: "127.0.0.1"
+  port: 18473
+
 # Where the database, vector store, and cache live
 storage:
   database_path: "data/recommendations.db"
-
-# Configure your data sources (see each source's setup guide for fields)
-inputs:
-  goodreads_csv:
-    plugin: goodreads_csv
-    path: "inputs/goodreads_library_export.csv"
-    enabled: true
 ```
 
-Everything else — AI toggles, scorer weights, sync workers, enrichment
-providers, conversation tuning, and the web/logging settings — has built-in
-defaults and is managed from the **Settings** page in the web UI or the
-`settings` CLI group, which persist to the database. Precedence is
-**const default < `config.yaml` < database**, so you MAY still add any of those
-sections to `config.yaml` to override the defaults, but you no longer need to.
+Under Docker, `web.host` and `web.port` are inert: the image starts with
+`--host`/`--port` on the command line and CLI flags beat `config.yaml`. Publish a
+different port with `APP_PORT` instead — see [docs/DOCKER.md](docs/DOCKER.md).
+
+Everything else lives in the database and is managed from inside the app. **Data
+sources** are added from the **Data** tab with **+ Add source** (or the `source`
+CLI). **Global settings** — AI toggles, scorer weights, sync workers, enrichment
+providers, conversation tuning, CORS origins, and logging — come from the
+**Settings** page (or the `settings` CLI). Precedence for global settings is
+**const default < `config.yaml` < database**, so you MAY still add a section to
+`config.yaml` to change a value before anything is saved to the database, but you
+no longer need to.
 
 ```bash
 python3.11 -m src.cli settings list                       # see every setting
@@ -139,11 +146,13 @@ them from the Settings page or `settings set-secret`, not in `config.yaml`. See
 [ARCHITECTURE.md](ARCHITECTURE.md#global-configuration-precedence) for the full
 precedence model.
 
-**Conflict strategies:** when the same item is imported from multiple sources,
-`conflict_strategy` controls which data wins. `last_write_wins` (default) uses
-the most recent import; `source_priority` uses the highest-priority source;
-`keep_existing` only fills missing fields. Metadata (genres, tags) is always
-merged additively.
+**Duplicate items:** when the same title is imported from more than one source,
+the rows are merged into one on the next sync, matched by normalized title.
+Ratings and reviews are set once and never overwritten, and metadata (genres,
+tags) is merged additively, so re-importing a source cannot lose data you
+already have. Status only moves forward (unread → consuming → completed), with
+one deliberate exception: a completed TV show whose season checklist you have
+filled in returns to in-progress when a sync brings new seasons.
 
 ### Upgrading
 

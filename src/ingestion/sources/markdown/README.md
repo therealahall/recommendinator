@@ -10,12 +10,14 @@ Imports content items from a single Markdown file using a prescriptive list-per-
 
 ## Configuration
 
-```yaml
-inputs:
-  markdown_import:
-    path: "/path/to/library.md"
-    content_type: "book"   # or movie, tv_show, video_game
+```bash
+python3.11 -m src.cli source create my_md markdown_import
+python3.11 -m src.cli source set my_md path /path/to/library.md
+python3.11 -m src.cli source set my_md content_type book   # or movie, tv_show, video_game
 ```
+
+Or add it from the **Data** tab with **+ Add source**. The id (`my_md` above) is
+yours to choose, so you can have several Markdown sources for different files.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|

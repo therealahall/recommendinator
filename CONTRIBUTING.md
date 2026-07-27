@@ -212,7 +212,7 @@ See [docs/PLUGIN_DEVELOPMENT.md](docs/PLUGIN_DEVELOPMENT.md) for a complete guid
 1. Create a plugin folder `src/ingestion/sources/<name>/` containing `<name>.py` (the `SourcePlugin` subclass), `__init__.py` (one-line re-export), `README.md`, and `test_<name>.py`
 2. Plugins are auto-discovered — no manual registration needed
 3. Tests live alongside the implementation, with mocked APIs
-4. Update `config/example.yaml` with the new source's configuration
+4. Document the source in `docs/DATA_SOURCES.md` and the plugin's own `README.md` — do **not** add it to `config/example.yaml`, which is bootstrap-only. The Add-source modal and the `source` CLI build their forms from `get_config_schema()`, so a correct schema is all a new plugin needs to be configurable.
 
 ## Project Structure
 

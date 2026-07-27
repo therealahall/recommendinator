@@ -12,15 +12,9 @@ Imports owned games and (optionally) wishlist items from a [GOG.com](https://www
 
 ### Option 1: Web UI (recommended)
 
-1. Enable GOG in `config.yaml`:
-   ```yaml
-   inputs:
-     gog:
-       plugin: gog
-       enabled: true
-   ```
-2. Start the web server and open the **Data** tab.
-3. Follow the **Connect GOG Account** wizard — it runs the OAuth flow and stores the token securely.
+1. Start the web server and open the **Data** tab, then click **+ Add source** and
+   pick GOG. (Or from the CLI: `python3.11 -m src.cli source create gog gog`.)
+2. Follow the **Connect GOG Account** wizard — it runs the OAuth flow and stores the token securely.
 
 ### Option 2: Manual
 
@@ -40,13 +34,17 @@ If GOG sync later fails with an authentication error, the refresh token has expi
 
 ## Configuration
 
-```yaml
-inputs:
-  gog:
-    refresh_token: "YOUR_GOG_REFRESH_TOKEN"
-    include_wishlist: true     # Optional, default true
-    enrich_wishlist: true      # Optional, default true
+The connect flow above creates the source and stores the refresh token encrypted.
+The optional fields are set from the source's panel in the **Data** tab, or from
+the CLI:
+
+```bash
+python3.11 -m src.cli source set gog include_wishlist true   # Optional, default true
+python3.11 -m src.cli source set gog enrich_wishlist true    # Optional, default true
 ```
+
+The `refresh_token` is never entered by hand — it comes from the connect flow and
+is stored encrypted.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
