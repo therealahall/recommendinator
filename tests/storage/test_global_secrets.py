@@ -116,6 +116,63 @@ class TestMigrateConfigSecrets:
         assert read_secret(storage, _TMDB_KEY) == "db_key"
         assert "api_key" not in config["enrichment"]["providers"]["tmdb"]
 
+    def test_discarded_yaml_value_says_so_rather_than_claiming_a_migration(
+        self, storage: StorageManager, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The DB-wins branch popped the plaintext with no log at all.
+
+        This function's docstring says precedence mirrors
+        ``migrate_config_credentials``, which warns on every branch — but the
+        mirror was never applied here, so an operator moving global provider
+        keys got total silence while source credentials got a deprecation nudge.
+
+        The wording matters as much as the presence: the file value is IGNORED,
+        not saved. Telling the user it was migrated would invite them to delete
+        a value that was never persisted.
+        """
+        storage.set_global_secret(_TMDB_KEY, "db_key")
+        config = {
+            "enrichment": {
+                "providers": {"tmdb": {"enabled": True, "api_key": "stale_key"}}
+            }
+        }
+
+        with caplog.at_level(logging.WARNING, logger="src.storage.global_secrets"):
+            migrate_config_secrets(config, storage)
+
+        assert any(
+            "DEPRECATED" in message and _TMDB_KEY in message and "IGNORED" in message
+            for message in caplog.messages
+        )
+        # The secret itself must never reach the logs — these get pasted into
+        # bug reports.
+        assert "stale_key" not in caplog.text
+        assert "db_key" not in caplog.text
+
+    def test_migration_warns_so_the_operator_knows_to_clean_the_file(
+        self, storage: StorageManager, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A successful migration was logged at INFO, below the default cutoff.
+
+        The user cannot delete the plaintext from config.yaml if nothing tells
+        them it is now redundant, which leaves the secret sitting in a file
+        indefinitely — the exact outcome this sweep exists to end.
+        """
+        config = {
+            "enrichment": {
+                "providers": {"tmdb": {"enabled": True, "api_key": "yaml_key"}}
+            }
+        }
+
+        with caplog.at_level(logging.WARNING, logger="src.storage.global_secrets"):
+            migrate_config_secrets(config, storage)
+
+        assert any(
+            "DEPRECATED" in message and _TMDB_KEY in message
+            for message in caplog.messages
+        )
+        assert "yaml_key" not in caplog.text
+
     def test_idempotent_across_repeated_boots(self, storage: StorageManager) -> None:
         """Re-running the sweep leaves the stored secret unchanged."""
         first = {

@@ -9,7 +9,7 @@ The in-scope global-config sections resolve with precedence
 3. Overlay the database ``settings`` leaves on top (the DB is authoritative).
 
 **Key scheme: dotted leaf paths.** Each stored leaf lives under a namespaced
-key ``"<section>.<path>.<to>.<leaf>"`` (e.g. ``"web.port"`` or
+key ``"<section>.<path>.<to>.<leaf>"`` (e.g. ``"recommendations.default_count"`` or
 ``"recommendations.scorer_weights.genre_match"``). A stored leaf wins at its
 own path; unknown/legacy DB leaves still overlay.
 
@@ -44,7 +44,6 @@ if TYPE_CHECKING:
 IN_SCOPE_SECTIONS: tuple[str, ...] = (
     "features",
     "ollama",
-    "ingestion",
     "recommendations",
     "conversation",
     "sync",

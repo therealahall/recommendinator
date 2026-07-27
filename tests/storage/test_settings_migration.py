@@ -51,24 +51,18 @@ class TestMigrateConfigSettings:
 
     def test_yaml_overrides_const_default(self, storage: StorageManager) -> None:
         """A YAML leaf overrides the registry const default for that leaf."""
-        # Const default for web.port is 18473.
-        config: dict[str, Any] = {"web": {"port": 20000}}
+        # Const default for recommendations.default_count is 5.
+        config: dict[str, Any] = {"recommendations": {"default_count": 11}}
 
         migrate_config_settings(config, storage)
 
-        assert config["web"]["port"] == 20000
+        assert config["recommendations"]["default_count"] == 11
         # Sibling leaves still resolve from const defaults.
-        assert config["web"]["host"] == default_config()["web"]["host"]
+        assert (
+            config["recommendations"]["max_count"]
+            == default_config()["recommendations"]["max_count"]
+        )
         assert storage.list_settings() == {}
-
-    def test_db_leaf_overrides_yaml_and_const(self, storage: StorageManager) -> None:
-        """A stored DB leaf wins over both the YAML value and the const default."""
-        storage.set_setting("web.port", 9999)
-        config: dict[str, Any] = {"web": {"port": 20000}}
-
-        migrate_config_settings(config, storage)
-
-        assert config["web"]["port"] == 9999
 
     def test_section_absent_from_yaml_resolves_from_defaults(
         self, storage: StorageManager
@@ -133,16 +127,22 @@ class TestMigrateConfigSettings:
     def test_db_leaf_wins_while_new_yaml_leaf_appears(
         self, storage: StorageManager
     ) -> None:
-        """A DB leaf wins per-key while other YAML leaves still flow through."""
-        storage.set_setting("web.port", 9999)
-        config: dict[str, Any] = {"web": {"port": 20000, "host": "0.0.0.0"}}
+        """A DB leaf wins per-key while other YAML leaves still flow through.
+
+        All three layers differ for ``default_count`` (const 5 < YAML 11 < DB 9),
+        so the stored value can only survive if the DB overlay is applied last.
+        """
+        storage.set_setting("recommendations.default_count", 9)
+        config: dict[str, Any] = {
+            "recommendations": {"default_count": 11, "max_count": 30}
+        }
 
         migrate_config_settings(config, storage)
 
-        assert config["web"]["port"] == 9999
-        assert config["web"]["host"] == "0.0.0.0"
+        assert config["recommendations"]["default_count"] == 9
+        assert config["recommendations"]["max_count"] == 30
         # Still no writes — only the pre-existing leaf lives in the DB.
-        assert storage.list_settings() == {"web.port": 9999}
+        assert storage.list_settings() == {"recommendations.default_count": 9}
 
     def test_unknown_legacy_db_leaf_overlays(self, storage: StorageManager) -> None:
         """A DB leaf with no registry entry still overlays onto its section."""
@@ -185,13 +185,16 @@ class TestMigrateConfigSettings:
         The section cannot deep-merge onto a dict, so it falls back to the const
         defaults, and any DB leaf still overlays without raising.
         """
-        storage.set_setting("web.port", 9999)
-        config: dict[str, Any] = {"web": "broken"}
+        storage.set_setting("recommendations.default_count", 9)
+        config: dict[str, Any] = {"recommendations": "broken"}
 
         migrate_config_settings(config, storage)
 
-        assert config["web"]["port"] == 9999
-        assert config["web"]["host"] == default_config()["web"]["host"]
+        assert config["recommendations"]["default_count"] == 9
+        assert (
+            config["recommendations"]["max_count"]
+            == default_config()["recommendations"]["max_count"]
+        )
 
     def test_does_not_mutate_shared_default_config(
         self, storage: StorageManager

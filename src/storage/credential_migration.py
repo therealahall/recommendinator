@@ -28,11 +28,18 @@ def migrate_config_credentials(
     decrypted (e.g., after an encryption key change), then re-encrypts
     from the config value if available.
 
+    Reading secrets from ``config.yaml`` is a **deprecated** legacy path kept so
+    existing installs keep working: a ``sensitive=True`` field found in the file
+    logs a deprecation warning telling the user to delete it. Nothing writes
+    secrets to the file any more — the Add-source modal, the connect flows, and
+    ``source set-secret`` all write straight to encrypted storage.
+
     This is safe to call on every startup and on config hot-reload.
 
-    **Mutates ``config`` in place:** after a credential is migrated to the
-    database, its plaintext value is removed from the in-memory config dict
-    so it does not linger in ``app_state.config`` for the process lifetime.
+    **Mutates ``config`` in place:** once a sensitive field has been migrated to
+    the database — or superseded by a credential already stored there — its
+    plaintext value is removed from the in-memory config dict so it does not
+    linger in ``app_state.config`` for the process lifetime.
 
     Args:
         config: Full application config dict (from ``load_config``).
@@ -69,7 +76,25 @@ def migrate_config_credentials(
             # Check if a readable DB entry already exists
             existing = storage.get_credential(user_id, source_id, field.name)
             if existing is not None:
-                # DB credential is readable — nothing to do
+                if has_config_value:
+                    # The stored credential wins and the file value is DISCARDED,
+                    # not migrated. Say so precisely: telling the user it was
+                    # saved would invite them to delete a value that was never
+                    # persisted — losing it, unrecoverably for an OAuth token.
+                    logger.warning(
+                        "DEPRECATED: '%s.%s' is set in config.yaml, but an "
+                        "encrypted credential already exists and takes "
+                        "precedence — the file value is IGNORED, not migrated. "
+                        "To change it use 'source set-secret %s %s', then delete "
+                        "it from config.yaml.",
+                        source_id,
+                        field.name,
+                        source_id,
+                        field.name,
+                    )
+                # Drop the duplicate plaintext copy so it does not linger in
+                # app_state.config for the lifetime of the process.
+                entry.pop(field.name, None)
                 continue
 
             # Check if a stale (unreadable) row exists in the DB
@@ -79,8 +104,12 @@ def migrate_config_credentials(
                     storage.save_credential(
                         user_id, source_id, field.name, str(config_value)
                     )
-                    logger.info(
-                        "Re-encrypted stale %s.%s credential from config",
+                    logger.warning(
+                        "DEPRECATED: '%s.%s' is set in config.yaml. It has been "
+                        "re-encrypted into the database (replacing an "
+                        "undecryptable row) and removed from the running config "
+                        "— you can now delete it from config.yaml. A future "
+                        "release will stop reading secrets from the file.",
                         source_id,
                         field.name,
                     )
@@ -103,8 +132,11 @@ def migrate_config_credentials(
                 storage.save_credential(
                     user_id, source_id, field.name, str(config_value)
                 )
-                logger.info(
-                    "Migrated %s.%s credential to database",
+                logger.warning(
+                    "DEPRECATED: '%s.%s' is set in config.yaml. It has been "
+                    "moved to encrypted storage and removed from the running "
+                    "config — you can now delete it from config.yaml. A future "
+                    "release will stop reading secrets from the file.",
                     source_id,
                     field.name,
                 )
