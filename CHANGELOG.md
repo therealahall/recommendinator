@@ -1,6 +1,61 @@
 # CHANGELOG
 
 
+## v0.22.0 (2026-07-27)
+
+### Bug Fixes
+
+- **ingestion/calibre_web**: Stop importing Calibre star ratings
+  ([`b2fd476`](https://github.com/therealahall/recommendinator/commit/b2fd476e125fa822829de75da14dc332414a9ec1))
+
+- **sync**: Sync database-only sources from the per-source path
+  ([`7463774`](https://github.com/therealahall/recommendinator/commit/7463774358de20eed296cb93bf3884ebd5d665ae))
+
+### Chores
+
+- **config**: Add Calibre-Web example configuration
+  ([`5c28e1e`](https://github.com/therealahall/recommendinator/commit/5c28e1e7d68ad55f3cb7020561ff5eb5ca5d6d14))
+
+### Documentation
+
+- Add Calibre-Web to source documentation
+  ([`1989c13`](https://github.com/therealahall/recommendinator/commit/1989c139e5c8e3d35c3b92a81b839b9f937ae692))
+
+- Document setting source secrets in the add-source modal
+  ([`74ec592`](https://github.com/therealahall/recommendinator/commit/74ec59203fb9296ee0b3e41328bfe290c35b07c4))
+
+- **ingestion/calibre_web**: Note ratings are not imported
+  ([`73c26cb`](https://github.com/therealahall/recommendinator/commit/73c26cbf73c2e8302a3c9715e157e825a96984bb))
+
+### Features
+
+- **ingestion**: Add Calibre-Web book source plugin
+  ([`1190373`](https://github.com/therealahall/recommendinator/commit/1190373e8cb04218f46ac98f1a807f47e3dd45b0))
+
+- **web**: Allow hyphens in source ids
+  ([`526d875`](https://github.com/therealahall/recommendinator/commit/526d875147a610dd11199dc1d58d6b1e97c2f4e0))
+
+- **web**: Set source secrets when creating a source in the web UI
+  ([`0e46c44`](https://github.com/therealahall/recommendinator/commit/0e46c447d5e2a946ec805ef0d38cd0c78b88e5fe))
+
+### Testing
+
+- **enrichment**: Make the already-running guard test deterministic
+  ([`43b5f38`](https://github.com/therealahall/recommendinator/commit/43b5f38349f3e4db6bd1f7f1a27a9148aee3c1c8))
+
+- **ingestion/calibre_web**: Cover protocol-relative and userinfo next links
+  ([`4fe51cc`](https://github.com/therealahall/recommendinator/commit/4fe51cc63b7f81b33dcb355a17e06d0fa9ebabbe))
+
+- **ingestion/calibre_web**: Cover read/unread sync without ratings
+  ([`ea9eac2`](https://github.com/therealahall/recommendinator/commit/ea9eac2743ea889888da66a12371169cd7887da6))
+
+- **sync**: Cover per-source sync of database-only sources
+  ([`93e37f1`](https://github.com/therealahall/recommendinator/commit/93e37f166b38ec1954c17429bb47a3b12b81ac69))
+
+- **web**: Cover sync-trigger error reset and polling lifecycle
+  ([`c3e07d6`](https://github.com/therealahall/recommendinator/commit/c3e07d6106c7305f04ad0947087fe1d3943a622b))
+
+
 ## v0.21.0 (2026-07-23)
 
 ### Chores
