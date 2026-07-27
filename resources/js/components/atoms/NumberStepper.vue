@@ -12,11 +12,17 @@ const props = withDefaults(defineProps<{
   id?: string
   describedBy?: string
   invalid?: boolean
+  /** Locks the control while a save is in flight, matching the other controls. */
+  disabled?: boolean
 }>(), {
-  min: 1,
-  max: 100,
   step: 1,
+  disabled: false,
 })
+// Neither `min` nor `max` has a default: a control must never report or enforce a
+// bound its registry entry does not declare. A default cap silently rewrites a
+// typed value and announces the wrong limit to assistive tech — which is exactly
+// what `max: 100` did to every min-only leaf (conversation.llm.max_tokens,
+// enrichment.batch_size, recommendations.max_count, sync.max_workers).
 
 const attrs = useAttrs()
 const resolvedLabel = computed(() =>
@@ -32,14 +38,27 @@ const emit = defineEmits<{
 }>()
 
 function clamp(value: number): number {
-  return Math.min(props.max, Math.max(props.min, value))
+  const lower = props.min ?? Number.NEGATIVE_INFINITY
+  const upper = props.max ?? Number.POSITIVE_INFINITY
+  return Math.min(upper, Math.max(lower, value))
 }
 
+// Bound state uses aria-disabled, NOT native disabled: stepping down to `min`
+// while the Decrease button has focus would blur the element the user is
+// operating and drop focus to <body> mid-interaction (WCAG 2.4.3). Native
+// disabled is reserved for `props.disabled` (an in-flight save), where focus
+// provably cannot be inside the stepper — reaching Save requires focusing Save.
+// aria-disabled does not block activation, so the handlers guard instead.
+const atMin = computed(() => props.min != null && props.modelValue <= props.min)
+const atMax = computed(() => props.max != null && props.modelValue >= props.max)
+
 function decrement() {
+  if (props.disabled || atMin.value) return
   emit('update:modelValue', clamp(props.modelValue - props.step))
 }
 
 function increment() {
+  if (props.disabled || atMax.value) return
   emit('update:modelValue', clamp(props.modelValue + props.step))
 }
 
@@ -57,7 +76,8 @@ function onInput(event: Event) {
     <button
       type="button"
       class="stepper-btn stepper-decrement"
-      :disabled="modelValue <= min"
+      :disabled="disabled"
+      :aria-disabled="atMin || undefined"
       :aria-label="`Decrease ${resolvedLabel}`"
       @click="decrement"
     >
@@ -76,12 +96,14 @@ function onInput(event: Event) {
       :aria-label="resolvedLabel"
       :aria-describedby="describedBy"
       :aria-invalid="invalid || undefined"
+      :disabled="disabled"
       @input="onInput"
     >
     <button
       type="button"
       class="stepper-btn stepper-increment"
-      :disabled="modelValue >= max"
+      :disabled="disabled"
+      :aria-disabled="atMax || undefined"
       :aria-label="`Increase ${resolvedLabel}`"
       @click="increment"
     >
@@ -100,14 +122,17 @@ function onInput(event: Event) {
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
   overflow: hidden;
-  height: 34px;
+  /* min-height, not height: font-size is rem-derived, so under text-only zoom
+     the line box outgrows a fixed 34px and `overflow: hidden` would clip the
+     digits — the same 1.4.4 concern the width above is sized for. */
+  min-height: 34px;
 }
 
 .stepper-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
+  min-width: 30px;
   background: var(--bg-elevated);
   border: none;
   color: var(--text-secondary);
@@ -117,12 +142,15 @@ function onInput(event: Event) {
   font-family: inherit;
 }
 
-.stepper-btn:hover:not(:disabled) {
+.stepper-btn:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--bg-hover);
   color: var(--text-primary);
 }
 
-.stepper-btn:disabled {
+/* Both forms look the same: aria-disabled marks "at the bound" (still
+   focusable), native disabled marks "save in flight". */
+.stepper-btn:disabled,
+.stepper-btn[aria-disabled='true'] {
   opacity: 0.3;
   cursor: not-allowed;
 }
@@ -136,15 +164,47 @@ function onInput(event: Event) {
 }
 
 .stepper-input {
-  width: 40px;
+  /* Sized for the widest int leaf (conversation.llm.context_window_size, max
+     131072 — six digits). The base.css `box-sizing: border-box` reset makes
+     `width` include the horizontal padding, so it has to be added back: a bare
+     4ch left a ~3-character content box, NARROWER than the 40px this replaced.
+     ch scales with font size, so resizing text keeps working (1.4.4).
+     The @supports gate matters — without field-sizing, `width: auto` on a
+     number input resolves to the intrinsic ~20-character width and the stepper
+     balloons instead. */
+  width: calc(7ch + var(--space-1) * 2);
   text-align: center;
   background: var(--bg-input);
   border: none;
   color: var(--text-primary);
   font-size: var(--text-sm);
   font-family: var(--font-mono);
-  padding: 0;
+  padding: 0 var(--space-1);
   -moz-appearance: textfield;
+}
+
+@supports (field-sizing: content) {
+  .stepper-input {
+    width: auto;
+    min-width: calc(4ch + var(--space-1) * 2);
+    /* Bounded: min-only leaves (e.g. recommendations.max_count) clamp against
+       +Infinity, so an over-long paste would otherwise grow the stepper past a
+       320px viewport and break reflow. */
+    max-width: calc(12ch + var(--space-1) * 2);
+    field-sizing: content;
+  }
+}
+
+.stepper-input:disabled {
+  /* The value is the one thing that must stay readable while a save is in
+     flight. The UA default greys disabled number text far below what a
+     low-vision user can resolve, and -webkit-text-fill-color wins over color.
+     No opacity here: fading the element would re-composite the text toward the
+     background and undo the restoration. The inert state is already conveyed by
+     both flanking buttons and the cursor. */
+  color: var(--text-primary);
+  -webkit-text-fill-color: var(--text-primary);
+  cursor: not-allowed;
 }
 
 .stepper-input::-webkit-inner-spin-button,

@@ -15,6 +15,47 @@ function srOnlyBlock(source: string): string {
   return match[1]
 }
 
+function readBase(): string {
+  return readFileSync(`${process.cwd()}/resources/css/base.css`, 'utf8')
+}
+
+describe('inactive button styling', () => {
+  // Regression: the project had NO `.btn:disabled` rule at all. `.btn` sets a
+  // solid background and `cursor: pointer`, so every button locked during a
+  // save — Reset, Add, each chip's ×, Replace/Clear/Save secret, and every
+  // toggle — rendered pixel-identically to a working one and silently ignored
+  // clicks. Native inputs and selects get UA greying; buttons get none, so the
+  // in-flight lock was conveyed to assistive tech and to nobody else (1.3.1).
+  //
+  // Asserted here rather than per component because the whole point is that one
+  // shared rule covers every button; a per-component test would pass while the
+  // next new button shipped unstyled.
+  it('dims and re-cursors both inactive spellings', () => {
+    const source = readBase()
+    const match = source.match(
+      /\.btn:disabled,\s*\.btn\[aria-disabled='true'\],\s*\.toggle-switch:disabled\s*\{([^}]*)\}/,
+    )
+    if (!match) throw new Error('shared inactive-button rule not found in base.css')
+
+    expect(match[1]).toMatch(/opacity:/)
+    expect(match[1]).toMatch(/cursor:\s*not-allowed/)
+  })
+
+  it('never brightens an inactive button on hover', () => {
+    // aria-disabled buttons stay in the hover-able tree, so an ungated
+    // `.btn-*:hover` lights them up while `cursor: not-allowed` says otherwise.
+    const source = readBase()
+    const hoverRules = source.match(/^\.btn-[a-z]+:hover[^{]*/gm) ?? []
+
+    expect(hoverRules.length).toBeGreaterThan(0)
+    for (const rule of hoverRules) {
+      expect(rule, `${rule.trim()} is not gated on the inactive states`).toMatch(
+        /:not\(:disabled\):not\(\[aria-disabled='true'\]\)/,
+      )
+    }
+  })
+})
+
 describe('.sr-only utility', () => {
   it('disables text selection so hidden labels never enter a copy', () => {
     // Browsers pull visually-clipped text into a selection, so copying an

@@ -1,12 +1,17 @@
 <script setup lang="ts">
-defineProps<{
-  modelValue: boolean
-  label: string
-  /** id/aria hooks so a wrapping control can wire the switch to help/error text. */
-  id?: string
-  describedBy?: string
-  invalid?: boolean
-}>()
+withDefaults(
+  defineProps<{
+    modelValue: boolean
+    label: string
+    /** id/aria hooks so a wrapping control can wire the switch to help/error text. */
+    id?: string
+    describedBy?: string
+    invalid?: boolean
+    /** Locks the switch while a save is in flight, like every other control. */
+    disabled?: boolean
+  }>(),
+  { disabled: false },
+)
 
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
@@ -24,6 +29,7 @@ const emit = defineEmits<{
       :aria-label="label"
       :aria-describedby="describedBy"
       :aria-invalid="invalid || undefined"
+      :disabled="disabled"
       @click="emit('update:modelValue', !modelValue)"
     />
     <span class="toggle-switch-text">{{ label }}</span>

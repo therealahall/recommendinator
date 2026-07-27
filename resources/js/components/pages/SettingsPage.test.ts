@@ -91,11 +91,79 @@ describe('SettingsPage', () => {
     expect(wrapper.find('[aria-busy="true"]').exists()).toBe(true)
   })
 
+  // Regression: aria-busy="true" sat on the settings card, which only renders
+  // while the page has no sections to show. On the common outcome — settings
+  // arrive — that node is replaced by the section list, so assistive tech
+  // tracking the busy state saw it vanish and never heard that loading finished
+  // (4.1.3). Every outcome is enumerated because the two that re-render the
+  // card in place passed even with the flag in the wrong place.
+  const LOAD_OUTCOMES: Array<{
+    outcome: string
+    settle: (resolve: (value: unknown) => void, reject: (error: unknown) => void) => void
+    shows: string
+  }> = [
+    {
+      outcome: 'settings arrive',
+      settle: (resolve) => resolve({ sections: [section('web')] }),
+      shows: 'Web',
+    },
+    {
+      outcome: 'there are no settings',
+      settle: (resolve) => resolve({ sections: [] }),
+      shows: 'No configurable settings',
+    },
+    {
+      outcome: 'the load fails',
+      settle: (_resolve, reject) => reject(new Error('boom')),
+      shows: "Couldn't load settings",
+    },
+  ]
+
+  it.each(LOAD_OUTCOMES)('clears aria-busy in place when $outcome', async ({ settle, shows }) => {
+    let resolveGet: (value: unknown) => void = () => {}
+    let rejectGet: (error: unknown) => void = () => {}
+    mockGet.mockReturnValue(
+      new Promise((resolve, reject) => {
+        resolveGet = resolve
+        rejectGet = reject
+      }),
+    )
+    const wrapper = mount(SettingsPage)
+    await flushPromises()
+
+    const busy = wrapper.find('[aria-busy="true"]')
+    expect(busy.exists()).toBe(true)
+    // The flag has to live on the page wrapper: it is the only node present in
+    // every outcome, so it is the only one that can flip rather than unmount.
+    expect(busy.element).toBe(wrapper.element)
+
+    settle(resolveGet, rejectGet)
+    await flushPromises()
+
+    expect(busy.attributes('aria-busy')).toBeUndefined()
+    expect(wrapper.text()).toContain(shows)
+  })
+
   it('shows an empty state when there are no settings', async () => {
     mockGet.mockResolvedValue({ sections: [] })
     const wrapper = mount(SettingsPage)
     await flushPromises()
     expect(wrapper.text()).toContain('No configurable settings')
+  })
+
+  it('keeps the Retry button out of the alert region', async () => {
+    // Alert content is announced as one chunk, so a button inside it has its
+    // affordance buried in the error prose.
+    mockGet.mockRejectedValue(new Error('boom'))
+    const wrapper = mount(SettingsPage)
+    await flushPromises()
+
+    const alert = wrapper.find('[role="alert"]')
+    expect(alert.find('[data-testid="settings-retry"]').exists()).toBe(false)
+    // Defaults to type="submit" without this, which would post a wrapping form.
+    expect(wrapper.find('[data-testid="settings-retry"]').attributes('type')).toBe(
+      'button',
+    )
   })
 
   it('shows an error state with a Retry button when the load fails', async () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import SourceConfigForm from './SourceConfigForm.vue'
 import type { SourceFieldSchema } from '@/types/api'
 
@@ -282,6 +282,78 @@ describe('SourceConfigForm', () => {
     expect(chips[0].text()).toContain('indie')
   })
 
+  describe('focus after removing a chip', () => {
+    // Regression: removeChip rewrote the list and stopped, so the × button the
+    // user had just activated unmounted with its chip and focus fell to <body>
+    // — once per chip while pruning a list (WCAG 2.4.3).
+    //
+    // attachTo is required: focus() is inert on a detached element, so these
+    // would otherwise read <body> and pass for the wrong reason.
+    function mountChips(values: string[], extra: Record<string, unknown> = {}) {
+      return mount(SourceConfigForm, {
+        props: {
+          schema: [field({ name: 'tags', field_type: 'list' })],
+          values: { tags: values },
+          secretStatus: {},
+          ...extra,
+        },
+        attachTo: document.body,
+      })
+    }
+
+    it('moves focus to the chip that took the removed one\'s place', async () => {
+      const wrapper = mountChips(['a', 'b', 'c'])
+      const button = wrapper.find('[data-testid="chip-remove-tags-0"]')
+      ;(button.element as HTMLElement).focus()
+
+      await button.trigger('click')
+      await flushPromises()
+
+      expect(document.activeElement).toBe(
+        wrapper.find('[data-testid="chip-remove-tags-0"]').element,
+      )
+      expect(wrapper.findAll('[data-testid="chip"]')[0].text()).toContain('b')
+      wrapper.unmount()
+    })
+
+    it('falls back to the previous chip when the last one is removed', async () => {
+      const wrapper = mountChips(['a', 'b'])
+      const button = wrapper.find('[data-testid="chip-remove-tags-1"]')
+      ;(button.element as HTMLElement).focus()
+
+      await button.trigger('click')
+      await flushPromises()
+
+      expect(document.activeElement).toBe(
+        wrapper.find('[data-testid="chip-remove-tags-0"]').element,
+      )
+      wrapper.unmount()
+    })
+
+    it('falls back to the draft input when the list empties', async () => {
+      const wrapper = mountChips(['only'])
+      const button = wrapper.find('[data-testid="chip-remove-tags-0"]')
+      ;(button.element as HTMLElement).focus()
+
+      await button.trigger('click')
+      await flushPromises()
+
+      expect(document.activeElement).toBe(
+        wrapper.find('[data-testid="chip-input-tags"]').element,
+      )
+      wrapper.unmount()
+    })
+
+    it('does not remove a chip while the form is disabled', async () => {
+      const wrapper = mountChips(['a', 'b'], { disabled: true })
+
+      await wrapper.find('[data-testid="chip-remove-tags-0"]').trigger('click')
+
+      expect(wrapper.findAll('[data-testid="chip"]')).toHaveLength(2)
+      wrapper.unmount()
+    })
+  })
+
   it('emits save including the edited list value', async () => {
     const schema = [field({ name: 'tags', field_type: 'list' })]
     const wrapper = mount(SourceConfigForm, {
@@ -412,19 +484,50 @@ describe('SourceConfigForm', () => {
     expect(wrapper.find('[data-testid="form-save-status"]').exists()).toBe(false)
   })
 
-  it('disables the Save button while saving', () => {
-    const schema = [field({ name: 'path' })]
-    const wrapper = mount(SourceConfigForm, {
+  function mountSaving(extra: Record<string, unknown> = {}) {
+    return mount(SourceConfigForm, {
       props: {
-        schema,
+        schema: [field({ name: 'path' })],
         values: { path: 'x' },
         secretStatus: {},
         saving: true,
+        ...extra,
       },
     })
+  }
 
-    expect(
-      wrapper.find('[data-testid="form-save"]').attributes('disabled'),
-    ).toBeDefined()
+  it('marks Save aria-disabled while saving, without blurring it', () => {
+    // Regression: native `disabled` removed the button from the a11y tree at the
+    // instant the user activated it, dropping focus to <body> for the whole
+    // round trip (WCAG 2.4.3). aria-disabled keeps it focusable.
+    const button = mountSaving().find('[data-testid="form-save"]')
+    expect(button.attributes('aria-disabled')).toBe('true')
+    expect(button.attributes('disabled')).toBeUndefined()
+  })
+
+  it('drops a second activation while saving instead of double-submitting', async () => {
+    // aria-disabled does not block activation the way native disabled does, so
+    // the guard in onSave is the only thing preventing a duplicate save.
+    const wrapper = mountSaving()
+    await wrapper.find('[data-testid="form-save"]').trigger('click')
+    expect(wrapper.emitted('save')).toBeUndefined()
+  })
+
+  it('still natively disables Save when the form itself is disabled', () => {
+    // `disabled` is a different axis from `saving`: it is set before any user
+    // interaction, so there is no focus to lose.
+    const button = mountSaving({ saving: false, disabled: true }).find(
+      '[data-testid="form-save"]',
+    )
+    expect(button.attributes('disabled')).toBeDefined()
+  })
+
+  it('does not nest the save status inside a second live region', () => {
+    // role="status"/role="alert" on the status span are implicit live regions.
+    // An aria-live wrapper around them double-announces and, with aria-atomic,
+    // re-reads the button label on every state change.
+    const group = mountSaving().find('.source-form-save-group')
+    expect(group.attributes('aria-live')).toBeUndefined()
+    expect(group.attributes('aria-atomic')).toBeUndefined()
   })
 })

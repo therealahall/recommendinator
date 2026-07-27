@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { nextTick, ref, watch } from 'vue'
 
 const props = withDefaults(defineProps<{
   modelValue: string[]
@@ -11,10 +11,13 @@ const props = withDefaults(defineProps<{
   /** aria hooks so a wrapping control can wire the draft input to help/error text. */
   describedBy?: string
   invalid?: boolean
+  /** Locks the input while a save is in flight, like every other control. */
+  disabled?: boolean
 }>(), {
   addButtonLabel: 'Add',
   placeholder: '',
   emptyText: 'None yet',
+  disabled: false,
 })
 
 const emit = defineEmits<{
@@ -37,9 +40,39 @@ function add() {
   draft.value = ''
 }
 
+const chipList = ref<HTMLElement | null>(null)
+const draftInput = ref<HTMLInputElement | null>(null)
+const pendingFocusIndex = ref<number | null>(null)
+
 function remove(index: number) {
+  if (props.disabled) return
+  // Record the intent only. This is a controlled component: the chip does not
+  // disappear until the parent applies the new array, so moving focus here
+  // would query a DOM that still holds the old chips.
+  pendingFocusIndex.value = index
   emit('update:modelValue', props.modelValue.filter((_, i) => i !== index))
 }
+
+// The × button the user activated unmounts with its chip, so focus would fall
+// to <body> and their next Tab would restart at the top of the document — once
+// per chip while pruning a list (WCAG 2.4.3). Land on whichever chip slid into
+// that position, or the draft input once the last one is gone. Driven off the
+// prop rather than the click so focus only moves if the removal actually took;
+// a parent that rejects the change leaves focus where the user put it.
+watch(
+  () => props.modelValue,
+  async () => {
+    if (pendingFocusIndex.value === null) return
+    const index = pendingFocusIndex.value
+    pendingFocusIndex.value = null
+    await nextTick()
+    const buttons = chipList.value?.querySelectorAll<HTMLElement>('.tag-input-remove')
+    const next = buttons?.length
+      ? buttons[Math.min(index, buttons.length - 1)]
+      : undefined
+    ;(next ?? draftInput.value)?.focus()
+  },
+)
 
 function onKeypress(event: KeyboardEvent) {
   if (event.key === 'Enter') {
@@ -53,13 +86,14 @@ function onKeypress(event: KeyboardEvent) {
   <div class="tag-input">
     <label :for="inputId">{{ label }}</label>
     <div v-if="modelValue.length === 0" class="empty-rules">{{ emptyText }}</div>
-    <div v-else class="tag-input-chips">
+    <div v-else ref="chipList" class="tag-input-chips">
       <span v-for="(tag, index) in modelValue" :key="tag" class="profile-tag tag-input-chip">
         {{ tag }}
         <button
           type="button"
           class="tag-input-remove"
           :aria-label="`Remove ${tag}`"
+          :disabled="disabled"
           @click="remove(index)"
         >×</button>
       </span>
@@ -67,15 +101,22 @@ function onKeypress(event: KeyboardEvent) {
     <div class="add-rule-form">
       <input
         :id="inputId"
+        ref="draftInput"
         type="text"
         v-model="draft"
         :placeholder="placeholder"
         :maxlength="MAX_LENGTH"
         :aria-describedby="describedBy"
         :aria-invalid="invalid || undefined"
+        :disabled="disabled"
         @keypress="onKeypress"
       >
-      <button type="button" class="btn btn-small btn-primary" @click="add">{{ addButtonLabel }}</button>
+      <button
+        type="button"
+        class="btn btn-small btn-primary"
+        :disabled="disabled"
+        @click="add"
+      >{{ addButtonLabel }}</button>
     </div>
   </div>
 </template>

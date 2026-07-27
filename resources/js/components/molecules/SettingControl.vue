@@ -96,14 +96,18 @@ function onFloatBlur(event: Event): void {
         :label="setting.label"
         :described-by="describedBy"
         :invalid="invalid"
+        :disabled="disabled"
         :data-testid="`setting-${setting.key}`"
         @update:model-value="emit('update:modelValue', $event)"
       />
     </template>
 
-    <!-- Integer: NumberStepper (int-only atom), labelled via aria-label. -->
+    <!-- Integer: NumberStepper (int-only atom). The visible <label for> gives
+         click-to-focus, matching every other branch; the aria-label stays
+         because NumberStepper derives its "Increase X"/"Decrease X" button
+         names from it. -->
     <template v-else-if="control === 'number-int'">
-      <span class="source-form-label">{{ setting.label }}</span>
+      <label :for="inputId" class="source-form-label">{{ setting.label }}</label>
       <NumberStepper
         :id="inputId"
         :model-value="(modelValue as number) ?? 0"
@@ -112,6 +116,7 @@ function onFloatBlur(event: Event): void {
         :aria-label="setting.label"
         :described-by="describedBy"
         :invalid="invalid"
+        :disabled="disabled"
         :data-testid="`setting-${setting.key}`"
         @update:model-value="emit('update:modelValue', $event)"
       />
@@ -145,6 +150,7 @@ function onFloatBlur(event: Event): void {
         :input-id="inputId"
         :described-by="describedBy"
         :invalid="invalid"
+        :disabled="disabled"
         :data-testid="`setting-${setting.key}`"
         @update:model-value="emit('update:modelValue', $event)"
       />
