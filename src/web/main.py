@@ -8,10 +8,18 @@ from pathlib import Path
 
 import uvicorn
 
-from src.cli.config import load_config
+from src.cli.config import (
+    load_config,
+    resolve_bootstrap_web,
+)
 from src.web.app import create_app
 
 logger = logging.getLogger(__name__)
+
+# Bind addresses that listen on every interface. The startup banner must report
+# these as network-reachable rather than printing them literally, so an operator
+# is never told an exposed instance is localhost-only.
+_WILDCARD_HOSTS = frozenset({"0.0.0.0", "::"})
 
 
 def get_local_ip_addresses() -> list[str]:
@@ -86,9 +94,13 @@ def main() -> None:
     except FileNotFoundError:
         config = {}
 
-    web_config = config.get("web", {})
-    host = args.host or web_config.get("host", "0.0.0.0")
-    port = args.port or web_config.get("port", 8000)
+    # Shared with create_app so the two readers cannot disagree — see
+    # resolve_bootstrap_web. CLI flags then override on top.
+    bootstrap = resolve_bootstrap_web(config)
+    host = args.host or bootstrap.host
+    # `is not None` rather than `or`: --port 0 is a real request for an
+    # ephemeral port, not a blank value to fall through.
+    port = args.port if args.port is not None else bootstrap.port
 
     # Create app
     app = create_app(config_path)
@@ -96,22 +108,29 @@ def main() -> None:
     # Log accessible addresses
     logger.info("Starting Recommendinator web server...")
     logger.info("Server will be accessible at:")
-    logger.info("  - http://localhost:%s", port)
-    if host == "0.0.0.0":
-        local_ips = get_local_ip_addresses()
-        for ip in local_ips:
+    if host in _WILDCARD_HOSTS:
+        # Only a wildcard bind is reachable at localhost AND on the LAN.
+        logger.info("  - http://localhost:%s", port)
+        for ip in get_local_ip_addresses():
             logger.info("  - http://%s:%s", ip, port)
     else:
+        # A socket bound to one specific address is NOT reachable at localhost,
+        # so printing it unconditionally handed the operator a dead URL — above
+        # the correct one.
         logger.info("  - http://%s:%s", host, port)
-    logger.info(
-        "API documentation: http://%s:%s/docs",
-        host if host != "0.0.0.0" else "localhost",
-        port,
-    )
+    # Only when debug is on: create_app leaves docs_url, redoc_url and
+    # openapi_url unset otherwise, so advertising /docs on a default install
+    # points the operator at a 404.
+    if bootstrap.debug:
+        logger.info(
+            "API documentation: http://%s:%s/docs",
+            "localhost" if host in _WILDCARD_HOSTS else host,
+            port,
+        )
 
     # Reload is enabled either by the explicit --reload flag (dev compose) or by web.debug
     # in config. uvicorn requires an import string when reload is enabled.
-    reload_enabled = args.reload or web_config.get("debug", False)
+    reload_enabled = args.reload or bootstrap.debug
 
     if reload_enabled:
         if config_path:

@@ -1,6 +1,7 @@
 """Tests for web API endpoints."""
 
 import json
+import logging
 import threading
 from collections.abc import Callable
 from dataclasses import fields
@@ -8,6 +9,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.testclient import TestClient
 
 from src.ingestion.sync import SyncResult
@@ -17,11 +19,12 @@ from src.llm.recommendations import RecommendationGenerator
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.engine import RecommendationEngine
+from src.settings.metadata import default_of
 from src.storage.manager import StorageManager
 from src.storage.settings_migration import migrate_config_settings
 from src.utils.series import MAX_SEASONS
 from src.web.api import APP_VERSION, _item_to_response
-from src.web.app import create_app
+from src.web.app import _LOG_BASE_DIR, _safe_log_path, create_app
 from src.web.enrichment_manager import WebEnrichmentManager
 from src.web.epic_auth import EpicAuthError
 from src.web.gog_auth import GogAuthError
@@ -152,6 +155,173 @@ def test_create_app_runs_both_source_migrations(mock_components):
     mock_components["migrate_source_config_plugins"].assert_called_once_with(storage)
 
 
+def _cors_kwargs(app) -> dict:
+    """Return the kwargs actually handed to the CORS middleware.
+
+    Read off the middleware rather than ``app_state.config``: the config keeps
+    whatever YAML supplied, and the type guard in ``create_app`` is what decides
+    the value that reaches Starlette.
+    """
+    for middleware in app.user_middleware:
+        if middleware.cls is CORSMiddleware:
+            return middleware.kwargs
+    raise AssertionError("CORSMiddleware is not installed")
+
+
+def _cors_origins(app) -> list[str]:
+    """Return the origin list actually handed to the CORS middleware."""
+    return _cors_kwargs(app)["allow_origins"]
+
+
+class TestSafeLogPath:
+    """``logging.file`` containment — the control the registry pattern relies on.
+
+    The registry pattern now rejects traversal at the Settings API, so this is
+    no longer the only thing standing between an API caller and an arbitrary
+    write. It stays load-bearing for the inputs the pattern never sees:
+    ``config.yaml`` is unvalidated, rows persisted before the pattern gained its
+    ``..`` lookahead still overlay at boot without re-validation, and a symlink
+    under ``logs/`` satisfies any pattern.
+
+    ``tests/web/test_logging_config.py`` covers this end to end through
+    ``configure_logging``; these are the direct unit cases for the containment
+    rule itself, including the fallback value and the warning.
+    """
+
+    def test_path_inside_logs_is_returned_resolved(self) -> None:
+        assert _safe_log_path("logs/app.log") == (Path("logs") / "app.log").resolve()
+
+    def test_nested_path_inside_logs_is_allowed(self) -> None:
+        assert _safe_log_path("logs/sub/app.log") == (
+            (Path("logs") / "sub" / "app.log").resolve()
+        )
+
+    @pytest.mark.parametrize(
+        "escaping",
+        [
+            "logs/../../../tmp/pwned.log",
+            "/etc/cron.d/evil.log",
+            "logs/../secrets.log",
+        ],
+    )
+    def test_path_escaping_logs_falls_back_to_the_default(self, escaping: str) -> None:
+        """Anything resolving outside logs/ falls back — fail safe, never write.
+
+        None of these can reach here from the Settings API any more: the pattern
+        rejects both traversal and absolute paths. They can still arrive from a
+        hand-edited config.yaml, which is unvalidated, or from a row persisted
+        before the pattern gained its ``..`` lookahead.
+        """
+        assert _safe_log_path(escaping) == Path(default_of("logging.file")).resolve()
+
+    def test_the_fallback_is_itself_contained(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Closes the loop the test above leaves open.
+
+        That assertion compares the result against the same expression the
+        implementation uses, so if ``logging.file``'s registry default ever
+        moved outside ``logs/``, the fallback would hand back an escaping path
+        and the test would still pass. Containment is asserted directly here,
+        without reference to the default.
+        """
+        monkeypatch.chdir(tmp_path)
+
+        fallback = _safe_log_path("/etc/cron.d/evil.log")
+
+        assert _LOG_BASE_DIR.resolve() in fallback.parents
+        # And the fallback must satisfy the rule it is the fallback for, so
+        # feeding it back through is a fixed point rather than a second retreat.
+        assert _safe_log_path(str(fallback)) == fallback
+
+    def test_the_fallback_survives_a_symlinked_default_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The fail-safe branch must not become the escape it refuses.
+
+        Regression: the refusal branch returned ``Path(default_of(
+        "logging.file")).resolve()``, and ``resolve`` follows symlinks — so
+        planting the default log file as a link out of ``logs/`` made every
+        refused path resolve to the attacker's target instead. The fallback is
+        now built from the ``logs/`` base, so it cannot escape by construction.
+        """
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "logs").mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        default_name = Path(default_of("logging.file")).name
+        (tmp_path / "logs" / default_name).symlink_to(outside / "pwned.log")
+
+        fallback = _safe_log_path("logs/../../evil.log")
+
+        assert _LOG_BASE_DIR.resolve() in fallback.parents
+        assert fallback != (outside / "pwned.log").resolve()
+
+    def test_the_logs_directory_itself_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``file: logs`` names the directory, which is never a valid log file.
+
+        Regression: containment accepted ``resolved == base``, so the directory
+        came back unchanged and the FileHandler opened on it raised
+        IsADirectoryError inside ``create_app``'s try — turning a one-word
+        config mistake into "Failed to initialize components".
+        """
+        monkeypatch.chdir(tmp_path)
+
+        fallback = _safe_log_path("logs")
+
+        assert fallback != _LOG_BASE_DIR.resolve()
+        assert _LOG_BASE_DIR.resolve() in fallback.parents
+
+    def test_escape_attempt_is_logged(self, caplog) -> None:
+        """The rejection must be visible — a silent fallback hides a live attempt."""
+        with caplog.at_level(logging.WARNING, logger="src.web.app"):
+            _safe_log_path("logs/../../../tmp/pwned.log")
+
+        assert any("outside the logs/ directory" in m for m in caplog.messages)
+
+    def test_symlink_out_of_logs_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The third input the pattern cannot see, and the reason this is not dead code.
+
+        ``logs/app.log`` satisfies the registry pattern completely — the name is
+        clean, there is no ``..``, and it is relative. If ``logs/app.log`` is a
+        symlink, the pattern still passes it and the containment check is the
+        only thing standing between a network-set value and a FileHandler
+        opening an arbitrary file for append.
+
+        Containment therefore has to compare the RESOLVED path, which follows
+        symlinks. A check written against the unresolved string would pass this.
+        """
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "logs").mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (tmp_path / "logs" / "app.log").symlink_to(outside / "pwned.log")
+
+        resolved = _safe_log_path("logs/app.log")
+
+        assert resolved != (outside / "pwned.log").resolve()
+        assert resolved == Path(default_of("logging.file")).resolve()
+
+    def test_symlink_staying_inside_logs_is_allowed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Containment is about where the path lands, not about symlinks per se.
+
+        Pins the rule as "resolves under logs/" rather than "is not a symlink",
+        so a future tightening that simply banned symlinks would fail here.
+        """
+        monkeypatch.chdir(tmp_path)
+        logs = tmp_path / "logs"
+        (logs / "real").mkdir(parents=True)
+        (logs / "app.log").symlink_to(logs / "real" / "app.log")
+
+        assert _safe_log_path("logs/app.log") == (logs / "real" / "app.log").resolve()
+
+
 class TestCreateAppSettingsMigration:
     """create_app assembles DB-overlaid settings before reading global config."""
 
@@ -165,8 +335,8 @@ class TestCreateAppSettingsMigration:
         """
         reset_sync_manager()
         storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
-        # A stored DB leaf must win over the YAML "web.port" on boot.
-        storage_manager.set_setting("web.port", 65000)
+        # A stored DB leaf must win over the YAML value on boot.
+        storage_manager.set_setting("recommendations.default_count", 9)
         with (
             patch("src.web.app.load_config", return_value=mock_config),
             patch(
@@ -183,9 +353,297 @@ class TestCreateAppSettingsMigration:
             create_app()
 
             # Real hook overlaid the DB leaf onto the in-memory config.
-            assert app_state.config["web"]["port"] == 65000
+            assert app_state.config["recommendations"]["default_count"] == 9
             # Boot seeded nothing: only the pre-existing leaf remains in the DB.
-            assert storage_manager.list_settings() == {"web.port": 65000}
+            assert storage_manager.list_settings() == {
+                "recommendations.default_count": 9
+            }
+        reset_sync_manager()
+
+    def test_debug_resolves_from_yaml_not_the_db_overlay(self, mock_config, tmp_path):
+        """A stale ``web.debug`` DB row must not enable the OpenAPI docs.
+
+        Regression: create_app read ``web.debug`` from the config AFTER
+        migrate_config_settings ran. ``web`` is still an in-scope section and the
+        overlay applies unknown/legacy leaves, so a ``web.debug`` row left by an
+        earlier build — when it was briefly a registry leaf — re-enabled /docs
+        and /redoc here while src/web/main.py (raw YAML) ignored it. The row is
+        also unreachable from the app, since `settings reset` refuses a key with
+        no registry entry. Debug must resolve pre-overlay, matching the launcher.
+        """
+        reset_sync_manager()
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        # Write the row directly: the settings API would reject this key now.
+        storage_manager.set_setting("web.debug", True)
+        with (
+            patch("src.web.app.load_config", return_value=mock_config),
+            patch(
+                "src.web.app.create_storage_manager",
+                return_value=storage_manager,
+            ),
+            patch("src.web.app.create_llm_components", return_value=(None, None, None)),
+            patch("src.web.app.create_recommendation_engine"),
+            patch("src.web.app.migrate_config_credentials"),
+            patch("src.web.app.configure_logging"),
+        ):
+            _reset_app_state()
+
+            app = create_app()
+
+        # mock_config carries no web.debug, so the bootstrap default (False)
+        # applies and the docs stay closed despite the stored row.
+        assert app.docs_url is None
+        assert app.redoc_url is None
+        # The schema too: docs_url=None alone would still serve the full route
+        # inventory at /openapi.json.
+        assert app.openapi_url is None
+        reset_sync_manager()
+
+    def test_yaml_debug_true_opens_the_openapi_docs(self, mock_config, tmp_path):
+        """The positive half: YAML ``web.debug`` is what actually gates /docs.
+
+        Without this, ``debug_mode`` could be hardcoded False and the negative
+        test above would still pass — proving the docs are closed, but nothing
+        about where the value comes from.
+        """
+        reset_sync_manager()
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        config = {**mock_config, "web": {**mock_config.get("web", {}), "debug": True}}
+        with (
+            patch("src.web.app.load_config", return_value=config),
+            patch(
+                "src.web.app.create_storage_manager",
+                return_value=storage_manager,
+            ),
+            patch("src.web.app.create_llm_components", return_value=(None, None, None)),
+            patch("src.web.app.create_recommendation_engine"),
+            patch("src.web.app.migrate_config_credentials"),
+            patch("src.web.app.configure_logging"),
+        ):
+            _reset_app_state()
+
+            app = create_app()
+
+        assert app.docs_url == "/docs"
+        assert app.redoc_url == "/redoc"
+        # Swagger and ReDoc need the schema, so it opens with them.
+        assert app.openapi_url == "/openapi.json"
+        reset_sync_manager()
+
+    def test_non_dict_web_section_does_not_crash_boot(self, mock_config, tmp_path):
+        """A ``web:`` header with no children must not take the app down.
+
+        Regression: the debug read moved above ``migrate_config_settings``, which
+        is what heals a non-dict section — so ``config.get("web", {})`` returned
+        None (the default only fires on an ABSENT key) and boot died with an
+        AttributeError outside the try/except.
+        """
+        reset_sync_manager()
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        config = {**mock_config, "web": None}
+        with (
+            patch("src.web.app.load_config", return_value=config),
+            patch(
+                "src.web.app.create_storage_manager",
+                return_value=storage_manager,
+            ),
+            patch("src.web.app.create_llm_components", return_value=(None, None, None)),
+            patch("src.web.app.create_recommendation_engine"),
+            patch("src.web.app.migrate_config_credentials"),
+            patch("src.web.app.configure_logging"),
+        ):
+            _reset_app_state()
+
+            app = create_app()
+
+        # Fails closed on both counts: no debug, and CORS pinned to the
+        # restrictive default rather than whatever a malformed section produced.
+        assert app.docs_url is None
+        assert _cors_origins(app) == default_of("web.allowed_origins")
+        reset_sync_manager()
+
+    def test_configured_origins_reach_the_middleware(self, mock_config, tmp_path):
+        """A well-formed non-default list must pass through, not fall back.
+
+        Every other CORS test asserts the FALLBACK, so replacing the guard with
+        an unconditional `default_of(...)` would keep them all green while
+        silently discarding the CORS policy of every operator who configured one.
+        """
+        reset_sync_manager()
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        config = {
+            **mock_config,
+            "web": {"allowed_origins": ["https://app.example.com"]},
+        }
+        with (
+            patch("src.web.app.load_config", return_value=config),
+            patch(
+                "src.web.app.create_storage_manager",
+                return_value=storage_manager,
+            ),
+            patch("src.web.app.create_llm_components", return_value=(None, None, None)),
+            patch("src.web.app.create_recommendation_engine"),
+            patch("src.web.app.migrate_config_credentials"),
+            patch("src.web.app.configure_logging"),
+        ):
+            _reset_app_state()
+
+            app = create_app()
+
+        assert _cors_origins(app) == ["https://app.example.com"]
+        # A concrete origin list may carry credentials.
+        assert _cors_kwargs(app)["allow_credentials"] is True
+        reset_sync_manager()
+
+    def test_wildcard_origin_disables_credentials(self, mock_config, tmp_path):
+        """``["*"]`` must turn credentials off — a browser-security invariant.
+
+        Allowing credentials against a wildcard origin is exactly the
+        combination browsers refuse and the one that would expose every
+        authenticated response to any site. It had no coverage anywhere.
+        """
+        reset_sync_manager()
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        config = {**mock_config, "web": {"allowed_origins": ["*"]}}
+        with (
+            patch("src.web.app.load_config", return_value=config),
+            patch(
+                "src.web.app.create_storage_manager",
+                return_value=storage_manager,
+            ),
+            patch("src.web.app.create_llm_components", return_value=(None, None, None)),
+            patch("src.web.app.create_recommendation_engine"),
+            patch("src.web.app.migrate_config_credentials"),
+            patch("src.web.app.configure_logging"),
+        ):
+            _reset_app_state()
+
+            app = create_app()
+
+        assert _cors_origins(app) == ["*"]
+        assert _cors_kwargs(app)["allow_credentials"] is False
+        reset_sync_manager()
+
+    def test_db_set_origins_reach_the_middleware(self, mock_config, tmp_path):
+        """A DB-stored value applies on the next boot, as restart_required promises.
+
+        The overlay runs before the CORS read, but nothing pinned that ordering
+        — and this is the only registry leaf whose effect is a security control.
+        """
+        reset_sync_manager()
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        storage_manager.set_setting("web.allowed_origins", ["https://stored.example"])
+        with (
+            patch("src.web.app.load_config", return_value=mock_config),
+            patch(
+                "src.web.app.create_storage_manager",
+                return_value=storage_manager,
+            ),
+            patch("src.web.app.create_llm_components", return_value=(None, None, None)),
+            patch("src.web.app.create_recommendation_engine"),
+            patch("src.web.app.migrate_config_credentials"),
+            patch("src.web.app.configure_logging"),
+        ):
+            _reset_app_state()
+
+            app = create_app()
+
+        assert _cors_origins(app) == ["https://stored.example"]
+        reset_sync_manager()
+
+    @pytest.mark.parametrize("bad_origins", [None, "https://app.example.com", [1, 2]])
+    def test_unusable_allowed_origins_is_reported_not_swallowed(
+        self, mock_config, tmp_path, bad_origins, caplog
+    ):
+        """A narrowed CORS policy must say why, like the bind path already does.
+
+        ``resolve_bootstrap_web`` warns for every unusable ``web.*`` leaf, and
+        the reasoning applies identically here: an operator who typed
+        ``allowed_origins: https://app.example.com`` (a scalar, not a list) gets
+        the default policy instead of theirs, and without a log there is nothing
+        to debug the resulting browser CORS failures from.
+        """
+        reset_sync_manager()
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        config = {**mock_config, "web": {"allowed_origins": bad_origins}}
+        with (
+            patch("src.web.app.load_config", return_value=config),
+            patch(
+                "src.web.app.create_storage_manager",
+                return_value=storage_manager,
+            ),
+            patch("src.web.app.create_llm_components", return_value=(None, None, None)),
+            patch("src.web.app.create_recommendation_engine"),
+            patch("src.web.app.migrate_config_credentials"),
+            patch("src.web.app.configure_logging"),
+            caplog.at_level(logging.WARNING, logger="src.web.app"),
+        ):
+            _reset_app_state()
+
+            create_app()
+
+        assert any("web.allowed_origins" in m for m in caplog.messages)
+        reset_sync_manager()
+
+    def test_well_formed_allowed_origins_logs_nothing(
+        self, mock_config, tmp_path, caplog
+    ):
+        """The common case stays quiet, or the warning trains itself away."""
+        reset_sync_manager()
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        config = {**mock_config, "web": {"allowed_origins": ["https://ok.example"]}}
+        with (
+            patch("src.web.app.load_config", return_value=config),
+            patch(
+                "src.web.app.create_storage_manager",
+                return_value=storage_manager,
+            ),
+            patch("src.web.app.create_llm_components", return_value=(None, None, None)),
+            patch("src.web.app.create_recommendation_engine"),
+            patch("src.web.app.migrate_config_credentials"),
+            patch("src.web.app.configure_logging"),
+            caplog.at_level(logging.WARNING, logger="src.web.app"),
+        ):
+            _reset_app_state()
+
+            app = create_app()
+
+        assert _cors_origins(app) == ["https://ok.example"]
+        assert not any("web.allowed_origins" in m for m in caplog.messages)
+        reset_sync_manager()
+
+    @pytest.mark.parametrize("bad_origins", [None, "https://app.example.com", [1, 2]])
+    def test_unusable_allowed_origins_falls_back_to_the_default(
+        self, mock_config, tmp_path, bad_origins
+    ):
+        """A malformed CORS list must not crash boot or widen the policy.
+
+        Regression: a blank ``allowed_origins:`` yields None and ``"*" not in
+        None`` raised outside the try/except, so boot died with a bare
+        traceback. A scalar string was worse — Starlette's origin check is
+        ``origin in self.allow_origins``, which on a string is a substring test,
+        so ``https://app.example.co`` would have been accepted against a
+        configured ``https://app.example.com``.
+        """
+        reset_sync_manager()
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        config = {**mock_config, "web": {"allowed_origins": bad_origins}}
+        with (
+            patch("src.web.app.load_config", return_value=config),
+            patch(
+                "src.web.app.create_storage_manager",
+                return_value=storage_manager,
+            ),
+            patch("src.web.app.create_llm_components", return_value=(None, None, None)),
+            patch("src.web.app.create_recommendation_engine"),
+            patch("src.web.app.migrate_config_credentials"),
+            patch("src.web.app.configure_logging"),
+        ):
+            _reset_app_state()
+
+            app = create_app()
+
+        assert _cors_origins(app) == default_of("web.allowed_origins")
         reset_sync_manager()
 
     def test_logging_configured_after_settings_overlay(self, mock_config, tmp_path):
@@ -3737,16 +4195,18 @@ class TestSettingsEndpoints:
     def test_put_restart_required_persists_but_flagged(self, settings_env) -> None:
         client, storage, config = settings_env
 
-        response = client.put("/api/settings", json={"updates": {"web.port": 9000}})
+        response = client.put(
+            "/api/settings", json={"updates": {"logging.level": "DEBUG"}}
+        )
 
         assert response.status_code == 200
-        assert storage.get_setting("web.port") == 9000
+        assert storage.get_setting("logging.level") == "DEBUG"
         # Restart-required: persisted but the running config is unchanged.
-        assert config["web"]["port"] == 18473
-        setting = self._find(response.json(), "web.port")
+        assert config["logging"]["level"] == "INFO"
+        setting = self._find(response.json(), "logging.level")
         assert setting["restart_required"] is True
         assert setting["db_overridden"] is True
-        assert setting["value"] == 18473
+        assert setting["value"] == "INFO"
 
     def test_delete_resets_to_default(self, settings_env) -> None:
         client, storage, config = settings_env

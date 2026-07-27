@@ -18,6 +18,7 @@ from src.cli.config import (
     create_recommendation_engine,
     create_storage_manager,
     load_config,
+    resolve_bootstrap_web,
     resolve_config_path,
 )
 from src.conversation.engine import create_conversation_engine
@@ -42,33 +43,50 @@ logger = logging.getLogger(__name__)
 # refused before a FileHandler ever opens it (see ``_safe_log_path``).
 _LOG_BASE_DIR = Path("logs")
 
+# The authoritative name -> level map, minus NOTSET. ``logging.NOTSET`` is a
+# real name in that mapping but not a usable threshold: the root logger has no
+# parent to inherit from, so level 0 enables every record — a DEBUG firehose
+# written to disk from a value that reads like "off".
+_LOG_LEVELS = {
+    name: level
+    for name, level in logging.getLevelNamesMapping().items()
+    if level != logging.NOTSET
+}
+
 
 def _safe_log_path(log_file: str) -> Path:
     """Resolve *log_file*, refusing any path that escapes the ``logs/`` directory.
 
-    ``logging.file`` is a network-settable string. A registry ``pattern`` blocks
-    obvious traversal/absolute values at the Settings API, but the char class
-    still admits ``..`` segments, so this is the defense-in-depth backstop before
-    a ``FileHandler`` creates/appends a file. Any path resolving outside
-    ``logs/`` falls back to the registry default, so logging never writes to an
-    arbitrary location (fail safe).
+    ``logging.file`` is a network-settable string. The registry ``pattern`` now
+    rejects traversal and absolute paths at the Settings API, but this backstop
+    is still load-bearing, for three inputs the pattern never sees:
+    ``config.yaml`` is unvalidated; rows persisted before the pattern gained its
+    ``..`` lookahead still overlay onto config at boot without re-validation; and
+    a symlink planted under ``logs/`` satisfies any pattern. Any path resolving
+    outside ``logs/`` falls back to the registry default's file name inside
+    ``logs/``, so logging never writes to an arbitrary location (fail safe).
 
     Args:
         log_file: Configured log file path (relative or absolute).
 
     Returns:
-        The resolved, contained path, or the resolved registry default when the
-        configured path escapes ``logs/``.
+        The resolved, contained path, or the registry default's file name under
+        ``logs/`` when the configured path escapes ``logs/``.
     """
     base = _LOG_BASE_DIR.resolve()
     resolved = Path(log_file).resolve()
-    if resolved == base or base in resolved.parents:
+    # ``base`` itself is excluded deliberately: `file: logs` names the directory,
+    # which FileHandler cannot open (IsADirectoryError), not a log file.
+    if base in resolved.parents:
         return resolved
     logger.warning(
         "Log file %r resolves outside the logs/ directory; using the default.",
         log_file,
     )
-    return Path(default_of("logging.file")).resolve()
+    # Built from ``base`` rather than resolving the default, so the fail-safe
+    # branch cannot itself escape — via an absolute registry default or a
+    # symlinked default file.
+    return base / Path(default_of("logging.file")).name
 
 
 def configure_logging(config: dict) -> None:
@@ -77,12 +95,41 @@ def configure_logging(config: dict) -> None:
     Args:
         config: Application configuration dictionary
     """
-    logging_config = config.get("logging", {})
-    log_level_str = logging_config.get("level", default_of("logging.level")).upper()
-    log_file = logging_config.get("file", default_of("logging.file"))
+    # Type-guarded like every other leaf read straight from YAML (see
+    # resolve_bootstrap_web and the CORS block): config.yaml is unvalidated, and
+    # both of these land inside create_app's try, so an unguarded `logging: 3`
+    # or `level: 3` aborts boot with "Failed to initialize components" instead of
+    # degrading. A bare `logging:` header parses to None, not {}, so the section
+    # itself needs the guard too — .get would raise on None.
+    raw_section = config.get("logging")
+    logging_config = raw_section if isinstance(raw_section, dict) else {}
 
-    # Map string to logging level
-    log_level = getattr(logging, log_level_str, logging.INFO)
+    raw_level = logging_config.get("level", default_of("logging.level"))
+    if isinstance(raw_level, str) and raw_level.upper() in _LOG_LEVELS:
+        log_level_str = raw_level.upper()
+    else:
+        log_level_str = default_of("logging.level")
+        logger.warning(
+            "Ignoring unusable logging.level %r in config.yaml; using %s instead. "
+            "It must be one of: %s.",
+            raw_level,
+            log_level_str,
+            ", ".join(sorted(_LOG_LEVELS)),
+        )
+
+    raw_file = logging_config.get("file", default_of("logging.file"))
+    if isinstance(raw_file, str):
+        log_file = raw_file
+    else:
+        log_file = default_of("logging.file")
+        logger.warning(
+            "Ignoring unusable logging.file %r in config.yaml; using %s instead. "
+            "It must be a string.",
+            raw_file,
+            log_file,
+        )
+
+    log_level = _LOG_LEVELS[log_level_str]
 
     # Contain the (network-settable) log path under logs/ before opening it.
     log_path = _safe_log_path(log_file)
@@ -153,10 +200,18 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         logger.error("Config file not found: %s", error)
         raise
 
+    # Resolved from raw YAML BEFORE the database overlay, so a legacy `web.debug`
+    # row in the settings table cannot open /docs here while src/web/main.py
+    # (which calls the same resolver) believes it is closed.
+    # warn=False: src/web/main.py resolves the same config a moment earlier and
+    # already logged anything unusable. Warning again here would print every
+    # bind diagnostic twice per launch, reading like two separate faults.
+    debug_mode = resolve_bootstrap_web(config, warn=False).debug
+
     # Initialize components
     try:
         # Storage must come first: the effective global settings (incl. logging
-        # and web host/port) are assembled from const/YAML/DB layers before
+        # and CORS origins) are assembled from const/YAML/DB layers before
         # anything reads them.
         storage = create_storage_manager(config)
 
@@ -216,24 +271,48 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         logger.error("Failed to initialize components: %s", error)
         raise
 
-    # Configure web settings
-    web_config = config.get("web", {})
+    # Configure web settings. Guarded independently of migrate_config_settings:
+    # a `web:` header with no children parses to None, and dict.get's default
+    # only fires on an ABSENT key. The overlay does heal a non-dict section, but
+    # relying on that is an undocumented cross-file ordering dependency, and this
+    # read sits outside the try/except.
+    raw_web_config = config.get("web")
+    web_config = raw_web_config if isinstance(raw_web_config, dict) else {}
 
-    # Create FastAPI app
-    debug_mode = web_config.get("debug", default_of("web.debug"))
+    # Create FastAPI app (debug_mode was resolved pre-overlay, above)
     app = FastAPI(
         title="Recommendinator API",
         description="API for personalized content recommendations",
         version=APP_VERSION,
         docs_url="/docs" if debug_mode else None,
         redoc_url="/redoc" if debug_mode else None,
+        # Gated too: docs_url=None only removes the Swagger HTML page, leaving
+        # the machine-readable schema — and the full route inventory — served at
+        # /openapi.json. Swagger and ReDoc need it, so it tracks debug_mode.
+        openapi_url="/openapi.json" if debug_mode else None,
         lifespan=lifespan,
     )
 
-    # Configure CORS (default to localhost only)
-    allowed_origins = web_config.get(
-        "allowed_origins", default_of("web.allowed_origins")
-    )
+    # Configure CORS (default to localhost only).
+    # Type-guarded because config.yaml is unvalidated: a blank `allowed_origins:`
+    # yields None and `"*" not in None` raises outside the try/except, killing
+    # boot with a bare traceback. Worse, a scalar string is passed straight to
+    # Starlette, whose check is `origin in self.allow_origins` — a SUBSTRING test
+    # on a string, so "https://app.example.co" would match a configured
+    # "https://app.example.com". The DB path is already list-validated.
+    raw_origins = web_config.get("allowed_origins")
+    if isinstance(raw_origins, list) and all(
+        isinstance(origin, str) for origin in raw_origins
+    ):
+        allowed_origins = raw_origins
+    else:
+        if "allowed_origins" in web_config:
+            logger.warning(
+                "Ignoring unusable web.allowed_origins %r; using the default. "
+                "It must be a list of origin strings.",
+                raw_origins,
+            )
+        allowed_origins = default_of("web.allowed_origins")
 
     # Disable credentials when wildcard origin is used (browser requirement)
     allow_credentials = "*" not in allowed_origins
@@ -293,8 +372,13 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         """
         if dist_index.exists():
             return HTMLResponse(content=dist_index.read_text())
+        # Only advertise /docs when it actually exists. docs_url/redoc_url/
+        # openapi_url are all left unset unless debug_mode, so on a default
+        # install this sentence pointed at a 404 — the sibling of the same fix
+        # in src/web/main.py's startup banner.
+        docs_hint = " Use /docs for API documentation." if debug_mode else ""
         return HTMLResponse(
-            content="<h1>Recommendinator API</h1><p>API is running. Use /docs for API documentation.</p>"
+            content=f"<h1>Recommendinator API</h1><p>API is running.{docs_hint}</p>"
         )
 
     return app
