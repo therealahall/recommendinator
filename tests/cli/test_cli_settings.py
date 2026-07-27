@@ -1,7 +1,7 @@
 """Tests for the CLI ``settings`` group.
 
 Mirrors the global-settings web endpoints in ``src/web/api.py`` — the
-``--json`` output shape must match the ``SettingsResponse``/``SettingView``
+``--format json`` output shape must match the ``SettingsResponse``/``SettingView``
 Pydantic models exactly so the two interfaces stay in lockstep. Business logic
 lives in ``src.settings.service`` (shared with the API); these tests exercise
 the CLI adapter against a real temp-DB ``StorageManager``.
@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
+from src.settings.metadata import default_of
 from src.storage.manager import StorageManager
 from tests.cli.conftest import _invoke_with_mocks
 
@@ -22,9 +23,13 @@ from tests.cli.conftest import _invoke_with_mocks
 # fails loudly in one place rather than across every assertion.
 _INT_KEY = "recommendations.default_count"  # int, non-restart, min 1
 _BOOL_KEY = "conversation.enabled"  # bool, non-restart
-_LIST_KEY = "ingestion.source_priority"  # list, non-restart
-_ENUM_KEY = "ingestion.conflict_strategy"  # enum, non-restart
-_ADVANCED_KEY = "web.port"  # int, restart_required, advanced
+_LIST_KEY = "web.allowed_origins"  # list, restart_required, advanced
+_ENUM_KEY = "logging.level"  # enum, restart_required, advanced
+_ADVANCED_KEY = "logging.file"  # string, restart_required, advanced
+# Deliberately restart_required but NOT advanced, so the two flags cannot be
+# conflated: a test using a leaf that is both would pass even if the code
+# checked the wrong one.
+_RESTART_KEY = "features.ai_enabled"  # bool, restart_required, NOT advanced
 _SECRET_KEY = "enrichment.providers.tmdb.api_key"  # sensitive string
 
 
@@ -44,6 +49,20 @@ class TestSettingsList:
         assert "Default count" in result.output
         # Advanced infra/security leaves are hidden without --advanced.
         assert _ADVANCED_KEY not in result.output
+
+    def test_list_shows_restart_required_leaf_that_is_not_advanced(
+        self, cli_runner: CliRunner, storage: StorageManager
+    ) -> None:
+        """Hiding is gated on ``advanced``, not on ``restart_required``.
+
+        Guards against conflating the two flags: gating the default listing on
+        restart_required would silently drop the whole features section. The
+        sibling test above cannot catch that, because its key is both.
+        """
+        result = _invoke_with_mocks(cli_runner, ["settings", "list"], storage)
+
+        assert result.exit_code == 0
+        assert _RESTART_KEY in result.output
 
     def test_list_advanced_flag_includes_advanced(
         self, cli_runner: CliRunner, storage: StorageManager
@@ -81,7 +100,9 @@ class TestSettingsList:
     def test_list_json_matches_service_view_shape(
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
-        result = _invoke_with_mocks(cli_runner, ["settings", "list", "--json"], storage)
+        result = _invoke_with_mocks(
+            cli_runner, ["settings", "list", "--format", "json"], storage
+        )
 
         assert result.exit_code == 0
         payload = json.loads(result.output)
@@ -112,7 +133,9 @@ class TestSettingsList:
     ) -> None:
         storage.set_global_secret(_SECRET_KEY, "SECRETPLAIN")
 
-        result = _invoke_with_mocks(cli_runner, ["settings", "list", "--json"], storage)
+        result = _invoke_with_mocks(
+            cli_runner, ["settings", "list", "--format", "json"], storage
+        )
 
         assert result.exit_code == 0
         secret = _find_json(json.loads(result.output), _SECRET_KEY)
@@ -159,7 +182,7 @@ class TestSettingsGet:
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
         result = _invoke_with_mocks(
-            cli_runner, ["settings", "get", _INT_KEY, "--json"], storage
+            cli_runner, ["settings", "get", _INT_KEY, "--format", "json"], storage
         )
 
         assert result.exit_code == 0
@@ -172,7 +195,7 @@ class TestSettingsGet:
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
         result = _invoke_with_mocks(
-            cli_runner, ["settings", "get", _ENUM_KEY, "--json"], storage
+            cli_runner, ["settings", "get", _ENUM_KEY, "--format", "json"], storage
         )
 
         assert result.exit_code == 0
@@ -186,7 +209,7 @@ class TestSettingsGet:
         storage.set_global_secret(_SECRET_KEY, "SECRETPLAIN")
 
         result = _invoke_with_mocks(
-            cli_runner, ["settings", "get", _SECRET_KEY, "--json"], storage
+            cli_runner, ["settings", "get", _SECRET_KEY, "--format", "json"], storage
         )
 
         assert result.exit_code == 0
@@ -232,7 +255,7 @@ class TestSettingsSet:
         assert set_result.exit_code == 0
 
         get_result = _invoke_with_mocks(
-            cli_runner, ["settings", "get", _INT_KEY, "--json"], storage
+            cli_runner, ["settings", "get", _INT_KEY, "--format", "json"], storage
         )
         body = json.loads(get_result.output)
         assert body["value"] == 9
@@ -253,12 +276,15 @@ class TestSettingsSet:
     ) -> None:
         result = _invoke_with_mocks(
             cli_runner,
-            ["settings", "set", _LIST_KEY, "steam, goodreads"],
+            ["settings", "set", _LIST_KEY, "https://a.example, https://b.example"],
             storage,
         )
 
         assert result.exit_code == 0
-        assert storage.get_setting(_LIST_KEY) == ["steam", "goodreads"]
+        assert storage.get_setting(_LIST_KEY) == [
+            "https://a.example",
+            "https://b.example",
+        ]
 
     def test_set_list_empty_string_is_empty_list(
         self, cli_runner: CliRunner, storage: StorageManager
@@ -276,7 +302,7 @@ class TestSettingsSet:
     ) -> None:
         """Setting a restart-required leaf prints the restart advisory."""
         result = _invoke_with_mocks(
-            cli_runner, ["settings", "set", _ADVANCED_KEY, "9000"], storage
+            cli_runner, ["settings", "set", _RESTART_KEY, "true"], storage
         )
 
         assert result.exit_code == 0
@@ -560,7 +586,7 @@ class TestSettingsBootSecretMigration:
 
         result = _invoke_with_mocks(
             cli_runner,
-            ["settings", "get", _SECRET_KEY, "--json"],
+            ["settings", "get", _SECRET_KEY, "--format", "json"],
             storage,
             config=config,
         )
@@ -571,6 +597,108 @@ class TestSettingsBootSecretMigration:
         providers = config.get("enrichment", {}).get("providers", {})
         assert providers.get("tmdb", {}).get("api_key") is None
         assert "tmdb-secret" not in result.output
+
+
+class TestMutatingCommandsEmitTheRefreshedView:
+    """Parity: the web mutations return the updated body; the CLI must too.
+
+    ``PUT /api/settings`` and ``DELETE /api/settings/{key}`` both respond with
+    the full refreshed ``SettingsResponse``. Without a JSON mode on the CLI's
+    equivalents, a scripted caller had to issue a second ``settings list`` to
+    reconstruct what the API hands back in one round trip — a real asymmetry,
+    not an interface-appropriate difference. The ``source`` group already
+    establishes this pattern via ``_emit_config_view``.
+    """
+
+    def test_set_emits_the_updated_view(
+        self, cli_runner: CliRunner, storage: StorageManager
+    ) -> None:
+        result = _invoke_with_mocks(
+            cli_runner, ["settings", "set", _INT_KEY, "9", "--format", "json"], storage
+        )
+
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert set(payload.keys()) == {"sections"}
+        setting = _find_json(payload, _INT_KEY)
+        # The NEW value, from the same call that wrote it.
+        assert setting["value"] == 9
+        assert setting["db_overridden"] is True
+
+    def test_reset_emits_the_updated_view(
+        self, cli_runner: CliRunner, storage: StorageManager
+    ) -> None:
+        storage.set_setting(_INT_KEY, 9)
+
+        result = _invoke_with_mocks(
+            cli_runner, ["settings", "reset", _INT_KEY, "--format", "json"], storage
+        )
+
+        assert result.exit_code == 0
+        setting = _find_json(json.loads(result.output), _INT_KEY)
+        assert setting["db_overridden"] is False
+        assert setting["value"] == default_of(_INT_KEY)
+
+    def test_apply_emits_the_updated_view(
+        self, cli_runner: CliRunner, storage: StorageManager
+    ) -> None:
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["settings", "apply", "--from-json", "-", "--format", "json"],
+            storage,
+            input_text=json.dumps({_INT_KEY: 9}),
+        )
+
+        assert result.exit_code == 0
+        assert _find_json(json.loads(result.output), _INT_KEY)["value"] == 9
+
+    def test_json_output_never_carries_a_secret(
+        self, cli_runner: CliRunner, storage: StorageManager
+    ) -> None:
+        """The refreshed view spans every section, including sensitive leaves."""
+        storage.set_global_secret(_SECRET_KEY, "SECRETPLAIN")
+
+        result = _invoke_with_mocks(
+            cli_runner, ["settings", "set", _INT_KEY, "9", "--format", "json"], storage
+        )
+
+        assert "SECRETPLAIN" not in result.output
+        secret = _find_json(json.loads(result.output), _SECRET_KEY)
+        assert secret["has_secret"] is True
+        assert "value" not in secret
+
+    def test_table_output_keeps_the_human_confirmation(
+        self, cli_runner: CliRunner, storage: StorageManager
+    ) -> None:
+        """The default must stay a one-line confirmation, not a JSON dump."""
+        result = _invoke_with_mocks(
+            cli_runner, ["settings", "set", _INT_KEY, "9"], storage
+        )
+
+        assert result.exit_code == 0
+        assert f"Set {_INT_KEY} = 9." in result.output
+        assert "sections" not in result.output
+
+    def test_every_settings_command_spells_the_flag_the_same_way(self) -> None:
+        """The repo-wide convention is --format, not a boolean --json.
+
+        Regression: the settings group shipped `--json` while twenty other
+        commands (including `source create`, added on the same branch) use
+        `--format`. A user who learned one spelling got "no such option" from
+        the other.
+        """
+        from src.cli.commands import settings as settings_group
+
+        for name, command in settings_group.commands.items():
+            option_names = {opt for param in command.params for opt in param.opts}
+            assert "--json" not in option_names, f"settings {name} uses --json"
+            if "--format" in option_names:
+                continue
+            # Secret commands take a prompted value and have nothing to render.
+            assert name in {
+                "set-secret",
+                "clear-secret",
+            }, f"settings {name} lacks --format"
 
 
 def _find_json(payload: dict, key: str) -> dict:

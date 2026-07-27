@@ -113,11 +113,13 @@ class TestReloadConfig:
         against an isolated temp-DB StorageManager (no stub).
         """
         config_file = tmp_path / "config.yaml"
-        config_file.write_text("web:\n  port: 18473\n")
+        config_file.write_text("recommendations:\n  default_count: 11\n")
 
         storage = StorageManager(sqlite_path=tmp_path / "test.db")
         # A DB leaf the operator edited must win over the reloaded YAML value.
-        storage.set_setting("web.port", 9999)
+        # All three layers differ (const 5 < YAML 11 < DB 9), so 9 can only
+        # reach the running config through the overlay.
+        storage.set_setting("recommendations.default_count", 9)
 
         app_state.config_path = str(config_file)
         app_state.storage = storage
@@ -125,7 +127,7 @@ class TestReloadConfig:
         result = reload_config()
 
         assert result is True
-        assert app_state.config["web"]["port"] == 9999
+        assert app_state.config["recommendations"]["default_count"] == 9
 
     def test_reload_sweeps_config_secret_into_storage(self, tmp_path: Path) -> None:
         """Hot-reload re-runs the secret sweep against the DB.

@@ -13,7 +13,9 @@ from src.ingestion.sync import SyncResult
 from src.llm.embeddings import EmbeddingGenerator
 from src.llm.recommendations import RecommendationGenerator
 from src.recommendations.engine import RecommendationEngine
+from src.storage.global_secrets import GLOBAL_SECRET_USER_ID
 from src.storage.manager import StorageManager
+from tests.cli.conftest import _invoke_with_mocks
 
 
 def test_cli_main_module_exposes_cli_entry_point() -> None:
@@ -348,10 +350,11 @@ def test_cli_boot_overlays_db_settings_without_seeding(tmp_path: Path) -> None:
     and boot must not write anything else to the settings table.
     """
     runner = CliRunner()
-    config: dict[str, Any] = {"web": {"port": 18473}}
+    config: dict[str, Any] = {"recommendations": {"default_count": 11}}
     storage = StorageManager(sqlite_path=tmp_path / "test.db")
-    # A DB leaf the operator set must win over the YAML value on boot.
-    storage.set_setting("web.port", 9999)
+    # A DB leaf the operator set must win over the YAML value on boot. All three
+    # layers differ (const 5 < YAML 11 < DB 9), so 9 can only come from the DB.
+    storage.set_setting("recommendations.default_count", 9)
 
     with (
         patch("src.cli.main.load_config", return_value=config),
@@ -363,6 +366,42 @@ def test_cli_boot_overlays_db_settings_without_seeding(tmp_path: Path) -> None:
 
     assert result.exit_code == 0
     # Real hook overlaid the DB leaf onto the in-memory config (DB wins).
-    assert config["web"]["port"] == 9999
+    assert config["recommendations"]["default_count"] == 9
     # Boot seeded nothing: only the pre-existing leaf remains in the DB.
-    assert storage.list_settings() == {"web.port": 9999}
+    assert storage.list_settings() == {"recommendations.default_count": 9}
+
+
+class TestMockedBootSecretSweepRegression:
+    """The mocked CLI storage must look like an empty credentials table.
+
+    Bug: ``back_mock_settings_store`` — the shared backing behind every mocked
+    CLI storage — stubbed only the settings methods. Every other method on a
+    ``Mock(spec=StorageManager)`` returns a truthy ``Mock``, so the
+    ``migrate_config_secrets`` hook that ``src.cli.main`` runs on every boot read
+    ``get_credential`` as "an encrypted secret already exists and takes
+    precedence" and discarded the config value instead of storing it.
+
+    Fix: the helper now reports an empty credentials table, so a mocked boot
+    takes the same branch a fresh install does.
+    """
+
+    def test_boot_sweeps_a_yaml_api_key_into_encrypted_storage(
+        self, cli_runner: CliRunner
+    ) -> None:
+        """The secret is saved under the ``settings:`` namespace and stripped."""
+        storage = MagicMock(spec=StorageManager)
+        config: dict[str, Any] = {
+            "enrichment": {"providers": {"tmdb": {"api_key": "yaml-secret"}}}
+        }
+
+        result = _invoke_with_mocks(cli_runner, ["status"], storage, config=config)
+
+        assert result.exit_code == 0, result.output
+        storage.save_credential.assert_called_once_with(
+            GLOBAL_SECRET_USER_ID,
+            "settings:enrichment.providers.tmdb",
+            "api_key",
+            "yaml-secret",
+        )
+        # And no plaintext copy lingers in the running config.
+        assert "api_key" not in config["enrichment"]["providers"]["tmdb"]
