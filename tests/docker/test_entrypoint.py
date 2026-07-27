@@ -60,9 +60,13 @@ class TestEntrypointFirstRun:
 
     def test_copies_example_to_config_and_logs_guidance(self, config_dir: Path) -> None:
         """Requirement: an empty config directory mounted on first start gets
-        a working config.yaml seeded from example.yaml so the user has a file
-        to edit. Both stdout messages (copy-success and edit-then-restart
-        guidance) must be emitted so users see the next step they need to take.
+        a working config.yaml seeded from example.yaml.
+
+        The guidance line must say the file is bootstrap-only. It used to read
+        "Edit ./config/config.yaml on the host with your settings" — which is
+        now a dead end, because example.yaml carries only the web bind and
+        storage paths. A user who followed it would open the file, find nothing
+        recognisable, and conclude the app was broken.
         """
         example_content = "features:\n  ai_enabled: false\n"
         (config_dir / "example.yaml").write_text(example_content)
@@ -74,7 +78,11 @@ class TestEntrypointFirstRun:
         assert config.exists()
         assert config.read_text() == example_content
         assert "copied example.yaml as a starting point" in result.stdout
-        assert "Edit ./config/config.yaml on the host" in result.stdout
+        assert "Data sources, settings, and API keys are managed in the app" in (
+            result.stdout
+        )
+        # The dead-end instruction must not come back.
+        assert "Edit ./config/config.yaml on the host" not in result.stdout
         # Verify exec actually replaced the shell — the passed command's
         # stdout must reach the test, not get swallowed.
         assert "exec-target-ran" in result.stdout
