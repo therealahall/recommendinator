@@ -13,7 +13,6 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from src.ingestion.conflict import ConflictStrategy, resolve_conflict
 from src.models.content import (
     ConsumptionStatus,
     ContentItem,
@@ -92,8 +91,6 @@ class StorageManager:
         vector_db_path: Path | None = None,
         vector_collection_name: str = "content_embeddings",
         ai_enabled: bool = False,
-        conflict_strategy: ConflictStrategy = ConflictStrategy.LAST_WRITE_WINS,
-        source_priority: list[str] | None = None,
     ) -> None:
         """Initialize storage manager.
 
@@ -102,20 +99,17 @@ class StorageManager:
             vector_db_path: Path to ChromaDB database directory (optional)
             vector_collection_name: Name of ChromaDB collection
             ai_enabled: Whether to enable AI features (embeddings)
-            conflict_strategy: Strategy for resolving duplicate content items
-            source_priority: Ordered list of source names (highest priority first)
         """
         self.sqlite_db = SQLiteDB(sqlite_path)
         self.vector_db: VectorDB | None = None
         self.ai_enabled = ai_enabled
-        self.conflict_strategy = conflict_strategy
-        self.source_priority = source_priority or []
         self._credential_key_path = self._resolve_key_path(sqlite_path)
-        # Serialises the read-conflict-write sequence in save_content_item
-        # and the encrypt-then-write sequence in save_credential. SQLite
-        # WAL allows concurrent readers but the cross-source dedup path
-        # and the credential rotation path both have a read-then-write
-        # gap that can race under parallel sync (max_workers > 1).
+        # Serialises the lookup-then-write sequence in save_content_item and
+        # the encrypt-then-write sequence in save_credential. SQLite WAL allows
+        # concurrent readers, but the cross-source dedup path (match by
+        # external id, then by normalized title) and the credential rotation
+        # path both have a read-then-write gap that can race under parallel
+        # sync (max_workers > 1).
         self._save_lock = threading.Lock()
 
         # Only initialize vector DB if AI is enabled and path provided.
@@ -184,9 +178,10 @@ class StorageManager:
     ) -> int:
         """Save a content item to SQLite and optionally ChromaDB.
 
-        If the item has an external ID, checks for an existing item with the
-        same external ID and content type. If found, applies the configured
-        conflict resolution strategy before saving.
+        Upsert-by-external-id and cross-source dedup by normalized title are
+        both handled by :meth:`SQLiteDB.save_content_item`; this wrapper
+        serialises that read-then-write under ``_save_lock`` and mirrors the
+        embedding into the vector DB.
 
         Args:
             item: ContentItem to save
@@ -197,24 +192,9 @@ class StorageManager:
             Database ID of the saved item
         """
         with self._save_lock:
-            # Apply conflict resolution if item has an external ID
-            resolved_item = item
-            if item.id:
-                existing = self.get_content_item_by_external_id(
-                    external_id=item.id,
-                    content_type=ContentType(item.content_type),
-                    user_id=user_id if user_id is not None else item.user_id,
-                )
-                if existing is not None:
-                    resolved_item = resolve_conflict(
-                        existing=existing,
-                        incoming=item,
-                        strategy=self.conflict_strategy,
-                        source_priority=self.source_priority,
-                    )
-
-            # Save to SQLite
-            db_id = self.sqlite_db.save_content_item(resolved_item, user_id=user_id)
+            # Save to SQLite. Upsert-by-external-id and cross-source dedup by
+            # normalized title both live in SQLiteDB.save_content_item.
+            db_id = self.sqlite_db.save_content_item(item, user_id=user_id)
 
             # Save embedding if provided and vector DB is enabled
             if embedding is not None and self.vector_db:

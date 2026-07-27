@@ -529,6 +529,102 @@ class TestConcurrentSaveContentItem:
         assert temp_storage_manager.count_items() <= thread_count
         assert temp_storage_manager.count_items() >= 1
 
+    def test_repeat_external_id_merges_in_place_per_field(
+        self, temp_storage_manager: StorageManager
+    ) -> None:
+        """Pins the semantics left behind when the conflict module was deleted.
+
+        ``src/ingestion/conflict.py`` and its 523-line test file were removed on
+        this branch. That is behaviour-preserving because the default
+        ``LAST_WRITE_WINS`` strategy returned the incoming item unchanged and was
+        the only reachable branch — the real merge has always lived in
+        ``SQLiteDB.save_content_item``. But nothing at the manager layer pinned
+        the surviving contract afterwards: the nearest test asserts
+        ``count_items() <= 16 and >= 1``, far too loose to catch a regression to
+        insert-always, or to a blanket overwrite.
+
+        And the contract is NOT "last write wins" — it is field-level:
+
+        * rating/review — set once, never overwritten (the user's own judgement
+          must survive a re-sync from a source that does not know it)
+        * status — forward-only (a stale export cannot un-complete an item)
+        * ``None`` incoming values never clobber stored data
+
+        Held at the manager layer, not only in ``tests/test_sqlite_db.py``,
+        because ``save_content_item`` is the seam the deleted strategy sat on.
+        """
+        db_id = temp_storage_manager.save_content_item(
+            ContentItem(
+                id="steam_440",
+                title="Team Fortress 2",
+                source="steam",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.COMPLETED,
+                rating=3.0,
+                review="Held up better than I expected.",
+            )
+        )
+
+        # A later sync of the same external id, carrying a different rating, an
+        # earlier status, and no review.
+        second_db_id = temp_storage_manager.save_content_item(
+            ContentItem(
+                id="steam_440",
+                title="Team Fortress 2",
+                source="steam",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.UNREAD,
+                rating=5.0,
+                review=None,
+            )
+        )
+
+        assert second_db_id == db_id
+        assert temp_storage_manager.count_items() == 1
+
+        stored = temp_storage_manager.get_content_item(db_id)
+        assert stored is not None
+        # Set-once: the first rating and review survive the re-sync.
+        assert stored.rating == 3.0
+        assert stored.review == "Held up better than I expected."
+        # Forward-only: COMPLETED is not walked back to UNREAD.
+        assert stored.status == ConsumptionStatus.COMPLETED
+
+    def test_status_advances_forward_on_a_repeat_save(
+        self, temp_storage_manager: StorageManager
+    ) -> None:
+        """The other half of forward-only: real progress IS applied.
+
+        Without this, "forward-only" could be implemented as "never change
+        status" and the test above would still pass.
+        """
+        db_id = temp_storage_manager.save_content_item(
+            ContentItem(
+                id="steam_440",
+                title="Team Fortress 2",
+                source="steam",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.UNREAD,
+            )
+        )
+
+        temp_storage_manager.save_content_item(
+            ContentItem(
+                id="steam_440",
+                title="Team Fortress 2",
+                source="steam",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.COMPLETED,
+                rating=4.0,
+            )
+        )
+
+        stored = temp_storage_manager.get_content_item(db_id)
+        assert stored is not None
+        assert stored.status == ConsumptionStatus.COMPLETED
+        # Rating was unset before, so set-once applies it now.
+        assert stored.rating == 4.0
+
     def test_busy_timeout_pragma_set_on_connections(
         self, temp_storage_manager: StorageManager
     ) -> None:
