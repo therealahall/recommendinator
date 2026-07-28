@@ -1,6 +1,99 @@
 # CHANGELOG
 
 
+## v0.23.0 (2026-07-28)
+
+### Bug Fixes
+
+- **storage**: Tell the operator when a config.yaml secret is migrated or ignored
+  ([`1edeced`](https://github.com/therealahall/recommendinator/commit/1edeced7949b426c32d4cc2cfd32bc73e1422a40))
+
+- **web**: Guard every config.yaml leaf read before the database opens
+  ([`a9cf485`](https://github.com/therealahall/recommendinator/commit/a9cf4855c9268c8b7f3cd3d624f4d5b138e4dd16))
+
+- **web-ui**: Keep focus and convey state across the settings surface
+  ([`ed4c283`](https://github.com/therealahall/recommendinator/commit/ed4c283185b5f8ea7e53833ceea320860d501fa6))
+
+### Chores
+
+- **agents**: Drop the project copies of the shared review agents
+  ([`35679dd`](https://github.com/therealahall/recommendinator/commit/35679dd4ece54374d2abe517efcb5daa2679bfa9))
+
+- **config**: Trim example.yaml to bootstrap only
+  ([`49b68b9`](https://github.com/therealahall/recommendinator/commit/49b68b974297fae4fefd865559a065a5c5343eab))
+
+- **config**: Trim example.yaml to what stands the app up
+  ([`8702706`](https://github.com/therealahall/recommendinator/commit/8702706f03a452078088bb1529786d2aa5e689ec))
+
+### Documentation
+
+- Describe settings as database backed rather than file backed
+  ([`76cdd74`](https://github.com/therealahall/recommendinator/commit/76cdd74b15f48dc96753cca8ad3f17dcaf1a6bb8))
+
+- Document database-backed global config precedence
+  ([`3a0a4d5`](https://github.com/therealahall/recommendinator/commit/3a0a4d54f3c7d53cc1b125a8241c5766a349a659))
+
+- **claude**: Drop stale cavecrew-investigator references
+  ([`61e6b3b`](https://github.com/therealahall/recommendinator/commit/61e6b3b6f206d73d8b81acf95fed32f2decbe796))
+
+- **claude**: Note the settings module in project structure
+  ([`21dd100`](https://github.com/therealahall/recommendinator/commit/21dd1002e511312d283d1b4e3fb8443b1da61298))
+
+- **patterns**: Document the frontend and Vue review rules
+  ([`edeef5d`](https://github.com/therealahall/recommendinator/commit/edeef5dc72cf8ad17e397015b98b9b3e771bcb06))
+
+- **settings**: Document the database-backed settings layer
+  ([`9f51dca`](https://github.com/therealahall/recommendinator/commit/9f51dcac565d6b74bf18ad994dd6cfd198a43497))
+
+### Features
+
+- **cli**: Add settings command group
+  ([`12b68dc`](https://github.com/therealahall/recommendinator/commit/12b68dca41a27bdc1b4b5ba18cf95c887bf25857))
+
+- **cli**: Give the settings group --format json on every command
+  ([`340cb14`](https://github.com/therealahall/recommendinator/commit/340cb142dfe5cbf4e5850d056ac070234926e001))
+
+- **config**: Layer const < yaml < db and drop seed-on-boot
+  ([`8a8d67f`](https://github.com/therealahall/recommendinator/commit/8a8d67f77f186e684ad7f54608312db5413e4c95))
+
+- **enrichment**: Read provider api keys from the encrypted store
+  ([`9266c98`](https://github.com/therealahall/recommendinator/commit/9266c98a72b3f6d44c1bea038207b32d0195234b))
+
+- **settings**: Add config metadata registry and shared service
+  ([`8bba048`](https://github.com/therealahall/recommendinator/commit/8bba048458158a6805529986c9e3c5da43f316f6))
+
+- **settings**: Port the TMDB and conversation leaves into the registry
+  ([`581c7b5`](https://github.com/therealahall/recommendinator/commit/581c7b5ecbfb6d505941d584f4ed36e0cf2c710f))
+
+- **storage**: Encrypt global secrets and clean up seeded settings
+  ([`42ebbe2`](https://github.com/therealahall/recommendinator/commit/42ebbe299df814dd0fb88319ced1095b01b6cc55))
+
+- **storage**: Persist global config in a database-backed settings store
+  ([`603ae69`](https://github.com/therealahall/recommendinator/commit/603ae693a8b0fa7033852b8f627c0039b96d8253))
+
+- **web**: Add settings api endpoints
+  ([`c3f9883`](https://github.com/therealahall/recommendinator/commit/c3f988375cc232dfc802a51262242881b4215f47))
+
+- **web**: Add the settings page
+  ([`bc37e05`](https://github.com/therealahall/recommendinator/commit/bc37e05ed758ad5d486ce236c769645c75eb4d14))
+
+- **web,cli**: Seed and overlay database config on startup
+  ([`772d3a4`](https://github.com/therealahall/recommendinator/commit/772d3a45cd0a64806d94a38c308d9a7c4f88b8a4))
+
+### Refactoring
+
+- **ingestion**: Drop the unwired conflict resolution machinery
+  ([`dd1caff`](https://github.com/therealahall/recommendinator/commit/dd1caff7afa474bc7a61ee5fd971c971b30974a9))
+
+### Testing
+
+- **config**: Cover config reload, secret sweep and log path containment
+  ([`18ccbe1`](https://github.com/therealahall/recommendinator/commit/18ccbe1fbc40704c3f78114423881d8a5ba4657a))
+
+- **recommendations**: Verify global defaults act as new-user fallback
+  ([`69bd959`](https://github.com/therealahall/recommendinator/commit/69bd9593039d85d77b9f8b05663ecd8815edef92))
+
+
 ## v0.22.0 (2026-07-27)
 
 ### Bug Fixes
