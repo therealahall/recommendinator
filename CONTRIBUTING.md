@@ -66,16 +66,38 @@ All six agents must approve changes before they are committed. These six are pro
 
 ## Quality Checks
 
-**All four checks must pass before submitting a PR:**
+**Run `make check` before submitting a PR.** It must be green — the same six
+steps run in CI:
 
 ```bash
-python3.11 -m pytest                       # All tests pass
-python3.11 -m black --check src/ tests/    # Formatting
-python3.11 -m mypy src/                    # Type checking (strict)
-python3.11 -m ruff check src/ tests/       # Linting
+python3.11 -m black --check src/ tests/    # Python formatting
+python3.11 -m ruff check src/ tests/       # Python linting
+python3.11 -m mypy src/                    # Python type checking (strict)
+python3.11 -m pytest                       # Python tests
+pnpm vue-tsc --noEmit                      # Frontend type checking
+pnpm vitest run                            # Frontend tests
 ```
 
-Or use the Makefile: `make check`
+The two frontend steps need the frontend toolchain installed first
+(`make install-frontend`, which needs Node.js 18+). `make check-frontend` runs
+just those two.
+
+**Lockfiles are checked in CI but not by `make check`.** CI installs with
+`uv sync --locked` and `pnpm install --frozen-lockfile`, so a dependency edit
+whose lockfile was not regenerated fails the build before any test runs:
+
+- Edited `pyproject.toml` dependencies? Run `make lock` (i.e. `uv lock`) and
+  commit `uv.lock`. Verify with `uv lock --check`, which is exactly what
+  `uv sync --locked` enforces.
+- Edited `package.json`? Run `pnpm install` and commit `pnpm-lock.yaml`.
+
+Note that `uv lock --check` fails on a *specifier* change too, not only on a
+resolved-version change — tightening a floor like `>=0.0.9` to `>=0.0.18`
+requires a regenerated lockfile even though no package version moves.
+
+Do not edit `pyproject.toml`'s `version` field or `CHANGELOG.md`:
+python-semantic-release writes both from commit messages, and manual edits are
+overwritten on the next release.
 
 **Important:** Always use `python3.11` explicitly — not bare `python` or `python3`.
 
@@ -198,7 +220,7 @@ The project uses **automatic semantic versioning**:
 - **Version source of truth**: `pyproject.toml` `[project] version` field, written by python-semantic-release
 - **Runtime version**: `src/__init__.py` resolves the version by preferring an adjacent `pyproject.toml` (dev and Docker source layouts) and falling back to `importlib.metadata.version("recommendinator")` for wheel installs — never hardcode versions. The pyproject.toml preference keeps editable installs and Docker dev containers in sync after `python-semantic-release` bumps the version without requiring a reinstall.
 - **CHANGELOG.md**: Auto-generated from commit messages — **do not edit manually** (edits will be overwritten on the next release)
-- **Release workflow**: A GitHub Actions workflow on push to `main` analyzes commits, bumps the version, updates CHANGELOG.md, and creates a version commit and tag. A follow-up step regenerates `uv.lock` and commits it separately
+- **Release workflow**: A GitHub Actions workflow on push to `main` analyzes commits, bumps the version, updates CHANGELOG.md, and creates a version commit and tag. That commit carries a regenerated `uv.lock` too, but only for the project's own version entry (`uv lock --upgrade-package recommendinator`). It never relocks a dependency change: the release job runs `uv sync --locked` before semantic-release starts, so a stale lockfile fails the release exactly as it fails PR CI. Change a dependency and you run `make lock` and commit `uv.lock` in the same commit yourself
 - **No manual version bumps**: Never edit the version in `pyproject.toml` by hand — let the release workflow handle it
 
 ## Security

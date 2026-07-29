@@ -71,6 +71,7 @@ Override these variables in `colors.css` using a `:root` selector. You only need
 | `--text-secondary` | `#d8dee9` | Secondary/dimmer text |
 | `--text-muted` | `#97abbe` | Muted/label text |
 | `--text-inverse` | `#2e3440` | Text on accent backgrounds |
+| `--text-on-danger` | `#ffffff` | Text on `--color-error` fills (danger buttons). Separate from `--text-inverse` because that one is dark by default, which does not carry enough contrast against the darker danger fill — override both if your theme changes either background. |
 
 ### Accent Colors
 

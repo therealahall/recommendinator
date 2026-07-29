@@ -18,7 +18,7 @@ The enrichment system compares your library items against known metadata databas
 
 The process:
 
-1. **Sync your data** from ingestion sources (Goodreads, Steam, Sonarr, etc.)
+1. **Get your data in** — sync your sources (Steam, Sonarr, Trakt, etc.) or import a file (a Goodreads CSV export, or CSV/JSON/Markdown)
 2. **Run enrichment** — it processes unenriched items in batches, querying the appropriate provider for each content type
 3. **Metadata is merged** — genres, tags, descriptions, and additional metadata (runtime, page count, developer, series position, etc.) are filled in
 

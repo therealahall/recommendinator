@@ -17,6 +17,11 @@
 #   * Data sources — Data tab -> "+ Add source", or the `source` CLI
 #     (`python3.11 -m src.cli source create <id> <plugin>`). See
 #     docs/DATA_SOURCES.md for the available plugins and their fields.
+#   * File imports — a Goodreads CSV export, or a CSV/JSON/Markdown file, is
+#     imported in one shot rather than configured as a source: Data tab ->
+#     "Import from file", or `python3.11 -m src.cli import --source <plugin>
+#     --file <path>`. Nothing about the file is stored, so there is nothing to
+#     put here.
 #   * API keys, passwords, and tokens — NEVER in this file. They are stored
 #     encrypted in the credentials table and entered in the Add-source modal, a
 #     connect flow (Data tab), or via `source set-secret` / `settings

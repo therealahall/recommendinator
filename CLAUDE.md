@@ -150,7 +150,8 @@ The project uses **python-semantic-release** for automatic semantic versioning d
 - **Runtime version**: `src/__init__.py` resolves the version by preferring an adjacent `pyproject.toml` (dev and Docker source layouts) and falling back to `importlib.metadata.version("recommendinator")` for wheel installs — never hardcode versions. The pyproject.toml preference keeps editable installs and Docker dev containers in sync after `python-semantic-release` bumps the version without requiring a reinstall.
 - **CHANGELOG.md**: Auto-generated from commit messages — **do not edit manually** (edits will be silently overwritten on the next release)
 - **Version bump rules**: `feat` → minor, `fix`/`perf` → patch, `BREAKING CHANGE` footer → major (but `major_on_zero = false` while pre-1.0)
-- **Release workflow**: GitHub Actions on push to `main` → analyzes commits → bumps version → updates CHANGELOG.md → creates version commit and tag → regenerates and commits `uv.lock`
+- **Release workflow**: GitHub Actions on push to `main` → analyzes commits → bumps version → updates CHANGELOG.md → creates version commit and tag. That commit carries a regenerated `uv.lock`, but only for the project's own version entry (`uv lock --upgrade-package recommendinator`)
+- **The release does NOT relock a dependency change**: `release.yml` runs `uv sync --locked` *before* semantic-release starts, so a lockfile that disagrees with `pyproject.toml` fails the release exactly as it fails PR CI. Change a dependency and you run `make lock` and commit `uv.lock` in the same commit yourself. `make check` runs `uv lock --check` first so this fails locally in milliseconds
 
 **Implication for development:** Commit types are not just conventions — they are parsed by tooling. Using the wrong type (e.g., `fix` instead of `feat` for a new feature) causes incorrect version numbers.
 

@@ -13,7 +13,7 @@ The architecture emphasizes modularity, testability, and extensibility.
 Responsible for parsing and normalizing data from various sources.
 
 **Current Sources:**
-- Goodreads CSV exports (books)
+- Goodreads CSV exports (books) — one-shot file import
 - Goodreads public shelves via RSS (books)
 - The StoryGraph CSV exports (books)
 - Calibre-Web OPDS catalog (books)
@@ -24,13 +24,14 @@ Responsible for parsing and normalizing data from various sources.
 - Radarr API (movies)
 - Trakt OAuth device-code API (TV shows and movies — watched history, ratings, watchlist)
 - ROM Library — local filesystem scanner with curated ROM extensions, built-in No-Intro/Redump/TOSEC title cleaner, and multi-disc collapse
-- Generic CSV, JSON, Markdown (any content type)
+- Generic CSV, JSON, Markdown (any content type) — one-shot file imports
 
 **Design:**
 - Plugin-based architecture (`SourcePlugin` ABC in `plugin_base.py`)
 - Auto-discovered from `src/ingestion/sources/` via `PluginRegistry`
-- **Named source instances**: Each entry under `inputs:` has a user-defined key name (e.g., `my_books`, `tv_shows`) with a `plugin:` field specifying the plugin type. Multiple instances of the same plugin are supported (e.g., two `json_import` sources with different files). The `resolve_inputs()` function in `src/web/sync_sources.py` is the central resolver that maps config entries to `(source_id, plugin, config)` tuples.
-- `ContentItem.source` reflects the user-defined key name, not the plugin name, enabling per-instance tracking
+- **Named source instances**: Each source has a user-defined id (e.g., `my_books`, `tv_shows`) and a plugin name, so multiple instances of the same plugin are supported (e.g., two `sonarr` sources pointed at different servers). Sources live in the `source_configs` table, with a legacy `inputs:` YAML block still read as a bootstrap. The `resolve_inputs()` function in `src/web/sync_sources.py` is the central resolver that maps either origin to `(source_id, plugin, config)` tuples.
+- **One-shot file imports**: `goodreads_csv`, `storygraph_csv` and the generic CSV/JSON/Markdown plugins set `is_file_import = True` (declared on `SourcePlugin`, alongside `accepted_extensions`). They are not sources: they have no stored config, the file is supplied at invocation time (a web upload or the CLI `import --file` flag), run through the pipeline once by `src/ingestion/import_service.py` (`import_file`), and forgotten. `import_file` owns the whole contract for both interfaces — plugin lookup, the file check, and the rule that only schema-declared option keys may pass (which is what keeps `_source_id` from relabelling imported items) — so the CLI and `POST /api/import` cannot drift. `list_available_plugins` omits them and `create_source` rejects them, so they can never be created as sources, and `resolve_inputs` skips any leftover row or YAML block that names one. Such a leftover is left in place and still listed by `get_available_sync_sources` with `is_file_import=True`, which is what lets the Data tab and `source list` show the row the user is told to remove — and that listing, called once per request, is where the actionable warning is logged (`resolve_inputs` only notes the skip at `info`, because it is re-entered several times per sync). The importers themselves are listed via `GET /api/import/sources` / `import --source list` and driven by `POST /api/import` / the CLI `import` command.
+- `ContentItem.source` reflects the user-defined key name, not the plugin name, enabling per-instance tracking. A file import has no user-defined key — `import_file` refuses `_source_id` along with every other undeclared option — so `get_source_identifier` falls back to the plugin name there
 - Each plugin handles config validation, fetching, and rating normalization
 - Shared sync executor (`execute_multi_source_sync`) used by both CLI and web
 - **Parallel multi-source sync**: `execute_multi_source_sync` accepts `max_workers` (configured via `sync.max_workers`, default 4; CLI override `--workers N`). Each enabled source runs on its own thread in a `concurrent.futures.ThreadPoolExecutor`; per-source results preserve input ordering. Plugin-internal rate limits (e.g. GOG's `rate_limit_seconds`) remain enforced per source so cross-source parallelism is safe.
@@ -219,7 +220,7 @@ view your profile). New capabilities are expected to land in both interfaces; th
 
 #### CLI (`src/cli/`)
 - Click-based command structure
-- Commands: `status`, `recommend`, `update`, `complete`, `source`, `settings`, `preferences`, `enrichment`, `library`, `auth`, `memory`, `profile`, `chat` (full reference: [docs/CLI.md](docs/CLI.md))
+- Commands: `status`, `recommend`, `update`, `import`, `complete`, `source`, `settings`, `preferences`, `enrichment`, `library`, `auth`, `memory`, `profile`, `chat` (full reference: [docs/CLI.md](docs/CLI.md))
 - Supports batch operations and multiple output formats
 
 #### Web (`src/web/` + `resources/`)
@@ -232,6 +233,7 @@ view your profile). New capabilities are expected to land in both interfaces; th
   - **Settings** page (`/settings`) manages the global/system config: sections of controls (toggle/number/text/tags/select) with curated labels/help and per-setting validation, an **Advanced** group for infra/security leaves (`web.allowed_origins` CORS, `logging.*`) badged **restart required**, per-setting **reset to default**, and masked **write-only** controls for provider secrets. It is the UI peer of the `settings` CLI group, backed by the shared `src/settings/service.py`.
   - Recommendations cards offer two actions: **ignore** (excludes the item from future recommendations and removes its card) and **mark complete** (opens the shared edit dialog to set status/rating/review, saves to the library, and removes the card). Neither regenerates the list.
 - SSE streaming for chat responses and AI recommendation blurbs
+- File import: the Data tab's **Import from file** modal reads its source list from `GET /api/import/sources` and posts a multipart upload to `POST /api/import`, which streams the body to a temp file, runs it as a tracked job so progress renders like a sync, and always deletes the temp file afterwards. The size cap is enforced in three places: the modal refuses an oversized file client-side, a pure-ASGI middleware (`src/web/upload_limit.py`) refuses a request body over 50 MB plus a small multipart allowance *before* Starlette's parser can spool it to disk, and the handler re-checks the file itself while copying it out. All three quote the same 50 MB constant. The same middleware also bounds how many imports may be in flight at once, answering HTTP 429 past the bound — a per-request cap says nothing about the aggregate, and the parser spools before any handler-level counter could be consulted. The CLI peer is `import --file`, which reads a local path with no cap.
 - Library export: `GET /api/items/export?type=book&format=csv` (CSV or JSON download)
 - **Themeable UI**: CSS custom properties system with folder-per-theme in `src/web/static/themes/`. Each theme provides a `theme.json` metadata file and a `colors.css` override. Tailwind `@theme` maps CSS vars to utility classes. Theme selection persisted per user via backend preferences (system default: `nord`). CSS uses `color-mix()` so themes only need to define core color variables. See `docs/THEME_DEVELOPMENT.md`.
 - **Version display and update detection**: Version fetched from `GET /api/status`; UI polls every 5 minutes and displays a banner when a newer server version is detected
@@ -280,19 +282,17 @@ are **not** required in `config.yaml`: any value found there is swept into the
 encrypted `credentials` table on boot and stripped from the plaintext config, and
 they are otherwise entered in-app via the Settings page / `settings set-secret`.
 
-Sources use **named instances**: each has a user-defined id and a plugin name, so the same plugin can back several sources (e.g., separate JSON imports for books and movies). File-based plugins use a standardized `path` field. Sources are stored in the `source_configs` table; the legacy `inputs` YAML form below expresses the same shape and is still read on boot for migration:
+Sources use **named instances**: each has a user-defined id and a plugin name, so the same plugin can back several sources (e.g., two Sonarr servers). Only syncable sources live here: the one-shot file imports (`goodreads_csv`, `storygraph_csv`, `csv_import`, `json_import`, `markdown_import`) are not configured at all, they are uploaded through the web **Data** tab or the CLI `import --file` command (see [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md#importing-from-a-file)). A source that parses a single user-supplied file therefore carries no caller-settable filesystem path; `roms`, the one plugin that genuinely scans directories over time, keeps its `paths` field but resolves every entry and refuses anything outside an allowed root (see [the roms guide](src/ingestion/sources/roms/README.md#where-a-library-may-live)). Sources are stored in the `source_configs` table; the legacy `inputs` YAML form below expresses the same shape and is still read on boot for migration:
 
 ```yaml
 inputs:
-  my_books:
-    plugin: json_import
-    path: "inputs/books.json"
-    content_type: "book"
+  my_shelves:
+    plugin: goodreads_rss
+    user_id: "12345678"
     enabled: true
-  my_movies:
-    plugin: json_import
-    path: "inputs/movies.json"
-    content_type: "movie"
+  my_shows:
+    plugin: sonarr
+    url: "http://localhost:8989"
     enabled: true
 ```
 

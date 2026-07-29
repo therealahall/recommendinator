@@ -7,13 +7,13 @@ Commands are organized into groups.
 All commands are run as `python3.11 -m src.cli <command>`. Most read-only
 commands accept `--format json` for scripting.
 
-## Import & recommend
+## Sync & recommend
 
 ```bash
-# Import data
-python3.11 -m src.cli update --source goodreads_csv
-python3.11 -m src.cli update --source steam
+# Sync data from your configured (syncable) sources
+python3.11 -m src.cli update --source my_steam
 python3.11 -m src.cli update --source all
+python3.11 -m src.cli update --source list   # show configured sources
 
 # Get recommendations
 python3.11 -m src.cli recommend --type book --count 10
@@ -22,6 +22,77 @@ python3.11 -m src.cli recommend --type video_game --count 5
 # Mark content as completed
 python3.11 -m src.cli complete --type book --title "Project Hail Mary" --rating 5
 ```
+
+`update` drives the syncable sources (Steam, GOG, Epic, Sonarr, Radarr, Trakt,
+Calibre-Web, Goodreads RSS, ROM Library). The five one-shot file imports
+(`goodreads_csv`, `storygraph_csv`, `csv_import`, `json_import`,
+`markdown_import`) are not sources at all and never appear here. They use the
+`import` command below.
+
+## Importing from a file
+
+The `import` command runs a single file through a file-import plugin. It is the
+CLI peer of the web **Data** tab's **Import from file** button (`POST /api/import`).
+It reads a real path off disk, runs the file through the ingestion pipeline,
+streams progress, prints the item counts, and exits non-zero on failure. The
+import is one-shot: nothing is stored about the file and nothing re-syncs, so to
+refresh, export again and import again.
+
+The CLI has no size cap, because it reads a local file you already trust. The web
+upload is capped at 50 MB and rejects anything larger with HTTP 413, and it also
+bounds how many imports may run at once (HTTP 429 past the bound). Both are
+properties of the upload endpoint, not of the importer.
+
+```bash
+# Import a Goodreads or StoryGraph CSV export (neither takes extra options)
+python3.11 -m src.cli import --source goodreads_csv --file inputs/goodreads_library_export.csv
+python3.11 -m src.cli import --source storygraph_csv --file inputs/storygraph_export.csv
+
+# Import a generic CSV/JSON/Markdown file (content type is required for these)
+python3.11 -m src.cli import --source csv_import --file my_movies.csv --content-type movie
+python3.11 -m src.cli import --source json_import --file my_books.json --content-type book
+python3.11 -m src.cli import --source markdown_import --file my_shows.md --content-type tv_show
+
+# List importable sources, the file types they read, and the options they accept
+python3.11 -m src.cli import --source list
+python3.11 -m src.cli import --source list --format json   # matches GET /api/import/sources
+```
+
+The listing carries each importer's `accepted_extensions` (`.csv`,
+`.json`/`.jsonl`, `.md`/`.markdown`) — the same field the web upload form builds
+its file picker from. It is advisory: the parser decides whether a file is
+usable, so a renamed export is refused by the importer, not by its extension.
+
+Flags:
+
+- `--source` — the file-import plugin name (`goodreads_csv`, `storygraph_csv`,
+  `csv_import`, `json_import`, `markdown_import`), or `list` to show importable
+  sources.
+- `--file` — path to the file to import (required unless `--source list`).
+- `--content-type` — `book`, `movie`, `tv_show`, or `video_game`; required by the
+  three generic formats, not used by the Goodreads and StoryGraph exports (they
+  are always books). Case-insensitive, and so is the same value supplied as
+  `--option content_type=BOOK` or as a multipart field to `POST /api/import` —
+  all three routes accept exactly the same set.
+- `--option KEY=VALUE` — an extra import option, repeatable, for plugin options
+  beyond `content-type`. Run `--source list` to see what a plugin accepts. It
+  writes the same keys the dedicated flags do and runs after them, so
+  `--option content_type=movie` overrides an earlier `--content-type book`.
+
+Both option flags are checked against the source's own schema by the import
+service itself, so `POST /api/import` refuses exactly the same keys with a 400.
+A key the source does not declare (including `--content-type` on a source that is
+always books) aborts the command and names the options it does accept, rather
+than being silently dropped.
+- `--format table|json` — output format (default `table`) for both the source
+  listing (`--source list`) and the final import result. In `json`, an import
+  emits `{message, source, items_synced, total_items, errors, warning}`, the same
+  field set `POST /api/import` returns.
+
+A file that parses but yields no items is still a success, and it comes back with
+a `warning` rather than an error: the table output prints a `Warning:` line and
+the JSON output carries the same text in `warning`. When rows fail instead, each
+failure lands in `errors` and `warning` is `null`.
 
 ## System status
 
@@ -88,25 +159,41 @@ these marks the item enriched via the `manual` provider, so it drops out of the
 Add, edit, enable/disable, and remove data sources without editing YAML. Sources
 can live in YAML (bootstrap), in the database (created or migrated), or both.
 
+The `source` group manages syncable sources only. The five file imports
+(`goodreads_csv`, `storygraph_csv`, `csv_import`, `json_import`,
+`markdown_import`) have no stored config, so `source plugins` does not list them
+and `source create` rejects them with a pointer to the `import` command above.
+`source list` is the one exception: it still shows a *leftover* entry naming one
+of them, so you can find the id and remove it (see below).
+
 ```bash
 # Create a brand-new source directly in the database (no YAML edit needed)
 python3.11 -m src.cli source plugins             # see what plugins are available
-python3.11 -m src.cli source create my_books goodreads_csv
-python3.11 -m src.cli source set my_books path inputs/goodreads_library_export.csv
+python3.11 -m src.cli source create my_shelves goodreads_rss
+python3.11 -m src.cli source set my_shelves user_id 12345678
 
 # Move an existing YAML source into the database (one-time, idempotent)
-python3.11 -m src.cli source migrate goodreads_csv
+python3.11 -m src.cli source migrate my_steam
 
 # Inspect / edit fields after migration or creation
-python3.11 -m src.cli source show goodreads_csv
-python3.11 -m src.cli source schema goodreads_csv           # list editable fields
-python3.11 -m src.cli source set goodreads_csv path inputs/new_export.csv
-python3.11 -m src.cli source disable goodreads_csv          # disabled sources are skipped during sync
-python3.11 -m src.cli source enable goodreads_csv
+python3.11 -m src.cli source show my_steam
+python3.11 -m src.cli source schema my_steam           # list editable fields
+python3.11 -m src.cli source set my_steam vanity_url my-steam-name
+python3.11 -m src.cli source disable my_steam          # disabled sources are skipped during sync
+python3.11 -m src.cli source enable my_steam
 
 # Remove a DB-backed source entirely (clears stored secrets too)
-python3.11 -m src.cli source remove my_books
+python3.11 -m src.cli source remove my_shelves
 ```
+
+`source remove` is also how you clear a leftover row for one of the file-import
+plugins. Such a row is skipped at sync time with a warning in the log, and every
+other `source` subcommand reports it as unknown — there is nothing to configure
+on a one-shot import. It stays in the database until you remove it, and
+`source list` keeps listing it (with `is_file_import: true`, or `file import` in
+the Enabled column) so you can find the id. A leftover that only exists in
+`config.yaml` has no database row: `source remove` reports it as not migrated,
+and you delete its block under `inputs:` instead.
 
 All `source` subcommands except `set-secret` and `clear-secret` accept
 `--format json` for scripting parity with the web API. For atomic multi-field
@@ -114,8 +201,8 @@ updates (the CLI equivalent of `PUT /api/sync/sources/<id>/config`), use
 `source apply` with a JSON dict from a file or stdin:
 
 ```bash
-echo '{"path": "inputs/new.csv", "content_type": "book"}' \
-  | python3.11 -m src.cli source apply my_csv --from-json -
+echo '{"steam_id": "76561198000000000", "min_playtime_minutes": 30}' \
+  | python3.11 -m src.cli source apply my_steam --from-json -
 ```
 
 For non-interactive secret rotation (Docker entrypoints, CI), set

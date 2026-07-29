@@ -93,7 +93,7 @@ services:
     volumes:
       - ./config:/app/config        # rw — entrypoint writes config.yaml on first run
       - ./data:/app/data            # persistent SQLite + ChromaDB
-      - ./inputs:/app/inputs:ro     # mount your Goodreads exports etc. here
+      - ./inputs:/app/inputs:ro     # mount export files for CLI imports here
       - ./private:/app/private:ro   # optional; private plugin directory
     restart: unless-stopped
 ```
@@ -109,8 +109,14 @@ volume entry — the application is happy without it.
 |----------------|------|---------|
 | `/app/config` | `rw` | Configuration. Container creates `config.yaml` from `example.yaml` on first run if missing; never overwrites an existing file. **Edit `./config/config.yaml` on the host.** |
 | `/app/data` | `rw` | SQLite database, ChromaDB vectors (AI variant), credential keys, cache. Backed by your host filesystem so it survives container restarts and updates. |
-| `/app/inputs` | `ro` | Source files for ingestion plugins (e.g., `goodreads_library_export.csv`). Read-only because the app shouldn't be modifying your exports. |
+| `/app/inputs` | `ro` | Files for CLI file imports (e.g., `goodreads_library_export.csv` for `import --file /app/inputs/...`). Read-only because the app shouldn't be modifying your exports. Web uploads via the **Import from file** button don't need this mount, but they are capped at 50 MB, so a very large export is easier to bring in through this mount and the CLI, which has no cap. |
 | `/app/private` | `ro` | Optional. Private/personal plugin code (gitignored from the repo). Leave the host directory empty if you don't have any. |
+
+Mounting a ROM library for the `roms` source works out of the box under
+`/app/...` (the working directory) or `/data`, `/media`, `/mnt`, `/roms` — scan
+paths are contained to an allow-list. For any other container path, set
+`RECOMMENDINATOR_SCAN_ROOTS` on the service; see
+[the roms guide](../src/ingestion/sources/roms/README.md#where-a-library-may-live).
 
 ### Ports
 
@@ -131,6 +137,7 @@ exposed to the host by default — only `app-ai` talks to it.
 | `OLLAMA_BASE_URL` | `http://ollama:11434` | Set inside the AI service automatically. Override only if you're pointing at a remote Ollama instance. |
 | `OLLAMA_MODEL` | `mistral:7b` | Generation model the sidecar pulls on first start. Must match the `ollama.model` setting the app requests. |
 | `OLLAMA_EMBEDDING_MODEL` | `nomic-embed-text` | Embedding model the sidecar pulls on first start. Must match the `ollama.embedding_model` setting. |
+| `RECOMMENDINATOR_SCAN_ROOTS` | (unset) | Directories a `roms` scan path may live under, separated by `:`. Replaces the built-in roots. Only needed when the ROM library is mounted somewhere the defaults do not cover. |
 | `OLLAMA_CONVERSATION_MODEL` | (unset — reuses `OLLAMA_MODEL`) | Set only if you point `ollama.conversation_model` at a separate chat model. Leave unset and the sidecar reuses the generation model, matching the app's own fallback. |
 
 ## First run

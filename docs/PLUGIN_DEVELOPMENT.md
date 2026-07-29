@@ -107,7 +107,9 @@ ContentItem(
     author="Author/Director",      # Optional
     ignored=False,                 # Optional: exclude from recommendations
     metadata={},                   # Optional: source-specific data
-    source="my_plugin",            # Set automatically to the user-defined config key name
+    source="my_plugin",            # get_source_identifier(config): the user-defined
+                                   # source key, or the plugin name for a file import
+
 )
 ```
 
@@ -134,73 +136,116 @@ def normalize_rating(source_rating: int, max_rating: int = 10) -> int | None:
     return max(1, min(5, round(source_rating * 5 / max_rating)))
 ```
 
-## Example: File-Based Plugin
+## Example: File-Import Plugin
+
+A plugin that parses one file the user hands over — an export from another
+service — is a **one-shot file import**, not a syncable source. That is the
+shape almost every file-based plugin wants; a plugin that scans a directory on
+a schedule is the rare exception, and `roms` is the only one in the repo. See
+[One-shot file-import plugins](#one-shot-file-import-plugins) below for the
+rules this example follows.
 
 ```python
-import csv
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Iterator
+from typing import TYPE_CHECKING, Any
 
+from src.ingestion.file_reading import read_csv_rows
 from src.ingestion.plugin_base import ConfigField, ProgressCallback, SourcePlugin
 from src.models.content import ContentItem, ContentType, ConsumptionStatus
+
+if TYPE_CHECKING:
+    from src.storage.manager import StorageManager
 
 class CsvBookPlugin(SourcePlugin):
     @property
     def name(self) -> str:
         return "csv_books"
-    
+
     @property
     def display_name(self) -> str:
         return "CSV Book Import"
-    
+
     @property
     def content_types(self) -> list[ContentType]:
         return [ContentType.BOOK]
-    
+
     @property
     def requires_api_key(self) -> bool:
         return False
-    
+
     @property
     def requires_network(self) -> bool:
         return False
-    
+
+    # Routes the plugin through the one-shot import service rather than the
+    # syncable-source list, and tells the upload form which files to offer.
+    @property
+    def is_file_import(self) -> bool:
+        return True
+
+    @property
+    def accepted_extensions(self) -> list[str]:
+        return [".csv"]
+
+    # No `path` field. The import service injects the file the user supplied;
+    # everything declared here is settable by whoever can reach the port.
     def get_config_schema(self) -> list[ConfigField]:
         return [
-            ConfigField(name="path", field_type=str, required=True),
+            ConfigField(
+                name="shelf",
+                field_type=str,
+                required=False,
+                default="",
+                description="Only import rows on this shelf",
+            ),
         ]
 
-    def validate_config(self, config: dict[str, Any]) -> list[str]:
-        errors = []
-        file_path = config.get("path", "")
-        if not file_path:
-            errors.append("File path is required")
-        elif not Path(file_path).exists():
-            errors.append(f"File not found: {file_path}")
-        return errors
+    def validate_config(
+        self,
+        config: dict[str, Any],
+        storage: StorageManager | None = None,
+        user_id: int = 1,
+    ) -> list[str]:
+        # These messages reach the caller verbatim, so they describe the option
+        # that was just filled in — never a path or other runtime state.
+        if config.get("shelf", "").startswith("#"):
+            return ["'shelf' must be a shelf name, not a comment"]
+        return []
 
     def fetch(self, config: dict[str, Any], progress_callback: ProgressCallback | None = None) -> Iterator[ContentItem]:
-        csv_path = Path(config["path"])
-        
-        with open(csv_path, newline="", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                if not row.get("title"):
-                    continue
-                
-                yield ContentItem(
-                    id=row.get("isbn") or row["title"],
-                    title=row["title"],
-                    content_type=ContentType.BOOK,
-                    status=self._map_status(row.get("status", "")),
-                    rating=self._parse_rating(row.get("rating")),
-                    author=row.get("author"),
-                    metadata={
-                        "pages": int(row["pages"]) if row.get("pages") else None,
-                        "genre": row.get("genre"),
-                    },
-                )
-    
+        source = self.get_source_identifier(config)
+        shelf = config.get("shelf", "")
+        # read_csv_rows, never open(): it turns a Latin-1 export, a directory,
+        # or an unreadable file into a SourceError the import service renders
+        # as a 4xx instead of letting it escape as a 500.
+        rows = read_csv_rows(
+            self.name,
+            Path(config["path"]),
+            required_columns=["title"],
+        )
+
+        for index, row in enumerate(rows):
+            title = (row.get("title") or "").strip()
+            if not title:
+                continue
+            if shelf and (row.get("shelf") or "").strip() != shelf:
+                continue
+
+            if progress_callback:
+                progress_callback(index, len(rows), title)
+
+            yield ContentItem(
+                id=row.get("isbn") or title,
+                title=title,
+                content_type=ContentType.BOOK,
+                status=self._map_status(row.get("status", "")),
+                rating=self._parse_rating(row.get("rating")),
+                author=row.get("author"),
+                source=source,
+                metadata={"genre": row.get("genre")},
+            )
+
     def _map_status(self, status: str) -> ConsumptionStatus:
         status_map = {
             "read": ConsumptionStatus.COMPLETED,
@@ -208,7 +253,7 @@ class CsvBookPlugin(SourcePlugin):
             "to-read": ConsumptionStatus.UNREAD,
         }
         return status_map.get(status.lower(), ConsumptionStatus.UNREAD)
-    
+
     def _parse_rating(self, rating: str | None) -> int | None:
         if not rating:
             return None
@@ -222,11 +267,15 @@ class CsvBookPlugin(SourcePlugin):
 
 ```python
 import requests
-from typing import Any, Iterator
+from collections.abc import Iterator
+from typing import TYPE_CHECKING, Any
 
 from src.ingestion.plugin_base import ConfigField, ProgressCallback, SourceError, SourcePlugin
 from src.models.content import ContentItem, ContentType, ConsumptionStatus
 from src.utils.request_errors import scrub_request_error
+
+if TYPE_CHECKING:
+    from src.storage.manager import StorageManager
 
 class MovieApiPlugin(SourcePlugin):
     API_BASE = "https://api.example.com/v1"
@@ -257,7 +306,12 @@ class MovieApiPlugin(SourcePlugin):
             ConfigField(name="username", field_type=str, required=True),
         ]
 
-    def validate_config(self, config: dict[str, Any]) -> list[str]:
+    def validate_config(
+        self,
+        config: dict[str, Any],
+        storage: StorageManager | None = None,
+        user_id: int = 1,
+    ) -> list[str]:
         errors = []
         if not config.get("api_key"):
             errors.append("API key is required")
@@ -331,7 +385,8 @@ from src.ingestion.sources.<plugin>.<plugin> import *  # noqa: F401, F403
 To verify your plugin is discovered:
 
 ```bash
-python3.11 -m src.cli update --help  # Should show your source in the list
+python3.11 -m src.cli source plugins   # syncable plugins
+python3.11 -m src.cli import --source list   # file-import plugins
 ```
 
 ## Configuration Format
@@ -340,24 +395,32 @@ Sources use a **named instance** model: each source has a user-defined id plus a
 
 ```yaml
 inputs:
-  # User-defined name "my_books" using the csv_import plugin
-  my_books:
-    plugin: csv_import
-    path: "inputs/books.csv"
-    content_type: "book"
+  # User-defined name "my_shelves" using the goodreads_rss plugin
+  my_shelves:
+    plugin: goodreads_rss
+    user_id: "12345678"
     enabled: true
 
-  # A second instance of csv_import with a different name
-  classic_movies:
-    plugin: csv_import
-    path: "inputs/classic_movies.csv"
-    content_type: "movie"
+  # A second instance of the sonarr plugin, pointed at another server
+  living_room:
+    plugin: sonarr
+    url: "http://localhost:8989"
     enabled: true
 ```
 
-File-based plugins use a standardized `path` field (not `csv_path`, `json_path`, or `markdown_path`).
+**A plugin that parses a single user-supplied file must not declare a filesystem path field.** Source config is settable over the network by anyone who can reach the port (and `create_source` stores a schema-declared value without calling `validate_config`), so a caller-settable path is a way to make the app read arbitrary files. Such plugins are one-shot file imports instead — see below — and receive the path from the import service. A plugin that genuinely needs to scan a directory repeatedly (`roms` is the only one) must resolve every configured path and refuse anything outside an allowed root.
 
-When your plugin's `fetch()` method is called, the config dict includes a `_source_id` key containing the user-defined name. The base class method `get_source_identifier(config)` returns this value, which is stored in `ContentItem.source`. This means items are tracked by user-defined name, not plugin name.
+When your plugin's `fetch()` method is called, the config dict includes a `_source_id` key containing the user-defined name. The base class method `get_source_identifier(config)` returns this value, which is stored in `ContentItem.source`. This means items are tracked by user-defined name, not plugin name. A file import has no user-defined name — `import_file` refuses `_source_id` along with every other undeclared option — so `get_source_identifier` falls back to the plugin name there.
+
+### One-shot file-import plugins
+
+A plugin that imports a single user-supplied file, rather than syncing a source that persists, overrides `is_file_import` to return `True` and `accepted_extensions` to return the extensions it reads (e.g. `[".csv"]`). Such a plugin is deliberately not a source: `list_available_plugins` leaves it out of the plugin picker, `create_source` rejects it, and `resolve_inputs` skips any leftover source row or YAML block naming it (that leftover is still *listed*, flagged `is_file_import`, so the user can find and remove it — and `get_available_sync_sources`, the enumeration behind that listing, is what logs the warning telling them to). The plugin is listed by `GET /api/import/sources` / `import --source list` and run by `POST /api/import` / the CLI `import` command instead. `accepted_extensions` rides that listing and drives the upload form's file picker, so a new format does not need a frontend change; it is advisory, since the parser is what decides whether a file is usable.
+
+The file arrives at invocation time (a web upload or the CLI `--file` flag) and `src/ingestion/import_service.py` runs it through the ingestion pipeline once. The import service injects the file path as the config `path` key, so `fetch()` still reads `config["path"]` — but `path` must not be in `get_config_schema()`, or a caller could set it. Declare any other per-import option (e.g. `content_type`) in `get_config_schema()` and both the upload form and the CLI will collect it. `import_file` itself refuses any key that schema does not declare, so both interfaces reject the same thing with the same message and a third caller cannot bypass the rule. The bundled `goodreads_csv`, `storygraph_csv`, `csv_import`, `json_import`, and `markdown_import` plugins work this way.
+
+Read the file through `src/ingestion/file_reading.py` (`read_import_text` for text, `read_csv_rows` for CSV) rather than `open()` or `read_text()` directly. A user-supplied file can be a Latin-1 export, a directory, or unreadable; those helpers turn each of those into a `SourceError` with an actionable message, which the import service renders as a 4xx instead of letting a `UnicodeDecodeError` escape as a 500. This is load-bearing, not a convenience: the import service does *not* wrap `OSError`, precisely so a full disk or a permission fault during the storage write stays a 500 rather than telling the user to check their file. `read_csv_rows` also takes `required_columns` and `known_columns`, so header validation lives with the read instead of in each plugin.
+
+A `SourceError` your plugin raises reaches the log and the CLI but never an HTTP response: `FileImportError` carries a separate, path-free `client_detail` for that, since plugin messages routinely embed the (server-side) file path. The one thing that *is* surfaced verbatim is what `validate_config` returns, because those messages describe the option schema the caller just filled in — so keep paths and runtime state out of them.
 
 ## Testing Your Plugin
 
@@ -440,7 +503,7 @@ enabled source runs on its own worker thread inside
   guarantees the callback itself is thread-safe; plugins just call it as
   documented.
 
-Stateless plugins (the existing CSV / Goodreads / Steam / Sonarr / Radarr
+Stateless plugins (the existing CSV / Goodreads CSV / Steam / Sonarr / Radarr
 implementations) need no changes for parallel sync.
 
 ## Handling Token Rotation (OAuth Plugins)

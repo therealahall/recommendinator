@@ -118,7 +118,11 @@ time you sync data — no extra step needed. See
 
 The system supports multiple data sources through a plugin architecture. See [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md) for the full list of available plugins and their configuration options.
 
-**Available plugins:** Goodreads (books), The StoryGraph (books), Calibre-Web (books), Steam (games), GOG (games), Epic Games (games), Sonarr (TV shows), Radarr (movies), Trakt (TV shows/movies), ROM Library (games), and generic CSV/JSON/Markdown importers for any content type.
+**Available plugins:** Goodreads CSV export (books), Goodreads public shelves via RSS (books), The StoryGraph (books), Calibre-Web (books), Steam (games), GOG (games), Epic Games (games), Sonarr (TV shows), Radarr (movies), Trakt (TV shows/movies), ROM Library (games), and generic CSV/JSON/Markdown importers for any content type.
+
+The Goodreads and StoryGraph CSV exports and the generic CSV/JSON/Markdown
+formats are **file imports**, not sources you configure and sync. See [Import a
+file](#import-a-file) below. Everything else is a source you set up once.
 
 ### Configure a source
 
@@ -127,9 +131,9 @@ form from the plugin's own field list and takes any secret at create time. The
 equivalent from the CLI:
 
 ```bash
-# A file-based source needs no credentials
-python3.11 -m src.cli source create my_books goodreads_csv
-python3.11 -m src.cli source set my_books path inputs/goodreads_library_export.csv
+# A source that only needs a URL
+python3.11 -m src.cli source create my_library calibre_web
+python3.11 -m src.cli source set my_library url http://localhost:8083
 
 # A source with a secret takes it separately, via a hidden prompt
 python3.11 -m src.cli source create my_steam steam
@@ -146,30 +150,42 @@ Some sources (GOG, Epic Games, Trakt) require OAuth setup — see that source's 
 for step-by-step instructions. [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md) lists
 every source and covers managing them in the UI.
 
-### Generic CSV/JSON/Markdown
+### Import a file
 
-For sources without a dedicated plugin, use the generic importers. Templates for each content type are in the `templates/` directory:
+A Goodreads or StoryGraph CSV export, or any file in the generic
+CSV/JSON/Markdown formats, is imported in one shot. You hand the file to the app and it runs immediately. There
+is no source to create and nothing to re-sync, so to refresh you export again and
+import again. Templates for the generic formats are in the `templates/` directory:
 
 ```bash
 # Copy a template and fill in your data
-cp templates/movies.csv inputs/my_movies.csv
+cp templates/movies.csv my_movies.csv
 ```
 
-Then add the source — from the **Data** tab with **+ Add source**, or from the CLI:
+Import it from the **Data** tab's **Import from file** button, or from the CLI:
 
 ```bash
-python3.11 -m src.cli source create my_movies csv_import
-python3.11 -m src.cli source set my_movies path inputs/my_movies.csv
-python3.11 -m src.cli source set my_movies content_type movie
+# Goodreads and StoryGraph take no options (they are always books)
+python3.11 -m src.cli import --source goodreads_csv --file goodreads_library_export.csv
+python3.11 -m src.cli import --source storygraph_csv --file storygraph_export.csv
+
+# The generic formats need a content type
+python3.11 -m src.cli import --source csv_import --file my_movies.csv --content-type movie
+
+# List importable sources and their options
+python3.11 -m src.cli import --source list
 ```
 
-You can have multiple instances of the same plugin (e.g., two `json_import` sources for different files) — just give each a unique id.
+Web uploads are capped at 50 MB. The CLI has no cap, since it reads a local file
+you already trust. See
+[docs/DATA_SOURCES.md](docs/DATA_SOURCES.md#importing-from-a-file) for the full
+reference.
 
 ### Sync your data
 
 ```bash
 # Sync a specific source
-python3.11 -m src.cli update --source goodreads_csv
+python3.11 -m src.cli update --source my_steam
 
 # Sync all enabled sources
 python3.11 -m src.cli update --source all
@@ -186,20 +202,24 @@ that expands to reveal settings) or from the CLI. YAML is no longer
 required for new sources — sources can live in YAML (bootstrap), in the
 database (post-migration or freshly created), or both.
 
+The `source` group covers syncable sources. The file imports have no stored
+config, so they are not listed by `source plugins` and `source create` turns them
+down. Use the `import` command above instead.
+
 ```bash
 # Create a brand-new source directly in the database (no YAML edit needed)
 python3.11 -m src.cli source plugins             # see what plugins are available
-python3.11 -m src.cli source create my_books goodreads_csv
-python3.11 -m src.cli source set my_books path inputs/goodreads_library_export.csv
+python3.11 -m src.cli source create my_shelves goodreads_rss
+python3.11 -m src.cli source set my_shelves user_id 12345678
 
 # Move an existing YAML source into the database (one-time, idempotent)
-python3.11 -m src.cli source migrate goodreads_csv
+python3.11 -m src.cli source migrate my_steam
 
 # Inspect / edit fields after migration or creation
-python3.11 -m src.cli source show goodreads_csv
-python3.11 -m src.cli source set goodreads_csv path inputs/new_export.csv
-python3.11 -m src.cli source disable goodreads_csv          # disabled sources are skipped during sync
-python3.11 -m src.cli source enable goodreads_csv
+python3.11 -m src.cli source show my_steam
+python3.11 -m src.cli source set my_steam vanity_url my-steam-name
+python3.11 -m src.cli source disable my_steam          # disabled sources are skipped during sync
+python3.11 -m src.cli source enable my_steam
 python3.11 -m src.cli source set-secret my_steam api_key   # hidden prompt, sources with secrets only
 
 # Remove a DB-backed source entirely (clears stored secrets too)
@@ -210,20 +230,19 @@ All `source` subcommands except `set-secret` and `clear-secret` accept
 `--format json` for scripting parity with the web API:
 
 ```bash
-python3.11 -m src.cli source show goodreads_csv --format json
-python3.11 -m src.cli source migrate goodreads_csv --format json
+python3.11 -m src.cli source show my_steam --format json
+python3.11 -m src.cli source migrate my_steam --format json
 ```
 
 For atomic multi-field updates (the CLI equivalent of the web
 `PUT /api/sync/sources/<id>/config` bulk endpoint), use `source apply` with
-a JSON dict of values from a file or stdin. The example below uses
-`generic_csv` because it has both `path` and `content_type` in its schema —
-plugin-specific sources like `goodreads_csv` only expose the fields their
-schema declares (run `python3.11 -m src.cli source schema <id>` to see them):
+a JSON dict of values from a file or stdin. The example below uses Steam because
+it has several non-sensitive fields. Each plugin only exposes the fields its own
+schema declares, so run `python3.11 -m src.cli source schema <id>` to see them:
 
 ```bash
-echo '{"path": "inputs/new.csv", "content_type": "book"}' \
-  | python3.11 -m src.cli source apply my_csv --from-json -
+echo '{"steam_id": "76561198000000000", "min_playtime_minutes": 30}' \
+  | python3.11 -m src.cli source apply my_steam --from-json -
 ```
 
 For non-interactive secret rotation (Docker entrypoints, CI), set

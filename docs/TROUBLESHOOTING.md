@@ -131,9 +131,107 @@ Recommendations are based on items you **haven't consumed yet**. If all your ite
 
 **Solution:**
 1. Export from Goodreads: My Books → Import/Export → Export Library
-2. Place file in `inputs/` directory
-3. Update path in config
+2. Import the file from the **Data** tab's **Import from file** button, or run
+   `python3.11 -m src.cli import --source goodreads_csv --file <path>`
+3. Check the path you passed, the CLI reads it directly off disk
 4. Ensure CSV has required columns (Title, Author, etc.)
+
+**Error:** HTTP 400 on a web upload, or "Check that the file is the export that importer expects, and that it is UTF-8 text"
+
+Every importer reads UTF-8 (a byte-order mark, which is what Excel writes, is
+fine). A file saved as Latin-1 or UTF-16 is refused. Re-save it as UTF-8 — in
+Excel, "CSV UTF-8 (Comma delimited)" — and import again. The server log carries
+the full detail for any import failure; the response keeps the file path out of
+it deliberately. When a 400 arrives with no message of its own, the modal says
+"We couldn't read that file. Check that it matches the selected format and try
+again." instead, which means the same thing.
+
+**Error:** HTTP 409 on a web upload, or "An import from this source is already running"
+
+The server refuses a second import from the same source while the first one is
+still going. Wait for it to finish and try again. The Data tab's job list shows
+what is in flight. The modal is stricter than the server here: it greys out the
+Import button while any sync or import job is running, not just one from the
+same source.
+
+**Error:** HTTP 413 on a web upload, or "That file is larger than the 50 MB limit"
+
+The upload endpoint caps files at 50 MB, and the Import modal refuses a larger
+file before uploading it. Split the export, or import the file with the CLI
+instead, which has no cap.
+
+**Error:** HTTP 422 on a web upload, or "That import source isn't available"
+
+The source named in the request is not one of the installed file-import plugins.
+In the browser that usually means the Source dropdown is stale, so reload the
+Data tab and pick the format again. A non-browser client gets the same status for
+a request that leaves out the `source` or `file` field. `GET /api/import/sources`
+lists every source the endpoint accepts.
+
+**Error:** HTTP 429 on a web upload, or "Too many imports are already running"
+
+The endpoint accepts two imports at once, because each one costs a spooled copy
+of the body plus a temp file plus a full ingestion run. Wait for a running import
+to finish and retry. The Data tab's job list shows what is in flight.
+
+**Error:** HTTP 503 on a web upload, or "Imports are unavailable: the server's storage or configuration didn't load"
+
+The server is answering requests but its storage or its configuration never
+initialised, so an import has nowhere to write. Retrying will not help, and
+neither will a different file: this one is on the server, not on you. Check the
+server's startup log, fix what it reports, and restart. Anything else that needs
+the database is failing at the same time.
+
+**Error:** "Something went wrong during the import. Please try again."
+
+The modal's fallback for a status it has no specific wording for, which in
+practice means the server hit an unexpected error (HTTP 500). The failure is not
+about the file you picked, so retrying the same upload usually gives the same
+result. The server log carries the detail.
+
+**Error:** "Couldn't load import sources"
+
+The modal asks the server which formats it can import when it opens, and that
+request failed, so the Source dropdown is empty. Check the server is still
+running, then close and reopen the modal.
+
+**Warning:** "No items were found in the file."
+
+The file parsed cleanly but produced nothing. Check that you uploaded the export
+you meant to and that it is not empty. This is a warning, not an error, so the
+import itself succeeded.
+
+### A ROM Library source finds nothing, or refuses its path
+
+**Error:** "Scan path is not an allowed ROM directory"
+
+Scan paths are contained to an allow-list: your home directory, the directory the
+app runs from, and the usual media mounts (`/mnt`, `/media`, `/run/media`,
+`/srv`, `/data`, `/games`, `/roms`, `/Volumes`). Hidden directories under those
+roots are refused, so a library at `~/.local/share/roms` is not scannable by
+default — `~/.ssh` is refused the same way, which is the point. Name the hidden
+directory itself as a root and it works, since a root is something you set.
+
+If your library is elsewhere, set `RECOMMENDINATOR_SCAN_ROOTS` to the directories
+it lives under, separated by `:`, and restart. It **replaces** the defaults
+rather than adding to them, so list every root you need — naming only the new one
+stops every other ROM source, including one under your home directory, from
+scanning:
+
+```bash
+RECOMMENDINATOR_SCAN_ROOTS=/storage/roms:"$HOME" python3.11 -m src.web
+```
+
+See [the roms guide](../src/ingestion/sources/roms/README.md#where-a-library-may-live).
+
+**Symptom:** a ROM sync hangs after an `extra_strip_patterns` entry was added
+
+Patterns are capped at 10 entries of 200 characters, but nothing bounds how long
+one takes to run — Python's `re` has no timeout, and a nested quantifier such as
+`(a+)+` (or a chain like `.*.*.*x`) backtracks exponentially on a title that does
+not match. Remove the pattern and rewrite it without the nesting: usually
+`(?:...)+` over a fixed-length body, or a plain character class, does the same
+job.
 
 ### Steam Import Fails
 

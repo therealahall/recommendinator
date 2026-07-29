@@ -68,9 +68,9 @@ rest.
 
 | Source | Type | Setup |
 |--------|------|-------|
-| **Goodreads (CSV export)** | Books | [goodreads_csv](src/ingestion/sources/goodreads_csv/README.md) |
+| **Goodreads (CSV export, file import)** | Books | [goodreads_csv](src/ingestion/sources/goodreads_csv/README.md) |
 | **Goodreads (public shelves via RSS)** | Books | [goodreads_rss](src/ingestion/sources/goodreads_rss/README.md) |
-| **The StoryGraph** | Books | [storygraph_csv](src/ingestion/sources/storygraph_csv/README.md) |
+| **The StoryGraph (CSV export, file import)** | Books | [storygraph_csv](src/ingestion/sources/storygraph_csv/README.md) |
 | **Calibre-Web** | Books | [calibre_web](src/ingestion/sources/calibre_web/README.md) |
 | **Steam** | Games | [steam](src/ingestion/sources/steam/README.md) |
 | **GOG** | Games | [gog](src/ingestion/sources/gog/README.md) |
@@ -79,10 +79,17 @@ rest.
 | **Radarr** | Movies | [radarr](src/ingestion/sources/radarr/README.md) |
 | **Trakt** | TV Shows / Movies | [trakt](src/ingestion/sources/trakt/README.md) |
 | **ROM Library** | Games | [roms](src/ingestion/sources/roms/README.md) |
-| **CSV / JSON / Markdown** | Any | [generic_csv](src/ingestion/sources/generic_csv/README.md) · [generic_json](src/ingestion/sources/generic_json/README.md) · [markdown](src/ingestion/sources/markdown/README.md) |
+| **CSV / JSON / Markdown (file import)** | Any | [generic_csv](src/ingestion/sources/generic_csv/README.md) · [generic_json](src/ingestion/sources/generic_json/README.md) · [markdown](src/ingestion/sources/markdown/README.md) |
 
-For adding/editing/removing sources in the UI, parallel sync, and library export,
-see **[docs/DATA_SOURCES.md](docs/DATA_SOURCES.md)**.
+The rows marked **file import** work differently from the rest. They are not
+sources you configure and sync: you hand the app a file once, from the **Data**
+tab's **Import from file** button or `python3.11 -m src.cli import`, and it is
+read straight into your library. Nothing is stored about the file, so to refresh
+you export again and import again. Everything else is set up once and synced
+whenever you like.
+
+For adding/editing/removing sources in the UI, importing a file, parallel sync,
+and library export, see **[docs/DATA_SOURCES.md](docs/DATA_SOURCES.md)**.
 
 ## Features
 
@@ -156,18 +163,48 @@ filled in returns to in-progress when a sync brings new seasons.
 
 ### Upgrading
 
-The Goodreads CSV plugin was renamed from `goodreads` to `goodreads_csv`.
-Existing Goodreads items and any DB-stored source configs are relabeled from
-`goodreads` to `goodreads_csv` automatically on first startup, so no action is
-needed there. If you configure Goodreads via `config.yaml`, rename
-`plugin: goodreads` to `plugin: goodreads_csv`.
+**Goodreads was split in two.** The CSV export is now `goodreads_csv` and the new
+`goodreads_rss` plugin syncs your public shelves from a feed. Existing Goodreads
+items are relabeled from `goodreads` to `goodreads_csv` automatically on first
+startup. A DB-stored source config is relabeled too — not so that it keeps
+syncing (it cannot, see below) but so it still names a plugin the app knows and
+stays visible in the list you clear it from.
+
+**File imports are no longer sources.** `goodreads_csv`, `storygraph_csv`,
+`csv_import`, `json_import`, and `markdown_import` cannot be created or synced
+any more. They are missing from **+ Add source** and `source plugins`, and
+`source create` rejects them and points at the import flow. An existing source
+row (or a legacy `config.yaml` `inputs:` block) naming one of them is skipped at
+sync time with a warning and left in place rather than deleted. It still shows
+up in the **Data** tab and in `source list`, marked as a file import and with no
+Sync button, so you can find it and clear it:
+
+- A **database-backed** row: click **Remove** in its panel, or run
+  `python3.11 -m src.cli source remove <id>`.
+- A row that only exists in `config.yaml`: delete its block under `inputs:`.
+  There is no database row to remove.
+
+Import the file instead, from the **Data** tab or the CLI:
+
+```bash
+python3.11 -m src.cli import --source goodreads_csv --file inputs/goodreads_library_export.csv
+python3.11 -m src.cli import --source storygraph_csv --file inputs/storygraph_export.csv
+```
+
+**ROM libraries have to live somewhere expected.** The scanner now refuses a
+`paths` entry outside your home directory, the directory the app runs from, and
+the usual media mounts (`/mnt`, `/media`, `/srv`, `/data`, `/games`, `/roms`,
+`/run/media`, `/Volumes`). If your ROMs are somewhere else, name the directories
+in `RECOMMENDINATOR_SCAN_ROOTS` — see
+[the roms guide](src/ingestion/sources/roms/README.md#where-a-library-may-live).
 
 ## CLI usage
 
 The CLI is a full peer to the web UI. A taste:
 
 ```bash
-python3.11 -m src.cli update --source all          # import everything
+python3.11 -m src.cli update --source all          # sync every configured source
+python3.11 -m src.cli import --source csv_import --file my_movies.csv --content-type movie
 python3.11 -m src.cli recommend --type book --count 10
 python3.11 -m src.cli library list --type book --status completed --sort rating
 python3.11 -m src.cli library list --search "die hard"   # fuzzy title/creator search

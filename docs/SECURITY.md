@@ -110,6 +110,114 @@ networks:
 - No code execution from imported data
 - Invalid data is skipped, not executed
 
+### File uploads (`POST /api/import`)
+
+- The request body is bounded **before** it is parsed. A pure-ASGI middleware
+  (`src/web/upload_limit.py`, registered in `create_app`) refuses a declared
+  `content-length` over the cap outright and counts the bytes of a chunked body
+  as they arrive, so an oversized request is rejected with HTTP 413 without
+  reaching Starlette's multipart parser. This is the layer that keeps an
+  oversized upload off the host disk: FastAPI resolves `file: UploadFile` before
+  the handler body runs, which means the parser has already spooled the whole
+  body to a `SpooledTemporaryFile` (spilling to the system temp directory past
+  1 MB) by the time application code could look at it
+- The cap is 50 MB for the file, plus a 1 MB allowance for multipart framing
+  (boundaries, part headers, the `source` and option fields) so a legitimate
+  50 MB file is not rejected by the limit sized for it
+- **The per-request cap is not the whole story.** It bounds one request; it says
+  nothing about how many are in flight. Each accepted import costs up to the
+  request cap spooled by the parser, plus the handler's own up-to-50 MB temp
+  copy, plus a full ingestion run — so the same middleware also bounds the
+  number of concurrent `POST /api/import` calls (2), answering **HTTP 429** past
+  it. The bound lives in the middleware rather than in the handler for the same
+  reason the size cap does: a counter inside the handler is only reached after
+  the body has already been spooled to disk. The handler's own duplicate guard
+  is a different thing — it is keyed per plugin and returns 409, so on its own
+  five file-import plugins meant five simultaneous imports, each of which had
+  already paid the spool cost before the guard was consulted
+- The concurrency bound is per process. Running multiple uvicorn workers
+  multiplies it, as it does every other in-process limit here
+- The handler re-checks the 50 MB file cap while copying the parsed upload to its
+  own temp file, as a backstop on the copy it owns
+- The temp file is removed on every exit path, including the rejection, and its
+  name takes a suffix from the uploaded filename only when that suffix is a short
+  alphanumeric extension (an embedded NUL or a 300-character extension would
+  otherwise make `mkstemp` raise)
+- Only form fields the plugin's own schema declares are read as import options,
+  and only string values, so an extra file part cannot reach the plugin. The CLI
+  `--option` flag applies the same schema gate, refusing anything else — without
+  it, an internal pipeline key such as `_source_id` could relabel every imported
+  item
+- Import failures return a structured, path-free detail. The full message (which
+  names the temp file and forwards plugin text) is logged server-side instead.
+  Plugin *validation* errors are the deliberate exception: they describe the
+  option schema the caller just filled in
+- A file that is not UTF-8 text, is a directory, or is unreadable is a 4xx with
+  an actionable message rather than an unhandled 500
+- `python-multipart` is floored at `>=0.0.18` in `pyproject.toml`. Earlier
+  releases carry CVE-2024-53981, and a lockfile only protects locked installs
+- The CLI `import` command has no cap: it reads a local path the operator chose
+  rather than an unauthenticated request body
+
+### Filesystem paths in source config
+
+Source config is written by `POST /api/sync/sources`, which stores any
+schema-declared value verbatim — it never calls `validate_config`. A
+caller-settable filesystem path is therefore a way for anyone who can reach the
+port to make the app read a directory of the attacker's choosing and render the
+filenames as library items.
+
+- Plugins that parse a single user-supplied file declare no `path` field at all.
+  They are one-shot file imports (`goodreads_csv`, `storygraph_csv`,
+  `csv_import`, `json_import`, `markdown_import`) and receive the path from the
+  import service
+- `roms` is the one plugin that genuinely re-scans directories, so it keeps
+  `paths` and contains them: each entry is resolved (following `..` and symlinks)
+  and must sit under an allowed root — the user's home directory, the working
+  directory, or a conventional media mount — **and** must reach that root
+  without descending through a hidden, dot-prefixed directory. The second rule
+  is what the first is worth anything for: the root list has to include `$HOME`,
+  so on its own it would accept `~/.ssh` and render `id_rsa`, `known_hosts` and
+  `authorized_keys` as game titles. `~/.aws`, `~/.gnupg` and `~/.config/*` are
+  the same shape. The rule applies below the root only, so an operator who names
+  a hidden directory in `RECOMMENDINATOR_SCAN_ROOTS` can scan it — a root is
+  operator-chosen and never arrives from a stored source config, which is what
+  makes a library at `~/.local/share/roms` reachable by naming it
+- `RECOMMENDINATOR_SCAN_ROOTS` **replaces** the default roots rather than adding
+  to them, so an operator who sets it must list every directory their libraries
+  live under, not only the new one — naming just the new one stops every other
+  `roms` source, including one under `$HOME`, from scanning. It lives in the
+  environment rather than in config or the settings table, because an allow-list
+  stored next to the value it contains would be settable by the same
+  unauthenticated request
+- What scan-path containment does **not** do: it decides which directories may
+  be opened, not what is inside them. Any plain directory under an allowed root
+  is still listable, so allowing `$HOME` accepts that the non-hidden parts of
+  `$HOME` can come back as "games". It also does not follow through to what the
+  scan *records*: a symlinked child inside an allowed root is resolved, and its
+  resolved target path and byte size are written into the item's `metadata`. So
+  an entry inside an allowed root can publish a path that is outside every
+  allowed root. Containment gates the root, not the contents
+- An empty string in `paths` is rejected. `Path("").resolve()` is the working
+  directory, which is itself a default root, so a blank entry would otherwise
+  pass containment and silently mean "scan wherever the app was started from".
+  `"."` still means exactly that — it just has to be spelled deliberately
+- `roms.extra_strip_patterns` takes arbitrary regex under two caps: at most 10
+  patterns, at most 200 characters each. Those bound how much regex runs against
+  every title. They do **not** make a pattern safe, and nothing else does:
+  Python's `re` has no execution timeout, deciding whether a regex backtracks
+  catastrophically is not something a cheap static check can do (`(a+)+` is five
+  characters, and `.*.*.*.*x` has no group for a structural check to look at),
+  so patterns are compiled as written. The residual risk is worse than "a slow
+  scan": a catastrophically backtracking pattern against a long title does not
+  finish when the scan finishes. `re` has no timeout and a Python thread cannot
+  be cancelled, so the sync worker running that match is **lost until the
+  process restarts**, and every later sync runs with one fewer worker — enough
+  of them and syncing stops altogether. That is unlike pointing the scanner at a
+  large directory, which terminates. Bounding it for real means running the
+  match somewhere killable (a subprocess with a timeout) or using a
+  backtracking-free engine such as RE2; neither is in place today
+
 ### Custom Rules
 
 - Rules are parsed by pattern matching or LLM
