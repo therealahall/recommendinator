@@ -89,7 +89,8 @@ services:
   app:
     image: ghcr.io/therealahall/recommendinator:${IMAGE_TAG:-latest}
     ports:
-      - "${APP_PORT:-18473}:8000"   # change 18473 if it collides
+      - "${APP_BIND_PREFIX:-}${APP_PORT:-18473}:8000"   # change 18473 if it collides
+        protocol: tcp
     volumes:
       - ./config:/app/config        # rw — entrypoint writes config.yaml on first run
       - ./data:/app/data            # persistent SQLite + ChromaDB
@@ -116,7 +117,7 @@ volume entry — the application is happy without it.
 
 | Container port | Default host port | Purpose |
 |----------------|-------------------|---------|
-| `8000` | `18473` | Web UI and HTTP API. Change the host side via `APP_PORT` env var or by editing the `ports:` mapping. |
+| `8000` | `18473` | Web UI and HTTP API. Change the host side via `APP_PORT` env var or by editing the `ports:` mapping. Restrict which host interface it lands on with `APP_BIND_PREFIX`. |
 
 The Ollama sidecar (AI variant only) runs on `11434` inside the network but is not
 exposed to the host by default — only `app-ai` talks to it.
@@ -127,6 +128,7 @@ exposed to the host by default — only `app-ai` talks to it.
 |----------|---------|--------|
 | `IMAGE_TAG` | `latest` | Which image tag the compose file pulls. Set to a semver like `0.7.0` for pinned deployments. The `-ai` suffix is appended automatically for the AI service. |
 | `APP_PORT` | `18473` | Host-side port for the web UI. |
+| `APP_BIND_PREFIX` | (unset — every interface) | Host interface the port is published on, written **with a trailing colon**: `APP_BIND_PREFIX=127.0.0.1:`. It is prepended to the port mapping, so leaving it unset publishes on every interface exactly as before. Set it to make the app reachable only from the host itself, which is what you want when a reverse proxy on the host terminates TLS and forwards to it. |
 | `COMPOSE_PROFILES` | (unset) | Optional fallback for `--profile ai`. If you set this instead of using the flag, you still need to name `app-ai` on the up command (`docker compose up -d app-ai`) to skip the default `app` service. |
 | `OLLAMA_BASE_URL` | `http://ollama:11434` | Set inside the AI service automatically. Override only if you're pointing at a remote Ollama instance. |
 | `OLLAMA_MODEL` | `mistral:7b` | Generation model the sidecar pulls on first start. Must match the `ollama.model` setting the app requests. |
@@ -257,6 +259,10 @@ recommendinator.example.com {
 
 …is sufficient. nginx and Traefik configurations are conventional `proxy_pass` to
 the same host:port.
+
+When the proxy runs on the same host, set `APP_BIND_PREFIX=127.0.0.1:` (note the
+trailing colon) so the published port is bound to loopback. The proxy can still
+reach it, but nothing else on the network can reach the app over plain HTTP.
 
 The application is a single-user tool with **no authentication**, so any reverse
 proxy in front of it must enforce its own access controls (basic auth, OAuth

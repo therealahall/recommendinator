@@ -18,6 +18,11 @@
 # Environment overrides (set in your shell or a .env file next to this file):
 #   IMAGE_TAG               — image tag to pull (default: latest)
 #   APP_PORT                — host port to expose the web UI on (default: 18473)
+#   APP_BIND_PREFIX         — host interface to publish that port on, written
+#                             WITH a trailing colon, e.g. "127.0.0.1:" (default:
+#                             unset, meaning every interface). Set it when
+#                             something else on the host — a reverse proxy
+#                             terminating TLS, say — is what should be reachable.
 #   OLLAMA_MODEL            — model the sidecar pulls (default: mistral:7b)
 #   OLLAMA_EMBEDDING_MODEL  — embedding model to pull (default: nomic-embed-text)
 #   OLLAMA_CONVERSATION_MODEL — separate chat model to pull (default: reuse OLLAMA_MODEL)
@@ -28,7 +33,13 @@
 
 x-app-common: &app-common
   ports:
-    - "${APP_PORT:-18473}:8000"
+    # APP_BIND_PREFIX is a prefix, not an address, so that unset renders the
+    # bare "18473:8000" this has always been — which publishes on every
+    # interface, IPv4 and IPv6 alike. Spelling a default address here instead
+    # (0.0.0.0) would silently drop the IPv6 binding, and the long `host_ip:`
+    # form cannot express "absent" at all: compose rejects an empty one with
+    # "invalid ip address". Hence the trailing colon in the value.
+    - "${APP_BIND_PREFIX:-}${APP_PORT:-18473}:8000"
   volumes:
     # config is mounted read-write so the entrypoint can copy example.yaml to
     # config.yaml on first run. Under Docker it holds only the storage paths
