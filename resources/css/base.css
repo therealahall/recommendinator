@@ -23,6 +23,11 @@
   --text-secondary: #d8dee9;
   --text-muted: #97abbe;
   --text-inverse: #2e3440;
+  /* Label colour for controls painted on a saturated danger fill. Fixed rather
+     than theme-derived: `.btn-danger` darkens --color-error in EVERY theme, so
+     the fill is dark even in a light theme and --text-primary would flip to
+     near-black on it (1.53:1 in snowstorm). */
+  --text-on-danger: #ffffff;
 
   /* Borders */
   --border-default: #4c566a;
@@ -597,7 +602,7 @@ input[type="checkbox"] {
 
 .btn-danger {
   background: color-mix(in srgb, var(--color-error) 75%, black);
-  color: var(--text-primary);
+  color: var(--text-on-danger);
   border-color: color-mix(in srgb, var(--color-error) 75%, black);
 }
 
@@ -959,9 +964,13 @@ input[type="checkbox"] {
   border-color: var(--accent);
 }
 
+/* --text-secondary (not --text-muted) to clear WCAG 1.4.3 4.5:1 on --bg-card in
+   every theme. This class carries required instructions, not decoration: the
+   accepted file types and the reason Import is disabled are both wired to a
+   control via aria-describedby. */
 .help-text {
   font-size: var(--text-sm);
-  color: var(--text-muted);
+  color: var(--text-secondary);
   margin: 0 0 var(--space-3) 0;
 }
 
@@ -1609,9 +1618,21 @@ input[type="checkbox"] {
 .sync-card h3 { font-size: var(--text-md); font-weight: 600; margin-bottom: var(--space-1); color: var(--text-primary); }
 .sync-plugin-name { font-size: var(--text-xs); color: var(--text-muted); margin-bottom: var(--space-3); }
 .sync-status-message { padding: var(--space-3) var(--space-4); border-radius: var(--radius-md); margin-bottom: var(--space-3); font-size: var(--text-sm); }
-.sync-status-info { background: color-mix(in srgb, var(--color-info) 10%, transparent); color: var(--color-info); border: 1px solid color-mix(in srgb, var(--color-info) 30%, transparent); }
-.sync-status-success { background: color-mix(in srgb, var(--color-success) 10%, transparent); color: var(--color-success); border: 1px solid color-mix(in srgb, var(--color-success) 30%, transparent); }
-.sync-status-error { background: color-mix(in srgb, var(--color-error) 10%, transparent); color: var(--color-error); border: 1px solid color-mix(in srgb, var(--color-error) 30%, transparent); }
+/* The text mixes each semantic colour toward --text-primary (light in dark
+   themes, dark in light ones) so it clears WCAG 1.4.3 4.5:1 against its own 10%
+   tint on --bg-card in both themes — the raw colour reaches only 2.27:1 for
+   error and 3.24:1 for info in Nord, and no darker tint can rescue it because
+   the accents are mid-luminance. The saturated colour still reads from the
+   border, and every state also carries a ⚠/✓ glyph. Warning gets the same
+   treatment even though it already cleared the threshold: these four are
+   states of ONE banner (ImportFileModal swaps the class on a single node), so
+   a saturated amber beside three tinted siblings would read as a different
+   control. The 45% is pinned by base.css.test.ts, which recomputes the ratio
+   from these values rather than trusting a number in a comment. */
+.sync-status-info { background: color-mix(in srgb, var(--color-info) 10%, transparent); color: color-mix(in srgb, var(--color-info) 45%, var(--text-primary)); border: 1px solid color-mix(in srgb, var(--color-info) 30%, transparent); }
+.sync-status-success { background: color-mix(in srgb, var(--color-success) 10%, transparent); color: color-mix(in srgb, var(--color-success) 45%, var(--text-primary)); border: 1px solid color-mix(in srgb, var(--color-success) 30%, transparent); }
+.sync-status-error { background: color-mix(in srgb, var(--color-error) 10%, transparent); color: color-mix(in srgb, var(--color-error) 45%, var(--text-primary)); border: 1px solid color-mix(in srgb, var(--color-error) 30%, transparent); }
+.sync-status-warning { background: color-mix(in srgb, var(--color-warning) 10%, transparent); color: color-mix(in srgb, var(--color-warning) 45%, var(--text-primary)); border: 1px solid color-mix(in srgb, var(--color-warning) 30%, transparent); }
 .sync-progress-bar { height: 4px; background: var(--border-default); border-radius: 2px; margin-bottom: var(--space-3); overflow: hidden; }
 .sync-progress-fill { height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.3s ease; }
 .gog-connect-flow, .epic-connect-flow { text-align: left; }

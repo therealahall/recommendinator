@@ -1,5 +1,12 @@
 import { readFileSync } from 'node:fs'
 import { describe, it, expect } from 'vitest'
+import {
+  contrastRatio,
+  parseTokens,
+  rendered,
+  type BackgroundMode,
+  type Tokens,
+} from './contrast'
 
 // base.css is a static asset: importing it through Vite yields an empty stub
 // under Vitest, so read the file off disk to assert on its real contents.
@@ -54,6 +61,86 @@ describe('inactive button styling', () => {
       )
     }
   })
+})
+
+// Every theme is base.css's :root with a colours.css layered on top, so a
+// theme's effective palette is the merge. Nord is the default: its colours.css
+// is a comment explaining that base.css already holds the palette, so there is
+// no block to merge. Stated per theme rather than sniffed from the file, so a
+// theme that moves its tokens somewhere this parser cannot see them fails
+// loudly instead of quietly measuring base.css's palette a second time.
+type PaletteMode = 'is-base' | 'overrides-base'
+
+const THEMES: [string, PaletteMode][] = [
+  ['nord', 'is-base'],
+  ['snowstorm', 'overrides-base'],
+]
+
+function themeTokens(theme: string, palette: PaletteMode): Tokens {
+  const base = parseTokens(readBase())
+  const overrides = readFileSync(
+    `${process.cwd()}/src/web/static/themes/${theme}/colors.css`,
+    'utf8',
+  )
+  if (palette === 'is-base') {
+    if (/:root\s*\{/.test(overrides)) {
+      throw new Error(`${theme} now overrides the base palette`)
+    }
+    return base
+  }
+  return { ...base, ...parseTokens(overrides) }
+}
+
+// WCAG 1.4.3 Contrast (Minimum) for normal-size text. Every selector below is
+// normal weight at --text-sm (13px) or larger, so none qualifies for the 3:1
+// large-text allowance.
+const AA_NORMAL_TEXT = 4.5
+
+// Each entry is [selector, the surface the element sits on, whether the rule
+// paints its own background]. The status banners tint that surface through a
+// translucent background, so which surface it is changes the answer — all of
+// them render inside a `.card` or the import dialog, both of which are
+// --bg-card.
+const CONTRAST_CASES: [string, string, BackgroundMode][] = [
+  // Carries the import 413/oversize/parse-failure messages and the source
+  // removal-failure alert.
+  ['.sync-status-error', 'bg-card', 'own-background'],
+  ['.sync-status-success', 'bg-card', 'own-background'],
+  ['.sync-status-warning', 'bg-card', 'own-background'],
+  // "Importing…" while an upload is in flight.
+  ['.sync-status-info', 'bg-card', 'own-background'],
+  // Required instructions, not decoration: the accepted file types and the
+  // reason Import is disabled are both wired to a control via aria-describedby.
+  // Unstyled background: the text is painted straight onto the surface.
+  ['.help-text', 'bg-card', 'inherits'],
+  // Remove, on every leftover file-import row.
+  ['.btn-danger', 'bg-card', 'own-background'],
+]
+
+describe('WCAG AA text contrast of shared colour rules', () => {
+  // Regression: these ratios were computed from the committed hex values and
+  // found short — .sync-status-error at 2.27:1 and .sync-status-info at 3.24:1
+  // in nord, .help-text at 3.58:1 in snowstorm, and .btn-danger at 1.53:1 in
+  // snowstorm, i.e. a destructive button whose label was effectively invisible.
+  // Asserted against the parsed stylesheet rather than hardcoded numbers so
+  // that editing a token, a tint percentage, or a colour re-runs the maths.
+  for (const [theme, palette] of THEMES) {
+    it.each(CONTRAST_CASES)(
+      `${theme}: %s on %s clears 4.5:1`,
+      (selector, surface, mode) => {
+        const { text, background } = rendered(
+          readBase(),
+          themeTokens(theme, palette),
+          selector,
+          surface,
+          mode,
+        )
+        expect(contrastRatio(text, background)).toBeGreaterThanOrEqual(
+          AA_NORMAL_TEXT,
+        )
+      },
+    )
+  }
 })
 
 describe('.sr-only utility', () => {
