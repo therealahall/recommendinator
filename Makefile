@@ -1,5 +1,5 @@
-.PHONY: help install install-ai install-dev lock test lint format type-check clean run
-.PHONY: install-frontend build-frontend check-frontend
+.PHONY: help install install-ai install-dev lock lock-check test lint format type-check clean run
+.PHONY: install-frontend build-frontend check-frontend lock-check-frontend
 
 help:
 	@echo "Available commands:"
@@ -33,6 +33,17 @@ install-frontend:
 lock:
 	uv lock
 
+# Every install path uses `uv sync --locked`, which refuses a lockfile that no
+# longer matches pyproject.toml. Running this first fails the same way here as
+# CI does, instead of after the whole suite has passed.
+lock-check:
+	uv lock --check
+
+# Same guarantee for the frontend: `--lockfile-only` resolves without linking
+# node_modules, so this only reports drift and never writes pnpm-lock.yaml.
+lock-check-frontend:
+	pnpm install --frozen-lockfile --lockfile-only
+
 test:
 	python3.11 -m pytest
 
@@ -55,7 +66,7 @@ check-frontend:
 	pnpm vue-tsc --noEmit
 	pnpm vitest run
 
-check: format-check lint type-check test check-frontend
+check: lock-check lock-check-frontend format-check lint type-check test check-frontend
 
 clean:
 	find . -type d -name __pycache__ -exec rm -r {} +
