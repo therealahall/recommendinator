@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v0.24.0 (2026-07-29)
+
+### Features
+
+- **docker**: Make the published port's host interface configurable
+  ([`f687a05`](https://github.com/therealahall/recommendinator/commit/f687a0590e132d11d1a32c70f16b9fcd1534636b))
+
+- **frontend**: Let the dev server port and proxy target come from env
+  ([`d849b20`](https://github.com/therealahall/recommendinator/commit/d849b20a58dc56a201f9ae05d5d1a00f29f4942d))
+
+
 ## v0.23.0 (2026-07-28)
 
 ### Bug Fixes
