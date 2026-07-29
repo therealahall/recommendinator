@@ -4,6 +4,7 @@ import Accordion from '@/components/atoms/Accordion.vue'
 import SourceConfigForm from '@/components/molecules/SourceConfigForm.vue'
 import OAuthConnectFlow from '@/components/molecules/OAuthConnectFlow.vue'
 import TraktDeviceCodeFlow from '@/components/molecules/TraktDeviceCodeFlow.vue'
+import { apiErrorDetail } from '@/composables/useApi'
 import { useDataStore } from '@/stores/data'
 import type {
   SyncJobResponse,
@@ -19,6 +20,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   sync: [sourceId: string]
+  removed: [displayName: string]
 }>()
 
 const data = useDataStore()
@@ -38,6 +40,9 @@ const config = computed(() => data.sourceConfigs[props.source.id])
 const isMigrated = computed(() => config.value?.migrated === true)
 
 async function ensureDetails(): Promise<void> {
+  // A file-import entry has no plugin the per-source endpoints will resolve —
+  // schema and config both 404 — and nothing in its panel needs them.
+  if (props.source.is_file_import) return
   if (detailsLoaded.value || detailsLoading.value) return
   detailsLoading.value = true
   try {
@@ -88,7 +93,9 @@ async function onSaveConfig(values: Record<string, unknown>): Promise<void> {
     }, 2500)
   } catch (err) {
     saveStatus.value = 'error'
-    saveError.value = err instanceof Error ? err.message : 'Unknown error'
+    // The server's detail names the field it refused; ApiError.message is only
+    // the status line ("400 Bad Request").
+    saveError.value = apiErrorDetail(err) ?? "Couldn't save these settings."
   } finally {
     savingConfig.value = false
   }
@@ -113,6 +120,7 @@ async function onEnabledChange(value: boolean): Promise<void> {
 }
 
 const removing = ref(false)
+const removeError = ref('')
 
 async function onRemove(): Promise<void> {
   if (removing.value) return
@@ -123,8 +131,23 @@ async function onRemove(): Promise<void> {
   )
   if (!ok) return
   removing.value = true
+  removeError.value = ''
   try {
     await data.deleteSource(props.source.id)
+    // deleteSource drops the row, so this accordion — and the Remove button
+    // holding focus — unmounts on the next render. The parent owns both the
+    // announcement and the new focus target, because neither can live here.
+    // The name travels with the event: the store entry is already gone.
+    emit('removed', props.source.display_name)
+  } catch (err) {
+    // A leftover entry that lives only in config.yaml has no database row to
+    // delete, so this is the one path where Remove routinely fails and the
+    // user needs to be told where the entry actually is. That explanation is
+    // the server's detail — ApiError.message is only "404 Not Found".
+    const detail = apiErrorDetail(err)
+    removeError.value = detail
+      ? `Couldn't remove this source: ${detail}`
+      : "Couldn't remove this source."
   } finally {
     removing.value = false
   }
@@ -198,6 +221,14 @@ const progressLabel = computed<string>(() => {
   return `${entry.items_processed} items`
 })
 
+// aria-valuetext, not the accessible name: baking the percentage into the name
+// makes AT read it twice and leaves it stale between renders.
+const progressValueText = computed<string>(() =>
+  progress.value?.progress_percent != null
+    ? `${progress.value.progress_percent}% complete`
+    : '',
+)
+
 const errorBadgeText = computed<string>(() => {
   const count = props.job?.error_count ?? 0
   return `${count} error${count === 1 ? '' : 's'}`
@@ -212,28 +243,32 @@ const errorBadgeAriaLabel = computed<string>(
   <Accordion
     :id="source.id"
     :expanded="expanded"
-    :class="{ 'source-accordion--disabled': !props.source.enabled }"
+    :class="{
+      'source-accordion--disabled':
+        !props.source.enabled || props.source.is_file_import,
+    }"
     @update:expanded="onToggleExpanded"
   >
     <template #header>
       <span class="source-accordion-header-text">
         <span class="source-accordion-name">{{ source.display_name }}</span>
         <span
-          v-if="!props.source.enabled"
+          v-if="props.source.is_file_import"
+          class="source-accordion-status-badge"
+        >Not syncable</span>
+        <span
+          v-else-if="!props.source.enabled"
           class="source-accordion-status-badge"
         >Disabled</span>
         <!--
-          v-show (not v-if) keeps the live region in the DOM so JAWS/NVDA
-          announce progress as values change rather than treating each
-          poll as a fresh insertion (WCAG 4.1.3 status messages).
-          All `progress?` derefs are null-safe so the children evaluate
-          cleanly while the region is hidden.
+          Deliberately NOT a live region: the 2s sync poll rewrites these
+          counts, and announcing each one floods the polite queue and buries
+          the eventual result behind it. The progressbar carries the value for
+          assistive tech to read on demand instead (WCAG 4.1.3).
+          v-show (not v-if) so the node is stable across polls; all `progress?`
+          derefs are null-safe so the children evaluate cleanly while hidden.
         -->
-        <span
-          v-show="progress"
-          class="source-accordion-progress"
-          aria-live="polite"
-        >
+        <span v-show="progress" class="source-accordion-progress">
           <span
             v-if="progress?.progress_percent != null"
             class="source-accordion-progress-bar"
@@ -241,7 +276,8 @@ const errorBadgeAriaLabel = computed<string>(
             :aria-valuenow="progress.progress_percent"
             aria-valuemin="0"
             aria-valuemax="100"
-            :aria-label="`${source.display_name} sync progress: ${progress.progress_percent}%`"
+            :aria-valuetext="progressValueText"
+            :aria-label="`${source.display_name} sync progress`"
           >
             <span
               class="source-accordion-progress-fill"
@@ -263,7 +299,12 @@ const errorBadgeAriaLabel = computed<string>(
     </template>
 
     <template #header-actions>
+      <!--
+        A file-import entry has no sync to trigger, so it gets no Sync button
+        at all rather than a permanently dead one.
+      -->
       <button
+        v-if="!props.source.is_file_import"
         type="button"
         class="btn btn-primary sync-btn"
         :data-testid="`sync-btn-${source.id}`"
@@ -279,7 +320,29 @@ const errorBadgeAriaLabel = computed<string>(
       >{{ syncLabel }}</button>
     </template>
 
-    <div v-if="detailsLoading && !detailsLoaded" class="empty-state">
+    <template v-if="props.source.is_file_import">
+      <p class="source-accordion-explainer">
+        This entry names <strong>{{ source.plugin_display_name }}</strong>, which
+        is a one-shot file import rather than a source that syncs. It is skipped
+        with a warning every time a sync runs, so it is safe to remove. Use
+        <strong>Import from file</strong> above to import the export itself.
+      </p>
+      <p class="source-accordion-explainer">
+        Remove drops the database row. An entry that lives only in the
+        <code>inputs:</code> section of <code>config.yaml</code> has no row to
+        drop — delete it there instead.
+      </p>
+      <button
+        type="button"
+        class="btn btn-danger source-accordion-remove-btn"
+        :data-testid="`remove-btn-${source.id}`"
+        :aria-label="`Remove ${source.display_name} from the database`"
+        :disabled="removing"
+        @click="onRemove"
+      >{{ removing ? 'Removing…' : 'Remove' }}</button>
+    </template>
+
+    <div v-else-if="detailsLoading && !detailsLoaded" class="empty-state">
       <span class="spinner" /> Loading…
     </div>
 
@@ -396,6 +459,20 @@ const errorBadgeAriaLabel = computed<string>(
         </SourceConfigForm>
       </template>
     </template>
+
+    <!--
+      Last in the panel so it lands directly below the Remove button in both
+      layouts (the file-import branch ends with it; the config form puts it in
+      its action row). One instance rather than one per branch.
+      v-show (not v-if) for the same reason as the OAuth messages above: a
+      role="alert" region inserted with its content already populated is
+      unreliably announced (VoiceOver in particular skips it).
+    -->
+    <p
+      v-show="removeError"
+      class="sync-status-message sync-status-error"
+      role="alert"
+    >{{ removeError }}</p>
   </Accordion>
 </template>
 

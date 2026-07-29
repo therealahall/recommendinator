@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   formatContentType, formatStatus, formatScore, formatElapsed,
   formatStatusForContentType, formatScorerName, formatDate, capitalize, truncate,
-  humanizeSection,
+  humanizeKey,
 } from './format'
 
 describe('formatContentType', () => {
@@ -106,20 +106,25 @@ describe('capitalize', () => {
   })
 })
 
-describe('humanizeSection', () => {
+describe('humanizeKey', () => {
   it('title-cases a plain section key', () => {
-    expect(humanizeSection('web')).toBe('Web')
+    expect(humanizeKey('web')).toBe('Web')
   })
 
   it('keeps allow-listed acronyms fully uppercase', () => {
-    expect(humanizeSection('llm')).toBe('LLM')
-    expect(humanizeSection('cors')).toBe('CORS')
-    expect(humanizeSection('api')).toBe('API')
+    expect(humanizeKey('llm')).toBe('LLM')
+    expect(humanizeKey('cors')).toBe('CORS')
+    expect(humanizeKey('api')).toBe('API')
   })
 
   it('splits underscores and hyphens into words', () => {
-    expect(humanizeSection('ai_features')).toBe('AI Features')
-    expect(humanizeSection('log-level')).toBe('Log Level')
+    expect(humanizeKey('ai_features')).toBe('AI Features')
+    expect(humanizeKey('log-level')).toBe('Log Level')
+  })
+
+  it('title-cases a config-schema field name', () => {
+    expect(humanizeKey('content_type')).toBe('Content Type')
+    expect(humanizeKey('title_column')).toBe('Title Column')
   })
 })
 

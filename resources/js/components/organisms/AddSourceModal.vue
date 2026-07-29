@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useFocusTrap } from '@/composables/useFocusTrap'
+import { apiErrorDetail } from '@/composables/useApi'
 import { useDataStore } from '@/stores/data'
 import type { PluginInfoResponse, SourceCreateRequest } from '@/types/api'
 
@@ -41,8 +42,7 @@ onMounted(async () => {
     try {
       await data.loadAvailablePlugins()
     } catch (err) {
-      errorMessage.value =
-        err instanceof Error ? err.message : 'Failed to load plugins'
+      errorMessage.value = apiErrorDetail(err) ?? 'Failed to load plugins.'
     }
   }
   if (data.availablePlugins.length > 0 && !pluginName.value) {
@@ -106,8 +106,9 @@ const missingRequiredFields = computed(() =>
 // natively disabling the button under the user's own focus drops them to
 // <body> (WCAG 2.4.3). Worse here than elsewhere — every field and Cancel are
 // also disabled while submitting, so a native lock on Create would leave the
-// dialog with ZERO focusable elements, useFocusTrap bails (it returns early on
-// an empty list), and Tab escapes behind an aria-modal="true" dialog.
+// dialog with ZERO focusable elements. useFocusTrap then has nowhere to send
+// Tab but the dialog container itself, which keeps focus in but leaves the
+// user pinned on an inert dialog with nothing to reach.
 const isValid = computed(
   () =>
     !!pluginName.value &&
@@ -172,7 +173,7 @@ async function submit(): Promise<void> {
         // settings panel. Name the actual field — plugins may have several.
         emit('created', created.source_id)
         errorMessage.value =
-          (err instanceof Error ? err.message : 'Failed to save secret') +
+          (apiErrorDetail(err) ?? 'Failed to save secret.') +
           ` — the source "${created.source_id}" was created, but its ` +
           `"${field.name}" could not be saved. Set it from the source ` +
           'settings panel.'
@@ -182,8 +183,9 @@ async function submit(): Promise<void> {
     emit('created', created.source_id)
     emit('close')
   } catch (err) {
-    errorMessage.value =
-      err instanceof Error ? err.message : 'Failed to create source'
+    // The server's detail names the conflicting id or the rejected field;
+    // ApiError.message is only the status line ("409 Conflict").
+    errorMessage.value = apiErrorDetail(err) ?? 'Failed to create source.'
   } finally {
     submitting.value = false
   }

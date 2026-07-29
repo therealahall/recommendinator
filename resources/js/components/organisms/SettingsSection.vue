@@ -16,7 +16,7 @@ import Accordion from '@/components/atoms/Accordion.vue'
 import SettingControl from '@/components/molecules/SettingControl.vue'
 import SettingSecret from '@/components/molecules/SettingSecret.vue'
 import { useSettingsStore } from '@/stores/settings'
-import { humanizeSection } from '@/utils/format'
+import { humanizeKey } from '@/utils/format'
 import type {
   SettingsSection,
   SettingView,
@@ -44,7 +44,7 @@ const nonAdvanced = computed(() => valueSettings.value.filter((setting) => !sett
 const advanced = computed(() => valueSettings.value.filter((setting) => setting.advanced))
 const secrets = computed(() => props.section.settings.filter(isSecret))
 
-const title = computed(() => humanizeSection(props.section.section))
+const title = computed(() => humanizeKey(props.section.section))
 const sectionKey = computed(() => props.section.section)
 const groupId = computed(() => `settings-group-${sectionKey.value}`)
 const headingId = computed(() => `settings-heading-${sectionKey.value}`)

@@ -90,6 +90,9 @@ export interface SyncSourceResponse {
   display_name: string
   plugin_display_name: string
   enabled: boolean
+  // A leftover entry naming a one-shot file-import plugin. It can never sync;
+  // it is listed so the user can find and remove it.
+  is_file_import: boolean
 }
 
 export type SourceFieldType = 'str' | 'int' | 'float' | 'bool' | 'list'
@@ -143,6 +146,28 @@ export interface SourceCreateRequest {
   plugin: string
   values: Record<string, unknown>
   enabled: boolean
+}
+
+// --- File import ---
+
+export interface ImportSourceResponse {
+  name: string
+  display_name: string
+  description: string
+  content_types: string[]
+  // Lowercase, dot-prefixed extensions this importer expects (e.g. ['.csv']).
+  accepted_extensions: string[]
+  fields: SourceFieldSchema[]
+}
+
+export interface ImportResultResponse {
+  message: string
+  source: string
+  items_synced: number
+  total_items: number
+  errors: string[]
+  // Advisory for an import that parsed but produced no items; null otherwise.
+  warning: string | null
 }
 
 export interface SyncSourceProgressResponse {

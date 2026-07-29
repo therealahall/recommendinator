@@ -17,6 +17,25 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * The server's `detail` string for a failed request, when there is one.
+ *
+ * Never use `ApiError.message` in user-facing copy: it is built from the status
+ * line, so it reads "404 Not Found" while the explanation the user needs sits
+ * in `detail`. FastAPI's own request validation sends `detail` as an array of
+ * error objects instead — diagnostic output, not copy, and `[object Object]` in
+ * a banner if rendered — so only a non-empty string is returned.
+ */
+export function apiErrorDetail(error: unknown): string | undefined {
+  if (!(error instanceof ApiError)) return undefined
+  const { body } = error
+  if (typeof body !== 'object' || body === null || !('detail' in body)) {
+    return undefined
+  }
+  const { detail } = body
+  return typeof detail === 'string' && detail !== '' ? detail : undefined
+}
+
 function buildUrl(
   path: string,
   params?: Record<string, string | number | boolean | undefined>,
@@ -40,7 +59,12 @@ async function request<T>(path: string, options: ApiOptions = {}): Promise<T> {
   const url = buildUrl(path, params)
 
   const headers: HeadersInit = { ...fetchOptions.headers }
-  if (fetchOptions.body !== undefined) {
+  // FormData sets its own multipart Content-Type (with boundary); only force
+  // JSON for plain-object bodies.
+  if (
+    fetchOptions.body !== undefined &&
+    !(fetchOptions.body instanceof FormData)
+  ) {
     ;(headers as Record<string, string>)['Content-Type'] = 'application/json'
   }
 
@@ -89,6 +113,10 @@ export function useApi() {
         method: 'PATCH',
         body: body !== undefined ? JSON.stringify(body) : undefined,
       })
+    },
+
+    postForm<T>(path: string, body: FormData) {
+      return request<T>(path, { method: 'POST', body })
     },
 
     delete<T>(path: string) {

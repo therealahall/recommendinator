@@ -17,6 +17,8 @@ import type {
   TraktStatusResponse,
   TraktDeviceFlowResponse,
   TraktPollResponse,
+  ImportSourceResponse,
+  ImportResultResponse,
 } from '@/types/api'
 
 const ALL_SOURCES_LABEL = 'All Sources'
@@ -435,6 +437,34 @@ export const useDataStore = defineStore('data', () => {
   const sourceSchemas = ref<Record<string, SourceSchemaResponse>>({})
   const sourceConfigs = ref<Record<string, SourceConfigResponse>>({})
   const availablePlugins = ref<PluginInfoResponse[]>([])
+  const importSources = ref<ImportSourceResponse[]>([])
+
+  async function loadImportSources(): Promise<ImportSourceResponse[]> {
+    const sources = await api.get<ImportSourceResponse[]>('/import/sources')
+    importSources.value = sources
+    return sources
+  }
+
+  // One-shot file import. Builds the multipart body the /import endpoint
+  // expects (source + file + one form field per option), dispatches the
+  // POST, then starts sync polling so the in-flight progress feed updates
+  // while the request is awaited. The response body carries the final
+  // counts; ApiError propagates to the caller for status-specific messaging.
+  async function runImport(
+    source: string,
+    file: File,
+    options: Record<string, string>,
+  ): Promise<ImportResultResponse> {
+    const formData = new FormData()
+    formData.append('source', source)
+    formData.append('file', file)
+    for (const [name, value] of Object.entries(options)) {
+      formData.append(name, value)
+    }
+    const pending = api.postForm<ImportResultResponse>('/import', formData)
+    startSyncPolling()
+    return pending
+  }
 
   async function loadSourceSchema(sourceId: string): Promise<SourceSchemaResponse> {
     const schema = await api.get<SourceSchemaResponse>(
@@ -549,6 +579,7 @@ export const useDataStore = defineStore('data', () => {
     // Helpers
     isSourceIdSyncing,
     jobForSourceId,
+    jobForLabel,
     gogStatus,
     epicStatus,
     traktStatus,
@@ -560,6 +591,7 @@ export const useDataStore = defineStore('data', () => {
     sourceSchemas,
     sourceConfigs,
     availablePlugins,
+    importSources,
     // Actions
     loadSyncSources,
     triggerSync,
@@ -587,6 +619,8 @@ export const useDataStore = defineStore('data', () => {
     loadAvailablePlugins,
     createSource,
     deleteSource,
+    loadImportSources,
+    runImport,
     cleanup,
   }
 })

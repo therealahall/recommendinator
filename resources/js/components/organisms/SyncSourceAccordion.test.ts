@@ -2,19 +2,36 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import SyncSourceAccordion from './SyncSourceAccordion.vue'
+import { ApiError } from '@/composables/useApi'
 import { useDataStore } from '@/stores/data'
-import type { SourceConfigResponse, SourceSchemaResponse } from '@/types/api'
+import type {
+  SourceConfigResponse,
+  SourceSchemaResponse,
+  SyncSourceResponse,
+} from '@/types/api'
 
-const baseSource = {
+const baseSource: SyncSourceResponse = {
   id: 'steam',
   display_name: 'Steam',
   plugin_display_name: 'Steam',
   enabled: true,
+  is_file_import: false,
 }
 
-const disabledSource = {
+const disabledSource: SyncSourceResponse = {
   ...baseSource,
   enabled: false,
+}
+
+// A leftover entry naming a file-import plugin: it still carries enabled=true
+// (nothing rewrites the stored flag), which is exactly why the accordion has
+// to key its "not syncable" rendering off is_file_import rather than enabled.
+const fileImportSource: SyncSourceResponse = {
+  id: 'legacy_books',
+  display_name: 'Legacy Books',
+  plugin_display_name: 'Goodreads (CSV Export)',
+  enabled: true,
+  is_file_import: true,
 }
 
 const baseSchema: SourceSchemaResponse = {
@@ -56,6 +73,13 @@ const yamlConfig: SourceConfigResponse = {
   ...migratedConfig,
   migrated: false,
   migrated_at: null,
+}
+
+// v-show toggles inline `display`. Read that rather than `isVisible()`:
+// jsdom's computed style goes stale after a visible → hidden transition, which
+// is exactly the transition the retry test needs to observe.
+function isShown(element: Element): boolean {
+  return (element as HTMLElement).style.display !== 'none'
 }
 
 describe('SyncSourceAccordion', () => {
@@ -207,6 +231,144 @@ describe('SyncSourceAccordion', () => {
     expect(wrapper.text()).toContain('Disabled')
   })
 
+  describe('a leftover file-import entry', () => {
+    it('renders no Sync button and a Not syncable badge', () => {
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: fileImportSource, syncing: false },
+      })
+
+      // Keyed off is_file_import, not enabled: the row is still enabled=true.
+      expect(wrapper.find('[data-testid="sync-btn-legacy_books"]').exists()).toBe(
+        false,
+      )
+      expect(wrapper.text()).toContain('Not syncable')
+      expect(wrapper.text()).not.toContain('Disabled')
+    })
+
+    it('explains itself and offers Remove without loading a schema', async () => {
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: fileImportSource, syncing: false },
+      })
+      const store = useDataStore()
+      // Both per-source endpoints 404 for a file-import plugin, so expanding
+      // must not call them — an error banner would be all the user got.
+      const loadSchema = vi.spyOn(store, 'loadSourceSchema')
+      const loadConfig = vi.spyOn(store, 'loadSourceConfig')
+
+      await wrapper.find('button.accordion-trigger').trigger('click')
+      await flushPromises()
+
+      expect(loadSchema).not.toHaveBeenCalled()
+      expect(loadConfig).not.toHaveBeenCalled()
+      expect(wrapper.text()).toContain('one-shot file import')
+      expect(wrapper.text()).toContain('config.yaml')
+      expect(
+        wrapper.find('[data-testid="remove-btn-legacy_books"]').exists(),
+      ).toBe(true)
+    })
+
+    async function expandAndRemove() {
+      vi.spyOn(window, 'confirm').mockReturnValue(true)
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: fileImportSource, syncing: false },
+      })
+      await wrapper.find('button.accordion-trigger').trigger('click')
+      await flushPromises()
+      await wrapper
+        .find('[data-testid="remove-btn-legacy_books"]')
+        .trigger('click')
+      await flushPromises()
+      return wrapper
+    }
+
+    it('removes the row and hands the parent the name to announce', async () => {
+      const store = useDataStore()
+      const remove = vi
+        .spyOn(store, 'deleteSource')
+        .mockResolvedValue(undefined)
+
+      const wrapper = await expandAndRemove()
+
+      expect(remove).toHaveBeenCalledWith('legacy_books')
+      // The parent has to do the announcing and re-focusing: this component
+      // unmounts with the row it just deleted.
+      expect(wrapper.emitted('removed')).toEqual([['Legacy Books']])
+      expect(isShown(wrapper.find('[role="alert"]').element)).toBe(false)
+    })
+
+    it('reports a failed removal instead of silently doing nothing', async () => {
+      // Regression: the banner interpolated `err.message`, which ApiError
+      // builds from the status line — so the one failure this flow routinely
+      // hits announced "Couldn't remove this source: 404 Not Found" and the
+      // server's actual explanation was discarded (WCAG 3.3.1).
+      const store = useDataStore()
+      // Exactly what DELETE /api/sync/sources/<id> answers for a YAML-only
+      // entry: 404 not_migrated, with the explanation in `detail`.
+      vi.spyOn(store, 'deleteSource').mockRejectedValue(
+        new ApiError(404, 'Not Found', {
+          detail: 'Source has not been migrated to the database.',
+        }),
+      )
+
+      const wrapper = await expandAndRemove()
+
+      const alert = wrapper.find('[role="alert"]')
+      // Mounted before the text arrives (v-show, not v-if) so screen readers
+      // that ignore a region inserted with content still announce it.
+      expect(alert.exists()).toBe(true)
+      expect(isShown(alert.element)).toBe(true)
+      expect(alert.text()).toBe(
+        "Couldn't remove this source: Source has not been migrated to the " +
+          'database.',
+      )
+      expect(alert.text()).not.toContain('404')
+      expect(wrapper.emitted('removed')).toBeUndefined()
+    })
+
+    it('falls back to generic copy when the rejection carries no detail', async () => {
+      const store = useDataStore()
+      // A dropped connection is not an ApiError at all, and its message
+      // ("Failed to fetch") is no more use to the user than a status line.
+      vi.spyOn(store, 'deleteSource').mockRejectedValue(
+        new Error('Failed to fetch'),
+      )
+
+      const wrapper = await expandAndRemove()
+
+      const alert = wrapper.find('[role="alert"]')
+      expect(alert.text()).toBe("Couldn't remove this source.")
+      expect(wrapper.emitted('removed')).toBeUndefined()
+    })
+
+    it('clears the failure alert when the user retries', async () => {
+      const store = useDataStore()
+      const remove = vi
+        .spyOn(store, 'deleteSource')
+        .mockRejectedValueOnce(
+          new ApiError(404, 'Not Found', {
+            detail: 'Source has not been migrated to the database.',
+          }),
+        )
+        .mockResolvedValueOnce(undefined)
+
+      const wrapper = await expandAndRemove()
+      expect(isShown(wrapper.find('[role="alert"]').element)).toBe(true)
+
+      await wrapper
+        .find('[data-testid="remove-btn-legacy_books"]')
+        .trigger('click')
+      await flushPromises()
+
+      expect(remove).toHaveBeenCalledTimes(2)
+      // A stale error beside a now-successful action would contradict itself,
+      // and a permanently-mounted region must be emptied as well as hidden or
+      // a screen reader can still reach the old text.
+      expect(wrapper.find('[role="alert"]').text()).toBe('')
+      expect(isShown(wrapper.find('[role="alert"]').element)).toBe(false)
+      expect(wrapper.emitted('removed')).toEqual([['Legacy Books']])
+    })
+  })
+
   it('does not emit sync when disabled source button is clicked', async () => {
     const wrapper = mount(SyncSourceAccordion, {
       props: { source: disabledSource, syncing: false },
@@ -334,14 +496,16 @@ describe('SyncSourceAccordion', () => {
     expect(status.text()).toContain('Saved')
   })
 
-  it('renders the Error status pill when updateSourceConfig rejects', async () => {
+  it('renders the server detail in the Error status pill when updateSourceConfig rejects', async () => {
     const wrapper = mount(SyncSourceAccordion, {
       props: { source: baseSource, syncing: false },
     })
     const store = useDataStore()
     primeStore(store, migratedConfig)
     vi.spyOn(store, 'updateSourceConfig').mockRejectedValue(
-      new Error('save blew up'),
+      new ApiError(400, 'Bad Request', {
+        detail: "Invalid field 'vanity_url' for plugin 'steam'.",
+      }),
     )
 
     await wrapper.find('button.accordion-trigger').trigger('click')
@@ -351,8 +515,29 @@ describe('SyncSourceAccordion', () => {
 
     const status = wrapper.find('[data-testid="form-save-status"]')
     expect(status.exists()).toBe(true)
-    expect(status.text()).toContain('save blew up')
+    expect(status.text()).toContain("Invalid field 'vanity_url'")
+    // Not the status line ApiError builds its message from.
+    expect(status.text()).not.toContain('400')
     expect(status.attributes('role')).toBe('alert')
+  })
+
+  it('falls back to generic save copy when the rejection carries no detail', async () => {
+    const wrapper = mount(SyncSourceAccordion, {
+      props: { source: baseSource, syncing: false },
+    })
+    const store = useDataStore()
+    primeStore(store, migratedConfig)
+    vi.spyOn(store, 'updateSourceConfig').mockRejectedValue(
+      new Error('Failed to fetch'),
+    )
+
+    await wrapper.find('button.accordion-trigger').trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-testid="form-save"]').trigger('click')
+    await flushPromises()
+
+    const status = wrapper.find('[data-testid="form-save-status"]')
+    expect(status.text()).toContain("Couldn't save these settings.")
   })
 
   it('disables the toggle button while setSourceEnabled is in flight (re-entrant guard)', async () => {
@@ -383,11 +568,11 @@ describe('SyncSourceAccordion', () => {
   })
 
   describe('trakt device-code connect/disconnect', () => {
-    const traktSource = {
+    const traktSource: SyncSourceResponse = {
+      ...baseSource,
       id: 'trakt',
       display_name: 'Trakt',
       plugin_display_name: 'Trakt',
-      enabled: true,
     }
     const traktConfig: SourceConfigResponse = {
       ...migratedConfig,
@@ -495,6 +680,16 @@ describe('SyncSourceAccordion', () => {
       expect(wrapper.text()).toContain('4/10')
       expect(wrapper.text()).toContain('40%')
       expect(wrapper.text()).toContain('Half-Life 2')
+
+      // Regression: the percentage was baked into aria-label, so AT read it
+      // twice and the accessible name went stale between polls; and the whole
+      // counts region was aria-live="polite", which the 2s poll rewrote into a
+      // flood that buried the eventual result (WCAG 4.1.3).
+      expect(bar.attributes('aria-label')).toBe('Steam sync progress')
+      expect(bar.attributes('aria-valuetext')).toBe('40% complete')
+      expect(
+        wrapper.find('.source-accordion-progress').attributes('aria-live'),
+      ).toBeUndefined()
     })
 
     it('looks up this source in job.sources[] when job is umbrella', () => {
@@ -588,8 +783,8 @@ describe('SyncSourceAccordion', () => {
         props: { source: baseSource, syncing: false, job: null },
       })
 
-      // The aria-live progress region is in the DOM via v-show but
-      // hidden, and the error badge is absent because there's no job.
+      // The progress region is in the DOM via v-show but hidden, and the
+      // error badge is absent because there's no job.
       expect(wrapper.find('.source-accordion-error-badge').exists()).toBe(false)
       const region = wrapper.find('.source-accordion-progress')
       expect(region.exists()).toBe(true)

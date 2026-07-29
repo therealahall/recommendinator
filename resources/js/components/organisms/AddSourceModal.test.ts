@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import AddSourceModal from './AddSourceModal.vue'
+import { ApiError } from '@/composables/useApi'
 import { useDataStore } from '@/stores/data'
 import type { PluginInfoResponse, SourceConfigResponse } from '@/types/api'
 
@@ -276,6 +277,32 @@ describe('AddSourceModal', () => {
     expect(alert.text()).toContain('was created')
     // Names the actual failing field (this plugin's secret is "password").
     expect(alert.text()).toContain('password')
+  })
+
+  it('shows the server detail when createSource is rejected, not the status line', async () => {
+    // Regression: the banner interpolated `err.message`, which ApiError builds
+    // from the status line — so a duplicate id read "409 Conflict" instead of
+    // naming the id that already exists (WCAG 3.3.1).
+    const { wrapper, store } = await mountWithPlugins()
+    vi.spyOn(store, 'createSource').mockRejectedValue(
+      new ApiError(409, 'Conflict', {
+        detail: "Source id 'calibre-web' already exists.",
+      }),
+    )
+
+    await wrapper.find('#add-source-id').setValue('calibre-web')
+    await wrapper.find('#add-source-field-base_url').setValue('http://cw')
+    await wrapper.find('#add-source-field-username').setValue('me')
+    await wrapper
+      .find('[data-testid="add-source-secret-password"]')
+      .setValue('hunter2')
+    await wrapper.find('[data-testid="add-source-submit"]').trigger('click')
+    await flushPromises()
+
+    const alert = wrapper.find('.add-source-error')
+    expect(alert.text()).toBe("Source id 'calibre-web' already exists.")
+    expect(alert.attributes('role')).toBe('alert')
+    expect(wrapper.emitted('close')).toBeFalsy()
   })
 
   it('sets each secret once in field order for a two-secret plugin', async () => {

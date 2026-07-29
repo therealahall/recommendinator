@@ -1,7 +1,19 @@
 import { type Ref, onMounted, onUnmounted, nextTick } from 'vue'
 
 const FOCUSABLE_SELECTOR =
-  'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+  'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary:not([hidden]), a[href], [tabindex]:not([tabindex="-1"])'
+
+// The selector only filters the HTML `hidden` attribute, but `v-show` hides an
+// element with inline `display: none`, which the browser also skips when
+// tabbing. Including one would make it a phantom first/last stop and break
+// wrapping, so drop anything hidden on the element ITSELF. This does not see an
+// element hidden by an ancestor — `getComputedStyle(child).display` reports the
+// child's own value, not the ancestor's `none` — which is fine for the dialogs
+// using this trap, where `v-show` sits on the focusable's own node.
+function isVisible(element: HTMLElement): boolean {
+  const style = getComputedStyle(element)
+  return style.display !== 'none' && style.visibility !== 'hidden'
+}
 
 /**
  * Only one focus trap should be active at a time in this application.
@@ -18,16 +30,31 @@ export function useFocusTrap(
       return
     }
     if (event.key === 'Tab') {
-      const focusable = containerRef.value?.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)
-      if (!focusable || focusable.length === 0) return
-      const first = focusable[0]
-      const last = focusable[focusable.length - 1]
-      if (event.shiftKey && document.activeElement === first) {
+      const container = containerRef.value
+      if (!container) return
+      const focusable = [
+        ...container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
+      ].filter(isVisible)
+      const active = document.activeElement as HTMLElement | null
+      const index = active ? focusable.indexOf(active) : -1
+      const lastIndex = focusable.length - 1
+      // Focus is not on anything the trap owns: it is on the container itself
+      // (tabindex="-1", so never in `focusable`) after mount or a click on the
+      // dialog's text, on <body> after a control blurred mid-request, or on a
+      // control behind the overlay. Native Tab would walk to whatever sits
+      // next in document order, which is outside an aria-modal dialog and so
+      // invisible to the screen reader's virtual cursor. Enter the trap at the
+      // near edge instead, falling back to the container when it is
+      // momentarily empty of focusables (WCAG 2.4.3).
+      if (index === -1) {
         event.preventDefault()
-        last.focus()
-      } else if (!event.shiftKey && document.activeElement === last) {
+        ;(focusable[event.shiftKey ? lastIndex : 0] ?? container).focus()
+      } else if (event.shiftKey && index === 0) {
         event.preventDefault()
-        first.focus()
+        focusable[lastIndex].focus()
+      } else if (!event.shiftKey && index === lastIndex) {
+        event.preventDefault()
+        focusable[0].focus()
       }
     }
   }

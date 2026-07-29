@@ -55,8 +55,8 @@ export function formatScorerName(key: string): string {
   return key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
-/** Acronyms that stay fully uppercase in humanized section headings. */
-const SECTION_ACRONYMS: Record<string, string> = {
+/** Acronyms that stay fully uppercase in humanized keys. */
+const KEY_ACRONYMS: Record<string, string> = {
   llm: 'LLM',
   ai: 'AI',
   api: 'API',
@@ -65,13 +65,17 @@ const SECTION_ACRONYMS: Record<string, string> = {
   db: 'DB',
 }
 
-/** Humanize a settings section key (e.g. "web" -> "Web", "llm" -> "LLM"). */
-export function humanizeSection(section: string): string {
-  return section
+/**
+ * Humanize a snake/kebab-case key for display — settings sections and
+ * config-schema field names alike (e.g. "llm" -> "LLM",
+ * "content_type" -> "Content Type").
+ */
+export function humanizeKey(key: string): string {
+  return key
     .replace(/[_-]+/g, ' ')
     .trim()
     .split(/\s+/)
-    .map((word) => SECTION_ACRONYMS[word.toLowerCase()] ?? capitalize(word))
+    .map((word) => KEY_ACRONYMS[word.toLowerCase()] ?? capitalize(word))
     .join(' ')
 }
 
