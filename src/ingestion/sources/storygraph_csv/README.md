@@ -1,6 +1,8 @@
 # The StoryGraph (CSV Export)
 
-Imports books from a The StoryGraph library CSV export.
+Imports books from a The StoryGraph library CSV export. This is a **one-shot file
+import**, not a source: there is nothing to create, configure, or re-sync. To
+pick up new books, export again and import again.
 
 ## Content type
 - `book`
@@ -10,21 +12,21 @@ Imports books from a The StoryGraph library CSV export.
   generate the file from your account: **Manage Account → Manage Your Data →
   Export StoryGraph Library**. StoryGraph emails you the CSV.
 
-## Configuration
+## Import
+
+Open the **Data** tab, click **Import from file**, pick **The StoryGraph (CSV
+Export)**, and choose your export. Or from the CLI:
 
 ```bash
-python3.11 -m src.cli source create storygraph_csv storygraph_csv
-python3.11 -m src.cli source set storygraph_csv path /path/to/storygraph_export.csv
+python3.11 -m src.cli import --source storygraph_csv --file /path/to/storygraph_export.csv
 ```
 
-Or add it from the **Data** tab with **+ Add source**.
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `path` | str | yes | Path to The StoryGraph library CSV export file. |
+This plugin takes no import options, since it is always books. Web uploads are
+capped at 50 MB, and the CLI has no cap.
 
 ## Notes
-- No API key or network access required — pure file import.
+- No API key or network access required.
+- An export re-saved in Excel (UTF-8 with a byte-order mark) imports as is.
 - Reads `Title`, `Authors`, `Contributors`, `ISBN/UID`, `Format`, `Read Status`,
   `Date Added`, `Last Date Read`, `Dates Read`, `Read Count`, `Moods`, `Pace`,
   the character-attribute columns (`Character- or Plot-Driven?`, `Strong

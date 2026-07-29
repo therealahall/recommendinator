@@ -1,27 +1,28 @@
 # Generic CSV Import
 
-Imports content items from a generic CSV file. Each input maps to a single content type; recognised columns vary by type.
+Imports content items from a generic CSV file. Each import covers a single content type; recognised columns vary by type. This is a **one-shot file import**, not a source: the file is read once and nothing about it is stored, so import each file whenever you want its contents in your library.
 
 ## Content types
-- `book`, `movie`, `tv_show`, `video_game` (one type per import — set via the `content_type` config field)
+- `book`, `movie`, `tv_show`, `video_game` (one type per import, set via the `content_type` option)
 
 ## Requirements
-- A CSV file with at minimum a `title` column for the configured content type.
+- A CSV file with at minimum a `title` column for the content type you are importing.
+- UTF-8 encoded. A file saved by Excel (UTF-8 with a byte-order mark) works as is.
 
-## Configuration
+## Import
+
+Open the **Data** tab, click **Import from file**, pick **CSV Import**, choose the
+file, and select a content type. Or from the CLI:
 
 ```bash
-python3.11 -m src.cli source create my_csv csv_import
-python3.11 -m src.cli source set my_csv path /path/to/library.csv
-python3.11 -m src.cli source set my_csv content_type book   # or movie, tv_show, video_game
+python3.11 -m src.cli import --source csv_import --file /path/to/library.csv --content-type book
 ```
 
-Or add it from the **Data** tab with **+ Add source**. The id (`my_csv` above) is
-yours to choose, so you can have several CSV sources for different files.
+Import one file per content type. Web uploads are capped at 50 MB, and the CLI has
+no cap.
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `path` | str | yes | Path to the CSV file. |
+| Option | Type | Required | Description |
+|--------|------|----------|-------------|
 | `content_type` | str | yes | One of: `book`, `movie`, `tv_show`, `video_game`. |
 
 ## Recognized columns

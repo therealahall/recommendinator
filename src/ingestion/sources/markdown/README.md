@@ -1,27 +1,28 @@
 # Markdown Import
 
-Imports content items from a single Markdown file using a prescriptive list-per-section format.
+Imports content items from a single Markdown file using a prescriptive list-per-section format. This is a **one-shot file import**, not a source: the file is read once and nothing about it is stored, so import it again whenever you update it.
 
 ## Content types
-- `book`, `movie`, `tv_show`, `video_game` (one type per import — set via `content_type` config field)
+- `book`, `movie`, `tv_show`, `video_game` (one type per import, set via the `content_type` option)
 
 ## Requirements
 - A `.md` file with `## Status` section headings and `- **Title** by Creator | metadata` list items.
+- UTF-8 encoded. A file saved with a byte-order mark works as is.
 
-## Configuration
+## Import
+
+Open the **Data** tab, click **Import from file**, pick **Markdown Import**, choose
+the file, and select a content type. Or from the CLI:
 
 ```bash
-python3.11 -m src.cli source create my_md markdown_import
-python3.11 -m src.cli source set my_md path /path/to/library.md
-python3.11 -m src.cli source set my_md content_type book   # or movie, tv_show, video_game
+python3.11 -m src.cli import --source markdown_import --file /path/to/library.md --content-type book
 ```
 
-Or add it from the **Data** tab with **+ Add source**. The id (`my_md` above) is
-yours to choose, so you can have several Markdown sources for different files.
+Import one file per content type. Web uploads are capped at 50 MB, and the CLI has
+no cap.
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `path` | str | yes | Path to the Markdown file. |
+| Option | Type | Required | Description |
+|--------|------|----------|-------------|
 | `content_type` | str | yes | One of: `book`, `movie`, `tv_show`, `video_game`. |
 
 ## File format

@@ -32,6 +32,59 @@ _UPPERCASE_WORDS: dict[str, str] = {
     "json": "JSON",
 }
 
+# Every C0 control, DEL, every C1 control, and the two Unicode line separators.
+# CR/LF forge a log line under the "%(asctime)s | ... | %(message)s" format,
+# ESC drives the terminal of whoever cats or tails the file, and the
+# separators are line breaks to plenty of log viewers. Spelled with ``\N``
+# escapes because the separators themselves are invisible in a source file.
+_LOG_UNSAFE_RE = re.compile(
+    "[\x00-\x1f\x7f-\x9f\N{LINE SEPARATOR}\N{PARAGRAPH SEPARATOR}]"
+)
+
+# Familiar spellings for the controls an operator actually meets. Anything
+# else renders as its numeric escape.
+_LOG_ESCAPES = {"\0": "\\0", "\t": "\\t", "\n": "\\n", "\r": "\\r"}
+
+# Cap on one value rendered into a log record. Long enough to identify the row
+# it came from, short enough that a file full of oversized values cannot bury
+# the records around them.
+MAX_LOGGED_VALUE_LENGTH = 200
+
+_TRUNCATION_MARKER = "...(truncated)"
+
+
+def _escape_log_control(match: re.Match[str]) -> str:
+    """Render one control character as a printable escape."""
+    char = match.group()
+    escaped = _LOG_ESCAPES.get(char)
+    if escaped is not None:
+        return escaped
+    codepoint = ord(char)
+    return f"\\x{codepoint:02x}" if codepoint <= 0xFF else f"\\u{codepoint:04x}"
+
+
+def sanitize_for_log(value: str) -> str:
+    """Escape control characters and cap the length before logging.
+
+    Values that reach a log line are often user-controlled — a path parameter,
+    a settings key, a cell of an uploaded import file. A newline in one of them
+    forges a structured log line and an ESC sequence hijacks the terminal of
+    whoever reads the file back (CWE-117), so every control character is
+    rewritten to a printable escape rather than dropped: the record still shows
+    what arrived. The cap keeps a record's size independent of its input.
+
+    Args:
+        value: The value to render into a log record.
+
+    Returns:
+        The escaped value, truncated with a marker when it exceeds
+        :data:`MAX_LOGGED_VALUE_LENGTH`.
+    """
+    escaped = _LOG_UNSAFE_RE.sub(_escape_log_control, value)
+    if len(escaped) > MAX_LOGGED_VALUE_LENGTH:
+        return escaped[:MAX_LOGGED_VALUE_LENGTH] + _TRUNCATION_MARKER
+    return escaped
+
 
 def humanize_source_id(source_id: str) -> str:
     """Convert a snake_case source ID to a human-readable title.

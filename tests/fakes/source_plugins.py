@@ -14,13 +14,17 @@ from typing import Any
 
 import pytest
 
-from src.ingestion.plugin_base import ConfigField, SourcePlugin
+from src.ingestion.plugin_base import ConfigField, ProgressCallback, SourcePlugin
 from src.ingestion.registry import PluginRegistry
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 
 
 class FakeFilePlugin(SourcePlugin):
-    """File-based fake: a single non-sensitive ``path`` field."""
+    """File-based fake: a single non-sensitive ``path`` field.
+
+    Still an ordinary *syncable* source — ``FakeUploadPlugin`` below is the
+    one-shot file-import fake.
+    """
 
     @property
     def name(self) -> str:
@@ -60,7 +64,11 @@ class FakeFilePlugin(SourcePlugin):
             return ["'path' is required"]
         return []
 
-    def fetch(self, config: dict[str, Any]) -> Iterator[ContentItem]:
+    def fetch(
+        self,
+        config: dict[str, Any],
+        progress_callback: ProgressCallback | None = None,
+    ) -> Iterator[ContentItem]:
         yield ContentItem(
             id="x",
             title="Stub",
@@ -131,7 +139,11 @@ class FakeApiPlugin(SourcePlugin):
     def validate_config(self, config: dict[str, Any], **kwargs: Any) -> list[str]:
         return []
 
-    def fetch(self, config: dict[str, Any]) -> Iterator[ContentItem]:
+    def fetch(
+        self,
+        config: dict[str, Any],
+        progress_callback: ProgressCallback | None = None,
+    ) -> Iterator[ContentItem]:
         yield ContentItem(
             id="g",
             title="Stub",
@@ -141,9 +153,57 @@ class FakeApiPlugin(SourcePlugin):
         )
 
 
+class FakeUploadPlugin(SourcePlugin):
+    """One-shot file-import fake: never a syncable source.
+
+    Stands in for ``goodreads_csv`` / ``csv_import`` / ``json_import`` /
+    ``markdown_import`` so the source-config suites can prove a file-import
+    plugin is neither offered by the plugin picker nor creatable as a source.
+    """
+
+    @property
+    def name(self) -> str:
+        return "fake_upload"
+
+    @property
+    def display_name(self) -> str:
+        return "Fake Upload"
+
+    @property
+    def content_types(self) -> list[ContentType]:
+        return [ContentType.BOOK]
+
+    @property
+    def requires_api_key(self) -> bool:
+        return False
+
+    @property
+    def is_file_import(self) -> bool:
+        return True
+
+    def get_config_schema(self) -> list[ConfigField]:
+        return []
+
+    def validate_config(self, config: dict[str, Any], **kwargs: Any) -> list[str]:
+        return []
+
+    def fetch(
+        self,
+        config: dict[str, Any],
+        progress_callback: ProgressCallback | None = None,
+    ) -> Iterator[ContentItem]:
+        yield ContentItem(
+            id="u",
+            title="Stub",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            source=self.get_source_identifier(config),
+        )
+
+
 @pytest.fixture()
 def registry_with_source_fakes() -> Iterator[None]:
-    """Replace the ``PluginRegistry`` singleton with the two source-config fakes.
+    """Replace the ``PluginRegistry`` singleton with the source-config fakes.
 
     Use ``@pytest.mark.usefixtures("registry_with_source_fakes")`` on the
     test class. The registry is restored on teardown.
@@ -153,5 +213,6 @@ def registry_with_source_fakes() -> Iterator[None]:
     registry._plugins.clear()
     registry.register(FakeFilePlugin())
     registry.register(FakeApiPlugin())
+    registry.register(FakeUploadPlugin())
     yield
     PluginRegistry.reset_instance()

@@ -1,5 +1,6 @@
 """Tests for Markdown import plugin."""
 
+import logging
 from datetime import date
 from pathlib import Path
 
@@ -8,6 +9,19 @@ import pytest
 from src.ingestion.plugin_base import SourceError, SourcePlugin
 from src.ingestion.sources.markdown.markdown import MarkdownImportPlugin
 from src.models.content import ConsumptionStatus, ContentType
+
+_MARKDOWN_LOGGER = "src.ingestion.sources.markdown.markdown"
+
+
+def _invalid_date_message(caplog: pytest.LogCaptureFixture) -> str:
+    """Return the one invalid-date warning the parse emitted."""
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if "Invalid date format" in record.getMessage()
+    ]
+    assert len(messages) == 1
+    return messages[0]
 
 
 @pytest.fixture()
@@ -40,55 +54,54 @@ class TestMarkdownImportPluginProperties:
     def test_requires_network(self, plugin: MarkdownImportPlugin) -> None:
         assert plugin.requires_network is False
 
-    def test_config_schema(self, plugin: MarkdownImportPlugin) -> None:
-        schema = plugin.get_config_schema()
-        assert len(schema) == 2
-        names = [field.name for field in schema]
-        assert "path" in names
-        assert "content_type" in names
+    def test_is_file_import(self, plugin: MarkdownImportPlugin) -> None:
+        assert plugin.is_file_import is True
+
+    def test_config_schema_has_no_path(self, plugin: MarkdownImportPlugin) -> None:
+        """Path is injected by the import service; only content_type remains."""
+        names = [field.name for field in plugin.get_config_schema()]
+        assert names == ["content_type"]
 
     def test_get_source_identifier(self, plugin: MarkdownImportPlugin) -> None:
         assert plugin.get_source_identifier() == "markdown_import"
+
+    def test_get_info_is_file_import(self, plugin: MarkdownImportPlugin) -> None:
+        assert plugin.get_info().is_file_import is True
 
 
 class TestMarkdownImportPluginValidation:
     """Tests for config validation."""
 
-    def test_validate_valid_config(
-        self, plugin: MarkdownImportPlugin, tmp_path: Path
-    ) -> None:
-        md_file = tmp_path / "books.md"
-        md_file.write_text("# Books\n")
-        errors = plugin.validate_config({"path": str(md_file), "content_type": "book"})
-        assert errors == []
+    def test_validate_valid_config(self, plugin: MarkdownImportPlugin) -> None:
+        assert plugin.validate_config({"content_type": "book"}) == []
 
-    def test_validate_missing_markdown_path(self, plugin: MarkdownImportPlugin) -> None:
-        errors = plugin.validate_config({"content_type": "book"})
-        assert any("path" in error for error in errors)
-
-    def test_validate_nonexistent_file(self, plugin: MarkdownImportPlugin) -> None:
-        errors = plugin.validate_config(
-            {"path": "/nonexistent/path.md", "content_type": "book"}
+    def test_validate_does_not_require_path(self, plugin: MarkdownImportPlugin) -> None:
+        """validate_config no longer requires a path — the service injects it."""
+        assert (
+            plugin.validate_config(
+                {"path": "/nonexistent/path.md", "content_type": "book"}
+            )
+            == []
         )
-        assert any("not found" in error for error in errors)
 
-    def test_validate_missing_content_type(
-        self, plugin: MarkdownImportPlugin, tmp_path: Path
-    ) -> None:
-        md_file = tmp_path / "books.md"
-        md_file.write_text("# Books\n")
-        errors = plugin.validate_config({"path": str(md_file)})
+    def test_validate_missing_content_type(self, plugin: MarkdownImportPlugin) -> None:
+        errors = plugin.validate_config({})
         assert any("content_type" in error for error in errors)
 
-    def test_validate_invalid_content_type(
-        self, plugin: MarkdownImportPlugin, tmp_path: Path
-    ) -> None:
-        md_file = tmp_path / "books.md"
-        md_file.write_text("# Books\n")
-        errors = plugin.validate_config(
-            {"path": str(md_file), "content_type": "podcast"}
-        )
+    def test_validate_invalid_content_type(self, plugin: MarkdownImportPlugin) -> None:
+        errors = plugin.validate_config({"content_type": "podcast"})
         assert any("Invalid content_type" in error for error in errors)
+
+    def test_validate_accepts_any_case(self, plugin: MarkdownImportPlugin) -> None:
+        """Every content type validates however it is cased.
+
+        The value arrives raw from ``--option content_type=BOOK`` and from the
+        multipart field on POST /api/import; only the ``--content-type`` flag
+        lowercases it first, so an exact-case check split the three routes.
+        """
+        for content_type in ContentType:
+            spelled = content_type.value.upper()
+            assert plugin.validate_config({"content_type": spelled}) == [], spelled
 
 
 class TestMarkdownImportPluginFetch:
@@ -115,6 +128,22 @@ class TestMarkdownImportPluginFetch:
         assert item.status == ConsumptionStatus.COMPLETED.value
         assert item.date_completed == date(2024, 6, 15)
         assert item.source == "markdown_import"
+
+    def test_fetch_resolves_a_mixed_case_content_type(
+        self, plugin: MarkdownImportPlugin, tmp_path: Path
+    ) -> None:
+        """``BOOK`` types the entries exactly as ``book`` does.
+
+        Validation is only half the route: ``fetch`` resolves the option again
+        on its own, so a case-sensitive lookup there would accept the config and
+        then refuse the file it had just approved.
+        """
+        md_file = tmp_path / "books.md"
+        md_file.write_text("## Completed\n- **Dune** by Frank Herbert | Rating: 5\n")
+
+        items = list(plugin.fetch({"path": str(md_file), "content_type": "BOOK"}))
+
+        assert [item.content_type for item in items] == [ContentType.BOOK.value]
 
     def test_fetch_multiple_sections(
         self, plugin: MarkdownImportPlugin, tmp_path: Path
@@ -391,6 +420,16 @@ class TestMarkdownErrors:
                 )
             )
 
+    def test_non_utf8_file_raises_source_error(
+        self, plugin: MarkdownImportPlugin, tmp_path: Path
+    ) -> None:
+        """A Latin-1 file is refused as a SourceError, not a decode crash."""
+        md_file = tmp_path / "data.md"
+        md_file.write_text("## Completed\n- **Café** by Author\n", encoding="latin-1")
+
+        with pytest.raises(SourceError, match="not UTF-8 text"):
+            list(plugin.fetch({"path": str(md_file), "content_type": "book"}))
+
     def test_invalid_content_type_raises_source_error(
         self, plugin: MarkdownImportPlugin, tmp_path: Path
     ) -> None:
@@ -405,6 +444,33 @@ class TestMarkdownErrors:
                     }
                 )
             )
+
+
+class TestMarkdownBomRegression:
+    """Regression: a BOM-prefixed markdown file imports with its first section.
+
+    Sibling of the Excel-BOM CSV defect: an editor that saves UTF-8 with a
+    byte-order mark put the BOM in front of the leading ``##``, and reading as
+    plain ``utf-8`` stopped that heading matching as a section, so its entries
+    fell back to the default status. Fix: read with ``utf-8-sig``, which
+    strips the BOM when present and decodes a BOM-less file identically.
+    """
+
+    def test_fetch_bom_prefixed_markdown(
+        self, plugin: MarkdownImportPlugin, tmp_path: Path
+    ) -> None:
+        md_file = tmp_path / "books.md"
+        # Writing as utf-8-sig emits the real byte-order mark.
+        md_file.write_text(
+            "## Completed\n- **Dune** by Frank Herbert | Rating: 5\n",
+            encoding="utf-8-sig",
+        )
+
+        items = list(plugin.fetch({"path": str(md_file), "content_type": "book"}))
+
+        assert len(items) == 1
+        assert items[0].title == "Dune"
+        assert items[0].status == ConsumptionStatus.COMPLETED.value
 
 
 class TestMarkdownContentTypes:
@@ -516,3 +582,52 @@ class TestMarkdownTemplates:
         )
         assert len(items) == 3
         assert items[0].title == "The Witcher 3"
+
+
+class TestMarkdownImportPluginLogInjectionRegression:
+    """An entry cannot drive a terminal or bloat the invalid-date warning.
+
+    Reported: ``POST /api/import`` accepts an arbitrary Markdown file, so both
+    values in the warning are attacker-chosen. Root cause: the warning
+    interpolated the raw title and date value. The line-based parser keeps a
+    newline out of them, but nothing kept out an ESC sequence, which hijacks
+    the terminal of whoever cats or tails the log (CWE-117); and the warning
+    fires once per bad entry, so an oversized value let one file bury the whole
+    log. Fixed by passing both values through ``sanitize_for_log``.
+    """
+
+    def test_invalid_date_warning_escapes_the_entry(
+        self,
+        plugin: MarkdownImportPlugin,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        md_file = tmp_path / "books.md"
+        md_file.write_text(
+            "## Completed\n"
+            "- **Dune\x1b[2J\x1b[H** by Frank Herbert | Date: not\x1b[31m-a-date\n"
+        )
+
+        with caplog.at_level(logging.WARNING, logger=_MARKDOWN_LOGGER):
+            items = list(plugin.fetch({"path": str(md_file), "content_type": "book"}))
+
+        assert len(items) == 1
+        message = _invalid_date_message(caplog)
+        assert "\x1b" not in message
+        assert "Dune\\x1b[2J\\x1b[H" in message
+
+    def test_invalid_date_warning_is_length_capped(
+        self,
+        plugin: MarkdownImportPlugin,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        md_file = tmp_path / "books.md"
+        md_file.write_text(
+            "## Completed\n" f"- **{'T' * 50_000}** by Author | Date: {'D' * 50_000}\n"
+        )
+
+        with caplog.at_level(logging.WARNING, logger=_MARKDOWN_LOGGER):
+            list(plugin.fetch({"path": str(md_file), "content_type": "book"}))
+
+        assert len(_invalid_date_message(caplog)) < 600

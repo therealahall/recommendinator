@@ -3,9 +3,11 @@
 import pytest
 
 from src.utils.text import (
+    MAX_LOGGED_VALUE_LENGTH,
     extract_raw_genres,
     format_genre_tag,
     humanize_source_id,
+    sanitize_for_log,
     sanitize_prompt_text,
     sanitize_prompt_text_long,
     sanitize_prompt_text_with_truncation,
@@ -163,6 +165,99 @@ class TestHumanizeSourceIdEdgeCases:
         # so it goes through .capitalize() which gives "Tv"
         assert humanize_source_id("TV") == "Tv"
         assert humanize_source_id("GOG") == "Gog"
+
+
+class TestSanitizeForLog:
+    """Tests for sanitize_for_log — making a value safe to put in a log record."""
+
+    def test_ordinary_text_is_unchanged(self) -> None:
+        """A value with nothing to escape passes through verbatim."""
+        assert sanitize_for_log("The Name of the Wind") == "The Name of the Wind"
+
+    def test_non_ascii_text_is_preserved(self) -> None:
+        """Only control characters are escaped, so real titles stay readable."""
+        assert sanitize_for_log("Les Misérables 🎮") == "Les Misérables 🎮"
+
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            ("a\nb", "a\\nb"),
+            ("a\rb", "a\\rb"),
+            ("a\0b", "a\\0b"),
+            ("a\tb", "a\\tb"),
+            # The pair, not just each half: CRLF is the line ending an attacker
+            # actually sends to forge a second record in the log.
+            ("a\r\nb", "a\\r\\nb"),
+        ],
+    )
+    def test_familiar_controls_get_familiar_escapes(
+        self, raw: str, expected: str
+    ) -> None:
+        """CR, LF, NUL and tab render as the escapes an operator recognises."""
+        assert sanitize_for_log(raw) == expected
+
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            ("a\x1bb", "a\\x1bb"),
+            ("a\vb", "a\\x0bb"),
+            ("a\fb", "a\\x0cb"),
+            ("a\x7fb", "a\\x7fb"),
+            ("a\x9bb", "a\\x9bb"),
+            ("a\N{LINE SEPARATOR}b", "a\\u2028b"),
+            ("a\N{PARAGRAPH SEPARATOR}b", "a\\u2029b"),
+        ],
+    )
+    def test_remaining_controls_get_numeric_escapes(
+        self, raw: str, expected: str
+    ) -> None:
+        """ESC, VT, FF, DEL, C1 controls and the Unicode line separators.
+
+        Regression: the helper stripped only CR/LF/NUL, so an ESC sequence in
+        an imported file reached the log verbatim and drove the terminal of
+        whoever ran ``cat`` or ``tail`` on it.
+        """
+        assert sanitize_for_log(raw) == expected
+
+    def test_ansi_escape_sequence_is_defused(self) -> None:
+        """A full colour/cursor sequence leaves no raw ESC behind."""
+        result = sanitize_for_log("Dune\x1b[2J\x1b[H owned")
+
+        assert "\x1b" not in result
+        assert result == "Dune\\x1b[2J\\x1b[H owned"
+
+    def test_long_value_is_truncated_with_a_marker(self) -> None:
+        """An oversized value is capped so one record cannot bury the next."""
+        result = sanitize_for_log("A" * 5000)
+
+        assert result.startswith("A" * MAX_LOGGED_VALUE_LENGTH)
+        assert result.endswith("...(truncated)")
+
+    def test_value_at_the_cap_is_not_marked(self) -> None:
+        """A value exactly at the cap is complete, so it carries no marker."""
+        assert sanitize_for_log("A" * MAX_LOGGED_VALUE_LENGTH) == (
+            "A" * MAX_LOGGED_VALUE_LENGTH
+        )
+
+    def test_cap_applies_to_the_escaped_length(self) -> None:
+        """Escaping expands the value, and the cap bounds what is written.
+
+        A file of newlines doubles in length once escaped, so capping the raw
+        input would let the record grow past the bound.
+        """
+        result = sanitize_for_log("\n" * 5000)
+
+        assert len(result) == MAX_LOGGED_VALUE_LENGTH + len("...(truncated)")
+
+    def test_is_idempotent(self) -> None:
+        """Sanitizing an already-sanitized value changes nothing.
+
+        Some values pass a sanitizing sink twice (a plugin message escaped at
+        the plugin, then again when the API logs the wrapping exception).
+        """
+        once = sanitize_for_log("Dune\r\nINFO | forged")
+
+        assert sanitize_for_log(once) == once
 
 
 # ===========================================================================

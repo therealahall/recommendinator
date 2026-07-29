@@ -1005,3 +1005,100 @@ class TestSyncEmbeddingLogging:
         ]
         assert len(completed_messages) == 1
         assert "Embeddings" not in completed_messages[0]
+
+
+class TestSyncItemTitleLogInjectionRegression:
+    """An item title cannot forge a log record or bloat one.
+
+    Reported: ``POST /api/import`` runs an uploaded file through this same
+    pipeline, so a file-import plugin takes ``item.title`` verbatim from
+    attacker-supplied bytes. Root cause: ``execute_sync`` interpolated the raw
+    title into five messages and into ``SyncResult.errors``, so a title
+    carrying CRLF ended the record and appended a forged one under the app's
+    ``... | LEVEL | logger | message`` format (CWE-117), and an oversized title
+    made a single row as long as the file. Fixed by escaping and capping the
+    title once per item through ``sanitize_for_log``.
+    """
+
+    FORGED_TITLE = "Dune\r\n2099-01-01 | ERROR | src.web.api | forged"
+
+    def test_failed_item_title_is_escaped_in_log_and_error(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The save-failure record and the client-facing error are both clean."""
+        plugin = MagicMock(spec=SourcePlugin)
+        plugin.display_name = "TestPlugin"
+        plugin.fetch.return_value = iter([make_item(self.FORGED_TITLE)])
+
+        storage = MagicMock(spec=StorageManager)
+        storage.save_content_item.side_effect = ValueError("db error")
+
+        with caplog.at_level(logging.WARNING, logger="src.ingestion.sync"):
+            result = execute_sync(
+                plugin=plugin,
+                plugin_config={},
+                storage_manager=storage,
+            )
+
+        message = caplog.records[0].getMessage()
+        assert "\r" not in message
+        assert "\n" not in message
+        assert "Dune\\r\\n2099-01-01 | ERROR | src.web.api | forged" in message
+        # ``errors`` is serialised to the web UI and printed by the CLI.
+        assert "\r" not in result.errors[0]
+        assert "\n" not in result.errors[0]
+        assert "Dune" in result.errors[0]
+
+    def test_embedding_progress_log_escapes_the_title(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The embedding-progress record names the title too, so it is escaped."""
+        plugin = MagicMock(spec=SourcePlugin)
+        plugin.display_name = "TestPlugin"
+        plugin.fetch.return_value = iter(
+            [make_item(self.FORGED_TITLE, item_id="ext_1")]
+        )
+
+        storage = MagicMock(spec=StorageManager)
+        storage.has_embedding.return_value = False
+        embedding_gen = MagicMock(spec=EmbeddingGenerator)
+        embedding_gen.generate_content_embedding.return_value = [0.1, 0.2]
+
+        with caplog.at_level(logging.INFO, logger="src.ingestion.sync"):
+            execute_sync(
+                plugin=plugin,
+                plugin_config={},
+                storage_manager=storage,
+                embedding_generator=embedding_gen,
+                use_embeddings=True,
+            )
+
+        generating = [
+            record.getMessage()
+            for record in caplog.records
+            if "Generating embedding" in record.getMessage()
+        ]
+        assert len(generating) == 1
+        assert "\r" not in generating[0]
+        assert "\n" not in generating[0]
+
+    def test_oversized_title_is_capped_in_every_record(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A megabyte-long title cannot make a record scale with the file."""
+        plugin = MagicMock(spec=SourcePlugin)
+        plugin.display_name = "TestPlugin"
+        plugin.fetch.return_value = iter([make_item("A" * 100_000)])
+
+        storage = MagicMock(spec=StorageManager)
+        storage.save_content_item.side_effect = ValueError("db error")
+
+        with caplog.at_level(logging.DEBUG, logger="src.ingestion.sync"):
+            result = execute_sync(
+                plugin=plugin,
+                plugin_config={},
+                storage_manager=storage,
+            )
+
+        assert max(len(record.getMessage()) for record in caplog.records) < 400
+        assert len(result.errors[0]) < 400

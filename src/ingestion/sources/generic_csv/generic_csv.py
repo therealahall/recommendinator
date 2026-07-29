@@ -2,21 +2,23 @@
 
 from __future__ import annotations
 
-import csv
 import logging
 from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from src.ingestion.file_reading import read_csv_rows
 from src.ingestion.plugin_base import (
     ConfigField,
     ProgressCallback,
     SourceError,
     SourcePlugin,
+    validate_content_type_option,
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.utils.series import MAX_SEASONS
+from src.utils.text import sanitize_for_log
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
@@ -222,14 +224,16 @@ class CsvImportPlugin(SourcePlugin):
     def requires_network(self) -> bool:
         return False
 
+    @property
+    def is_file_import(self) -> bool:
+        return True
+
+    @property
+    def accepted_extensions(self) -> list[str]:
+        return [".csv"]
+
     def get_config_schema(self) -> list[ConfigField]:
         return [
-            ConfigField(
-                name="path",
-                field_type=str,
-                required=True,
-                description="Path to CSV file matching the template for the content type",
-            ),
             ConfigField(
                 name="content_type",
                 field_type=str,
@@ -244,25 +248,7 @@ class CsvImportPlugin(SourcePlugin):
         storage: StorageManager | None = None,
         user_id: int = 1,
     ) -> list[str]:
-        errors = []
-
-        path = config.get("path")
-        if not path:
-            errors.append("'path' is required")
-        elif not Path(path).resolve().exists():
-            errors.append(f"CSV file not found: {path}")
-
-        content_type = config.get("content_type", "")
-        valid_types = [content_type_enum.value for content_type_enum in ContentType]
-        if not content_type:
-            errors.append("'content_type' is required")
-        elif content_type not in valid_types:
-            errors.append(
-                f"Invalid content_type '{content_type}'. "
-                f"Must be one of: {', '.join(valid_types)}"
-            )
-
-        return errors
+        return validate_content_type_option(config)
 
     def fetch(
         self,
@@ -272,7 +258,8 @@ class CsvImportPlugin(SourcePlugin):
         """Fetch content items from a CSV file.
 
         Args:
-            config: Must contain 'csv_path' and 'content_type'
+            config: Holds 'content_type' plus the 'path' the import service
+                injects, naming the file to read
             progress_callback: Optional callback for progress updates
 
         Yields:
@@ -286,20 +273,13 @@ class CsvImportPlugin(SourcePlugin):
         file_path = Path(path)
 
         try:
-            content_type = ContentType(content_type_str)
+            content_type = ContentType.from_string(content_type_str)
         except ValueError as error:
             raise SourceError(
                 self.name, f"Invalid content type: {content_type_str}"
             ) from error
 
-        try:
-            yield from self._parse_csv(
-                file_path, content_type, config, progress_callback
-            )
-        except FileNotFoundError as error:
-            raise SourceError(self.name, f"CSV file not found: {file_path}") from error
-        except csv.Error as error:
-            raise SourceError(self.name, f"Failed to parse CSV: {error}") from error
+        yield from self._parse_csv(file_path, content_type, config, progress_callback)
 
     def _parse_csv(
         self,
@@ -326,24 +306,12 @@ class CsvImportPlugin(SourcePlugin):
         )
         creator_field = CREATOR_FIELD.get(content_type.value)
 
-        with open(file_path, encoding="utf-8") as csv_file:
-            reader = csv.DictReader(csv_file)
-            rows = list(reader)
-
-        if rows and reader.fieldnames:
-            actual_columns = set(reader.fieldnames)
-            missing = {"title"} - actual_columns
-            if missing:
-                raise SourceError(
-                    self.name,
-                    f"CSV missing required column: {', '.join(sorted(missing))}",
-                )
-            unknown = actual_columns - expected_columns
-            if unknown:
-                logger.warning(
-                    "CSV contains unknown columns that will be ignored: %s",
-                    ", ".join(sorted(unknown)),
-                )
+        rows = read_csv_rows(
+            self.name,
+            file_path,
+            required_columns={"title"},
+            known_columns=expected_columns,
+        )
 
         total = len(rows)
         logger.info("Found %d entries in CSV file", total)
@@ -370,10 +338,13 @@ class CsvImportPlugin(SourcePlugin):
                 try:
                     date_completed = datetime.strptime(date_str, "%Y-%m-%d").date()
                 except ValueError:
+                    # Both values are cells of the uploaded file, and this
+                    # fires once per bad row, so each is escaped and capped
+                    # before it reaches the record (CWE-117).
                     logger.warning(
                         "Invalid date format for '%s': %s. Expected YYYY-MM-DD.",
-                        title,
-                        date_str,
+                        sanitize_for_log(title),
+                        sanitize_for_log(date_str),
                     )
 
             # Parse review and notes

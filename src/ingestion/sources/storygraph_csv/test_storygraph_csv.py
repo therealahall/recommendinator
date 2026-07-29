@@ -61,14 +61,15 @@ class TestStorygraphCsvPluginProperties:
         """Test that plugin does not require network access."""
         assert plugin.requires_network is False
 
-    def test_config_schema(self, plugin: StorygraphCsvPlugin) -> None:
-        """Test configuration schema defines a single required path."""
+    def test_is_file_import(self, plugin: StorygraphCsvPlugin) -> None:
+        """Test that the StoryGraph export is a one-shot file-import plugin."""
+        assert plugin.is_file_import is True
+
+    def test_config_schema_has_no_path(self, plugin: StorygraphCsvPlugin) -> None:
+        """Path is injected by the import service, not configured on the plugin."""
         schema = plugin.get_config_schema()
 
-        assert len(schema) == 1
-        assert schema[0].name == "path"
-        assert schema[0].field_type is str
-        assert schema[0].required is True
+        assert [field.name for field in schema] == []
 
     def test_get_source_identifier(self, plugin: StorygraphCsvPlugin) -> None:
         """Test source identifier matches plugin name by default."""
@@ -83,42 +84,16 @@ class TestStorygraphCsvPluginProperties:
         assert info.content_types == [ContentType.BOOK]
         assert info.requires_api_key is False
         assert info.requires_network is False
+        assert info.is_file_import is True
 
 
 class TestStorygraphCsvPluginValidation:
     """Tests for StorygraphCsvPlugin config validation."""
 
-    def test_validate_valid_config(
-        self, plugin: StorygraphCsvPlugin, tmp_path: Path
-    ) -> None:
-        """Test validation passes with valid CSV path."""
-        csv_file = tmp_path / "library.csv"
-        csv_file.write_text("header\n")
-
-        errors = plugin.validate_config({"path": str(csv_file)})
-
-        assert errors == []
-
-    def test_validate_missing_path(self, plugin: StorygraphCsvPlugin) -> None:
-        """Test validation fails when path is missing."""
-        errors = plugin.validate_config({})
-
-        assert len(errors) == 1
-        assert "'path' is required" in errors[0]
-
-    def test_validate_empty_path(self, plugin: StorygraphCsvPlugin) -> None:
-        """Test validation fails when path is empty."""
-        errors = plugin.validate_config({"path": ""})
-
-        assert len(errors) == 1
-        assert "'path' is required" in errors[0]
-
-    def test_validate_nonexistent_file(self, plugin: StorygraphCsvPlugin) -> None:
-        """Test validation fails when CSV file does not exist."""
-        errors = plugin.validate_config({"path": "/nonexistent/library.csv"})
-
-        assert len(errors) == 1
-        assert "CSV file not found" in errors[0]
+    def test_validate_does_not_require_path(self, plugin: StorygraphCsvPlugin) -> None:
+        """validate_config no longer requires a path — the service injects it."""
+        assert plugin.validate_config({}) == []
+        assert plugin.validate_config({"path": "/nonexistent/library.csv"}) == []
 
 
 class TestStorygraphCsvPluginFetch:
@@ -384,6 +359,18 @@ class TestStorygraphCsvPluginFetch:
 
         assert exc_info.value.plugin_name == "storygraph_csv"
 
+    def test_fetch_non_utf8_file_raises_source_error(
+        self, plugin: StorygraphCsvPlugin, tmp_path: Path
+    ) -> None:
+        """A Latin-1 export is refused as a SourceError, not a decode crash."""
+        csv_file = tmp_path / "library.csv"
+        csv_file.write_text(f"{HEADER}\nCafé,An Author\n", encoding="latin-1")
+
+        with pytest.raises(SourceError, match="not UTF-8 text") as exc_info:
+            list(plugin.fetch({"path": str(csv_file)}))
+
+        assert exc_info.value.plugin_name == "storygraph_csv"
+
     def test_fetch_oversized_field_raises_source_error(
         self, plugin: StorygraphCsvPlugin, tmp_path: Path
     ) -> None:
@@ -637,6 +624,31 @@ class TestStorygraphCsvPluginFetch:
             (0, 3, "First Book"),
             (1, 3, "Second Book"),
         ]
+
+
+class TestStorygraphCsvBomRegression:
+    """Regression: an Excel-saved export imported instead of failing.
+
+    Reported: a StoryGraph CSV re-saved in Excel imported nothing. Root cause:
+    Excel writes a UTF-8 BOM and the reader opened the file as plain ``utf-8``,
+    so the BOM was glued onto the first column name and every ``Title`` lookup
+    came back empty. Fix: open with ``utf-8-sig``, which strips the BOM when
+    present and decodes a BOM-less file identically.
+    """
+
+    def test_fetch_bom_prefixed_csv(
+        self, plugin: StorygraphCsvPlugin, tmp_path: Path
+    ) -> None:
+        csv_file = tmp_path / "library.csv"
+        rows = "The Fifth Season,N. K. Jemisin,,,,read," + "," * 17 + "\n"
+        # Writing as utf-8-sig emits the real byte-order mark Excel prepends.
+        csv_file.write_text(f"{HEADER}\n{rows}", encoding="utf-8-sig")
+
+        items = list(plugin.fetch({"path": str(csv_file)}))
+
+        assert len(items) == 1
+        assert items[0].title == "The Fifth Season"
+        assert items[0].author == "N. K. Jemisin"
 
 
 class TestStorygraphCsvPluginDiscovery:

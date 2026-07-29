@@ -1,5 +1,6 @@
 """Tests for generic CSV import plugin."""
 
+import logging
 from datetime import date
 from pathlib import Path
 
@@ -13,6 +14,19 @@ from src.ingestion.sources.generic_csv.generic_csv import (
 )
 from src.models.content import ConsumptionStatus, ContentType
 from src.utils.series import MAX_SEASONS
+
+_CSV_LOGGER = "src.ingestion.sources.generic_csv.generic_csv"
+
+
+def _invalid_date_message(caplog: pytest.LogCaptureFixture) -> str:
+    """Return the one invalid-date warning the parse emitted."""
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if "Invalid date format" in record.getMessage()
+    ]
+    assert len(messages) == 1
+    return messages[0]
 
 
 @pytest.fixture()
@@ -45,12 +59,13 @@ class TestCsvImportPluginProperties:
     def test_requires_network(self, plugin: CsvImportPlugin) -> None:
         assert plugin.requires_network is False
 
-    def test_config_schema(self, plugin: CsvImportPlugin) -> None:
-        schema = plugin.get_config_schema()
-        assert len(schema) == 2
-        names = [field.name for field in schema]
-        assert "path" in names
-        assert "content_type" in names
+    def test_is_file_import(self, plugin: CsvImportPlugin) -> None:
+        assert plugin.is_file_import is True
+
+    def test_config_schema_has_no_path(self, plugin: CsvImportPlugin) -> None:
+        """Path is injected by the import service; only content_type remains."""
+        names = [field.name for field in plugin.get_config_schema()]
+        assert names == ["content_type"]
 
     def test_get_source_identifier(self, plugin: CsvImportPlugin) -> None:
         assert plugin.get_source_identifier() == "csv_import"
@@ -61,61 +76,48 @@ class TestCsvImportPluginProperties:
         assert info.display_name == "CSV Import"
         assert info.requires_api_key is False
         assert info.requires_network is False
+        assert info.is_file_import is True
 
 
 class TestCsvImportPluginValidation:
     """Tests for CsvImportPlugin config validation."""
 
-    def test_validate_valid_config(
-        self, plugin: CsvImportPlugin, tmp_path: Path
-    ) -> None:
-        csv_file = tmp_path / "books.csv"
-        csv_file.write_text("title\n")
-        errors = plugin.validate_config({"path": str(csv_file), "content_type": "book"})
-        assert errors == []
+    def test_validate_valid_config(self, plugin: CsvImportPlugin) -> None:
+        assert plugin.validate_config({"content_type": "book"}) == []
 
-    def test_validate_missing_csv_path(self, plugin: CsvImportPlugin) -> None:
-        errors = plugin.validate_config({"content_type": "book"})
-        assert any("path" in error for error in errors)
-
-    def test_validate_empty_csv_path(self, plugin: CsvImportPlugin) -> None:
-        errors = plugin.validate_config({"path": "", "content_type": "book"})
-        assert any("path" in error for error in errors)
-
-    def test_validate_nonexistent_file(self, plugin: CsvImportPlugin) -> None:
-        errors = plugin.validate_config(
-            {"path": "/nonexistent/path.csv", "content_type": "book"}
+    def test_validate_does_not_require_path(self, plugin: CsvImportPlugin) -> None:
+        """validate_config no longer requires a path — the service injects it."""
+        assert (
+            plugin.validate_config(
+                {"path": "/nonexistent/path.csv", "content_type": "book"}
+            )
+            == []
         )
-        assert any("not found" in error for error in errors)
 
-    def test_validate_missing_content_type(
-        self, plugin: CsvImportPlugin, tmp_path: Path
-    ) -> None:
-        csv_file = tmp_path / "books.csv"
-        csv_file.write_text("title\n")
-        errors = plugin.validate_config({"path": str(csv_file)})
+    def test_validate_missing_content_type(self, plugin: CsvImportPlugin) -> None:
+        errors = plugin.validate_config({})
         assert any("content_type" in error for error in errors)
 
-    def test_validate_invalid_content_type(
-        self, plugin: CsvImportPlugin, tmp_path: Path
-    ) -> None:
-        csv_file = tmp_path / "books.csv"
-        csv_file.write_text("title\n")
-        errors = plugin.validate_config(
-            {"path": str(csv_file), "content_type": "podcast"}
-        )
+    def test_validate_invalid_content_type(self, plugin: CsvImportPlugin) -> None:
+        errors = plugin.validate_config({"content_type": "podcast"})
         assert any("Invalid content_type" in error for error in errors)
 
-    def test_validate_all_content_types(
-        self, plugin: CsvImportPlugin, tmp_path: Path
-    ) -> None:
-        csv_file = tmp_path / "data.csv"
-        csv_file.write_text("title\n")
+    def test_validate_all_content_types(self, plugin: CsvImportPlugin) -> None:
         for content_type in ContentType:
-            errors = plugin.validate_config(
-                {"path": str(csv_file), "content_type": content_type.value}
-            )
+            errors = plugin.validate_config({"content_type": content_type.value})
             assert errors == [], f"Failed for content_type={content_type.value}"
+
+    def test_validate_accepts_any_case(self, plugin: CsvImportPlugin) -> None:
+        """Every content type validates however it is cased.
+
+        ``ContentType.value`` is always lowercase, so the loop above only ever
+        exercised one spelling. The value arrives raw from ``--option
+        content_type=BOOK`` and from the multipart field on POST /api/import,
+        and only the ``--content-type`` flag lowercases it first.
+        """
+        for content_type in ContentType:
+            spelled = content_type.value.upper()
+            assert plugin.validate_config({"content_type": spelled}) == [], spelled
 
 
 class TestCsvImportPluginFetchBooks:
@@ -196,6 +198,24 @@ class TestCsvImportPluginFetchBooks:
         items = list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
 
         assert items[0].metadata["notes"] == "Recommended by friend"
+
+    def test_fetch_resolves_a_mixed_case_content_type(
+        self, plugin: CsvImportPlugin, tmp_path: Path
+    ) -> None:
+        """``BOOK`` types the rows exactly as ``book`` does.
+
+        Validation is only half the route: ``fetch`` resolves the option again
+        on its own, so a case-sensitive lookup there would accept the config and
+        then refuse the file it had just approved.
+        """
+        csv_file = tmp_path / "books.csv"
+        csv_file.write_text(
+            "title,author,rating,status\nDune,Frank Herbert,5,completed\n"
+        )
+
+        items = list(plugin.fetch({"path": str(csv_file), "content_type": "BOOK"}))
+
+        assert [item.content_type for item in items] == [ContentType.BOOK.value]
 
 
 class TestCsvImportPluginFetchMovies:
@@ -361,6 +381,20 @@ class TestCsvImportPluginErrors:
         with pytest.raises(SourceError, match="missing required column"):
             list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
 
+    def test_non_utf8_file_raises_source_error(
+        self, plugin: CsvImportPlugin, tmp_path: Path
+    ) -> None:
+        """A Latin-1 export is refused as a SourceError, not a UnicodeDecodeError.
+
+        Proves the plugin reads through the shared reader: the decode failure
+        used to escape ``fetch`` and surface as an unhandled 500.
+        """
+        csv_file = tmp_path / "data.csv"
+        csv_file.write_text("title\nCafé\n", encoding="latin-1")
+
+        with pytest.raises(SourceError, match="not UTF-8 text"):
+            list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
+
     def test_invalid_date_does_not_crash(
         self, plugin: CsvImportPlugin, tmp_path: Path
     ) -> None:
@@ -370,6 +404,33 @@ class TestCsvImportPluginErrors:
         items = list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
         assert len(items) == 1
         assert items[0].date_completed is None
+
+
+class TestCsvImportBomRegression:
+    """Regression: an Excel-saved CSV imported instead of failing.
+
+    Reported: a CSV saved by Excel was rejected with "CSV missing required
+    column: title" even though the column was there. Root cause: Excel writes
+    a UTF-8 BOM and the reader opened the file as plain ``utf-8``, so the BOM
+    became part of the first column name. Fix: open with ``utf-8-sig``, which
+    strips the BOM when present and decodes a BOM-less file identically.
+    """
+
+    def test_fetch_bom_prefixed_csv(
+        self, plugin: CsvImportPlugin, tmp_path: Path
+    ) -> None:
+        csv_file = tmp_path / "books.csv"
+        # Writing as utf-8-sig emits the real byte-order mark Excel prepends.
+        csv_file.write_text(
+            "title,author,rating,status\nDune,Frank Herbert,5,completed\n",
+            encoding="utf-8-sig",
+        )
+
+        items = list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
+
+        assert len(items) == 1
+        assert items[0].title == "Dune"
+        assert items[0].author == "Frank Herbert"
 
 
 class TestCsvTemplates:
@@ -624,3 +685,52 @@ class TestParseSeasonsWatched:
             2,
             MAX_SEASONS,
         ]
+
+
+class TestCsvImportPluginLogInjectionRegression:
+    """A row cannot forge or bloat the invalid-date warning.
+
+    Reported: ``POST /api/import`` accepts an arbitrary CSV, so both values in
+    the warning are attacker-chosen. Root cause: the warning interpolated the
+    raw title and date cell, and CSV permits a quoted field containing CRLF, so
+    one row could end the record and append a forged one under the app's
+    ``... | LEVEL | logger | message`` format (CWE-117). It fires once per bad
+    row, so an oversized cell also let one file bury the whole log. Fixed by
+    passing both values through ``sanitize_for_log``.
+    """
+
+    def test_invalid_date_warning_escapes_the_row(
+        self, plugin: CsvImportPlugin, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        csv_file = tmp_path / "books.csv"
+        # newline="": the CRLF has to reach the file untranslated to end up
+        # inside the quoted title cell.
+        csv_file.write_text(
+            "title,rating,status,date_completed\n"
+            '"Dune\r\n2099-01-01 | ERROR | src.web.api | forged",,,not-a-date\n',
+            encoding="utf-8",
+            newline="",
+        )
+
+        with caplog.at_level(logging.WARNING, logger=_CSV_LOGGER):
+            items = list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
+
+        assert len(items) == 1
+        message = _invalid_date_message(caplog)
+        assert "\r" not in message
+        assert "\n" not in message
+        assert "Dune\\n2099-01-01 | ERROR | src.web.api | forged" in message
+
+    def test_invalid_date_warning_is_length_capped(
+        self, plugin: CsvImportPlugin, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        csv_file = tmp_path / "books.csv"
+        csv_file.write_text(
+            "title,rating,status,date_completed\n" f"{'T' * 50_000},,,{'D' * 50_000}\n",
+            encoding="utf-8",
+        )
+
+        with caplog.at_level(logging.WARNING, logger=_CSV_LOGGER):
+            list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
+
+        assert len(_invalid_date_message(caplog)) < 600

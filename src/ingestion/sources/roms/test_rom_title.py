@@ -217,6 +217,45 @@ class TestCompileExtraPatterns:
         with pytest.raises(ValueError, match="exceeds 200 chars"):
             compile_extra_patterns(["a" * 201])
 
+    def test_accepts_pattern_at_the_length_cap(self) -> None:
+        """The cap is inclusive; a ``>=`` slip would refuse a legal pattern."""
+        assert len(compile_extra_patterns(["a" * 200])) == 1
+
+    def test_rejects_more_patterns_than_the_cap(self) -> None:
+        """Every pattern runs against every title, so the count is bounded too."""
+        with pytest.raises(ValueError, match="At most 10 patterns"):
+            compile_extra_patterns([f"-{index}" for index in range(11)])
+
+    def test_accepts_exactly_the_maximum_number_of_patterns(self) -> None:
+        """The cap is inclusive; a ``>=`` slip would refuse a legal config."""
+        assert len(compile_extra_patterns([f"-{index}" for index in range(10)])) == 10
+
+    @pytest.mark.parametrize(
+        "pattern",
+        [
+            # Both were refused by a structural nested-quantifier check that
+            # used to live here, and both are patterns people actually write.
+            r"(?:\s*\[[^\]]*\])+$",
+            r"(\s*\(v\d+\.\d+\))+$",
+            # The shape that check existed to refuse...
+            "(a+)+",
+            # ...and the shape that walked straight past it: no group at all,
+            # 18 characters, one pattern, yet it backtracks with degree equal
+            # to the number of ``.*``.
+            ".*.*.*.*.*.*.*.*x",
+        ],
+    )
+    def test_only_the_caps_and_compilation_gate_a_pattern(self, pattern: str) -> None:
+        """Nothing refuses a pattern by shape, deliberately.
+
+        Static analysis of an arbitrary regex is not sound: the previous
+        nested-quantifier check refused legitimate patterns while missing the
+        group-free form above, so it bought a false sense of safety. The caps
+        bound how much regex runs per title, not how long a pattern takes;
+        docs/SECURITY.md states that residual risk.
+        """
+        assert len(compile_extra_patterns([pattern])) == 1
+
 
 class TestNormalizeTitleKey:
     def test_lowercases(self) -> None:

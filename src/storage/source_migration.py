@@ -70,9 +70,20 @@ def migrate_source_config_plugins(
 
     Updates every ``source_configs`` row whose ``plugin`` is the historical
     plugin name ``goodreads`` so a source config a user moved into the database
-    keeps resolving after the plugin rename. Without this, once a
-    ``plugin = 'goodreads'`` row exists ``get_plugin('goodreads')`` returns
-    ``None`` and that source silently stops syncing.
+    still names a registered plugin after the rename.
+
+    Since ``goodreads_csv`` became a one-shot file import, such a row can no
+    longer sync — that is what the rename made it. What the relabel preserves
+    is the row's *identity*: an unregistered plugin name is skipped in silence
+    by every enumeration, so a ``plugin = 'goodreads'`` row would be invisible
+    in the Data tab and in ``source list``, leaving the user told to remove
+    something they cannot find. Relabeled, it lists as a file-import entry with
+    a Remove action (see ``get_available_sync_sources``).
+
+    The row's ``enabled`` flag is deliberately left alone. Disabling it would
+    change no behaviour — ``resolve_inputs`` skips a file-import plugin whether
+    it is enabled or not — while silently rewriting a user setting and muting
+    the per-sync warning that is the prompt to clean the row up.
 
     This is safe to call on every startup: once the rows are relabeled the
     UPDATE matches nothing and the call is a silent no-op.

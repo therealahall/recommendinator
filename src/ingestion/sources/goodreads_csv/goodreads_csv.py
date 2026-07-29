@@ -2,17 +2,16 @@
 
 from __future__ import annotations
 
-import csv
 import logging
 from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from src.ingestion.file_reading import read_csv_rows
 from src.ingestion.plugin_base import (
     ConfigField,
     ProgressCallback,
-    SourceError,
     SourcePlugin,
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
@@ -56,15 +55,16 @@ class GoodreadsCsvPlugin(SourcePlugin):
     def requires_network(self) -> bool:
         return False
 
+    @property
+    def is_file_import(self) -> bool:
+        return True
+
+    @property
+    def accepted_extensions(self) -> list[str]:
+        return [".csv"]
+
     def get_config_schema(self) -> list[ConfigField]:
-        return [
-            ConfigField(
-                name="path",
-                field_type=str,
-                required=True,
-                description="Path to Goodreads CSV export file",
-            ),
-        ]
+        return []
 
     def validate_config(
         self,
@@ -72,13 +72,7 @@ class GoodreadsCsvPlugin(SourcePlugin):
         storage: StorageManager | None = None,
         user_id: int = 1,
     ) -> list[str]:
-        errors = []
-        path = config.get("path")
-        if not path:
-            errors.append("'path' is required")
-        elif not Path(path).exists():
-            errors.append(f"CSV file not found: {path}")
-        return errors
+        return []
 
     def fetch(
         self,
@@ -88,7 +82,8 @@ class GoodreadsCsvPlugin(SourcePlugin):
         """Fetch content items from a Goodreads CSV export.
 
         Args:
-            config: Must contain 'path' pointing to the CSV file
+            config: Holds the 'path' the import service injects, naming the
+                CSV file to read; this plugin declares no options of its own
             progress_callback: Optional callback for progress updates
 
         Yields:
@@ -100,12 +95,7 @@ class GoodreadsCsvPlugin(SourcePlugin):
         path = config.get("path", "")
         file_path = Path(path)
 
-        try:
-            yield from self._parse_csv(file_path, config, progress_callback)
-        except FileNotFoundError as error:
-            raise SourceError(self.name, f"CSV file not found: {file_path}") from error
-        except csv.Error as error:
-            raise SourceError(self.name, f"Failed to parse CSV: {error}") from error
+        yield from self._parse_csv(file_path, config, progress_callback)
 
     def _parse_csv(
         self,
@@ -126,9 +116,7 @@ class GoodreadsCsvPlugin(SourcePlugin):
         source = self.get_source_identifier(config)
         logger.info("Parsing Goodreads CSV file: %s", file_path)
 
-        with open(file_path, encoding="utf-8") as csv_file:
-            reader = csv.DictReader(csv_file)
-            rows = list(reader)
+        rows = read_csv_rows(self.name, file_path)
 
         total = len(rows)
         logger.info("Found %d entries in Goodreads CSV file", total)

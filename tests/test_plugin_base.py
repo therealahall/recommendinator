@@ -11,7 +11,16 @@ from src.ingestion.plugin_base import (
     ProgressCallback,
     SourceError,
     SourcePlugin,
+    validate_content_type_option,
 )
+from src.ingestion.sources.generic_csv.generic_csv import CsvImportPlugin
+from src.ingestion.sources.generic_json.generic_json import JsonImportPlugin
+from src.ingestion.sources.goodreads_csv.goodreads_csv import GoodreadsCsvPlugin
+from src.ingestion.sources.goodreads_rss.goodreads_rss import GoodreadsRssPlugin
+from src.ingestion.sources.markdown.markdown import MarkdownImportPlugin
+from src.ingestion.sources.roms.roms import RomScannerPlugin
+from src.ingestion.sources.steam.steam import SteamPlugin
+from src.ingestion.sources.storygraph_csv.storygraph_csv import StorygraphCsvPlugin
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 
 
@@ -184,6 +193,56 @@ class TestSourceError:
         assert exc_info.value.message == "API error"
 
 
+class TestValidateContentTypeOption:
+    """Tests for the shared ``content_type`` validator."""
+
+    def test_missing_value_is_reported(self) -> None:
+        assert validate_content_type_option({}) == ["'content_type' is required"]
+
+    def test_blank_value_reads_as_missing_not_as_a_bad_one(self) -> None:
+        """An empty string is "you did not pick one", not "that is not a type".
+
+        A multipart form and ``--option content_type=`` both send the key with
+        an empty value, so treating blank as a value would answer them with
+        "Invalid content_type ''" — an error about a choice the user never made.
+        """
+        assert validate_content_type_option({"content_type": ""}) == [
+            "'content_type' is required"
+        ]
+
+    @pytest.mark.parametrize("value", ["book", "BOOK", "Tv_Show", "vIdEo_GaMe"])
+    def test_recognised_value_passes_case_insensitively(self, value: str) -> None:
+        assert validate_content_type_option({"content_type": value}) == []
+
+    def test_unrecognised_value_names_the_value_and_the_choices(self) -> None:
+        assert validate_content_type_option({"content_type": "paperback"}) == [
+            "Invalid content_type 'paperback'. "
+            "Must be one of: book, movie, tv_show, video_game"
+        ]
+
+    def test_echoed_value_is_bounded(self) -> None:
+        """The rejected value is capped before it is echoed back.
+
+        Regression: the message is returned verbatim to the client *and*
+        written to the log, and a 50 MB ``content_type`` multipart field fits
+        inside the request cap — so an unbounded echo turned one 400 into a
+        50 MB response body and a 50 MB log record.
+        """
+        errors = validate_content_type_option({"content_type": "x" * 10_000_000})
+
+        assert len(errors[0]) < 500
+        assert "...(truncated)" in errors[0]
+
+    def test_echoed_value_cannot_forge_a_log_line(self) -> None:
+        """The message reaches a log sink, so control characters are escaped."""
+        errors = validate_content_type_option(
+            {"content_type": "book\r\n2099-01-01 | ERROR | src.web.api | forged"}
+        )
+
+        assert "\r" not in errors[0]
+        assert "\n" not in errors[0]
+
+
 class TestSourcePlugin:
     """Tests for SourcePlugin ABC."""
 
@@ -203,6 +262,18 @@ class TestSourcePlugin:
 
         assert file_plugin.requires_network is False
         assert api_plugin.requires_network is True
+
+    def test_is_file_import_defaults_false(self) -> None:
+        """Plugins are syncable sources unless they opt into file import."""
+        assert MockPlugin().is_file_import is False
+
+    def test_accepted_extensions_defaults_empty(self) -> None:
+        """A syncable source takes no file, so it advertises no extensions.
+
+        The upload form builds its file picker from this list; a non-empty
+        default would offer a filter for a source that accepts no upload.
+        """
+        assert MockPlugin().accepted_extensions == []
 
     def test_get_config_schema(self) -> None:
         """Test getting configuration schema."""
@@ -257,7 +328,22 @@ class TestSourcePlugin:
         assert info.content_types == [ContentType.BOOK]
         assert info.requires_api_key is False
         assert info.requires_network is False
+        assert info.is_file_import is False
+        assert info.accepted_extensions == []
         assert len(info.config_schema) == 2
+
+    def test_get_info_mirrors_file_import_metadata(self) -> None:
+        """``PluginInfo`` is a complete snapshot, including the import fields.
+
+        ``is_file_import`` and ``accepted_extensions`` describe the same thing
+        — how the plugin receives its data — so a snapshot carrying one without
+        the other would quietly lose the file picker's source of truth for any
+        consumer that reads ``get_info()`` instead of the plugin.
+        """
+        info = CsvImportPlugin().get_info()
+
+        assert info.is_file_import is True
+        assert info.accepted_extensions == [".csv"]
 
 
 class TestNormalizeRating:
@@ -331,6 +417,8 @@ class TestPluginInfo:
         assert ContentType.MOVIE in info.content_types
         assert info.requires_api_key is True
         assert info.config_schema == []
+        assert info.is_file_import is False
+        assert info.accepted_extensions == []
 
     def test_plugin_info_with_schema(self) -> None:
         """Test PluginInfo with config schema."""
@@ -348,3 +436,31 @@ class TestPluginInfo:
 
         assert len(info.config_schema) == 1
         assert info.config_schema[0].name == "url"
+
+
+class TestFileImportPluginFlags:
+    """The five single-file import plugins opt into ``is_file_import``;
+    directory-scan and API sources stay syncable (``is_file_import`` False).
+    """
+
+    def test_file_import_plugins_marked(self) -> None:
+        for plugin in (
+            GoodreadsCsvPlugin(),
+            StorygraphCsvPlugin(),
+            CsvImportPlugin(),
+            JsonImportPlugin(),
+            MarkdownImportPlugin(),
+        ):
+            assert plugin.is_file_import is True, plugin.name
+
+    def test_directory_scan_and_api_sources_not_marked(self) -> None:
+        assert RomScannerPlugin().is_file_import is False
+        assert SteamPlugin().is_file_import is False
+
+    def test_goodreads_rss_is_not_a_file_import(self) -> None:
+        """The RSS half of the Goodreads split polls a feed, so it stays syncable.
+
+        Only the CSV export is a one-shot file import; marking both would strip
+        the feed source out of the syncable list.
+        """
+        assert GoodreadsRssPlugin().is_file_import is False

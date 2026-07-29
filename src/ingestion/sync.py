@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from src.ingestion.plugin_base import SourcePlugin
 from src.models.content import ContentItem, get_enum_value
-from src.utils.text import humanize_source_id
+from src.utils.text import humanize_source_id, sanitize_for_log
 
 if TYPE_CHECKING:
     from src.llm.embeddings import EmbeddingGenerator
@@ -144,6 +144,10 @@ def execute_sync(
     for index, item in enumerate(items):
         item_num = index + 1
         content_type = get_enum_value(item.content_type)
+        # A file-import plugin takes the title straight from the file the user
+        # uploaded, so it is escaped and length-capped once here for every
+        # message below that names it (CWE-117).
+        logged_title = sanitize_for_log(item.title)
         try:
             if progress_callback:
                 # Report ``item_num`` (1-based) so the UI shows the current
@@ -157,7 +161,7 @@ def execute_sync(
                 content_type,
                 item_num,
                 result.total_items,
-                item.title,
+                logged_title,
             )
 
             embedding = None
@@ -169,7 +173,7 @@ def execute_sync(
                         source_name,
                         item_num,
                         result.total_items,
-                        item.title,
+                        logged_title,
                     )
                     embedding = embedding_generator.generate_content_embedding(item)
                     embeddings_generated += 1
@@ -179,7 +183,7 @@ def execute_sync(
                         source_name,
                         item_num,
                         result.total_items,
-                        item.title,
+                        logged_title,
                     )
                     embeddings_skipped += 1
 
@@ -193,8 +197,8 @@ def execute_sync(
                 except Exception as enrich_error:
                     logger.warning(
                         "[SYNC] Failed to mark '%s' for enrichment: %s",
-                        item.title,
-                        enrich_error,
+                        logged_title,
+                        sanitize_for_log(str(enrich_error)),
                     )
 
         except Exception as error:
@@ -206,10 +210,10 @@ def execute_sync(
             logger.warning(
                 "[SYNC] %s: Failed to process '%s': %s",
                 source_name,
-                item.title,
-                error,
+                logged_title,
+                sanitize_for_log(str(error)),
             )
-            result.errors.append(f"Failed to process '{item.title}'")
+            result.errors.append(f"Failed to process '{logged_title}'")
 
     embedding_summary = ""
     if use_embeddings and embedding_generator:

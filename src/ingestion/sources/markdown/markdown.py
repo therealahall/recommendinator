@@ -9,13 +9,16 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from src.ingestion.file_reading import read_import_text
 from src.ingestion.plugin_base import (
     ConfigField,
     ProgressCallback,
     SourceError,
     SourcePlugin,
+    validate_content_type_option,
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.utils.text import sanitize_for_log
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
@@ -97,14 +100,16 @@ class MarkdownImportPlugin(SourcePlugin):
     def requires_network(self) -> bool:
         return False
 
+    @property
+    def is_file_import(self) -> bool:
+        return True
+
+    @property
+    def accepted_extensions(self) -> list[str]:
+        return [".md", ".markdown"]
+
     def get_config_schema(self) -> list[ConfigField]:
         return [
-            ConfigField(
-                name="path",
-                field_type=str,
-                required=True,
-                description="Path to Markdown file in the prescribed format",
-            ),
             ConfigField(
                 name="content_type",
                 field_type=str,
@@ -119,25 +124,7 @@ class MarkdownImportPlugin(SourcePlugin):
         storage: StorageManager | None = None,
         user_id: int = 1,
     ) -> list[str]:
-        errors = []
-
-        path = config.get("path")
-        if not path:
-            errors.append("'path' is required")
-        elif not Path(path).resolve().exists():
-            errors.append(f"Markdown file not found: {path}")
-
-        content_type = config.get("content_type", "")
-        valid_types = [content_type_enum.value for content_type_enum in ContentType]
-        if not content_type:
-            errors.append("'content_type' is required")
-        elif content_type not in valid_types:
-            errors.append(
-                f"Invalid content_type '{content_type}'. "
-                f"Must be one of: {', '.join(valid_types)}"
-            )
-
-        return errors
+        return validate_content_type_option(config)
 
     def fetch(
         self,
@@ -147,7 +134,8 @@ class MarkdownImportPlugin(SourcePlugin):
         """Fetch content items from a Markdown file.
 
         Args:
-            config: Must contain 'markdown_path' and 'content_type'
+            config: Holds 'content_type' plus the 'path' the import service
+                injects, naming the file to read
             progress_callback: Optional callback for progress updates
 
         Yields:
@@ -161,7 +149,7 @@ class MarkdownImportPlugin(SourcePlugin):
         file_path = Path(path)
 
         try:
-            content_type = ContentType(content_type_str)
+            content_type = ContentType.from_string(content_type_str)
         except ValueError as error:
             raise SourceError(
                 self.name, f"Invalid content type: {content_type_str}"
@@ -169,12 +157,7 @@ class MarkdownImportPlugin(SourcePlugin):
 
         logger.info("Parsing Markdown file: %s", file_path)
 
-        try:
-            content = file_path.read_text(encoding="utf-8")
-        except FileNotFoundError as error:
-            raise SourceError(
-                self.name, f"Markdown file not found: {file_path}"
-            ) from error
+        content = read_import_text(self.name, file_path, "Markdown")
 
         yield from _parse_markdown(
             content, content_type, self.get_source_identifier(config), progress_callback
@@ -256,10 +239,13 @@ def _parse_markdown(
             try:
                 date_completed = datetime.strptime(date_str.strip(), "%Y-%m-%d").date()
             except ValueError:
+                # Both values come out of the uploaded file, and this fires
+                # once per bad entry, so each is escaped and capped before it
+                # reaches the record (CWE-117).
                 logger.warning(
                     "Invalid date format for '%s': %s. Expected YYYY-MM-DD.",
-                    title,
-                    date_str,
+                    sanitize_for_log(title),
+                    sanitize_for_log(date_str),
                 )
 
         if progress_callback:

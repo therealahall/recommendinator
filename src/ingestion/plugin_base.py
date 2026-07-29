@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from src.models.config_field import ConfigField
 from src.models.content import ContentItem, ContentType
+from src.utils.text import sanitize_for_log
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
@@ -39,6 +40,42 @@ class PluginInfo:
     requires_api_key: bool
     requires_network: bool
     config_schema: list[ConfigField] = field(default_factory=list)
+    is_file_import: bool = False
+    accepted_extensions: list[str] = field(default_factory=list)
+
+
+def validate_content_type_option(config: dict[str, Any]) -> list[str]:
+    """Validate the ``content_type`` option shared by the generic importers.
+
+    Case-insensitive, because the same logical value arrives by three routes
+    and they have to agree: the CLI's ``--content-type`` flag (a
+    ``click.Choice(case_sensitive=False)``, so ``BOOK`` reaches here already
+    lowercased), the CLI's ``--option content_type=BOOK`` escape hatch, and a
+    multipart form field on ``POST /api/import``. The latter two pass the raw
+    string straight through, so an exact-case check here made ``BOOK`` succeed
+    on one path and fail on the other two. ``fetch`` resolves the value with
+    the same case-insensitive :meth:`ContentType.from_string`.
+
+    Args:
+        config: The plugin config to check for a ``content_type`` entry.
+
+    Returns:
+        A list holding one message when the option is missing or unrecognised,
+        otherwise empty. The rejected value is echoed back escaped and
+        length-capped: the message is returned verbatim to the client *and*
+        written to the log, and a multipart ``content_type`` field can be
+        megabytes of anything.
+    """
+    content_type = config.get("content_type", "")
+    if not content_type:
+        return ["'content_type' is required"]
+    try:
+        ContentType.from_string(content_type)
+    except ValueError:
+        valid = ", ".join(member.value for member in ContentType)
+        echoed = sanitize_for_log(content_type)
+        return [f"Invalid content_type '{echoed}'. Must be one of: {valid}"]
+    return []
 
 
 class SourceError(Exception):
@@ -86,13 +123,16 @@ class SourcePlugin(ABC):
             def requires_api_key(self) -> bool:
                 return False
 
+            # A plugin that reads one user-supplied file declares no path
+            # field: source config is settable over the network, so the file
+            # comes in through the import flow instead (see is_file_import).
             def get_config_schema(self) -> list[ConfigField]:
                 return [
                     ConfigField(
-                        name="path",
+                        name="url",
                         field_type=str,
                         required=True,
-                        description="Path to data file"
+                        description="Base URL of the service"
                     ),
                 ]
 
@@ -103,8 +143,8 @@ class SourcePlugin(ABC):
                 user_id: int = 1,
             ) -> list[str]:
                 errors = []
-                if not config.get("path"):
-                    errors.append("'path' is required")
+                if not config.get("url"):
+                    errors.append("'url' is required")
                 return errors
 
             def fetch(self, config: dict[str, Any]) -> Iterator[ContentItem]:
@@ -186,6 +226,38 @@ class SourcePlugin(ABC):
             True if network access is required, False otherwise
         """
         return self.requires_api_key
+
+    @property
+    def is_file_import(self) -> bool:
+        """Whether this plugin imports a single user-supplied file.
+
+        File-import plugins (Goodreads, StoryGraph, CSV, JSON, Markdown) are not
+        persistent syncable sources: a file is supplied at invocation
+        time (a web upload or the CLI ``import --file`` flag), run
+        through the ingestion pipeline once, and discarded. ``True`` here
+        keeps the plugin out of the syncable-source list and routes it
+        through the one-shot import service instead.
+
+        Returns:
+            True for one-shot file-import plugins, False otherwise.
+        """
+        return False
+
+    @property
+    def accepted_extensions(self) -> list[str]:
+        """File extensions this plugin imports, lowercase and dot-prefixed.
+
+        Drives the upload form's ``accept`` attribute and its help text, and is
+        listed by ``import --source list``. Empty for a syncable source, which
+        takes no file at all.
+
+        Advisory only: the parser decides whether a file is usable, so a
+        renamed export is refused by the importer rather than by its extension.
+
+        Returns:
+            The extensions a file-import plugin expects (e.g. ``[".csv"]``).
+        """
+        return []
 
     @abstractmethod
     def get_config_schema(self) -> list[ConfigField]:
@@ -337,4 +409,6 @@ class SourcePlugin(ABC):
             requires_api_key=self.requires_api_key,
             requires_network=self.requires_network,
             config_schema=self.get_config_schema(),
+            is_file_import=self.is_file_import,
+            accepted_extensions=self.accepted_extensions,
         )

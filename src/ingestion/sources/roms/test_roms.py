@@ -11,10 +11,24 @@ import pytest
 from src.ingestion.plugin_base import SourceError, SourcePlugin
 from src.ingestion.sources.roms.roms import (
     DEFAULT_EXTENSIONS,
+    SCAN_ROOTS_ENV_VAR,
     RomScannerPlugin,
     _safe_size_bytes,
+    allowed_scan_roots,
 )
 from src.models.content import ConsumptionStatus, ContentType
+
+
+@pytest.fixture(autouse=True)
+def _scan_roots(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Allow this test's tmp directory as a ROM root.
+
+    Scan paths are contained to an allow-list, and a pytest tmp directory is
+    outside the defaults. Setting the environment variable is exactly how an
+    operator points the scanner at a library in an unusual place, so the whole
+    suite exercises that path.
+    """
+    monkeypatch.setenv(SCAN_ROOTS_ENV_VAR, str(tmp_path))
 
 
 @pytest.fixture()
@@ -103,8 +117,8 @@ class TestRomScannerValidation:
         errors = plugin.validate_config({"paths": str(rom_dir)})
         assert any("list" in error.lower() for error in errors)
 
-    def test_nonexistent_path(self, plugin: RomScannerPlugin) -> None:
-        errors = plugin.validate_config({"paths": ["/does/not/exist"]})
+    def test_nonexistent_path(self, plugin: RomScannerPlugin, tmp_path: Path) -> None:
+        errors = plugin.validate_config({"paths": [str(tmp_path / "not-here")]})
         assert any("not found" in error.lower() for error in errors)
 
     def test_path_is_file_not_directory(
@@ -147,9 +161,11 @@ class TestRomScannerValidation:
         )
         assert any("exclude_names" in error for error in errors)
 
-    def test_collects_multiple_errors(self, plugin: RomScannerPlugin) -> None:
+    def test_collects_multiple_errors(
+        self, plugin: RomScannerPlugin, tmp_path: Path
+    ) -> None:
         errors = plugin.validate_config(
-            {"paths": ["/does/not/exist"], "exclude_names": "scripts"}
+            {"paths": [str(tmp_path / "not-here")], "exclude_names": "scripts"}
         )
         assert any("not found" in error.lower() for error in errors)
         assert any("exclude_names" in error for error in errors)
@@ -192,6 +208,382 @@ class TestRomScannerValidation:
             }
         )
         assert any("extra_strip_patterns" in error for error in errors)
+
+
+class TestRomScanPathContainment:
+    """Scan paths are contained to an allow-list of roots.
+
+    ``paths`` reaches the plugin from ``POST /api/sync/sources``, which stores
+    a config value without ever calling ``validate_config``, and the app has no
+    authentication. Without containment a request could point the scanner at
+    ``/etc`` or ``/root`` and read back the directory listing as game titles.
+    """
+
+    def test_path_outside_the_allowed_roots_fails_validation(
+        self, plugin: RomScannerPlugin, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        allowed = tmp_path / "allowed"
+        allowed.mkdir()
+        monkeypatch.setenv(SCAN_ROOTS_ENV_VAR, str(allowed))
+
+        errors = plugin.validate_config({"paths": [str(outside)]})
+
+        assert len(errors) == 1
+        assert "not an allowed ROM directory" in errors[0]
+        assert SCAN_ROOTS_ENV_VAR in errors[0]
+
+    def test_fetch_refuses_a_path_outside_the_allowed_roots(
+        self, plugin: RomScannerPlugin, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Refused at fetch too — source creation never runs validate_config."""
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "Secret.zip").write_bytes(b"x")
+        allowed = tmp_path / "allowed"
+        allowed.mkdir()
+        monkeypatch.setenv(SCAN_ROOTS_ENV_VAR, str(allowed))
+
+        with pytest.raises(SourceError, match="not an allowed ROM directory"):
+            list(plugin.fetch({"paths": [str(outside)]}))
+
+    def test_traversal_out_of_an_allowed_root_is_refused(
+        self, plugin: RomScannerPlugin, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``..`` is resolved before the comparison, so it cannot escape."""
+        allowed = tmp_path / "allowed"
+        allowed.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        monkeypatch.setenv(SCAN_ROOTS_ENV_VAR, str(allowed))
+
+        errors = plugin.validate_config({"paths": [f"{allowed}/../outside"]})
+
+        assert any("not an allowed ROM directory" in error for error in errors)
+
+    def test_symlink_out_of_an_allowed_root_is_refused(
+        self, plugin: RomScannerPlugin, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A symlink planted inside an allowed root resolves to its target."""
+        allowed = tmp_path / "allowed"
+        allowed.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (allowed / "link").symlink_to(outside, target_is_directory=True)
+        monkeypatch.setenv(SCAN_ROOTS_ENV_VAR, str(allowed))
+
+        errors = plugin.validate_config({"paths": [str(allowed / "link")]})
+
+        assert any("not an allowed ROM directory" in error for error in errors)
+
+    @pytest.mark.parametrize("blank", ["", "   "])
+    def test_a_blank_path_entry_is_refused(
+        self, plugin: RomScannerPlugin, blank: str
+    ) -> None:
+        """An empty entry must not silently mean "scan the working directory".
+
+        ``Path("").resolve()`` is the current working directory, which is one
+        of the default roots — so a blank entry passed containment and turned
+        into a scan of wherever the app was started from, without the config
+        ever naming it. ``"."`` still means exactly that, spelled on purpose.
+        """
+        errors = plugin.validate_config({"paths": [blank]})
+
+        assert errors == ["'paths' entries must not be empty"]
+
+    def test_fetch_refuses_a_blank_path_entry(self, plugin: RomScannerPlugin) -> None:
+        """Refused at fetch too — source creation never runs validate_config."""
+        with pytest.raises(SourceError, match="not an allowed ROM directory"):
+            list(plugin.fetch({"paths": [""]}))
+
+    def test_a_library_under_an_allowed_root_still_validates(
+        self, plugin: RomScannerPlugin, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The containment must not break a real library: a nested dir passes."""
+        library = tmp_path / "library" / "snes"
+        library.mkdir(parents=True)
+        monkeypatch.setenv(SCAN_ROOTS_ENV_VAR, str(tmp_path / "library"))
+
+        assert plugin.validate_config({"paths": [str(library)]}) == []
+
+    def test_default_roots_cover_home_cwd_and_media_mounts(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """With no environment override, the built-in roots apply.
+
+        Pins the defaults so a future edit cannot quietly drop the home
+        directory (where most libraries live) or add ``/`` (which would make
+        the containment vacuous).
+        """
+        monkeypatch.delenv(SCAN_ROOTS_ENV_VAR, raising=False)
+
+        roots = allowed_scan_roots()
+
+        assert Path.home().resolve() in roots
+        assert Path.cwd().resolve() in roots
+        assert Path("/mnt") in roots
+        assert Path("/media") in roots
+        assert Path("/") not in roots
+
+    @pytest.mark.parametrize("system_dir", ["/etc", "/root", "/proc", "/var/log"])
+    def test_default_roots_refuse_system_directories(
+        self,
+        plugin: RomScannerPlugin,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        system_dir: str,
+    ) -> None:
+        """The directories the containment exists for are refused by default.
+
+        Home and cwd are pointed at a tmp directory so the assertion holds
+        whichever user runs the suite (as root, ``/root`` *is* the home
+        directory); what is pinned is that the built-in root list does not
+        name these.
+        """
+        monkeypatch.delenv(SCAN_ROOTS_ENV_VAR, raising=False)
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.setattr(Path, "cwd", lambda: tmp_path)
+
+        errors = plugin.validate_config({"paths": [system_dir]})
+
+        assert any("not an allowed ROM directory" in error for error in errors)
+
+    def test_environment_override_replaces_the_defaults(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Naming roots replaces the defaults rather than adding to them."""
+        first = tmp_path / "one"
+        second = tmp_path / "two"
+        monkeypatch.setenv(SCAN_ROOTS_ENV_VAR, f"{first}{os.pathsep}{second}")
+
+        roots = allowed_scan_roots()
+
+        assert roots == [first.resolve(), second.resolve()]
+
+    def test_whitespace_only_override_falls_back_to_the_defaults(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A blank value is an unset value, not an empty allow-list.
+
+        An empty root list would refuse every path, so a stray space in a
+        compose file must not silently disable the plugin.
+        """
+        monkeypatch.setenv(SCAN_ROOTS_ENV_VAR, "   ")
+
+        roots = allowed_scan_roots()
+
+        assert Path.home().resolve() in roots
+        assert Path("/mnt") in roots
+
+    def test_empty_entries_in_the_override_are_dropped(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """``/a::/b`` names two roots, not three — an empty entry would
+        resolve to the working directory and widen the allow-list."""
+        first = tmp_path / "one"
+        second = tmp_path / "two"
+        monkeypatch.setenv(
+            SCAN_ROOTS_ENV_VAR, f"{first}{os.pathsep}{os.pathsep}{second}"
+        )
+
+        roots = allowed_scan_roots()
+
+        assert roots == [first.resolve(), second.resolve()]
+
+
+class TestRomScanPathHiddenDirectories:
+    """A scan path may not reach its root through a dot-prefixed directory.
+
+    The allow-list has to include the home directory for the plugin to be
+    usable, which on its own would make ``~/.ssh`` a legal scan root and turn
+    ``id_rsa``, ``known_hosts`` and ``authorized_keys`` into game titles —
+    ``_collect_entries`` skips dot-prefixed *children*, not a dot-prefixed
+    *root*. ``~/.aws``, ``~/.gnupg`` and ``~/.config/*`` are the same shape.
+
+    The rule covers the part below the matched root only. Roots come from the
+    environment, so a dot in the root itself is the operator's own choice.
+    """
+
+    def test_hidden_scan_root_fails_validation(
+        self, plugin: RomScannerPlugin, tmp_path: Path
+    ) -> None:
+        hidden = tmp_path / ".ssh"
+        hidden.mkdir()
+        (hidden / "id_rsa").write_text("private key")
+
+        errors = plugin.validate_config({"paths": [str(hidden)]})
+
+        assert len(errors) == 1
+        assert "hidden (dot-prefixed) directory" in errors[0]
+
+    def test_hidden_ancestor_fails_validation(
+        self, plugin: RomScannerPlugin, tmp_path: Path
+    ) -> None:
+        """The rule applies to every component, not just the final one."""
+        nested = tmp_path / ".config" / "recommendinator"
+        nested.mkdir(parents=True)
+
+        errors = plugin.validate_config({"paths": [str(nested)]})
+
+        assert any("hidden (dot-prefixed) directory" in error for error in errors)
+
+    def test_fetch_refuses_a_hidden_scan_root(
+        self, plugin: RomScannerPlugin, tmp_path: Path
+    ) -> None:
+        """Refused at fetch too — source creation never runs validate_config."""
+        hidden = tmp_path / ".ssh"
+        hidden.mkdir()
+        (hidden / "id_rsa").write_text("private key")
+
+        with pytest.raises(SourceError, match="hidden"):
+            list(plugin.fetch({"paths": [str(hidden)]}))
+
+    def test_symlink_into_a_hidden_directory_is_refused(
+        self, plugin: RomScannerPlugin, tmp_path: Path
+    ) -> None:
+        """Resolution runs first, so a plain-looking name cannot hide it."""
+        hidden = tmp_path / ".gnupg"
+        hidden.mkdir()
+        (tmp_path / "roms").symlink_to(hidden, target_is_directory=True)
+
+        errors = plugin.validate_config({"paths": [str(tmp_path / "roms")]})
+
+        assert any("hidden (dot-prefixed) directory" in error for error in errors)
+
+    def test_hidden_directory_in_home_is_refused_by_default(
+        self, plugin: RomScannerPlugin, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``~/.ssh`` sits under an allowed root, so only the dot rule stops it."""
+        monkeypatch.delenv(SCAN_ROOTS_ENV_VAR, raising=False)
+
+        errors = plugin.validate_config({"paths": [str(Path.home() / ".ssh")]})
+
+        assert any("hidden (dot-prefixed) directory" in error for error in errors)
+
+    def test_a_plain_library_under_an_allowed_root_still_validates(
+        self, plugin: RomScannerPlugin, tmp_path: Path
+    ) -> None:
+        """The common legitimate case (``~/roms``) must keep working."""
+        library = tmp_path / "roms" / "snes"
+        library.mkdir(parents=True)
+
+        assert plugin.validate_config({"paths": [str(library)]}) == []
+
+    def test_a_dot_prefixed_root_the_operator_named_is_allowed(
+        self, plugin: RomScannerPlugin, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The dot rule applies below the root, not to the root itself.
+
+        A root only ever arrives from the environment, so a dot inside it is
+        operator-chosen and never attacker-chosen. Refusing it would strand an
+        XDG library at ``~/.local/share/roms`` and break the app whenever its
+        working directory happens to sit under a dot-prefixed path.
+        """
+        library = tmp_path / ".local" / "share" / "roms"
+        (library / "snes").mkdir(parents=True)
+        monkeypatch.setenv(SCAN_ROOTS_ENV_VAR, str(library))
+
+        assert plugin.validate_config({"paths": [str(library / "snes")]}) == []
+
+    def test_a_general_root_does_not_veto_a_more_specific_one(
+        self, plugin: RomScannerPlugin, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Matching a root through a dot must not stop a later root matching.
+
+        With both the home directory and a dot-prefixed library beneath it on
+        the list, the home match reaches the library through ``.local`` — but
+        the library's own entry reaches it cleanly, so it is scannable.
+        """
+        library = tmp_path / ".local" / "share" / "roms"
+        library.mkdir(parents=True)
+        monkeypatch.setenv(
+            SCAN_ROOTS_ENV_VAR, os.pathsep.join([str(tmp_path), str(library)])
+        )
+
+        assert plugin.validate_config({"paths": [str(library)]}) == []
+
+    def test_a_hidden_sibling_of_a_named_root_is_still_refused(
+        self, plugin: RomScannerPlugin, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Naming one dotted root must not unlock every other dotted directory."""
+        library = tmp_path / ".local" / "share" / "roms"
+        library.mkdir(parents=True)
+        secrets = tmp_path / ".ssh"
+        secrets.mkdir()
+        monkeypatch.setenv(
+            SCAN_ROOTS_ENV_VAR, os.pathsep.join([str(tmp_path), str(library)])
+        )
+
+        errors = plugin.validate_config({"paths": [str(secrets)]})
+
+        assert any("hidden (dot-prefixed) directory" in error for error in errors)
+
+
+class TestRomExtraStripPatternBounds:
+    """``extra_strip_patterns`` is capped by count and by length.
+
+    That is all it is: the caps bound how much regex runs against every title,
+    not how long any one pattern takes. ``re`` has no execution timeout and no
+    cheap static check separates a safe pattern from a catastrophic one, so a
+    caller who can write source config can still burn a CPU for the length of
+    a scan — documented in docs/SECURITY.md rather than half-mitigated here.
+    """
+
+    @pytest.mark.parametrize(
+        "pattern",
+        [r"\s*\(nsw2u\.com\)", r"-[A-Z0-9]+$", r"(USA|Europe)", r"\s*\[.*?\]"],
+    )
+    def test_realistic_patterns_are_accepted(
+        self, plugin: RomScannerPlugin, rom_dir: Path, pattern: str
+    ) -> None:
+        """The patterns people actually write pass validation."""
+        assert (
+            plugin.validate_config(
+                {"paths": [str(rom_dir)], "extra_strip_patterns": [pattern]}
+            )
+            == []
+        )
+
+    def test_too_many_patterns_are_refused(
+        self, plugin: RomScannerPlugin, rom_dir: Path
+    ) -> None:
+        """Every pattern runs against every title, so the count is capped too."""
+        errors = plugin.validate_config(
+            {
+                "paths": [str(rom_dir)],
+                "extra_strip_patterns": [f"-tag{index}" for index in range(11)],
+            }
+        )
+
+        assert any("At most 10 patterns" in error for error in errors)
+
+    def test_patterns_exactly_at_both_caps_are_accepted(
+        self, plugin: RomScannerPlugin, rom_dir: Path
+    ) -> None:
+        """Both caps are inclusive; a ``>=`` slip would refuse a legal config."""
+        patterns = [f"-tag{index}" for index in range(9)] + ["a" * 200]
+
+        assert (
+            plugin.validate_config(
+                {"paths": [str(rom_dir)], "extra_strip_patterns": patterns}
+            )
+            == []
+        )
+
+    def test_fetch_refuses_more_patterns_than_the_cap(
+        self, plugin: RomScannerPlugin, rom_dir: Path
+    ) -> None:
+        """Refused at fetch too, the path a stored config actually takes."""
+        with pytest.raises(SourceError, match="At most 10 patterns"):
+            list(
+                plugin.fetch(
+                    {
+                        "paths": [str(rom_dir)],
+                        "extra_strip_patterns": [f"-tag{index}" for index in range(11)],
+                    }
+                )
+            )
 
 
 class TestRomScannerFetchExtensionFiltering:
@@ -591,9 +983,11 @@ class TestRomScannerProgressCallback:
 
 
 class TestRomScannerErrors:
-    def test_missing_path_raises(self, plugin: RomScannerPlugin) -> None:
+    def test_missing_path_raises(
+        self, plugin: RomScannerPlugin, tmp_path: Path
+    ) -> None:
         with pytest.raises(SourceError, match="not found"):
-            list(plugin.fetch({"paths": ["/nonexistent/scan/root"]}))
+            list(plugin.fetch({"paths": [str(tmp_path / "nonexistent")]}))
 
     def test_path_not_directory_raises(
         self, plugin: RomScannerPlugin, tmp_path: Path

@@ -9,11 +9,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from src.ingestion.file_reading import read_import_text
 from src.ingestion.plugin_base import (
     ConfigField,
     ProgressCallback,
     SourceError,
     SourcePlugin,
+    validate_content_type_option,
 )
 from src.ingestion.sources.generic_csv import (
     CONTENT_TYPE_COLUMNS,
@@ -23,6 +25,7 @@ from src.ingestion.sources.generic_csv import (
     parse_seasons_watched,
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.utils.text import sanitize_for_log
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
@@ -67,14 +70,16 @@ class JsonImportPlugin(SourcePlugin):
     def requires_network(self) -> bool:
         return False
 
+    @property
+    def is_file_import(self) -> bool:
+        return True
+
+    @property
+    def accepted_extensions(self) -> list[str]:
+        return [".json", ".jsonl"]
+
     def get_config_schema(self) -> list[ConfigField]:
         return [
-            ConfigField(
-                name="path",
-                field_type=str,
-                required=True,
-                description="Path to JSON or JSONL file matching the template",
-            ),
             ConfigField(
                 name="content_type",
                 field_type=str,
@@ -89,25 +94,7 @@ class JsonImportPlugin(SourcePlugin):
         storage: StorageManager | None = None,
         user_id: int = 1,
     ) -> list[str]:
-        errors = []
-
-        path = config.get("path")
-        if not path:
-            errors.append("'path' is required")
-        elif not Path(path).resolve().exists():
-            errors.append(f"JSON file not found: {path}")
-
-        content_type = config.get("content_type", "")
-        valid_types = [content_type_enum.value for content_type_enum in ContentType]
-        if not content_type:
-            errors.append("'content_type' is required")
-        elif content_type not in valid_types:
-            errors.append(
-                f"Invalid content_type '{content_type}'. "
-                f"Must be one of: {', '.join(valid_types)}"
-            )
-
-        return errors
+        return validate_content_type_option(config)
 
     def fetch(
         self,
@@ -117,7 +104,8 @@ class JsonImportPlugin(SourcePlugin):
         """Fetch content items from a JSON or JSONL file.
 
         Args:
-            config: Must contain 'json_path' and 'content_type'
+            config: Holds 'content_type' plus the 'path' the import service
+                injects, naming the file to read
             progress_callback: Optional callback for progress updates
 
         Yields:
@@ -131,7 +119,7 @@ class JsonImportPlugin(SourcePlugin):
         file_path = Path(path)
 
         try:
-            content_type = ContentType(content_type_str)
+            content_type = ContentType.from_string(content_type_str)
         except ValueError as error:
             raise SourceError(
                 self.name, f"Invalid content type: {content_type_str}"
@@ -141,11 +129,16 @@ class JsonImportPlugin(SourcePlugin):
         logger.info("Parsing %s file: %s", file_format, file_path)
 
         try:
-            entries = _load_json_or_jsonl(file_path)
-        except FileNotFoundError as error:
-            raise SourceError(self.name, f"JSON file not found: {file_path}") from error
+            entries = _load_json_or_jsonl(self.name, file_path)
         except (json.JSONDecodeError, ValueError) as error:
             raise SourceError(self.name, f"Failed to parse JSON: {error}") from error
+        except RecursionError as error:
+            # A few kilobytes of "[[[[[..." exhausts the parser's stack long
+            # before it exhausts memory, and RecursionError is not a
+            # ValueError, so it would otherwise escape as a 500.
+            raise SourceError(
+                self.name, f"JSON file is nested too deeply to parse: {file_path}"
+            ) from error
 
         logger.info("Found %d entries in %s file", len(entries), file_format)
 
@@ -157,21 +150,22 @@ class JsonImportPlugin(SourcePlugin):
         )
 
 
-def _load_json_or_jsonl(file_path: Path) -> list[dict[str, Any]]:
+def _load_json_or_jsonl(plugin_name: str, file_path: Path) -> list[dict[str, Any]]:
     """Load entries from a JSON array or JSONL file.
 
     Args:
+        plugin_name: Plugin name for any raised ``SourceError``.
         file_path: Path to the file
 
     Returns:
         List of entry dictionaries
 
     Raises:
-        FileNotFoundError: If file doesn't exist
+        SourceError: If the file is missing, unreadable, or not UTF-8 text
         json.JSONDecodeError: If JSON is malformed
         ValueError: If file format is invalid
     """
-    content = file_path.read_text(encoding="utf-8").strip()
+    content = read_import_text(plugin_name, file_path, "JSON").strip()
 
     if not content:
         return []
@@ -246,10 +240,13 @@ def _parse_entries(
             try:
                 date_completed = datetime.strptime(date_str, "%Y-%m-%d").date()
             except ValueError:
+                # Both values are fields of the uploaded file, and this fires
+                # once per bad entry, so each is escaped and capped before it
+                # reaches the record (CWE-117).
                 logger.warning(
                     "Invalid date format for '%s': %s. Expected YYYY-MM-DD.",
-                    title,
-                    date_str,
+                    sanitize_for_log(title),
+                    sanitize_for_log(date_str),
                 )
 
         # Parse review and notes

@@ -43,14 +43,15 @@ class TestGoodreadsCsvPluginProperties:
         """Test that plugin does not require network access."""
         assert plugin.requires_network is False
 
-    def test_config_schema(self, plugin: GoodreadsCsvPlugin) -> None:
-        """Test configuration schema defines csv_path."""
+    def test_is_file_import(self, plugin: GoodreadsCsvPlugin) -> None:
+        """Test that the Goodreads CSV export is a one-shot file-import plugin."""
+        assert plugin.is_file_import is True
+
+    def test_config_schema_has_no_path(self, plugin: GoodreadsCsvPlugin) -> None:
+        """Path is injected by the import service, not configured on the plugin."""
         schema = plugin.get_config_schema()
 
-        assert len(schema) == 1
-        assert schema[0].name == "path"
-        assert schema[0].field_type is str
-        assert schema[0].required is True
+        assert [field.name for field in schema] == []
 
     def test_get_source_identifier(self, plugin: GoodreadsCsvPlugin) -> None:
         """Test source identifier matches plugin name."""
@@ -65,42 +66,16 @@ class TestGoodreadsCsvPluginProperties:
         assert info.content_types == [ContentType.BOOK]
         assert info.requires_api_key is False
         assert info.requires_network is False
+        assert info.is_file_import is True
 
 
 class TestGoodreadsCsvPluginValidation:
     """Tests for GoodreadsCsvPlugin config validation."""
 
-    def test_validate_valid_config(
-        self, plugin: GoodreadsCsvPlugin, tmp_path: Path
-    ) -> None:
-        """Test validation passes with valid CSV path."""
-        csv_file = tmp_path / "books.csv"
-        csv_file.write_text("header\n")
-
-        errors = plugin.validate_config({"path": str(csv_file)})
-
-        assert errors == []
-
-    def test_validate_missing_path(self, plugin: GoodreadsCsvPlugin) -> None:
-        """Test validation fails when path is missing."""
-        errors = plugin.validate_config({})
-
-        assert len(errors) == 1
-        assert "'path' is required" in errors[0]
-
-    def test_validate_empty_path(self, plugin: GoodreadsCsvPlugin) -> None:
-        """Test validation fails when path is empty."""
-        errors = plugin.validate_config({"path": ""})
-
-        assert len(errors) == 1
-        assert "'path' is required" in errors[0]
-
-    def test_validate_nonexistent_file(self, plugin: GoodreadsCsvPlugin) -> None:
-        """Test validation fails when CSV file does not exist."""
-        errors = plugin.validate_config({"path": "/nonexistent/books.csv"})
-
-        assert len(errors) == 1
-        assert "CSV file not found" in errors[0]
+    def test_validate_does_not_require_path(self, plugin: GoodreadsCsvPlugin) -> None:
+        """validate_config no longer requires a path — the service injects it."""
+        assert plugin.validate_config({}) == []
+        assert plugin.validate_config({"path": "/nonexistent/books.csv"}) == []
 
 
 class TestGoodreadsCsvPluginFetch:
@@ -191,6 +166,18 @@ class TestGoodreadsCsvPluginFetch:
 
         assert exc_info.value.plugin_name == "goodreads_csv"
 
+    def test_fetch_non_utf8_file_raises_source_error(
+        self, plugin: GoodreadsCsvPlugin, tmp_path: Path
+    ) -> None:
+        """A Latin-1 export is refused as a SourceError, not a decode crash."""
+        csv_file = tmp_path / "books.csv"
+        csv_file.write_text("Title,Author\nCafé,An Author\n", encoding="latin-1")
+
+        with pytest.raises(SourceError, match="not UTF-8 text") as exc_info:
+            list(plugin.fetch({"path": str(csv_file)}))
+
+        assert exc_info.value.plugin_name == "goodreads_csv"
+
     def test_fetch_metadata(self, plugin: GoodreadsCsvPlugin, tmp_path: Path) -> None:
         """Test that metadata fields are populated correctly."""
         csv_content = (
@@ -237,3 +224,37 @@ class TestGoodreadsCsvPluginFetch:
         items = list(plugin.fetch({"path": str(csv_file)}))
 
         assert items[0].date_completed is None
+
+
+class TestGoodreadsCsvBomRegression:
+    """Regression: a UTF-8 BOM export lost the Goodreads id of every book.
+
+    Reported: books imported from a Goodreads CSV re-saved in Excel came in
+    without their Goodreads id. Root cause: the reader opened the file as plain
+    ``utf-8``, so the BOM was glued onto the first column name — which in a
+    Goodreads export is ``Book Id`` — and every lookup of it came back empty.
+    Fix: open with ``utf-8-sig``, which strips the BOM when present and decodes
+    a BOM-less file identically.
+
+    The assertions below deliberately target the FIRST column. ``Title`` and
+    ``Author`` sit after it and decode identically either way, so asserting on
+    those alone would pass against the unfixed reader and prove nothing.
+    """
+
+    def test_fetch_bom_prefixed_csv(
+        self, plugin: GoodreadsCsvPlugin, tmp_path: Path
+    ) -> None:
+        csv_file = tmp_path / "books.csv"
+        # Writing as utf-8-sig emits the real byte-order mark Excel prepends.
+        csv_file.write_text(
+            "Book Id,Title,Author,My Rating,Exclusive Shelf\n"
+            "123,Test Book,Test Author,4,read\n",
+            encoding="utf-8-sig",
+        )
+
+        items = list(plugin.fetch({"path": str(csv_file)}))
+
+        assert len(items) == 1
+        assert items[0].metadata["book_id"] == "123"
+        assert items[0].id == "123"
+        assert items[0].title == "Test Book"
