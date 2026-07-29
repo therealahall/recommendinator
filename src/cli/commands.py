@@ -20,6 +20,8 @@ from src.cli.config import get_feature_flags
 from src.conversation.engine import ConversationEngine
 from src.conversation.profile import ProfileGenerator
 from src.enrichment.manager import EnrichmentManager
+from src.ingestion.import_service import FileImportError, import_file, import_warning
+from src.ingestion.registry import get_registry
 from src.ingestion.sync import (
     MAX_WORKERS_CEILING,
     execute_multi_source_sync,
@@ -89,6 +91,7 @@ from src.web.sync_sources import (
     delete_source,
     get_available_sync_sources,
     list_available_plugins,
+    list_importable_plugins,
     migrate_source,
     resolve_inputs,
     resolve_source_plugin,
@@ -350,7 +353,12 @@ def update(ctx: click.Context, source: str, workers: int | None) -> None:
 
         click.echo("Available sources:")
         for info in available:
-            status = "enabled" if info.enabled else "disabled"
+            # A file-import entry is a leftover that can never sync, so it is
+            # labelled as such rather than as enabled/disabled.
+            if info.is_file_import:
+                status = "file import — not syncable, remove it"
+            else:
+                status = "enabled" if info.enabled else "disabled"
             click.echo(f"  {info.id:20s} plugin={info.plugin_display_name} [{status}]")
         return
 
@@ -483,6 +491,184 @@ def update(ctx: click.Context, source: str, workers: int | None) -> None:
     except Exception as error:
         click.echo(f"Error updating data: {error}", err=True)
         raise click.Abort() from error
+
+
+def _list_importable_sources(output_format: str) -> None:
+    """Print the file-import plugins (mirrors GET /api/import/sources)."""
+    plugins = list_importable_plugins()
+    if output_format == "json":
+        click.echo(json.dumps(plugins, indent=2))
+        return
+
+    if not plugins:
+        click.echo("No importable sources available.")
+        return
+
+    rows = [
+        [
+            p["name"],
+            p["display_name"],
+            ",".join(p["content_types"]),
+            ", ".join(p["accepted_extensions"]),
+            ", ".join(field["name"] for field in p["fields"]) or "—",
+        ]
+        for p in plugins
+    ]
+    click.echo(
+        tabulate(
+            rows,
+            headers=[
+                "Name",
+                "Display Name",
+                "Content Types",
+                "File Types",
+                "Options",
+            ],
+            tablefmt="grid",
+        )
+    )
+
+
+@click.command(name="import")
+@click.option(
+    "--source",
+    required=True,
+    help="File-import source (use 'list' to see importable sources)",
+)
+@click.option(
+    "--file",
+    "file_path",
+    type=click.Path(path_type=Path),  # type: ignore[type-var]
+    default=None,
+    help="Path to the file to import",
+)
+@click.option(
+    "--content-type",
+    "content_type",
+    type=click.Choice(["book", "movie", "tv_show", "video_game"], case_sensitive=False),
+    default=None,
+    help="Content type for the imported items",
+)
+@click.option(
+    "--option",
+    "options",
+    multiple=True,
+    metavar="KEY=VALUE",
+    help="Additional import option as KEY=VALUE (repeatable)",
+)
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    default="table",
+    help="Output format for the source listing and the import result",
+)
+@click.pass_context
+def import_data(
+    ctx: click.Context,
+    source: str,
+    file_path: Path | None,
+    content_type: str | None,
+    options: tuple[str, ...],
+    output_format: str,
+) -> None:
+    """Import content from a file (mirrors POST /api/import).
+
+    Use ``--source list`` to see importable sources and their options.
+    """
+    if source == "list":
+        _list_importable_sources(output_format)
+        return
+
+    if file_path is None:
+        _abort_with("--file is required (or use --source list).")
+
+    import_options: dict[str, Any] = {}
+    if content_type is not None:
+        import_options["content_type"] = content_type
+    for raw in options:
+        if "=" not in raw:
+            _abort_with(f"Invalid --option '{raw}'. Expected KEY=VALUE.")
+        key, value = raw.split("=", 1)
+        import_options[key.strip()] = value
+
+    # Looked up only for the display name in JSON output. Every rule about the
+    # source and its options — unknown plugin, non-file-import plugin,
+    # undeclared option key — belongs to the import service, so both interfaces
+    # enforce it identically.
+    plugin = get_registry().get_plugin(source)
+
+    storage = ctx.obj["storage"]
+    embedding_gen = ctx.obj["embedding_gen"]
+    config = ctx.obj["config"]
+
+    use_embeddings = get_feature_flags(config)["use_embeddings"]
+    enrichment_config = config.get("enrichment", {})
+    auto_enrich = enrichment_config.get("enabled", False) and enrichment_config.get(
+        "auto_enrich_on_sync", False
+    )
+
+    last_reported = -1
+
+    def cli_progress(
+        items_processed: int,
+        total_items: int | None,
+        current_item: str | None,
+        current_source: str | None = None,
+    ) -> None:
+        nonlocal last_reported
+        if not (total_items and items_processed > 0 and items_processed % 10 == 0):
+            return
+        if last_reported == items_processed:
+            return
+        last_reported = items_processed
+        click.echo(f"    Processed {items_processed}/{total_items}...")
+
+    try:
+        result = import_file(
+            plugin_name=source,
+            file_path=file_path,
+            options=import_options,
+            storage_manager=storage,
+            embedding_generator=embedding_gen,
+            use_embeddings=use_embeddings,
+            progress_callback=cli_progress,
+            mark_for_enrichment=auto_enrich,
+        )
+    except FileImportError as error:
+        click.echo(f"Error: {error}", err=True)
+        raise click.Abort() from error
+
+    warning = import_warning(result)
+
+    if output_format == "json":
+        # Mirror the fields POST /api/import returns so JSON consumers get the
+        # same shape (including per-item errors) from either interface.
+        display_name = plugin.display_name if plugin else source
+        click.echo(
+            json.dumps(
+                {
+                    "message": (
+                        f"Imported {result.items_synced} item(s) from {display_name}."
+                    ),
+                    "source": source,
+                    "items_synced": result.items_synced,
+                    "total_items": result.total_items,
+                    "errors": result.errors,
+                    "warning": warning,
+                },
+                indent=2,
+            )
+        )
+        return
+
+    click.echo(
+        f"Imported {result.items_synced}/{result.total_items} items from {source}."
+    )
+    if warning:
+        click.echo(f"Warning: {warning}", err=True)
+    for item_error in result.errors:
+        click.echo(f"  Warning: {item_error}", err=True)
 
 
 @click.command()
@@ -2415,6 +2601,7 @@ def source_list(ctx: click.Context, output_format: str) -> None:
             "display_name": entry.display_name,
             "plugin_display_name": entry.plugin_display_name,
             "enabled": entry.enabled,
+            "is_file_import": entry.is_file_import,
         }
         for entry in sources
     ]
@@ -2432,7 +2619,13 @@ def source_list(ctx: click.Context, output_format: str) -> None:
             item["id"],
             item["display_name"],
             item["plugin_display_name"],
-            "yes" if item["enabled"] else "no",
+            # A file-import entry can never sync whatever its enabled flag
+            # says, so the column reports that instead of a misleading "yes".
+            (
+                "file import"
+                if item["is_file_import"]
+                else ("yes" if item["enabled"] else "no")
+            ),
         ]
         for item in payload
     ]

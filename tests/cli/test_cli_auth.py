@@ -1,5 +1,8 @@
 """Tests for CLI auth commands."""
 
+import itertools
+from collections.abc import Iterator
+from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
 from click.testing import CliRunner
@@ -8,6 +11,36 @@ from src.storage.manager import StorageManager
 from src.web.trakt_auth import DevicePollResult, DevicePollStatus, TraktAuthError
 
 from .conftest import _invoke_with_mocks
+
+
+@contextmanager
+def _patched_command_time(
+    monotonic: Iterator[float] | None = None,
+) -> Iterator[MagicMock]:
+    """Replace ``src.cli.commands``'s own ``time`` reference for the block.
+
+    Deliberately not ``patch("src.cli.commands.time.sleep")``: that target
+    resolves through to the shared ``time`` module and sets the attribute
+    *there*, so every thread in the process sees it for the duration. The Trakt
+    tests below assert on exact call recordings (``assert_called_once_with``,
+    whole ``call_args_list`` equality, ``assert_not_called``) and one of them
+    injects ``KeyboardInterrupt`` — a background thread that merely sleeps
+    during the block would corrupt the first three and take the exception in
+    the last. Rebinding the module reference inside ``commands``'s namespace
+    confines the replacement to the code under test, the shape
+    ``tests/enrichment/test_rate_limiter.py`` already uses.
+
+    Args:
+        monotonic: Readings ``time.monotonic()`` returns in order. Defaults to
+            a clock advancing one second per call, which leaves the poll loop's
+            deadline comfortably in the future.
+
+    Yields:
+        The stand-in module. ``.sleep`` is the recorder the tests assert on.
+    """
+    with patch("src.cli.commands.time") as mock_time:
+        mock_time.monotonic.side_effect = monotonic or itertools.count(0.0, 1.0)
+        yield mock_time
 
 
 class TestAuthStatus:
@@ -237,7 +270,7 @@ class TestAuthConnect:
                 ),
             ),
             patch("src.cli.commands.save_trakt_token") as mock_save,
-            patch("src.cli.commands.time.sleep") as mock_sleep,
+            _patched_command_time() as mock_time,
         ):
             result = _invoke_with_mocks(
                 cli_runner,
@@ -250,7 +283,7 @@ class TestAuthConnect:
         assert "connected successfully" in result.output.lower()
         mock_save.assert_called_once_with(mock_storage, "trakt-refresh", user_id=1)
         # The poll loop waits the cadence Trakt returned before each poll.
-        mock_sleep.assert_called_once_with(flow["interval"])
+        mock_time.sleep.assert_called_once_with(flow["interval"])
 
     def test_connect_trakt_not_configured(self, cli_runner: CliRunner) -> None:
         """Trakt connect aborts when client credentials are missing."""
@@ -289,7 +322,7 @@ class TestAuthConnect:
                 return_value=DevicePollResult(DevicePollStatus.DENIED),
             ),
             patch("src.cli.commands.save_trakt_token") as mock_save,
-            patch("src.cli.commands.time.sleep"),
+            _patched_command_time(),
         ):
             result = _invoke_with_mocks(
                 cli_runner,
@@ -325,7 +358,7 @@ class TestAuthConnect:
                 ],
             ),
             patch("src.cli.commands.save_trakt_token") as mock_save,
-            patch("src.cli.commands.time.sleep") as mock_sleep,
+            _patched_command_time() as mock_time,
         ):
             result = _invoke_with_mocks(
                 cli_runner,
@@ -337,7 +370,7 @@ class TestAuthConnect:
         assert "connected successfully" in result.output.lower()
         mock_save.assert_called_once_with(mock_storage, "trakt-refresh", user_id=1)
         # PENDING does not change the cadence: every sleep uses the base interval.
-        assert mock_sleep.call_args_list == [
+        assert mock_time.sleep.call_args_list == [
             ((flow["interval"],),),
             ((flow["interval"],),),
         ]
@@ -352,7 +385,6 @@ class TestAuthConnect:
             "expires_in": 600,
             "interval": 5,
         }
-        sleep_intervals: list[float] = []
         with (
             patch(
                 "src.cli.commands.resolve_trakt_client_credentials",
@@ -367,10 +399,7 @@ class TestAuthConnect:
                 ],
             ),
             patch("src.cli.commands.save_trakt_token") as mock_save,
-            patch(
-                "src.cli.commands.time.sleep",
-                side_effect=lambda seconds: sleep_intervals.append(seconds),
-            ),
+            _patched_command_time() as mock_time,
         ):
             result = _invoke_with_mocks(
                 cli_runner,
@@ -383,8 +412,7 @@ class TestAuthConnect:
         # The first sleep uses the returned interval (5); after SLOW_DOWN the
         # backoff adds 5 seconds per the Trakt device-flow spec before the next
         # poll, matching the frontend's +5s increment.
-        assert sleep_intervals[0] == 5
-        assert sleep_intervals[1] == 10
+        assert mock_time.sleep.call_args_list == [((5,),), ((10,),)]
 
     def test_connect_trakt_expired(self, cli_runner: CliRunner) -> None:
         """Trakt connect aborts when the device code expires."""
@@ -406,7 +434,7 @@ class TestAuthConnect:
                 "src.cli.commands.poll_device_token",
                 return_value=DevicePollResult(DevicePollStatus.EXPIRED),
             ),
-            patch("src.cli.commands.time.sleep"),
+            _patched_command_time(),
         ):
             result = _invoke_with_mocks(
                 cli_runner,
@@ -444,7 +472,7 @@ class TestAuthConnect:
                 return_value=DevicePollResult(DevicePollStatus.SUCCESS, None),
             ),
             patch("src.cli.commands.save_trakt_token") as mock_save,
-            patch("src.cli.commands.time.sleep"),
+            _patched_command_time(),
         ):
             result = _invoke_with_mocks(
                 cli_runner,
@@ -459,8 +487,9 @@ class TestAuthConnect:
     def test_connect_trakt_times_out(self, cli_runner: CliRunner) -> None:
         """Trakt connect aborts with a timeout message once the deadline passes.
 
-        ``time.monotonic`` is patched so the very first deadline check is already
-        past expiry — the poll loop body never runs and no real waiting occurs.
+        ``time.monotonic`` reads a clock that jumps far past ``expires_in``
+        between calls, so the very first deadline check is already expired —
+        the poll loop body never runs and no real waiting occurs.
         """
         mock_storage = MagicMock(spec=StorageManager)
         flow = {
@@ -478,10 +507,9 @@ class TestAuthConnect:
             patch("src.cli.commands.start_device_auth_flow", return_value=flow),
             patch("src.cli.commands.poll_device_token") as mock_poll,
             patch("src.cli.commands.save_trakt_token") as mock_save,
-            patch("src.cli.commands.time.sleep") as mock_sleep,
-            # First call sets the deadline (0 + 600); the loop check then sees a
-            # time already beyond it, so the body is skipped entirely.
-            patch("src.cli.commands.time.monotonic", side_effect=[0.0, 10_000.0]),
+            # Whichever call sets the deadline (t + 600), the next one is at
+            # least t + 10_000, so the loop body is always skipped entirely.
+            _patched_command_time(itertools.count(0.0, 10_000.0)) as mock_time,
         ):
             result = _invoke_with_mocks(
                 cli_runner,
@@ -492,7 +520,7 @@ class TestAuthConnect:
         assert result.exit_code != 0
         assert "timed out" in result.output.lower()
         mock_poll.assert_not_called()
-        mock_sleep.assert_not_called()
+        mock_time.sleep.assert_not_called()
         mock_save.assert_not_called()
 
     def test_connect_trakt_keyboard_interrupt(self, cli_runner: CliRunner) -> None:
@@ -513,8 +541,9 @@ class TestAuthConnect:
             patch("src.cli.commands.start_device_auth_flow", return_value=flow),
             patch("src.cli.commands.poll_device_token") as mock_poll,
             patch("src.cli.commands.save_trakt_token") as mock_save,
-            patch("src.cli.commands.time.sleep", side_effect=KeyboardInterrupt),
+            _patched_command_time() as mock_time,
         ):
+            mock_time.sleep.side_effect = KeyboardInterrupt
             result = _invoke_with_mocks(
                 cli_runner,
                 ["auth", "connect", "--source", "trakt"],

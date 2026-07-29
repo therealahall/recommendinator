@@ -86,6 +86,7 @@ class TestSourceList:
             "display_name",
             "plugin_display_name",
             "enabled",
+            "is_file_import",
         }
 
     def test_list_json_returns_empty_array_for_empty_config(
@@ -811,8 +812,9 @@ class TestSourcePlugins:
         )
         assert result.exit_code == 0
         body = json.loads(result.output)
-        # Exact set match — the fixture pins two plugins; an extra one
-        # appearing in the output would indicate a registry leak.
+        # Exact set match — the fixture pins three plugins, one of them a
+        # file-import plugin that must never be offered as an addable source.
+        # Any other extra name would indicate a registry leak.
         assert {p["name"] for p in body} == {"fake_file", "fake_api"}
         # Every plugin entry mirrors PluginInfoResponse exactly.
         for plugin in body:
@@ -989,6 +991,189 @@ class TestSourceCreate:
         )
         assert result.exit_code != 0
         assert storage.get_source_config(1, "leaky") is None
+
+
+@pytest.mark.usefixtures("registry_with_source_fakes")
+class TestSourceFileImportPluginNotASource:
+    """CLI mirror of the web rule: file-import plugins are not sources.
+
+    Same capability, same outcomes as ``POST /api/sync/sources`` and the
+    per-source endpoints — creation is refused with a clean error (never a
+    traceback), a pre-existing row is inert, and removal still works.
+    """
+
+    def _seed_stale_row(self, storage: StorageManager) -> None:
+        storage.upsert_source_config(1, "legacy_books", "fake_upload", {}, enabled=True)
+
+    def test_create_rejects_file_import_plugin(
+        self,
+        cli_runner: CliRunner,
+        storage: StorageManager,
+        base_config: dict[str, Any],
+    ) -> None:
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["source", "create", "legacy_books", "fake_upload"],
+            mock_storage=storage,
+            config=base_config,
+        )
+        assert result.exit_code != 0
+        assert "not a syncable source" in result.output
+        assert "import --source fake_upload --file" in result.output
+        assert "Traceback" not in result.output
+        assert storage.get_source_config(1, "legacy_books") is None
+
+    def test_list_shows_the_stale_row_flagged(
+        self,
+        cli_runner: CliRunner,
+        storage: StorageManager,
+        base_config: dict[str, Any],
+    ) -> None:
+        """Regression: ``source remove <id>`` was documented for an unlistable id.
+
+        ``source list`` is the only enumeration of configured sources, and it
+        dropped file-import rows, so a user following the upgrade notes had no
+        way to discover the id they were told to remove.
+        """
+        self._seed_stale_row(storage)
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["source", "list", "--format", "json"],
+            mock_storage=storage,
+            config=base_config,
+        )
+        assert result.exit_code == 0
+        entries = {entry["id"]: entry for entry in json.loads(result.output)}
+        assert entries["legacy_books"]["is_file_import"] is True
+        assert entries["my_games"]["is_file_import"] is False
+
+    def test_list_table_marks_the_stale_row_as_not_syncable(
+        self,
+        cli_runner: CliRunner,
+        storage: StorageManager,
+        base_config: dict[str, Any],
+    ) -> None:
+        """The human-readable listing says "file import", not a misleading "yes".
+
+        The row's stored ``enabled`` flag is still true (nothing rewrites it),
+        so reporting it verbatim would claim the row is going to sync.
+        """
+        self._seed_stale_row(storage)
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["source", "list"],
+            mock_storage=storage,
+            config=base_config,
+        )
+        assert result.exit_code == 0, result.output
+        assert "legacy_books" in result.output
+        assert "file import" in result.output
+
+    @pytest.mark.parametrize(
+        "args",
+        [
+            ["source", "show", "legacy_books"],
+            ["source", "schema", "legacy_books"],
+            ["source", "migrate", "legacy_books"],
+            ["source", "enable", "legacy_books"],
+            ["source", "disable", "legacy_books"],
+            ["source", "set", "legacy_books", "path", "/x"],
+            ["source", "apply", "legacy_books", "--from-json", "-"],
+            ["source", "set-secret", "legacy_books", "api_key"],
+            ["source", "clear-secret", "legacy_books", "api_key"],
+        ],
+    )
+    def test_stale_row_is_not_addressable_as_a_source(
+        self,
+        cli_runner: CliRunner,
+        storage: StorageManager,
+        base_config: dict[str, Any],
+        monkeypatch: pytest.MonkeyPatch,
+        args: list[str],
+    ) -> None:
+        """Every per-source command reports the stale row as unknown.
+
+        Covers the full command set the web suite parametrises (schema, config
+        read/write, migrate, enabled, secret set/clear) so neither interface
+        can leave a file-import row addressable while the other refuses it.
+        """
+        # Keep ``set-secret`` non-interactive; the gate must fire before any
+        # prompt, so an unexpected prompt would hang rather than fail.
+        monkeypatch.setenv("RECOMMENDINATOR_SECRET_VALUE", "value")
+        self._seed_stale_row(storage)
+        result = _invoke_with_mocks(
+            cli_runner,
+            args,
+            mock_storage=storage,
+            config=base_config,
+            input_text="{}",
+        )
+        assert result.exit_code != 0
+        assert "Unknown source: legacy_books" in result.output
+        assert storage.get_source_config(1, "legacy_books") is not None
+
+    def test_stale_row_cannot_be_synced(
+        self,
+        cli_runner: CliRunner,
+        storage: StorageManager,
+        base_config: dict[str, Any],
+    ) -> None:
+        """``update --source`` refuses the stale row via the resolver gate.
+
+        The sync path resolves through ``resolve_inputs``, not the per-source
+        ``resolve_source_plugin`` gate the ``source`` commands use, so it needs
+        its own coverage — mirrors ``POST /api/update`` returning 400.
+        """
+        self._seed_stale_row(storage)
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["update", "--source", "legacy_books"],
+            mock_storage=storage,
+            config=base_config,
+        )
+        assert result.exit_code != 0
+        assert "Unknown or disabled source 'legacy_books'" in result.output
+        assert storage.get_source_config(1, "legacy_books") is not None
+
+    def test_update_source_list_shows_the_stale_row_as_unsyncable(
+        self,
+        cli_runner: CliRunner,
+        storage: StorageManager,
+        base_config: dict[str, Any],
+    ) -> None:
+        """``update --source list`` names it without advertising it as syncable.
+
+        Listing it as "enabled" next to real sources would invite the user to
+        run ``update --source legacy_books``, which is refused; saying what it
+        actually is points them at the fix instead.
+        """
+        self._seed_stale_row(storage)
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["update", "--source", "list"],
+            mock_storage=storage,
+            config=base_config,
+        )
+        assert result.exit_code == 0, result.output
+        assert "legacy_books         plugin=Fake Upload [file import" in result.output
+        assert "my_games" in result.output
+
+    def test_remove_still_drops_stale_row(
+        self,
+        cli_runner: CliRunner,
+        storage: StorageManager,
+        base_config: dict[str, Any],
+    ) -> None:
+        """Removal is the escape hatch — the user can clean the row up."""
+        self._seed_stale_row(storage)
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["source", "remove", "legacy_books", "--yes"],
+            mock_storage=storage,
+            config=base_config,
+        )
+        assert result.exit_code == 0
+        assert storage.get_source_config(1, "legacy_books") is None
 
 
 @pytest.mark.usefixtures("registry_with_source_fakes")

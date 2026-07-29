@@ -92,14 +92,18 @@ def test_update_does_not_double_invoke_source_migrations(
       data is a silent no-op), a re-invocation cannot be caught by its own side
       effect; the command-binding guard is what fails if the bug returns.
 
-    The sync layer and plugin validation are mocked so the command body actually
-    executes (rather than exiting early on ``--help``).
+    The configured source is ``sonarr`` — a genuinely syncable plugin. A
+    file-import plugin would resolve to zero syncable sources, so ``update``
+    would never reach the sync call and the ``spy_sync`` assertion below would
+    pass vacuously. Only the sync layer itself is mocked, so the command body
+    actually executes (rather than exiting early on ``--help``).
     """
     config = {
         "inputs": {
-            "goodreads_csv": {
-                "plugin": "goodreads_csv",
-                "path": "inputs/goodreads_library_export.csv",
+            "sonarr": {
+                "plugin": "sonarr",
+                "url": "http://localhost:8989",
+                "api_key": "key",
                 "enabled": True,
             }
         },
@@ -137,10 +141,6 @@ def test_update_does_not_double_invoke_source_migrations(
         patch(
             "src.cli.commands.execute_multi_source_sync", side_effect=_fake_sync
         ) as spy_sync,
-        patch(
-            "src.ingestion.sources.goodreads_csv.GoodreadsCsvPlugin.validate_config",
-            return_value=[],
-        ),
         patch("src.cli.commands.migrate_source_labels", create=True) as guard_labels,
         patch(
             "src.cli.commands.migrate_source_config_plugins", create=True
