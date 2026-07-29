@@ -2,20 +2,32 @@
 
 import json
 import logging
+import os
+import re
+import tempfile
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Annotated, Any, assert_never, cast
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from src import __version__ as APP_VERSION
 from src.cli.config import get_feature_flags
+from src.ingestion.import_service import (
+    UNSUPPORTED_SOURCE_DETAIL,
+    FileImportError,
+    import_file,
+    import_warning,
+)
 from src.ingestion.plugin_base import SourcePlugin
+from src.ingestion.registry import get_registry
 from src.ingestion.sync import (
     MAX_WORKERS_CEILING,
+    SyncResult,
     execute_multi_source_sync,
     resolve_max_workers,
 )
@@ -39,7 +51,7 @@ from src.settings.service import (
 from src.storage.manager import VALID_SORT_OPTIONS, StorageManager
 from src.utils.item_serialization import item_to_dict
 from src.utils.series import MAX_SEASONS
-from src.utils.text import humanize_source_id
+from src.utils.text import humanize_source_id, sanitize_for_log
 from src.web.enrichment_manager import get_enrichment_manager
 from src.web.epic_auth import (
     EpicAuthError,
@@ -67,7 +79,7 @@ from src.web.state import (
     get_storage,
     reload_config,
 )
-from src.web.sync_manager import SyncJob, get_sync_manager
+from src.web.sync_manager import SyncInProgressError, SyncJob, get_sync_manager
 from src.web.sync_sources import (
     SourceConfigError,
     build_config_view,
@@ -77,6 +89,7 @@ from src.web.sync_sources import (
     delete_source,
     get_available_sync_sources,
     list_available_plugins,
+    list_importable_plugins,
     migrate_source,
     resolve_inputs,
     resolve_source_plugin,
@@ -94,8 +107,31 @@ from src.web.trakt_auth import (
     save_trakt_token,
     start_device_auth_flow,
 )
+from src.web.upload_limit import MAX_UPLOAD_BYTES, too_large_detail
 
 logger = logging.getLogger(__name__)
+
+_UPLOAD_CHUNK_BYTES = 1024 * 1024
+
+# Temp-file suffixes worth keeping from an uploaded filename: a short, plain
+# extension. ``Path.suffix`` is taken from the final path component, so it can
+# never carry a separator, but it can carry an embedded NUL (mkstemp raises
+# ValueError) or hundreds of characters (OSError: File name too long) — both
+# unhandled 500s. Anything outside this shape is dropped.
+_SAFE_SUFFIX_PATTERN = re.compile(r"\.[A-Za-z0-9]{1,10}")
+
+# Multipart fields of ``POST /api/import`` that are the request itself rather
+# than an import option: the plugin name and the upload.
+_NON_OPTION_FORM_FIELDS = frozenset({"source", "file"})
+
+# Prefix of the sync-status job label an import is tracked under. The import
+# modal rebuilds the same label to find its progress bar, so the two languages
+# are pinned together by a test (see ``tests/test_web_api.py``).
+IMPORT_JOB_LABEL_PREFIX = "Import: "
+
+# Client-facing detail for a duplicate import. The modal renders its own copy
+# for a 409, so this is what a non-browser client reads.
+IMPORT_ALREADY_RUNNING_DETAIL = "An import from this source is already running."
 
 router = APIRouter(prefix="/api", tags=["api"])
 
@@ -138,6 +174,9 @@ class SyncSourceResponse(BaseModel):
     display_name: str
     plugin_display_name: str
     enabled: bool
+    # True for a leftover entry naming a one-shot file-import plugin. It can
+    # never sync; it is listed so the user can find and remove it.
+    is_file_import: bool
 
 
 class UserResponse(BaseModel):
@@ -500,6 +539,31 @@ class PluginInfoResponse(BaseModel):
     requires_api_key: bool
     requires_network: bool
     fields: list[SourceFieldSchema]
+
+
+class ImportSourceResponse(BaseModel):
+    """One file-import plugin's metadata and option schema for the upload form."""
+
+    name: str
+    display_name: str
+    description: str
+    content_types: list[str]
+    # Lowercase, dot-prefixed extensions this importer expects. Drives the
+    # file picker's ``accept`` filter and its help text, so the form does not
+    # have to infer the format from the plugin name.
+    accepted_extensions: list[str]
+    fields: list[SourceFieldSchema]
+
+
+class ImportResultResponse(BaseModel):
+    """Result of a one-shot file import."""
+
+    message: str
+    source: str
+    items_synced: int
+    total_items: int
+    errors: list[str] = Field(default_factory=list)
+    warning: str | None = None
 
 
 class SourceCreateRequest(BaseModel):
@@ -1428,6 +1492,198 @@ async def update_data(request: UpdateRequest) -> dict[str, Any]:
     }
 
 
+@router.get("/import/sources", response_model=list[ImportSourceResponse])
+async def get_import_sources() -> list[ImportSourceResponse]:
+    """List file-import plugins and their option schema for the upload form.
+
+    The frontend renders the upload form fields from each plugin's
+    ``fields`` schema. Only file-import plugins (Goodreads, StoryGraph, CSV,
+    JSON, Markdown) are returned; syncable sources are excluded.
+    """
+    return [ImportSourceResponse(**info) for info in list_importable_plugins()]
+
+
+def _safe_temp_suffix(filename: str | None) -> str:
+    """Return the uploaded file's extension, or "" if it is not a plain one.
+
+    The suffix is only a convenience for anyone inspecting the temp directory —
+    nothing reads it — so an unusable one is dropped rather than rejected.
+    """
+    suffix = Path(filename or "").suffix
+    return suffix if _SAFE_SUFFIX_PATTERN.fullmatch(suffix) else ""
+
+
+@router.post("/import", response_model=ImportResultResponse)
+async def import_data(
+    request: Request,
+    source: str = Form(..., description="File-import plugin name"),
+    file: UploadFile = File(..., description="The file to import"),
+) -> ImportResultResponse:
+    """Import a single uploaded file through a file-import plugin.
+
+    The upload is streamed to a temp file, run through the import pipeline
+    (tracked as a job so ``GET /sync/status`` reports progress), and the
+    temp file is always removed afterwards. Every string form field other than
+    ``source`` and ``file`` is a per-import option; the import service refuses
+    any the plugin's config schema does not declare (HTTP 400), exactly as the
+    CLI does, so a non-browser client cannot slip an extra key past.
+
+    The request body is bounded before the multipart parser sees it — see
+    :mod:`src.web.upload_limit`, which is what actually keeps an oversized
+    upload off the host disk. The chunk loop below re-checks the file cap as a
+    backstop, on the copy this handler owns.
+
+    Args:
+        request: The multipart request, used to read per-import option fields.
+        source: The file-import plugin name (e.g. ``goodreads_csv``,
+            ``csv_import``).
+        file: The uploaded file.
+
+    Returns:
+        The import result, with fields:
+
+        - ``message``: human-readable summary of the import.
+        - ``source``: the file-import plugin name the caller supplied.
+        - ``items_synced``: count of items successfully imported.
+        - ``total_items``: count of items parsed from the file.
+        - ``errors``: per-item error messages for rows that failed to import.
+        - ``warning``: advisory for an import that parsed but produced nothing,
+          otherwise ``null``.
+    """
+    storage = _require_storage()
+    embedding_gen = get_embedding_gen()
+    config = _require_config()
+
+    plugin = get_registry().get_plugin(source)
+    if plugin is None or not plugin.is_file_import:
+        raise HTTPException(status_code=422, detail=UNSUPPORTED_SOURCE_DETAIL)
+
+    form = await request.form()
+    # Every remaining string field is an import option, passed through as-is:
+    # the import service owns the schema gate, so an undeclared key is refused
+    # there rather than silently dropped here (which is what the CLI does too).
+    # Non-string values are excluded because a client could send a file part
+    # named like a config field, and an UploadFile must never reach a plugin.
+    # A repeated field takes its last value, matching Starlette's own lookup.
+    options: dict[str, str] = {
+        key: value
+        for key, value in form.multi_items()
+        if key not in _NON_OPTION_FORM_FIELDS and isinstance(value, str)
+    }
+
+    use_embeddings = get_feature_flags(config)["use_embeddings"]
+    enrichment_config = config.get("enrichment", {})
+    auto_enrich = enrichment_config.get("enabled", False) and enrichment_config.get(
+        "auto_enrich_on_sync", False
+    )
+
+    # content_type only scopes the enrichment run, so derive it solely on the
+    # auto-enrich path where it is consumed. An unrecognised value leaves the
+    # run unscoped rather than raising: the import itself is about to fail
+    # validation on it, and a 500 from the enrichment scope would mask that.
+    import_content_type: ContentType | None = None
+    if auto_enrich:
+        content_type_value = options.get("content_type", "")
+        if content_type_value != "":
+            try:
+                import_content_type = ContentType.from_string(content_type_value)
+            except ValueError:
+                import_content_type = None
+
+    sync_manager = get_sync_manager()
+    job_label = f"{IMPORT_JOB_LABEL_PREFIX}{plugin.display_name}"
+
+    fd, tmp_name = tempfile.mkstemp(suffix=_safe_temp_suffix(file.filename))
+    temp_path = Path(tmp_name)
+
+    captured: dict[str, SyncResult] = {}
+
+    def run_import(job: SyncJob) -> int:
+        def progress_callback(
+            items_processed: int,
+            total_items: int | None,
+            current_item: str | None,
+            current_source: str | None,
+        ) -> None:
+            sync_manager.update_progress(
+                source=job_label,
+                items_processed=items_processed,
+                total_items=total_items,
+                current_item=current_item,
+            )
+
+        result = import_file(
+            plugin_name=source,
+            file_path=temp_path,
+            options=options,
+            storage_manager=storage,
+            embedding_generator=embedding_gen,
+            use_embeddings=use_embeddings,
+            progress_callback=progress_callback,
+            mark_for_enrichment=auto_enrich,
+        )
+        for error in result.errors:
+            sync_manager.add_error(job_label, error)
+        captured["result"] = result
+        return result.items_synced
+
+    def on_complete() -> None:
+        if auto_enrich:
+            enrichment_manager = get_enrichment_manager()
+            enrichment_manager.start_enrichment(
+                storage_manager=storage,
+                config=config,
+                content_type=import_content_type,
+            )
+
+    try:
+        # Copy the parsed upload out in chunks (await keeps the event loop
+        # free), aborting once the file cap is crossed. The middleware already
+        # bounded the body, so this only catches a file that is under the
+        # request cap but over the file cap; the finally block removes the
+        # partial temp file on every exit path, including the 413.
+        total = 0
+        with os.fdopen(fd, "wb") as buffer:
+            while chunk := await file.read(_UPLOAD_CHUNK_BYTES):
+                total += len(chunk)
+                if total > MAX_UPLOAD_BYTES:
+                    raise HTTPException(
+                        status_code=413, detail=too_large_detail(MAX_UPLOAD_BYTES)
+                    )
+                buffer.write(chunk)
+        await run_in_threadpool(
+            sync_manager.run_import, job_label, run_import, on_complete
+        )
+    except FileImportError as error:
+        # The full message names the temp file and forwards plugin text, both
+        # of which describe server internals; only the structured
+        # client_detail goes on the wire. ``SyncManager.run_import`` already
+        # logged the sanitized message along with the job label and exception
+        # type, so logging it again here would just double every failure.
+        raise HTTPException(status_code=400, detail=error.client_detail) from error
+    except SyncInProgressError as error:
+        # A fixed string, not ``str(error)``: the exception's text is
+        # server-built today, but echoing it would make that a wire contract
+        # and let a future edit leak whatever the message grows into.
+        raise HTTPException(
+            status_code=409, detail=IMPORT_ALREADY_RUNNING_DETAIL
+        ) from error
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+    result = captured["result"]
+    return ImportResultResponse(
+        message=f"Imported {result.items_synced} item(s) from {plugin.display_name}.",
+        # The plugin name the user supplied — what a `source` field should mean.
+        # The internal "Import: <display_name>" job label stays in sync status.
+        source=source,
+        items_synced=result.items_synced,
+        total_items=result.total_items,
+        errors=result.errors,
+        warning=import_warning(result),
+    )
+
+
 @router.get("/status", response_model=StatusResponse)
 async def get_status() -> StatusResponse:
     """Get system status.
@@ -1486,10 +1742,11 @@ async def reload_config_endpoint() -> dict[str, Any]:
 
 @router.get("/sync/sources", response_model=list[SyncSourceResponse])
 async def get_sync_sources() -> list[SyncSourceResponse]:
-    """Get list of available sync sources from config.
+    """Get list of configured sync sources (from config.yaml and the database).
 
-    Returns sources defined in config.inputs with enabled: true.
-    No fallback to example config - uses the loaded config only.
+    Includes disabled sources, and leftover entries naming a file-import
+    plugin (flagged ``is_file_import``), so the Data tab can render each in a
+    muted, non-syncable state rather than hiding it.
     """
     config = get_config()
     if not config:
@@ -1503,6 +1760,7 @@ async def get_sync_sources() -> list[SyncSourceResponse]:
             display_name=source.display_name,
             plugin_display_name=source.plugin_display_name,
             enabled=source.enabled,
+            is_file_import=source.is_file_import,
         )
         for source in sources
     ]
@@ -1568,6 +1826,7 @@ _ERROR_KIND_TO_STATUS: dict[str, int] = {
     "conflict": 409,
     "invalid_id": 400,
     "unknown_plugin": 400,
+    "file_import_plugin": 400,
 }
 
 # Fixed user-facing strings keyed by error kind so HTTP responses never
@@ -1585,23 +1844,18 @@ _ERROR_KIND_TO_DETAIL: dict[str, str] = {
         "lowercase letters, digits, underscores, and hyphens."
     ),
     "unknown_plugin": "The requested plugin is not registered.",
+    "file_import_plugin": (
+        "That plugin imports a single uploaded file and is not a syncable "
+        "source — upload the file from the Import screen instead."
+    ),
 }
-
-
-def _sanitize_for_log(value: str) -> str:
-    """Strip CR/LF/NUL from a string before logging.
-
-    Path parameters are user-controlled. Without sanitization an attacker
-    could inject newlines and forge structured log lines (CWE-117).
-    """
-    return value.replace("\n", "\\n").replace("\r", "\\r").replace("\0", "\\0")
 
 
 def _require_plugin(source_id: str) -> SourcePlugin:
     plugin = resolve_source_plugin(source_id, get_config(), get_storage())
     if plugin is None:
         # Server-side log carries the identifier; the wire response stays generic.
-        logger.info("Source lookup miss for source_id=%s", _sanitize_for_log(source_id))
+        logger.info("Source lookup miss for source_id=%s", sanitize_for_log(source_id))
         raise HTTPException(status_code=404, detail="Source not found.")
     return plugin
 
@@ -1773,7 +2027,7 @@ async def reset_setting_endpoint(key: str) -> SettingsResponse:
     config = _require_config()
     storage = _require_storage()
     if get_entry(key) is None:
-        logger.info("Settings reset miss for key=%s", _sanitize_for_log(key))
+        logger.info("Settings reset miss for key=%s", sanitize_for_log(key))
         raise HTTPException(status_code=404, detail="Unknown setting.")
     try:
         reset_setting(config, storage, key)

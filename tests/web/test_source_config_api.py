@@ -12,7 +12,7 @@ import threading
 from collections.abc import Iterator
 from dataclasses import fields
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 from unittest.mock import Mock, patch
 
 import pytest
@@ -24,8 +24,10 @@ from src.llm.embeddings import EmbeddingGenerator
 from src.llm.recommendations import RecommendationGenerator
 from src.recommendations.engine import RecommendationEngine
 from src.storage.manager import StorageManager
+from src.web.api import _ERROR_KIND_TO_DETAIL, _ERROR_KIND_TO_STATUS
 from src.web.app import create_app
 from src.web.state import AppState, app_state
+from src.web.sync_sources import SourceConfigErrorKind
 
 
 @pytest.fixture()
@@ -483,12 +485,45 @@ class TestEnabledEndpoint:
         assert row["enabled"] is True
 
 
+class TestErrorKindMapping:
+    """The error-kind Literal and its two HTTP mapping tables must not drift.
+
+    ``SourceConfigErrorKind`` is a closed Literal in ``src.web.sync_sources``;
+    ``_ERROR_KIND_TO_STATUS`` / ``_ERROR_KIND_TO_DETAIL`` in ``src.web.api``
+    translate it to the wire. Both lookups use ``.get(..., <fallback>)``, so a
+    kind added to the Literal without a mapping type-checks cleanly and then
+    silently answers a generic 400 — exactly what happened when
+    ``file_import_plugin`` was introduced. Nothing else in the suite compares
+    the three, so this is the guard.
+    """
+
+    def test_every_kind_has_a_status_and_a_detail(self) -> None:
+        kinds = set(get_args(SourceConfigErrorKind))
+        assert kinds, "expected a non-empty Literal of error kinds"
+        assert set(_ERROR_KIND_TO_STATUS) == kinds
+        assert set(_ERROR_KIND_TO_DETAIL) == kinds
+
+    def test_file_import_kind_maps_to_a_client_error(self) -> None:
+        """The kind this feature added answers 400, not the generic fallback."""
+        assert "file_import_plugin" in get_args(SourceConfigErrorKind)
+        assert _ERROR_KIND_TO_STATUS["file_import_plugin"] == 400
+        assert "not a syncable source" in _ERROR_KIND_TO_DETAIL["file_import_plugin"]
+
+    def test_details_never_echo_caller_supplied_values(self) -> None:
+        """Wire details are fixed strings, so a path param cannot be reflected."""
+        for detail in _ERROR_KIND_TO_DETAIL.values():
+            assert "{" not in detail
+            assert "%s" not in detail
+
+
 class TestPluginsEndpoint:
     def test_lists_registered_plugins_with_schemas(self, client: TestClient) -> None:
         """Exact-match assertions on the PluginInfoResponse shape.
 
-        Fixture pins the registry to two fakes; assert the full set so any
-        spurious extra plugin appearing in the response is caught.
+        Fixture pins the registry to three fakes, one of which is a
+        file-import plugin that must never be offered as an addable source.
+        Asserting the full set catches both a spurious extra plugin and a
+        regression that lets the file-import plugin back into the picker.
         """
         response = client.get("/api/plugins")
         assert response.status_code == 200
@@ -667,6 +702,166 @@ class TestCreateSourceEndpoint:
             },
         )
         assert response.status_code == 400
+
+
+class TestFileImportPluginNotASource:
+    """File-import plugins must never enter the DB-backed source flow.
+
+    They are one-shot uploads with no syncable config, so a ``source_configs``
+    row naming one would validate as having no fields and then never import
+    anything. Creation is refused outright, and a row that predates the rule
+    is inert everywhere except deletion — the user's escape hatch. It is still
+    *listed*, flagged ``is_file_import``, because a row nobody can see is a row
+    nobody can delete.
+    """
+
+    def _seed_stale_row(self, storage: StorageManager) -> None:
+        storage.upsert_source_config(1, "legacy_books", "fake_upload", {}, enabled=True)
+
+    def test_create_rejects_file_import_plugin(
+        self, client: TestClient, storage: StorageManager
+    ) -> None:
+        response = client.post(
+            "/api/sync/sources",
+            json={"id": "legacy_books", "plugin": "fake_upload", "values": {}},
+        )
+        assert response.status_code == 400
+        assert "not a syncable source" in response.json()["detail"]
+        assert storage.get_source_config(1, "legacy_books") is None
+
+    def test_stale_row_is_listed_flagged_not_hidden(
+        self, client: TestClient, storage: StorageManager
+    ) -> None:
+        """Regression: the listing hid a row the docs told the user to remove.
+
+        ``GET /api/sync/sources`` dropped file-import entries, and every
+        per-source endpoint 404s on them, so a leftover row was addressable
+        nowhere — while README and the docs said to clear it with
+        ``source remove <id>``. It is listed with ``is_file_import: true`` so
+        the Data tab can render it muted with a Remove action.
+        """
+        self._seed_stale_row(storage)
+        response = client.get("/api/sync/sources")
+        assert response.status_code == 200
+        entry = next(s for s in response.json() if s["id"] == "legacy_books")
+        assert entry["is_file_import"] is True
+        # Listed, not harvested: the row must survive so the user can still
+        # delete it deliberately (the only escape hatch).
+        assert storage.get_source_config(1, "legacy_books") is not None
+
+    def test_a_syncable_source_is_not_flagged_as_a_file_import(
+        self, client: TestClient, storage: StorageManager
+    ) -> None:
+        """The flag distinguishes; it is not set on everything."""
+        storage.upsert_source_config(1, "my_books", "fake_file", {}, enabled=True)
+        entry = next(
+            s for s in client.get("/api/sync/sources").json() if s["id"] == "my_books"
+        )
+        assert entry["is_file_import"] is False
+
+    def test_stale_row_survives_every_rejected_operation(
+        self, client: TestClient, storage: StorageManager
+    ) -> None:
+        """Being 404 everywhere must not quietly clean the row up.
+
+        The rejections above are read-only refusals; if any of them deleted the
+        row as a side effect, ``DELETE`` would 404 afterwards and the user would
+        have no way to tell a purged row from a never-created one.
+        """
+        self._seed_stale_row(storage)
+        for method, path, payload in [
+            ("get", "/api/sync/sources/legacy_books/schema", None),
+            ("get", "/api/sync/sources/legacy_books/config", None),
+            ("post", "/api/sync/sources/legacy_books/migrate", None),
+            ("put", "/api/sync/sources/legacy_books/config", {"values": {}}),
+            ("put", "/api/sync/sources/legacy_books/enabled", {"enabled": True}),
+            ("put", "/api/sync/sources/legacy_books/secret/x", {"value": "v"}),
+            ("delete", "/api/sync/sources/legacy_books/secret/x", None),
+        ]:
+            assert client.request(method, path, json=payload).status_code == 404
+
+        row = storage.get_source_config(1, "legacy_books")
+        assert row is not None
+        assert row["plugin"] == "fake_upload"
+        assert client.delete("/api/sync/sources/legacy_books").status_code == 204
+
+    @pytest.mark.parametrize(
+        ("method", "path", "payload"),
+        [
+            ("get", "/api/sync/sources/legacy_books/schema", None),
+            ("get", "/api/sync/sources/legacy_books/config", None),
+            ("post", "/api/sync/sources/legacy_books/migrate", None),
+            ("put", "/api/sync/sources/legacy_books/config", {"values": {}}),
+            ("put", "/api/sync/sources/legacy_books/enabled", {"enabled": True}),
+            ("put", "/api/sync/sources/legacy_books/secret/x", {"value": "v"}),
+            ("delete", "/api/sync/sources/legacy_books/secret/x", None),
+        ],
+    )
+    def test_stale_row_is_not_addressable_as_a_source(
+        self,
+        client: TestClient,
+        storage: StorageManager,
+        method: str,
+        path: str,
+        payload: dict[str, Any] | None,
+    ) -> None:
+        """Every per-source endpoint reports the stale row as not found."""
+        self._seed_stale_row(storage)
+        response = client.request(method, path, json=payload)
+        assert response.status_code == 404
+
+    def test_leftover_yaml_block_is_not_addressable_either(
+        self, client: TestClient
+    ) -> None:
+        """A legacy ``inputs:`` block naming a file-import plugin is inert too.
+
+        The DB row is only one of the two origins ``resolve_source_plugin``
+        reads. A user upgrading from the path-based config still has the YAML
+        block on disk, and it must be refused the same way — including
+        ``migrate``, which would otherwise copy it into the database and
+        create the stale row this feature exists to prevent.
+        """
+        app_state.config["inputs"]["legacy_yaml_books"] = {
+            "plugin": "fake_upload",
+            "enabled": True,
+            "path": "inputs/old_export.csv",
+        }
+
+        assert (
+            client.get("/api/sync/sources/legacy_yaml_books/schema").status_code == 404
+        )
+        assert (
+            client.post("/api/sync/sources/legacy_yaml_books/migrate").status_code
+            == 404
+        )
+        # Inert, but not invisible: it is listed as a file-import entry so the
+        # user can see the id that keeps warning at sync time.
+        listing = client.get("/api/sync/sources").json()
+        entry = next(s for s in listing if s["id"] == "legacy_yaml_books")
+        assert entry["is_file_import"] is True
+
+    def test_stale_row_cannot_be_synced(
+        self, client: TestClient, storage: StorageManager
+    ) -> None:
+        """The sync trigger refuses a stale row too, via a different resolver.
+
+        ``POST /api/update`` goes through ``resolve_inputs``, not
+        ``resolve_source_plugin``. Both gates have to hold, otherwise the row
+        would be invisible in the UI yet still syncable by id.
+        """
+        self._seed_stale_row(storage)
+        response = client.post("/api/update", json={"source": "legacy_books"})
+        assert response.status_code == 400
+        assert storage.get_source_config(1, "legacy_books") is not None
+
+    def test_stale_row_can_still_be_deleted(
+        self, client: TestClient, storage: StorageManager
+    ) -> None:
+        """Deletion is the escape hatch — the user can clean the row up."""
+        self._seed_stale_row(storage)
+        response = client.delete("/api/sync/sources/legacy_books")
+        assert response.status_code == 204
+        assert storage.get_source_config(1, "legacy_books") is None
 
 
 class TestDeleteSourceEndpoint:

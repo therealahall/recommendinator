@@ -2,16 +2,26 @@
 
 import json
 import logging
+import os
+import re
+import tempfile
 import threading
 from collections.abc import Callable
 from dataclasses import fields
 from pathlib import Path
+from typing import Any
 from unittest.mock import Mock, patch
 
 import pytest
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.testclient import TestClient
 
+from src.ingestion.import_service import (
+    FILE_NOT_READABLE_MESSAGE,
+    NO_ITEMS_WARNING,
+    UNREADABLE_FILE_DETAIL,
+    FileImportError,
+)
 from src.ingestion.sync import SyncResult
 from src.llm.client import OllamaClient
 from src.llm.embeddings import EmbeddingGenerator
@@ -23,7 +33,14 @@ from src.settings.metadata import default_of
 from src.storage.manager import StorageManager
 from src.storage.settings_migration import migrate_config_settings
 from src.utils.series import MAX_SEASONS
-from src.web.api import APP_VERSION, _item_to_response
+from src.web.api import (
+    APP_VERSION,
+    IMPORT_ALREADY_RUNNING_DETAIL,
+    IMPORT_JOB_LABEL_PREFIX,
+    MAX_UPLOAD_BYTES,
+    _item_to_response,
+    _safe_temp_suffix,
+)
 from src.web.app import _LOG_BASE_DIR, _safe_log_path, create_app
 from src.web.enrichment_manager import WebEnrichmentManager
 from src.web.epic_auth import EpicAuthError
@@ -36,6 +53,9 @@ from src.web.sync_manager import (
 )
 from src.web.trakt_auth import DevicePollResult, DevicePollStatus, TraktAuthError
 from tests.factories import back_mock_settings_store
+from tests.import_test_data import GOODREADS_CSV
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _reset_app_state() -> None:
@@ -67,9 +87,10 @@ def mock_config():
             "port": 8000,
         },
         "inputs": {
-            "goodreads_csv": {
-                "plugin": "goodreads_csv",
-                "path": "inputs/goodreads_library_export.csv",
+            "sonarr": {
+                "plugin": "sonarr",
+                "url": "http://localhost:8989",
+                "api_key": "x",
                 "enabled": True,
             }
         },
@@ -943,12 +964,12 @@ def test_sync_sources_endpoint(client, mock_config):
     assert response.status_code == 200
     sources = response.json()
     assert isinstance(sources, list)
-    # mock_config has exactly goodreads_csv enabled
+    # mock_config has exactly sonarr enabled
     assert len(sources) == 1
-    goodreads = next((s for s in sources if s["id"] == "goodreads_csv"), None)
-    assert goodreads is not None
-    assert goodreads["display_name"] == "Goodreads CSV"
-    assert goodreads["plugin_display_name"] == "Goodreads (CSV Export)"
+    sonarr = next((s for s in sources if s["id"] == "sonarr"), None)
+    assert sonarr is not None
+    assert sonarr["display_name"] == "Sonarr"
+    assert sonarr["plugin_display_name"] == "Sonarr"
 
 
 def test_sync_sources_lists_all_with_enabled_flag(client):
@@ -957,6 +978,10 @@ def test_sync_sources_lists_all_with_enabled_flag(client):
     The UI renders disabled sources in a muted state instead of hiding them
     entirely, so the listing endpoint must surface them. ``resolve_inputs``
     is the gate that filters to enabled-only for sync execution.
+
+    A leftover block naming a file-import plugin (here ``goodreads_csv``) is
+    listed too, flagged ``is_file_import`` — it can never sync, and this
+    listing is the only place the user can find the id to clear.
     """
     app_state.config = {
         "inputs": {
@@ -991,8 +1016,13 @@ def test_sync_sources_lists_all_with_enabled_flag(client):
     sources = response.json()
     by_id = {s["id"]: s for s in sources}
 
+    # A leftover file-import block keeps the ``enabled`` flag it was stored
+    # with — being unsyncable does not silently rewrite it — and is additionally
+    # flagged as a file import so the UI can explain why it never runs.
     assert by_id["goodreads_csv"]["enabled"] is True
+    assert by_id["goodreads_csv"]["is_file_import"] is True
     assert by_id["sonarr"]["enabled"] is True
+    assert by_id["sonarr"]["is_file_import"] is False
     assert by_id["steam"]["enabled"] is False
     assert by_id["radarr"]["enabled"] is False
 
@@ -1088,11 +1118,11 @@ def test_update_endpoint(client, mock_components):
 
     with (
         patch(
-            "src.ingestion.sources.goodreads_csv.GoodreadsCsvPlugin.fetch",
+            "src.ingestion.sources.sonarr.sonarr.SonarrPlugin.fetch",
             return_value=iter([mock_item]),
         ),
         patch(
-            "src.ingestion.sources.goodreads_csv.GoodreadsCsvPlugin.validate_config",
+            "src.ingestion.sources.sonarr.sonarr.SonarrPlugin.validate_config",
             return_value=[],
         ),
     ):
@@ -1101,7 +1131,7 @@ def test_update_endpoint(client, mock_components):
         ] * 768
         mock_components["storage"].save_content_item.return_value = 1
 
-        response = client.post("/api/update", json={"source": "goodreads_csv"})
+        response = client.post("/api/update", json={"source": "sonarr"})
 
         assert response.status_code == 200
         data = response.json()
@@ -1237,11 +1267,11 @@ def test_update_endpoint_all_sources(client, mock_components):
 
     with (
         patch(
-            "src.ingestion.sources.goodreads_csv.GoodreadsCsvPlugin.fetch",
+            "src.ingestion.sources.sonarr.sonarr.SonarrPlugin.fetch",
             return_value=iter([mock_book]),
         ),
         patch(
-            "src.ingestion.sources.goodreads_csv.GoodreadsCsvPlugin.validate_config",
+            "src.ingestion.sources.sonarr.sonarr.SonarrPlugin.validate_config",
             return_value=[],
         ),
         patch(
@@ -1265,7 +1295,7 @@ def test_update_endpoint_all_sources(client, mock_components):
         # New async behavior: returns sync started message with sources list
         assert "message" in data
         assert "sources" in data
-        assert "goodreads_csv" in data["sources"]
+        assert "sonarr" in data["sources"]
         assert "steam" in data["sources"]
 
 
@@ -2803,21 +2833,21 @@ class TestUpdateEndpoint409Conflict:
             mock_manager = Mock(spec=SyncManager)
             mock_manager.start_sync.return_value = (
                 False,
-                "Sync already in progress for Goodreads CSV",
+                "Sync already in progress for Sonarr",
             )
             mock_get_sync_manager.return_value = mock_manager
 
             with patch(
-                "src.ingestion.sources.goodreads_csv.GoodreadsCsvPlugin.validate_config",
+                "src.ingestion.sources.sonarr.sonarr.SonarrPlugin.validate_config",
                 return_value=[],
             ):
-                response = client.post("/api/update", json={"source": "goodreads_csv"})
+                response = client.post("/api/update", json={"source": "sonarr"})
 
             assert response.status_code == 409
             detail = response.json()["detail"]
             assert "Sync already in progress" in detail
-            assert "Goodreads CSV" in detail
-            assert mock_manager.start_sync.call_args.args[0] == "Goodreads CSV"
+            assert "Sonarr" in detail
+            assert mock_manager.start_sync.call_args.args[0] == "Sonarr"
 
     def test_update_allows_different_sources_concurrently(
         self, client: TestClient, mock_components: dict
@@ -2825,7 +2855,7 @@ class TestUpdateEndpoint409Conflict:
         """A second source is accepted while a different source is running.
 
         Plants a real RUNNING job for Steam in the global SyncManager
-        before triggering a Goodreads CSV sync. The endpoint must reject
+        before triggering a Sonarr sync. The endpoint must reject
         only when the SAME label is running — different labels return
         200 even with another sync still in flight.
         """
@@ -2841,27 +2871,23 @@ class TestUpdateEndpoint409Conflict:
         assert manager.is_running("Steam") is True
 
         with patch(
-            "src.ingestion.sources.goodreads_csv.GoodreadsCsvPlugin.validate_config",
+            "src.ingestion.sources.sonarr.sonarr.SonarrPlugin.validate_config",
             return_value=[],
         ):
             # Drop the captured execute_multi_source_sync into a no-op so
             # the second sync's daemon doesn't try to actually run.
             with patch(
                 "src.web.api.execute_multi_source_sync",
-                return_value=[
-                    SyncJob(source="Goodreads CSV", status=SyncStatus.RUNNING)
-                ],
+                return_value=[SyncJob(source="Sonarr", status=SyncStatus.RUNNING)],
             ):
-                response = client.post("/api/update", json={"source": "goodreads_csv"})
+                response = client.post("/api/update", json={"source": "sonarr"})
 
         assert response.status_code == 200, response.text
         assert "Sync started" in response.json()["message"]
         # Manager now tracks both jobs; the Steam one is still running
-        # and the Goodreads CSV one was added on top.
+        # and the Sonarr one was added on top.
         assert manager.is_running("Steam") is True
-        assert "Goodreads CSV" in {
-            job["source"] for job in manager.get_status()["jobs"]
-        }
+        assert "Sonarr" in {job["source"] for job in manager.get_status()["jobs"]}
 
 
 class TestUpdateEndpointParallelSync:
@@ -2912,7 +2938,7 @@ class TestUpdateEndpointParallelSync:
                 side_effect=self._make_capture(captured_kwargs, completion),
             ),
             patch(
-                "src.ingestion.sources.goodreads_csv.GoodreadsCsvPlugin.validate_config",
+                "src.ingestion.sources.sonarr.sonarr.SonarrPlugin.validate_config",
                 return_value=[],
             ),
         ):
@@ -2936,7 +2962,7 @@ class TestUpdateEndpointParallelSync:
                 side_effect=self._make_capture(captured_kwargs, completion),
             ),
             patch(
-                "src.ingestion.sources.goodreads_csv.GoodreadsCsvPlugin.validate_config",
+                "src.ingestion.sources.sonarr.sonarr.SonarrPlugin.validate_config",
                 return_value=[],
             ),
         ):
@@ -2960,7 +2986,7 @@ class TestUpdateEndpointParallelSync:
                 side_effect=self._make_capture(captured_kwargs, completion),
             ),
             patch(
-                "src.ingestion.sources.goodreads_csv.GoodreadsCsvPlugin.validate_config",
+                "src.ingestion.sources.sonarr.sonarr.SonarrPlugin.validate_config",
                 return_value=[],
             ),
         ):
@@ -4366,3 +4392,1291 @@ class TestSettingsEndpoints:
 
         response = client.delete(f"/api/settings/secret/{_SETTINGS_SECRET_KEY}")
         assert response.status_code == 503
+
+
+def _fake_tempfile(mkstemp: Callable[..., tuple[int, str]] | None = None) -> Mock:
+    """A stand-in for ``src.web.api``'s ``tempfile`` reference.
+
+    Patched as ``patch("src.web.api.tempfile", _fake_tempfile(...))`` rather
+    than ``patch("src.web.api.tempfile.mkstemp")``: the latter resolves through
+    to the shared ``tempfile`` module and replaces the attribute there, so any
+    other thread in the process creating a temp file during the block lands in
+    this test's recording (or its ``assert_not_called``). ``api`` uses
+    ``tempfile`` for nothing but ``mkstemp``, so rebinding the whole reference
+    is both safe and local.
+
+    Args:
+        mkstemp: Implementation for ``mkstemp``. Omit to get a plain recorder
+            that creates nothing — for tests asserting it never ran.
+    """
+    module = Mock(spec=tempfile)
+    if mkstemp is not None:
+        module.mkstemp.side_effect = mkstemp
+    return module
+
+
+def _recording_mkstemp(
+    captured: dict[str, Path],
+) -> Callable[..., tuple[int, str]]:
+    """Wrap tempfile.mkstemp so a test can capture and later assert on the path.
+
+    The real temp file is still created (the handler writes the upload into it);
+    its path is recorded under ``captured["path"]`` so cleanup can be verified.
+    """
+    real_mkstemp = tempfile.mkstemp
+
+    def recording(*args: Any, **kwargs: Any) -> tuple[int, str]:
+        fd, name = real_mkstemp(*args, **kwargs)
+        captured["path"] = Path(name)
+        return fd, name
+
+    return recording
+
+
+def _chunked_multipart(
+    source: str, filename: str, payload: bytes
+) -> tuple[dict[str, str], list[bytes]]:
+    """Build a multipart body as a list of chunks, with its content-type header.
+
+    Sent through ``content=iter(chunks)`` so httpx uses ``Transfer-Encoding:
+    chunked`` and declares no ``content-length`` — the only way to exercise the
+    middleware's streaming counter against the real upload endpoint.
+    """
+    boundary = "recommendinatorTestBoundary"
+    prologue = (
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="source"\r\n\r\n'
+        f"{source}\r\n"
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+        "Content-Type: text/csv\r\n\r\n"
+    ).encode()
+    epilogue = f"\r\n--{boundary}--\r\n".encode()
+    headers = {"content-type": f"multipart/form-data; boundary={boundary}"}
+    return headers, [prologue, payload, epilogue]
+
+
+class TestImportSourcesEndpoint:
+    """Tests for GET /api/import/sources."""
+
+    def test_lists_only_file_import_plugins_with_schema(self, client):
+        """The listing is exactly the five file-import plugins, no syncables.
+
+        An exact set, not a subset: a syncable plugin that gained
+        ``is_file_import`` by accident would stop being creatable and start
+        accepting uploads, and a subset assertion would not notice.
+        """
+        response = client.get("/api/import/sources")
+        assert response.status_code == 200
+        data = response.json()
+        names = {plugin["name"] for plugin in data}
+        assert names == {
+            "csv_import",
+            "goodreads_csv",
+            "json_import",
+            "markdown_import",
+            "storygraph_csv",
+        }
+        # Syncable sources (sonarr is configured in mock_config) are excluded.
+        assert "sonarr" not in names
+        # The Goodreads RSS feed is a network source, not a file import.
+        assert "goodreads_rss" not in names
+
+        csv_plugin = next(p for p in data if p["name"] == "csv_import")
+        assert [f["name"] for f in csv_plugin["fields"]] == ["content_type"]
+
+        goodreads_plugin = next(p for p in data if p["name"] == "goodreads_csv")
+        assert goodreads_plugin["fields"] == []
+
+        # The StoryGraph export is books-only, so it takes no options either.
+        storygraph_plugin = next(p for p in data if p["name"] == "storygraph_csv")
+        assert storygraph_plugin["fields"] == []
+
+    def test_each_plugin_declares_the_extensions_it_reads(self, client):
+        """The file picker's ``accept`` filter and help text come from here.
+
+        Regression: the modal inferred the format by substring-matching the
+        plugin name, so a future importer whose name says nothing about its
+        format (``opml_import``) would have been offered a CSV file picker.
+        """
+        data = client.get("/api/import/sources").json()
+        extensions = {p["name"]: p["accepted_extensions"] for p in data}
+
+        assert extensions == {
+            "csv_import": [".csv"],
+            "goodreads_csv": [".csv"],
+            "json_import": [".json", ".jsonl"],
+            "markdown_import": [".md", ".markdown"],
+            "storygraph_csv": [".csv"],
+        }
+
+
+class TestImportEndpoint:
+    """Tests for POST /api/import."""
+
+    def test_goodreads_happy_path(self, client, mock_components):
+        """A Goodreads CSV upload imports every parsed book."""
+        mock_components["storage"].save_content_item.return_value = 1
+        response = client.post(
+            "/api/import",
+            data={"source": "goodreads_csv"},
+            files={"file": ("books.csv", GOODREADS_CSV, "text/csv")},
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["items_synced"] == 2
+        assert body["total_items"] == 2
+        # source is the plugin name the user passed, not the internal job label.
+        assert body["source"] == "goodreads_csv"
+        assert body["errors"] == []
+        # An import that produced items has nothing to warn about.
+        assert body["warning"] is None
+
+    def test_csv_import_happy_path_with_content_type_option(
+        self, client, mock_components
+    ):
+        """A generic CSV upload uses the content_type form field as an option."""
+        mock_components["storage"].save_content_item.return_value = 1
+        csv_content = "title,author,status,rating\nDune,Frank Herbert,read,5\n"
+        response = client.post(
+            "/api/import",
+            data={"source": "csv_import", "content_type": "book"},
+            files={"file": ("books.csv", csv_content, "text/csv")},
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["items_synced"] == 1
+        assert body["total_items"] == 1
+        assert body["source"] == "csv_import"
+
+    def test_unknown_plugin_rejected(self, client):
+        """An unregistered source name is a 422 client error."""
+        response = client.post(
+            "/api/import",
+            data={"source": "does_not_exist"},
+            files={"file": ("x.csv", "ignored", "text/csv")},
+        )
+        assert response.status_code == 422
+
+    def test_non_file_import_source_rejected(self, client):
+        """A syncable (non-file-import) source is a 422 client error."""
+        response = client.post(
+            "/api/import",
+            data={"source": "sonarr"},
+            files={"file": ("x.csv", "ignored", "text/csv")},
+        )
+        assert response.status_code == 422
+
+    def test_corrupt_file_returns_client_error(self, client):
+        """A FileImportError maps to a 400 carrying only its client_detail."""
+        with patch(
+            "src.web.api.import_file",
+            side_effect=FileImportError(
+                "Failed to import file with 'csv_import': /tmp/upload-x.csv line 3",
+                "Failed to import file with 'csv_import'.",
+            ),
+        ):
+            response = client.post(
+                "/api/import",
+                data={"source": "csv_import", "content_type": "book"},
+                files={"file": ("x.csv", "garbage", "text/csv")},
+            )
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Failed to import file with 'csv_import'."
+        # The diagnostic half of the error stays server-side.
+        assert "/tmp/upload-x.csv" not in response.text
+
+    def test_import_failure_is_logged_once(self, client, caplog):
+        """Regression: the same failure was written to the log twice.
+
+        ``SyncManager.run_import`` logs every import exception with the job
+        label, the exception type and the sanitized message; the API handler
+        then logged the message again. The handler's line is gone — the more
+        informative one is kept.
+        """
+        with (
+            patch(
+                "src.web.api.import_file",
+                side_effect=FileImportError(
+                    "Failed to import file with 'csv_import': /tmp/upload-x.csv",
+                    "Failed to import file with 'csv_import'.",
+                ),
+            ),
+            caplog.at_level(logging.WARNING),
+        ):
+            response = client.post(
+                "/api/import",
+                data={"source": "csv_import", "content_type": "book"},
+                files={"file": ("x.csv", "garbage", "text/csv")},
+            )
+
+        assert response.status_code == 400
+        failures = [
+            record
+            for record in caplog.records
+            if "Failed to import file" in record.getMessage()
+        ]
+        assert len(failures) == 1
+        assert failures[0].name == "src.web.sync_manager"
+        assert "FileImportError" in failures[0].getMessage()
+
+    def test_temp_file_cleaned_up_on_failure(self, client):
+        """The streamed temp file is removed even when the import fails."""
+        captured: dict[str, Path] = {}
+
+        def fail(**kwargs: Any) -> None:
+            captured["file_path"] = kwargs["file_path"]
+            raise FileImportError("boom", "The file could not be imported.")
+
+        with patch("src.web.api.import_file", side_effect=fail):
+            response = client.post(
+                "/api/import",
+                data={"source": "csv_import", "content_type": "book"},
+                files={"file": ("x.csv", "garbage", "text/csv")},
+            )
+        assert response.status_code == 400
+        assert "file_path" in captured
+        assert not captured["file_path"].exists()
+
+    def test_progress_observable_via_status_endpoint(self, client, mock_components):
+        """A completed import is reported as a job via GET /api/sync/status."""
+        mock_components["storage"].save_content_item.return_value = 1
+        response = client.post(
+            "/api/import",
+            data={"source": "goodreads_csv"},
+            files={"file": ("books.csv", GOODREADS_CSV, "text/csv")},
+        )
+        assert response.status_code == 200
+
+        status = client.get("/api/sync/status").json()
+        jobs = {job["source"]: job for job in status["jobs"]}
+        label = "Import: Goodreads (CSV Export)"
+        assert label in jobs
+        assert jobs[label]["status"] == "completed"
+        assert jobs[label]["items_processed"] == 2
+
+    def test_json_import_happy_path(self, client, mock_components):
+        """A generic JSON upload imports every entry (criterion 1: JSON format)."""
+        mock_components["storage"].save_content_item.return_value = 1
+        json_content = json.dumps(
+            [
+                {"title": "Dune", "author": "Frank Herbert", "status": "completed"},
+                {"title": "Neuromancer", "author": "William Gibson", "status": "read"},
+            ]
+        )
+        response = client.post(
+            "/api/import",
+            data={"source": "json_import", "content_type": "book"},
+            files={"file": ("books.json", json_content, "application/json")},
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["items_synced"] == 2
+        assert body["total_items"] == 2
+        assert body["source"] == "json_import"
+        assert body["errors"] == []
+
+    def test_markdown_import_happy_path(self, client, mock_components):
+        """A markdown upload imports every entry (criterion 1: markdown format)."""
+        mock_components["storage"].save_content_item.return_value = 1
+        md_content = (
+            "## Completed\n"
+            "- **Dune** by Frank Herbert | Rating: 5\n"
+            "- **Neuromancer** by William Gibson | Rating: 4\n"
+        )
+        response = client.post(
+            "/api/import",
+            data={"source": "markdown_import", "content_type": "book"},
+            files={"file": ("books.md", md_content, "text/markdown")},
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["items_synced"] == 2
+        assert body["total_items"] == 2
+        assert body["source"] == "markdown_import"
+        assert body["errors"] == []
+
+    def test_temp_file_cleaned_up_on_success(self, client):
+        """The streamed temp file is removed on the success path (criterion 7).
+
+        The existing suite only proves cleanup on failure; this locks in that
+        the ``finally`` block also runs after a successful import so uploads
+        never accumulate on disk.
+        """
+        captured: dict[str, Path] = {}
+
+        def succeed(**kwargs: Any) -> SyncResult:
+            file_path = kwargs["file_path"]
+            captured["file_path"] = file_path
+            # The temp file must still exist while the import runs.
+            assert file_path.exists()
+            return SyncResult(source_name="csv_import", items_synced=1, total_items=1)
+
+        with patch("src.web.api.import_file", side_effect=succeed):
+            response = client.post(
+                "/api/import",
+                data={"source": "csv_import", "content_type": "book"},
+                files={"file": ("x.csv", "title\nDune\n", "text/csv")},
+            )
+        assert response.status_code == 200, response.text
+        assert "file_path" in captured
+        assert not captured["file_path"].exists()
+
+    def test_missing_required_option_returns_400(self, client, mock_components):
+        """Omitting content_type for a generic format is a 400, not a 500.
+
+        csv_import requires a content_type option; without it the plugin's
+        validate_config fails, the service raises FileImportError, and the
+        endpoint must surface a clean 400.
+        """
+        mock_components["storage"].save_content_item.return_value = 1
+        response = client.post(
+            "/api/import",
+            data={"source": "csv_import"},
+            files={"file": ("x.csv", "title\nDune\n", "text/csv")},
+        )
+        assert response.status_code == 400
+        assert "content_type" in response.json()["detail"]
+
+    def test_empty_file_imports_zero_items_with_a_warning(
+        self, client, mock_components
+    ):
+        """An empty upload is a clean 200 with zero items and a warning.
+
+        An empty file yields no rows; the import completes successfully with
+        zero counts rather than failing or raising, but the response carries a
+        warning so the user learns why nothing arrived.
+        """
+        mock_components["storage"].save_content_item.return_value = 1
+        response = client.post(
+            "/api/import",
+            data={"source": "csv_import", "content_type": "book"},
+            files={"file": ("empty.csv", "", "text/csv")},
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["items_synced"] == 0
+        assert body["total_items"] == 0
+        assert body["errors"] == []
+        assert body["warning"] == NO_ITEMS_WARNING
+
+    def test_wrong_format_file_returns_400(self, client, mock_components):
+        """A JSON file sent to csv_import surfaces a clean 400, not a 500.
+
+        The CSV parser sees no ``title`` column in the JSON content and raises
+        a SourceError, which the service wraps into a FileImportError -> 400.
+        """
+        mock_components["storage"].save_content_item.return_value = 1
+        json_content = json.dumps([{"name": "Dune"}, {"name": "Neuromancer"}], indent=2)
+        response = client.post(
+            "/api/import",
+            data={"source": "csv_import", "content_type": "book"},
+            files={"file": ("books.json", json_content, "application/json")},
+        )
+        assert response.status_code == 400
+        # Plugin-specific detail: the wrapper names the failing plugin so the
+        # user knows which importer rejected the file, not just that it failed.
+        assert "Failed to import file with 'csv_import'" in response.json()["detail"]
+
+    def test_bom_prefixed_csv_imports(self, client, mock_components):
+        """A UTF-8-BOM CSV (what Excel writes) imports like any other upload.
+
+        Regression: the parser opened the file with plain ``utf-8``, so the BOM
+        was glued onto the first header and the upload was rejected with "CSV
+        missing required column: title" — sending the user hunting for a column
+        that was right there. The readers now open with ``utf-8-sig``.
+        """
+        mock_components["storage"].save_content_item.return_value = 1
+        csv_content = (
+            "\N{ZERO WIDTH NO-BREAK SPACE}"
+            "title,author,status,rating\nDune,Frank Herbert,read,5\n"
+        )
+        response = client.post(
+            "/api/import",
+            data={"source": "csv_import", "content_type": "book"},
+            files={"file": ("books.csv", csv_content, "text/csv")},
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["items_synced"] == 1
+        assert body["errors"] == []
+
+    def test_per_item_errors_surfaced_when_some_rows_fail(
+        self, client, mock_components
+    ):
+        """A file that parses but whose rows partially fail to save reports them.
+
+        The first item's save raises; the second succeeds. The endpoint must
+        return 200 with the surviving count and a safe per-item error string
+        (no raw exception text) for the failed row.
+        """
+        mock_components["storage"].save_content_item.side_effect = [
+            RuntimeError("db write failed"),
+            1,
+        ]
+        response = client.post(
+            "/api/import",
+            data={"source": "goodreads_csv"},
+            files={"file": ("books.csv", GOODREADS_CSV, "text/csv")},
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["items_synced"] == 1
+        assert body["total_items"] == 2
+        # Pins the pipeline's per-item error format ("Failed to process '<title>'"):
+        # a safe, title-only string with no raw exception text.
+        assert body["errors"] == ["Failed to process 'Dune'"]
+        # The raw exception text must never leak to the client.
+        assert "db write failed" not in json.dumps(body)
+
+    def test_all_rows_failing_reports_errors_without_a_warning(
+        self, client, mock_components
+    ):
+        """A file whose every row fails reports errors only, not also a warning.
+
+        Zero items imported would otherwise look like the empty-file case. The
+        per-item errors already explain the outcome, so warning as well would
+        double-report it.
+        """
+        mock_components["storage"].save_content_item.side_effect = [
+            RuntimeError("db write failed"),
+            RuntimeError("db write failed"),
+        ]
+        response = client.post(
+            "/api/import",
+            data={"source": "goodreads_csv"},
+            files={"file": ("books.csv", GOODREADS_CSV, "text/csv")},
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["items_synced"] == 0
+        assert body["total_items"] == 2
+        assert body["errors"] == [
+            "Failed to process 'Dune'",
+            "Failed to process 'Neuromancer'",
+        ]
+        assert body["warning"] is None
+
+    def test_all_rows_failing_is_a_200_response_and_a_failed_job(
+        self, client, mock_components
+    ):
+        """The response and the job status answer different questions. Both are right.
+
+        The 200 says the request succeeded: the file was accepted, parsed, and
+        run — every row's outcome is reported in ``errors``. The job says the
+        import produced nothing, which is what the Data tab's banner is for.
+        Reconciling them by failing the request would hide the per-row detail
+        behind an error body; reconciling them by completing the job would
+        claim a successful import that saved nothing. This test exists so the
+        divergence is a stated contract rather than an accident.
+        """
+        mock_components["storage"].save_content_item.side_effect = [
+            RuntimeError("db write failed"),
+            RuntimeError("db write failed"),
+        ]
+        response = client.post(
+            "/api/import",
+            data={"source": "goodreads_csv"},
+            files={"file": ("books.csv", GOODREADS_CSV, "text/csv")},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["items_synced"] == 0
+
+        job = next(
+            job
+            for job in client.get("/api/sync/status").json()["jobs"]
+            if job["source"] == "Import: Goodreads (CSV Export)"
+        )
+        assert job["status"] == "failed"
+        assert job["error_message"] == "Failed to process 'Dune'"
+        assert job["error_count"] == 2
+
+    def test_concurrent_import_returns_409(self, client, mock_components):
+        """A second import for the same label while one runs is a 409.
+
+        Plants a RUNNING job under the import's label in the global
+        SyncManager, then posts an import that maps to the same label. The
+        endpoint must reject it with 409 rather than starting a duplicate.
+        """
+        mock_components["storage"].save_content_item.return_value = 1
+        label = "Import: Goodreads (CSV Export)"
+        manager = get_sync_manager()
+        with patch("src.web.sync_manager.threading.Thread"):
+            manager.start_sync(source=label, sync_function=lambda _job: 0)
+        assert manager.is_running(label) is True
+
+        captured: dict[str, Path] = {}
+        with patch(
+            "src.web.api.tempfile", _fake_tempfile(_recording_mkstemp(captured))
+        ):
+            response = client.post(
+                "/api/import",
+                data={"source": "goodreads_csv"},
+                files={"file": ("books.csv", GOODREADS_CSV, "text/csv")},
+            )
+        assert response.status_code == 409
+        assert response.json()["detail"] == IMPORT_ALREADY_RUNNING_DETAIL
+        # The label the exception carries names the plugin; it must not be what
+        # goes on the wire, or its text becomes a wire contract by accident.
+        assert label not in response.text
+        # The streamed temp file must be removed on the 409 path too.
+        assert "path" in captured
+        assert not captured["path"].exists()
+
+    def test_concurrency_guard_is_scoped_to_the_same_import_plugin(
+        self, client, mock_components
+    ):
+        """The 409 guard is per-plugin, not a global import/sync lock.
+
+        Pins the actual scope of the server-side guard so it is not mistaken
+        for global serialisation: a running job under a *different* label (here
+        a whole-library sync) does not block an import. The Import modal
+        deliberately blocks more than this client-side — it disables the button
+        whenever any job is running — so the two layers must not be conflated
+        when reasoning about concurrency.
+        """
+        mock_components["storage"].save_content_item.return_value = 1
+        manager = get_sync_manager()
+        with patch("src.web.sync_manager.threading.Thread"):
+            manager.start_sync(source="All Sources", sync_function=lambda _job: 0)
+        assert manager.is_running("All Sources") is True
+        assert manager.is_running() is True
+
+        response = client.post(
+            "/api/import",
+            data={"source": "goodreads_csv"},
+            files={"file": ("books.csv", GOODREADS_CSV, "text/csv")},
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["items_synced"] == 2
+
+    def test_oversized_body_never_reaches_the_upload_handler(self, mock_components):
+        """A body over the request cap is refused before the handler is entered.
+
+        This is the layer that actually bounds disk use. By the time the
+        handler runs, FastAPI has resolved ``file: UploadFile``, which means
+        Starlette's multipart parser has already drained the whole request into
+        a ``SpooledTemporaryFile`` — spilling to the system temp directory past
+        1 MB, with no total-size limit. So the handler's own chunk loop can
+        only bound the second copy. ``mkstemp`` never being called is the proof
+        that nothing in the handler ran; ``tests/web/test_upload_limit.py``
+        proves the wrapped application never reads the body at all.
+        """
+        fake_tempfile = _fake_tempfile()
+        with (
+            patch("src.web.app.MAX_REQUEST_BODY_BYTES", 128),
+            patch("src.web.api.tempfile", fake_tempfile),
+        ):
+            app = create_app()
+            response = TestClient(app).post(
+                "/api/import",
+                data={"source": "goodreads_csv"},
+                files={"file": ("books.csv", "x" * 4096, "text/csv")},
+            )
+
+        assert response.status_code == 413
+        assert "exceeds" in response.json()["detail"]
+        fake_tempfile.mkstemp.assert_not_called()
+        mock_components["storage"].save_content_item.assert_not_called()
+
+    def test_oversized_chunked_upload_is_a_413_not_a_parse_error(
+        self, mock_components, caplog
+    ):
+        """A body with no declared length is refused as a 413, not a 400.
+
+        Regression: the middleware signalled the overrun by raising a private
+        exception from the wrapped ``receive``. On this endpoint that raise
+        happens inside ``await request.form()``, and FastAPI wraps that call in
+        ``except Exception`` -> HTTP 400 "There was an error parsing the body"
+        — so on the one route the cap exists for, an oversized chunked upload
+        came back as a 400 and the modal said "We couldn't read that file".
+        The cap still held; the answer was wrong. The existing coverage missed
+        it because its probe endpoint called ``await request.body()``, which
+        FastAPI does not wrap.
+
+        The declared-``content-length`` path is unaffected (it never reaches
+        the app at all) and is pinned by the test above.
+        """
+        headers, chunks = _chunked_multipart("goodreads_csv", "books.csv", b"x" * 4096)
+        fake_tempfile = _fake_tempfile()
+        with (
+            patch("src.web.app.MAX_REQUEST_BODY_BYTES", 128),
+            patch("src.web.api.tempfile", fake_tempfile),
+            caplog.at_level(logging.WARNING, logger="src.web.upload_limit"),
+        ):
+            app = create_app()
+            response = TestClient(app).post(
+                "/api/import", headers=headers, content=iter(chunks)
+            )
+
+        # No declared length, so this is the streaming counter's branch — the
+        # one whose warning never fired because the signal was swallowed first.
+        assert "content-length" not in {
+            name.lower() for name in response.request.headers
+        }
+        assert "mid-stream" in caplog.text
+        assert response.status_code == 413, response.text
+        assert "exceeds" in response.json()["detail"]
+        fake_tempfile.mkstemp.assert_not_called()
+        mock_components["storage"].save_content_item.assert_not_called()
+
+    def test_oversized_upload_returns_413_and_cleans_up(self, client, mock_components):
+        """The handler's own cap check is a backstop, and it cleans up after itself.
+
+        Distinct from the middleware above: this body is small enough to pass
+        the request cap, so the handler does run, copies the parsed upload out
+        in chunks, and aborts on the file cap (patched low here rather than
+        streaming tens of megabytes). What it pins is that the abort leaves no
+        partial temp file behind — not that the body stayed off the disk, which
+        is the middleware's job.
+        """
+        mock_components["storage"].save_content_item.return_value = 1
+        captured: dict[str, Path] = {}
+        with (
+            patch("src.web.api.MAX_UPLOAD_BYTES", 16),
+            patch("src.web.api.tempfile", _fake_tempfile(_recording_mkstemp(captured))),
+        ):
+            response = client.post(
+                "/api/import",
+                data={"source": "goodreads_csv"},
+                files={"file": ("books.csv", "x" * 1024, "text/csv")},
+            )
+        assert response.status_code == 413
+        assert "exceeds" in response.json()["detail"]
+        assert "path" in captured
+        assert not captured["path"].exists()
+
+    def test_chunked_copy_aborts_without_ever_exceeding_the_cap(
+        self, client, mock_components
+    ):
+        """The copy loop stops at the cap mid-file, not after writing it all.
+
+        Every other cap test uses a body under the 1 MB chunk size, so the
+        ``while chunk := await file.read(...)`` loop runs exactly once and the
+        incremental accounting is never exercised — a loop that wrote the whole
+        upload before checking would pass them all. Shrinking the chunk size
+        alongside the cap forces several iterations and pins the property that
+        matters: the partial temp file never grows past the cap.
+        """
+        mock_components["storage"].save_content_item.return_value = 1
+        sizes: list[int] = []
+        real_fdopen = os.fdopen
+
+        def recording_fdopen(fd: int, mode: str) -> Any:
+            handle = real_fdopen(fd, mode)
+            original_write = handle.write
+
+            def write(chunk: bytes) -> int:
+                written = original_write(chunk)
+                handle.flush()
+                sizes.append(handle.tell())
+                return written
+
+            handle.write = write
+            return handle
+
+        fake_os = Mock(spec=os)
+        fake_os.fdopen.side_effect = recording_fdopen
+        with (
+            patch("src.web.api._UPLOAD_CHUNK_BYTES", 8),
+            patch("src.web.api.MAX_UPLOAD_BYTES", 32),
+            # The whole ``os`` reference, not ``os.fdopen``: ``api`` uses it for
+            # nothing else, and reaching into the shared module would hand every
+            # other thread's ``os.fdopen`` call to this test's recorder.
+            patch("src.web.api.os", fake_os),
+        ):
+            response = client.post(
+                "/api/import",
+                data={"source": "goodreads_csv"},
+                files={"file": ("books.csv", "x" * 1024, "text/csv")},
+            )
+
+        assert response.status_code == 413
+        # More than one iteration — otherwise this proves nothing the
+        # single-chunk tests do not already cover.
+        assert len(sizes) > 1
+        assert max(sizes) <= 32
+        mock_components["storage"].save_content_item.assert_not_called()
+
+    def test_upload_of_exactly_the_cap_is_accepted(self, client, mock_components):
+        """A file exactly at the byte cap imports; only *over* the cap is 413.
+
+        The check is ``total > MAX_UPLOAD_BYTES``, so the boundary value must
+        pass. An off-by-one here would reject a legitimate 50 MB export.
+        """
+        mock_components["storage"].save_content_item.return_value = 1
+        with patch("src.web.api.MAX_UPLOAD_BYTES", len(GOODREADS_CSV)):
+            response = client.post(
+                "/api/import",
+                data={"source": "goodreads_csv"},
+                files={"file": ("books.csv", GOODREADS_CSV, "text/csv")},
+            )
+        assert response.status_code == 200, response.text
+        assert response.json()["items_synced"] == 2
+
+    def test_upload_one_byte_over_the_cap_is_rejected(self, client, mock_components):
+        """One byte past the cap is a 413 — the other half of the boundary."""
+        mock_components["storage"].save_content_item.return_value = 1
+        with patch("src.web.api.MAX_UPLOAD_BYTES", len(GOODREADS_CSV) - 1):
+            response = client.post(
+                "/api/import",
+                data={"source": "goodreads_csv"},
+                files={"file": ("books.csv", GOODREADS_CSV, "text/csv")},
+            )
+        assert response.status_code == 413
+        mock_components["storage"].save_content_item.assert_not_called()
+
+    def test_cap_is_mirrored_in_the_frontend_constant(self):
+        """The Import modal re-declares this cap in TypeScript; pin them together.
+
+        ``resources/js/constants/upload.ts`` holds a copy so the modal can
+        refuse an oversized file before spending the upload. Nothing else ties
+        the two languages together, so raising one alone would leave the
+        client-side check silently disagreeing with the 413.
+        """
+        constants = _REPO_ROOT / "resources" / "js" / "constants" / "upload.ts"
+        match = re.search(
+            r"MAX_UPLOAD_MB = (\d+)", constants.read_text(encoding="utf-8")
+        )
+        assert match is not None, f"MAX_UPLOAD_MB not declared in {constants}"
+        assert int(match.group(1)) * 1024 * 1024 == MAX_UPLOAD_BYTES
+
+    def test_returns_503_when_components_uninitialized(self, client, mock_components):
+        """With storage uninitialized the endpoint is a clean 503, not a crash.
+
+        Uses the module's ``_require_storage`` helper, like every other
+        endpoint, rather than a local truthiness check with its own status.
+        """
+        app_state.storage = None
+        response = client.post(
+            "/api/import",
+            data={"source": "goodreads_csv"},
+            files={"file": ("books.csv", GOODREADS_CSV, "text/csv")},
+        )
+        assert response.status_code == 503
+        assert response.json()["detail"] == "Storage unavailable"
+
+    def test_returns_503_when_config_uninitialized(self, client, mock_components):
+        """Config is the second boot dependency, and it gets its own 503.
+
+        The modal's copy names both ("storage or configuration"), but only the
+        storage half was pinned. The handler reads feature flags and the
+        enrichment block off the config, so a null one would otherwise be an
+        ``AttributeError`` 500 rather than a stated unavailability.
+        """
+        app_state.config = None
+        response = client.post(
+            "/api/import",
+            data={"source": "goodreads_csv"},
+            files={"file": ("books.csv", GOODREADS_CSV, "text/csv")},
+        )
+        assert response.status_code == 503
+        assert response.json()["detail"] == "Config unavailable"
+        mock_components["storage"].save_content_item.assert_not_called()
+
+    def test_unreadable_file_error_is_masked(self, client):
+        """The not-readable FileImportError never leaks the internal temp path.
+
+        The service embeds the (temp) path in its message for the log and the
+        CLI; the response carries only the structured ``client_detail`` so the
+        client cannot see server-side filesystem paths.
+        """
+        secret_path = "/tmp/server-secret-upload-xyz.csv"
+        with patch(
+            "src.web.api.import_file",
+            side_effect=FileImportError(
+                f"{FILE_NOT_READABLE_MESSAGE}: {secret_path}", UNREADABLE_FILE_DETAIL
+            ),
+        ):
+            response = client.post(
+                "/api/import",
+                data={"source": "goodreads_csv"},
+                files={"file": ("books.csv", GOODREADS_CSV, "text/csv")},
+            )
+        assert response.status_code == 400
+        assert response.json()["detail"] == "The uploaded file could not be read"
+        assert secret_path not in response.text
+
+    def test_goodreads_rss_is_not_importable(self, client):
+        """The RSS half of the Goodreads split is a feed source, not an import.
+
+        Control for the plugin split: only ``goodreads_csv`` accepts an upload.
+        Were ``goodreads_rss`` accidentally flagged as a file import, this would
+        return 200 instead of rejecting the upload.
+        """
+        response = client.post(
+            "/api/import",
+            data={"source": "goodreads_rss"},
+            files={"file": ("books.csv", GOODREADS_CSV, "text/csv")},
+        )
+        assert response.status_code == 422
+
+    def test_missing_source_field_is_a_validation_error(self, client):
+        """Omitting the ``source`` form field is a 422, not a 500."""
+        response = client.post(
+            "/api/import",
+            files={"file": ("books.csv", GOODREADS_CSV, "text/csv")},
+        )
+        assert response.status_code == 422
+
+    def test_missing_file_part_is_a_validation_error(self, client):
+        """Omitting the ``file`` part is a 422, not a 500."""
+        response = client.post("/api/import", data={"source": "goodreads_csv"})
+        assert response.status_code == 422
+
+    def test_a_file_part_named_like_an_option_is_ignored(self, client, mock_components):
+        """A second *file* part named ``content_type`` must not become an option.
+
+        The handler reads options off the raw multipart form, so a client can
+        name a file part after a config field. Only string parts may enter the
+        options dict — an UploadFile reaching the plugin config would be a type
+        confusion. Here csv_import's required option is supplied only by the
+        file part, so the import must fail validation rather than accept it.
+        """
+        mock_components["storage"].save_content_item.return_value = 1
+        response = client.post(
+            "/api/import",
+            data={"source": "csv_import"},
+            files={
+                "file": ("books.csv", "title\nDune\n", "text/csv"),
+                "content_type": ("book.txt", "book", "text/plain"),
+            },
+        )
+        assert response.status_code == 400
+        assert "content_type" in response.json()["detail"]
+        mock_components["storage"].save_content_item.assert_not_called()
+
+    def test_temp_file_cleaned_up_on_unexpected_error(self, client):
+        """An error the handler does not map still leaves no temp file behind.
+
+        ``FileImportError`` / ``SyncInProgressError`` have explicit handlers; a
+        storage or plugin fault that escapes as something else must still hit
+        the ``finally`` unlink rather than leaking the upload onto disk.
+        """
+        captured: dict[str, Path] = {}
+
+        def blow_up(**kwargs: Any) -> None:
+            captured["file_path"] = kwargs["file_path"]
+            raise RuntimeError("unexpected internal fault")
+
+        # ``raise_server_exceptions=False`` makes the client return the 500 the
+        # deployed server would send instead of re-raising into the test.
+        unwrapped = TestClient(client.app, raise_server_exceptions=False)
+        with patch("src.web.api.import_file", side_effect=blow_up):
+            response = unwrapped.post(
+                "/api/import",
+                data={"source": "csv_import", "content_type": "book"},
+                files={"file": ("x.csv", "title\nDune\n", "text/csv")},
+            )
+        assert response.status_code == 500
+        # The raw exception text must not reach the client.
+        assert "unexpected internal fault" not in response.text
+        assert "file_path" in captured
+        assert not captured["file_path"].exists()
+
+    def test_unicode_filename_and_content_import_cleanly(self, client, mock_components):
+        """A non-ASCII filename and body survive the multipart + temp-file hop.
+
+        The temp file takes its suffix from the uploaded filename, so a
+        non-ASCII name must not break ``mkstemp``, and the CSV must still be
+        decoded as UTF-8.
+        """
+        mock_components["storage"].save_content_item.return_value = 1
+        csv_content = (
+            "title,author,status,rating\n"
+            "Les Misérables,Victor Hugo,read,5\n"
+            "こころ,夏目漱石,read,4\n"
+        )
+        response = client.post(
+            "/api/import",
+            data={"source": "csv_import", "content_type": "book"},
+            files={"file": ("本の一覧.csv", csv_content, "text/csv")},
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["items_synced"] == 2
+        assert body["errors"] == []
+        titles = [
+            call.args[0].title
+            for call in mock_components["storage"].save_content_item.call_args_list
+        ]
+        assert titles == ["Les Misérables", "こころ"]
+
+    @pytest.mark.parametrize(
+        ("source", "options", "filename", "body"),
+        [
+            ("goodreads_csv", {}, "books.csv", "Title,Author\nCafé,Hugo\n"),
+            (
+                "csv_import",
+                {"content_type": "book"},
+                "books.csv",
+                "title,author\nCafé,Hugo\n",
+            ),
+            (
+                "storygraph_csv",
+                {},
+                "library.csv",
+                "Title,Authors\nCafé,Hugo\n",
+            ),
+            (
+                "markdown_import",
+                {"content_type": "book"},
+                "books.md",
+                "## Completed\n- **Café** by Hugo\n",
+            ),
+        ],
+    )
+    def test_latin1_upload_returns_400_not_500(
+        self, client, mock_components, source, options, filename, body
+    ):
+        """A Latin-1 export is a clean 400 on every text importer, not a 500.
+
+        Regression: ``execute_sync`` called ``list(plugin.fetch(...))`` with no
+        exception handling and the import service wrapped only ``SourceError``,
+        so a ``UnicodeDecodeError`` from any non-UTF-8 export escaped as a bare
+        500 with a stack trace in the log.
+        """
+        unwrapped = TestClient(client.app, raise_server_exceptions=False)
+        response = unwrapped.post(
+            "/api/import",
+            data={"source": source, **options},
+            files={"file": (filename, body.encode("latin-1"), "text/plain")},
+        )
+
+        assert response.status_code == 400, response.text
+        assert "Failed to import file" in response.json()["detail"]
+        mock_components["storage"].save_content_item.assert_not_called()
+
+    def test_utf16_upload_returns_400_not_500(self, client, mock_components):
+        """A UTF-16 export (what some tools emit by default) is also a 400."""
+        unwrapped = TestClient(client.app, raise_server_exceptions=False)
+        response = unwrapped.post(
+            "/api/import",
+            data={"source": "json_import", "content_type": "book"},
+            files={
+                "file": (
+                    "books.json",
+                    json.dumps([{"title": "Café"}]).encode("utf-16"),
+                    "application/json",
+                )
+            },
+        )
+
+        assert response.status_code == 400, response.text
+        mock_components["storage"].save_content_item.assert_not_called()
+
+    def test_deeply_nested_json_returns_400_not_500(self, client, mock_components):
+        """A few KB of '[' exhausts the JSON parser's stack; that is still a 400.
+
+        ``RecursionError`` is not a ``ValueError``, so it escaped the plugin's
+        JSON error handling and the service's wrapper alike.
+        """
+        unwrapped = TestClient(client.app, raise_server_exceptions=False)
+        response = unwrapped.post(
+            "/api/import",
+            data={"source": "json_import", "content_type": "book"},
+            files={"file": ("deep.json", "[" * 20000, "application/json")},
+        )
+
+        assert response.status_code == 400, response.text
+        mock_components["storage"].save_content_item.assert_not_called()
+
+    def test_binary_upload_returns_400_not_500(self, client, mock_components):
+        """A binary file (a mistakenly picked .zip) is a 400, not a crash."""
+        unwrapped = TestClient(client.app, raise_server_exceptions=False)
+        response = unwrapped.post(
+            "/api/import",
+            data={"source": "csv_import", "content_type": "book"},
+            files={
+                "file": ("books.zip", b"PK\x03\x04\x00\xff\xfe\x00", "application/zip")
+            },
+        )
+
+        assert response.status_code == 400, response.text
+
+    def test_auto_enrich_triggers_enrichment_on_success(self, client, mock_components):
+        """With auto-enrich configured, a successful import starts enrichment.
+
+        The completion callback must forward the live storage_manager and
+        config. A Goodreads upload carries no content_type form field, so the
+        enrichment run is unscoped (content_type is None) and covers all types.
+        """
+        mock_components["storage"].save_content_item.return_value = 1
+        app_state.config["enrichment"] = {
+            "enabled": True,
+            "auto_enrich_on_sync": True,
+        }
+        with patch("src.web.api.get_enrichment_manager") as mock_get:
+            response = client.post(
+                "/api/import",
+                data={"source": "goodreads_csv"},
+                files={"file": ("books.csv", GOODREADS_CSV, "text/csv")},
+            )
+        assert response.status_code == 200, response.text
+        mock_get.return_value.start_enrichment.assert_called_once_with(
+            storage_manager=mock_components["storage"],
+            config=app_state.config,
+            content_type=None,
+        )
+
+    def test_auto_enrich_scopes_the_run_to_the_imported_content_type(
+        self, client, mock_components
+    ):
+        """A content_type option narrows the enrichment run to that type.
+
+        The unscoped case above cannot tell a working scope from one that is
+        always ``None``; this is the branch where the option is read.
+        """
+        mock_components["storage"].save_content_item.return_value = 1
+        app_state.config["enrichment"] = {
+            "enabled": True,
+            "auto_enrich_on_sync": True,
+        }
+        with patch("src.web.api.get_enrichment_manager") as mock_get:
+            response = client.post(
+                "/api/import",
+                data={"source": "csv_import", "content_type": "movie"},
+                files={"file": ("films.csv", "title\nDune\n", "text/csv")},
+            )
+        assert response.status_code == 200, response.text
+        mock_get.return_value.start_enrichment.assert_called_once_with(
+            storage_manager=mock_components["storage"],
+            config=app_state.config,
+            content_type=ContentType.MOVIE,
+        )
+
+    def test_auto_enrich_off_neither_enriches_nor_marks_items(
+        self, client, mock_components
+    ):
+        """Without auto-enrich the import must not start a run or mark items.
+
+        ``mark_for_enrichment`` rides the same flag, so an inverted condition
+        would leave every imported item queued for a run that never starts.
+        """
+        mock_components["storage"].save_content_item.return_value = 1
+        app_state.config["enrichment"] = {
+            "enabled": True,
+            "auto_enrich_on_sync": False,
+        }
+        with (
+            patch("src.web.api.get_enrichment_manager") as mock_get,
+            patch("src.web.api.import_file") as mock_import,
+        ):
+            mock_import.return_value = SyncResult(
+                source_name="goodreads_csv", items_synced=2, total_items=2
+            )
+            response = client.post(
+                "/api/import",
+                data={"source": "goodreads_csv"},
+                files={"file": ("books.csv", GOODREADS_CSV, "text/csv")},
+            )
+        assert response.status_code == 200, response.text
+        mock_get.return_value.start_enrichment.assert_not_called()
+        assert mock_import.call_args.kwargs["mark_for_enrichment"] is False
+
+    def test_unrecognised_content_type_is_a_400_not_a_500(
+        self, client, mock_components
+    ):
+        """An unusable content_type is refused by the plugin, not by a crash.
+
+        The handler derives the enrichment scope from the same option before
+        the import runs. That derivation must degrade to "unscoped" rather than
+        raising — auto-enrich is on here, so a raise would turn the plugin's
+        clean 400 into an unhandled 500.
+        """
+        app_state.config["enrichment"] = {
+            "enabled": True,
+            "auto_enrich_on_sync": True,
+        }
+        unwrapped = TestClient(client.app, raise_server_exceptions=False)
+        response = unwrapped.post(
+            "/api/import",
+            data={"source": "csv_import", "content_type": "paperback"},
+            files={"file": ("books.csv", "title\nDune\n", "text/csv")},
+        )
+        assert response.status_code == 400, response.text
+        assert "Invalid content_type 'paperback'" in response.json()["detail"]
+        mock_components["storage"].save_content_item.assert_not_called()
+
+    def test_job_label_prefix_is_mirrored_in_the_import_modal(self):
+        """The ``Import: `` job label is built in two languages; pin them together.
+
+        ``src/web/api.py`` labels the job; ``ImportFileModal.vue`` rebuilds the
+        same string to find that job in the sync-status poll and drive its
+        progress bar. Nothing else ties them, so changing the prefix on one
+        side would blank the progress bar with every test still green — the
+        same failure mode the upload-cap constant is pinned against.
+        """
+        modal = (
+            _REPO_ROOT
+            / "resources"
+            / "js"
+            / "components"
+            / "organisms"
+            / "ImportFileModal.vue"
+        )
+        source = modal.read_text(encoding="utf-8")
+        assert f"jobForLabel(`{IMPORT_JOB_LABEL_PREFIX}${{" in source
+
+
+class TestImportResponsesNeverLeakTheTempPath:
+    """No import failure puts the server-side temp path on the wire.
+
+    Regression: the handler returned ``detail=str(error)`` for every
+    FileImportError except one exact prefix, and the service forwarded plugin
+    text verbatim — three of the file plugins embed the temp path in their
+    not-found messages, and the parse branches forwarded raw library text. The
+    error now carries a structured ``client_detail`` and the full message is
+    logged instead.
+    """
+
+    @pytest.mark.parametrize(
+        ("source", "options", "body"),
+        [
+            # Wrong format for the importer (plugin SourceError).
+            (
+                "csv_import",
+                {"content_type": "book"},
+                b'[\n  {\n    "name": "Dune"\n  }\n]\n',
+            ),
+            # Missing required option (plugin validation).
+            ("csv_import", {}, b"title\nDune\n"),
+            # Unparseable JSON (raw library text).
+            ("json_import", {"content_type": "book"}, b"{not valid json"),
+            # Not UTF-8 (decode failure).
+            (
+                "markdown_import",
+                {"content_type": "book"},
+                "- **Café**\n".encode("latin-1"),
+            ),
+            ("goodreads_csv", {}, "Title\nCafé\n".encode("latin-1")),
+        ],
+    )
+    def test_failure_details_carry_no_temp_path(
+        self, client, mock_components, source, options, body
+    ):
+        """Whatever goes wrong, the response never names the upload's temp file."""
+        captured: dict[str, Path] = {}
+        unwrapped = TestClient(client.app, raise_server_exceptions=False)
+        with patch(
+            "src.web.api.tempfile", _fake_tempfile(_recording_mkstemp(captured))
+        ):
+            response = unwrapped.post(
+                "/api/import",
+                data={"source": source, **options},
+                files={"file": ("books.csv", body, "text/csv")},
+            )
+
+        assert response.status_code == 400, response.text
+        assert "path" in captured
+        temp_path = captured["path"]
+        assert str(temp_path) not in response.text
+        assert temp_path.name not in response.text
+        assert tempfile.gettempdir() not in response.text
+
+    def test_unreadable_upload_detail_carries_no_temp_path(
+        self, client, mock_components
+    ):
+        """The not-readable branch is the one that embeds the path in its message.
+
+        The temp file is removed the moment it is created, so ``import_file``
+        takes its ``File not found or not readable: <temp path>`` branch — the
+        exact message the handler used to prefix-match on.
+        """
+        captured: dict[str, Path] = {}
+        real_mkstemp = tempfile.mkstemp
+
+        def vanishing_mkstemp(*args: Any, **kwargs: Any) -> tuple[int, str]:
+            fd, name = real_mkstemp(*args, **kwargs)
+            captured["path"] = Path(name)
+            Path(name).unlink()
+            return fd, name
+
+        with patch("src.web.api.tempfile", _fake_tempfile(vanishing_mkstemp)):
+            response = client.post(
+                "/api/import",
+                data={"source": "goodreads_csv"},
+                files={"file": ("books.csv", GOODREADS_CSV, "text/csv")},
+            )
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "The uploaded file could not be read"
+        assert str(captured["path"]) not in response.text
+
+
+class TestUploadTempSuffix:
+    """The uploaded filename's extension is constrained before ``mkstemp``."""
+
+    @pytest.mark.parametrize(
+        ("filename", "expected"),
+        [
+            ("books.csv", ".csv"),
+            ("books.JSON", ".JSON"),
+            ("archive.tar.gz", ".gz"),
+            ("../../etc/passwd.csv", ".csv"),
+            ("no-extension", ""),
+            (None, ""),
+            # An embedded NUL makes mkstemp raise ValueError.
+            ("books.cs\x00v", ""),
+            # An overlong extension makes mkstemp raise OSError.
+            ("books." + "a" * 300, ""),
+            # Not a plain extension: separators, spaces, unicode.
+            ("books.c v", ""),
+            ("本の一覧.csv", ".csv"),
+            ("books.☃", ""),
+        ],
+    )
+    def test_only_plain_short_extensions_survive(self, filename, expected):
+        assert _safe_temp_suffix(filename) == expected
+
+    def test_hostile_filename_still_imports(self, client, mock_components):
+        """An unusable extension costs the suffix, not the upload.
+
+        Both an embedded NUL and a 300-character extension used to reach
+        ``mkstemp`` and raise (``ValueError`` / ``OSError: File name too
+        long``) from above the try/finally — an unhandled 500.
+        """
+        mock_components["storage"].save_content_item.return_value = 1
+        response = client.post(
+            "/api/import",
+            data={"source": "goodreads_csv"},
+            files={"file": ("books." + "a" * 300, GOODREADS_CSV, "text/csv")},
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["items_synced"] == 2
+
+
+class TestPluginPickerExcludesFileImports:
+    """GET /api/plugins offers only plugins that can become a source.
+
+    Runs against the real registry (not fakes) so it pins the actual plugin
+    ids: the five file-import plugins are addressed through POST /api/import,
+    and offering them in the Add-source picker would only lead the user into a
+    source that can never sync. ``goodreads_rss`` is the control — the RSS half
+    of the Goodreads split polls a feed and must stay offerable.
+    """
+
+    def test_file_import_plugins_are_not_offered(self, client):
+        response = client.get("/api/plugins")
+        assert response.status_code == 200
+        names = {plugin["name"] for plugin in response.json()}
+
+        assert names.isdisjoint(
+            {
+                "goodreads_csv",
+                "csv_import",
+                "json_import",
+                "markdown_import",
+                "storygraph_csv",
+            }
+        )
+        assert "goodreads_rss" in names
+        assert "sonarr" in names
+        # roms scans directories rather than reading one uploaded file, so it
+        # stays here. That it is absent from the import listing is already an
+        # exact-set assertion in TestImportSourcesEndpoint; its own
+        # ``is_file_import`` flag and config schema are pinned in
+        # tests/test_plugin_base.py and src/.../roms/test_roms.py.
+        assert "roms" in names

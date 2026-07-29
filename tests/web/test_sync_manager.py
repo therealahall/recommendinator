@@ -1,11 +1,17 @@
 """Tests for background sync job manager."""
 
+import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+from src.ingestion.import_service import FileImportError
 from src.web.sync_manager import (
+    IMPORT_INTERNAL_FAILURE_MESSAGE,
+    SyncInProgressError,
     SyncJob,
     SyncManager,
     SyncStatus,
@@ -699,6 +705,173 @@ class TestSyncManagerRunSync:
         manager._run_sync("steam", sync_function)
 
         assert manager.get_status()["jobs"][0]["items_processed"] == 99
+
+
+class TestSyncManagerRunImport:
+    """run_import inline execution and failure reporting."""
+
+    def test_failure_without_per_item_errors_sets_error_message(self) -> None:
+        """A raise before any add_error still reports a non-null error_message.
+
+        run_import re-raises so the web handler can map the failure, but the
+        tracked job must still expose a message via get_status — otherwise a
+        polling client sees status=failed with error_message=None.
+        """
+        manager = SyncManager()
+
+        def boom(_job: SyncJob) -> int:
+            raise RuntimeError("import blew up")
+
+        with pytest.raises(RuntimeError, match="import blew up"):
+            manager.run_import("Import: Goodreads", boom)
+
+        job = manager.get_status()["jobs"][0]
+        assert job["status"] == "failed"
+        # The exception's own text describes server internals, so the fixed
+        # message is what a polling client reads instead.
+        assert job["error_message"] == IMPORT_INTERNAL_FAILURE_MESSAGE
+
+    def test_per_item_error_preferred_over_exception_message(self) -> None:
+        """When the job recorded a per-item error, it wins over the exception."""
+        manager = SyncManager()
+
+        def boom(job: SyncJob) -> int:
+            manager.add_error(job.source, "row 3 failed validation")
+            raise RuntimeError("downstream blew up")
+
+        with pytest.raises(RuntimeError):
+            manager.run_import("Import: Goodreads", boom)
+
+        job = manager.get_status()["jobs"][0]
+        assert job["status"] == "failed"
+        assert job["error_message"] == "row 3 failed validation"
+
+    def test_file_import_error_message_never_reaches_the_serialised_job(self) -> None:
+        """Regression: the server temp path was polled straight to the browser.
+
+        Reported by review: ``run_import`` wrote ``str(error)`` into
+        ``error_message`` whenever no per-item error existed — which, on the
+        import failure path, is always. A ``FileImportError``'s full message
+        embeds the server-side temp path and raw parser text, and
+        ``SyncJob.to_dict`` serialises ``error_message`` straight into
+        ``GET /api/sync/status``, which the import modal polls every 2s. That
+        bypassed the handler's ``client_detail`` sanitisation entirely. Fix:
+        write a fixed message, keeping the diagnostic in the log.
+        """
+        manager = SyncManager()
+
+        def boom(_job: SyncJob) -> int:
+            raise FileImportError(
+                "Failed to import file with 'csv_import': CSV file is not "
+                "UTF-8 text: /tmp/tmpabc.csv",
+                "safe",
+            )
+
+        with pytest.raises(FileImportError):
+            manager.run_import("Import: CSV Import", boom)
+
+        job = manager.get_status()["jobs"][0]
+        assert job["status"] == "failed"
+        assert job["error_message"] == IMPORT_INTERNAL_FAILURE_MESSAGE
+
+    def test_the_failure_log_line_cannot_be_forged_by_the_exception_text(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Newlines in the logged exception text are escaped, not written raw.
+
+        The unknown-option ``FileImportError`` quotes caller-supplied multipart
+        field names back, so its message carries whatever a client sent. That
+        message used to reach the log through ``exc_info=True``, which renders
+        the exception verbatim and cannot be sanitised — a field name holding a
+        newline forged a log line of its own (CWE-117).
+        """
+        manager = SyncManager()
+
+        def boom(_job: SyncJob) -> int:
+            raise FileImportError(
+                "Unknown import option(s): x\nINFO forged log line", "safe"
+            )
+
+        with (
+            caplog.at_level(logging.ERROR, logger="src.web.sync_manager"),
+            pytest.raises(FileImportError),
+        ):
+            manager.run_import("Import: CSV Import", boom)
+
+        assert "\\nINFO forged log line" in caplog.text
+        assert "\nINFO forged log line" not in caplog.text
+
+    def test_on_complete_runs_after_a_successful_import(self) -> None:
+        """The callback (auto-enrichment) fires once the job is COMPLETED."""
+        manager = SyncManager()
+        on_complete = MagicMock()
+
+        count = manager.run_import("Import: CSV Import", lambda _job: 3, on_complete)
+
+        assert count == 3
+        on_complete.assert_called_once_with()
+        assert manager.get_status()["jobs"][0]["status"] == "completed"
+
+    def test_on_complete_is_skipped_when_the_job_finalises_failed(self) -> None:
+        """An import that saved nothing and logged errors must not auto-enrich.
+
+        ``_finalize_job_locked`` marks a zero-item job with errors FAILED. The
+        callback starts an enrichment run over the items the import added, so
+        firing it when nothing was added is wasted work on stale data.
+        """
+        manager = SyncManager()
+        on_complete = MagicMock()
+
+        def import_nothing(job: SyncJob) -> int:
+            manager.add_error(job.source, "Failed to process 'Dune'")
+            return 0
+
+        count = manager.run_import("Import: CSV Import", import_nothing, on_complete)
+
+        assert count == 0
+        assert manager.get_status()["jobs"][0]["status"] == "failed"
+        on_complete.assert_not_called()
+
+    def test_a_failing_on_complete_does_not_fail_the_import(self) -> None:
+        """The import already succeeded; a broken callback cannot undo that.
+
+        ``run_import`` re-raises so the handler can map an import failure onto
+        an HTTP status — if the callback's exception propagated too, a
+        successful import would come back as an error and the user would be
+        told to re-upload a file that already imported.
+        """
+        manager = SyncManager()
+
+        def boom() -> None:
+            raise RuntimeError("enrichment start blew up")
+
+        count = manager.run_import("Import: CSV Import", lambda _job: 2, boom)
+
+        assert count == 2
+        job = manager.get_status()["jobs"][0]
+        assert job["status"] == "completed"
+        assert job["error_message"] is None
+
+    def test_duplicate_running_label_raises(self) -> None:
+        """A second run_import for a label already running raises.
+
+        The in-flight job is a real one — the second call is made from inside
+        the first import — rather than a ``_jobs`` entry written by hand, so the
+        guard is checked against the state the manager actually keeps. The
+        refused label is asserted too: ``SyncInProgressError.source`` is what
+        the handler turns into the message naming the import to wait for.
+        """
+        manager = SyncManager()
+        refused: list[SyncInProgressError] = []
+
+        def import_and_retry(_job: SyncJob) -> int:
+            with pytest.raises(SyncInProgressError) as caught:
+                manager.run_import("Import: Goodreads", lambda _inner: 0)
+            refused.append(caught.value)
+            return 1
+
+        assert manager.run_import("Import: Goodreads", import_and_retry) == 1
+        assert refused[0].source == "Import: Goodreads"
 
 
 class TestSyncManagerThreadCreation:

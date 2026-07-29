@@ -3,7 +3,7 @@
 Sources are discovered from PluginRegistry - each entry in config['inputs']
 must have a ``plugin`` field identifying the plugin type. The config key is
 the user-defined source identifier, allowing multiple instances of the same
-plugin (e.g. two json_import sources for books and TV shows).
+plugin (e.g. two sonarr sources for two servers).
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypeGuard
 
 from src.ingestion.plugin_base import SourcePlugin
 from src.ingestion.registry import get_registry
+from src.models.config_field import ConfigField
 from src.utils.text import humanize_source_id
 
 if TYPE_CHECKING:
@@ -35,6 +36,7 @@ SourceConfigErrorKind = Literal[
     "conflict",
     "invalid_id",
     "unknown_plugin",
+    "file_import_plugin",
 ]
 
 
@@ -48,12 +50,18 @@ class SyncSourceInfo:
     disabled sources too (so the UI can render them in a muted state),
     but ``resolve_inputs`` continues to filter them out for sync
     execution.
+
+    ``is_file_import`` marks a leftover entry naming a one-shot file-import
+    plugin. Such an entry can never sync, but it is listed anyway: it is the
+    only place the user can see that it exists, and the docs tell them to
+    remove it.
     """
 
     id: str
     display_name: str
     plugin_display_name: str
     enabled: bool
+    is_file_import: bool
 
 
 @dataclass
@@ -153,6 +161,22 @@ def resolve_inputs(
             )
             continue
 
+        # One rule for both origins: a leftover YAML ``inputs:`` block and a
+        # stale ``source_configs`` row are equally unsyncable. The row is left
+        # in the database untouched so the user can still see and remove it.
+        #
+        # Only ``info`` here. This resolver is re-entered several times per
+        # operation (``validate_source_config`` -> ``get_sync_handler``, then
+        # again per entry), so a warning would repeat once per pass; the
+        # actionable one is emitted once by ``get_available_sync_sources``.
+        if plugin.is_file_import:
+            logger.info(
+                "Skipping source '%s': plugin '%s' is a one-shot file import",
+                source_id,
+                plugin_name,
+            )
+            continue
+
         plugin_config = dict(raw_fields)
         plugin_config["_source_id"] = source_id
 
@@ -182,12 +206,20 @@ def get_available_sync_sources(
     storage: StorageManager | None = None,
     user_id: int = 1,
 ) -> list[SyncSourceInfo]:
-    """List every configured sync source, including disabled ones.
+    """List every configured sync source, including disabled and unsyncable ones.
 
     The UI uses this list to render the data accordions and visually
     distinguishes disabled sources via the ``enabled`` flag. ``resolve_inputs``
     is still the gate for sync execution — it continues to filter out
-    disabled and unknown-plugin entries.
+    disabled, unknown-plugin and file-import entries.
+
+    A leftover entry naming a file-import plugin is listed with
+    ``is_file_import=True`` rather than dropped, and warned about here — once
+    per call, because this is the only enumeration behind both
+    ``GET /api/sync/sources`` and ``source list``, so hiding it would leave the
+    user told to remove a row they can see nowhere. An entry whose plugin is
+    not registered at all is still skipped: there is nothing to say about it
+    beyond its id.
 
     Sources may exist in YAML, the database (post-migration), or both.
     DB rows are authoritative when present; YAML provides the bootstrap.
@@ -233,12 +265,26 @@ def get_available_sync_sources(
         if plugin is None:
             continue
 
+        # The one place the leftover is warned about. This enumeration runs
+        # once per ``GET /api/sync/sources`` / ``source list`` — which is where
+        # the user is looking when they act on it — whereas ``resolve_inputs``
+        # is re-entered several times per sync and would repeat itself.
+        if plugin.is_file_import:
+            logger.warning(
+                "Source '%s' uses file-import plugin '%s', which is not a "
+                "syncable source; remove the entry and import the file via the "
+                "web upload or `import --file`",
+                source_id,
+                plugin_name,
+            )
+
         sources.append(
             SyncSourceInfo(
                 id=source_id,
                 display_name=humanize_source_id(source_id),
                 plugin_display_name=plugin.display_name,
                 enabled=enabled,
+                is_file_import=plugin.is_file_import,
             )
         )
     return sources
@@ -306,6 +352,8 @@ class SourceConfigError(Exception):
     * ``conflict``        — create attempted on an existing source id (409)
     * ``invalid_id``      — source id violates the allowed character set (400)
     * ``unknown_plugin``  — create / migrate referenced an unregistered plugin (400)
+    * ``file_import_plugin`` — the plugin is a one-shot file import, not a
+      syncable source (400)
     """
 
     def __init__(self, kind: SourceConfigErrorKind, message: str) -> None:
@@ -350,6 +398,22 @@ def field_type_name(field_type: type) -> str:
     return "str"
 
 
+def _field_view(field: ConfigField) -> dict[str, Any]:
+    """Serialise one ``ConfigField`` to the wire shape used by every schema view.
+
+    ``default`` is masked to ``None`` for sensitive fields so a plugin that
+    hard-codes a placeholder credential as the default never leaks it.
+    """
+    return {
+        "name": field.name,
+        "field_type": field_type_name(field.field_type),
+        "required": field.required,
+        "default": None if field.sensitive else field.default,
+        "description": field.description,
+        "sensitive": field.sensitive,
+    }
+
+
 def resolve_source_plugin(
     source_id: str,
     config: dict[str, Any] | None,
@@ -360,6 +424,11 @@ def resolve_source_plugin(
 
     Looks up the plugin name first from the migrated DB row (when storage is
     available), then falls back to the YAML ``inputs`` entry.
+
+    A file-import plugin resolves to ``None`` too: it is a one-shot upload,
+    never a syncable source. This is the single gate in front of every
+    per-source operation (schema, config view, migrate, enable/disable,
+    secrets), so a stale entry naming one can never reach a syncable position.
     """
     plugin_name: str | None = None
 
@@ -376,7 +445,10 @@ def resolve_source_plugin(
     if plugin_name is None:
         return None
 
-    return get_registry().get_plugin(plugin_name)
+    plugin = get_registry().get_plugin(plugin_name)
+    if plugin is not None and plugin.is_file_import:
+        return None
+    return plugin
 
 
 def _yaml_entry_for(source_id: str, config: dict[str, Any] | None) -> dict[str, Any]:
@@ -399,17 +471,7 @@ def build_schema_view(source_id: str, plugin: SourcePlugin) -> dict[str, Any]:
         "source_id": source_id,
         "plugin": plugin.name,
         "plugin_display_name": plugin.display_name,
-        "fields": [
-            {
-                "name": field.name,
-                "field_type": field_type_name(field.field_type),
-                "required": field.required,
-                "default": None if field.sensitive else field.default,
-                "description": field.description,
-                "sensitive": field.sensitive,
-            }
-            for field in plugin.get_config_schema()
-        ],
+        "fields": [_field_view(field) for field in plugin.get_config_schema()],
     }
 
 
@@ -659,15 +721,21 @@ _SOURCE_ID_RE = re.compile(r"^[a-z][a-z0-9_-]*$")
 
 
 def list_available_plugins() -> list[dict[str, Any]]:
-    """Return every registered source plugin's metadata.
+    """Return every registered syncable source plugin's metadata.
 
     Used by the "Add data source" UI/CLI to populate the plugin picker.
     Includes the same field schema returned by ``build_schema_view`` so
     the frontend can preview required fields before the user commits.
+
+    File-import plugins are excluded: they cannot be created as sources
+    (``create_source`` rejects them) so offering them here would only lead
+    the user into a dead end. ``list_importable_plugins`` surfaces them.
     """
     registry = get_registry()
     plugins = []
     for name, plugin in sorted(registry.get_all_plugins().items()):
+        if plugin.is_file_import:
+            continue
         plugins.append(
             {
                 "name": name,
@@ -676,19 +744,34 @@ def list_available_plugins() -> list[dict[str, Any]]:
                 "content_types": [str(ct.value) for ct in plugin.content_types],
                 "requires_api_key": plugin.requires_api_key,
                 "requires_network": plugin.requires_network,
-                # Sensitive defaults are masked — a stray placeholder credential
-                # in a plugin schema would otherwise leak via this endpoint.
-                "fields": [
-                    {
-                        "name": field.name,
-                        "field_type": field_type_name(field.field_type),
-                        "required": field.required,
-                        "default": None if field.sensitive else field.default,
-                        "description": field.description,
-                        "sensitive": field.sensitive,
-                    }
-                    for field in plugin.get_config_schema()
-                ],
+                "fields": [_field_view(field) for field in plugin.get_config_schema()],
+            }
+        )
+    return plugins
+
+
+def list_importable_plugins() -> list[dict[str, Any]]:
+    """Return metadata for every file-import plugin, sorted by name.
+
+    Drives the web upload form (``GET /api/import/sources``) and the CLI
+    ``import --source list`` listing: only plugins whose ``is_file_import``
+    is True are included, each with the option schema the user fills in
+    alongside the uploaded file and the file extensions it expects.
+    Non-file-import (syncable) plugins are excluded.
+    """
+    registry = get_registry()
+    plugins = []
+    for name, plugin in sorted(registry.get_all_plugins().items()):
+        if not plugin.is_file_import:
+            continue
+        plugins.append(
+            {
+                "name": name,
+                "display_name": plugin.display_name,
+                "description": plugin.description,
+                "content_types": [str(ct.value) for ct in plugin.content_types],
+                "accepted_extensions": list(plugin.accepted_extensions),
+                "fields": [_field_view(field) for field in plugin.get_config_schema()],
             }
         )
     return plugins
@@ -717,6 +800,7 @@ def create_source(
         - ``invalid_id`` — bad source_id format
         - ``conflict`` — the source_id is already in use
         - ``unknown_plugin`` — plugin_name is not registered
+        - ``file_import_plugin`` — plugin_name is a one-shot file import
         - ``invalid_field`` — values has a key not in the plugin schema
         - ``sensitive_in_config`` — values has a sensitive-flagged field
     """
@@ -742,6 +826,15 @@ def create_source(
     plugin = get_registry().get_plugin(plugin_name)
     if plugin is None:
         raise SourceConfigError("unknown_plugin", f"Unknown plugin: {plugin_name}")
+
+    if plugin.is_file_import:
+        raise SourceConfigError(
+            "file_import_plugin",
+            f"Plugin '{plugin_name}' imports a single uploaded file and is not "
+            "a syncable source — run "
+            f"`import --source {plugin_name} --file <path>` "
+            "or use the web Import button instead",
+        )
 
     schema = {f.name: f for f in plugin.get_config_schema()}
     for key in values:

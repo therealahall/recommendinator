@@ -35,6 +35,10 @@ from src.web.api import APP_VERSION
 from src.web.api import router as api_router
 from src.web.chat_api import router as chat_router
 from src.web.state import app_state
+from src.web.upload_limit import (
+    MAX_REQUEST_BODY_BYTES,
+    RequestBodySizeLimitMiddleware,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -292,6 +296,11 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         openapi_url="/openapi.json" if debug_mode else None,
         lifespan=lifespan,
     )
+
+    # Bound the request body before Starlette's multipart parser can spool it
+    # to disk. Added first so it ends up the innermost user middleware, which
+    # leaves the CORS and security headers applied to its 413 as well.
+    app.add_middleware(RequestBodySizeLimitMiddleware, max_bytes=MAX_REQUEST_BODY_BYTES)
 
     # Configure CORS (default to localhost only).
     # Type-guarded because config.yaml is unvalidated: a blank `allowed_origins:`

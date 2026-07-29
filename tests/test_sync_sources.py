@@ -6,16 +6,31 @@ from typing import Any
 
 import pytest
 
-from src.ingestion.plugin_base import ConfigField, SourcePlugin
-from src.ingestion.registry import PluginRegistry
+from src.ingestion.plugin_base import ConfigField, ProgressCallback, SourcePlugin
+from src.ingestion.registry import PluginRegistry, get_registry
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.manager import StorageManager
 from src.web.sync_sources import (
+    SourceConfigError,
+    create_source,
     get_available_sync_sources,
     get_sync_handler,
+    list_available_plugins,
     resolve_inputs,
+    resolve_source_plugin,
     validate_source_config,
 )
+
+# The built-in plugins that take a single uploaded file instead of being
+# created as a source. Kept in one place so the classification is asserted as
+# an exact set rather than restated per test.
+_FILE_IMPORT_PLUGINS = {
+    "goodreads_csv",
+    "storygraph_csv",
+    "csv_import",
+    "json_import",
+    "markdown_import",
+}
 
 
 class FakeBookPlugin(SourcePlugin):
@@ -164,6 +179,54 @@ class FakeCredentialPlugin(SourcePlugin):
         )
 
 
+class FakeFileImportPlugin(SourcePlugin):
+    """Fake one-shot file-import plugin (not a syncable source).
+
+    Named ``fake_upload`` to match ``tests/fakes/source_plugins.py``, where
+    ``fake_file`` already means the opposite thing: an ordinary syncable
+    source that happens to read a ``path``.
+    """
+
+    @property
+    def name(self) -> str:
+        return "fake_upload"
+
+    @property
+    def display_name(self) -> str:
+        return "Fake Upload"
+
+    @property
+    def content_types(self) -> list[ContentType]:
+        return [ContentType.BOOK]
+
+    @property
+    def requires_api_key(self) -> bool:
+        return False
+
+    @property
+    def is_file_import(self) -> bool:
+        return True
+
+    def get_config_schema(self) -> list[ConfigField]:
+        return []
+
+    def validate_config(self, config: dict[str, Any], **kwargs: Any) -> list[str]:
+        return []
+
+    def fetch(
+        self,
+        config: dict[str, Any],
+        progress_callback: ProgressCallback | None = None,
+    ) -> Iterator[ContentItem]:
+        yield ContentItem(
+            id="file_1",
+            title="Fake Upload Item",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            source=self.get_source_identifier(config),
+        )
+
+
 @pytest.fixture()
 def _registry_with_fakes() -> Iterator[None]:
     """Set up a registry with fake plugins for testing."""
@@ -173,6 +236,7 @@ def _registry_with_fakes() -> Iterator[None]:
     registry.register(FakeBookPlugin())
     registry.register(FakeGamePlugin())
     registry.register(FakeCredentialPlugin())
+    registry.register(FakeFileImportPlugin())
     yield
     PluginRegistry.reset_instance()
 
@@ -344,6 +408,277 @@ class TestResolveInputs:
         assert len(resolved) == 2
         source_ids = {entry.source_id for entry in resolved}
         assert source_ids == {"my_books", "more_books"}
+
+
+@pytest.mark.usefixtures("_registry_with_fakes")
+class TestFileImportExcludedFromSync:
+    """File-import plugins are one-shot uploads, never syncable sources.
+
+    Regression: a source naming one of the file-import plugins (goodreads_csv,
+    csv_import, json_import, markdown_import) can reach the resolver from two
+    origins — a legacy path-based ``inputs:`` block in ``config.yaml``, or a
+    ``source_configs`` row created before the plugins stopped being syncable.
+    One rule covers both: ``resolve_inputs`` skips them non-fatally rather than
+    treating them as syncable or crashing, while ``get_available_sync_sources``
+    still lists them flagged ``is_file_import`` — that listing is the only
+    place the user can see a row they are told to remove, and it is where the
+    actionable warning is emitted.
+    """
+
+    @pytest.fixture()
+    def storage(self, tmp_path: Path) -> StorageManager:
+        return StorageManager(sqlite_path=tmp_path / "test.db")
+
+    def test_resolve_inputs_skips_file_import_plugin(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Skipped, and noted at ``info`` — never at ``warning``.
+
+        Regression: this warned, and the resolver is re-entered several times
+        per ``update`` (``validate_source_config`` -> ``get_sync_handler``,
+        then again per entry), so one leftover row produced a stack of
+        identical warnings. The actionable one now comes from
+        ``get_available_sync_sources``, which runs once per listing.
+        """
+        config = {
+            "inputs": {
+                "legacy_books": {
+                    "plugin": "fake_upload",
+                    "enabled": True,
+                    "path": "inputs/old_export.csv",
+                },
+            }
+        }
+
+        with caplog.at_level("INFO", logger="src.web.sync_sources"):
+            resolved = resolve_inputs(config)
+
+        assert resolved == []
+        assert [record.levelname for record in caplog.records] == ["INFO"]
+        assert "legacy_books" in caplog.messages[0]
+
+    def test_resolve_inputs_does_not_amplify_the_warning_per_pass(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Resolving the same leftover repeatedly logs no warning at all."""
+        config = {
+            "inputs": {
+                "legacy_books": {
+                    "plugin": "fake_upload",
+                    "enabled": True,
+                },
+            }
+        }
+
+        with caplog.at_level("WARNING", logger="src.web.sync_sources"):
+            for _ in range(3):
+                resolve_inputs(config)
+
+        assert caplog.messages == []
+
+    def test_get_available_sync_sources_warns_once_per_call(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The single enumeration behind both interfaces carries the warning."""
+        config = {
+            "inputs": {
+                "legacy_books": {
+                    "plugin": "fake_upload",
+                    "enabled": True,
+                },
+                "my_books": {
+                    "plugin": "fake_books",
+                    "enabled": True,
+                    "path": "/data/books.csv",
+                },
+            }
+        }
+
+        with caplog.at_level("WARNING", logger="src.web.sync_sources"):
+            get_available_sync_sources(config)
+
+        assert len(caplog.messages) == 1
+        assert "legacy_books" in caplog.messages[0]
+        assert "import --file" in caplog.messages[0]
+
+    def test_resolve_inputs_skips_file_import_without_path(self) -> None:
+        """A legacy block with no path at all is still skipped, not crashed."""
+        config = {
+            "inputs": {
+                "legacy_books": {
+                    "plugin": "fake_upload",
+                    "enabled": True,
+                },
+            }
+        }
+
+        assert resolve_inputs(config) == []
+
+    def test_resolve_inputs_keeps_syncable_alongside_file_import(self) -> None:
+        """A file-import block is dropped while a real source still resolves."""
+        config = {
+            "inputs": {
+                "legacy_books": {
+                    "plugin": "fake_upload",
+                    "enabled": True,
+                    "path": "inputs/old.csv",
+                },
+                "my_books": {
+                    "plugin": "fake_books",
+                    "enabled": True,
+                    "path": "/data/books.csv",
+                },
+            }
+        }
+
+        resolved = resolve_inputs(config)
+
+        assert [entry.source_id for entry in resolved] == ["my_books"]
+
+    def test_get_available_sync_sources_flags_file_import_rather_than_hiding_it(
+        self,
+    ) -> None:
+        """Regression: the row existed but was invisible in both interfaces.
+
+        ``get_available_sync_sources`` filtered file-import entries out, and it
+        is the only enumeration behind ``GET /api/sync/sources`` and ``source
+        list``. ``resolve_source_plugin`` returns ``None`` for them too, so
+        ``source show``/``schema`` 404 — the row was addressable nowhere while
+        the docs told the user to run ``source remove <id>`` on it.
+        """
+        config = {
+            "inputs": {
+                "legacy_books": {
+                    "plugin": "fake_upload",
+                    "enabled": True,
+                    "path": "inputs/old.csv",
+                },
+                "my_books": {
+                    "plugin": "fake_books",
+                    "enabled": True,
+                    "path": "/data/books.csv",
+                },
+            }
+        }
+
+        flags = {
+            source.id: source.is_file_import
+            for source in get_available_sync_sources(config)
+        }
+
+        assert flags == {"legacy_books": True, "my_books": False}
+
+    def test_resolve_inputs_skips_stale_db_row(
+        self, storage: StorageManager, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A ``source_configs`` row naming a file-import plugin is skipped too.
+
+        The row is left in the database untouched so the user can still see it
+        in the UI and remove it deliberately.
+        """
+        config: dict[str, Any] = {"inputs": {}}
+        storage.upsert_source_config(1, "legacy_books", "fake_upload", {}, enabled=True)
+
+        with caplog.at_level("INFO", logger="src.web.sync_sources"):
+            resolved = resolve_inputs(config, storage=storage)
+
+        assert resolved == []
+        assert [record.levelname for record in caplog.records] == ["INFO"]
+        assert "legacy_books" in caplog.messages[0]
+        assert storage.get_source_config(1, "legacy_books") is not None
+
+    def test_get_available_sync_sources_flags_a_stale_db_row(
+        self, storage: StorageManager
+    ) -> None:
+        """A stale DB row is listed as unsyncable, which is what Remove needs."""
+        config: dict[str, Any] = {"inputs": {}}
+        storage.upsert_source_config(1, "legacy_books", "fake_upload", {}, enabled=True)
+        storage.upsert_source_config(
+            1, "my_books", "fake_books", {"path": "/x.csv"}, enabled=True
+        )
+
+        flags = {
+            source.id: source.is_file_import
+            for source in get_available_sync_sources(config, storage)
+        }
+
+        assert flags == {"legacy_books": True, "my_books": False}
+
+    def test_an_unregistered_plugin_is_still_hidden(
+        self, storage: StorageManager
+    ) -> None:
+        """Only file-import rows are surfaced; an unknown plugin stays skipped.
+
+        There is nothing to tell the user about a row whose plugin no longer
+        exists — no display name, no explanation of what it was — so it keeps
+        the pre-existing behaviour rather than becoming a mystery accordion.
+        """
+        config: dict[str, Any] = {"inputs": {}}
+        storage.upsert_source_config(1, "ancient", "no_such_plugin", {}, enabled=True)
+
+        assert get_available_sync_sources(config, storage) == []
+
+    def test_resolve_source_plugin_returns_none_for_stale_db_row(
+        self, storage: StorageManager
+    ) -> None:
+        """The per-source gate treats a stale DB row as absent.
+
+        ``resolve_source_plugin`` fronts every per-source operation (schema,
+        config view, migrate, enable/disable, secrets). Returning ``None`` here
+        is what stops all of them from putting a file-import plugin into a
+        syncable position.
+        """
+        config: dict[str, Any] = {"inputs": {}}
+        storage.upsert_source_config(1, "legacy_books", "fake_upload", {}, enabled=True)
+
+        assert resolve_source_plugin("legacy_books", config, storage) is None
+
+    def test_resolve_source_plugin_returns_none_for_yaml_entry(self) -> None:
+        """The same gate applies to a leftover YAML ``inputs:`` block."""
+        config = {
+            "inputs": {
+                "legacy_books": {
+                    "plugin": "fake_upload",
+                    "enabled": True,
+                    "path": "inputs/old.csv",
+                },
+            }
+        }
+
+        assert resolve_source_plugin("legacy_books", config, None) is None
+
+
+@pytest.mark.usefixtures("_registry_with_fakes")
+class TestFileImportPluginsNotAddableAsSources:
+    """File-import plugins are neither offerable nor creatable as sources.
+
+    Sources are database-backed rows created from the plugin picker
+    (``GET /api/plugins`` / ``source plugins``) via ``create_source``. A
+    file-import plugin has no syncable config at all, so a row naming one
+    would validate cleanly and then never import anything. It must not be
+    offered, and it must be refused if a caller asks for it anyway.
+    """
+
+    @pytest.fixture()
+    def storage(self, tmp_path: Path) -> StorageManager:
+        return StorageManager(sqlite_path=tmp_path / "test.db")
+
+    def test_list_available_plugins_excludes_file_import(self) -> None:
+        names = {plugin["name"] for plugin in list_available_plugins()}
+
+        assert "fake_upload" not in names
+        assert names == {"fake_books", "fake_games", "fake_credential"}
+
+    def test_create_source_rejects_file_import_plugin(
+        self, storage: StorageManager
+    ) -> None:
+        """Creation fails with an actionable error and writes no row."""
+        with pytest.raises(SourceConfigError) as excinfo:
+            create_source("legacy_books", "fake_upload", {}, storage)
+
+        assert excinfo.value.kind == "file_import_plugin"
+        assert "import --source fake_upload --file" in excinfo.value.message
+        assert storage.get_source_config(1, "legacy_books") is None
 
 
 @pytest.mark.usefixtures("_registry_with_fakes")
@@ -862,3 +1197,112 @@ class TestResolveInputsWithDbSourceConfig:
         resolved = resolve_inputs(config, storage=storage)
 
         assert resolved == []
+
+
+class TestRealPluginSyncability:
+    """Real-registry guard on which built-in plugins are still syncable.
+
+    The rest of this module drives fakes, which proves the *rule* but not the
+    *classification*: if ``goodreads_rss`` or ``roms`` were accidentally marked
+    ``is_file_import``, or if a file-import plugin lost the flag, every
+    fake-driven test above would still pass. These run against the real plugin
+    registry so the actual plugin ids are pinned.
+    """
+
+    @pytest.fixture()
+    def storage(self, tmp_path: Path) -> StorageManager:
+        return StorageManager(sqlite_path=tmp_path / "test.db")
+
+    def test_file_import_plugins_are_exactly_this_set(self) -> None:
+        """The registry's file-import plugins are exactly the documented five.
+
+        Pinned as an equality: the flag decides whether a plugin can be created
+        as a source at all, so a plugin gaining or losing it is a breaking
+        change for anyone whose config names it, and must be a deliberate edit
+        here rather than a silent one.
+        """
+        file_imports = {
+            name
+            for name, plugin in get_registry().get_all_plugins().items()
+            if plugin.is_file_import
+        }
+
+        assert file_imports == _FILE_IMPORT_PLUGINS
+
+    @pytest.mark.parametrize("plugin_name", sorted(_FILE_IMPORT_PLUGINS))
+    def test_real_file_import_row_is_skipped_and_kept(
+        self,
+        storage: StorageManager,
+        caplog: pytest.LogCaptureFixture,
+        plugin_name: str,
+    ) -> None:
+        """Each real file-import plugin is skipped by name, and its row survives.
+
+        ``migrate_source_config_plugins`` rewrites a legacy ``plugin='goodreads'``
+        row to ``goodreads_csv`` on boot, so this exact row shape reaches users
+        who upgrade. It must be inert but not silently deleted — and it must
+        stay listed, because ``source remove <id>`` is the documented way out
+        and the listing is where the user finds the id.
+        """
+        # Guard against a vacuous pass: an unregistered plugin would also
+        # resolve to nothing, so prove the plugin really is registered and
+        # really is flagged as a file import before asserting it is skipped.
+        registered = get_registry().get_plugin(plugin_name)
+        assert registered is not None, plugin_name
+        assert registered.is_file_import is True
+
+        config: dict[str, Any] = {"inputs": {}}
+        storage.upsert_source_config(1, "legacy_books", plugin_name, {}, enabled=True)
+
+        assert resolve_inputs(config, storage=storage) == []
+
+        # The warning naming the plugin rides the listing, which runs once per
+        # request, rather than the resolver, which runs several times per sync.
+        with caplog.at_level("WARNING", logger="src.web.sync_sources"):
+            listed = get_available_sync_sources(config, storage=storage)
+
+        assert any(plugin_name in message for message in caplog.messages)
+        assert [(entry.id, entry.is_file_import) for entry in listed] == [
+            ("legacy_books", True)
+        ]
+        assert resolve_source_plugin("legacy_books", config, storage) is None
+        # The escape hatch depends on the row still being there.
+        assert storage.get_source_config(1, "legacy_books") is not None
+
+    @pytest.mark.parametrize("plugin_name", ["goodreads_rss", "roms", "sonarr"])
+    def test_split_feed_and_directory_sources_still_resolve(
+        self, storage: StorageManager, plugin_name: str
+    ) -> None:
+        """The RSS feed, the ROM directory scanner and an API source stay syncable.
+
+        The Goodreads split (``goodreads`` -> ``goodreads_csv`` + ``goodreads_rss``)
+        and the directory-scanning ``roms`` plugin sit next to the file imports;
+        sweeping either into the one-shot flow would silently stop them syncing.
+        """
+        config: dict[str, Any] = {"inputs": {}}
+        storage.upsert_source_config(1, "my_source", plugin_name, {}, enabled=True)
+
+        resolved = resolve_inputs(config, storage=storage)
+
+        assert [entry.source_id for entry in resolved] == ["my_source"]
+        assert resolved[0].plugin.name == plugin_name
+        assert [s.id for s in get_available_sync_sources(config, storage=storage)] == [
+            "my_source"
+        ]
+        plugin = resolve_source_plugin("my_source", config, storage)
+        assert plugin is not None
+        assert plugin.name == plugin_name
+
+    @pytest.mark.parametrize("plugin_name", sorted(_FILE_IMPORT_PLUGINS))
+    def test_create_source_rejects_real_file_import_plugins(
+        self, storage: StorageManager, plugin_name: str
+    ) -> None:
+        """Creating a source from a real file-import plugin id writes no row."""
+        registered = get_registry().get_plugin(plugin_name)
+        assert registered is not None, plugin_name
+
+        with pytest.raises(SourceConfigError) as excinfo:
+            create_source("legacy_books", plugin_name, {}, storage)
+
+        assert excinfo.value.kind == "file_import_plugin"
+        assert storage.get_source_config(1, "legacy_books") is None
