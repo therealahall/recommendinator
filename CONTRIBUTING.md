@@ -49,6 +49,20 @@ pnpm dev
 ```
 
 Vite serves on port 5173 and proxies API calls to the container on port 18473.
+Both ends are overridable from your shell or from a gitignored `.env` at the
+repository root, which is what you need if the dev server sits behind a reverse
+proxy:
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `DEV_SERVER_PORT` | `5173` | Port Vite listens on. |
+| `DEV_SERVER_API_TARGET` | `http://localhost:18473` | Origin that `/api` and `/static/themes` are proxied to. |
+| `DEV_SERVER_HMR_CLIENT_PORT` | (unset — the port Vite listens on) | Port the browser opens the hot-reload websocket on. Set it to the proxy's public port when that differs from `DEV_SERVER_PORT`. |
+| `DEV_SERVER_HMR_PROTOCOL` | (unset — `ws`) | Scheme for the hot-reload websocket. Set it to `wss` when the proxy terminates TLS. |
+
+The HMR *host* is deliberately not configurable. Left unset, the browser reuses
+the hostname it loaded the page from, which is the only behaviour that works when
+the same dev server is reached under more than one name.
 
 Your gitignored `docker-compose.override.yml` (for personal mounts like private
 plugin directories) merges automatically alongside both files, so all three

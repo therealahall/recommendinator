@@ -48,7 +48,8 @@ src/
 └── utils/            # Utility functions (list_merge, series, sorting)
 resources/            # Frontend source (Vue 3 + Tailwind CSS v4)
 ├── js/               # Vue components, Pinia stores, composables, router, types
-└── css/              # CSS variables (base.css) and Tailwind config (tailwind.css)
+├── css/              # CSS variables (base.css) and Tailwind config (tailwind.css)
+└── vite/             # Build-time config helpers (dev-server ports/proxy from env)
 index.html            # Vite SPA entry point
 vite.config.ts        # Vite build configuration
 tests/                # Cross-cutting tests (CLI, web, storage, recommendations, conversation).

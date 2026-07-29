@@ -227,7 +227,7 @@ view your profile). New capabilities are expected to land in both interfaces; th
 - **Frontend**: Vue 3 SPA with Tailwind CSS v4, built with Vite
   - Source: `resources/js/` (Vue components, Pinia stores, composables, router) and `resources/css/` (CSS variables, Tailwind config)
   - Build output: `src/web/static/dist/` (Vite generates content-hashed asset bundles)
-  - Dev server: Vite on `:5173` proxies `/api/*` and `/static/themes/*` to FastAPI on `:18473`
+  - Dev server: Vite on `:5173` proxies `/api/*` and `/static/themes/*` to FastAPI on `:18473`. Both ports, the proxy target and the HMR client port/protocol default to those values and are overridable via `DEV_SERVER_*` env vars for running behind a reverse proxy — see `resources/vite/devServer.ts` and [CONTRIBUTING.md](CONTRIBUTING.md)
 - Tabbed UI: Recommendations, Library, Chat, Data, Preferences, Settings (Chat hidden when AI is disabled)
   - **Settings** page (`/settings`) manages the global/system config: sections of controls (toggle/number/text/tags/select) with curated labels/help and per-setting validation, an **Advanced** group for infra/security leaves (`web.allowed_origins` CORS, `logging.*`) badged **restart required**, per-setting **reset to default**, and masked **write-only** controls for provider secrets. It is the UI peer of the `settings` CLI group, backed by the shared `src/settings/service.py`.
   - Recommendations cards offer two actions: **ignore** (excludes the item from future recommendations and removes its card) and **mark complete** (opens the shared edit dialog to set status/rating/review, saves to the library, and removes the card). Neither regenerates the list.
