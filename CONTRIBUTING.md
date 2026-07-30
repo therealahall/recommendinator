@@ -138,7 +138,7 @@ These standards are enforced strictly. Write clean code the first time — don't
 - **Module-level imports only** — no inline `import` inside functions. Use `TYPE_CHECKING` blocks instead of bottom-of-file import hacks.
 - **Never expose internal errors** in HTTP responses — use generic messages and log details server-side.
 - **Keep developer-facing files self-contained** — docs, tooling, CI, compose and build files, `tests/`, and `.claude/` files must not point at a path outside the repository (a home directory, one machine's layout). A reader with no context cannot verify one, and neither can CI. `tests/test_repository_self_contained.py` enforces this. `src/` is exempt, because application code genuinely addresses the machine it runs on.
-- **The self-containment guard also bans the APIs that build a home-relative path**, so a legitimate hostile-input test can trip on its own payload. When the outside path IS what a test is about, exempt that single line with a comment marker: the reason is required, and it only counts when the marker opens a comment (`#`, or `<!--` in Markdown), so quoting it in prose exempts nothing.
+- **The self-containment guard also bans the APIs that build a home-relative path**, so a legitimate hostile-input test can trip on its own payload. When the outside path IS what a test is about, exempt that single line with a comment marker: the reason is required, and it only counts when the marker opens a comment (`#`, `//`, or `<!--`) — one per language in scope: `#` for Python, YAML and shell, `//` for TypeScript, `<!--` for Markdown — so quoting it in prose exempts nothing.
 
   ```python
   scan_root = Path(configured).expanduser()  # self-contained: allow the API under test
@@ -189,12 +189,14 @@ class TestMyFeatureRegression:
 Before committing, run the review agents and quality checks:
 
 1. Run **security-review**, **code-review**, **test-review**, **document-review**, **parity-review**, and **accessibility-review** agents (can run in parallel). An agent that cannot be launched is a hard stop, not a step to skip — it reviewed nothing, and unlike a skipped approval that gap is silent. All seven agents are in your checkout, so they work on any machine; start Claude Code at the repository root or none of them resolve
-2. Address all agent findings
-3. Re-run **all six agents from step 1** — not just the ones that had findings. A fix that satisfies one agent can break another's domain, so approval is on the final tree, not on the delta. Repeat steps 2–3 until every agent approves the **same** tree
-4. Run **commit-hygiene** agent to plan atomic commit split
-5. Run all quality checks: `command make check`
-6. Commit following the split plan. If staging triggers a formatter or any other code edit, restart at step 3 — the agents must approve the exact tree that gets committed
-7. Run **commit-hygiene** again before pushing to verify commit structure
+2. Triage every finding against the **frozen scope**. Once a change is under review its scope is frozen: nothing new enters it unless it is a correctness or security defect in code that change introduced. Every agent labels each finding as introduced by the diff or pre-existing, so this is a lookup rather than a judgement call. A real finding belonging to another stream is filed against that stream — not fixed here, and not dropped
+3. Address the findings that survive triage
+4. Re-run **all six agents from step 1** — not just the ones that had findings. A fix that satisfies one agent can break another's domain, so approval is on the final tree, not on the delta. Repeat steps 2–4 until every agent approves the **same** tree
+5. Stop once the review **converges**. When a round returns no criticals and no highs, and what remains is assertion strength, naming, or tidiness in code the change already got right, that is the end of the loop: file what is relevant, cut what is not, say which is which, and commit. A round whose only output is a shorter list of smaller nits is a round that should not have run — good reviewers converge on quality, never on silence, so waiting for an empty findings list is waiting forever. This changes what counts as *resolved*; it does not make the gate optional, and every agent still approves the exact tree being committed, per step 4. Two safeguards keep the rule from becoming erosion: **every cut is stated explicitly with its reason**, and **every deferral gets a tracker issue naming the stream it lands in**. A deferral with no tracker entry is a cut pretending otherwise
+6. Run **commit-hygiene** agent to plan atomic commit split
+7. Run all quality checks: `command make check`
+8. Commit following the split plan. If staging triggers a formatter or any other code edit, restart at step 4 — the agents must approve the exact tree that gets committed
+9. Run **commit-hygiene** again before pushing to verify commit structure
 
 ## Commit Messages
 

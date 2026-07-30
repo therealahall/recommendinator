@@ -165,7 +165,7 @@ The project uses **python-semantic-release** for automatic semantic versioning d
 
 ## Claude Code Tooling
 
-The project uses Claude Code plugins and custom agents to maintain code quality and security. Configuration lives in `.claude/settings.json` (plugins and allowed tools — deliberately no hooks, see [Review Agent Preflight](#review-agent-preflight)) and `.claude/agents/`, which holds all seven mandated review agents: six vendored shared agents plus the native `parity-review`.
+The project uses Claude Code plugins and custom agents to maintain code quality and security. Configuration lives in `.claude/settings.json` — `enabledPlugins` and `permissions.allow`, deliberately no hooks (see [Review Agent Preflight](#review-agent-preflight)) — and `.claude/agents/`, which holds all seven mandated review agents: six vendored shared agents plus the native `parity-review`. Both settings keys are pinned exactly by `tests/test_review_agents.py`, because both grant ambient authority to every clone: see [docs/SECURITY.md](docs/SECURITY.md#how-the-review-gate-is-started) before adding to either.
 
 ### Enabled Plugins
 
@@ -271,9 +271,13 @@ For Plan Mode, Adding Features, Adding Data Sources, Bug Fixes, and the Anti-Chu
 ## Pre-commit Workflow
 
 1. Run **security-review**, **code-review**, **test-review**, **document-review**, **parity-review**, and **accessibility-review** agents in parallel. **An agent that fails to load is a hard stop, not something to work around** — an agent that never ran reviewed nothing, and unlike a skipped approval that gap is silent. Fix the resolution first (usually: restart Claude Code from the repository root so project-local agents are discovered), and run `command make check-agents` if you want the reason spelled out.
-2. Address all agent findings.
-3. **Re-run all six agents from step 1** — not just the ones that had findings. A fix that satisfies one agent can introduce a new issue in another agent's domain (e.g., a security fix that changes test mock setup, or a test refactor that adds a new file requiring documentation). Approval is on the *final state*, not the delta. Repeat steps 2–3 until every agent returns APPROVE on the **same** tree. Never skip an agent because it approved on an earlier round — that approval is invalidated by every subsequent edit.
-4. Run **commit-hygiene** agent to plan commit split.
-5. Run `command make check` (the review-agent check first, then black, ruff, mypy, pytest, and the frontend `vue-tsc` and Vitest checks).
-6. Commit following the split plan from commit-hygiene. If staging triggers a formatter or any other code edit, the loop restarts at step 3 — agents must approve the exact tree that gets committed.
-7. Run **commit-hygiene** again pre-push to verify commit structure.
+2. **Triage every finding against the frozen scope.** Once a change is under review its scope is frozen: nothing new enters it unless it is a correctness or security defect in code that change introduced. Every agent labels each finding as introduced by the diff or pre-existing, so this is a lookup rather than a judgement call. A real finding belonging to another stream is filed against that stream — it does not get fixed here, and it does not get dropped.
+3. Address the findings that survive triage.
+4. **Re-run all six agents from step 1** — not just the ones that had findings. A fix that satisfies one agent can introduce a new issue in another agent's domain (e.g., a security fix that changes test mock setup, or a test refactor that adds a new file requiring documentation). Approval is on the *final state*, not the delta. Repeat steps 2–4 until every agent returns APPROVE on the **same** tree. Never skip an agent because it approved on an earlier round — that approval is invalidated by every subsequent edit.
+5. **Stop once the review converges.** When a round returns no criticals and no highs, and what remains is assertion strength, naming, or tidiness in code the change already got right, that is the end of the loop: file what is relevant, cut what is not, say which is which, and commit. A round whose only output is a shorter list of smaller nits is a round that should not have run — good reviewers converge on quality, never on silence, so waiting for an empty findings list is waiting forever. This changes what counts as *resolved*; it does not make the gate optional. Every agent still approves the exact tree being committed, per step 4. Two safeguards keep the rule from becoming erosion:
+   - **Every cut is stated explicitly with its reason.** A finding dropped silently is a finding nobody decided about.
+   - **Every deferral gets a tracker issue naming the stream it lands in.** A deferral with no tracker entry is a cut pretending otherwise.
+6. Run **commit-hygiene** agent to plan commit split.
+7. Run `command make check` (the review-agent check first, then black, ruff, mypy, pytest, and the frontend `vue-tsc` and Vitest checks).
+8. Commit following the split plan from commit-hygiene. If staging triggers a formatter or any other code edit, the loop restarts at step 4 — agents must approve the exact tree that gets committed.
+9. Run **commit-hygiene** again pre-push to verify commit structure.
