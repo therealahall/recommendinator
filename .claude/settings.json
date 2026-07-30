@@ -3,11 +3,19 @@
     "pyright-lsp@claude-plugins-official": true,
     "frontend-design@claude-plugins-official": true
   },
-  "allowedTools": [
-    "Bash(git status)",
-    "Bash(git status *)",
-    "Bash(git diff*)",
-    "Bash(git log *)",
-    "mcp__ide__getDiagnostics"
-  ]
+  "permissions": {
+    "allow": [
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "mcp__ide__getDiagnostics"
+    ],
+    "deny": [
+      "Bash(git difftool:*)",
+      "Bash(git diff-files:*)",
+      "Bash(git diff-index:*)",
+      "Bash(git diff-tree:*)",
+      "Bash(git diff-pairs:*)"
+    ]
+  }
 }
