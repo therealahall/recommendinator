@@ -23,6 +23,7 @@ never be watered down to satisfy this guard.
 
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -73,6 +74,26 @@ _FORBIDDEN_PATTERNS: tuple[tuple[str, str], ...] = (
         "a repository that is not this one (if you mean hidden files, mark the line)",
     ),
 )
+
+
+# The documents that describe the opt-out marker to a contributor. Prose and
+# constant have drifted once already — `//` was added for the TypeScript files in
+# scope and neither document said so — with nothing failing, so the phrasing is a
+# contract: each lists the introducers, in order, inside the parenthesis this
+# lead-in opens.
+_MARKER_DOCUMENTS = ("CONTRIBUTING.md", "docs/DEVELOPMENT_PATTERNS.md")
+_INTRODUCER_LEAD_IN = "opens a comment ("
+_INLINE_CODE = re.compile(r"`([^`]+)`")
+
+
+def _documented_introducers(relative_path: str) -> tuple[str, ...]:
+    """Return the comment introducers a document lists, in the order it lists them."""
+    text = (_REPO_ROOT / relative_path).read_text(encoding="utf-8")
+    _, lead_in, rest = text.partition(_INTRODUCER_LEAD_IN)
+    assert lead_in, f"{relative_path} no longer says {_INTRODUCER_LEAD_IN!r}"
+    listed, closing_parenthesis, _ = rest.partition(")")
+    assert closing_parenthesis, f"{relative_path} never closes the introducer list"
+    return tuple(_INLINE_CODE.findall(listed))
 
 
 def _is_in_scope(name: str) -> bool:
@@ -154,11 +175,17 @@ def _offences(path: Path, display_name: str) -> list[str]:
     target can be anywhere on the machine, so following it would both make the
     invariant this guard asserts false — the contents inspected are not the file
     the repository ships — and echo an arbitrary file into a CI log.
+
+    The name is bounded for the same reason the line is: `git ls-files -z` emits
+    names as unquoted bytes, so a committed file whose *name* carries a control
+    character would otherwise reach a terminal raw — and on the symlink branch it
+    does so with no content match needed at all.
     """
+    name = _bounded(display_name)
     if path.is_symlink():
-        return [f"  {display_name} is a symlink, whose target need not be in the repo"]
+        return [f"  {name} is a symlink, whose target need not be in the repo"]
     return [
-        f"  {display_name}:{number} mentions {description}: {_bounded(line.strip())}"
+        f"  {name}:{number} mentions {description}: {_bounded(line.strip())}"
         for number, line in _numbered_lines(path)
         for pattern, description in _FORBIDDEN_PATTERNS
         if pattern in line and not _is_exempt(line)
@@ -240,7 +267,7 @@ class TestForbiddenPatterns:
         path.write_text(f"first line\nsomewhere {pattern} else\n", encoding="utf-8")
         quoted = _bounded(f"somewhere {pattern} else")
         assert _offences(path, "example.md") == [
-            f"  example.md:2 mentions {description}: {quoted}"
+            f"  'example.md':2 mentions {description}: {quoted}"
         ]
 
     def test_ordinary_prose_is_not_an_offence(self, tmp_path: Path) -> None:
@@ -266,6 +293,37 @@ class TestForbiddenPatterns:
         assert "\\x1b[2K" in offence
         assert len(offence) < _LINE_DISPLAY_LIMIT + 100
         assert offence.endswith("...")
+
+    def test_the_reported_file_name_is_escaped(self, tmp_path: Path) -> None:
+        """The name is as file-derived as the line, and was the half left unescaped.
+
+        `git ls-files -z` emits names as unquoted bytes, so a committed file whose
+        *name* carries an escape would rewrite the report just as a crafted line
+        would. The same helper bounds its length too.
+        """
+        pattern = _FORBIDDEN_PATTERNS[0][0]
+        hostile_name = "\x1b[2Kwiped.md"
+        path = tmp_path / hostile_name
+        path.write_text(f"somewhere {pattern} else\n", encoding="utf-8")
+        offence = _offences(path, hostile_name)[0]
+        assert "\x1b" not in offence
+        assert "\\x1b[2K" in offence
+
+    def test_the_reported_file_name_is_capped(self, tmp_path: Path) -> None:
+        """The name is a repository-relative path and paths have no useful bound.
+
+        Nothing on disk has to be long for this: the display name is a parameter,
+        and `git ls-files` will hand over whatever depth of directory nesting a
+        branch commits. Escaping without capping still lets one name flood the
+        report the reader needs.
+        """
+        pattern = _FORBIDDEN_PATTERNS[0][0]
+        path = tmp_path / "example.md"
+        path.write_text(f"somewhere {pattern} else\n", encoding="utf-8")
+        offence = _offences(path, "z" * 5000)[0]
+        name = offence.split(":", 1)[0].strip()
+        assert len(name) <= _LINE_DISPLAY_LIMIT + len("...")
+        assert name.endswith("...")
 
     def test_an_undecodable_byte_does_not_hide_the_rest_of_the_file(
         self, tmp_path: Path
@@ -308,8 +366,22 @@ class TestSymlinks:
         link = tmp_path / "link.md"
         link.symlink_to(outside)
         assert _offences(link, "link.md") == [
-            "  link.md is a symlink, whose target need not be in the repo"
+            "  'link.md' is a symlink, whose target need not be in the repo"
         ]
+
+    def test_a_symlinks_reported_name_is_escaped(self, tmp_path: Path) -> None:
+        """This branch reports a name with no content match, so nothing else bounds it.
+
+        A crafted line has to match a forbidden pattern to be printed. A symlink's
+        name is printed for existing at all, which makes it the cheaper way to get
+        an escape into the report if the name were interpolated raw.
+        """
+        hostile_name = "\x1b[2Kwiped.md"
+        link = tmp_path / hostile_name
+        link.symlink_to(tmp_path / "target.md")
+        offence = _offences(link, hostile_name)[0]
+        assert "\x1b" not in offence
+        assert "\\x1b[2K" in offence
 
     def test_a_marker_cannot_exempt_a_symlink(self, tmp_path: Path) -> None:
         """The exemption works on line text, and a symlink's own text is its target's.
@@ -340,6 +412,37 @@ class TestAllowMarker:
     def test_the_introducers_are_pinned(self) -> None:
         """Removing one breaks a behavioural test; adding one widens the hatch silently."""
         assert _COMMENT_INTRODUCERS == ("#", "//", "<!--")
+
+    def test_no_other_shipped_document_describes_the_introducers(self) -> None:
+        """The list is pinned by discovery, which is stronger than pinning it.
+
+        This uses the same file discovery the guard itself runs on, so dropping an
+        entry from the constant fails here, adding a bogus one fails here, and a
+        third document describing the introducers has to join the list — and
+        therefore has to agree with the constant — rather than quietly
+        contradicting it. A literal pin beside this would add only the ability to
+        catch a reorder, and order means nothing to a `parametrize` and a sorted
+        comparison.
+        """
+        describing = sorted(
+            str(path.relative_to(_REPO_ROOT))
+            for path in _shipped_files()
+            if path.suffix == ".md"
+            and not path.is_symlink()
+            and _INTRODUCER_LEAD_IN
+            in path.read_text(encoding="utf-8", errors="replace")
+        )
+        assert describing == sorted(_MARKER_DOCUMENTS)
+
+    @pytest.mark.parametrize("document", _MARKER_DOCUMENTS)
+    def test_the_documented_introducers_match_the_constant(self, document: str) -> None:
+        """A contributor opens the hatch from the docs, so the docs must be complete.
+
+        `//` was added to the constant and neither document was updated, leaving a
+        TypeScript contributor with no documented way to mark a line. Pinning the
+        tuple alone could not catch that — nothing compared it to the prose.
+        """
+        assert _documented_introducers(document) == _COMMENT_INTRODUCERS
 
     @pytest.mark.parametrize(
         ("suffix", "introducer"),

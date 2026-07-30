@@ -12,6 +12,9 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
+from collections import Counter
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
@@ -37,9 +40,11 @@ from scripts.check_review_agents import (
 # parents[1] resolves /tests/test_review_agents.py -> repo root.
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 CLAUDE_MD = _REPO_ROOT / "CLAUDE.md"
+CONTRIBUTING_MD = _REPO_ROOT / "CONTRIBUTING.md"
 MAKEFILE_PATH = _REPO_ROOT / "Makefile"
 CI_WORKFLOW_PATH = _REPO_ROOT / ".github" / "workflows" / "ci.yml"
 SETTINGS_JSON_PATH = _REPO_ROOT / ".claude" / "settings.json"
+LOCAL_SETTINGS_RELATIVE_PATH = Path(".claude") / "settings.local.json"
 COMMITTED_AGENTS_DIR = _REPO_ROOT / ".claude" / "agents"
 
 # The headings whose content is the documented source of truth for which agents
@@ -64,6 +69,164 @@ _CHECK_PREREQUISITES = (
 
 # The tools whose invocations must cover scripts/ wherever they appear.
 _SCRIPTS_AWARE_TOOLS = ("black", "ruff", "mypy")
+
+# Exactly what tracked settings grant. Both keys are ambient authority: an entry
+# in `permissions.allow` is pre-approved without a prompt for anyone who checks
+# out the branch carrying it, and an enabled plugin is code. Pinning cannot stop
+# a hostile branch, which can edit this file too. It makes widening the grant a
+# deliberate act, visible in the diff, instead of one quiet line in a settings
+# file — adding a permission is *supposed* to cost a test update, so the friction
+# is the feature.
+#
+# WHAT THE `deny` LIST BOUNDS, AND WHAT NOTHING HERE BOUNDS. The denials cover
+# execution: `git difftool` takes `--extcmd=<command>`, and it shares a prefix
+# with the granted `git diff`, so it is named outright rather than left to depend
+# on whether a `:*` prefix matches on the string or on whole arguments. The
+# `diff-*` plumbing family is denied alongside it because no reviewer invokes
+# plumbing and a future member could gain such a flag. Even that is a claim about
+# a *name*: a local `alias.diffmine`, or any `git-diffmine` on PATH, extends the
+# granted prefix and may be a shell. Git ignores aliases that shadow existing
+# commands, so the risk is the extending name rather than the shadowing one, and
+# that surface is machine-local and cannot be enumerated from here.
+#
+# Reads and writes are NOT bounded, deliberately. `git diff --no-index a b`
+# prints any two files on the machine — confirmed from `git diff -h` — and
+# `git diff --output=<file>` is documented to create or truncate any path, which
+# nobody here has verified. Both are unprompted, both match the granted prefix,
+# and neither is closeable by a deny, because a flag can sit anywhere in the
+# arguments and a rule that misses `git diff --stat --no-index a b` reads as
+# closed while being open. The grant was kept knowing this: see docs/SECURITY.md
+# for the trade, and note that what actually holds the line is the agents' own
+# read-only rule, which is prose rather than enforcement — and which
+# `_READ_ONLY_CLAIMS` below now pins for that reason.
+_TRACKED_GRANTS = {
+    "permissions": {
+        "allow": [
+            "Bash(git status:*)",
+            "Bash(git diff:*)",
+            "Bash(git log:*)",
+            "mcp__ide__getDiagnostics",
+        ],
+        "deny": [
+            "Bash(git difftool:*)",
+            "Bash(git diff-files:*)",
+            "Bash(git diff-index:*)",
+            "Bash(git diff-tree:*)",
+            "Bash(git diff-pairs:*)",
+        ],
+    },
+    "enabledPlugins": {
+        "pyright-lsp@claude-plugins-official": True,
+        "frontend-design@claude-plugins-official": True,
+    },
+}
+
+# The only top-level keys tracked `.claude/settings.json` may declare. Derived
+# from the value pin rather than restated, so a key cannot be admitted here while
+# nothing pins what it may say. The two tests stay distinct: this one rejects a
+# key nobody has thought of yet — `hooks` is not the only setting that makes
+# checking out a contributed branch act as the reviewer — while the value pin
+# covers a nested arrival like `permissions.defaultMode`.
+_ALLOWED_SETTINGS_KEYS = frozenset(_TRACKED_GRANTS)
+
+# The two regions the agents carry word for word. Six of the seven are vendored
+# from a shared upstream and one is native here, so a reword reaching only some
+# of them is drift nothing else would catch. Each region is delimited in the
+# files themselves rather than inferred from a heading to end-of-file: that lets
+# any agent add its own tail after a region — which most of them need — and it
+# means a comparison can be made between the agents rather than against one
+# designated file, which would pass tautologically for the file it read.
+_REVIEW_GUIDANCE = "shared-review-guidance"
+_EPHEMERAL_RULE = "shared-ephemeral-rule"
+
+_REVIEW_GUIDANCE_SECTIONS = (
+    "## How to search",
+    "## Provenance on every finding",
+    "## Severity calibration",
+)
+
+# The claims those headings are there to carry. Headings alone are a shell:
+# delete every paragraph beneath them and the region is still "present" and still
+# identical across all seven. What that would silently discard is load-bearing
+# elsewhere — the pre-commit workflow in CLAUDE.md and CONTRIBUTING.md says
+# triage is a lookup because every agent labels each finding introduced or
+# pre-existing, so gutting the provenance body turns that step back into a
+# judgement call with the whole suite green.
+_REVIEW_GUIDANCE_CLAIMS = (
+    "Never `grep`, `egrep`, `fgrep`, `rg`, `find`, `sed` or `awk` through Bash.",
+    "bare grep under another name",
+    "`git diff --no-index <path> <path>` is the sharper version of the same trick",
+    "tracked files only",
+    "git status --porcelain",
+    "introduced by the diff under review",
+    "pre-existing and merely surfaced",
+    "Report criticals and highs without hesitation",
+)
+
+# `parity-review` states the same no-ephemeral-verification rule under its own
+# heading in its own words, so it is checked by claim rather than verbatim: the
+# forms it must forbid, and the fact that it promises no enforcement. The claim
+# is what matters — an agent told a control will stop it relaxes; one told the
+# restraint is its own does not.
+_PARITY_REVIEW = "parity-review"
+_PARITY_EPHEMERAL_HEADING = "## No ephemeral verification (hard rule)"
+_VERBATIM_EPHEMERAL_AGENTS = tuple(
+    name for name in MANDATED_AGENTS if name != _PARITY_REVIEW
+)
+# Every form the rule forbids, not a representative sample. Two of these were
+# left out at first because `parity-review` worded its sentence without them, and
+# the shorter list would have let `heredoc-fed interpreters` be deleted from all
+# six with the whole class still green — the one form with a live violation
+# history in this engagement, and the one `scratch scripts` and `one-off shells`
+# cover only if a reader is feeling generous. The fix was to widen the sentence,
+# not the pin.
+_EPHEMERAL_FORMS = (
+    "python -c",
+    "node -e",
+    "scratch script",
+    "heredoc-fed interpreter",
+    "one-off shell",
+    "REPL probing",
+    "git stash",
+    "edit-and-revert",
+    "commenting code out",
+)
+
+# The rule those forms elaborate. Pinned separately because the elaboration is
+# not the rule: delete the read-only sentence from all six in one edit and they
+# still agree with each other, and every other pinned fragment lives in the
+# paragraphs below it. docs/SECURITY.md now rests the write-primitive argument on
+# this sentence existing, which makes leaving it unpinned the larger of the two
+# gaps rather than the smaller.
+_READ_ONLY_CLAIMS = (
+    "## Hard rule: you are read-only",
+    "**You are read-only.**",
+    "Do not create, modify, copy, or delete any file",
+)
+# Fragments rather than sentences, because the two wordings differ around them:
+# the vendored six say a command working "is not permission to have run it", and
+# `parity-review` says not to "treat a command working as permission to have run
+# it". Both halves of the claim have to survive — that no rule is promised, and
+# that a command succeeding grants nothing.
+_NO_ENFORCEMENT_CLAIMS = ("hook or permission rule", "permission to have run it")
+
+# The pre-commit workflow is written out twice, for two audiences. Duplicating it
+# is the decision; letting the copies disagree is not, and this project has
+# watched them drift twice. Matched case-insensitively so a sentence-initial
+# capital in one copy is not a failure, and on phrases rather than whole steps so
+# each copy keeps its own register.
+_WORKFLOW_HEADING = "## Pre-commit Workflow"
+_WORKFLOW_STEP = re.compile(r"^\d+\. ", re.MULTILINE)
+_WORKFLOW_PHRASES = (
+    "scope is frozen",
+    "correctness or security defect in code that change introduced",
+    "no criticals and no highs",
+    "cut is stated explicitly with its reason",
+    "deferral gets a tracker issue naming the stream it lands in",
+    "a deferral with no tracker entry is a cut pretending otherwise",
+    # The requirement the convergence rule must not weaken.
+    "the **same** tree",
+)
 
 
 @pytest.fixture
@@ -103,6 +266,28 @@ def _frontmatter_of_length(lines: int) -> str:
     return "---\n" + "\n".join(body) + "\n---\n\nBody.\n"
 
 
+def _delimited_region(agent_name: str, region: str) -> str:
+    """Return the text an agent carries between a region's start and end markers."""
+    text = (COMMITTED_AGENTS_DIR / f"{agent_name}.md").read_text(encoding="utf-8")
+    _, start, rest = text.partition(f"<!-- {region}:start -->")
+    assert start, f"{agent_name} has no '{region}' start marker"
+    body, end, _ = rest.partition(f"<!-- {region}:end -->")
+    assert end, f"{agent_name} never closes its '{region}' region"
+    assert body.strip(), f"{agent_name}'s '{region}' region is empty"
+    return body.strip()
+
+
+def _agents_out_of_step(agent_names: Sequence[str], region: str) -> list[str]:
+    """Return the agents whose region differs from however most of them word it.
+
+    Named this way round on purpose: comparing every agent against one designated
+    file reports the six innocent ones when the designated file is what changed.
+    """
+    regions = {name: _delimited_region(name, region) for name in agent_names}
+    agreed, _ = Counter(regions.values()).most_common(1)[0]
+    return sorted(name for name, body in regions.items() if body != agreed)
+
+
 def _scope(project_agents: Path, session_project_dir: Path | None = None) -> AgentScope:
     """Build a scope over test directories, rooted here unless told otherwise."""
     return AgentScope(
@@ -114,14 +299,19 @@ def _scope(project_agents: Path, session_project_dir: Path | None = None) -> Age
 
 
 def _claude_md_section(heading: str) -> str:
-    """Return the CLAUDE.md text under `heading`, up to the next heading.
+    """Return the CLAUDE.md text under `heading`, up to the next heading."""
+    return _document_section(CLAUDE_MD, heading)
+
+
+def _document_section(path: Path, heading: str) -> str:
+    """Return the text under `heading`, up to the next heading.
 
     Fenced blocks are skipped: the Preflight section contains one, and a line
     inside it beginning `## ` is JSON or shell, not a heading. Splitting on the
     raw pattern would silently shrink the section a test then scans.
     """
-    text = CLAUDE_MD.read_text(encoding="utf-8")
-    assert heading in text, f"CLAUDE.md no longer has {heading!r}"
+    text = path.read_text(encoding="utf-8")
+    assert heading in text, f"{path.name} no longer has {heading!r}"
     section: list[str] = []
     inside_fence = False
     for line in text.split(heading, 1)[1].splitlines():
@@ -831,6 +1021,137 @@ class TestMandatedAgentList:
         assert "make check-agents" in _claude_md_section(_PREFLIGHT_HEADING)
 
 
+class TestSharedAgentGuidance:
+    """The two regions every agent carries word for word, and one it paraphrases."""
+
+    @pytest.mark.parametrize("name", MANDATED_AGENTS)
+    def test_every_agent_carries_every_guidance_section(self, name: str) -> None:
+        """Equality alone would be satisfied by seven identically empty regions.
+
+        The rules only make the loop cheaper if every agent applies the same ones:
+        an agent that omits the provenance field puts its findings back on the
+        orchestrator to triage by hand, and an agent still reaching for a denied
+        search command stalls a whole round. Both are silent — the report reads
+        exactly as it always did.
+        """
+        region = _delimited_region(name, _REVIEW_GUIDANCE)
+        for section in _REVIEW_GUIDANCE_SECTIONS:
+            assert section in region, f"{name} is missing its '{section}' section"
+        for claim in _REVIEW_GUIDANCE_CLAIMS:
+            assert claim in region, f"{name} no longer tells a reviewer {claim!r}"
+
+    def test_every_agent_words_the_guidance_identically(self) -> None:
+        """One agent left behind by a reword is one reviewing under the old rules."""
+        odd = _agents_out_of_step(MANDATED_AGENTS, _REVIEW_GUIDANCE)
+        assert not odd, f"{odd} word the shared review guidance differently"
+
+    def test_the_vendored_agents_word_the_ephemeral_rule_identically(self) -> None:
+        """The most-repeated correction in this repository, and the least guarded.
+
+        These paragraphs sit under each agent's read-only hard rule, above the
+        review guidance, so before they were delimited nothing compared them at
+        all — a reword could reach one agent and leave five telling reviewers a
+        different story about what they may run.
+        """
+        odd = _agents_out_of_step(_VERBATIM_EPHEMERAL_AGENTS, _EPHEMERAL_RULE)
+        assert not odd, f"{odd} word the no-ephemeral-verification rule differently"
+
+    def test_parity_review_states_the_ephemeral_rule_in_its_own_words(self) -> None:
+        """The one agent that words this rule itself, so it is checked by claim.
+
+        Its own section predates the shared one and says the same things, so
+        forcing the vendored wording on it would be churn. What it may not lose is
+        the substance: the forms it forbids, and the promise that nothing enforces
+        them. That second half is the load-bearing one — the file previously
+        claimed the harness would deny these commands, which was false in every
+        clone, and being told a control will stop you invites relaxing.
+
+        Scoped to that section rather than the whole file. The file also carries
+        the shared review guidance, which names several of the same forms, so a
+        whole-file scan would stay green through a normalisation that deleted the
+        section this test is named after. Reading the section also asserts the
+        heading, which the name promises and a whole-file scan never checked.
+        """
+        section = _document_section(
+            COMMITTED_AGENTS_DIR / f"{_PARITY_REVIEW}.md", _PARITY_EPHEMERAL_HEADING
+        )
+        for form in _EPHEMERAL_FORMS:
+            assert form in section, f"{_PARITY_REVIEW} no longer forbids {form!r}"
+        for claim in _NO_ENFORCEMENT_CLAIMS:
+            assert claim in section, f"{_PARITY_REVIEW} no longer states {claim!r}"
+
+    @pytest.mark.parametrize("name", _VERBATIM_EPHEMERAL_AGENTS)
+    def test_every_vendored_agent_forbids_every_ephemeral_form(self, name: str) -> None:
+        """Pins the forms themselves, which agent-to-agent equality cannot.
+
+        Drop `git stash` from all six at once and they still agree with each
+        other; the list of what is actually forbidden has to be pinned separately
+        from the fact that they agree on it.
+        """
+        region = _delimited_region(name, _EPHEMERAL_RULE)
+        for claim in _READ_ONLY_CLAIMS:
+            assert claim in region, f"{name} no longer states {claim!r}"
+        for form in _EPHEMERAL_FORMS:
+            assert form in region, f"{name} no longer forbids {form!r}"
+        for claim in _NO_ENFORCEMENT_CLAIMS:
+            assert claim in region, f"{name} no longer states {claim!r}"
+
+    @pytest.mark.parametrize("name", MANDATED_AGENTS)
+    def test_no_agents_frontmatter_approaches_the_checker_bound(
+        self, name: str
+    ) -> None:
+        """`_FRONTMATTER_LINE_LIMIT` rejects a file as "not an agent definition".
+
+        The bound's own comment used to claim the agents sat comfortably under it
+        and nothing checked that, twice with a different wrong figure. This asserts
+        the margin instead of describing it: `parity-review` is the tallest, its
+        frontmatter is prose that grows, and crossing the bound is a hard stop on
+        every `make check` and every CI run — reported as a malformed file rather
+        than as a file that got longer, which is the confusing way to find out.
+        """
+        text = (COMMITTED_AGENTS_DIR / f"{name}.md").read_text(encoding="utf-8")
+        lines = text.splitlines()
+        closing = lines.index("---", 1)
+        assert closing - 1 <= _FRONTMATTER_LINE_LIMIT // 2, (
+            f"{name}'s frontmatter is {closing - 1} lines, over half the "
+            f"{_FRONTMATTER_LINE_LIMIT}-line bound in check_review_agents.py — "
+            "raise the bound and the comment that describes it together"
+        )
+
+
+class TestWorkflowDocumentsAgree:
+    """The pre-commit workflow exists twice, so the two copies are pinned together."""
+
+    def test_both_copies_have_the_same_number_of_steps(self) -> None:
+        """A step added to one copy and not the other is how these drifted before.
+
+        Counting steps catches the shape of that drift — an inserted or dropped
+        step — which phrase matching cannot see, and it is what makes the two
+        copies' step numbers refer to the same things.
+        """
+        counts = {
+            path.name: len(
+                _WORKFLOW_STEP.findall(_document_section(path, _WORKFLOW_HEADING))
+            )
+            for path in (CLAUDE_MD, CONTRIBUTING_MD)
+        }
+        assert (
+            len(set(counts.values())) == 1
+        ), f"the workflows disagree in length: {counts}"
+
+    @pytest.mark.parametrize("phrase", _WORKFLOW_PHRASES)
+    def test_both_copies_state_every_rule(self, phrase: str) -> None:
+        """Scope freeze and convergence only work if both audiences are told them.
+
+        These two files were duplicated near-verbatim with nothing asserting they
+        matched — the same drift class this workflow's own rules exist to close,
+        reintroduced in the change that wrote them.
+        """
+        for path in (CLAUDE_MD, CONTRIBUTING_MD):
+            section = _document_section(path, _WORKFLOW_HEADING).lower()
+            assert phrase.lower() in section, f"{path.name}'s workflow omits {phrase!r}"
+
+
 class TestDocumentedHookSnippet:
     """The opt-in hook snippet in CLAUDE.md is the only tracked copy of it."""
 
@@ -868,7 +1189,7 @@ class TestQualityGateWiring:
         ), f"`make check-agents` no longer runs the checker: {recipe}"
 
     def test_check_runs_exactly_the_documented_prerequisites_in_order(self) -> None:
-        """The Makefile must match the set and order CONTRIBUTING.md describes.
+        """`make check` runs exactly these prerequisites, in exactly this order.
 
         This reads the Makefile only — it pins what `make check` does, not what the
         doc says about it. Membership alone would let a reorder or an appended
@@ -981,7 +1302,7 @@ class TestReviewAgentGateRegression:
         assert str(elsewhere) in report
         assert "Claude Code's search path" in report
 
-    def test_tracked_settings_declares_no_hooks_regression(self) -> None:
+    def test_tracked_settings_declares_only_the_permitted_keys_regression(self) -> None:
         """Regression test: a tracked SessionStart hook ran contributed code.
 
         Bug reported: the hook was added to `.claude/settings.json`, which is
@@ -990,11 +1311,63 @@ class TestReviewAgentGateRegression:
         Root cause: tracked project settings are contributor-writable, and
         SessionStart hooks execute without a prompt.
         Fix: the hook is opt-in via the gitignored `.claude/settings.local.json`,
-        and tracked settings declare no hooks at all.
+        and tracked settings carry only the two keys that configure a session
+        rather than act on its behalf.
         """
         settings = json.loads(SETTINGS_JSON_PATH.read_text(encoding="utf-8"))
-        assert "hooks" not in settings, (
-            "tracked .claude/settings.json declares hooks, which execute for "
-            "anyone who checks out a contributed branch — keep hooks in the "
-            "gitignored .claude/settings.local.json"
+        unexpected = sorted(set(settings) - _ALLOWED_SETTINGS_KEYS)
+        assert not unexpected, (
+            f"tracked .claude/settings.json declares {unexpected}, which takes "
+            "effect for anyone who checks out a contributed branch — keep "
+            "anything that executes or auto-authorises in the gitignored "
+            ".claude/settings.local.json"
         )
+
+    def test_the_local_settings_file_stays_untracked_regression(self) -> None:
+        """Regression test: the fix for the tracked hook rests on one gitignore line.
+
+        Bug reported: a `SessionStart` hook in tracked settings ran a contributed
+        branch's script as the maintainer.
+        Root cause: the remedy moved the hook to `.claude/settings.local.json`,
+        and both settings tests above assume that file can never be committed —
+        an assumption neither of them checks. Delete the ignore rule and the hook
+        becomes committable again with the whole suite still green.
+        Fix: git itself is asked, so a rule that is present but overridden later
+        in the file counts as absent.
+        """
+        ignored = subprocess.run(
+            ["git", "check-ignore", "--quiet", str(LOCAL_SETTINGS_RELATIVE_PATH)],
+            cwd=_REPO_ROOT,
+            check=False,
+        )
+        assert ignored.returncode == 0, (
+            f"{LOCAL_SETTINGS_RELATIVE_PATH} is not ignored by git, so the opt-in "
+            "SessionStart hook this repository deliberately keeps local can be "
+            "committed and will then run for everyone who checks the branch out"
+        )
+
+    def test_tracked_settings_grants_only_what_is_pinned_here_regression(self) -> None:
+        """Regression test: tracked settings acted on a contributor's behalf unprompted.
+
+        Bug reported: a `SessionStart` hook in the tracked `.claude/settings.json`
+        ran a contributed branch's script as the maintainer. `permissions.allow`
+        and `enabledPlugins` are the same shape — tracked, contributor-writable,
+        and effective with no prompt for whoever checks the branch out. A branch
+        adding `Bash(curl:*)`, or flipping on a plugin, widens the ambient
+        authority of every clone.
+        Root cause: nothing pinned what tracked settings *grant*, only that they
+        declared no hooks, so a wider allow list was one quiet line in a diff.
+        Fix: the grants are pinned exactly, whole-value rather than by membership,
+        which also catches a nested `permissions.defaultMode` the top-level key
+        allowlist cannot see.
+
+        This cannot stop a hostile branch — it can edit this test too. It makes
+        widening the repository's permissions a deliberate act, visible in the
+        diff. Adding a permission is meant to cost a test update: do not remove
+        that friction, update the pin and say why in the commit.
+
+        Compared in one dict so a branch that widened both keys sees both, rather
+        than fixing one and discovering the other on the next run.
+        """
+        settings = json.loads(SETTINGS_JSON_PATH.read_text(encoding="utf-8"))
+        assert {key: settings.get(key) for key in _TRACKED_GRANTS} == _TRACKED_GRANTS
