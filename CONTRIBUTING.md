@@ -68,28 +68,34 @@ Your gitignored `docker-compose.override.yml` (for personal mounts like private
 plugin directories) merges automatically alongside both files, so all three
 compose cleanly with one command.
 
-**Automated code review:** When using Claude Code, six review agents run before commits:
+**Automated code review:** When using Claude Code, seven review agents run before commits:
 - **code-review** — Reviews code quality, design, naming, DRY compliance, and adherence to project standards.
 - **security-review** — Audits for vulnerabilities, credential leaks, and unsafe patterns. See [docs/SECURITY.md](docs/SECURITY.md) for details.
 - **test-review** — Audits test coverage, correctness, mock hygiene, regression test format, and edge case handling.
 - **document-review** — Verifies documentation accuracy, completeness, and cross-document consistency.
 - **accessibility-review** — Verifies WCAG 2.1 AA compliance for frontend components (semantic HTML, ARIA attributes, keyboard navigation, focus management, color contrast). Self-gates on frontend file presence.
 - **commit-hygiene** — Enforces atomic commit structure and conventional commit format.
+- **parity-review** — Enforces CLI/web feature parity (native to this repository).
 
-All six agents must approve changes before they are committed. These six are project-agnostic agents shared across repos, so their definitions live at the user level (`~/.claude/agents/`) rather than in this repository — they pick up the project's rules by reading `CLAUDE.md` and `docs/`. Only the project-local `parity-review` agent (CLI/web feature parity) is checked in, under `.claude/agents/`. Contributors can expect feedback on PRs touching security-sensitive areas (authentication, configuration, network requests) as well as general code quality, test coverage, and documentation accuracy concerns.
+All seven agents must approve changes before they are committed, and all seven are checked in under `.claude/agents/`, so a plain clone has the whole gate. Six of them are project-agnostic and shared across repositories; their canonical source is maintained outside this repository, and they pick up this project's rules by reading `CLAUDE.md` and `docs/`. To improve one of them, edit the committed copy and say so in the PR. `parity-review` is native here, because CLI/web parity is this repository's own invariant.
+
+Claude Code only discovers `.claude/agents/` for the directory a session started in, so start it **at the repository root** — a subdirectory does not count. `make check` verifies that every mandated agent is committed and loadable; an agent that cannot be launched is a hard stop, because it reviewed nothing and said nothing. Contributors can expect feedback on PRs touching security-sensitive areas (authentication, configuration, network requests) as well as general code quality, test coverage, and documentation accuracy concerns.
 
 ## Quality Checks
 
-**All four checks must pass before submitting a PR:**
+**Every check must pass before submitting a PR:**
 
 ```bash
-python3.11 -m pytest                       # All tests pass
-python3.11 -m black --check src/ tests/    # Formatting
-python3.11 -m mypy src/                    # Type checking (strict)
-python3.11 -m ruff check src/ tests/       # Linting
+python3.11 scripts/check_review_agents.py          # Review agents are loadable
+python3.11 -m black --check src/ tests/ scripts/   # Formatting
+python3.11 -m ruff check src/ tests/ scripts/      # Linting
+python3.11 -m mypy src/ scripts/                   # Type checking (strict)
+python3.11 -m pytest                               # All tests pass
+pnpm vue-tsc --noEmit                              # Frontend type checking
+pnpm vitest run                                    # Frontend tests
 ```
 
-Or use the Makefile: `make check`
+Or use the Makefile: `make check` runs exactly those, in that order.
 
 **Important:** Always use `python3.11` explicitly — not bare `python` or `python3`.
 
@@ -131,6 +137,14 @@ These standards are enforced strictly. Write clean code the first time — don't
 - **Copy dicts before mutating** if the original was passed in from outside.
 - **Module-level imports only** — no inline `import` inside functions. Use `TYPE_CHECKING` blocks instead of bottom-of-file import hacks.
 - **Never expose internal errors** in HTTP responses — use generic messages and log details server-side.
+- **Keep developer-facing files self-contained** — docs, tooling, CI, compose and build files, `tests/`, and `.claude/` files must not point at a path outside the repository (a home directory, one machine's layout). A reader with no context cannot verify one, and neither can CI. `tests/test_repository_self_contained.py` enforces this. `src/` is exempt, because application code genuinely addresses the machine it runs on.
+- **The self-containment guard also bans the APIs that build a home-relative path**, so a legitimate hostile-input test can trip on its own payload. When the outside path IS what a test is about, exempt that single line with a comment marker: the reason is required, and it only counts when the marker opens a comment (`#`, or `<!--` in Markdown), so quoting it in prose exempts nothing.
+
+  ```python
+  scan_root = Path(configured).expanduser()  # self-contained: allow the API under test
+  ```
+
+  **Never water down a security test to satisfy the guard.**
 - **Data-driven patterns** over copy-paste branches when multiple code paths differ only in names/mappings.
 
 ## Testing
@@ -174,12 +188,13 @@ class TestMyFeatureRegression:
 
 Before committing, run the review agents and quality checks:
 
-1. Run **security-review**, **code-review**, **test-review**, **document-review**, and **accessibility-review** agents (can run in parallel)
+1. Run **security-review**, **code-review**, **test-review**, **document-review**, **parity-review**, and **accessibility-review** agents (can run in parallel). An agent that cannot be launched is a hard stop, not a step to skip — it reviewed nothing, and unlike a skipped approval that gap is silent. All seven agents are in your checkout, so they work on any machine; start Claude Code at the repository root or none of them resolve
 2. Address all agent findings
-3. Run **commit-hygiene** agent to plan atomic commit split
-4. Run all quality checks: `command make check`
-5. Commit following the split plan from commit-hygiene
-6. Run **commit-hygiene** again before pushing to verify commit structure
+3. Re-run **all six agents from step 1** — not just the ones that had findings. A fix that satisfies one agent can break another's domain, so approval is on the final tree, not on the delta. Repeat steps 2–3 until every agent approves the **same** tree
+4. Run **commit-hygiene** agent to plan atomic commit split
+5. Run all quality checks: `command make check`
+6. Commit following the split plan. If staging triggers a formatter or any other code edit, restart at step 3 — the agents must approve the exact tree that gets committed
+7. Run **commit-hygiene** again before pushing to verify commit structure
 
 ## Commit Messages
 
@@ -247,10 +262,11 @@ src/
 └── utils/            # Utility functions
 tests/                # Cross-cutting tests (CLI, web, storage, recommendations, conversation).
                       # Plugin-local tests live next to the plugin: src/.../<plugin>/test_<plugin>.py.
+scripts/              # Developer tooling (check_review_agents.py)
 config/               # Configuration files
 templates/            # Import file templates (CSV, JSON, Markdown)
 docs/                 # Additional documentation
-.claude/agents/       # Project-local Claude Code agents (parity-review)
+.claude/agents/       # All seven mandated review agents (six shared, vendored; parity-review native)
 ```
 
 ## UI Themes

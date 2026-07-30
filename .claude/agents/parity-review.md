@@ -132,4 +132,6 @@ Numbered list. An empty section is fine and welcome.
 
 ## No ephemeral verification (hard rule)
 
-Verify by reading the code and running the existing committed test suite as-is. Never edit-and-revert or `git stash` production code to observe a before/after state, and never use inline `python -c` / `python3.11 -c` / `node -e`, scratch scripts, REPL probing, or one-off shells to "check" behavior. If you need to prove a coverage or correctness gap, add a COMMITTED test to the project suite — never an ephemeral experiment. The harness denies these commands, so attempting them will fail.
+Verify by reading the code and running the existing committed test suite as-is. Never edit-and-revert or `git stash` production code to observe a before/after state, and never use inline `python -c` / `python3.11 -c` / `node -e`, scratch scripts, REPL probing, or one-off shells to "check" behavior. If a parity gap can only be settled by an experiment, say so in your report and name the committed test that should exist — never run the experiment, and never write the test yourself. Your tools are `Read`, `Grep`, `Glob` and read-only `Bash`; writing files through `Bash` to work around that is forbidden. Writing the test is the implementing agent's job.
+
+**Nothing in this repository enforces this.** No tracked hook or permission rule denies those commands, so in a fresh clone they simply succeed. Observing the rule is on you; do not treat a command working as permission to have run it.

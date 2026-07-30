@@ -170,7 +170,7 @@ class TestEntrypointBoundsCheck:
         "bad_dir",
         [
             "/etc/recommendinator",
-            "/home/attacker/config",
+            "/home/attacker/config",  # self-contained: allow hostile input under test
             # Prefix-collision boundary: /app-evil must NOT match /app/*.
             # Catches a regression where the case glob is loosened to /app*.
             "/app-evil",

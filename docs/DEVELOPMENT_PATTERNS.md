@@ -99,11 +99,17 @@ Review agents repeatedly flag the same classes of issues. Reading this list befo
 - **No try/except that re-raises unchanged.** No validation for "can't happen" internal states. Trust internal code; only validate at system boundaries.
 - **No feature flags or config toggles unless the user asked for them.** Just change the code.
 - **Click `IntRange` for bounded ints, Click choices for enums.** Don't manually validate `if count > max: abort()` for simple bounds — but DO validate against config-driven limits (e.g., `max_count` from config) since those aren't Click-expressible.
+- **No outside-the-repository paths in docs, tooling, CI, compose/build files, `tests/`, or `.claude/` files.** Not in prose, comments, docstrings, report strings, or tests. A reader with no context cannot verify a path they cannot see, and neither can CI. `tests/test_repository_self_contained.py` fails with the offending file and line. `src/` is exempt — application code addresses the machine it runs on.
+- **The same guard bans the APIs that build a home-relative path**, so a hostile-input test can trip on its own payload. Exempt that single line with a comment marker rather than changing the payload — the reason is required, and the marker only counts when it opens a comment (`#`, or `<!--` in Markdown), so quoting it in prose exempts nothing. **A security test is never weakened to satisfy the guard.**
+
+  ```python
+  scan_root = Path(configured).expanduser()  # self-contained: allow the API under test
+  ```
 
 ### Shell discipline (user preferences, memory-backed)
 
 - **One Bash call per logical step.** Never chain with `&&`/`;`. See `feedback_dont_chain_commands.md`.
-- **Run `python3.11 -m black src/ tests/` and `python3.11 -m ruff check src/ tests/ --fix` BEFORE `command make check`**, so make check doesn't fail on auto-fixable formatting. See `feedback_always_format_before_check.md`.
+- **Run `python3.11 -m black src/ tests/ scripts/` and `python3.11 -m ruff check src/ tests/ scripts/ --fix` BEFORE `command make check`**, so make check doesn't fail on auto-fixable formatting. The directory list must match what `make check` inspects, or an edit gets format-checked without ever being pre-formatted. See `feedback_always_format_before_check.md`.
 - **Do not read raw subagent output files** to verify agent results — the agent returns its finding in its tool result. See `feedback_no_grep_agent_output.md`.
 - **Never wait/poll on background agents.** The runtime notifies on completion.
 

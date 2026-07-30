@@ -348,9 +348,9 @@ which write back to `source_configs` (non-sensitive fields) and `credentials`
 
 - **Parity-Review Agent** — CLI/web feature parity enforcement agent that flags capabilities exposed in one interface but not the other.
 
-The six review agents above are project-agnostic and shared across repos, so their definitions live at the user level (`~/.claude/agents/`); they read `CLAUDE.md` and `docs/` to pick up this project's rules. Parity-Review is project-local and checked in.
+All seven agents are checked in under `.claude/agents/`. The six above Parity-Review are project-agnostic and shared across repositories, so their canonical source is maintained outside this repository and the copies here are what a checkout gets; they read `CLAUDE.md` and `docs/` to pick up this project's rules. Parity-Review is native to this repository.
 
-Plugin configuration: `.claude/settings.json` | Project-local agents: `.claude/agents/` | Shared agents: `~/.claude/agents/`
+Plugin configuration: `.claude/settings.json` | Review agents: `.claude/agents/`
 
 ## Container Artifacts
 
