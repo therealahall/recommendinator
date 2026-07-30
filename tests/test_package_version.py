@@ -4,8 +4,6 @@ from importlib.metadata import PackageNotFoundError
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 import src
 
 
@@ -88,16 +86,17 @@ class TestStaleEditableInstallRegression:
     def test_real_pyproject_is_parseable_in_dev_tree(self) -> None:
         """The dev tree's real pyproject.toml resolves to a SemVer-shaped string.
 
-        Skipped on wheel-only installs where pyproject.toml is not bundled
-        alongside the package, since that environment legitimately falls
-        back to importlib.metadata.
+        Asserted unconditionally. Everywhere this test runs — the dev tree and CI,
+        both editable installs of the repo — pyproject.toml IS adjacent to `src/`,
+        so `None` here is a real layout regression and must fail rather than skip.
+        The genuine wheel-install layout is covered by
+        `test_returns_none_when_no_pyproject` using a `tmp_path` tree.
         """
         version = src._read_source_version()
-        if version is None:
-            pytest.skip("pyproject.toml not adjacent to src/ (wheel install)")
+        assert version is not None, "pyproject.toml is no longer adjacent to src/"
         parts = version.split(".")
         assert len(parts) >= 2, f"Expected dotted version, got {version!r}"
-        assert all(p for p in parts), f"Empty version segment in {version!r}"
+        assert all(part for part in parts), f"Empty version segment in {version!r}"
 
     def test_returns_none_when_no_pyproject(self, tmp_path: Path) -> None:
         """Wheel-install layout: no pyproject.toml adjacent → fall through to metadata."""
