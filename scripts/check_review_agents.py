@@ -53,7 +53,8 @@ _ERROR_DISPLAY_LIMIT = 160
 # after. It is a sanity bound on shape, not a resource limit: the file is already
 # read and split by this point, and line length is not capped, so it stops nothing
 # an attacker would try. The committed seven are validated through this same path
-# by a test, and the tallest of them is a quarter of this.
+# by a test, which also fails if any of their frontmatter exceeds half of this
+# bound — so check that test, not this comment, before assuming there is room.
 _FRONTMATTER_LINE_LIMIT = 40
 
 # A home-rooted path is reported with a leading tilde instead of the real
