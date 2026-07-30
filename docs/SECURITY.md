@@ -166,7 +166,7 @@ uv sync --locked --extra ai
 
 ## Automated Security Review
 
-Claude Code's shared security-review agent (a project-agnostic agent at the user level, `~/.claude/agents/`) performs automated security audits before commits, applying the project-specific rules documented below.
+Claude Code's shared security-review agent (a project-agnostic agent committed at `.claude/agents/security-review.md`) audits changes for security before they are committed, applying the project-specific rules documented below. Nothing launches it for you — running it is a step in the pre-commit workflow, described under [How the Review Gate Is Started](#how-the-review-gate-is-started).
 
 ### What It Checks
 
@@ -188,9 +188,19 @@ Claude Code's shared security-review agent (a project-agnostic agent at the user
 - Dicts/lists must be copied before mutating externally-passed data
 - `is not None` checks required instead of truthy checks for security-relevant values
 
+### How the Review Gate Is Started
+
+Nothing starts the review gate for you. Running the agents is a step in the pre-commit workflow, and `make check` verifies that every mandated agent is committed and loadable, because an agent that never loaded reviews nothing and says nothing. See [Review Agent Preflight](../CLAUDE.md#review-agent-preflight).
+
+**"Loadable" is not "unaltered", and nothing here checks the difference.** The check catches an agent that is missing, renamed, or malformed — not one whose instructions were rewritten. A `.claude/agents/security-review.md` edited to approve everything passes the check exactly like the real one. Reviewing the `.claude/agents/` diff by hand is the only control on that, so treat a change to any of those files like a change to CI configuration: they are prompts that direct the agents reviewing this repository, they run with the reviewer's tool permissions, and an edit changes what the review does — including the review of the branch making the edit.
+
+Auto-executing hooks are deliberately kept out of the tracked `.claude/settings.json`, because nobody should have a `SessionStart` hook imposed on them by a repository they cloned; tracked settings ship to every clone and hooks run without a prompt. The [documented opt-in](../CLAUDE.md#review-agent-preflight) puts it in the gitignored `.claude/settings.local.json` instead — **which makes the execution risk a choice you own, not one that goes away.** `$CLAUDE_PROJECT_DIR` is the checkout, so the hook runs the working tree's copy of the script, including on a branch someone else wrote. Do not enable it in a checkout used to review other people's branches.
+
+That residual path is not unique to the hook. The review agents' prompts instruct them to run the project's quality-check command as it already exists, so reviewing a contributed branch runs that branch's test code with your credentials and file access regardless. Reviewing someone else's code means running it; the hook is a second door, and the only one you can decline.
+
 ### For Contributors
 
-security-review is a shared user-level agent (`~/.claude/agents/`); it reads this SECURITY.md and CLAUDE.md to learn the project-specific rules above. When using Claude Code, it runs automatically before commits alongside the **code-review**, **test-review**, **document-review**, and **commit-hygiene** agents. All five agents must approve changes before they are committed. Each security finding includes severity, CWE classification, evidence, impact, and remediation steps.
+security-review is one of the six shared, project-agnostic agents committed under `.claude/agents/`; it reads this SECURITY.md and CLAUDE.md to learn the project-specific rules above. When using Claude Code it runs in parallel with **code-review**, **test-review**, **document-review**, **accessibility-review**, and the repository's own **parity-review**; **commit-hygiene** runs afterwards, once the other six have approved, to plan the commit split. All seven must approve before anything is committed. Each security finding includes severity, CWE classification, evidence, impact, and remediation steps.
 
 ## Reporting Security Issues
 
