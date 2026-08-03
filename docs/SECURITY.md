@@ -35,6 +35,7 @@ Sensitive credentials (OAuth tokens, API keys) are encrypted at rest using Ferne
 - **Stale credential recovery**: If the encryption key changes, stale credentials are automatically re-encrypted from config values or purged if no config fallback exists
 - **Automatic token rotation**: When OAuth-based sources (GOG, Epic Games) receive a rotated refresh token during sync, the new token is automatically persisted to the encrypted credentials table. Users do not need to manually reconnect when servers rotate tokens
 - **Credentials are write-only from the API** — no endpoint returns credential values
+- **The test suite never touches the real key** — an autouse fixture in the repository-root `conftest.py` points `RECOMMENDINATOR_KEY_PATH` at a per-test temporary directory. It is at the root, not in `tests/`, because tests are also collected from `src/` (plugin-local) and `private/`, and a conftest only covers its own subtree
 
 If you move the database to a new host, copy `data/.credential_key` along with it. Without the key file, stored credentials cannot be decrypted and will need to be re-entered.
 
