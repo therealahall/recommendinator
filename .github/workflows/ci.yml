@@ -44,13 +44,13 @@ jobs:
         run: uv run python scripts/check_review_agents.py
 
       - name: Check formatting
-        run: uv run black --check src/ tests/ scripts/
+        run: uv run black --check src/ tests/ scripts/ conftest.py
 
       - name: Lint
-        run: uv run ruff check src/ tests/ scripts/
+        run: uv run ruff check src/ tests/ scripts/ conftest.py
 
       - name: Type check (Python)
-        run: uv run mypy src/ scripts/
+        run: uv run mypy src/ scripts/ conftest.py
 
       - name: Type check (frontend)
         run: pnpm vue-tsc --noEmit

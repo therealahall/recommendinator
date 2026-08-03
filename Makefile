@@ -38,16 +38,16 @@ test:
 	python3.11 -m pytest
 
 lint:
-	python3.11 -m ruff check src/ tests/ scripts/
+	python3.11 -m ruff check src/ tests/ scripts/ conftest.py
 
 format:
-	python3.11 -m black src/ tests/ scripts/
+	python3.11 -m black src/ tests/ scripts/ conftest.py
 
 format-check:
-	python3.11 -m black --check src/ tests/ scripts/
+	python3.11 -m black --check src/ tests/ scripts/ conftest.py
 
 type-check:
-	python3.11 -m mypy src/ scripts/
+	python3.11 -m mypy src/ scripts/ conftest.py
 
 build-frontend:
 	pnpm build
