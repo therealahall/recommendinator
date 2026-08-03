@@ -5,8 +5,8 @@ import sqlite3
 from typing import Any, TypedDict
 
 from src.storage.merge import (
-    _merge_detail_tables,
-    _merge_scalar_columns,
+    merge_detail_tables,
+    merge_scalar_columns,
     normalize_title_for_matching,
 )
 
@@ -109,8 +109,8 @@ _ALLOWED_ENRICHMENT_ALIASES: frozenset[str] = frozenset({"es"})
 _ALLOWED_ENRICHMENT_WHERE: frozenset[str] = frozenset(
     {
         "1=1",
-        "needs_enrichment = 1",
-        "es.needs_enrichment = 1",
+        "needs_enrichment = 1 AND enrichment_error IS NULL",
+        "es.needs_enrichment = 1 AND es.enrichment_error IS NULL",
         "needs_enrichment = 0 AND enrichment_error IS NULL"
         " AND enrichment_provider != 'none'",
         "es.needs_enrichment = 0 AND es.enrichment_error IS NULL"
@@ -162,7 +162,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
         conn: SQLite database connection. ``row_factory`` is set to
               ``sqlite3.Row`` unconditionally — required by migration dedup.
     """
-    # Required by _merge_scalar_columns which uses named column access
+    # Required by merge_scalar_columns which uses named column access
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
 
@@ -586,13 +586,14 @@ def _deduplicate_inline(cursor: sqlite3.Cursor) -> None:
 def _merge_duplicate_row(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -> None:
     """Merge all data from duplicate into kept row, then delete duplicate.
 
-    Uses the shared ``_merge_scalar_columns`` and ``_merge_detail_tables``
-    functions from ``sqlite_db`` for the merge rules.  This ensures that
-    migration-time dedup preserves detail table data (genres, tags, etc.)
+    Uses the shared ``merge_scalar_columns`` and ``merge_detail_tables``
+    functions from ``merge`` for the merge rules.  This ensures that
+    migration-time dedup preserves user-owned state (rating, review, status,
+    ignored, completion date) and detail table data (genres, tags, etc.)
     the same way as the runtime ``_merge_duplicate_into`` method.
     """
-    _merge_scalar_columns(cursor, keep_id, delete_id)
-    _merge_detail_tables(cursor, keep_id, delete_id)
+    merge_scalar_columns(cursor, keep_id, delete_id)
+    merge_detail_tables(cursor, keep_id, delete_id)
     cursor.execute("DELETE FROM content_items WHERE id = ?", (delete_id,))
 
 
@@ -938,7 +939,13 @@ def mark_enrichment_failed(
     content_item_id: int,
     error: str,
 ) -> None:
-    """Mark an item's enrichment as failed.
+    """Mark an item's enrichment as failed and keep it queued.
+
+    A failure means no provider ever said whether it has this item, so the
+    outcome is unknown rather than settled: ``needs_enrichment`` stays 1 so the
+    next enrichment run retries the item. Contrast ``mark_enrichment_complete``
+    with quality ``not_found``, which records a settled miss and retires the
+    item from the queue.
 
     Args:
         conn: SQLite database connection
@@ -950,7 +957,7 @@ def mark_enrichment_failed(
         """INSERT OR REPLACE INTO enrichment_status
            (content_item_id, last_enriched_at, enrichment_provider,
             enrichment_quality, needs_enrichment, enrichment_error)
-           VALUES (?, CURRENT_TIMESTAMP, NULL, NULL, 0, ?)""",
+           VALUES (?, CURRENT_TIMESTAMP, NULL, NULL, 1, ?)""",
         (content_item_id, error),
     )
     conn.commit()
@@ -1101,6 +1108,20 @@ def get_enrichment_stats(
 ) -> dict[str, int | dict[str, int]]:
     """Get overall enrichment statistics.
 
+    ``enriched``, ``pending`` and ``failed`` read the same retry state and are
+    mutually exclusive: a failed item is queued for retry like a pending one,
+    but ``pending`` requires ``enrichment_error IS NULL``, so it is reported
+    only as failed — the more specific of the two, and the one the operator
+    may need to act on. Interfaces list these counts side by side, so an item
+    appearing in two of them would read as two items.
+
+    ``not_found`` is a different measure: it counts a quality label rather
+    than a retry state, so it overlaps the other three instead of extending
+    them into a partition. An item that settled as not_found and was then
+    re-queued by :func:`reset_enrichment_status` — which clears the error but
+    leaves the quality alone — is counted under both ``pending`` and
+    ``not_found``. The four buckets therefore need not sum to ``total``.
+
     Args:
         conn: SQLite database connection
         user_id: If specified, only count items for this user.
@@ -1152,7 +1173,11 @@ def get_enrichment_stats(
         cursor,
         "enrichment_status",
         es_alias,
-        "es.needs_enrichment = 1" if user_id else "needs_enrichment = 1",
+        (
+            "es.needs_enrichment = 1 AND es.enrichment_error IS NULL"
+            if user_id
+            else "needs_enrichment = 1 AND enrichment_error IS NULL"
+        ),
         user_join,
         user_filter,
         user_params,

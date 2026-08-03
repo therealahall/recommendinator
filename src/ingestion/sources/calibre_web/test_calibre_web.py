@@ -966,8 +966,8 @@ class TestCalibreWebRegression:
     ) -> None:
         """Bug: a re-import could regress a completed book back to unread.
 
-        Bug: status is resolved forward-only in src/storage/sqlite_db.py
-        (_resolve_status_forward) so a re-sync never reverts a COMPLETED item.
+        Bug: status is resolved forward-only by resolve_status_forward in
+        src/storage/merge.py, so a re-sync never reverts a COMPLETED item.
         That protection only works if the plugin emits UNREAD (not some other
         status) for unread library books; emitting anything else would defeat
         the forward-only guard.
