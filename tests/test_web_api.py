@@ -5,6 +5,7 @@ import logging
 import threading
 from collections.abc import Callable
 from dataclasses import fields
+from datetime import UTC, date, datetime
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -20,9 +21,10 @@ from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.engine import RecommendationEngine
 from src.settings.metadata import default_of
-from src.storage.manager import StorageManager
+from src.storage.manager import UNSET, StorageManager
 from src.storage.settings_migration import migrate_config_settings
 from src.utils.series import MAX_SEASONS
+from src.utils.sorting import MAX_SEARCH_LENGTH
 from src.web.api import APP_VERSION, _item_to_response
 from src.web.app import _LOG_BASE_DIR, _safe_log_path, create_app
 from src.web.enrichment_manager import WebEnrichmentManager
@@ -1041,7 +1043,7 @@ def test_complete_endpoint(client, mock_components):
     mock_components["embedding_gen"].generate_content_embedding.return_value = [
         0.1
     ] * 768
-    mock_components["storage"].save_content_item.return_value = 1
+    mock_components["storage"].complete_content_item.return_value = 1
 
     response = client.post(
         "/api/complete",
@@ -1055,8 +1057,126 @@ def test_complete_endpoint(client, mock_components):
 
     assert response.status_code == 200
     data = response.json()
-    assert "message" in data
-    assert "id" in data
+    assert data["message"] == "Marked 'Test Book' as completed"
+    assert data["id"] == 1
+
+
+def test_complete_endpoint_dates_by_the_host_calendar_day_regression(
+    client, mock_components, tmp_path, host_timezone
+):
+    """POST /api/complete dates a completion by the day the user is living.
+
+    Bug reported: an item finished at 21:00 in America/Los_Angeles came back
+    dated tomorrow. The endpoint stamped ``datetime.now(UTC).date()``, so west
+    of UTC an evening completion crossed into the next UTC day — while a date
+    arriving from an import was narrowed to the host's zone. The ``TZ`` a
+    Docker operator sets was honoured for one and ignored for the other.
+    Root cause: the endpoint chose the date itself, in UTC.
+    Fix: the endpoint sends no date; the storage door stamps today in the
+    host's zone. The clock is frozen because under the suite's UTC default the
+    two implementations agree, and a live clock disagrees with itself across
+    UTC midnight.
+    """
+    host_timezone("America/Los_Angeles")
+    storage = StorageManager(sqlite_path=tmp_path / "complete.db")
+    app_state.storage = storage
+    app_state.embedding_gen = None
+
+    with patch(
+        "src.utils.dates.utc_now", return_value=datetime(2026, 3, 15, 4, 0, tzinfo=UTC)
+    ):
+        response = client.post(
+            "/api/complete",
+            json={"content_type": "book", "title": "Piranesi", "rating": 4},
+        )
+
+    assert response.status_code == 200, response.text
+    stored = storage.get_content_item(response.json()["id"])
+    assert stored is not None
+    assert stored.date_completed == date(2026, 3, 14)
+
+
+def test_complete_endpoint_preserves_an_imported_completion_date_regression(
+    client, mock_components, tmp_path
+):
+    """POST /api/complete does not re-date an item that already has a date.
+
+    Bug reported: completing an item imported with
+    ``date_completed = 2020-01-01`` rewrote the date to today — silent loss of
+    a date the user owns, which feeds the variety ladder's ordering.
+    Root cause: the endpoint stamped today's date onto the item it built, and
+    the sync door's later-date-wins rule takes today over any past date.
+    Fix: the endpoint sends no date; the door fills an empty one and keeps a
+    stored one.
+    """
+    storage = StorageManager(sqlite_path=tmp_path / "complete.db")
+    db_id = storage.save_content_item(
+        ContentItem(
+            id="book-1",
+            title="Dune",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            date_completed=date(2020, 1, 1),
+        )
+    )
+    app_state.storage = storage
+    app_state.embedding_gen = None
+
+    response = client.post(
+        "/api/complete",
+        json={"content_type": "book", "title": "Dune", "rating": 2},
+    )
+
+    assert response.status_code == 200, response.text
+    stored = storage.get_content_item(db_id)
+    assert stored is not None
+    assert stored.date_completed == date(2020, 1, 1)
+    assert stored.rating == 2
+
+
+def test_complete_endpoint_overwrites_existing_rating_regression(
+    client, mock_components, tmp_path
+):
+    """POST /api/complete replaces the rating an item already has.
+
+    Bug reported: completing an already-rated item through the API returns
+    200 with "Marked 'Dune' as completed" while the stored rating is left at
+    its old value, so the user's correction is silently discarded and
+    preference analysis keeps scoring on the stale rating. Same silent-discard
+    class as the chat re-rating defect, on the completion endpoint.
+    Root cause: the endpoint persisted through ``save_content_item`` — the
+    ingestion/sync door, whose fill-only rule never overwrites a user-owned
+    field that already has a value — rather than an explicit-user-action door.
+    Marking something complete from the UI is an explicit user action.
+    Fix: the completion door applies the explicit-action rules, so the
+    supplied rating and review win.
+    """
+    storage = StorageManager(sqlite_path=tmp_path / "complete.db")
+    db_id = storage.save_content_item(
+        ContentItem(
+            id="book-1",
+            title="Dune",
+            author="Frank Herbert",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            review="Loved it",
+        )
+    )
+    app_state.storage = storage
+    # No embedding generator: this test is about the SQLite write, and the
+    # endpoint skips embedding generation when there is none.
+    app_state.embedding_gen = None
+
+    response = client.post(
+        "/api/complete",
+        json={"content_type": "book", "title": "Dune", "rating": 2},
+    )
+
+    assert response.status_code == 200, response.text
+    stored = storage.get_content_item(db_id)
+    assert stored is not None
+    assert stored.rating == 2
 
 
 def test_complete_invalid_rating(client):
@@ -1908,8 +2028,8 @@ def test_edit_item_status(client, mock_components):
     mock_components["storage"].update_item_from_ui.assert_called_once_with(
         db_id=42,
         status="unread",
-        rating=None,
-        review=None,
+        rating=UNSET,
+        review=UNSET,
         seasons_watched=None,
         genres=None,
         tags=None,
@@ -1985,8 +2105,8 @@ def test_edit_tv_show_seasons(client, mock_components):
     mock_components["storage"].update_item_from_ui.assert_called_once_with(
         db_id=42,
         status="currently_consuming",
-        rating=None,
-        review=None,
+        rating=UNSET,
+        review=UNSET,
         seasons_watched=[1, 2, 3],
         genres=None,
         tags=None,
@@ -2030,6 +2150,99 @@ def test_edit_rejects_out_of_range_season_regression(client, mock_components):
     assert too_many.status_code == 422
 
     mock_components["storage"].update_item_from_ui.assert_not_called()
+
+
+def test_edit_rejects_blank_review_regression(client, mock_components):
+    """PATCH /api/items/{db_id} rejects a review that is empty or all spaces.
+
+    Regression: ``review`` was bounded above but not below, so a hand-written
+    request storing ``""`` reached the state ``library edit --review ""``
+    already refuses — an empty string reads as a review the user wrote, and it
+    blocks any later import from filling the field in. The request model now
+    requires a non-blank review, so clearing one is only ever the explicit
+    null the CLI spells ``--clear-review``.
+    """
+    mock_components["storage"].update_item_from_ui = Mock(return_value=True)
+
+    empty = client.patch(
+        "/api/items/42?user_id=1",
+        json={"status": "completed", "review": ""},
+    )
+    assert empty.status_code == 422
+
+    whitespace = client.patch(
+        "/api/items/42?user_id=1",
+        json={"status": "completed", "review": "   "},
+    )
+    assert whitespace.status_code == 422
+
+    mock_components["storage"].update_item_from_ui.assert_not_called()
+
+
+def test_edit_item_status_preserves_rating_regression(client, mock_components):
+    """PATCH with only a status leaves the stored rating and review alone.
+
+    Bug reported: a status-only edit from the library UI silently nulled the
+    item's rating and review.
+    Root cause: the endpoint always forwarded request.rating / request.review,
+    both defaulting to None, and storage wrote whatever it was handed — so an
+    omitted field and a cleared field were indistinguishable.
+    Fix: fields absent from the request body are forwarded as UNSET, which
+    storage leaves untouched; an explicit null still clears.
+    """
+    updated_item = ContentItem(
+        id="ext_1",
+        db_id=42,
+        title="Rated Book",
+        content_type=ContentType.BOOK,
+        status=ConsumptionStatus.COMPLETED,
+        rating=5,
+        review="Loved it",
+    )
+    mock_components["storage"].update_item_from_ui = Mock(
+        spec=StorageManager.update_item_from_ui, return_value=True
+    )
+    mock_components["storage"].get_content_item = Mock(
+        spec=StorageManager.get_content_item, return_value=updated_item
+    )
+
+    response = client.patch("/api/items/42?user_id=1", json={"status": "completed"})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["rating"] == 5
+    assert data["review"] == "Loved it"
+
+    call_kwargs = mock_components["storage"].update_item_from_ui.call_args[1]
+    assert call_kwargs["rating"] is UNSET
+    assert call_kwargs["review"] is UNSET
+
+
+def test_edit_item_explicit_null_clears_rating(client, mock_components):
+    """PATCH with an explicit null rating still clears it (the edit dialog's path)."""
+    updated_item = ContentItem(
+        id="ext_1",
+        db_id=42,
+        title="Unrated Book",
+        content_type=ContentType.BOOK,
+        status=ConsumptionStatus.COMPLETED,
+    )
+    mock_components["storage"].update_item_from_ui = Mock(
+        spec=StorageManager.update_item_from_ui, return_value=True
+    )
+    mock_components["storage"].get_content_item = Mock(
+        spec=StorageManager.get_content_item, return_value=updated_item
+    )
+
+    response = client.patch(
+        "/api/items/42?user_id=1",
+        json={"status": "completed", "rating": None, "review": None},
+    )
+
+    assert response.status_code == 200
+    call_kwargs = mock_components["storage"].update_item_from_ui.call_args[1]
+    assert call_kwargs["rating"] is None
+    assert call_kwargs["review"] is None
 
 
 def test_edit_item_not_found(client, mock_components):
@@ -2203,8 +2416,8 @@ def test_edit_item_manual_metadata(client, mock_components):
     mock_components["storage"].update_item_from_ui.assert_called_once_with(
         db_id=7,
         status="unread",
-        rating=None,
-        review=None,
+        rating=UNSET,
+        review=UNSET,
         seasons_watched=None,
         genres=["Drama"],
         tags=["slow-burn"],
@@ -2235,7 +2448,7 @@ def test_edit_item_without_manual_metadata_passes_none(client, mock_components):
         db_id=7,
         status="completed",
         rating=4,
-        review=None,
+        review=UNSET,
         seasons_watched=None,
         genres=None,
         tags=None,
@@ -2598,6 +2811,77 @@ class TestSearchParam:
         data = response.json()
         assert len(data) == 1
         assert data[0]["title"] == "Dune"
+
+    def test_non_latin_search_term_reaches_storage_unmangled(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """A non-Latin search term survives the round trip to storage and back.
+
+        Storage is mocked, so the matching itself is not exercised here —
+        ``tests/test_sorting.py`` covers that. What this pins is the web half:
+        the percent-encoded term arrives at storage byte-for-byte and a
+        matched title in a non-Latin script comes back through the JSON
+        response unchanged.
+        """
+        mock_items = [
+            ContentItem(
+                id="1",
+                title="進撃の巨人",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.COMPLETED,
+                source="tmdb",
+            )
+        ]
+        mock_components["storage"].get_content_items = Mock(
+            spec=StorageManager.get_content_items, return_value=mock_items
+        )
+
+        response = client.get("/api/items", params={"search": "進撃の巨人"})
+        assert response.status_code == 200
+
+        call_kwargs = mock_components["storage"].get_content_items.call_args[1]
+        assert call_kwargs["search"] == "進撃の巨人"
+        assert response.json()[0]["title"] == "進撃の巨人"
+
+    def test_over_long_search_term_is_rejected_regression(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """An unbounded search term is a free scan of the whole library.
+
+        Bug reported: the search parameter had no maximum length. Matching
+        normalizes both sides and then slides a SequenceMatcher window over
+        every candidate title, and the query has no SQL LIMIT to shorten the
+        candidate set, so the term's length multiplies the cost of a scan an
+        anonymous caller can start.
+        Root cause: ``search`` was declared as a plain optional string.
+        Fix: the parameter is bounded, and the CLI's ``--search`` refuses the
+        same length so the two interfaces agree on what a valid search is.
+        """
+        mock_components["storage"].get_content_items = Mock(
+            spec=StorageManager.get_content_items, return_value=[]
+        )
+
+        response = client.get(
+            "/api/items", params={"search": "x" * (MAX_SEARCH_LENGTH + 1)}
+        )
+
+        assert response.status_code == 422
+        mock_components["storage"].get_content_items.assert_not_called()
+
+    def test_search_term_at_the_limit_is_accepted(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """The bound is inclusive, so a term of exactly the limit still runs."""
+        mock_components["storage"].get_content_items = Mock(
+            spec=StorageManager.get_content_items, return_value=[]
+        )
+        term = "x" * MAX_SEARCH_LENGTH
+
+        response = client.get("/api/items", params={"search": term})
+
+        assert response.status_code == 200
+        call_kwargs = mock_components["storage"].get_content_items.call_args[1]
+        assert call_kwargs["search"] == term
 
 
 # ---------------------------------------------------------------------------

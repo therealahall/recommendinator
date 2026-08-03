@@ -2,14 +2,14 @@
 
 import json
 import logging
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Annotated, Any, assert_never, cast
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field
 
 from src import __version__ as APP_VERSION
 from src.cli.config import get_feature_flags
@@ -20,6 +20,7 @@ from src.ingestion.sync import (
     resolve_max_workers,
 )
 from src.models.content import (
+    MAX_REVIEW_LENGTH,
     ConsumptionStatus,
     ContentItem,
     ContentType,
@@ -36,9 +37,10 @@ from src.settings.service import (
     reset_setting,
     set_secret,
 )
-from src.storage.manager import VALID_SORT_OPTIONS, StorageManager
+from src.storage.manager import UNSET, VALID_SORT_OPTIONS, StorageManager
 from src.utils.item_serialization import item_to_dict
 from src.utils.series import MAX_SEASONS
+from src.utils.sorting import MAX_SEARCH_LENGTH
 from src.utils.text import humanize_source_id
 from src.web.enrichment_manager import get_enrichment_manager
 from src.web.epic_auth import (
@@ -100,6 +102,46 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["api"])
 
 
+def _blank_review_validator(remedy: str) -> Callable[[str], str]:
+    """Build the blank-review validator for one surface's remedy.
+
+    The check is common to every request model carrying a review — the field's
+    lower bound already refuses ``""``, and a string of spaces is the same
+    claim in a form the schema cannot express — but the remedy is not, so the
+    message belongs to the model. This is the split ``src/cli/commands.py``
+    already makes around ``_is_blank_review``.
+    """
+
+    def reject(value: str) -> str:
+        if not value.strip():
+            raise ValueError(f"review cannot be blank{remedy}")
+        return value
+
+    return reject
+
+
+#: A review the user actually wrote. Blank is not a review — stored, it reads
+#: as one they wrote and stops a later import from filling the field.
+#: On an edit, clearing is therefore the explicit null alone (the CLI spells it
+#: ``--clear-review``).
+EditReviewText = Annotated[
+    str,
+    Field(min_length=1, max_length=MAX_REVIEW_LENGTH),
+    AfterValidator(_blank_review_validator("; send null to clear it")),
+]
+
+#: The same review, on a completion, where there is nothing to clear: a null
+#: is indistinguishable from omitting the field, and either way the door
+#: leaves a stored review in place. Naming the edit endpoint's remedy here
+#: would promise a clear that never happens, so this message names none —
+#: matching ``complete``, which says only that ``--review`` cannot be empty.
+CompletionReviewText = Annotated[
+    str,
+    Field(min_length=1, max_length=MAX_REVIEW_LENGTH),
+    AfterValidator(_blank_review_validator("")),
+]
+
+
 # Request/Response models
 class CompletionRequest(BaseModel):
     """Request model for marking content as completed."""
@@ -110,7 +152,7 @@ class CompletionRequest(BaseModel):
     title: str = Field(..., max_length=500, description="Title of the content")
     author: str | None = Field(None, max_length=500, description="Author (for books)")
     rating: int | None = Field(None, ge=1, le=5, description="Rating (1-5)")
-    review: str | None = Field(None, max_length=10000, description="Review text")
+    review: CompletionReviewText | None = Field(None, description="Review text")
 
 
 class UpdateRequest(BaseModel):
@@ -313,11 +355,16 @@ class IgnoreItemRequest(BaseModel):
 
 
 class ItemEditRequest(BaseModel):
-    """Request model for editing a content item from the UI."""
+    """Request model for editing a content item from the UI.
+
+    ``rating`` and ``review`` distinguish omitted from null: a field absent
+    from the request body leaves the stored value alone, an explicit ``null``
+    clears it. See ``edit_item``.
+    """
 
     status: str = Field(..., description="Status value")
     rating: int | None = Field(None, ge=1, le=5)
-    review: str | None = Field(None, max_length=10000)
+    review: EditReviewText | None = None
     seasons_watched: list[Annotated[int, Field(ge=1, le=MAX_SEASONS)]] | None = Field(
         None, max_length=MAX_SEASONS
     )
@@ -897,7 +944,11 @@ async def list_items(
         None,
         description="Filter by enrichment state: enriched or not_enriched",
     ),
-    search: str | None = Query(None, description="Search term for title/creator"),
+    search: str | None = Query(
+        None,
+        max_length=MAX_SEARCH_LENGTH,
+        description="Search term for title/creator",
+    ),
     needs_rating: bool = Query(
         False,
         description="Only return completed items that have no rating yet",
@@ -1109,6 +1160,12 @@ async def edit_item(
     seasons_watched (TV shows). Unlike sync, status can go backward
     and rating/review can be changed or cleared.
 
+    Only the fields present in the request body are written: omitting
+    ``rating`` or ``review`` leaves the stored value untouched, while sending
+    an explicit ``null`` clears it. A blank ``review`` is rejected rather than
+    stored, so clearing one is always the null — the same two instructions
+    ``library edit`` spells ``--review`` and ``--clear-review``.
+
     Args:
         db_id: Database ID of the item.
         request: Edit request with new values.
@@ -1129,11 +1186,12 @@ async def edit_item(
             detail="Invalid status. Valid options: completed, currently_consuming, unread",
         )
 
+    supplied = request.model_fields_set
     success = storage.update_item_from_ui(
         db_id=db_id,
         status=request.status,
-        rating=request.rating,
-        review=request.review,
+        rating=request.rating if "rating" in supplied else UNSET,
+        review=request.review if "review" in supplied else UNSET,
         seasons_watched=request.seasons_watched,
         genres=request.genres,
         tags=request.tags,
@@ -1215,6 +1273,12 @@ async def update_user_preferences(
 async def mark_complete(request: CompletionRequest) -> dict[str, Any]:
     """Mark content as completed.
 
+    A blank ``review`` is rejected rather than stored, as it is on the edit
+    endpoint and on ``complete --review``: this is an overwriting door, so a
+    blank accepted here would replace a review the user wrote. Unlike the edit
+    endpoint, a null cannot clear one: it is indistinguishable from omitting
+    the field, and either way the stored review is left alone.
+
     Args:
         request: Completion request
 
@@ -1239,7 +1303,6 @@ async def mark_complete(request: CompletionRequest) -> dict[str, Any]:
             detail="Invalid content type. Valid options: book, movie, tv_show, video_game",
         ) from None
 
-    # Create content item
     item = ContentItem(
         id=None,
         title=request.title,
@@ -1255,16 +1318,15 @@ async def mark_complete(request: CompletionRequest) -> dict[str, Any]:
         embedding = None
         if use_embeddings and embedding_gen:
             embedding = embedding_gen.generate_content_embedding(item)
-        db_id = storage.save_content_item(item, embedding=embedding)
-
-        safe_title = request.title.replace("\n", " ").replace("\r", " ")
-        return {"message": f"Marked '{safe_title}' as completed", "id": db_id}
-
+        db_id = storage.complete_content_item(item, embedding=embedding)
     except Exception as error:
         logger.error("Error marking content as completed: %s", error)
         raise HTTPException(
             status_code=500, detail="Failed to mark content as completed"
         ) from error
+
+    safe_title = request.title.replace("\n", " ").replace("\r", " ")
+    return {"message": f"Marked '{safe_title}' as completed", "id": db_id}
 
 
 @router.post("/update")

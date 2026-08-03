@@ -5,6 +5,7 @@ from datetime import date
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
 from click.testing import CliRunner
 
 from src.cli.commands import (
@@ -15,8 +16,9 @@ from src.cli.commands import (
     MAX_TAGS,
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
-from src.storage.manager import StorageManager
+from src.storage.manager import UNSET, StorageManager
 from src.utils.series import MAX_SEASONS
+from src.utils.sorting import MAX_SEARCH_LENGTH
 
 from .conftest import _invoke_with_mocks
 
@@ -263,6 +265,73 @@ class TestLibraryList:
         call_kwargs = mock_storage.get_content_items.call_args[1]
         assert call_kwargs["search"] == "Dune"
         assert call_kwargs["content_type"] == ContentType.BOOK
+
+    def test_list_passes_a_non_latin_search_term_through_unmangled(
+        self, cli_runner: CliRunner
+    ) -> None:
+        """A non-Latin --search term reaches storage and renders in both formats.
+
+        Storage is mocked, so the matching itself is not exercised here —
+        ``tests/test_sorting.py`` covers that. What this pins is the CLI half:
+        Click hands the term to storage byte-for-byte, and a matched title in
+        a non-Latin script survives both the table and the JSON rendering.
+        """
+        items = [_make_item(db_id=1, title="進撃の巨人", author="諫山創")]
+        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage.get_content_items.return_value = items
+
+        result = _invoke_with_mocks(
+            cli_runner, ["library", "list", "--search", "進撃の巨人"], mock_storage
+        )
+
+        assert result.exit_code == 0
+        assert "進撃の巨人" in result.output
+        call_kwargs = mock_storage.get_content_items.call_args[1]
+        assert call_kwargs["search"] == "進撃の巨人"
+
+        json_result = _invoke_with_mocks(
+            cli_runner,
+            ["library", "list", "--search", "進撃の巨人", "--format", "json"],
+            mock_storage,
+        )
+
+        assert json_result.exit_code == 0
+        assert json.loads(json_result.output)[0]["title"] == "進撃の巨人"
+
+    def test_list_rejects_an_over_long_search_term(self, cli_runner: CliRunner) -> None:
+        """--search is bounded at the same length the web API accepts.
+
+        Fuzzy matching slides a window over every candidate title with no SQL
+        LIMIT to stop it, so the term's length multiplies the cost of the
+        whole scan. The web rejects a longer term with a 422; the CLI has to
+        agree or the two interfaces disagree about what a valid search is.
+        """
+        mock_storage = MagicMock(spec=StorageManager)
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["library", "list", "--search", "x" * (MAX_SEARCH_LENGTH + 1)],
+            mock_storage,
+        )
+
+        assert result.exit_code != 0
+        assert f"at most {MAX_SEARCH_LENGTH} characters" in result.output
+        mock_storage.get_content_items.assert_not_called()
+
+    def test_list_accepts_a_search_term_at_the_limit(
+        self, cli_runner: CliRunner
+    ) -> None:
+        """The bound is inclusive, so a term of exactly the limit still runs."""
+        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage.get_content_items.return_value = []
+        term = "x" * MAX_SEARCH_LENGTH
+
+        result = _invoke_with_mocks(
+            cli_runner, ["library", "list", "--search", term], mock_storage
+        )
+
+        assert result.exit_code == 0
+        assert mock_storage.get_content_items.call_args[1]["search"] == term
 
     def test_list_without_search_passes_none(self, cli_runner: CliRunner) -> None:
         """Test that omitting --search forwards search=None (unchanged behavior)."""
@@ -902,6 +971,279 @@ class TestLibraryEditRegression:
         call_kwargs = mock_storage.update_item_from_ui.call_args[1]
         assert len(call_kwargs["genres"]) == MAX_GENRES
         assert len(call_kwargs["tags"]) == MAX_TAGS
+
+
+class TestLibraryEditPartialUpdate:
+    """Regression tests for `library edit` erasing fields it was not given.
+
+    Bug reported: ``library edit --id N --genre X`` (or any edit that did not
+    repeat the rating) nulled the item's rating and review. The rating is the
+    taste signal, so the item silently dropped out of preference analysis, and
+    the value could not be recovered.
+    Root cause: unset ``--rating`` / ``--review`` are None, and storage wrote
+    both columns unconditionally — "not supplied" and "clear it" were the same
+    value.
+    Fix: the CLI forwards UNSET for a flag the user did not pass, and storage
+    only writes the fields it was actually given.
+    """
+
+    def _seeded_storage(self, tmp_path: Path) -> tuple[StorageManager, int]:
+        """A real temp-DB storage holding one rated, reviewed book."""
+        storage = StorageManager(sqlite_path=tmp_path / "library.db")
+        db_id = storage.save_content_item(
+            ContentItem(
+                id="book-1",
+                title="Dune",
+                author="Frank Herbert",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+                review="Loved it",
+            ),
+            user_id=1,
+        )
+        return storage, db_id
+
+    def test_genre_only_edit_preserves_rating_regression(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """A genre-only edit leaves the stored rating and review in place."""
+        storage, db_id = self._seeded_storage(tmp_path)
+
+        edited = _invoke_with_mocks(
+            cli_runner,
+            ["library", "edit", "--id", str(db_id), "--genre", "Science Fiction"],
+            storage,
+        )
+        assert edited.exit_code == 0, edited.output
+
+        shown = _invoke_with_mocks(
+            cli_runner,
+            ["library", "show", "--id", str(db_id), "--format", "json"],
+            storage,
+        )
+        assert shown.exit_code == 0, shown.output
+        parsed = json.loads(shown.output)
+        assert parsed["rating"] == 5
+        assert parsed["review"] == "Loved it"
+        assert parsed["genres"] == ["Science Fiction"]
+
+    def test_status_only_edit_preserves_rating_regression(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """A status-only edit leaves the stored rating and review in place."""
+        storage, db_id = self._seeded_storage(tmp_path)
+
+        edited = _invoke_with_mocks(
+            cli_runner,
+            ["library", "edit", "--id", str(db_id), "--status", "currently_consuming"],
+            storage,
+        )
+        assert edited.exit_code == 0, edited.output
+
+        stored = storage.get_content_item(db_id, user_id=1)
+        assert stored is not None
+        assert stored.status == ConsumptionStatus.CURRENTLY_CONSUMING
+        assert stored.rating == 5
+        assert stored.review == "Loved it"
+
+    def test_rating_edit_overwrites_the_existing_rating(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """An explicit --rating still replaces the stored value."""
+        storage, db_id = self._seeded_storage(tmp_path)
+
+        edited = _invoke_with_mocks(
+            cli_runner,
+            ["library", "edit", "--id", str(db_id), "--rating", "2"],
+            storage,
+        )
+        assert edited.exit_code == 0, edited.output
+
+        stored = storage.get_content_item(db_id, user_id=1)
+        assert stored is not None
+        assert stored.rating == 2
+        assert stored.review == "Loved it"
+
+    def test_unset_flags_are_forwarded_as_unset(self, cli_runner: CliRunner) -> None:
+        """The CLI sends UNSET, not None, for flags the user did not pass."""
+        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage.get_content_item.return_value = _make_item(db_id=1)
+        mock_storage.update_item_from_ui.return_value = True
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["library", "edit", "--id", "1", "--status", "completed"],
+            mock_storage,
+        )
+
+        assert result.exit_code == 0
+        call_kwargs = mock_storage.update_item_from_ui.call_args[1]
+        assert call_kwargs["rating"] is UNSET
+        assert call_kwargs["review"] is UNSET
+
+
+class TestLibraryEditClearing:
+    """Regression tests for clearing a rating or review from the CLI.
+
+    Bug reported: a mis-rated item could not be put back to unrated from the
+    command line, so it stayed out of ``library list --needs-rating`` forever
+    and kept feeding preference analysis a score the user disowned. The web
+    edit dialog clears both fields by sending an explicit null.
+    Root cause: making an omitted flag mean "leave it alone" — which it had to,
+    so that a genre-only edit stopped erasing the rating — left the CLI with no
+    way to say "clear it" at all. Before that, ``--status completed`` nulled
+    the rating implicitly, so the capability existed by accident and then went
+    away. An empty ``--review ""`` was worse than nothing: it stored the empty
+    string, which is not the NULL the web stores and which reads to the sync
+    door as a review the user wrote, so no later import could ever fill one in.
+    Fix: explicit ``--clear-rating`` / ``--clear-review`` flags that send the
+    same None the web sends, and an empty ``--review`` is refused rather than
+    stored.
+    """
+
+    def _seeded_storage(self, tmp_path: Path) -> tuple[StorageManager, int]:
+        """A real temp-DB storage holding one rated, reviewed book."""
+        storage = StorageManager(sqlite_path=tmp_path / "clear.db")
+        db_id = storage.save_content_item(
+            ContentItem(
+                id="book-1",
+                title="Dune",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+                review="Loved it",
+            ),
+            user_id=1,
+        )
+        return storage, db_id
+
+    def test_clear_rating_stores_null_regression(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """--clear-rating puts the item back among the unrated."""
+        storage, db_id = self._seeded_storage(tmp_path)
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["library", "edit", "--id", str(db_id), "--clear-rating"],
+            storage,
+        )
+
+        assert result.exit_code == 0, result.output
+        stored = storage.get_content_item(db_id, user_id=1)
+        assert stored is not None
+        assert stored.rating is None
+        assert stored.review == "Loved it"
+        assert storage.get_content_items(user_id=1, unrated_only=True) != []
+
+    def test_clear_review_stores_null_regression(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """--clear-review stores NULL, not the empty string the web never sends."""
+        storage, db_id = self._seeded_storage(tmp_path)
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["library", "edit", "--id", str(db_id), "--clear-review"],
+            storage,
+        )
+
+        assert result.exit_code == 0, result.output
+        stored = storage.get_content_item(db_id, user_id=1)
+        assert stored is not None
+        assert stored.review is None
+        assert stored.rating == 5
+
+    def test_clear_flags_forward_none_like_the_web(self, cli_runner: CliRunner) -> None:
+        """The clear flags send the same None the web's explicit null sends."""
+        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage.get_content_item.return_value = _make_item(db_id=1)
+        mock_storage.update_item_from_ui.return_value = True
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["library", "edit", "--id", "1", "--clear-rating", "--clear-review"],
+            mock_storage,
+        )
+
+        assert result.exit_code == 0
+        call_kwargs = mock_storage.update_item_from_ui.call_args[1]
+        assert call_kwargs["rating"] is None
+        assert call_kwargs["review"] is None
+
+    @pytest.mark.parametrize("review", ["", "   "])
+    def test_empty_review_is_refused_regression(
+        self, cli_runner: CliRunner, tmp_path: Path, review: str
+    ) -> None:
+        """An empty --review is refused rather than stored as an empty string.
+
+        ``--review ""`` is the form the bug was reported against; whitespace is
+        the same emptiness spelled differently, and the guard strips before
+        testing so both must be refused alike.
+        """
+        storage, db_id = self._seeded_storage(tmp_path)
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["library", "edit", "--id", str(db_id), "--review", review],
+            storage,
+        )
+
+        assert result.exit_code != 0
+        assert "--clear-review" in result.output
+        stored = storage.get_content_item(db_id, user_id=1)
+        assert stored is not None
+        assert stored.review == "Loved it"
+
+    def test_rating_and_clear_rating_together_are_refused(
+        self, cli_runner: CliRunner
+    ) -> None:
+        """Setting and clearing the rating in one command is a contradiction."""
+        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage.get_content_item.return_value = _make_item(db_id=1)
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["library", "edit", "--id", "1", "--rating", "3", "--clear-rating"],
+            mock_storage,
+        )
+
+        assert result.exit_code != 0
+        assert "cannot be used together" in result.output
+        mock_storage.update_item_from_ui.assert_not_called()
+
+    def test_review_and_clear_review_together_are_refused(
+        self, cli_runner: CliRunner
+    ) -> None:
+        """Setting and clearing the review in one command is a contradiction."""
+        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage.get_content_item.return_value = _make_item(db_id=1)
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["library", "edit", "--id", "1", "--review", "Fine", "--clear-review"],
+            mock_storage,
+        )
+
+        assert result.exit_code != 0
+        assert "cannot be used together" in result.output
+        mock_storage.update_item_from_ui.assert_not_called()
+
+    def test_a_clear_flag_alone_is_enough_of_an_edit(
+        self, cli_runner: CliRunner
+    ) -> None:
+        """A clear flag on its own satisfies the "provide something" check."""
+        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage.get_content_item.return_value = _make_item(db_id=1)
+        mock_storage.update_item_from_ui.return_value = True
+
+        result = _invoke_with_mocks(
+            cli_runner, ["library", "edit", "--id", "1", "--clear-rating"], mock_storage
+        )
+
+        assert result.exit_code == 0
+        mock_storage.update_item_from_ui.assert_called_once()
 
 
 class TestLibraryIgnore:

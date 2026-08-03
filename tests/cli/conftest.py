@@ -8,6 +8,7 @@ from click.testing import CliRunner
 from src.cli.main import cli
 from src.llm.embeddings import EmbeddingGenerator
 from src.llm.recommendations import RecommendationGenerator
+from src.storage.manager import StorageManager
 from tests.factories import back_mock_settings_store
 
 
@@ -41,7 +42,7 @@ def _cli_patches():
 def _invoke_with_mocks(
     cli_runner: CliRunner,
     args: list[str],
-    mock_storage: MagicMock,
+    mock_storage: MagicMock | StorageManager,
     config: dict | None = None,
     input_text: str | None = None,
     llm_client: MagicMock | None = None,
@@ -51,7 +52,8 @@ def _invoke_with_mocks(
     Args:
         cli_runner: Click test runner
         args: CLI arguments
-        mock_storage: Pre-configured storage mock
+        mock_storage: Pre-configured storage mock, or a real temp-DB
+            StorageManager when a test needs the command to hit real storage
         config: Config dict (default: empty)
         input_text: Simulated stdin input
         llm_client: Optional LLM client mock (default: None/AI disabled)

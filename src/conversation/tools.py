@@ -13,6 +13,7 @@ from src.models.content import (
     get_enum_value,
 )
 from src.models.conversation import ToolResult
+from src.storage.manager import unset_if_none
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
@@ -166,6 +167,22 @@ _VALID_TOOL_NAMES: frozenset[str] = frozenset(
 )
 
 
+def _supplied_review(params: dict[str, Any]) -> str | None:
+    """The review the user actually wrote, or None when they wrote none.
+
+    Chat is the only review-writing surface with no request schema in front of
+    it: these parameters are LLM output rather than a validated form, so the
+    value can be blank, all whitespace, or not a string at all. Both doors
+    behind chat overwrite what they are given, and a stored blank reads as a
+    review the user wrote and stops any later import from filling the field,
+    so it is dropped here — once, rather than at each call site.
+    """
+    review = params.get("review")
+    if not isinstance(review, str) or not review.strip():
+        return None
+    return review
+
+
 def get_tool_descriptions() -> str:
     """Get formatted tool descriptions for inclusion in prompts.
 
@@ -251,10 +268,53 @@ class ToolExecutor:
         }
         return handlers.get(tool_name)
 
+    def _persist_user_edit(
+        self,
+        item_id: int,
+        user_id: int,
+        status: str,
+        rating: int | None,
+        review: str | None,
+    ) -> ContentItem | None:
+        """Apply an explicit user edit and return the item as it was stored.
+
+        A chat edit is an explicit user action, so it goes through
+        ``update_item_from_ui`` — the door that may overwrite user-owned
+        fields — rather than the sync door, which only fills empty ones. A
+        value the user did not give (a rating they never mentioned) is sent as
+        UNSET so the door leaves it alone.
+
+        Completing is not an edit and does not come through here: it has its
+        own door, so that chat dates a completion the way the ``complete``
+        command and ``POST /api/complete`` do.
+
+        Returns None when the door reports the write did not land, so a
+        handler never announces a change the database does not hold. The row
+        is read back because the handlers quote the stored values.
+        """
+        updated = self.storage.update_item_from_ui(
+            db_id=item_id,
+            status=status,
+            rating=unset_if_none(rating),
+            review=unset_if_none(review),
+            user_id=user_id,
+        )
+        if not updated:
+            return None
+        return self.storage.get_content_item(item_id, user_id=user_id)
+
     def _handle_mark_completed(
         self, params: dict[str, Any], user_id: int
     ) -> ToolResult:
         """Mark an item as completed.
+
+        Goes through ``complete_content_item``, the same door the ``complete``
+        command and ``POST /api/complete`` use, so that one user intention
+        gets one answer whichever surface it arrives on. The door owns the
+        date rule — an empty completion date is filled with today in the
+        host's zone, a stored one is kept — which is why nothing here decides
+        it. A date the user does name is passed on and written as given,
+        including a correction pointing to an earlier day than the stored one.
 
         Args:
             params: Tool parameters (item_id, rating, review, date_completed)
@@ -272,41 +332,52 @@ class ToolExecutor:
         if not item:
             return ToolResult(success=False, message=f"Item {item_id} not found")
 
-        # Update fields
-        item.status = ConsumptionStatus.COMPLETED
+        rating = params.get("rating")
+        if rating is not None and not (1 <= rating <= 5):
+            return ToolResult(success=False, message="Rating must be between 1-5")
 
-        if "rating" in params and params["rating"] is not None:
-            rating = params["rating"]
-            if not (1 <= rating <= 5):
-                return ToolResult(success=False, message="Rating must be between 1-5")
-            item.rating = rating
-
-        if "review" in params and params["review"]:
-            item.review = params["review"]
-
-        if "date_completed" in params and params["date_completed"]:
+        completed_on: date | None = None
+        raw_date = params.get("date_completed")
+        if raw_date:
             try:
-                item.date_completed = date.fromisoformat(params["date_completed"])
+                completed_on = date.fromisoformat(raw_date)
             except ValueError:
                 return ToolResult(
                     success=False,
                     message="Invalid date format. Use YYYY-MM-DD",
                 )
-        else:
-            item.date_completed = date.today()
 
-        # Save the updated item
-        self.storage.save_content_item(item, user_id=user_id)
+        # The item is identified by external id and title rather than by
+        # db_id because the door finds or creates its own row, so the id it
+        # returns — not the one asked for — names the row that was written.
+        db_id = self.storage.complete_content_item(
+            ContentItem(
+                id=item.id,
+                title=item.title,
+                content_type=item.content_type,
+                status=ConsumptionStatus.COMPLETED,
+                rating=rating,
+                review=_supplied_review(params),
+                date_completed=completed_on,
+            ),
+            user_id=user_id,
+        )
+        stored = self.storage.get_content_item(db_id, user_id=user_id)
+        if stored is None:
+            return ToolResult(
+                success=False,
+                message=f"Could not mark '{item.title}' as completed",
+            )
 
-        rating_text = f" with {item.rating}/5" if item.rating else ""
+        rating_text = f" with {stored.rating}/5" if stored.rating else ""
         return ToolResult(
             success=True,
-            message=f"Marked '{item.title}' as completed{rating_text}",
+            message=f"Marked '{stored.title}' as completed{rating_text}",
             data={
-                "item_id": item_id,
-                "title": item.title,
-                "rating": item.rating,
-                "date_completed": str(item.date_completed),
+                "item_id": db_id,
+                "title": stored.title,
+                "rating": stored.rating,
+                "date_completed": str(stored.date_completed),
             },
         )
 
@@ -336,13 +407,18 @@ class ToolExecutor:
             return ToolResult(success=False, message=f"Item {item_id} not found")
 
         old_rating = item.rating
-        item.rating = rating
-
-        if "review" in params and params["review"]:
-            item.review = params["review"]
-
-        # Save the updated item
-        self.storage.save_content_item(item, user_id=user_id)
+        stored = self._persist_user_edit(
+            item_id,
+            user_id,
+            status=get_enum_value(item.status),
+            rating=rating,
+            review=_supplied_review(params),
+        )
+        if stored is None:
+            return ToolResult(
+                success=False,
+                message=f"Could not update the rating for '{item.title}'",
+            )
 
         change_text = ""
         if old_rating:
@@ -350,12 +426,12 @@ class ToolExecutor:
 
         return ToolResult(
             success=True,
-            message=f"Updated '{item.title}' to {rating}/5{change_text}",
+            message=f"Updated '{stored.title}' to {stored.rating}/5{change_text}",
             data={
                 "item_id": item_id,
-                "title": item.title,
+                "title": stored.title,
                 "old_rating": old_rating,
-                "new_rating": rating,
+                "new_rating": stored.rating,
             },
         )
 

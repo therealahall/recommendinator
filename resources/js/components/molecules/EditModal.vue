@@ -47,7 +47,9 @@ function save() {
   const data: ItemEditRequest = {
     status: status.value,
     rating: rating.value,
-    review: review.value || null,
+    // A blank review would store "", which reads as a review the user wrote
+    // and blocks any later import from filling one in. Blank means clear.
+    review: review.value.trim() ? review.value : null,
     genres: genres.value,
     tags: tags.value,
     description: description.value || null,

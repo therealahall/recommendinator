@@ -153,6 +153,43 @@ describe('EditModal', () => {
     wrapper.unmount()
   })
 
+  it('save serializes a whitespace-only review to null', async () => {
+    // Regression: the payload coerced with `|| null`, so '' cleared the review
+    // but '   ' was sent as a string. A stored blank review reads as one the
+    // user wrote and blocks any later import from filling the field, so the
+    // API rejects it — the modal now clears on blank, as the CLI does.
+    const wrapper = mount(EditModal, {
+      props: { item: { ...defaultItem, review: 'Loved it.' }, saving: false },
+      attachTo: document.body,
+    })
+
+    await wrapper.find('#edit-review').setValue('   ')
+    await wrapper.findAll('.btn-primary').find(b => b.text().includes('Save'))!.trigger('click')
+
+    expect(wrapper.emitted('save')![0][1]).toEqual({
+      status: 'unread',
+      rating: null,
+      review: null,
+      genres: [],
+      tags: [],
+      description: null,
+    })
+    wrapper.unmount()
+  })
+
+  it('save keeps a review that has content', async () => {
+    const wrapper = mount(EditModal, {
+      props: { item: defaultItem, saving: false },
+      attachTo: document.body,
+    })
+
+    await wrapper.find('#edit-review').setValue('  Loved it.  ')
+    await wrapper.findAll('.btn-primary').find(b => b.text().includes('Save'))!.trigger('click')
+
+    expect((wrapper.emitted('save')![0][1] as { review: string | null }).review).toBe('  Loved it.  ')
+    wrapper.unmount()
+  })
+
   it('save serializes an empty description to null', async () => {
     const wrapper = mount(EditModal, {
       props: { item: defaultItem, saving: false },

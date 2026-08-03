@@ -26,6 +26,7 @@ from src.ingestion.sync import (
     resolve_max_workers,
 )
 from src.models.content import (
+    MAX_REVIEW_LENGTH,
     ConsumptionStatus,
     ContentItem,
     ContentType,
@@ -49,9 +50,10 @@ from src.settings.service import (
     setting_view,
 )
 from src.storage.credential_migration import migrate_config_credentials
-from src.storage.manager import StorageManager
+from src.storage.manager import StorageManager, unset_if_none
 from src.utils.item_serialization import item_to_dict
 from src.utils.series import MAX_SEASONS
+from src.utils.sorting import MAX_SEARCH_LENGTH
 from src.web.epic_auth import (
     exchange_code_for_tokens as exchange_epic_code,
     extract_code_from_input as extract_epic_code,
@@ -106,7 +108,18 @@ MAX_GENRES = 50
 MAX_TAGS = 100
 MAX_GENRE_TAG_LENGTH = 100
 MAX_DESCRIPTION_LENGTH = 10000
-MAX_REVIEW_LENGTH = 10000
+
+
+def _is_blank_review(review: str | None) -> bool:
+    """Whether a ``--review`` value is empty or all whitespace.
+
+    Storing ``""`` reads as a review the user wrote and blocks any later
+    import from filling one in, so ``complete`` and ``library edit`` both
+    refuse one, as the web request models do. Only the remedy differs —
+    ``library edit`` has ``--clear-review``, a completion has nothing yet to
+    clear — so each caller writes its own message.
+    """
+    return review is not None and not review.strip()
 
 
 @click.command()
@@ -510,7 +523,12 @@ def complete(
     rating: int | None,
     review: str | None,
 ) -> None:
-    """Mark content as completed."""
+    """Mark content as completed.
+
+    A rating or review given here replaces the stored one, so an empty
+    --review is refused rather than written over a review you wrote.
+    Mirrors the web API POST /api/complete.
+    """
     content_type = ContentType.from_string(content_type_str)
 
     storage = ctx.obj["storage"]
@@ -525,7 +543,10 @@ def complete(
         click.echo("Error: Rating must be between 1 and 5", err=True)
         raise click.Abort()
 
-    # Create content item
+    if _is_blank_review(review):
+        click.echo("Error: --review cannot be empty.", err=True)
+        raise click.Abort()
+
     item = ContentItem(
         id=None,  # Will be generated
         title=title,
@@ -541,12 +562,12 @@ def complete(
         embedding = None
         if use_embeddings:
             embedding = embedding_gen.generate_content_embedding(item)
-        db_id = storage.save_content_item(item, embedding)
-
-        click.echo(f"Marked '{title}' as completed (ID: {db_id})")
+        db_id = storage.complete_content_item(item, embedding=embedding)
     except Exception as error:
         click.echo(f"Error marking content as completed: {error}", err=True)
         raise click.Abort() from error
+
+    click.echo(f"Marked '{title}' as completed (ID: {db_id})")
 
 
 # ---------------------------------------------------------------------------
@@ -1271,6 +1292,13 @@ def library_list(
     user_id: int,
 ) -> None:
     """List library items with filters."""
+    if search is not None and len(search) > MAX_SEARCH_LENGTH:
+        click.echo(
+            f"Error: --search must be at most {MAX_SEARCH_LENGTH} characters.",
+            err=True,
+        )
+        raise click.Abort()
+
     storage = ctx.obj["storage"]
 
     content_type = (
@@ -1399,7 +1427,17 @@ def library_show(
     default=None,
     help="New rating (1-5)",
 )
+@click.option(
+    "--clear-rating",
+    is_flag=True,
+    help="Remove the rating, putting the item back in --needs-rating",
+)
 @click.option("--review", default=None, help="New review text")
+@click.option(
+    "--clear-review",
+    is_flag=True,
+    help="Remove the review text",
+)
 @click.option(
     "--seasons-watched",
     default=None,
@@ -1435,7 +1473,9 @@ def library_edit(
     item_id: int,
     status_str: str | None,
     rating: int | None,
+    clear_rating: bool,
     review: str | None,
+    clear_review: bool,
     seasons_watched: str | None,
     genres: tuple[str, ...],
     tags: tuple[str, ...],
@@ -1446,15 +1486,35 @@ def library_edit(
     if (
         status_str is None
         and rating is None
+        and not clear_rating
         and review is None
+        and not clear_review
         and seasons_watched is None
         and not genres
         and not tags
         and description is None
     ):
         click.echo(
-            "Error: Provide at least one of --status, --rating, --review, "
-            "--seasons-watched, --genre, --tag, --description.",
+            "Error: Provide at least one of --status, --rating, --clear-rating, "
+            "--review, --clear-review, --seasons-watched, --genre, --tag, "
+            "--description.",
+            err=True,
+        )
+        raise click.Abort()
+
+    if rating is not None and clear_rating:
+        click.echo(
+            "Error: --rating and --clear-rating cannot be used together.", err=True
+        )
+        raise click.Abort()
+    if review is not None and clear_review:
+        click.echo(
+            "Error: --review and --clear-review cannot be used together.", err=True
+        )
+        raise click.Abort()
+    if _is_blank_review(review):
+        click.echo(
+            "Error: --review cannot be empty. Use --clear-review to remove one.",
             err=True,
         )
         raise click.Abort()
@@ -1531,11 +1591,14 @@ def library_edit(
         )
         raise click.Abort()
 
+    # An unsupplied flag leaves the stored value alone; only --clear-rating /
+    # --clear-review send the None that storage writes as NULL, matching the
+    # explicit null the web edit dialog sends.
     updated = storage.update_item_from_ui(
         db_id=item_id,
         status=effective_status,
-        rating=rating,
-        review=review,
+        rating=None if clear_rating else unset_if_none(rating),
+        review=None if clear_review else unset_if_none(review),
         seasons_watched=parsed_seasons,
         genres=genre_list,
         tags=tag_list,
