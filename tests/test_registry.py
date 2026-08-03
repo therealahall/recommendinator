@@ -1,12 +1,15 @@
 """Tests for plugin registry."""
 
 import logging
+import pkgutil
 import types
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 import pytest
 
+from src.ingestion import sources
 from src.ingestion.plugin_base import ConfigField, SourcePlugin
 from src.ingestion.registry import PluginRegistry
 from src.ingestion.sources.arr_base import ArrPlugin
@@ -298,6 +301,34 @@ class TestPluginRegistry:
         # Force re-discover - should lose the manually added one
         clean_registry.discover_plugins(force=True)
         assert len(clean_registry.get_all_plugins()) < count_with_extra
+
+
+class TestIsolationPackageIsNotAPlugin:
+    """``src/ingestion/sources/_isolation/`` holds a test, not a source plugin.
+
+    Two independent things keep it out of the registry: discovery skips module
+    names starting with ``_``, and the package exports no ``SourcePlugin``. Both
+    are incidental until something asserts them — dropping either would put a
+    bogus source in front of users, so the guard is cheap insurance.
+    """
+
+    def test_isolation_package_is_scanned_but_contributes_no_plugin(
+        self, clean_registry: PluginRegistry
+    ) -> None:
+        """Discovery walks past the underscore package without registering it."""
+        sources_path = Path(sources.__file__).parent
+        scanned = {info.name for info in pkgutil.iter_modules([str(sources_path)])}
+        # Without this the assertions below pass vacuously once the package moves.
+        assert "_isolation" in scanned
+
+        clean_registry.discover_plugins()
+
+        assert "_isolation" not in clean_registry.list_plugin_names()
+        assert [
+            name
+            for name, plugin in clean_registry.get_all_plugins().items()
+            if type(plugin).__module__.startswith("src.ingestion.sources._isolation")
+        ] == []
 
 
 class TestPluginRegistrySingleton:
