@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import csv
 import logging
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -34,13 +34,49 @@ COMMON_COLUMNS = {
     "ignored",
 }
 
-# Additional columns per content type
-CONTENT_TYPE_COLUMNS: dict[str, set[str]] = {
-    "book": {"author", "isbn", "pages", "year_published", "genre"},
-    "movie": {"director", "year", "runtime_minutes", "genre"},
-    "tv_show": {"creator", "seasons_watched", "total_seasons", "year", "genre"},
-    "video_game": {"developer", "platform", "genre", "hours_played"},
+# Additional columns per content type, each mapped to the metadata key the
+# library stores that value under. The two are not always the same word — a
+# template says "year", the library stores "release_year" — and both the
+# import and the export path read this table, so a column can only ever be
+# written and read back under one name.
+#
+# The creator column (author/director/creator/developer) maps to itself and
+# is never read from here: it becomes ContentItem.author, not metadata.
+CONTENT_TYPE_COLUMNS: dict[str, dict[str, str]] = {
+    "book": {
+        "author": "author",
+        "isbn": "isbn",
+        "pages": "pages",
+        "year_published": "year_published",
+        "genre": "genres",
+    },
+    "movie": {
+        "director": "director",
+        "year": "release_year",
+        "runtime_minutes": "runtime",
+        "genre": "genres",
+    },
+    "tv_show": {
+        "creator": "creator",
+        "seasons_watched": "seasons_watched",
+        "total_seasons": "seasons",
+        "year": "release_year",
+        "genre": "genres",
+    },
+    "video_game": {
+        "developer": "developer",
+        "platform": "platforms",
+        "genre": "genres",
+        "hours_played": "playtime_hours",
+    },
 }
+
+# Template columns the library stores as a list. A template cell holds a
+# single value, so an import wraps it — every other plugin writes these as
+# lists, and readers such as ``extract_raw_genres`` (which builds the
+# embedding text before the item is ever saved) only recognise the list form
+# — and an export writes the first entry back out.
+LIST_VALUED_COLUMNS: frozenset[str] = frozenset({"genre", "platform"})
 
 # Status string mapping
 STATUS_MAP: dict[str, ConsumptionStatus] = {
@@ -96,6 +132,11 @@ CREATOR_FIELD: dict[str, str] = {
     "video_game": "developer",
 }
 
+# Every creator column, whichever type it belongs to. These become
+# ContentItem.author rather than metadata, so import and export both skip
+# them when walking the type-specific columns.
+CREATOR_COLUMNS: frozenset[str] = frozenset(CREATOR_FIELD.values())
+
 
 def parse_boolean_field(value: str | bool | int | None) -> bool:
     """Parse a boolean value from CSV or JSON input.
@@ -116,6 +157,31 @@ def parse_boolean_field(value: str | bool | int | None) -> bool:
         return value != 0
     normalized = str(value).strip().lower()
     return normalized in {"true", "yes", "1"}
+
+
+def parse_ignored_field(row: Mapping[str, Any]) -> bool | None:
+    """Read the optional ``ignored`` column/field from an import row.
+
+    Only a real value counts. A missing column, a blank CSV cell and a JSON
+    null all mean the file says nothing about the flag, and return None —
+    which tells storage to preserve whatever the user set. The blank cell
+    matters because ``csv.DictReader`` puts every header key into every row,
+    so exporting a library, hand-editing a few rows and re-importing would
+    otherwise clear the ignore flag on every row left untouched.
+
+    A stated ``true`` or ``false`` is returned as it reads, in both
+    directions, so the same round trip can un-ignore an item on purpose.
+
+    Args:
+        row: A CSV row or JSON entry.
+
+    Returns:
+        The parsed flag, or None when the source did not state one.
+    """
+    value = row.get("ignored")
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    return parse_boolean_field(value)
 
 
 def parse_seasons_watched(value: str | int | list[int] | None) -> list[int]:
@@ -321,8 +387,8 @@ class CsvImportPlugin(SourcePlugin):
         """
         source = self.get_source_identifier(config)
         logger.info("Parsing CSV file: %s", file_path)
-        expected_columns = COMMON_COLUMNS | CONTENT_TYPE_COLUMNS.get(
-            content_type.value, set()
+        expected_columns = COMMON_COLUMNS | set(
+            CONTENT_TYPE_COLUMNS.get(content_type.value, {})
         )
         creator_field = CREATOR_FIELD.get(content_type.value)
 
@@ -385,8 +451,8 @@ class CsvImportPlugin(SourcePlugin):
             if creator_field:
                 author = row.get(creator_field, "").strip() or None
 
-            # Parse ignored flag
-            ignored = parse_boolean_field(row.get("ignored", ""))
+            # Parse ignored flag (absent or blank leaves the stored flag alone)
+            ignored = parse_ignored_field(row)
 
             # Build metadata from type-specific columns
             metadata = _build_metadata(row, content_type)
@@ -419,6 +485,11 @@ class CsvImportPlugin(SourcePlugin):
 def _build_metadata(row: dict[str, str], content_type: ContentType) -> dict[str, Any]:
     """Build metadata dict from type-specific CSV columns.
 
+    Each column is stored under the metadata key the rest of the library uses
+    for it, so an imported value reaches its detail-table column instead of
+    the free-form metadata blob. An empty cell says nothing about the field
+    and is left out entirely.
+
     Args:
         row: CSV row as dict
         content_type: Content type for determining which columns to extract
@@ -427,16 +498,13 @@ def _build_metadata(row: dict[str, str], content_type: ContentType) -> dict[str,
         Metadata dictionary with non-empty values
     """
     metadata: dict[str, Any] = {}
-    type_columns = CONTENT_TYPE_COLUMNS.get(content_type.value, set())
+    type_columns = CONTENT_TYPE_COLUMNS.get(content_type.value, {})
 
-    # Common metadata fields to skip (already in ContentItem fields)
-    skip_fields = {"author", "director", "creator", "developer"}
-
-    for column in type_columns:
-        if column in skip_fields:
+    for column, metadata_key in type_columns.items():
+        if column in CREATOR_COLUMNS:
             continue
         value = row.get(column, "").strip()
         if value:
-            metadata[column] = value
+            metadata[metadata_key] = [value] if column in LIST_VALUED_COLUMNS else value
 
     return metadata

@@ -5,9 +5,23 @@ import io
 import json
 import tempfile
 from pathlib import Path
+from typing import Any
+from unittest.mock import patch
 
+from src.ingestion.sources.arr_base import ArrPlugin
+from src.ingestion.sources.generic_csv import (
+    COMMON_COLUMNS,
+    CONTENT_TYPE_COLUMNS,
+    CsvImportPlugin,
+)
+from src.ingestion.sources.generic_json import JsonImportPlugin
+from src.ingestion.sources.gog.gog import GogPlugin
+from src.ingestion.sources.radarr.radarr import RadarrPlugin
+from src.ingestion.sources.sonarr.sonarr import SonarrPlugin
+from src.ingestion.sources.steam.steam import SteamPlugin
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
-from src.web.export import export_items_csv, export_items_json
+from src.storage.sqlite_db import SQLiteDB
+from src.web.export import _CSV_COLUMN_ORDER, export_items_csv, export_items_json
 
 
 class TestExportSerialization:
@@ -23,7 +37,7 @@ class TestExportSerialization:
                 content_type=ContentType.BOOK,
                 status=ConsumptionStatus.COMPLETED,
                 rating=5,
-                metadata={"isbn": "978-0756404741", "genre": "Fantasy"},
+                metadata={"isbn": "978-0756404741", "genres": ["Fantasy"]},
             ),
         ]
         result = export_items_csv(items, ContentType.BOOK)
@@ -49,8 +63,8 @@ class TestExportSerialization:
                 rating=5,
                 metadata={
                     "seasons_watched": [1, 2, 5, 6],
-                    "total_seasons": "6",
-                    "genre": "Drama",
+                    "seasons": "6",
+                    "genres": ["Drama"],
                 },
             ),
         ]
@@ -90,7 +104,7 @@ class TestExportSerialization:
                 content_type=ContentType.BOOK,
                 status=ConsumptionStatus.COMPLETED,
                 rating=5,
-                metadata={"isbn": "978-0756404741", "genre": "Fantasy"},
+                metadata={"isbn": "978-0756404741", "genres": ["Fantasy"]},
             ),
         ]
         result = export_items_json(items, ContentType.BOOK)
@@ -115,8 +129,8 @@ class TestExportSerialization:
                 rating=5,
                 metadata={
                     "seasons_watched": [1, 2, 5, 6],
-                    "total_seasons": "6",
-                    "genre": "Drama",
+                    "seasons": "6",
+                    "genres": ["Drama"],
                 },
             ),
         ]
@@ -229,7 +243,7 @@ class TestExportSerialization:
                 content_type=ContentType.BOOK,
                 status=ConsumptionStatus.COMPLETED,
                 rating=5,
-                metadata={"genre": "Science Fiction"},
+                metadata={"genres": ["Science Fiction"]},
             ),
             ContentItem(
                 id="2",
@@ -238,7 +252,7 @@ class TestExportSerialization:
                 content_type=ContentType.BOOK,
                 status=ConsumptionStatus.COMPLETED,
                 rating=4,
-                metadata={"genre": "Cyberpunk"},
+                metadata={"genres": ["Cyberpunk"]},
             ),
             ContentItem(
                 id="3",
@@ -306,9 +320,9 @@ class TestExportSerialization:
                 status=ConsumptionStatus.COMPLETED,
                 rating=5,
                 metadata={
-                    "platform": "PC",
-                    "genre": "Action RPG",
-                    "hours_played": "120",
+                    "platforms": ["PC"],
+                    "genres": ["Action RPG"],
+                    "playtime_hours": "120",
                 },
             ),
         ]
@@ -331,7 +345,11 @@ class TestExportSerialization:
                 content_type=ContentType.MOVIE,
                 status=ConsumptionStatus.COMPLETED,
                 rating=5,
-                metadata={"year": "2017", "runtime_minutes": "164", "genre": "Sci-Fi"},
+                metadata={
+                    "release_year": "2017",
+                    "runtime": "164",
+                    "genres": ["Sci-Fi"],
+                },
             ),
         ]
         result = export_items_json(items, ContentType.MOVIE)
@@ -397,7 +415,7 @@ class TestExportSerialization:
                 content_type=ContentType.VIDEO_GAME,
                 status=ConsumptionStatus.COMPLETED,
                 rating=5,
-                metadata={"platform": "PC", "hours_played": "45"},
+                metadata={"platforms": ["PC"], "playtime_hours": "45"},
             ),
         ]
         result = export_items_csv(items, ContentType.VIDEO_GAME)
@@ -420,7 +438,7 @@ class TestExportSerialization:
                 content_type=ContentType.MOVIE,
                 status=ConsumptionStatus.COMPLETED,
                 rating=5,
-                metadata={"year": "2016", "runtime_minutes": "116"},
+                metadata={"release_year": "2016", "runtime": "116"},
             ),
         ]
         result = export_items_csv(items, ContentType.MOVIE)
@@ -433,13 +451,236 @@ class TestExportSerialization:
         assert "author" not in reader.fieldnames  # type: ignore[operator]
 
 
+def _store_and_read_back(tmp_path: Path, item: ContentItem) -> ContentItem:
+    """Save an item through a real database and read it back.
+
+    The returned item carries the metadata keys storage exposes, which is
+    what the exporter sees in production and what a hand-built metadata dict
+    in a test does not.
+    """
+    database = SQLiteDB(tmp_path / "export.db")
+    db_id = database.save_content_item(item)
+    stored = database.get_content_item(db_id)
+    assert stored is not None
+    return stored
+
+
+def _arr_item(plugin: ArrPlugin, payload: dict[str, Any]) -> ContentItem:
+    """Build the item an *arr plugin yields for *payload*, minus the HTTP call.
+
+    The metadata comes from the plugin's own extractor, so this fixture
+    cannot claim a key Radarr or Sonarr does not write.
+    """
+    return ContentItem(
+        id=plugin.build_external_id(payload),
+        title=payload["title"],
+        content_type=plugin.arr_content_type,
+        status=ConsumptionStatus.UNREAD,
+        source=plugin.name,
+        metadata=plugin.build_metadata(payload),
+    )
+
+
+def _gog_game(product: dict[str, Any]) -> ContentItem:
+    """Fetch the item the GOG plugin yields for *product*, minus the network."""
+    with (
+        patch(
+            "src.ingestion.sources.gog.gog.refresh_access_token",
+            return_value={"access_token": "access", "refresh_token": "refresh"},
+        ),
+        patch("src.ingestion.sources.gog.gog.get_owned_games", return_value=[product]),
+    ):
+        return next(
+            GogPlugin().fetch({"refresh_token": "token", "include_wishlist": False})
+        )
+
+
+def _steam_game(game: dict[str, Any]) -> ContentItem:
+    """Fetch the item the Steam plugin yields for *game*, minus the network."""
+    with patch(
+        "src.ingestion.sources.steam.steam.get_owned_games", return_value=[game]
+    ):
+        return next(
+            SteamPlugin().fetch({"api_key": "key", "steam_id": "76561197960287930"})
+        )
+
+
+def _csv_book(tmp_path: Path, csv_content: str) -> ContentItem:
+    """Fetch the item the CSV importer yields for a one-row book file."""
+    csv_path = tmp_path / "books.csv"
+    csv_path.write_text(csv_content, encoding="utf-8")
+    return next(
+        CsvImportPlugin().fetch({"path": str(csv_path), "content_type": "book"})
+    )
+
+
+class TestExportOfStoredItems:
+    """Export of items the shipped sources actually produce.
+
+    Bug reported: the year, runtime, total_seasons and platform columns came
+    out blank for every library item that did not originate from a generic
+    CSV/JSON import — a Radarr movie, a Sonarr show, a GOG game — so the
+    documented export/edit/re-import round trip silently dropped them.
+
+    Root cause: two mismatched vocabularies. The exporter looked each
+    type-specific value up in ``item.metadata`` under the *template* column
+    name (``year``, ``runtime_minutes``, ``total_seasons``, ``platform``),
+    while an item read back from storage carries the detail-table keys
+    (``release_year``, ``runtime``, ``seasons``, ``platforms``) — and the
+    detail tables in turn only recognised the canonical key, so the values
+    the *arr and Trakt plugins write (``year``, ``runtime_minutes``) never
+    reached their columns, which stayed NULL.
+
+    Fix: ``CONTENT_TYPE_COLUMNS`` names the metadata key each template column
+    carries and the exporter reads that key, and the detail-table config
+    accepts each plugin spelling as an alias of its column.
+
+    Every fixture below is produced by the named plugin rather than written
+    by hand, because a hand-written dict is what let both halves of this bug
+    pass their tests: they asserted keys the sources they were labelled with
+    never emit.
+    """
+
+    def test_movie_export_includes_year_and_runtime_regression(
+        self, tmp_path: Path
+    ) -> None:
+        """A stored Radarr movie exports its release year and runtime."""
+        stored = _store_and_read_back(
+            tmp_path,
+            _arr_item(
+                RadarrPlugin(),
+                {
+                    "title": "Inception",
+                    "tmdbId": 27205,
+                    "imdbId": "tt1375666",
+                    "year": 2010,
+                    "runtime": 148,
+                    "studio": "Warner Bros. Pictures",
+                    "genres": ["Action", "Sci-Fi"],
+                },
+            ),
+        )
+
+        rows = list(
+            csv.DictReader(io.StringIO(export_items_csv([stored], ContentType.MOVIE)))
+        )
+
+        assert rows[0]["year"] == "2010"
+        assert rows[0]["runtime_minutes"] == "148"
+        assert rows[0]["genre"] == "Action"
+
+    def test_tv_export_includes_total_seasons_regression(self, tmp_path: Path) -> None:
+        """A stored Sonarr show exports its season count and year."""
+        stored = _store_and_read_back(
+            tmp_path,
+            _arr_item(
+                SonarrPlugin(),
+                {
+                    "title": "Breaking Bad",
+                    "tvdbId": 81189,
+                    "imdbId": "tt0903747",
+                    "year": 2008,
+                    "network": "AMC",
+                    "genres": ["Drama", "Crime"],
+                    "statistics": {"seasonCount": 5, "episodeCount": 62},
+                },
+            ),
+        )
+
+        rows = list(
+            csv.DictReader(io.StringIO(export_items_csv([stored], ContentType.TV_SHOW)))
+        )
+
+        assert rows[0]["total_seasons"] == "5"
+        assert rows[0]["year"] == "2008"
+
+    def test_game_export_includes_platform_regression(self, tmp_path: Path) -> None:
+        """A stored GOG game exports a platform name, not a flag dict."""
+        stored = _store_and_read_back(
+            tmp_path,
+            _gog_game(
+                {
+                    "id": 1207658924,
+                    "title": "The Witcher 3: Wild Hunt",
+                    "slug": "the_witcher_3_wild_hunt",
+                    "genres": ["Role-playing"],
+                    "worksOn": {"Windows": True, "Mac": False, "Linux": True},
+                }
+            ),
+        )
+
+        rows = list(
+            csv.DictReader(
+                io.StringIO(export_items_csv([stored], ContentType.VIDEO_GAME))
+            )
+        )
+
+        assert rows[0]["platform"] == "Windows"
+        assert rows[0]["genre"] == "Role-playing"
+
+    def test_game_export_includes_playtime(self, tmp_path: Path) -> None:
+        """A stored Steam game exports the hours it recorded."""
+        stored = _store_and_read_back(
+            tmp_path,
+            _steam_game(
+                {
+                    "appid": 292030,
+                    "name": "The Witcher 3: Wild Hunt",
+                    "playtime_forever": 7200,
+                }
+            ),
+        )
+
+        rows = list(
+            csv.DictReader(
+                io.StringIO(export_items_csv([stored], ContentType.VIDEO_GAME))
+            )
+        )
+
+        assert rows[0]["hours_played"] == "120.0"
+
+    def test_book_export_includes_isbn_pages_and_year(self, tmp_path: Path) -> None:
+        """The book columns whose names already matched keep working."""
+        stored = _store_and_read_back(
+            tmp_path,
+            _csv_book(
+                tmp_path,
+                "title,author,rating,status,isbn,pages,year_published,genre\n"
+                "The Name of the Wind,Patrick Rothfuss,5,read,"
+                "978-0756404741,662,2007,Fantasy\n",
+            ),
+        )
+
+        rows = list(
+            csv.DictReader(io.StringIO(export_items_csv([stored], ContentType.BOOK)))
+        )
+
+        assert rows[0]["isbn"] == "978-0756404741"
+        assert rows[0]["pages"] == "662"
+        assert rows[0]["year_published"] == "2007"
+        assert rows[0]["genre"] == "Fantasy"
+
+
+class TestExportColumnConsistency:
+    """Ensures the export column order stays in sync with the templates."""
+
+    def test_csv_column_order_matches_template_columns(self) -> None:
+        """Every template column is exported, and nothing else is.
+
+        ``_CSV_COLUMN_ORDER`` fixes the export layout while
+        ``CONTENT_TYPE_COLUMNS`` declares what the templates hold. A column
+        added to one and not the other either exports blank forever or never
+        exports at all.
+        """
+        for content_type, columns in CONTENT_TYPE_COLUMNS.items():
+            assert set(_CSV_COLUMN_ORDER[content_type]) == COMMON_COLUMNS | set(columns)
+
+
 class TestExportRoundtrip:
     """Tests that exported data can be re-imported identically."""
 
     def test_csv_roundtrip_book(self) -> None:
         """Export a book to CSV, re-import it, verify fields match."""
-        from src.ingestion.sources.generic_csv import CsvImportPlugin
-
         original = ContentItem(
             id="rt1",
             title="Roundtrip Book",
@@ -448,7 +689,7 @@ class TestExportRoundtrip:
             status=ConsumptionStatus.COMPLETED,
             rating=4,
             ignored=True,
-            metadata={"genre": "Fantasy"},
+            metadata={"genres": ["Fantasy"]},
         )
 
         csv_content = export_items_csv([original], ContentType.BOOK)
@@ -473,8 +714,6 @@ class TestExportRoundtrip:
 
     def test_json_roundtrip_tv_show_with_seasons(self) -> None:
         """Export a TV show with seasons_watched to JSON, re-import, verify."""
-        from src.ingestion.sources.generic_json import JsonImportPlugin
-
         original = ContentItem(
             id="rt2",
             title="Roundtrip Show",
@@ -485,8 +724,8 @@ class TestExportRoundtrip:
             ignored=False,
             metadata={
                 "seasons_watched": [1, 2, 5, 6],
-                "total_seasons": 8,
-                "genre": "Drama",
+                "seasons": 8,
+                "genres": ["Drama"],
             },
         )
 
@@ -507,4 +746,45 @@ class TestExportRoundtrip:
         assert reimported[0].title == original.title
         assert reimported[0].author == original.author
         assert reimported[0].metadata["seasons_watched"] == [1, 2, 5, 6]
+        assert reimported[0].metadata["seasons"] == 8
         assert reimported[0].ignored is False
+
+    def test_csv_roundtrip_movie_through_storage_regression(
+        self, tmp_path: Path
+    ) -> None:
+        """A stored movie survives export, re-import and a second save.
+
+        This is the harm the blank export columns caused: the exported file
+        carried no year or runtime, so re-importing it dropped both and
+        content-length scoring fell back to its no-metadata default.
+        """
+        stored = _store_and_read_back(
+            tmp_path,
+            _arr_item(
+                RadarrPlugin(),
+                {
+                    "title": "Inception",
+                    "tmdbId": 27205,
+                    "imdbId": "tt1375666",
+                    "year": 2010,
+                    "runtime": 148,
+                },
+            ),
+        )
+        csv_path = tmp_path / "movies.csv"
+        csv_path.write_text(
+            export_items_csv([stored], ContentType.MOVIE), encoding="utf-8"
+        )
+
+        reimported = list(
+            CsvImportPlugin().fetch({"path": str(csv_path), "content_type": "movie"})
+        )
+        assert len(reimported) == 1
+
+        target = SQLiteDB(tmp_path / "reimported.db")
+        db_id = target.save_content_item(reimported[0])
+        round_tripped = target.get_content_item(db_id)
+
+        assert round_tripped is not None
+        assert round_tripped.metadata["release_year"] == 2010
+        assert round_tripped.metadata["runtime"] == 148

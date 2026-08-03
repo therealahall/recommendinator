@@ -702,9 +702,47 @@ class TestGogPluginFetch:
         assert metadata["genres"] == ["RPG", "Action"]
         assert metadata["tags"] == ["Open World", "Sci-Fi"]
         assert metadata["dlc_count"] == 2
-        assert metadata["platforms"]["windows"] is True
-        assert metadata["platforms"]["mac"] is False
-        assert metadata["platforms"]["linux"] is True
+        assert metadata["platforms"] == ["Windows", "Linux"]
+
+    @patch("src.ingestion.sources.gog.gog.get_owned_games")
+    @patch("src.ingestion.sources.gog.gog.refresh_access_token")
+    def test_platforms_omitted_when_no_platform_is_supported_regression(
+        self,
+        mock_refresh: Mock,
+        mock_owned: Mock,
+    ) -> None:
+        """``worksOn`` with nothing set writes no platforms at all.
+
+        Bug reported: GOG wrote ``platforms`` as a per-platform flag dict
+        while every other source — and the ``platforms`` detail column —
+        uses a list of names, so a GOG game exported a Python repr into the
+        CSV ``platform`` cell and re-imported that literal string.
+
+        Root cause: the flag dict was stored verbatim. It was also always
+        truthy, so a game GOG reports as running nowhere still claimed a
+        platform value.
+
+        Fix: keep only the platforms reported as supported, as a list of
+        their names, and write nothing when none are.
+        """
+        mock_refresh.return_value = {
+            "access_token": "access",
+            "refresh_token": "refresh",
+        }
+        mock_owned.return_value = [
+            {
+                "id": 43,
+                "title": "Unsupported Everywhere",
+                "worksOn": {"Windows": False, "Mac": False, "Linux": False},
+            },
+        ]
+
+        plugin = GogPlugin()
+        items = list(
+            plugin.fetch({"refresh_token": "token", "include_wishlist": False})
+        )
+
+        assert "platforms" not in items[0].metadata
 
     @patch("src.ingestion.sources.gog.gog.get_owned_games")
     @patch("src.ingestion.sources.gog.gog.refresh_access_token")

@@ -1,14 +1,18 @@
 """Tests for the shared sync executor."""
 
+import json
 import logging
 import threading
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
 from src.ingestion.plugin_base import SourceError, SourcePlugin
+from src.ingestion.sources.generic_csv import CsvImportPlugin
+from src.ingestion.sources.generic_json import JsonImportPlugin
 from src.ingestion.sync import (
     MAX_WORKERS_CEILING,
     SyncResult,
@@ -17,7 +21,7 @@ from src.ingestion.sync import (
     resolve_max_workers,
 )
 from src.llm.embeddings import EmbeddingGenerator
-from src.models.content import ContentItem
+from src.models.content import ConsumptionStatus, ContentItem
 from src.storage.manager import StorageManager
 from tests.factories import make_item
 
@@ -1005,3 +1009,122 @@ class TestSyncEmbeddingLogging:
         ]
         assert len(completed_messages) == 1
         assert "Embeddings" not in completed_messages[0]
+
+
+class TestIgnoreFlagSurvivesReimport:
+    """Regression tests for a re-import un-ignoring items the user ignored.
+
+    Bug reported: after ignoring an item in the app, re-running the sync for
+    the CSV/JSON file it came from silently cleared the ignore flag, so the
+    item came back as a recommendation candidate and back into the taste
+    signal, even though the file said nothing about ignoring.
+    Root cause: both generic importers called ``parse_boolean_field`` on a
+    missing key, which returns False, so every item carried a concrete
+    ``ignored=False`` that storage dutifully wrote over the user's flag.
+    Fix: ``parse_ignored_field`` returns None when the column/field is absent,
+    which is ContentItem's "not specified by this source" contract, and
+    storage preserves the stored value.
+    """
+
+    def _sync(self, plugin: SourcePlugin, path: Path, storage: StorageManager) -> None:
+        """Run one import of *path* as a book source through the real sync."""
+        execute_sync(
+            plugin=plugin,
+            plugin_config={"path": str(path), "content_type": "book"},
+            storage_manager=storage,
+        )
+
+    def _only_item(self, storage: StorageManager) -> ContentItem:
+        """Return the single stored item, failing loudly if there is not one."""
+        items = storage.get_content_items(user_id=1)
+        assert len(items) == 1
+        return items[0]
+
+    def test_reimport_without_ignored_column_preserves_ignore_regression(
+        self, tmp_path: Path
+    ) -> None:
+        """A CSV with no ignored column does not clear the user's ignore."""
+        csv_path = tmp_path / "books.csv"
+        csv_path.write_text("title,author,rating,status\nDune,Frank Herbert,5,read\n")
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+        plugin = CsvImportPlugin()
+
+        self._sync(plugin, csv_path, storage)
+        db_id = self._only_item(storage).db_id
+        assert db_id is not None
+        assert storage.set_item_ignored(db_id, True) is True
+
+        self._sync(plugin, csv_path, storage)
+
+        stored = self._only_item(storage)
+        assert stored.db_id == db_id
+        assert stored.ignored is True
+
+    def test_json_reimport_without_ignored_field_preserves_ignore_regression(
+        self, tmp_path: Path
+    ) -> None:
+        """A JSON entry with no ignored field does not clear the user's ignore."""
+        json_path = tmp_path / "books.json"
+        json_path.write_text(
+            json.dumps([{"title": "Dune", "author": "Frank Herbert", "status": "read"}])
+        )
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+        plugin = JsonImportPlugin()
+
+        self._sync(plugin, json_path, storage)
+        db_id = self._only_item(storage).db_id
+        assert db_id is not None
+        assert storage.set_item_ignored(db_id, True) is True
+
+        self._sync(plugin, json_path, storage)
+
+        stored = self._only_item(storage)
+        assert stored.db_id == db_id
+        assert stored.ignored is True
+
+    def test_explicit_ignored_false_still_clears_the_flag(self, tmp_path: Path) -> None:
+        """The column is not inert: a file that says ignored=false still clears."""
+        csv_path = tmp_path / "books.csv"
+        csv_path.write_text("title,status,ignored\nDune,read,false\n")
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+        plugin = CsvImportPlugin()
+
+        self._sync(plugin, csv_path, storage)
+        db_id = self._only_item(storage).db_id
+        assert db_id is not None
+        storage.set_item_ignored(db_id, True)
+
+        self._sync(plugin, csv_path, storage)
+
+        stored = self._only_item(storage)
+        assert stored.db_id == db_id
+        assert stored.ignored is False
+
+    def test_reimport_preserves_rating_review_and_status(self, tmp_path: Path) -> None:
+        """A re-import never overwrites the other user-owned fields either.
+
+        The file carries a weaker status and a different rating and review
+        than the user set in the app; the stored values win.
+        """
+        csv_path = tmp_path / "books.csv"
+        csv_path.write_text(
+            "title,author,rating,status,review\n"
+            "Dune,Frank Herbert,2,to-read,Imported note\n"
+        )
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+        plugin = CsvImportPlugin()
+
+        self._sync(plugin, csv_path, storage)
+        db_id = self._only_item(storage).db_id
+        assert db_id is not None
+        storage.update_item_from_ui(
+            db_id=db_id, status="completed", rating=5, review="Loved it"
+        )
+
+        self._sync(plugin, csv_path, storage)
+
+        stored = self._only_item(storage)
+        assert stored.db_id == db_id
+        assert stored.rating == 5
+        assert stored.review == "Loved it"
+        assert stored.status == ConsumptionStatus.COMPLETED

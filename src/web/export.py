@@ -7,7 +7,9 @@ from typing import Any
 
 from src.ingestion.sources.generic_csv import (
     CONTENT_TYPE_COLUMNS,
+    CREATOR_COLUMNS,
     CREATOR_FIELD,
+    LIST_VALUED_COLUMNS,
     STATUS_DISPLAY,
 )
 from src.models.content import ContentItem, ContentType, get_enum_value
@@ -102,38 +104,25 @@ def _item_to_export_dict(
         "ignored": str(bool(item.ignored)).lower() if for_csv else bool(item.ignored),
     }
 
-    # Add type-specific metadata fields
-    type_columns = CONTENT_TYPE_COLUMNS.get(content_type_value, set())
-    skip_fields = {"author", "director", "creator", "developer"}
+    # Add type-specific metadata fields, read under the key the library
+    # stores each template column as (a template says "year", the library
+    # stores "release_year").
+    type_columns = CONTENT_TYPE_COLUMNS.get(content_type_value, {})
 
-    for column in type_columns:
-        if column in skip_fields:
+    for column, metadata_key in type_columns.items():
+        if column in CREATOR_COLUMNS or column in result:
             continue
-        if column in result:
-            continue
 
-        value = item.metadata.get(column)
+        value = item.metadata.get(metadata_key)
 
-        if column == "seasons_watched":
-            if isinstance(value, list):
-                result[column] = (
-                    ",".join(str(season) for season in value) if for_csv else value
-                )
-            else:
-                result[column] = (
-                    value if value is not None else ("" if for_csv else None)
-                )
-        elif column == "genre":
-            # Map genres list back to genre string
-            genres = item.metadata.get("genres")
-            if isinstance(genres, list) and genres:
-                result[column] = genres[0]
-            elif value is not None:
-                result[column] = value
-            else:
-                result[column] = "" if for_csv else None
-        else:
-            result[column] = value if value is not None else ("" if for_csv else None)
+        if column == "seasons_watched" and isinstance(value, list):
+            # One cell holds the whole list.
+            value = ",".join(str(season) for season in value) if for_csv else value
+        elif column in LIST_VALUED_COLUMNS and isinstance(value, list):
+            # One cell holds one of them.
+            value = value[0] if value else None
+
+        result[column] = value if value is not None else ("" if for_csv else None)
 
     return result
 
