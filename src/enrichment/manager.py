@@ -49,6 +49,88 @@ def _render_error(error: Exception) -> str:
     return str(error)
 
 
+# HTTP statuses that mean "ask again later" rather than "your request is
+# wrong". Every other 4xx is the caller's own configuration — a revoked or
+# mistyped API key above all — and repeating it on every run is a flood aimed
+# at the provider that can never come out differently.
+_RETRYABLE_HTTP_STATUSES = frozenset({408, 429})
+
+
+@dataclass(frozen=True)
+class _ProviderFailure:
+    """One provider's failure on one item, described without its own words.
+
+    ``reason`` is built only from values this module derives, never from the
+    provider's message, because it is persisted to the database.
+    """
+
+    provider: str
+    reason: str
+    retryable: bool
+
+    def __str__(self) -> str:
+        return f"{self.provider}: {self.reason}"
+
+
+def _underlying_request_error(error: Exception) -> requests.RequestException | None:
+    """Find the ``requests`` failure underneath a provider's exception.
+
+    Providers wrap transport failures in ``ProviderError``. Both the explicit
+    ``raise ... from error`` the in-tree providers use and the implicit
+    chaining Python applies to any raise inside an ``except`` block leave the
+    original on the chain, so a provider does not have to opt in to anything
+    for the manager to tell a timeout from a rejected API key.
+    """
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        if isinstance(current, requests.RequestException):
+            return current
+        seen.add(id(current))
+        current = current.__cause__ or current.__context__
+    return None
+
+
+def _classify_failure(provider_name: str, error: Exception) -> _ProviderFailure:
+    """Describe a provider failure safely enough to store it.
+
+    A provider is free to interpolate the failing request URL — API key and
+    all — into its own message, and enrichment errors are written to the
+    database, so the description is assembled here instead: the provider name,
+    plus the HTTP status or transport error class ``requests`` reported, or the
+    exception type when no ``requests`` failure is on the chain.
+
+    Args:
+        provider_name: Name of the provider that failed.
+        error: The exception it raised.
+
+    Returns:
+        The failure, flagged retryable unless it is positively identifiable as
+        the provider rejecting the request itself.
+    """
+    request_error = _underlying_request_error(error)
+    if request_error is None:
+        return _ProviderFailure(provider_name, type(error).__name__, retryable=True)
+    return _ProviderFailure(
+        provider_name,
+        scrub_request_error(request_error),
+        retryable=_is_retryable(request_error),
+    )
+
+
+def _is_retryable(error: requests.RequestException) -> bool:
+    """Whether repeating this request could plausibly succeed later.
+
+    Transport failures (connection refused, timeouts) and server-side or
+    throttling statuses clear on their own. Any other client error is the
+    request being wrong, and will be answered identically every time.
+    """
+    if isinstance(error, requests.HTTPError) and error.response is not None:
+        status = error.response.status_code
+        return status >= 500 or status in _RETRYABLE_HTTP_STATUSES
+    return True
+
+
 @dataclass
 class EnrichmentJobStatus:
     """Status of an enrichment job."""
@@ -307,15 +389,32 @@ class EnrichmentManager:
             with self._lock:
                 self._status.total_items = pending_count + len(not_found_ids)
 
+            # An item whose provider errored stays queued so a later run
+            # retries it, which means this run's own query keeps returning it.
+            # The queue is ordered by database ID, so walking a cursor forward
+            # past the last row fetched reaches the items behind the failures
+            # while keeping every fetch exactly one batch wide.
+            after_db_id: int | None = None
+            # A not_found item pulled in from the set below joins the queue
+            # proper if it fails, and it sits behind the cursor rather than
+            # ahead of it, so the cursor alone cannot keep it from coming back.
+            retried_ids: set[int] = set()
+
             # Process items in batches
             while not self._stop_requested:
                 # Fetch next batch of items (normal items only, not include_not_found)
-                items = self.storage_manager.get_items_needing_enrichment(
+                fetched = self.storage_manager.get_items_needing_enrichment(
                     content_type=content_type,
                     user_id=user_id,
                     limit=batch_size,
                     include_not_found=False,
+                    after_db_id=after_db_id,
                 )
+                if fetched:
+                    after_db_id = max(db_id for db_id, _item in fetched)
+                items = [
+                    (db_id, item) for db_id, item in fetched if db_id not in retried_ids
+                ]
 
                 # Add any remaining not_found items to this batch
                 if not_found_ids and len(items) < batch_size:
@@ -334,9 +433,10 @@ class EnrichmentManager:
                         if db_id in fetched_map:
                             items.append((db_id, fetched_map[db_id]))
                             not_found_ids.discard(db_id)
+                            retried_ids.add(db_id)
 
-                if not items:
-                    # No more items to process
+                if not fetched and not items:
+                    # Both queues are drained
                     break
 
                 # Process each item
@@ -426,6 +526,9 @@ class EnrichmentManager:
                 self._status.items_not_found += 1
             return
 
+        # Providers that never gave an answer for this item because they raised.
+        failures: list[_ProviderFailure] = []
+
         # Try each provider until one succeeds
         for provider in matching_providers:
             try:
@@ -474,6 +577,7 @@ class EnrichmentManager:
                 logger.warning(
                     "[ENRICHMENT] Provider %s failed: %s", provider.name, error
                 )
+                failures.append(_classify_failure(provider.name, error))
                 with self._lock:
                     self._status.errors.append(f"{provider.name}: {error.message}")
 
@@ -484,13 +588,43 @@ class EnrichmentManager:
                     provider.name,
                     rendered,
                 )
+                failures.append(_classify_failure(provider.name, error))
                 with self._lock:
                     self._status.errors.append(f"{provider.name}: {rendered}")
 
-        # No provider found a match
-        logger.debug(
-            "[ENRICHMENT] No match found for %s: %s", content_type_str, item.title
-        )
+        if failures:
+            reported = "; ".join(str(failure) for failure in failures)
+            if any(failure.retryable for failure in failures):
+                # A provider that blew up, timed out or could not be reached
+                # never said whether it has this item, so "no match" is an
+                # unknown rather than a settled miss. Record the failure, which
+                # leaves the item queued for the next run instead of retiring
+                # it as not_found.
+                logger.info(
+                    "[ENRICHMENT] Enrichment of %s failed, will retry: %s",
+                    content_type_str,
+                    item.title,
+                )
+                self.storage_manager.mark_enrichment_failed(db_id, reported)
+                with self._lock:
+                    self._status.items_processed += 1
+                    self._status.items_failed += 1
+                return
+
+            # Every provider rejected the request itself, so the next run would
+            # be rejected the same way. Settle the item rather than queue the
+            # whole library against a provider that answers none of it.
+            logger.warning(
+                "[ENRICHMENT] Every provider rejected %s, not retrying: %s",
+                item.title,
+                reported,
+            )
+        else:
+            # Every provider answered and none of them has this item
+            logger.debug(
+                "[ENRICHMENT] No match found for %s: %s", content_type_str, item.title
+            )
+
         self.storage_manager.mark_enrichment_complete(db_id, "none", "not_found")
         with self._lock:
             self._status.items_processed += 1

@@ -135,7 +135,12 @@ class TestEnrichmentStatusMethods:
     def test_mark_enrichment_failed(
         self, storage_manager: StorageManager, sample_item: ContentItem
     ) -> None:
-        """Test marking an item's enrichment as failed."""
+        """A failure records the error and leaves the item queued for retry.
+
+        A failed provider never said whether it has the item, so the outcome is
+        unknown: ``needs_enrichment`` stays set and the item is still returned
+        by ``get_items_needing_enrichment``.
+        """
         db_id = storage_manager.save_content_item(sample_item)
 
         storage_manager.mark_enrichment_failed(db_id, "API rate limit exceeded")
@@ -143,7 +148,9 @@ class TestEnrichmentStatusMethods:
         status = storage_manager.get_enrichment_status(db_id)
         assert status is not None
         assert status["enrichment_error"] == "API rate limit exceeded"
-        assert status["needs_enrichment"] is False
+        assert status["needs_enrichment"] is True
+        queued = storage_manager.get_items_needing_enrichment()
+        assert [db for db, _item in queued] == [db_id]
 
     def test_mark_item_needs_enrichment(
         self, storage_manager: StorageManager, sample_item: ContentItem
@@ -307,6 +314,48 @@ class TestGetItemsNeedingEnrichment:
         items = storage_manager.get_items_needing_enrichment(limit=3)
 
         assert len(items) == 3
+
+    def test_after_db_id_pages_forward_through_the_queue(
+        self, storage_manager: StorageManager
+    ) -> None:
+        """``after_db_id`` excludes handled items in SQL, not in the caller.
+
+        The enrichment manager leaves an item queued when its provider errored,
+        so it walks this cursor forward to reach the items behind it without
+        re-fetching — and re-hydrating — the ones it already attempted.
+        """
+        db_ids = [
+            storage_manager.save_content_item(
+                ContentItem(
+                    id=f"movie{index}",
+                    title=f"Movie {index}",
+                    content_type=ContentType.MOVIE,
+                    status=ConsumptionStatus.UNREAD,
+                )
+            )
+            for index in range(4)
+        ]
+
+        page = storage_manager.get_items_needing_enrichment(
+            limit=2, after_db_id=db_ids[1]
+        )
+
+        assert [db_id for db_id, _item in page] == db_ids[2:]
+
+    def test_after_db_id_past_the_last_item_returns_nothing(
+        self, storage_manager: StorageManager
+    ) -> None:
+        """The cursor walking off the end terminates the caller's loop."""
+        db_id = storage_manager.save_content_item(
+            ContentItem(
+                id="movie0",
+                title="Movie 0",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.UNREAD,
+            )
+        )
+
+        assert storage_manager.get_items_needing_enrichment(after_db_id=db_id) == []
 
 
 class TestCountItemsNeedingEnrichment:
@@ -488,11 +537,81 @@ class TestEnrichmentStats:
         assert stats["total"] == 5
         assert stats["enriched"] == 2
         assert stats["failed"] == 1
-        # pending includes both explicitly marked and untracked items
+        # pending includes explicitly marked and untracked items. A failed item
+        # is queued too, but it is reported under the more specific "failed".
         assert stats["pending"] == 2  # 1 marked + 1 untracked
         assert stats["by_provider"]["tmdb"] == 2
         assert stats["by_quality"]["high"] == 1
         assert stats["by_quality"]["medium"] == 1
+
+    def test_the_four_states_partition_the_library_regression(
+        self, storage_manager: StorageManager
+    ) -> None:
+        """Every item is counted once across enriched/pending/not_found/failed.
+
+        Reported symptom: a failed item was listed under both "Pending" and
+        "Failed", and the CLI and the Data page print the four counts as a flat
+        list — so a library of five items read as six.
+
+        Root cause: a failure keeps ``needs_enrichment = 1`` so the item is
+        retried, and ``pending`` counted every such row regardless of whether
+        its last attempt had errored.
+
+        Fix: ``pending`` excludes rows carrying an enrichment error, which the
+        ``failed`` count already covers. The two remain the same item — it is
+        still queued for retry — but it is reported once, under the state that
+        tells the operator more.
+        """
+        db_ids = [
+            storage_manager.save_content_item(
+                ContentItem(
+                    id=f"item{index}",
+                    title=f"Item {index}",
+                    content_type=ContentType.MOVIE,
+                    status=ConsumptionStatus.UNREAD,
+                )
+            )
+            for index in range(5)
+        ]
+        storage_manager.mark_enrichment_complete(db_ids[0], "tmdb", "high")
+        storage_manager.mark_enrichment_complete(db_ids[1], "none", "not_found")
+        storage_manager.mark_enrichment_failed(db_ids[2], "tmdb: HTTP 503")
+        storage_manager.mark_item_needs_enrichment(db_ids[3])
+        # Item 4 is untracked.
+
+        stats = storage_manager.get_enrichment_stats()
+
+        assert stats["enriched"] == 1
+        assert stats["not_found"] == 1
+        assert stats["failed"] == 1
+        assert stats["pending"] == 2  # 1 marked + 1 untracked
+        assert (
+            stats["enriched"] + stats["pending"] + stats["not_found"] + stats["failed"]
+            == stats["total"]
+        ), "the four reported states must account for each item exactly once"
+
+    def test_failed_item_is_still_queued_for_retry(
+        self, storage_manager: StorageManager
+    ) -> None:
+        """Reporting a failure outside "pending" must not unqueue it.
+
+        The counts are a report; the queue is the behaviour. Splitting the two
+        apart in the stats has to leave the retry itself intact.
+        """
+        db_id = storage_manager.save_content_item(
+            ContentItem(
+                id="item0",
+                title="Item 0",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.UNREAD,
+            )
+        )
+        storage_manager.mark_enrichment_failed(db_id, "tmdb: HTTP 503")
+
+        queued = storage_manager.get_items_needing_enrichment()
+
+        assert [db for db, _item in queued] == [db_id]
+        assert storage_manager.get_enrichment_stats()["pending"] == 0
 
 
 class TestTagsAndDescriptionStorage:
