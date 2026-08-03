@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterator
-from datetime import date, datetime
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 import requests
@@ -40,7 +40,7 @@ from src.ingestion.plugin_base import (
     SourcePlugin,
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
-from src.utils.dates import parse_iso_timestamp
+from src.utils.dates import local_date_from_iso_timestamp, parse_iso_timestamp
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
@@ -237,12 +237,6 @@ def fetch_show_season_totals(
             f"Failed to fetch {endpoint}: {type(error).__name__}"
         ) from error
     return totals
-
-
-def _parse_completed_date(raw: str | None) -> date | None:
-    """Parse a Trakt ISO 8601 timestamp into a date, or None if absent/invalid."""
-    parsed = parse_iso_timestamp(raw)
-    return parsed.date() if parsed else None
 
 
 def _show_season_progress(
@@ -578,7 +572,9 @@ class TraktPlugin(SourcePlugin):
                 content_type=ContentType.MOVIE,
                 status=ConsumptionStatus.COMPLETED,
                 rating=None,
-                date_completed=_parse_completed_date(entry.get("last_watched_at")),
+                date_completed=local_date_from_iso_timestamp(
+                    entry.get("last_watched_at")
+                ),
                 metadata=_media_metadata(movie),
                 source=source,
             )
@@ -641,7 +637,7 @@ class TraktPlugin(SourcePlugin):
                     else ConsumptionStatus.CURRENTLY_CONSUMING
                 ),
                 date_completed=(
-                    _parse_completed_date(entry.get("last_watched_at"))
+                    local_date_from_iso_timestamp(entry.get("last_watched_at"))
                     if fully_watched
                     else None
                 ),

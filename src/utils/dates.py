@@ -1,8 +1,8 @@
-"""Shared ISO 8601 timestamp parsing."""
+"""Shared ISO 8601 timestamp parsing and local-calendar-date narrowing."""
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 
 def parse_iso_timestamp(raw: object) -> datetime | None:
@@ -26,6 +26,82 @@ def parse_iso_timestamp(raw: object) -> datetime | None:
     try:
         return datetime.fromisoformat(raw.replace("Z", "+00:00"))
     except ValueError:
+        return None
+
+
+def _as_utc(value: datetime) -> datetime:
+    """Return *value* as an aware UTC datetime, assuming a naive value is UTC."""
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
+def utc_now() -> datetime:
+    """Return the current instant as an aware UTC datetime.
+
+    The only clock read behind the storage and date layers, so that every
+    stamp they take — a completion date, a season watch timestamp — moves
+    together when a test freezes it. Other layers (chat memory, sync job
+    bookkeeping) call ``datetime.now`` for themselves, and freezing this
+    does not move them.
+
+    Returns:
+        The current instant, in UTC.
+    """
+    return datetime.now(UTC)
+
+
+def local_today() -> date:
+    """Return today's calendar date in the host's zone.
+
+    The counterpart of :func:`local_date_from_iso_timestamp` for the current
+    instant: a completion recorded in the app means the day the user is
+    living, so an evening completion west of UTC must not be dated tomorrow.
+    Both narrowings read the same host zone, which a container inherits
+    through the ``TZ`` the operator sets on the service, so an imported date
+    and an in-app one are on the same calendar.
+
+    Returns:
+        Today's date in the host's zone.
+    """
+    return utc_now().astimezone().date()
+
+
+def local_date_from_iso_timestamp(raw: object) -> date | None:
+    """Narrow an ISO 8601 timestamp to its calendar date in the host's zone.
+
+    Watch and read timestamps are UTC *instants* — Trakt's ``last_watched_at``,
+    this app's own ``seasons_watched_dates`` stamps — so taking ``.date()``
+    straight off them reports the UTC calendar day: west of UTC an evening
+    watch lands on the following day, east of UTC an early-morning one lands on
+    the previous day. Converting to the host's zone first yields the day the
+    user actually lived, which is what a completion date means everywhere it is
+    shown, exported, merged or ranked.
+
+    There is no timezone setting: the zone comes from the host, which a
+    container inherits through the ``TZ`` the operator sets on the service.
+    ``astimezone()`` is called without an argument so the offset is the one in
+    force *at that instant*, which keeps a winter timestamp correct when it is
+    read in summer. A naive timestamp is assumed to already be UTC, as in
+    ``later_iso_timestamp``.
+
+    Args:
+        raw: Timestamp value, e.g. from Trakt's API or stored metadata.
+
+    Returns:
+        The local calendar date, or ``None`` if *raw* is not a parseable
+        ISO 8601 timestamp, or if shifting it into the host's zone lands
+        outside the range ``datetime`` can represent.
+    """
+    parsed = parse_iso_timestamp(raw)
+    if parsed is None:
+        return None
+    try:
+        return _as_utc(parsed).astimezone().date()
+    except OverflowError:
+        # The extremes of the datetime range have no local equivalent in every
+        # zone: 9999-12-31T23:59Z shifted east, or 0001-01-01T00:00Z shifted
+        # west, falls off the end. Callers get None here as they do for any
+        # other value this cannot narrow, rather than an exception from a
+        # helper that never raises for bad input.
         return None
 
 
@@ -55,9 +131,7 @@ def later_iso_timestamp(a: str | None, b: str | None) -> str | None:
     if parsed_b is None:
         return a
 
-    aware_a = parsed_a if parsed_a.tzinfo is not None else parsed_a.replace(tzinfo=UTC)
-    aware_b = parsed_b if parsed_b.tzinfo is not None else parsed_b.replace(tzinfo=UTC)
-    return a if aware_a >= aware_b else b
+    return a if _as_utc(parsed_a) >= _as_utc(parsed_b) else b
 
 
 def merge_seasons_watched_dates(a: object, b: object) -> dict[str, str] | None:
