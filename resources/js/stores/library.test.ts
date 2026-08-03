@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { useLibraryStore } from './library'
+import { MAX_SEARCH_LENGTH } from '@/constants/library'
 
 const mockGet = vi.fn()
 const mockPatch = vi.fn()
@@ -204,6 +205,26 @@ describe('useLibraryStore', () => {
       store.setFilter('search', 'zzz')
       await vi.runAllTimersAsync()
       expect(store.searchAnnouncement).toBe('No items match “zzz”')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('clamps an over-long search term to the length the API accepts', async () => {
+    // Regression: the store sent whatever term it was handed, so anything over
+    // MAX_SEARCH_LENGTH came back 422 and surfaced as a bare status line.
+    vi.useFakeTimers()
+    try {
+      mockGet.mockResolvedValue([])
+      const store = useLibraryStore()
+
+      store.setFilter('search', 'a'.repeat(MAX_SEARCH_LENGTH + 1))
+      expect(store.searchQuery).toBe('a'.repeat(MAX_SEARCH_LENGTH))
+
+      await vi.runAllTimersAsync()
+
+      const params = mockGet.mock.lastCall![1]
+      expect(params.search).toBe('a'.repeat(MAX_SEARCH_LENGTH))
     } finally {
       vi.useRealTimers()
     }

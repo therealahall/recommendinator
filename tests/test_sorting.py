@@ -1,5 +1,9 @@
 """Tests for sorting utilities."""
 
+from pathlib import Path
+
+from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.storage.sqlite_db import SQLiteDB
 from src.utils.sorting import (
     FUZZY_MATCH_THRESHOLD,
     _best_window_ratio,
@@ -363,6 +367,183 @@ class TestMatchesSearch:
 
     def test_empty_haystack_does_not_match(self) -> None:
         assert matches_search("", "Die Hard") is False
+
+
+class TestUnicodeSearch:
+    """Regression tests for library search over non-Latin scripts.
+
+    Bug reported: a title written in a non-Latin script (Japanese, Cyrillic,
+    Arabic) could never be found by searching the library, from either the web
+    UI or the CLI. Searching any substring of it returned nothing too, so the
+    item was invisible to search forever.
+
+    Root cause: normalize_for_search collapsed every character outside the
+    ASCII class ``[0-9a-z]`` to a space, so a title (or a search term) with no
+    ASCII alphanumerics normalized to the empty string, and matches_search
+    returns False as soon as either side normalizes to empty.
+
+    Fix: the normalization pattern now collapses only non-word characters,
+    which Python's ``\\w`` scopes to every script, so letters outside ASCII
+    survive normalization and only punctuation and symbols become spaces.
+    """
+
+    def test_non_latin_title_matches_itself_regression(self) -> None:
+        """Titles with no ASCII letters match their own text, exact or partial."""
+        assert matches_search("進撃の巨人", "進撃の巨人") is True
+        assert matches_search("Метро 2033", "Метро") is True
+        assert matches_search("ألف ليلة وليلة", "ألف ليلة") is True
+
+    def test_non_latin_title_is_findable_via_storage_regression(
+        self, tmp_path: Path
+    ) -> None:
+        """The library read path surfaces a non-Latin title for its own term."""
+        db = SQLiteDB(tmp_path / "unicode_search.db")
+        db.save_content_item(
+            ContentItem(
+                id="tv_aot",
+                title="進撃の巨人",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.COMPLETED,
+            )
+        )
+        db.save_content_item(
+            ContentItem(
+                id="tv_spirited",
+                title="千と千尋の神隠し",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.COMPLETED,
+            )
+        )
+
+        results = db.get_content_items(
+            content_type=ContentType.TV_SHOW, search="進撃の巨人"
+        )
+        assert [item.title for item in results] == ["進撃の巨人"]
+
+    def test_unrelated_terms_in_the_same_script_fail_every_tier(self) -> None:
+        """Non-ASCII input is matched, not waved through.
+
+        A negative control rather than a regression test — it passed before the
+        fix too, when both sides normalized to the empty string and
+        matches_search bailed out. What it pins is the fix's boundary: now that
+        non-Latin text survives normalization, unrelated strings in the same
+        script must still fail all three tiers rather than colliding.
+        """
+        assert matches_search("進撃の巨人", "千と千尋の神隠し") is False
+        assert matches_search("Метро 2033", "Война и мир") is False
+        assert matches_search("ألف ليلة وليلة", "رحلة إلى الشمس") is False
+
+    def test_every_reported_script_is_searchable_regression(self) -> None:
+        """All the scripts the report named survive normalization, not just three.
+
+        The report listed CJK, Cyrillic, Greek, Hebrew, Arabic and Devanagari
+        as falling through the old ASCII class, and its reproduction used a
+        Korean title, so covering only Japanese/Cyrillic/Arabic would leave
+        most of the reported surface unproven.
+        """
+        titles = [
+            "進撃の巨人",  # Japanese
+            "三体",  # Chinese
+            "백년의 고독",  # Korean
+            "Метро 2033",  # Cyrillic
+            "Οδύσσεια",  # Greek
+            "מלחמה ושלום",  # Hebrew
+            "ألف ليلة وليلة",  # Arabic
+            "गोदान",  # Devanagari
+            "แฮร์รี่ พอตเตอร์",  # Thai
+        ]
+        for title in titles:
+            assert normalize_for_search(title) != ""
+            assert matches_search(title, title) is True
+
+    def test_non_latin_partial_and_case_differing_terms_match_regression(self) -> None:
+        """A substring term and a case-differing term reach the item too.
+
+        The report called out that searching any substring of a non-Latin
+        title also returned nothing, so partial terms are part of the defect
+        rather than an extra. Cyrillic and Greek also have case, which the
+        lowercasing in get_sort_title has to fold for non-ASCII letters.
+        """
+        assert matches_search("進撃の巨人", "巨人") is True
+        assert matches_search("백년의 고독", "고독") is True
+        assert matches_search("Метро 2033", "МЕТРО") is True
+        assert matches_search("Οδύσσεια", "ΟΔΥΣΣΕΙΑ") is True
+
+    def test_punctuation_around_non_latin_still_collapses_regression(self) -> None:
+        """Non-Latin letters survive while punctuation and symbols still fold.
+
+        The fix must widen the kept set without losing the punctuation
+        normalization the ASCII class provided, including the full-width and
+        CJK punctuation that shows up in the titles this bug was about.
+        """
+        assert normalize_for_search("進撃の巨人！ 【完全版】") == "進撃の巨人 完全版"
+        assert matches_search("進撃の巨人 (Attack on Titan)", "進撃の巨人") is True
+        assert matches_search("進撃の巨人 (Attack on Titan)", "Attack on Titan") is True
+
+    def test_terms_in_a_different_script_fail_every_tier(self) -> None:
+        """A term in one script never matches a title in another.
+
+        The second negative control, and likewise not a regression test: the
+        first pairs strings within a script, which leaves open the possibility
+        that the wider character class made unrelated scripts collide through
+        the fuzzy tier.
+        """
+        assert matches_search("Die Hard", "進撃の巨人") is False
+        assert matches_search("進撃の巨人", "Die Hard") is False
+        assert matches_search("Метро 2033", "進撃の巨人") is False
+
+    def test_normalization_keeps_letters_and_digits_only_regression(self) -> None:
+        """States the boundary of the widened class, so it is not read as "keep all".
+
+        Python's ``\\w`` covers letters and digits in every script but not
+        combining marks (categories Mn/Mc) or symbols, so a decomposed string
+        keeps only its base letters and a title made purely of symbols still
+        normalizes to the empty string. Composed non-Latin text -- the
+        reported defect -- is unaffected. Folding decomposed and composed
+        forms together would need unicodedata.normalize, which this fix
+        deliberately does not do.
+
+        The first two assertions use the composed and the decomposed spelling
+        of e-acute, which look identical on screen: the composed one is a
+        single letter and survives, the decomposed one is a letter plus a
+        combining mark and loses the mark. Their differing expectations are
+        what tells them apart.
+        """
+        assert normalize_for_search("é") == "é"
+        assert normalize_for_search("é") == "e"
+        assert normalize_for_search("★☆") == ""
+
+    def test_non_latin_creator_is_findable_via_storage_regression(
+        self, tmp_path: Path
+    ) -> None:
+        """The creator half of the search matches non-Latin text too.
+
+        _matches_item runs the same normalization over the author/director/
+        creators/developer field, so the defect hid every non-Latin creator
+        name as well as every non-Latin title.
+        """
+        db = SQLiteDB(tmp_path / "unicode_creator.db")
+        db.save_content_item(
+            ContentItem(
+                id="book_kafka_shore",
+                title="Kafka on the Shore",
+                author="村上春樹",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+            )
+        )
+        db.save_content_item(
+            ContentItem(
+                id="book_snow_country",
+                title="Snow Country",
+                author="川端康成",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+            )
+        )
+
+        results = db.get_content_items(search="村上春樹")
+        assert [item.title for item in results] == ["Kafka on the Shore"]
 
 
 class TestBestWindowRatio:

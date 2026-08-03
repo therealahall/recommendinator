@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { useApi } from '@/composables/useApi'
 import { useAppStore } from '@/stores/app'
+import { MAX_SEARCH_LENGTH } from '@/constants/library'
 import type { ContentItemResponse, ItemEditRequest } from '@/types/api'
 
 const PAGE_SIZE = 50
@@ -146,7 +147,9 @@ export const useLibraryStore = defineStore('library', () => {
     value: string | boolean,
   ) {
     if (key === 'search') {
-      searchQuery.value = value as string
+      // The search input caps typing at the same length; this clamp keeps a
+      // programmatic caller from sending a term the API answers with a 422.
+      searchQuery.value = (value as string).slice(0, MAX_SEARCH_LENGTH)
       if (searchTimer) clearTimeout(searchTimer)
       searchTimer = setTimeout(() => {
         searchTimer = null

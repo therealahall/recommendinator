@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import LibraryFilters from './LibraryFilters.vue'
+import { MAX_SEARCH_LENGTH } from '@/constants/library'
 
 describe('LibraryFilters', () => {
   const defaultProps = {
@@ -20,6 +21,15 @@ describe('LibraryFilters', () => {
     expect(search.exists()).toBe(true)
     expect(search.find('input[type="search"]').attributes('placeholder')).toBe('Search by title or creator')
     expect(wrapper.find('.library-toolbar').element.firstElementChild).toBe(search.element)
+  })
+
+  it('bounds the search input by the length the API accepts', () => {
+    // Regression: the input had no maxlength, so a term over MAX_SEARCH_LENGTH
+    // reached ?search and came back 422 instead of an empty result set.
+    const wrapper = mount(LibraryFilters, { props: defaultProps })
+
+    const input = wrapper.find('.lib-search input')
+    expect(input.attributes('maxlength')).toBe(String(MAX_SEARCH_LENGTH))
   })
 
   it('reflects searchQuery into the search input', () => {

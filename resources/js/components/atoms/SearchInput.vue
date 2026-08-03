@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 
 const props = withDefaults(defineProps<{
   modelValue: string
@@ -7,11 +7,13 @@ const props = withDefaults(defineProps<{
   id?: string
   label?: string
   placeholder?: string
+  maxlength?: number
 }>(), {
   loading: false,
   id: 'library-search',
   label: 'Search library',
   placeholder: '',
+  maxlength: undefined,
 })
 
 const emit = defineEmits<{
@@ -20,6 +22,15 @@ const emit = defineEmits<{
 }>()
 
 const input = ref<HTMLInputElement | null>(null)
+
+const atLimit = computed(
+  () => props.maxlength !== undefined && props.modelValue.length >= props.maxlength,
+)
+const limitId = computed(() => `${props.id}-limit`)
+const limitMessage = computed(
+  () => `Search is limited to ${props.maxlength} characters. Anything longer is not included.`,
+)
+const limitAnnouncement = computed(() => (atLimit.value ? limitMessage.value : ''))
 
 function onInput(e: Event) {
   emit('update:modelValue', (e.target as HTMLInputElement).value)
@@ -40,53 +51,78 @@ function onEscape(e: KeyboardEvent) {
 </script>
 
 <template>
-  <div class="search-input" role="search">
-    <label :for="id" class="sr-only">{{ label }}</label>
-    <svg
-      class="search-input-icon"
-      aria-hidden="true"
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      stroke-width="2"
-    >
-      <circle cx="11" cy="11" r="8" />
-      <line x1="21" y1="21" x2="16.65" y2="16.65" />
-    </svg>
-    <input
-      :id="id"
-      ref="input"
-      type="search"
-      class="search-input-field"
-      :value="modelValue"
-      :placeholder="placeholder"
-      autocomplete="off"
-      enterkeyhint="search"
-      :aria-busy="loading"
-      @input="onInput"
-      @keydown.esc="onEscape"
-    >
-    <span class="search-input-trailing">
-      <span v-if="loading" class="spinner" aria-hidden="true" />
-      <button
-        v-else-if="modelValue.length > 0"
-        type="button"
-        class="btn btn-ghost search-input-clear"
-        aria-label="Clear search"
-        @click="onClear"
+  <div class="search-input-wrap" role="search">
+    <div class="search-input">
+      <label :for="id" class="sr-only">{{ label }}</label>
+      <svg
+        class="search-input-icon"
+        aria-hidden="true"
+        width="18"
+        height="18"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
       >
-        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <line x1="18" y1="6" x2="6" y2="18" />
-          <line x1="6" y1="6" x2="18" y2="18" />
-        </svg>
-      </button>
-    </span>
+        <circle cx="11" cy="11" r="8" />
+        <line x1="21" y1="21" x2="16.65" y2="16.65" />
+      </svg>
+      <input
+        :id="id"
+        ref="input"
+        type="search"
+        class="search-input-field"
+        :value="modelValue"
+        :placeholder="placeholder"
+        autocomplete="off"
+        enterkeyhint="search"
+        :maxlength="maxlength"
+        :aria-busy="loading"
+        :aria-describedby="atLimit ? limitId : undefined"
+        @input="onInput"
+        @keydown.esc="onEscape"
+      >
+      <span class="search-input-trailing">
+        <span v-if="loading" class="spinner" aria-hidden="true" />
+        <button
+          v-else-if="modelValue.length > 0"
+          type="button"
+          class="btn btn-ghost search-input-clear"
+          aria-label="Clear search"
+          @click="onClear"
+        >
+          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      </span>
+    </div>
+    <p v-if="atLimit" :id="limitId" class="search-input-limit">{{ limitMessage }}</p>
+    <!--
+      aria-live regions must exist in the DOM before content arrives, otherwise
+      some screen readers (notably JAWS) skip the announcement when the region
+      is inserted already populated — the user would hit the cap in silence
+      (WCAG 4.1.3 status messages). So this region is persistent and only its
+      text changes. The visible notice above carries no live role, or reaching
+      the limit would announce twice.
+    -->
+    <p class="sr-only" role="status" aria-live="polite" aria-atomic="true">{{ limitAnnouncement }}</p>
   </div>
 </template>
 
 <style scoped>
+.search-input-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.search-input-limit {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
 .search-input {
   display: flex;
   align-items: center;

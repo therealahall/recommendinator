@@ -12,6 +12,13 @@ from difflib import SequenceMatcher
 # separates real typos from unrelated terms.
 FUZZY_MATCH_THRESHOLD = 0.8
 
+# Longest search term either interface accepts. Fuzzy matching slides a
+# SequenceMatcher window over every candidate title, and no SQL LIMIT bounds
+# the scan, so the term's length is a per-request cost multiplier over the
+# whole library. 200 characters is far longer than any title worth searching
+# for and short enough that the scan stays cheap.
+MAX_SEARCH_LENGTH = 200
+
 # Articles to strip when sorting titles. Intentionally English-only: a
 # multilingual set collides with English words (German "die" in "Die Hard",
 # Spanish "el" in "El Camino"), sorting them under the wrong letter. Locale-aware
@@ -121,8 +128,11 @@ def titles_similar(title1: str, title2: str) -> bool:
     return _contains_on_word_boundary(shorter, longer)
 
 
-# Collapse runs of non-alphanumeric characters to single spaces.
-_NON_ALNUM_PATTERN = re.compile(r"[^0-9a-z]+")
+# Collapse runs of non-word characters (and underscores) to single spaces.
+# Python's \w spans every script, so letters outside ASCII survive: an
+# ASCII-only class would normalize a Cyrillic or Japanese title to the empty
+# string, making it unreachable through search.
+_NON_WORD_PATTERN = re.compile(r"[\W_]+")
 
 
 def normalize_for_search(text: str) -> str:
@@ -130,7 +140,9 @@ def normalize_for_search(text: str) -> str:
 
     Strips leading articles (via get_sort_title), lowercases, replaces
     punctuation with spaces, and collapses whitespace.  This lets
-    "Die Hard (1988)" and "die hard" compare on equal footing.
+    "Die Hard (1988)" and "die hard" compare on equal footing.  Letters in
+    any script are preserved, so non-Latin titles normalize to themselves
+    rather than to an empty string.
 
     Args:
         text: The string to normalize.
@@ -142,7 +154,7 @@ def normalize_for_search(text: str) -> str:
         return ""
 
     normalized = get_sort_title(text)
-    normalized = _NON_ALNUM_PATTERN.sub(" ", normalized)
+    normalized = _NON_WORD_PATTERN.sub(" ", normalized)
     return normalized.strip()
 
 
