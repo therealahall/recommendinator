@@ -74,6 +74,17 @@ FROM python:3.11-slim AS runtime-base
 
 WORKDIR /app
 
+# The IANA zone database. Completion dates are narrowed to the calendar day of
+# the zone the process runs in, and TZ names a zone that glibc looks up in
+# /usr/share/zoneinfo — Python's tzdata wheel does not serve that lookup. Slim
+# base images may or may not carry it; installing it here makes the TZ override
+# documented in docs/DOCKER.md work regardless of what the base image ships.
+# tzdata is intentionally unpinned, for the same reason build-essential is.
+# hadolint ignore=DL3008
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tzdata \
+    && rm -rf /var/lib/apt/lists/*
+
 # Create non-root user for security
 RUN useradd --create-home --shell /bin/bash appuser
 
