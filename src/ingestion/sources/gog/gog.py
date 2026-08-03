@@ -456,14 +456,17 @@ def _fetch_gog_games(
         if product.get("dlcCount") is not None:
             metadata["dlc_count"] = product["dlcCount"]
 
-        # Extract platform availability
-        works_on = product.get("worksOn", {})
-        if works_on:
-            metadata["platforms"] = {
-                "windows": works_on.get("Windows", False),
-                "mac": works_on.get("Mac", False),
-                "linux": works_on.get("Linux", False),
-            }
+        # Platform availability, as the list of names every other source
+        # writes and the platforms detail column stores. GOG reports it as a
+        # flag per platform, but a dict here reaches the export as a Python
+        # repr and re-imports as that literal string.
+        platforms = [
+            platform
+            for platform, supported in (product.get("worksOn") or {}).items()
+            if supported
+        ]
+        if platforms:
+            metadata["platforms"] = platforms
 
         count += 1
 

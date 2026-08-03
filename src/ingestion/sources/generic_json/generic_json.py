@@ -17,9 +17,11 @@ from src.ingestion.plugin_base import (
 )
 from src.ingestion.sources.generic_csv import (
     CONTENT_TYPE_COLUMNS,
+    CREATOR_COLUMNS,
     CREATOR_FIELD,
+    LIST_VALUED_COLUMNS,
     STATUS_MAP,
-    parse_boolean_field,
+    parse_ignored_field,
     parse_seasons_watched,
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
@@ -261,8 +263,8 @@ def _parse_entries(
         if creator_field:
             author = str(entry.get(creator_field, "")).strip() or None
 
-        # Parse ignored flag
-        ignored = parse_boolean_field(entry.get("ignored"))
+        # Parse ignored flag (absent or null leaves the stored flag alone)
+        ignored = parse_ignored_field(entry)
 
         # Build metadata from type-specific fields
         metadata = _build_json_metadata(entry, content_type)
@@ -318,6 +320,11 @@ def _build_json_metadata(
 ) -> dict[str, Any]:
     """Build metadata dict from type-specific JSON fields.
 
+    Each field is stored under the metadata key the rest of the library uses
+    for it, so an imported value reaches its detail-table column instead of
+    the free-form metadata blob. An absent or empty field says nothing about
+    the value and is left out entirely.
+
     Args:
         entry: JSON entry dict
         content_type: Content type for determining which fields to extract
@@ -326,16 +333,15 @@ def _build_json_metadata(
         Metadata dictionary with non-empty values
     """
     metadata: dict[str, Any] = {}
-    type_columns = CONTENT_TYPE_COLUMNS.get(content_type.value, set())
+    type_columns = CONTENT_TYPE_COLUMNS.get(content_type.value, {})
 
-    # Fields that map to ContentItem fields directly
-    skip_fields = {"author", "director", "creator", "developer"}
-
-    for column in type_columns:
-        if column in skip_fields:
+    for column, metadata_key in type_columns.items():
+        if column in CREATOR_COLUMNS:
             continue
         value = entry.get(column)
         if value is not None and str(value).strip():
-            metadata[column] = value
+            if column in LIST_VALUED_COLUMNS and not isinstance(value, list):
+                value = [value]
+            metadata[metadata_key] = value
 
     return metadata

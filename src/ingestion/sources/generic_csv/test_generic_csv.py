@@ -13,6 +13,7 @@ from src.ingestion.sources.generic_csv.generic_csv import (
 )
 from src.models.content import ConsumptionStatus, ContentType
 from src.utils.series import MAX_SEASONS
+from src.utils.text import extract_raw_genres
 
 
 @pytest.fixture()
@@ -143,7 +144,7 @@ class TestCsvImportPluginFetchBooks:
         assert item.metadata["isbn"] == "978-0756404741"
         assert item.metadata["pages"] == "662"
         assert item.metadata["year_published"] == "2007"
-        assert item.metadata["genre"] == "Fantasy"
+        assert item.metadata["genres"] == ["Fantasy"]
 
     def test_fetch_multiple_books(
         self, plugin: CsvImportPlugin, tmp_path: Path
@@ -216,9 +217,9 @@ class TestCsvImportPluginFetchMovies:
         assert item.author == "Christopher Nolan"
         assert item.content_type == ContentType.MOVIE.value
         assert item.rating == 5
-        assert item.metadata["year"] == "2010"
-        assert item.metadata["runtime_minutes"] == "148"
-        assert item.metadata["genre"] == "Sci-Fi"
+        assert item.metadata["release_year"] == "2010"
+        assert item.metadata["runtime"] == "148"
+        assert item.metadata["genres"] == ["Sci-Fi"]
 
 
 class TestCsvImportPluginFetchTvShows:
@@ -239,7 +240,8 @@ class TestCsvImportPluginFetchTvShows:
         assert item.author == "Vince Gilligan"
         assert item.content_type == ContentType.TV_SHOW.value
         assert item.metadata["seasons_watched"] == [1, 2, 3, 4, 5]
-        assert item.metadata["total_seasons"] == "5"
+        assert item.metadata["seasons"] == "5"
+        assert item.metadata["release_year"] == "2008"
 
 
 class TestCsvImportPluginFetchVideoGames:
@@ -261,9 +263,31 @@ class TestCsvImportPluginFetchVideoGames:
         assert item.title == "The Witcher 3"
         assert item.author == "CD Projekt Red"
         assert item.content_type == ContentType.VIDEO_GAME.value
-        assert item.metadata["platform"] == "PC"
-        assert item.metadata["genre"] == "RPG"
-        assert item.metadata["hours_played"] == "120"
+        assert item.metadata["platforms"] == ["PC"]
+        assert item.metadata["genres"] == ["RPG"]
+        assert item.metadata["playtime_hours"] == "120"
+
+    def test_imported_genre_reaches_the_prompt_helpers(
+        self, plugin: CsvImportPlugin, tmp_path: Path
+    ) -> None:
+        """The genre cell lands in the shape the rest of the app reads.
+
+        ``extract_raw_genres`` builds the embedding text during sync, before
+        the item is ever saved, and only recognises a list under ``genres``.
+        A bare string there would drop the genre from every imported item's
+        embedding without failing anything.
+        """
+        csv_file = tmp_path / "games.csv"
+        csv_file.write_text(
+            "title,developer,status,platform,genre\n"
+            "The Witcher 3,CD Projekt Red,completed,PC,RPG\n"
+        )
+
+        items = list(
+            plugin.fetch({"path": str(csv_file), "content_type": "video_game"})
+        )
+
+        assert extract_raw_genres(items[0]) == ["RPG"]
 
 
 class TestCsvImportPluginStatusMapping:
@@ -472,21 +496,47 @@ class TestCsvImportIgnored:
         items = list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
         assert items[0].ignored is True
 
-    def test_ignored_empty_defaults_false(
+    def test_blank_ignored_cell_is_unspecified_regression(
         self, plugin: CsvImportPlugin, tmp_path: Path
     ) -> None:
+        """A blank cell under an ignored header says nothing about the flag.
+
+        Bug reported: the export-edit-re-import round trip the docs recommend
+        cleared the ignore flag on every row the user had not touched. An
+        export always writes the ``ignored`` column, and an editor that empties
+        a cell leaves the header in place.
+        Root cause: ``csv.DictReader`` puts every header key into every row, so
+        a blank cell read as the string "" and parsed as False — a stated "not
+        ignored" that storage duly wrote over the user's flag.
+        Fix: only a real value counts. Blank means the file said nothing, which
+        is ``ignored=None``, which storage preserves.
+        """
         csv_file = tmp_path / "data.csv"
         csv_file.write_text("title,status,ignored\nTest,completed,\n")
         items = list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
-        assert items[0].ignored is False
+        assert items[0].ignored is None
 
-    def test_ignored_missing_defaults_false(
+    def test_whitespace_ignored_cell_is_unspecified(
         self, plugin: CsvImportPlugin, tmp_path: Path
     ) -> None:
+        """A cell holding only spaces is as empty as one holding nothing."""
+        csv_file = tmp_path / "data.csv"
+        csv_file.write_text("title,status,ignored\nTest,completed,   \n")
+        items = list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
+        assert items[0].ignored is None
+
+    def test_ignored_column_absent_is_unspecified(
+        self, plugin: CsvImportPlugin, tmp_path: Path
+    ) -> None:
+        """A file with no ignored column says nothing about the flag.
+
+        ``ignored=None`` is the "not specified by this source" contract on
+        ContentItem, which storage honours by preserving the stored value.
+        """
         csv_file = tmp_path / "data.csv"
         csv_file.write_text("title,status\nTest,completed\n")
         items = list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
-        assert items[0].ignored is False
+        assert items[0].ignored is None
 
     def test_ignored_not_treated_as_unknown_column(
         self, plugin: CsvImportPlugin, tmp_path: Path
