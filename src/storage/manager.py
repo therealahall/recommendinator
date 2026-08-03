@@ -66,10 +66,13 @@ from src.storage.schema import (
 )
 
 # Re-exported so consumers import from storage.manager rather than the
-# internal sqlite_db module.  The `as VALID_SORT_OPTIONS` form marks
-# the name as an intentional public re-export for type checkers.
+# internal sqlite_db module.  The `as <name>` form marks each one as an
+# intentional public re-export for type checkers.
+from src.storage.sqlite_db import UNSET as UNSET
 from src.storage.sqlite_db import VALID_SORT_OPTIONS as VALID_SORT_OPTIONS
 from src.storage.sqlite_db import SQLiteDB
+from src.storage.sqlite_db import Unset as Unset
+from src.storage.sqlite_db import unset_if_none as unset_if_none
 
 if TYPE_CHECKING:
     from src.storage.encryption import CredentialEncryptor
@@ -195,22 +198,67 @@ class StorageManager:
             # Save to SQLite. Upsert-by-external-id and cross-source dedup by
             # normalized title both live in SQLiteDB.save_content_item.
             db_id = self.sqlite_db.save_content_item(item, user_id=user_id)
-
-            # Save embedding if provided and vector DB is enabled
-            if embedding is not None and self.vector_db:
-                # Use external_id if available, otherwise use db_id as string
-                content_id = item.id if item.id else f"db_{db_id}"
-
-                metadata = {
-                    "content_type": get_enum_value(item.content_type),
-                    "title": item.title,
-                    "author": item.author or "",
-                    "status": get_enum_value(item.status),
-                    "user_id": str(user_id or item.user_id),
-                }
-                self.vector_db.add_embedding(content_id, embedding, metadata)
+            self._mirror_embedding(item, db_id, user_id, embedding)
 
         return db_id
+
+    def complete_content_item(
+        self,
+        item: ContentItem,
+        user_id: int | None = None,
+        embedding: list[float] | None = None,
+    ) -> int:
+        """Record an explicit completion, adding the item if it is new.
+
+        The single entry point behind every completion — the ``complete`` CLI
+        command, ``POST /api/complete`` and chat's ``mark_completed``:
+        :meth:`SQLiteDB.complete_content_item` finds or creates the row and
+        applies the user's rating, review and completion date in one
+        transaction, and this wrapper serialises it under ``_save_lock`` and
+        mirrors the embedding, as ``save_content_item`` does for sync.
+
+        Args:
+            item: ContentItem being completed
+            user_id: User ID (defaults to item.user_id)
+            embedding: Optional embedding vector to store (requires ai_enabled)
+
+        Returns:
+            Database ID of the completed item
+        """
+        with self._save_lock:
+            db_id = self.sqlite_db.complete_content_item(item, user_id=user_id)
+            self._mirror_embedding(item, db_id, user_id, embedding)
+
+        return db_id
+
+    def _mirror_embedding(
+        self,
+        item: ContentItem,
+        db_id: int,
+        user_id: int | None,
+        embedding: list[float] | None,
+    ) -> None:
+        """Store *item*'s embedding in the vector DB, if there is one to store.
+
+        Args:
+            item: The item as written to SQLite.
+            db_id: Database ID it was written under.
+            user_id: User ID the caller supplied, if any.
+            embedding: Embedding vector, or None when embeddings are off.
+        """
+        if embedding is None or not self.vector_db:
+            return
+
+        # Use external_id if available, otherwise use db_id as string
+        content_id = item.id if item.id else f"db_{db_id}"
+        metadata = {
+            "content_type": get_enum_value(item.content_type),
+            "title": item.title,
+            "author": item.author or "",
+            "status": get_enum_value(item.status),
+            "user_id": str(user_id or item.user_id),
+        }
+        self.vector_db.add_embedding(content_id, embedding, metadata)
 
     def get_content_item(
         self, db_id: int, user_id: int | None = None
@@ -476,24 +524,27 @@ class StorageManager:
         self,
         db_id: int,
         status: str,
-        rating: int | None = None,
-        review: str | None = None,
+        rating: int | None | Unset = UNSET,
+        review: str | None | Unset = UNSET,
         seasons_watched: list[int] | None = None,
         genres: list[str] | None = None,
         tags: list[str] | None = None,
         description: str | None = None,
         user_id: int | None = None,
     ) -> bool:
-        """Update a content item from the web UI (unrestricted editing).
+        """Update a content item from an explicit user action (unrestricted).
 
-        Delegates to SQLiteDB.update_item_from_ui which allows full editing
-        without the forward-only/set-once constraints of save_content_item.
+        Delegates to SQLiteDB.update_item_from_ui, the explicit-user-action
+        door: it writes only the fields the caller supplied and may overwrite
+        them freely, without the fill-only constraints save_content_item
+        applies to sync.
 
         Args:
             db_id: Database ID of the item to update.
             status: New status value.
-            rating: New rating (1-5) or None to clear.
-            review: New review text or None to clear.
+            rating: New rating (1-5), None to clear, UNSET to leave unchanged.
+            review: New review text, None or blank to clear, UNSET to leave
+                unchanged.
             seasons_watched: List of watched season numbers (TV shows only).
             genres: Manual genres to set (overwrite). None leaves them as-is.
             tags: Manual tags to set (overwrite). None leaves them as-is.
@@ -696,6 +747,7 @@ class StorageManager:
         user_id: int | None = None,
         limit: int = 100,
         include_not_found: bool = False,
+        after_db_id: int | None = None,
     ) -> list[tuple[int, ContentItem]]:
         """Get content items that need enrichment.
 
@@ -707,6 +759,8 @@ class StorageManager:
             user_id: Filter by user ID
             limit: Maximum number of items to return
             include_not_found: Also include items previously marked as not_found
+            after_db_id: Only return items with a database ID above this one,
+                for callers paging forward through the queue.
 
         Returns:
             List of (db_id, ContentItem) tuples
@@ -716,6 +770,7 @@ class StorageManager:
             user_id=user_id,
             limit=limit,
             include_not_found=include_not_found,
+            after_db_id=after_db_id,
         )
 
     def count_items_needing_enrichment(
@@ -772,7 +827,10 @@ class StorageManager:
         content_item_id: int,
         error: str,
     ) -> None:
-        """Mark an item's enrichment as failed.
+        """Mark an item's enrichment as failed, leaving it queued for retry.
+
+        A failure is an unknown outcome, not a settled miss, so the item stays
+        in the enrichment queue and the next run tries it again.
 
         Args:
             content_item_id: Content item database ID
@@ -823,9 +881,9 @@ class StorageManager:
             Dict with enrichment statistics including:
             - total: Total content items
             - enriched: Successfully enriched items
-            - pending: Items pending enrichment
+            - pending: Items queued whose last attempt did not error
             - not_found: Items where no match was found
-            - failed: Items with enrichment errors
+            - failed: Items whose last attempt errored (queued for retry)
             - by_provider: Breakdown by provider
             - by_quality: Breakdown by match quality
         """

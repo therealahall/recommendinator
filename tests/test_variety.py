@@ -10,6 +10,7 @@ at least one finished season).
 from __future__ import annotations
 
 from datetime import date
+from pathlib import Path
 
 import pytest
 
@@ -22,6 +23,7 @@ from src.recommendations.variety import (
     build_variety_ladder,
     variety_penalty_for,
 )
+from src.storage.sqlite_db import SQLiteDB
 
 
 def _completed(
@@ -480,3 +482,48 @@ class TestCompletedTvShowSeasonDateFallbackRegression:
         penalty = variety_penalty_for(bobs_burgers, ladder)
         # Before the fix this penalty was 0.0 (animation_family never on ladder).
         assert penalty > 0.0
+
+
+class TestVarietyLadderUsesInAppCompletions:
+    """Regression test: an in-app completion must be dated on the ladder.
+
+    Bug reported: finishing a book in the app and marking it complete left
+    ``date_completed`` NULL, so the ladder — which sorts undated events last —
+    ranked a years-old imported completion above it and demoted the wrong
+    genre.
+    Root cause: ``update_item_from_ui`` never wrote ``date_completed``.
+    Fix: an edit resolving to completed stamps today's date when the row has
+    none, so the just-finished item is the freshest completion event.
+    """
+
+    def test_in_app_completion_outranks_older_import_regression(
+        self, tmp_path: Path
+    ) -> None:
+        """The item completed in the app claims the ladder's top rung."""
+        storage = SQLiteDB(tmp_path / "variety.db")
+        storage.save_content_item(
+            ContentItem(
+                id="import-1",
+                title="Mistborn",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                date_completed=date(2020, 1, 1),
+                metadata={"genres": ["Fantasy"]},
+            )
+        )
+        scifi_id = storage.save_content_item(
+            ContentItem(
+                id="in-app-1",
+                title="Project Hail Mary",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+                metadata={"genres": ["Science Fiction"]},
+            )
+        )
+
+        storage.update_item_from_ui(db_id=scifi_id, status="completed")
+
+        ladder = build_variety_ladder(storage.get_content_items())
+
+        assert ladder["science_fiction"] == pytest.approx(VARIETY_TOP_PENALTY)
+        assert ladder["fantasy"] < ladder["science_fiction"]

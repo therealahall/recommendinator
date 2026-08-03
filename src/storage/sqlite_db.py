@@ -1,12 +1,71 @@
-"""SQLite database manager for content items."""
+"""SQLite database manager for content items.
+
+Rating, review, status, ``date_completed`` and ``ignored`` are user-owned, and
+every write to them goes through one of four doors — one sync door and three
+explicit-user-action doors. The sync door's rules are not uniform across the
+five fields, so read the field you care about rather than a summary of the
+door:
+
+- :meth:`SQLiteDB.save_content_item` is the ingestion/sync door. ``rating``
+  and ``review`` are fill-only, written only while the stored value is empty,
+  so a re-import can never erase either. A blank incoming ``review`` does not
+  count as a value to fill from — stored, it would be indistinguishable from
+  one the user wrote and would refuse every later value. The rest are weaker.
+  ``status`` is forward-only — :func:`resolve_status_forward` never resolves
+  backward — but "a sync cannot revert a completion" holds only of that
+  resolution: after the upsert, :meth:`_handle_tv_season_change` regresses a
+  completed TV show to currently_consuming when the sync raises its season
+  count above the seasons the user has checked off, because new seasons mean
+  the show is not finished.
+  ``date_completed`` is later-date-wins. ``ignored`` counts only a stated
+  value, where a real ``True`` or ``False`` wins in either direction, so an
+  exported, edited, re-imported library round-trips, while ``None`` — what a
+  source sends when the file says nothing about the flag — leaves the stored
+  value alone. That last decision is the door's, taken from the value it is
+  handed, so a plugin that says nothing cannot clear the user's ignore list by
+  accident. It also means the round trip is wholesale rather than selective:
+  ``src/web/export.py`` writes a concrete ``true``/``false`` on every row it
+  exports, so re-importing an export states the flag for every item and
+  replaces the ignore list with the state it had at export time. The
+  blank-cell rule protects a hand-maintained file; it protects nothing about
+  this project's own exports.
+- The explicit-user-action doors write exactly the fields the caller supplied
+  and may overwrite them freely: :meth:`SQLiteDB.update_item_from_ui` for an
+  edit (web UI, CLI, chat), :meth:`SQLiteDB.complete_content_item` for a
+  completion, which creates the item first when the library does not have it
+  yet, and :meth:`SQLiteDB.set_item_ignored`, which writes ``ignored`` alone,
+  in either direction. What "not supplied" looks like is not uniform either:
+  :meth:`SQLiteDB.update_item_from_ui` spells it three ways — ``status`` is
+  required, ``rating`` and ``review`` use :data:`UNSET` because ``None`` has
+  to mean "clear it", and the remaining fields use ``None``. Read that
+  method's docstring for the argument you are passing.
+
+No door stores a blank ``review``, whichever one it arrives at, because a
+stored ``""`` is indistinguishable from one the user wrote and would refuse
+every later import for that column. What each door does with one differs, and
+follows from what that door is for: the sync door declines to fill from it,
+:meth:`SQLiteDB._write_completion` drops it and leaves the stored review
+alone — a completion has nothing to clear — and
+:meth:`SQLiteDB.update_item_from_ui` clears the column, because that door
+exists to overwrite and an emptied review box is a clear.
+
+``date_completed`` is the field no door replaces *silently*: the sync door
+takes an incoming date only when it is later than the stored one, and a user
+action replaces a stored date only when the caller names one. A completion
+carrying no date fills an empty column with today in the host's zone and
+leaves a date the item already carries as it is — "I finished this" is not "I
+finished this today". A named date is written as given — a correction pointing
+backwards is still a correction.
+"""
 
 import json
 import sqlite3
 from collections.abc import Generator
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import date, datetime
+from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from src.models.content import (
     ConsumptionStatus,
@@ -16,31 +75,60 @@ from src.models.content import (
     get_enum_value,
 )
 from src.storage.merge import (
-    _ALLOWED_DETAIL_TABLES,
-    _MERGEABLE_DETAIL_COLUMNS,
-    _MONOTONIC_DETAIL_COLUMNS,
-    _assert_safe_identifier,
-    _merge_detail_tables,
-    _merge_scalar_columns,
-    _parse_json_list,
+    ALLOWED_DETAIL_TABLES,
+    MERGEABLE_DETAIL_COLUMNS,
+    MONOTONIC_DETAIL_COLUMNS,
+    assert_safe_identifier,
+    merge_detail_tables,
+    merge_scalar_columns,
     normalize_title_for_matching,
+    parse_json_list,
+    resolve_status_forward,
 )
 from src.storage.schema import (
     create_schema,
     get_default_user_id,
     write_enrichment_complete,
 )
-from src.utils.dates import merge_seasons_watched_dates
+from src.utils.dates import local_today, merge_seasons_watched_dates, utc_now
 from src.utils.list_merge import merge_string_lists
 from src.utils.sorting import get_sort_title, matches_search
 
-# Status ordering for forward-only progression.
-# A status can only be overwritten by a status later in this sequence.
-_STATUS_ORDER: dict[str, int] = {
-    "unread": 0,
-    "currently_consuming": 1,
-    "completed": 2,
-}
+
+class Unset(Enum):
+    """Type of the :data:`UNSET` sentinel.
+
+    A single-member enum rather than a bare object so that ``mypy`` narrows
+    ``value is not UNSET`` to the argument's real type.
+    """
+
+    UNSET = "unset"
+
+
+#: Marks an argument the caller did not supply, which ``None`` cannot mean
+#: on a nullable field: ``None`` clears the value, ``UNSET`` leaves it alone.
+UNSET = Unset.UNSET
+
+_T = TypeVar("_T")
+
+
+def unset_if_none(value: _T | None) -> _T | Unset:
+    """Translate a caller's "not supplied" ``None`` into :data:`UNSET`.
+
+    For surfaces whose absence *is* ``None`` and which therefore cannot ask
+    for a clear this way — a Click option nobody passed, a chat parameter the
+    model left out. A surface that can tell absent from null (the web, which
+    reads ``model_fields_set``) passes its ``None`` through untranslated, so
+    an explicit null still clears the field.
+
+    Args:
+        value: The value the caller supplied, or None if they supplied none.
+
+    Returns:
+        The value, or UNSET when it was None.
+    """
+    return UNSET if value is None else value
+
 
 # Chunk size for IN clauses, staying well within SQLite's
 # SQLITE_LIMIT_VARIABLE_NUMBER default of 999.
@@ -99,28 +187,6 @@ _ENRICHED_PREDICATE = (
 )
 
 
-def _resolve_status_forward(existing_status: str | None, incoming_status: str) -> str:
-    """Return the later of two statuses (forward-only progression).
-
-    Status can only advance: unread → currently_consuming → completed.
-    A re-sync with an earlier status does not revert.
-
-    Args:
-        existing_status: Current status in the database (may be None).
-        incoming_status: Status from the incoming sync.
-
-    Returns:
-        The resolved status string.
-    """
-    if existing_status is None:
-        return incoming_status
-    existing_order = _STATUS_ORDER.get(existing_status, 0)
-    incoming_order = _STATUS_ORDER.get(incoming_status, 0)
-    if incoming_order >= existing_order:
-        return incoming_status
-    return existing_status
-
-
 class SQLiteDB:
     """SQLite database manager for content items."""
 
@@ -176,7 +242,14 @@ class SQLiteDB:
             create_schema(conn)
 
     def save_content_item(self, item: ContentItem, user_id: int | None = None) -> int:
-        """Save or update a content item.
+        """Save or update a content item (the ingestion/sync door).
+
+        Each user-owned field has its own rule, as described in the module
+        docstring: ``rating`` and ``review`` are fill-only, so a re-sync can
+        never overwrite either; ``status`` is forward-only, bar the TV-season
+        regression the module docstring describes;
+        ``date_completed`` is later-date-wins; and ``ignored`` follows only a
+        stated incoming value.
 
         Args:
             item: ContentItem to save
@@ -185,6 +258,132 @@ class SQLiteDB:
         Returns:
             Database ID of the saved item
         """
+        with self.connection() as conn:
+            cursor = conn.cursor()
+            db_id = self._upsert_content_item(cursor, item, user_id)
+            conn.commit()
+            return db_id
+
+    def complete_content_item(
+        self, item: ContentItem, user_id: int | None = None
+    ) -> int:
+        """Record an explicit completion, adding the item if it is new.
+
+        The entry point behind every completion — the ``complete`` CLI
+        command, ``POST /api/complete`` and chat's ``mark_completed``: it finds
+        or creates the row and applies the user's own values in a single
+        transaction, so no interruption can leave an item completed carrying
+        the rating it had before.
+
+        Completing something is an explicit user action, so a rating, review
+        or completion date supplied here wins over what is stored — a date
+        included, even one earlier than the stored date, which is how a user
+        corrects a completion an import dated too late. A blank review is not
+        a supplied one and leaves a stored review alone; see
+        :meth:`_write_completion`. A completion carrying no date is the case
+        the module docstring describes: an empty column is stamped with today
+        in the host's zone, an existing date is kept.
+
+        Args:
+            item: ContentItem being completed, created if the library has no
+                match by external id or normalized title. Its
+                ``date_completed`` is the date the user named, or None when
+                they named none.
+            user_id: User ID (defaults to item.user_id or default user)
+
+        Returns:
+            Database ID of the completed item
+        """
+        with self.connection() as conn:
+            cursor = conn.cursor()
+            db_id = self._upsert_content_item(cursor, item, user_id)
+            self._write_completion(
+                cursor,
+                db_id,
+                item.rating,
+                item.review,
+                unset_if_none(item.date_completed),
+            )
+            conn.commit()
+            return db_id
+
+    def _write_completion(
+        self,
+        cursor: sqlite3.Cursor,
+        db_id: int,
+        rating: int | None,
+        review: str | None,
+        date_completed: date | Unset,
+    ) -> None:
+        """Apply the user-owned half of an explicit completion.
+
+        Runs on the caller's cursor so that creating the row and recording
+        what the user said about it are one transaction.
+
+        The status is written here rather than left to the sync rules the
+        upsert applies: a TV show whose season count has grown is regressed to
+        currently_consuming by that pass, and someone who has just said "I
+        finished this" outranks the season count. A named date is written here
+        for the same reason — the upsert's later-date-wins rule is a sync rule,
+        and leaving the date to it would drop a correction pointing backwards.
+
+        Args:
+            cursor: Database cursor (within an active transaction).
+            db_id: Database ID of the row being completed.
+            rating: Rating the user supplied, or None if they supplied none.
+            review: Review the user supplied, or None if they supplied none.
+                Blank counts as none: this door overwrites, so writing ``""``
+                would replace a stored review with a value that reads as one
+                the user wrote and stops a later import from filling the
+                field. The check is repeated here because it protects a
+                different write from the callers' own: the web and CLI
+                surfaces refuse a blank outright and chat drops one, and
+                :meth:`_upsert_content_item` — which runs first, so this guard
+                never sees what it writes — separately declines to fill from
+                one.
+            date_completed: Completion date the user supplied, written as
+                given. UNSET fills an empty column with today in the host's
+                zone and leaves a stored date alone.
+        """
+        set_parts = ["status = 'completed'", "updated_at = CURRENT_TIMESTAMP"]
+        params: list[Any] = []
+        if date_completed is not UNSET:
+            set_parts.append("date_completed = ?")
+            params.append(date_completed.isoformat())
+        else:
+            set_parts.append("date_completed = COALESCE(date_completed, ?)")
+            params.append(local_today().isoformat())
+        if rating is not None:
+            set_parts.append("rating = ?")
+            params.append(rating)
+        if review is not None and review.strip():
+            set_parts.append("review = ?")
+            params.append(review)
+        params.append(db_id)
+        cursor.execute(
+            f"UPDATE content_items SET {', '.join(set_parts)} WHERE id = ?",
+            params,
+        )
+
+    def _upsert_content_item(
+        self, cursor: sqlite3.Cursor, item: ContentItem, user_id: int | None
+    ) -> int:
+        """Insert or update *item*'s row and detail row under the sync rules.
+
+        The shared body of :meth:`save_content_item` and
+        :meth:`complete_content_item`: upsert by external id, cross-source
+        dedup by normalized title, and the fill-only rules for user-owned
+        fields. Runs on the caller's cursor and does not commit, so a caller
+        can add its own writes to the same transaction.
+
+        Args:
+            cursor: Database cursor (within an active transaction).
+            item: ContentItem to save.
+            user_id: User ID (defaults to item.user_id or default user).
+
+        Returns:
+            Database ID of the saved item.
+        """
         # Use provided user_id, fall back to item's user_id, then default
         effective_user_id = (
             user_id
@@ -192,182 +391,180 @@ class SQLiteDB:
             else (item.user_id if item.user_id is not None else get_default_user_id())
         )
 
-        with self.connection() as conn:
-            cursor = conn.cursor()
+        content_type_value = get_enum_value(item.content_type)
 
-            content_type_value = get_enum_value(item.content_type)
+        # A blank review is not a review. This leg fills the column only while
+        # it is empty, and a stored blank is indistinguishable from something
+        # the user wrote, so filling with one would refuse every later value
+        # and block the field for good.
+        incoming_review = item.review if item.review and item.review.strip() else None
 
-            # Check if item exists (by user_id, external_id, and content_type)
-            existing_id: int | None = None
-            if item.id:
-                cursor.execute(
-                    """SELECT id FROM content_items
-                       WHERE user_id = ? AND external_id = ? AND content_type = ?""",
-                    (effective_user_id, item.id, content_type_value),
-                )
-                row = cursor.fetchone()
-                if row:
-                    existing_id = int(row["id"])
-
-            # Compute normalized title once for both dedup paths below.
-            normalized_title = (
-                normalize_title_for_matching(item.title) if item.title else ""
+        # Check if item exists (by user_id, external_id, and content_type)
+        existing_id: int | None = None
+        if item.id:
+            cursor.execute(
+                """SELECT id FROM content_items
+                   WHERE user_id = ? AND external_id = ? AND content_type = ?""",
+                (effective_user_id, item.id, content_type_value),
             )
+            row = cursor.fetchone()
+            if row:
+                existing_id = int(row["id"])
 
-            # Cross-source dedup: if we found a row by external_id, check
-            # whether a *different* row exists with the same normalized title.
-            # This happens when both sources have already been imported and
-            # each has its own row.  Merge the duplicate into the kept row.
-            if existing_id is not None and normalized_title:
-                cursor.execute(
-                    """SELECT id FROM content_items
+        # Compute normalized title once for both dedup paths below.
+        normalized_title = (
+            normalize_title_for_matching(item.title) if item.title else ""
+        )
+
+        # Cross-source dedup: if we found a row by external_id, check
+        # whether a *different* row exists with the same normalized title.
+        # This happens when both sources have already been imported and
+        # each has its own row.  Merge the duplicate into the kept row.
+        if existing_id is not None and normalized_title:
+            cursor.execute(
+                """SELECT id FROM content_items
+                   WHERE user_id = ? AND content_type = ?
+                     AND normalized_title = ? AND id != ?""",
+                (
+                    effective_user_id,
+                    content_type_value,
+                    normalized_title,
+                    existing_id,
+                ),
+            )
+            # Normally at most one match, but loop defensively in case
+            # prior dedup ran partially and left multiple duplicates.
+            dup_rows = cursor.fetchall()
+            for dup_row in dup_rows:
+                dup_id = int(dup_row["id"])
+                self._merge_duplicate_into(
+                    cursor, keep_id=existing_id, delete_id=dup_id
+                )
+
+        # Fallback: check by normalized title to merge items from different sources
+        if existing_id is None and normalized_title:
+            cursor.execute(
+                """SELECT id FROM content_items
                        WHERE user_id = ? AND content_type = ?
-                         AND normalized_title = ? AND id != ?""",
-                    (
-                        effective_user_id,
-                        content_type_value,
-                        normalized_title,
-                        existing_id,
-                    ),
+                         AND normalized_title = ?""",
+                (effective_user_id, content_type_value, normalized_title),
+            )
+            row = cursor.fetchone()
+            if row:
+                existing_id = int(row["id"])
+
+        if existing_id is not None:
+            # Update existing item in base table.
+            # This is the sync door: user-owned fields are filled only
+            # while they are empty, never overwritten.
+            #   - rating/review: only set when the stored value is null
+            #   - status: forward-only (unread → consuming → completed)
+            #   - date_completed: only if incoming is later than existing
+            #   - ignored: only when the incoming value states one
+            #   - None incoming values never overwrite existing data
+            cursor.execute(
+                "SELECT status, rating, review, date_completed"
+                " FROM content_items WHERE id = ?",
+                (existing_id,),
+            )
+            existing_row = cursor.fetchone()
+
+            set_parts = ["updated_at = CURRENT_TIMESTAMP"]
+            params: list[str | int | None] = []
+
+            # Title: always update (identity field, always present)
+            set_parts.append("title = ?")
+            params.append(item.title)
+
+            # Keep normalized_title in sync with title
+            set_parts.append("normalized_title = ?")
+            params.append(normalize_title_for_matching(item.title))
+
+            # Source: update if incoming is not None
+            if item.source is not None:
+                set_parts.append("source = ?")
+                params.append(item.source)
+
+            # Status: only advance forward
+            existing_status = existing_row["status"] if existing_row else None
+            resolved_status = resolve_status_forward(
+                existing_status, get_enum_value(item.status)
+            )
+            set_parts.append("status = ?")
+            params.append(resolved_status)
+
+            # Rating: fill only — never overwrite the user's own value
+            existing_rating = existing_row["rating"] if existing_row else None
+            if existing_rating is None and item.rating is not None:
+                set_parts.append("rating = ?")
+                params.append(item.rating)
+
+            # Review: fill only — never overwrite the user's own value
+            existing_review = existing_row["review"] if existing_row else None
+            if existing_review is None and incoming_review is not None:
+                set_parts.append("review = ?")
+                params.append(incoming_review)
+
+            # Date completed: only if incoming is not None and later
+            if item.date_completed is not None:
+                incoming_date_str = item.date_completed.isoformat()
+                existing_date_str = (
+                    existing_row["date_completed"] if existing_row else None
                 )
-                # Normally at most one match, but loop defensively in case
-                # prior dedup ran partially and left multiple duplicates.
-                dup_rows = cursor.fetchall()
-                for dup_row in dup_rows:
-                    dup_id = int(dup_row["id"])
-                    self._merge_duplicate_into(
-                        cursor, keep_id=existing_id, delete_id=dup_id
-                    )
+                if existing_date_str is None or incoming_date_str > existing_date_str:
+                    set_parts.append("date_completed = ?")
+                    params.append(incoming_date_str)
 
-            # Fallback: check by normalized title to merge items from different sources
-            if existing_id is None and normalized_title:
-                cursor.execute(
-                    """SELECT id FROM content_items
-                           WHERE user_id = ? AND content_type = ?
-                             AND normalized_title = ?""",
-                    (effective_user_id, content_type_value, normalized_title),
-                )
-                row = cursor.fetchone()
-                if row:
-                    existing_id = int(row["id"])
+            # Ignored: only a stated value counts. True and False both win —
+            # that is how an edited export un-ignores an item — while None
+            # means the source said nothing and the stored flag stands.
+            if item.ignored is not None:
+                set_parts.append("ignored = ?")
+                params.append(1 if item.ignored else 0)
 
-            if existing_id is not None:
-                # Update existing item in base table.
-                # Rules:
-                #   - rating/review: set once — never overwrite existing values
-                #   - status: forward-only (unread → consuming → completed)
-                #   - date_completed: only if incoming is later than existing
-                #   - ignored: only when source explicitly sets it
-                #   - None incoming values never overwrite existing data
-                cursor.execute(
-                    "SELECT status, rating, review, date_completed"
-                    " FROM content_items WHERE id = ?",
-                    (existing_id,),
-                )
-                existing_row = cursor.fetchone()
+            set_clause = ", ".join(set_parts)
+            params.append(existing_id)
+            cursor.execute(
+                f"UPDATE content_items SET {set_clause} WHERE id = ?",
+                params,
+            )
+            db_id = existing_id
+        else:
+            # Insert new item into base table
+            cursor.execute(
+                """
+                INSERT INTO content_items
+                (user_id, external_id, title, normalized_title, content_type,
+                 status, rating, review, date_completed, source, ignored)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    effective_user_id,
+                    item.id,
+                    item.title,
+                    normalize_title_for_matching(item.title),
+                    content_type_value,
+                    get_enum_value(item.status),
+                    item.rating,
+                    incoming_review,
+                    (item.date_completed.isoformat() if item.date_completed else None),
+                    item.source,
+                    1 if item.ignored else 0,
+                ),
+            )
+            lastrowid = cursor.lastrowid
+            if lastrowid is None:
+                raise RuntimeError("INSERT did not return a row ID")
+            db_id = lastrowid
 
-                set_parts = ["updated_at = CURRENT_TIMESTAMP"]
-                params: list[str | int | None] = []
+        # Save to type-specific detail table
+        self._save_detail_table(cursor, db_id, item, content_type_value)
 
-                # Title: always update (identity field, always present)
-                set_parts.append("title = ?")
-                params.append(item.title)
+        # For TV shows, check if new seasons should regress status
+        if content_type_value == "tv_show":
+            self._handle_tv_season_change(cursor, db_id)
 
-                # Keep normalized_title in sync with title
-                set_parts.append("normalized_title = ?")
-                params.append(normalize_title_for_matching(item.title))
-
-                # Source: update if incoming is not None
-                if item.source is not None:
-                    set_parts.append("source = ?")
-                    params.append(item.source)
-
-                # Status: only advance forward
-                existing_status = existing_row["status"] if existing_row else None
-                resolved_status = _resolve_status_forward(
-                    existing_status, get_enum_value(item.status)
-                )
-                set_parts.append("status = ?")
-                params.append(resolved_status)
-
-                # Rating: set once — only set if existing is None
-                existing_rating = existing_row["rating"] if existing_row else None
-                if existing_rating is None and item.rating is not None:
-                    set_parts.append("rating = ?")
-                    params.append(item.rating)
-
-                # Review: set once — only set if existing is None
-                existing_review = existing_row["review"] if existing_row else None
-                if existing_review is None and item.review is not None:
-                    set_parts.append("review = ?")
-                    params.append(item.review)
-
-                # Date completed: only if incoming is not None and later
-                if item.date_completed is not None:
-                    incoming_date_str = item.date_completed.isoformat()
-                    existing_date_str = (
-                        existing_row["date_completed"] if existing_row else None
-                    )
-                    if (
-                        existing_date_str is None
-                        or incoming_date_str > existing_date_str
-                    ):
-                        set_parts.append("date_completed = ?")
-                        params.append(incoming_date_str)
-
-                # Ignored: only when source explicitly sets it (existing behavior)
-                if item.ignored is not None:
-                    set_parts.append("ignored = ?")
-                    params.append(1 if item.ignored else 0)
-
-                set_clause = ", ".join(set_parts)
-                params.append(existing_id)
-                cursor.execute(
-                    f"UPDATE content_items SET {set_clause} WHERE id = ?",
-                    params,
-                )
-                db_id = existing_id
-            else:
-                # Insert new item into base table
-                cursor.execute(
-                    """
-                    INSERT INTO content_items
-                    (user_id, external_id, title, normalized_title, content_type,
-                     status, rating, review, date_completed, source, ignored)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        effective_user_id,
-                        item.id,
-                        item.title,
-                        normalize_title_for_matching(item.title),
-                        content_type_value,
-                        get_enum_value(item.status),
-                        item.rating,
-                        item.review,
-                        (
-                            item.date_completed.isoformat()
-                            if item.date_completed
-                            else None
-                        ),
-                        item.source,
-                        1 if item.ignored else 0,
-                    ),
-                )
-                lastrowid = cursor.lastrowid
-                if lastrowid is None:
-                    raise RuntimeError("INSERT did not return a row ID")
-                db_id = lastrowid
-
-            # Save to type-specific detail table
-            self._save_detail_table(cursor, db_id, item, content_type_value)
-
-            # For TV shows, check if new seasons should regress status
-            if content_type_value == "tv_show":
-                self._handle_tv_season_change(cursor, db_id)
-
-            conn.commit()
-            return db_id
+        return db_id
 
     # Configuration for type-specific detail tables.
     # Each entry maps content_type value to:
@@ -375,7 +572,16 @@ class SQLiteDB:
     #   columns: list of (column_name, metadata_key, converter) tuples
     #            converter is "str" (default), "int" (safe_int), "json" (to_json_array),
     #            or "author" (special: use item.author or metadata)
-    #   alias_keys: metadata keys that are aliases (e.g. "genre" -> "genres")
+    #            The "*_or_*" converters accept a second metadata key for the
+    #            same column, because the plugins do not all agree on the
+    #            name: "genre"/"genres", "platform"/"platforms",
+    #            "seasons"/"total_seasons", "runtime"/"runtime_minutes" and
+    #            "release_year"/"year" each reach one column. One converter tag
+    #            per alias pair does not scale; the target shape is a tuple of
+    #            accepted keys per column, and that refactor must keep every
+    #            alias listed here.
+    #   known_keys: metadata keys the columns above consume, aliases included,
+    #               so they are not duplicated into the leftover metadata blob
     _DETAIL_TABLE_CONFIG: dict[str, dict[str, Any]] = {
         "book": {
             "table": "book_details",
@@ -407,8 +613,8 @@ class SQLiteDB:
             "table": "movie_details",
             "columns": [
                 ("director", "director", "str"),
-                ("runtime", "runtime", "int"),
-                ("release_year", "release_year", "int"),
+                ("runtime", "runtime", "int_or_runtime_minutes"),
+                ("release_year", "release_year", "int_or_year"),
                 ("genres", "genres", "json_or_genre"),
                 ("studio", "studio", "str"),
                 ("tags", "tags", "json"),
@@ -417,7 +623,9 @@ class SQLiteDB:
             "known_keys": {
                 "director",
                 "runtime",
+                "runtime_minutes",
                 "release_year",
+                "year",
                 "genres",
                 "genre",
                 "studio",
@@ -429,10 +637,10 @@ class SQLiteDB:
             "table": "tv_show_details",
             "columns": [
                 ("creators", "creators", "str"),
-                ("seasons", "seasons", "int"),
+                ("seasons", "seasons", "int_or_total_seasons"),
                 ("episodes", "episodes", "int"),
                 ("network", "network", "str"),
-                ("release_year", "release_year", "int"),
+                ("release_year", "release_year", "int_or_year"),
                 ("genres", "genres", "json_or_genre"),
                 ("tags", "tags", "json"),
                 ("description", "description", "str"),
@@ -440,9 +648,11 @@ class SQLiteDB:
             "known_keys": {
                 "creators",
                 "seasons",
+                "total_seasons",
                 "episodes",
                 "network",
                 "release_year",
+                "year",
                 "genres",
                 "genre",
                 "tags",
@@ -537,7 +747,7 @@ class SQLiteDB:
 
         metadata = item.metadata or {}
         table = config["table"]
-        if table not in _ALLOWED_DETAIL_TABLES:
+        if table not in ALLOWED_DETAIL_TABLES:
             raise ValueError(f"Unknown detail table: {table!r}")
         columns = config["columns"]
         known_keys = config["known_keys"]
@@ -578,17 +788,26 @@ class SQLiteDB:
             elif converter == "json_or_platform":
                 raw = metadata.get("platforms") or metadata.get("platform")
                 new_value = self._to_json_array(raw)
+            elif converter == "int_or_total_seasons":
+                raw = metadata.get("seasons") or metadata.get("total_seasons")
+                new_value = self._safe_int(raw)
+            elif converter == "int_or_runtime_minutes":
+                raw = metadata.get("runtime") or metadata.get("runtime_minutes")
+                new_value = self._safe_int(raw)
+            elif converter == "int_or_year":
+                raw = metadata.get("release_year") or metadata.get("year")
+                new_value = self._safe_int(raw)
             else:
                 new_value = metadata.get(meta_key)
 
             # Decide final value based on existing data
-            if col_name in _MERGEABLE_DETAIL_COLUMNS and existing_data:
+            if col_name in MERGEABLE_DETAIL_COLUMNS and existing_data:
                 # Genres/tags: additive merge
-                existing_list = _parse_json_list(existing_data.get(col_name))
-                new_list = _parse_json_list(new_value)
+                existing_list = parse_json_list(existing_data.get(col_name))
+                new_list = parse_json_list(new_value)
                 merged = merge_string_lists(existing_list, new_list)
                 values.append(json.dumps(merged) if merged else new_value)
-            elif col_name in _MONOTONIC_DETAIL_COLUMNS and existing_data:
+            elif col_name in MONOTONIC_DETAIL_COLUMNS and existing_data:
                 # Seasons/episodes: take the higher value
                 existing_val = self._safe_int(existing_data.get(col_name))
                 incoming_val = self._safe_int(new_value)
@@ -642,7 +861,7 @@ class SQLiteDB:
         values.append(metadata_json)
 
         for name in col_names:
-            _assert_safe_identifier(name)
+            assert_safe_identifier(name)
         placeholders = ", ".join("?" for _ in values)
         col_list = ", ".join(col_names)
         if existing_data:
@@ -675,8 +894,8 @@ class SQLiteDB:
         user, and content type) but have different external_ids from different
         sources.
 
-        Delegates to the module-level ``_merge_scalar_columns`` and
-        ``_merge_detail_tables`` functions so that the same merge logic
+        Delegates to the module-level ``merge_scalar_columns`` and
+        ``merge_detail_tables`` functions so that the same merge logic
         is available to both runtime and migration paths.
 
         Args:
@@ -684,8 +903,8 @@ class SQLiteDB:
             keep_id: Database ID of the row to keep.
             delete_id: Database ID of the duplicate row to delete.
         """
-        _merge_scalar_columns(cursor, keep_id, delete_id)
-        _merge_detail_tables(cursor, keep_id, delete_id)
+        merge_scalar_columns(cursor, keep_id, delete_id)
+        merge_detail_tables(cursor, keep_id, delete_id)
 
         # Delete the duplicate row (cascades to detail tables)
         cursor.execute("DELETE FROM content_items WHERE id = ?", (delete_id,))
@@ -832,8 +1051,9 @@ class SQLiteDB:
             min_rating: Minimum rating (inclusive)
             unrated_only: When True, only return items with no rating set
                 (rating IS NULL)
-            limit: Maximum number of results
-            offset: Number of results to skip (for pagination)
+            limit: Maximum number of results. None or 0 means no limit.
+            offset: Number of results to skip (for pagination). Independent of
+                limit: an offset with no limit skips and returns the rest.
             sort_by: Sort order - "title" (default, ignores articles),
                 "updated_at", "rating", or "created_at"
             include_ignored: Whether to include ignored items (default True
@@ -922,11 +1142,12 @@ class SQLiteDB:
             # limit/offset slicing until after filtering. Title sorting is also
             # always done in Python (article stripping).
             slice_in_python = sort_by == "title" or bool(search_term)
-            if not slice_in_python:
-                # Apply SQL LIMIT/OFFSET for non-title, non-search queries
-                if limit:
-                    query += " LIMIT ?"
-                    params.append(limit)
+            if not slice_in_python and (limit or offset > 0):
+                # Apply SQL LIMIT/OFFSET for non-title, non-search queries.
+                # SQLite accepts OFFSET only as a suffix of LIMIT, so an offset
+                # with no limit uses -1, SQLite's "unbounded" limit.
+                query += " LIMIT ?"
+                params.append(limit or -1)
                 if offset > 0:
                     query += " OFFSET ?"
                     params.append(offset)
@@ -1215,20 +1436,43 @@ class SQLiteDB:
         self,
         db_id: int,
         status: str,
-        rating: int | None = None,
-        review: str | None = None,
+        rating: int | None | Unset = UNSET,
+        review: str | None | Unset = UNSET,
         seasons_watched: list[int] | None = None,
         genres: list[str] | None = None,
         tags: list[str] | None = None,
         description: str | None = None,
         user_id: int | None = None,
     ) -> bool:
-        """Update a content item from the web UI (unrestricted editing).
+        """Update a content item from an explicit user action (unrestricted).
 
-        Unlike save_content_item which enforces forward-only status and
-        set-once rating/review for sync safety, this method allows full
-        editing: status can go backward, rating/review can be changed
-        or cleared.
+        This is the explicit-user-action door described in the module
+        docstring: unlike save_content_item, which fills user-owned fields
+        only while they are empty, an edit made here may freely overwrite
+        status, rating and review, and status may go backward.
+
+        Only the fields the caller actually supplied are written, but the
+        arguments say "not supplied" in three different ways, so read the one
+        you are passing:
+
+        - ``status`` is required and always written.
+        - ``rating`` and ``review`` use :data:`UNSET` for "leave it alone",
+          because they are nullable and ``None`` therefore has to mean
+          "clear it". A blank ``review`` clears it as well, so the only two
+          things this door can leave in the column are text the user wrote and
+          NULL: it overwrites what it is handed, and a stored ``""`` reads as a
+          review the user wrote and refuses every later import. Clearing
+          rather than ignoring is what the surfaces in front already decide —
+          the edit dialog sends null once the box is empty, and ``library
+          edit`` spells that instruction ``--clear-review``.
+        - ``seasons_watched``, ``genres``, ``tags`` and ``description`` use
+          ``None`` for "leave it alone", so sending an explicit null for one
+          of them is a no-op, not a clear. The *empty* value is the clear:
+          ``[]`` for the three lists and ``""`` for the description are
+          supplied values, and they are written as given. That is the ordinary
+          path rather than a corner — the web edit dialog sends ``genres`` and
+          ``tags`` on every save, so removing the last one there clears the
+          stored list.
 
         For TV shows with seasons_watched provided, status is auto-derived:
         0 watched = unread, all watched = completed, partial = currently_consuming.
@@ -1248,15 +1492,31 @@ class SQLiteDB:
         item enriched via the ``manual`` provider so it drops out of the
         not-enriched filter and is never re-queued for automatic enrichment.
 
+        When the edit moves the status *into* ``completed`` and the row has no
+        ``date_completed`` yet, today's date in the host's zone is stamped so
+        an in-app completion carries a date for the variety ladder — the same
+        calendar an imported date is narrowed to. An item that was
+        already completed is left as it is: an import that carried no date
+        stays undated rather than being dated today by an unrelated genre or
+        review edit, the same rule the season dates above follow. A status
+        moving away from completed leaves the stored date alone — it records
+        that a completion happened, and dropping it would be the same silent
+        loss this door exists to avoid.
+
         Args:
             db_id: Database ID of the item to update.
             status: New status value (unread, currently_consuming, completed).
-            rating: New rating (1-5) or None to clear.
-            review: New review text or None to clear.
+            rating: New rating (1-5), None to clear, UNSET to leave unchanged.
+            review: New review text, None or blank to clear, UNSET to leave
+                unchanged.
             seasons_watched: List of watched season numbers (TV shows only).
-            genres: Manual genres to set (overwrite). None leaves them as-is.
-            tags: Manual tags to set (overwrite). None leaves them as-is.
-            description: Manual description to set. None leaves it as-is.
+                None leaves them as-is, ``[]`` clears them.
+            genres: Manual genres to set (overwrite). None leaves them as-is,
+                ``[]`` clears them.
+            tags: Manual tags to set (overwrite). None leaves them as-is,
+                ``[]`` clears them.
+            description: Manual description to set. None leaves it as-is,
+                ``""`` clears it.
             user_id: Optional user ID filter for authorization.
 
         Returns:
@@ -1268,13 +1528,13 @@ class SQLiteDB:
             # Verify item exists (and belongs to user_id if provided)
             if user_id is not None:
                 cursor.execute(
-                    "SELECT id, content_type FROM content_items"
+                    "SELECT id, content_type, status FROM content_items"
                     " WHERE id = ? AND user_id = ?",
                     (db_id, user_id),
                 )
             else:
                 cursor.execute(
-                    "SELECT id, content_type FROM content_items WHERE id = ?",
+                    "SELECT id, content_type, status FROM content_items WHERE id = ?",
                     (db_id,),
                 )
             row = cursor.fetchone()
@@ -1282,6 +1542,7 @@ class SQLiteDB:
                 return False
 
             content_type = row["content_type"]
+            existing_status = row["status"]
             resolved_status = status
 
             # For TV shows with seasons_watched, auto-derive status
@@ -1313,7 +1574,7 @@ class SQLiteDB:
                                 existing_metadata = parsed
                         except (json.JSONDecodeError, TypeError):
                             pass
-                    now_iso = datetime.now(UTC).isoformat()
+                    now_iso = utc_now().isoformat()
                     existing_dates = existing_metadata.get("seasons_watched_dates")
                     if not isinstance(existing_dates, dict):
                         existing_dates = {}
@@ -1341,13 +1602,32 @@ class SQLiteDB:
                         (json.dumps(existing_metadata), db_id),
                     )
 
-            # Update the content_items row directly
+            # Update the content_items row directly, writing only the fields
+            # the caller supplied so a partial edit cannot erase the rest.
+            set_parts = ["status = ?", "updated_at = CURRENT_TIMESTAMP"]
+            params: list[Any] = [resolved_status]
+            if rating is not UNSET:
+                set_parts.append("rating = ?")
+                params.append(rating)
+            if review is not UNSET:
+                set_parts.append("review = ?")
+                # A blank is not a review. The check lives here rather than
+                # only in the callers so the door holds the property itself:
+                # every caller today refuses or drops a blank, and the next one
+                # inherits NULL instead of a value that reads as the user's.
+                params.append(review if review and review.strip() else None)
+            if resolved_status == "completed" and existing_status != "completed":
+                # Only a transition into completed dates the completion: an
+                # item that was already completed but undated is left undated
+                # rather than being dated by an unrelated edit. COALESCE fills
+                # the empty case without disturbing a date the user (or an
+                # import) already recorded.
+                set_parts.append("date_completed = COALESCE(date_completed, ?)")
+                params.append(local_today().isoformat())
+            params.append(db_id)
             cursor.execute(
-                "UPDATE content_items"
-                " SET status = ?, rating = ?, review = ?,"
-                " updated_at = CURRENT_TIMESTAMP"
-                " WHERE id = ?",
-                (resolved_status, rating, review, db_id),
+                f"UPDATE content_items SET {', '.join(set_parts)} WHERE id = ?",
+                params,
             )
 
             if genres is not None or tags is not None or description is not None:
@@ -1383,7 +1663,7 @@ class SQLiteDB:
         if not config:
             raise ValueError(f"Unknown content_type: {content_type!r}")
         table = config["table"]
-        if table not in _ALLOWED_DETAIL_TABLES:
+        if table not in ALLOWED_DETAIL_TABLES:
             raise ValueError(f"Unknown detail table: {table!r}")
 
         updates: dict[str, Any] = {}
@@ -1402,7 +1682,7 @@ class SQLiteDB:
 
         columns = list(updates)
         for name in columns:
-            _assert_safe_identifier(name)
+            assert_safe_identifier(name)
 
         if row_exists:
             set_clause = ", ".join(f"{name} = ?" for name in columns)
@@ -1609,6 +1889,7 @@ class SQLiteDB:
         user_id: int | None = None,
         limit: int = 100,
         include_not_found: bool = False,
+        after_db_id: int | None = None,
     ) -> list[tuple[int, ContentItem]]:
         """Get content items that need enrichment.
 
@@ -1622,6 +1903,10 @@ class SQLiteDB:
             user_id: Filter by user ID (defaults to default user)
             limit: Maximum number of items to return
             include_not_found: Also include items previously marked as not_found
+            after_db_id: Only return items with a database ID above this one.
+                Results are ordered by ID, so a caller walking the queue passes
+                the last ID it saw to page past the items it already handled —
+                including any it left queued on purpose.
 
         Returns:
             List of (db_id, ContentItem) tuples for items needing enrichment
@@ -1635,6 +1920,7 @@ class SQLiteDB:
                 content_type,
                 include_not_found,
                 count_only=False,
+                after_db_id=after_db_id,
             )
             query += " ORDER BY ci.id LIMIT ?"
             params.append(limit)
@@ -1687,6 +1973,7 @@ class SQLiteDB:
         content_type: ContentType | None,
         include_not_found: bool,
         count_only: bool,
+        after_db_id: int | None = None,
     ) -> tuple[str, list[Any]]:
         """Build the shared SELECT for items needing enrichment.
 
@@ -1718,6 +2005,9 @@ class SQLiteDB:
         if content_type:
             query += " AND ci.content_type = ?"
             params.append(get_enum_value(content_type))
+        if after_db_id is not None:
+            query += " AND ci.id > ?"
+            params.append(after_db_id)
         return query, params
 
     def get_content_item_db_id(

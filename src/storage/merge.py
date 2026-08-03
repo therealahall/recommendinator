@@ -4,6 +4,11 @@ These functions are used by both ``sqlite_db.SQLiteDB._merge_duplicate_into``
 (runtime dedup) and ``schema._merge_duplicate_row`` (migration dedup).
 Extracting them into a neutral module breaks the circular import between
 ``sqlite_db`` and ``schema``.
+
+``__all__`` is this module's contract: those names are imported by
+``sqlite_db`` and ``schema`` and cannot be renamed or reshaped without
+updating both. Nothing else here is imported by another ``src`` module, so
+the underscore-prefixed names really are internal.
 """
 
 import json
@@ -14,6 +19,18 @@ from typing import Any
 from src.utils.dates import merge_seasons_watched_dates
 from src.utils.list_merge import merge_string_lists
 
+__all__ = [
+    "ALLOWED_DETAIL_TABLES",
+    "MERGEABLE_DETAIL_COLUMNS",
+    "MONOTONIC_DETAIL_COLUMNS",
+    "assert_safe_identifier",
+    "merge_detail_tables",
+    "merge_scalar_columns",
+    "normalize_title_for_matching",
+    "parse_json_list",
+    "resolve_status_forward",
+]
+
 # ---------------------------------------------------------------------------
 # SQL identifier validation
 # ---------------------------------------------------------------------------
@@ -21,7 +38,7 @@ from src.utils.list_merge import merge_string_lists
 _SAFE_IDENTIFIER_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
 
 
-def _assert_safe_identifier(name: str) -> None:
+def assert_safe_identifier(name: str) -> None:
     """Validate that *name* is a safe SQL identifier (lowercase, no spaces).
 
     Raises ValueError if the name does not match ``^[a-z_][a-z0-9_]*$``.
@@ -35,7 +52,7 @@ def _assert_safe_identifier(name: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _parse_json_list(raw: str | None) -> list[str]:
+def parse_json_list(raw: str | None) -> list[str]:
     """Parse a JSON array string into a Python list of strings.
 
     Args:
@@ -61,7 +78,7 @@ def _parse_json_list(raw: str | None) -> list[str]:
 
 # Detail table columns for merge operations.  Kept in sync with
 # SQLiteDB._DETAIL_TABLE_CONFIG — enforced by TestDetailTableColumnsConsistency.
-# Used by _merge_detail_tables so that column names are never read from the
+# Used by merge_detail_tables so that column names are never read from the
 # live database schema at runtime.
 _DETAIL_TABLE_COLUMNS: dict[str, tuple[str, ...]] = {
     "book_details": (
@@ -106,15 +123,51 @@ _DETAIL_TABLE_COLUMNS: dict[str, tuple[str, ...]] = {
 }
 
 # Derived from _DETAIL_TABLE_COLUMNS so there is no independent list to keep
-# in sync.  Used by _save_detail_table to validate table names from
+# in sync.  Used by SQLiteDB._save_detail_table to validate table names from
 # _DETAIL_TABLE_CONFIG before SQL identifier interpolation.
-_ALLOWED_DETAIL_TABLES: frozenset[str] = frozenset(_DETAIL_TABLE_COLUMNS.keys())
+ALLOWED_DETAIL_TABLES: frozenset[str] = frozenset(_DETAIL_TABLE_COLUMNS.keys())
 
 # Columns merged additively (union of both rows' lists) during dedup.
-_MERGEABLE_DETAIL_COLUMNS: frozenset[str] = frozenset({"genres", "tags"})
+MERGEABLE_DETAIL_COLUMNS: frozenset[str] = frozenset({"genres", "tags"})
 
 # Columns that can only increase (e.g. TV show gaining new seasons).
-_MONOTONIC_DETAIL_COLUMNS: frozenset[str] = frozenset({"seasons", "episodes"})
+MONOTONIC_DETAIL_COLUMNS: frozenset[str] = frozenset({"seasons", "episodes"})
+
+
+# ---------------------------------------------------------------------------
+# Status ordering
+# ---------------------------------------------------------------------------
+
+# Status ordering for forward-only progression.
+# A status can only be overwritten by a status later in this sequence.
+_STATUS_ORDER: dict[str, int] = {
+    "unread": 0,
+    "currently_consuming": 1,
+    "completed": 2,
+}
+
+
+def resolve_status_forward(existing_status: str | None, incoming_status: str) -> str:
+    """Return the later of two statuses (forward-only progression).
+
+    Status can only advance: unread → currently_consuming → completed.
+    A re-sync with an earlier status does not revert, and neither does a
+    duplicate-row merge.
+
+    Args:
+        existing_status: Current status in the database (may be None).
+        incoming_status: Status from the incoming sync or duplicate row.
+
+    Returns:
+        The resolved status string.
+    """
+    if existing_status is None:
+        return incoming_status
+    existing_order = _STATUS_ORDER.get(existing_status, 0)
+    incoming_order = _STATUS_ORDER.get(incoming_status, 0)
+    if incoming_order >= existing_order:
+        return incoming_status
+    return existing_status
 
 
 # ---------------------------------------------------------------------------
@@ -210,16 +263,21 @@ def normalize_title_for_matching(title: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _merge_scalar_columns(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -> None:
-    """Merge rating, review, and date_completed from duplicate into kept row.
+def merge_scalar_columns(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -> None:
+    """Merge the user-owned scalar columns from a duplicate into the kept row.
 
     Shared by ``SQLiteDB._merge_duplicate_into`` (runtime) and
     ``schema._merge_duplicate_row`` (migration) to avoid duplicating
     the merge rules.
 
+    The duplicate row is deleted right after this runs, so every column a
+    user can own has to be carried across or it is lost for good.
+
     Rules:
     - rating/review: fill from duplicate only if kept is null
     - date_completed: keep the later date
+    - status: keep the further-advanced status (forward-only ordering)
+    - ignored: an ignore on either row survives
 
     Note:
         Requires the connection to use ``row_factory = sqlite3.Row`` so
@@ -233,18 +291,20 @@ def _merge_scalar_columns(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) 
     # Fetch both rows to determine whether the merge would produce any
     # actual data change.  We skip the UPDATE entirely when no delta exists
     # to avoid bumping updated_at (a user-facing sort key) spuriously.
-    cursor.execute(
-        "SELECT rating, review, date_completed FROM content_items WHERE id = ?",
-        (keep_id,),
+    select_sql = (
+        "SELECT status, rating, review, date_completed, ignored"
+        " FROM content_items WHERE id = ?"
     )
+    cursor.execute(select_sql, (keep_id,))
     keep_row = cursor.fetchone()
-    cursor.execute(
-        "SELECT rating, review, date_completed FROM content_items WHERE id = ?",
-        (delete_id,),
-    )
+    cursor.execute(select_sql, (delete_id,))
     dup_row = cursor.fetchone()
     if keep_row is None or dup_row is None:
         return
+
+    merged_status = resolve_status_forward(keep_row["status"], dup_row["status"])
+    keep_ignored = 1 if keep_row["ignored"] else 0
+    merged_ignored = 1 if (keep_ignored or dup_row["ignored"]) else 0
 
     will_change_rating = keep_row["rating"] is None and dup_row["rating"] is not None
     will_change_review = keep_row["review"] is None and dup_row["review"] is not None
@@ -252,13 +312,21 @@ def _merge_scalar_columns(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) 
         keep_row["date_completed"] is None
         or dup_row["date_completed"] > keep_row["date_completed"]
     )
-    if not (will_change_rating or will_change_review or will_change_date):
+    if not (
+        will_change_rating
+        or will_change_review
+        or will_change_date
+        or merged_status != keep_row["status"]
+        or merged_ignored != keep_ignored
+    ):
         return
 
     # Fully static parameterized query — no dynamic SQL construction.
     # The CASE expressions duplicate the will_change guards intentionally:
     # the Python guard skips the UPDATE to avoid bumping updated_at; the
     # CASE expressions ensure correct data even if the guard logic has a bug.
+    # status/ignored are resolved in Python instead, since their rules are
+    # not expressible in SQL without restating the status ordering.
     cursor.execute(
         """UPDATE content_items
            SET rating = CASE WHEN rating IS NULL THEN ? ELSE rating END,
@@ -268,6 +336,8 @@ def _merge_scalar_columns(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) 
                    WHEN ? IS NOT NULL AND ? > date_completed THEN ?
                    ELSE date_completed
                END,
+               status = ?,
+               ignored = ?,
                updated_at = CURRENT_TIMESTAMP
            WHERE id = ?""",
         (
@@ -277,6 +347,8 @@ def _merge_scalar_columns(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) 
             dup_row["date_completed"],
             dup_row["date_completed"],
             dup_row["date_completed"],
+            merged_status,
+            merged_ignored,
             keep_id,
         ),
     )
@@ -292,7 +364,7 @@ def _merge_detail_metadata(
     metadata — in which case we preserve the kept row's data as-is).
 
     Precondition: both arguments must be non-None sqlite3.Row objects.
-    The caller (_merge_detail_tables) guards against None before calling.
+    The caller (merge_detail_tables) guards against None before calling.
 
     Merge rule: existing keys take precedence; incoming fills gaps — except
     ``seasons_watched_dates``, which merges per season keeping the later
@@ -338,7 +410,7 @@ def _merge_detail_metadata(
     return json.dumps(merged)
 
 
-def _merge_detail_tables(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -> None:
+def merge_detail_tables(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -> None:
     """Merge detail table rows from duplicate into kept row.
 
     For each detail table (book_details, movie_details, etc.):
@@ -367,7 +439,7 @@ def _merge_detail_tables(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -
     """
     for table, columns in _DETAIL_TABLE_COLUMNS.items():
         # table comes from _DETAIL_TABLE_COLUMNS.keys() (compile-time constant),
-        # which is the source of _ALLOWED_DETAIL_TABLES — no runtime check needed.
+        # which is the source of ALLOWED_DETAIL_TABLES — no runtime check needed.
         # Column names are validated individually below as defense-in-depth.
         cursor.execute(
             f"SELECT * FROM {table} WHERE content_item_id = ?",
@@ -394,16 +466,16 @@ def _merge_detail_tables(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -
         detail_params: list[Any] = []
 
         for col in columns:
-            _assert_safe_identifier(col)
-            if col in _MERGEABLE_DETAIL_COLUMNS:
+            assert_safe_identifier(col)
+            if col in MERGEABLE_DETAIL_COLUMNS:
                 # Genres/tags: additive merge
-                keep_list = _parse_json_list(keep_detail[col])
-                dup_list = _parse_json_list(dup_detail[col])
+                keep_list = parse_json_list(keep_detail[col])
+                dup_list = parse_json_list(dup_detail[col])
                 if dup_list:
                     merged = merge_string_lists(keep_list, dup_list)
                     detail_updates.append(f"{col} = ?")
                     detail_params.append(json.dumps(merged))
-            elif col in _MONOTONIC_DETAIL_COLUMNS:
+            elif col in MONOTONIC_DETAIL_COLUMNS:
                 # Seasons/episodes: take the higher value
                 keep_val = keep_detail[col]
                 dup_val = dup_detail[col]
