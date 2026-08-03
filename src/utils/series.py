@@ -14,7 +14,7 @@ from datetime import date
 from typing import NamedTuple
 
 from src.models.content import ContentItem, ContentType
-from src.utils.dates import parse_iso_timestamp
+from src.utils.dates import local_date_from_iso_timestamp
 
 # Upper bound on TV season numbers and counts. No real series approaches this,
 # but season values arrive from user-supplied metadata (imports, the web edit
@@ -398,17 +398,19 @@ def latest_season_watched_date(item: ContentItem) -> date | None:
 
     Reads the ``seasons_watched_dates`` metadata map (season -> ISO timestamp)
     written on manual season check-off or Trakt sync, and returns the latest
-    date. Used by the variety ladder to date an ongoing show's
+    date. The stored timestamps are UTC instants, so each is narrowed to the
+    host's local calendar day (see ``local_date_from_iso_timestamp``) rather
+    than the UTC one. Used by the variety ladder to date an ongoing show's
     genre-completion event. Returns None when no parseable date exists.
     """
     dates = item.metadata.get("seasons_watched_dates")
     if not isinstance(dates, dict) or not dates:
         return None
-    parsed: list[date] = []
-    for value in dates.values():
-        timestamp = parse_iso_timestamp(value)
-        if timestamp is not None:
-            parsed.append(timestamp.date())
+    parsed = [
+        local_day
+        for value in dates.values()
+        if (local_day := local_date_from_iso_timestamp(value)) is not None
+    ]
     return max(parsed) if parsed else None
 
 

@@ -1510,3 +1510,39 @@ def test_latest_season_watched_date_none_when_all_unparseable():
     """A dict whose values are all unparseable dates yields None, not a crash."""
     item = _show({"1": "not-a-date"})
     assert latest_season_watched_date(item) is None
+
+
+class TestSeasonWatchedDateTimezone:
+    """Tests for dating a watched season by the viewer's calendar day."""
+
+    def test_season_date_uses_local_calendar_day_regression(self, host_timezone):
+        """Regression test: an evening watch was dated the following day.
+
+        Bug reported: a season finished at 21:00 on 2026-03-14 in
+        America/Los_Angeles is recorded by Trakt as the instant
+        2026-03-15T04:00:00+00:00, and the variety ladder dated that completion
+        2026-03-15 — a day the user had not lived yet.
+        Root cause: ``latest_season_watched_date`` called ``.date()`` straight
+        on the parsed instant, which yields the UTC calendar day.
+        Fix: the instant is converted to the host's zone before narrowing, via
+        ``local_date_from_iso_timestamp``.
+        """
+        host_timezone("America/Los_Angeles")
+        item = _show({"1": "2026-03-15T04:00:00+00:00"})
+        assert latest_season_watched_date(item) == date(2026, 3, 14)
+
+    def test_latest_season_is_chosen_by_local_day(self, host_timezone):
+        """The max is taken over local days, so a UTC-tied pair still separates.
+
+        Both instants fall on 2026-03-14 in UTC, so before the fix the two
+        seasons tied. In Tokyo (UTC+9) season 1 is half an hour into the 15th
+        while season 2 is still the evening of the 14th.
+        """
+        host_timezone("Asia/Tokyo")
+        item = _show(
+            {
+                "1": "2026-03-14T15:30:00+00:00",
+                "2": "2026-03-14T14:00:00+00:00",
+            }
+        )
+        assert latest_season_watched_date(item) == date(2026, 3, 15)

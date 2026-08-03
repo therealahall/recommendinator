@@ -1,5 +1,6 @@
 """Tests for Trakt API integration."""
 
+from collections.abc import Callable
 from datetime import date
 from typing import Any
 from unittest.mock import Mock, patch
@@ -12,7 +13,6 @@ from src.ingestion.registry import PluginRegistry
 from src.ingestion.sources.trakt.trakt import (
     TraktAPIError,
     TraktPlugin,
-    _parse_completed_date,
     _season_watched_dates,
     fetch_list,
     fetch_show_season_totals,
@@ -171,28 +171,75 @@ class TestFetchList:
         assert call_args[1]["params"]["extended"] == "full"
 
 
-class TestParseCompletedDate:
-    """Tests for the Trakt ISO 8601 timestamp parser."""
+class TestWatchedDateTimezone:
+    """Tests for dating a watch by the viewer's calendar day, not UTC's."""
 
-    def test_iso_with_z_suffix(self) -> None:
-        """A UTC timestamp ending in Z parses to the right date."""
-        assert _parse_completed_date("2021-05-01T10:00:00.000Z") == date(2021, 5, 1)
+    def test_late_evening_local_watch_keeps_local_date_regression(
+        self, host_timezone: Callable[[str], None]
+    ) -> None:
+        """Regression test: an evening watch was stored as the next day.
 
-    def test_iso_with_numeric_offset(self) -> None:
-        """A timestamp with a numeric UTC offset parses to the right date."""
-        assert _parse_completed_date("2021-05-01T10:00:00+02:00") == date(2021, 5, 1)
+        Bug reported: a movie finished at 21:00 on 2026-03-14 in
+        America/Los_Angeles is recorded by Trakt as the instant
+        ``2026-03-15T04:00:00.000Z``, and the library reported a
+        ``date_completed`` of 2026-03-15 — a day the user had not lived yet.
+        Root cause: the plugin narrowed the parsed instant with ``.date()``,
+        which yields the UTC calendar day rather than the viewer's.
+        Fix: the instant is converted to the host's zone before narrowing, via
+        ``local_date_from_iso_timestamp``.
+        """
+        host_timezone("America/Los_Angeles")
+        payloads = _all_lists(
+            watched_movies=[
+                {
+                    "last_watched_at": "2026-03-15T04:00:00.000Z",
+                    "movie": _movie(1, "Inception"),
+                }
+            ]
+        )
+        items = _run_fetch(payloads, _config())
 
-    def test_none_returns_none(self) -> None:
-        """None input yields None."""
-        assert _parse_completed_date(None) is None
+        assert items[0].date_completed == date(2026, 3, 14)
 
-    def test_empty_string_returns_none(self) -> None:
-        """An empty string yields None."""
-        assert _parse_completed_date("") is None
+    def test_after_midnight_local_watch_east_of_utc_keeps_local_date(
+        self, host_timezone: Callable[[str], None]
+    ) -> None:
+        """East of UTC the shift runs the other way, and shows narrow too.
 
-    def test_malformed_string_returns_none(self) -> None:
-        """A non-ISO string yields None instead of raising."""
-        assert _parse_completed_date("not-a-date") is None
+        00:30 on 2026-03-15 in Tokyo (UTC+9) is still the 14th in UTC, so a
+        UTC-dated completion would report the day before the user finished.
+        """
+        host_timezone("Asia/Tokyo")
+        payloads = _all_lists(
+            watched_shows=[
+                {
+                    "last_watched_at": "2026-03-14T15:30:00.000Z",
+                    "show": _show(10, "Severance", aired_episodes=9),
+                    "seasons": [
+                        {
+                            "number": 1,
+                            "episodes": [{"number": n} for n in range(1, 10)],
+                        }
+                    ],
+                }
+            ]
+        )
+        items = _run_fetch(payloads, _config())
+
+        assert items[0].status == ConsumptionStatus.COMPLETED
+        assert items[0].date_completed == date(2026, 3, 15)
+
+    def test_unparseable_watch_instant_leaves_the_date_unset(self) -> None:
+        """A malformed ``last_watched_at`` yields no date instead of raising."""
+        payloads = _all_lists(
+            watched_movies=[
+                {"last_watched_at": "not-a-date", "movie": _movie(1, "Inception")}
+            ]
+        )
+        items = _run_fetch(payloads, _config())
+
+        assert items[0].status == ConsumptionStatus.COMPLETED
+        assert items[0].date_completed is None
 
 
 class TestSeasonWatchedDates:
