@@ -86,13 +86,13 @@ Claude Code only discovers `.claude/agents/` for the directory a session started
 **Every check must pass before submitting a PR:**
 
 ```bash
-python3.11 scripts/check_review_agents.py          # Review agents are loadable
-python3.11 -m black --check src/ tests/ scripts/   # Formatting
-python3.11 -m ruff check src/ tests/ scripts/      # Linting
-python3.11 -m mypy src/ scripts/                   # Type checking (strict)
-python3.11 -m pytest                               # All tests pass
-pnpm vue-tsc --noEmit                              # Frontend type checking
-pnpm vitest run                                    # Frontend tests
+python3.11 scripts/check_review_agents.py                     # Review agents are loadable
+python3.11 -m black --check src/ tests/ scripts/ conftest.py  # Formatting
+python3.11 -m ruff check src/ tests/ scripts/ conftest.py     # Linting
+python3.11 -m mypy src/ scripts/ conftest.py                  # Type checking (strict)
+python3.11 -m pytest                                          # All tests pass
+pnpm vue-tsc --noEmit                                         # Frontend type checking
+pnpm vitest run                                               # Frontend tests
 ```
 
 Or use the Makefile: `make check` runs exactly those, in that order.
@@ -253,7 +253,10 @@ src/
 ├── web/              # FastAPI web interface
 │   └── static/themes/  # UI themes (folder-per-theme, auto-discovered)
 ├── ingestion/        # Data ingestion
-│   └── sources/      # Source plugins (folder-per-plugin: <name>/<name>.py + README.md + test_<name>.py)
+│   └── sources/      # Source plugins (folder-per-plugin: <name>/<name>.py + README.md + test_<name>.py).
+│                     # _isolation/ is the one folder here that is not a plugin: it holds the
+│                     # test proving plugin-local tests get the root conftest's isolation, and
+│                     # its leading underscore keeps the plugin registry from importing it.
 ├── llm/              # Ollama interaction (optional)
 ├── storage/          # SQLite + ChromaDB
 ├── recommendations/  # Scoring pipeline and engine
@@ -264,6 +267,8 @@ src/
 └── utils/            # Utility functions
 tests/                # Cross-cutting tests (CLI, web, storage, recommendations, conversation).
                       # Plugin-local tests live next to the plugin: src/.../<plugin>/test_<plugin>.py.
+conftest.py           # Three autouse fixtures for every test in every tree: real logs and
+                      # credentials are isolated, and the process timezone is pinned to UTC
 scripts/              # Developer tooling (check_review_agents.py)
 config/               # Configuration files
 templates/            # Import file templates (CSV, JSON, Markdown)
