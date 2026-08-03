@@ -99,8 +99,120 @@ Export your library data from the web UI:
 3. Choose a format (CSV or JSON).
 4. Click **Export** to download.
 
-Exported files match the import template format, so you can edit them (e.g., mark
-items as `ignored`, update `seasons_watched`) and re-import via CSV or JSON sync.
+Exported files match the import template format, so you can edit them (e.g. flip
+`ignored` on a batch of items, or rate something the import left unrated) and
+re-import via CSV or JSON sync. What a re-import is allowed to change depends
+on the field, and for most fields the answer is "less than you would expect":
+
+- **Rating and review** are filled only while the stored value is empty. A
+  re-import never replaces one you wrote in the app.
+- **Status** only moves forward (unread → consuming → completed). A file can
+  advance a status you moved backward, but it can never revert a completion —
+  except for one case that is not a status rule at all: a completed TV show
+  whose season checklist you have filled in returns to in-progress when the
+  import raises its `total_seasons` above the seasons you have watched.
+- **Completion date** is replaced only by a later one.
+- **`ignored`** does whatever the file actually states. A real `true` or `false`
+  wins in either direction, so the export-edit-re-import round trip is how you
+  un-ignore items in bulk. Leaving the column out, leaving a cell blank, or
+  sending a JSON `null` all mean the file says *nothing* about the flag, and the
+  value you set in the app stands. **That protects a file you maintain by hand,
+  not an export from this app** — see the warning below.
+- **`genre`** is additive. An imported genre is merged into the genres already
+  stored; it never replaces them, and there is no way to remove one through an
+  import.
+- **`total_seasons`** is monotonic — it only ever increases. A smaller number in
+  the file is discarded.
+- **`year`, `year_published`, `pages`, `isbn`, `runtime_minutes`, `platform`,
+  `hours_played` and `notes`** are fill-only: they are written only while the
+  library has no value, so editing one in an export and re-importing does
+  nothing. Whichever source or enrichment provider filled the field first owns
+  it, and there is no edit surface for these — the edit modal and `library edit`
+  cover status, rating, review, seasons watched, genres, tags and description,
+  and nothing else. Fix the value at the source it came from. **`notes` is the
+  one most likely to catch you out**: it is a universal column on every
+  template, not a type-specific one, and it is far more inviting to hand-edit
+  than an ISBN. It is fill-only for a different reason than the detail-table
+  columns in that list — it is not one of them but a key in the free-form
+  metadata blob, which merges with existing keys winning. `hours_played` is the
+  other blob key, and the effect is identical either way.
+- **`seasons_watched`** is fill-only too, and it is the one most worth knowing
+  about: an existing list always wins, so editing the season numbers in an
+  export and re-importing changes nothing. Change them from the edit modal's
+  season checklist or `library edit --seasons-watched`.
+- **The creator column** — `author` for books, `director` / `creator` /
+  `developer` for the other three types — round trips for books only. Books
+  store the author in their own detail table, so it exports and re-imports
+  intact. For movies, TV shows and video games the library has nowhere to put
+  it: the import reads the column and then drops it, so editing it in an export
+  does nothing, and it exports blank besides. The director, creators and
+  developer the app *does* show come from a plugin or an enrichment provider,
+  and no template column reaches them.
+
+> **An export is a snapshot, not a patch.** Every row this app exports carries a
+> real `true` or `false` in `ignored`, never a blank cell, so re-importing an
+> export replaces your entire ignore list with the state it had at export time —
+> every item you have ignored since is un-ignored. **Do not leave a one-off
+> export configured as a standing source.** If you do, every later sync
+> re-asserts that stale file, so your ignores are wiped again and again rather
+> than once. Import it, then remove or disable the source.
+
+Exports also changed in this release: `year`, `runtime_minutes`, `total_seasons`,
+`platform` and `hours_played` previously came out **blank**, because the export
+looked them up under the template's column name rather than the name the library
+stores them under (`year` is stored as `release_year`, `platform` as `platforms`,
+and so on). The first four were blank for *every* item, whatever it was imported
+from, since the library consumes those spellings into their columns and nothing
+is left under the template name; only `hours_played` still exported for items a
+generic CSV or JSON import had brought in. The first four now export for every
+item. `hours_played` moved as well, to the name the library uses for it
+(`playtime_hours`). Any game already storing its playtime under that name
+therefore *gains* the column, every Steam game in the library included — the
+Steam plugin has always written that spelling, which is exactly why the old
+export came out blank for it. What no longer exports is a game a generic CSV or
+JSON import brought in before this release, which is the third exception below.
+
+If you keep an export as a backup, retake it — but it is still not a complete
+one, and there are three exceptions rather than one.
+
+The first is the creator. `director`, `creator` and `developer` remain blank on
+every movie, TV show and video game, for the reason the creator bullet above
+gives. Books are unaffected.
+
+The second is **`platform` on a GOG library synced before this release**. The
+GOG plugin used to write the platform list in the wrong shape, and that fix is
+forward-only: `platform` is fill-only, so the stored value wins over every later
+sync and no amount of re-syncing will replace it. The export fix above is what
+makes this visible — the column used to come out blank, and now it emits the
+stored value as a Python repr (`{'windows': True, ...}`), which a re-import
+would store right back as that literal string. **There is nothing you can do
+about it from inside the app.** Removing the GOG source and adding it again
+does not help: Remove drops that source's config and the secrets its plugin
+currently declares sensitive — a secret is left behind when the plugin is no
+longer installed, or when the field holding it is no longer marked sensitive —
+and leaves every item it wrote exactly where it is, so a re-add syncs into those
+same rows — matched by external id, or by normalised title — and the fill-only
+rule keeps the stale value. Clearing the affected items is not an option
+either, because the app has no way to delete a library item, from the web UI or
+the CLI. The stale value survives every later sync.
+
+The third is **`hours_played` on a video game a generic CSV or JSON import
+brought in before this release**.
+Both the import and the export used to spell that column `hours_played` in the
+free-form metadata, and both now use the library's own name for it,
+`playtime_hours`. Nothing rewrites the key already stored on existing rows, so a
+game a generic CSV or JSON import brought in earlier still carries the old
+spelling and exports blank. Nothing is lost: the number is still in the
+database under `hours_played`, and syncing that source again writes the new key
+alongside it, after which the column exports normally. Nor does the gap reach
+anything but the export — the [length scorer](SCORING.md#content-length-preferences)
+reads `playtime_hours` and never read the old spelling, so those games did not
+feed it before this release and do not now.
+
+So a retaken backup restores everything except the creator on three of the four
+content types, `platform` on games from a GOG library that predates the fix, and
+`hours_played` on games a generic CSV or JSON import brought in before it.
+
 The CLI equivalent is `python3.11 -m src.cli library export` — see [CLI.md](CLI.md#library-management).
 
 ## Credential storage

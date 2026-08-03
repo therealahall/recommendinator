@@ -241,7 +241,17 @@ This means no enrichment provider is enabled for that content type. Check your s
 
 ### Items showing as "not found"
 
-Some items may not be found in the provider databases. This is normal — niche or very new content may not have entries yet. You can retry not-found items later (the data may have been added upstream) by running enrichment with the retry flag.
+Some items may not be found in the provider databases. This is normal — niche or very new content may not have entries yet. A not-found item is a settled answer: the provider replied and had nothing, so ordinary runs skip it from then on. You can retry not-found items later (the data may have been added upstream) with `python3.11 -m src.cli enrichment start --retry-not-found`.
+
+### Items showing as "failed"
+
+"Failed" is different from "not found". It means the provider never answered — it timed out, was unreachable, was throttling you, or returned a server error — so nothing is known about the item yet. Failed items stay in the queue and the next enrichment run picks them up automatically. No flag is needed, and there is nothing to do beyond running enrichment again once the provider is healthy.
+
+`enrichment status` counts each item once, so a failed item is reported under **Failed** rather than **Pending** even though it is queued.
+
+**This only applies going forward.** Keeping a failure in the queue is new in this release; before it, *any* provider error settled the item as "not found". So a library enriched under an older version can hold items that were never really missing — they were skipped because a provider was down or throttling at the time — and ordinary runs will keep skipping them, because "not found" is a settled answer. Run `python3.11 -m src.cli enrichment start --retry-not-found` once after upgrading to sweep them back in.
+
+One case does not retry: if the provider rejected the request itself — an invalid, revoked or expired API key returning 401 or 403, most often — the same request would be rejected on every later run, so the item settles as "not found" instead of re-asking the provider for your whole library on every run. Fix the key (see "API key errors" below), then re-run with `--retry-not-found`.
 
 ### API key errors
 
@@ -252,7 +262,7 @@ If you see authentication errors:
 
 ### Rate limiting
 
-The enrichment system has built-in rate limiting per provider to stay within API limits. If you have a very large library (thousands of items), the initial enrichment run may take some time — this is normal. Subsequent runs only process new unenriched items.
+The enrichment system has built-in rate limiting per provider to stay within API limits. If you have a very large library (thousands of items), the initial enrichment run may take some time — this is normal. Subsequent runs process new unenriched items plus anything a previous run failed on (see "Items showing as failed" above); items that were matched, or that settled as not found, are skipped.
 
 ### Enrichment seems slow
 

@@ -146,13 +146,53 @@ them from the Settings page or `settings set-secret`, not in `config.yaml`. See
 [ARCHITECTURE.md](ARCHITECTURE.md#global-configuration-precedence) for the full
 precedence model.
 
+**Your ratings are yours:** a sync fills in around what you have said, it does
+not talk over you. The exact promise differs a little by field:
+
+- **Rating and review** are filled only while they are empty. A re-import can
+  never erase or replace one you wrote.
+- **Status** only moves forward (unread → consuming → completed). A sync can
+  still advance a status you moved backward, but it can never revert a
+  completion — with one deliberate exception: a completed TV show whose season
+  checklist you have filled in goes back to in-progress when a sync brings new
+  seasons, because it is no longer finished.
+- **Completion date** is kept unless the file carries a later one.
+- **Ignore flag** does what the file actually says. Leave the `ignored` column
+  out, or leave a cell blank, and the import says nothing about the flag, so
+  what you ignored in the app stays ignored. Put a real `true` or `false` in
+  the cell and it wins — which is how you un-ignore items by exporting your
+  library, editing it and re-importing.
+
+  That blank-cell rule protects a file you maintain by hand. **It does not
+  protect you from your own exports.** Every row this app exports carries a real
+  `true` or `false` in `ignored`, so re-importing an export replaces your whole
+  ignore list with the one you had on the day you exported — anything you have
+  ignored since is un-ignored. An export is a snapshot, not a patch. Import it
+  once and remove it; leaving it configured as a source means every sync from
+  then on re-applies that stale snapshot.
+
+Editing an item yourself is the other side of the rule: your edit wins, and any
+field you do not mention is left exactly as it was. Marking something complete —
+from the Library page, the Recommendations page, `library edit`, the `complete`
+command, or chat — dates it today when it has no date yet, and leaves an existing
+date alone. Editing an item that was already complete never dates it, so tidying
+up an old import's genres cannot make the app think you finished it this
+afternoon.
+
+Chat is the one exception, and deliberately so: it is the only place you can say
+*when* you finished something ("I actually finished that in January"), and a date
+you name **replaces** the stored one, even if it is earlier. That is how you
+correct a date an import got wrong.
+
 **Duplicate items:** when the same title is imported from more than one source,
-the rows are merged into one on the next sync, matched by normalized title.
-Ratings and reviews are set once and never overwritten, and metadata (genres,
-tags) is merged additively, so re-importing a source cannot lose data you
-already have. Status only moves forward (unread → consuming → completed), with
-one deliberate exception: a completed TV show whose season checklist you have
-filled in returns to in-progress when a sync brings new seasons.
+the rows are merged into one on the next sync, matched by normalized title. The
+merged row keeps the strongest state from either side — the rating, review,
+later completion date, further-advanced status and any ignore flag — and
+metadata (genres, tags) is merged additively, so consolidating duplicates
+cannot lose data you already have. Status only moves forward (unread →
+consuming → completed), with one deliberate exception: a completed TV show
+whose season checklist you have filled in returns to in-progress when a sync
+brings new seasons.
 
 ### Upgrading
 

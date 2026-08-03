@@ -105,7 +105,7 @@ ContentItem(
     rating=4,                      # Optional: 1-5 scale
     review="My review text",       # Optional
     author="Author/Director",      # Optional
-    ignored=False,                 # Optional: exclude from recommendations
+    ignored=None,                  # Optional: True/False states the flag, None says nothing
     metadata={},                   # Optional: source-specific data
     source="my_plugin",            # Set automatically to the user-defined config key name
 )
@@ -133,6 +133,97 @@ def normalize_rating(source_rating: int, max_rating: int = 10) -> int | None:
         return None
     return max(1, min(5, round(source_rating * 5 / max_rating)))
 ```
+
+### Metadata Keys
+
+`metadata` is free-form, but storage recognises a fixed set of keys per content
+type and lifts those into the type's detail table (`book_details`,
+`movie_details`, `tv_show_details`, `video_game_details`). A key it does not
+recognise is kept verbatim in the detail row's free-form metadata blob — so spell
+a recognised key correctly, because a misspelling is not an error anywhere: the
+value lands in the blob and never reaches the column the rest of the app queries.
+
+The blob is not a private scratch space. It is a shared namespace: first-party
+code reads a good many keys out of it, and none of them is a recognised key, so
+every one lives in the blob alongside whatever you put there.
+
+| Read by | Keys |
+|---|---|
+| [Length scorer](SCORING.md#content-length-preferences) — `src/recommendations/content_length.py` | `num_pages`, `number_of_pages` (book); `number_of_seasons` (TV show); `playtime_hours`, `main_story_hours`, `average_playtime_hours` (video game) |
+| Series ordering — `src/utils/series.py` | Series name: `series_name`, `series`, `series_title`, `franchise`. Position: `series_position`, `series_number`, `series_num`, `book_number`, `book_num`, `season`, `season_number`, `season_num`, `part`, `part_number`, `episode`, `episode_number`, `movie_number`. Expanding a show into seasons: `number_of_seasons` |
+| Season checklist and the [variety ladder](SCORING.md#variety-after-completion) — `src/utils/series.py` | `seasons_watched`, `seasons_watched_dates` |
+| Library export — `src/web/export.py` | `notes`; `seasons_watched` (TV show); `playtime_hours` (video game) |
+
+Treat that as the state of the code rather than a closed list — it grows
+whenever a reader gains another fallback spelling, and the files named above are
+where to check it.
+
+Two consequences are worth stating outright:
+
+- **Choosing one of these keys for your own bookkeeping changes behaviour, and
+  nothing tells you.** A plugin that stores its own `number_of_seasons`
+  re-classifies the show's length; one that stores its own `franchise` re-orders
+  a series. There is no warning and no error at any layer. `playtime_hours` is
+  the same story read forwards: it is why a games file carrying `hours_played`
+  changes which games get recommended, since the import stores that column under
+  this key and the length scorer reads it.
+- **`franchise` is not only a plugin's to collide with.** The RAWG enrichment
+  provider writes `franchise` and `series_position` into `extra_metadata`; TMDB
+  writes `series_name`, `series_position` and `tmdb_collection_id`.
+  `merge_enrichment` in `src/enrichment/manager.py` *fills* each of those into
+  item metadata — only where the key is missing or holds an empty value, so it
+  never overwrites what is already there — and every one of them, being
+  unrecognised, lands in the blob. See [ARCHITECTURE.md](../ARCHITECTURE.md).
+
+Only the keys in the table and the recognised keys above are spoken for. Beyond
+those, the blob is yours.
+
+| Content type | Recognised keys |
+|---|---|
+| `book` | `author`, `pages`, `isbn`, `isbn13`, `publisher`, `year_published`, `genres`, `tags`, `description` |
+| `movie` | `director`, `runtime`, `release_year`, `genres`, `studio`, `tags`, `description` |
+| `tv_show` | `creators`, `seasons`, `episodes`, `network`, `release_year`, `genres`, `tags`, `description` |
+| `video_game` | `developer`, `publisher`, `platforms`, `genres`, `release_year`, `tags`, `description` |
+
+Because the plugins did not all agree on a name, five of those columns accept a
+second spelling and it is written to the same column either way:
+
+| Column | Also accepted as | Where |
+|---|---|---|
+| `genres` | `genre` | every content type |
+| `platforms` | `platform` | `video_game` |
+| `seasons` | `total_seasons` | `tv_show` |
+| `runtime` | `runtime_minutes` | `movie` |
+| `release_year` | `year` | `movie`, `tv_show` (**not** `video_game`, which takes `release_year` only) |
+
+Two shape rules matter:
+
+- **`genres`, `tags` and `platforms` are lists of names.** A list is stored as
+  given; anything that is not a list — a bare string included — is wrapped into a
+  one-element list. That wrapping is why a wrong shape survives instead of
+  failing: the GOG plugin wrote `platforms` as
+  `{"windows": true, "mac": false, ...}`, which became a one-element list holding
+  the dict, reached the library export as a Python repr and re-imported as that
+  literal string. Write `["Windows", "Linux"]`.
+
+  **Get the shape right the first time, because fixing the plugin does not
+  repair what it already stored.** `platforms` is a plain detail column — not
+  additive like `genres`, not monotonic like `seasons` — so it is fill-only: once
+  a value is stored, every later sync keeps it and writes nothing. A library
+  synced with the wrong shape therefore holds that shape permanently, and the
+  user has no way to undo it: removing the source deletes that source's config
+  and the secrets its plugin currently declares sensitive — a secret survives
+  when the plugin is no longer installed, or when the field holding it is no
+  longer marked sensitive — but none of the items it stored, so re-adding it
+  syncs into the same rows and the stored value still wins. No surface deletes a
+  library item either: `delete_content_item` exists on `StorageManager` and
+  `SQLiteDB`, and nothing in the web API or the CLI calls it. Your fix applies
+  to items nobody has synced yet. The same applies to every other fill-only
+  column.
+- **`genres` and `tags` merge additively; `seasons` and `episodes` only ever
+  increase.** Every other detail column is fill-only, written while the stored
+  value is empty and left alone afterwards, because enrichment and the user's own
+  edits outrank a re-sync.
 
 ## Example: File-Based Plugin
 
@@ -361,9 +452,10 @@ When your plugin's `fetch()` method is called, the config dict includes a `_sour
 
 ## Testing Your Plugin
 
-Create tests in `tests/test_my_plugin.py`:
+Tests live next to the plugin, in `src/ingestion/sources/<plugin>/test_<plugin>.py`. `pytest` collects them in the same session as `tests/`, and the repository-root `conftest.py` gives them the same autouse isolation every other test gets: the credential encryption key is redirected into the test's `tmp_path`, production logging is neutralised, and the process timezone is pinned to UTC. So a plugin test that builds a real `StorageManager` cannot touch the developer's `data/.credential_key` or `logs/recommendations.log`, and one that asserts on a date narrowed from a UTC instant does not depend on where the suite runs — request the `host_timezone` fixture and call it to exercise a different zone. Private plugins run under the same conftest. `src/ingestion/sources/_isolation/` holds the test that proves it — it is not a plugin, and the leading underscore keeps the registry from importing it.
 
 ```python
+# src/ingestion/sources/my_plugin/test_my_plugin.py
 import pytest
 from unittest.mock import Mock, patch
 
@@ -415,7 +507,9 @@ class TestMyPlugin:
 9. **Support progress reporting** - Accept `progress_callback` in `fetch()` and
    call it during long operations: `progress_callback(items_processed,
    total_items, current_item)`. Use `total_items=None` when unknown.
-10. **Respect the `ignored` field** - If your source provides a way to mark items as excluded, set `ignored=True` on the `ContentItem`. Use `parse_boolean_field()` from `generic_csv` for flexible boolean parsing.
+10. **Say nothing about `ignored` unless your source really says something** - `ignored` is user-owned, and storage writes it whenever your plugin states a value: `True` ignores the item, `False` *un-ignores* one the user ignored in the app. `None` (the default) means "this source has no opinion", and the stored flag is left alone. Storage receives a boolean or nothing, so it cannot tell a file's explicit `false` from a `False` you defaulted to — a defaulted `False` silently clears the user's ignore list on every sync. If your source carries the flag, read it with `parse_ignored_field()` from `generic_csv`, which returns `None` for an absent key, a blank CSV cell or a JSON `null` and only returns a boolean when a value was actually stated. `parse_boolean_field()` is the lower-level helper it calls, and it returns `False` for a missing value, so do not reach for it directly here.
+
+    The library exporter (`src/web/export.py`) is the one deliberate exception in this tree, and it is not a precedent for a plugin. It states `ignored` for every row it writes, because re-importing an edited export is the supported way to un-ignore items in bulk — which is exactly why a re-imported export replaces the user's whole ignore list with the state it had at export time, and why [DATA_SOURCES.md](DATA_SOURCES.md#library-export) warns against leaving one configured as a standing source. A third-party plugin syncing a live source has no such mandate: state the flag only when your source really states it.
 11. **Use list format for `seasons_watched`** - For TV shows, store `seasons_watched` as a list of specific season numbers (e.g., `[1, 2, 5, 6]`) in metadata. Use `parse_seasons_watched()` from `generic_csv` if converting from string input. A single integer is treated as a count for backward compatibility (e.g., `5` → `[1, 2, 3, 4, 5]`).
 12. **Populate `seasons_watched_dates` when you have per-season timestamps** - For TV shows, the optional `seasons_watched_dates` metadata field maps `{season_number_str: iso_timestamp}` (e.g., `{"1": "2026-05-01T00:00:00+00:00"}`), keyed by the same season numbers as `seasons_watched`. This is how a finished season of an in-progress show gets correct recency on the recommendation engine's variety ladder (see [SCORING.md](SCORING.md#variety-after-completion)); a source that omits it still gets the season admitted to the ladder, but it sorts to the weakest/undated rung instead of by actual watch date.
 13. **Scrub `requests` errors that may carry secrets** - If your plugin passes a secret in the URL or query params (an `?api_key=` / `?key=` style API), the default `str()` of a `requests` exception embeds the full request URL and leaks that credential into raised errors and logs. Pass the exception through `scrub_request_error()` from `src.utils.request_errors` before interpolating it — it returns only `HTTP <status>` (or the bare exception class name), never the URL. The TMDB and RAWG enrichment providers and the Steam source all do this.
@@ -434,8 +528,9 @@ enabled source runs on its own worker thread inside
   inside `fetch()` for the source you're talking to. Cross-source
   parallelism is what the framework adds; intra-source pacing must remain.
 - **Storage writes are already serialised.** `StorageManager` takes a
-  lock around `save_content_item` and `save_credential`, so there is
-  nothing for plugins to coordinate on the persistence side.
+  lock around `save_content_item`, `complete_content_item` and
+  `save_credential`, so there is nothing for plugins to coordinate on the
+  persistence side.
 - **`progress_callback` is called from the worker thread.** The framework
   guarantees the callback itself is thread-safe; plugins just call it as
   documented.

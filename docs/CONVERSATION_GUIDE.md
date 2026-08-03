@@ -79,10 +79,35 @@ Chat is available through both the **web interface** and the **CLI**. In the web
 - "I finished watching Fallout Season 2"
 - "I just read Project Hail Mary, 5 out of 5"
 - "Completed The Witcher 3"
+- "I finished Dune on 12 March" — chat is the only place you can say *when*
+
+Chat is the only surface that can put a completion date on an item. Name a date
+and it is written exactly as you gave it, *including* one earlier than the date
+already stored. That is how you fix a completion an import dated wrongly: "I
+actually finished that in January". The date has to resolve to a real calendar
+day; if what the assistant works out is not one, the completion is refused and
+the problem reported rather than stored as a guess.
+
+Everywhere else the date is decided for you, and the two kinds of surface do it
+differently:
+
+- The `complete` command and `POST /api/complete` always date a completion:
+  today's date if the item has none, and the stored date is kept if it has one.
+- The Library page, the Recommendations page and `library edit` are edit
+  surfaces, so they date an item only when the edit is what *moves* it into
+  completed and it has no date yet. An item that was already completed and
+  undated stays undated — that is deliberate, so that fixing the genres on a
+  years-old import cannot record it as finished today.
 
 **Rate or update items:**
 - "Rate Dune 4 out of 5"
 - "I'd give Succession a 5"
+- "Actually, make that a 3" — a new rating **replaces** the one on record
+
+Re-rating something you have already rated works. It is an explicit thing you
+said, so it overwrites, the same way the edit modal and `library edit` do.
+Previously chat routed a rating through the fill-only sync door, which left an
+existing rating in place and reported the change anyway.
 
 **State preferences:**
 - "I love steampunk settings"
