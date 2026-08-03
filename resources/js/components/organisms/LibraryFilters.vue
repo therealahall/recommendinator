@@ -4,6 +4,7 @@ import TypePills from '@/components/atoms/TypePills.vue'
 import TypeSelect from '@/components/atoms/TypeSelect.vue'
 import ToggleSwitch from '@/components/atoms/ToggleSwitch.vue'
 import SearchInput from '@/components/atoms/SearchInput.vue'
+import { MAX_SEARCH_LENGTH } from '@/constants/library'
 
 const props = defineProps<{
   typeFilter: string
@@ -68,6 +69,7 @@ onUnmounted(() => {
         class="lib-search"
         :model-value="searchQuery"
         :loading="searchLoading"
+        :maxlength="MAX_SEARCH_LENGTH"
         placeholder="Search by title or creator"
         @update:model-value="emit('filterChange', 'search', $event)"
       />
