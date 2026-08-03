@@ -1,20 +1,43 @@
-"""Static checks on docker-compose.yml's published port mapping.
+"""Static checks on the deployment's compose file and the image it runs.
 
 The port mapping is parsed out of the YAML and then *rendered* the way compose
 interpolates it, so the assertions are about the string compose actually gets
-rather than the expression written in the file. No Docker CLI or daemon needed.
+rather than the expression written in the file. The timezone assertions span
+both files, because passing ``TZ`` into a container and being able to resolve
+it there are separate requirements and either one alone is inert. No Docker CLI
+or daemon needed.
 """
 
 from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import NamedTuple
 
 import pytest
 import yaml
 
 # parents[2] resolves /tests/docker/test_compose.py -> repo root.
-COMPOSE = Path(__file__).resolve().parents[2] / "docker-compose.yml"
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+COMPOSE = _REPO_ROOT / "docker-compose.yml"
+DOCKERFILE = _REPO_ROOT / "Dockerfile"
+
+# The stage both shipped targets build on, and the targets themselves. Anything
+# installed in the shared stage reaches both; anything installed in one target
+# reaches only that one.
+RUNTIME_BASE_STAGE = "runtime-base"
+APP_TARGETS = ["default", "ai"]
+
+# `FROM <image> AS <stage>` — the only form this Dockerfile uses.
+_STAGE_HEADER = re.compile(
+    r"^FROM\s+(?P<parent>\S+)(?:\s+AS\s+(?P<name>\S+))?\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+# The arguments of an `apt-get install`, following backslash continuations onto
+# the following lines. Anything after the shell's `&&` belongs to the next
+# command, not to the install, so the caller cuts there.
+_APT_INSTALL = re.compile(r"apt-get install\b(?P<arguments>(?:[^\n\\]|\\\n)*)")
 
 # Services that publish the web UI. Both inherit the mapping from the
 # x-app-common anchor, so both must be checked — a mapping moved onto one
@@ -40,10 +63,58 @@ def _compose_text() -> str:
     return COMPOSE.read_text()
 
 
+class _Stage(NamedTuple):
+    """What a stage builds on, and the instructions it runs."""
+
+    parent: str
+    body: str
+
+
+def _stages() -> dict[str, _Stage]:
+    """Map each named Dockerfile stage to what it inherits and what it runs.
+
+    A stage's body runs from its ``FROM`` line to the next one, so every
+    instruction is attributed to the stage that actually executes it.
+    """
+    source = DOCKERFILE.read_text()
+    headers = list(_STAGE_HEADER.finditer(source))
+    stages: dict[str, _Stage] = {}
+    for index, header in enumerate(headers):
+        name = header.group("name")
+        if name is None:
+            continue
+        end = headers[index + 1].start() if index + 1 < len(headers) else len(source)
+        stages[name] = _Stage(header.group("parent"), source[header.end() : end])
+    return stages
+
+
+def _apt_packages(stage: _Stage) -> set[str]:
+    """Return the packages ``apt-get install`` asks for in *stage*.
+
+    Comment lines are dropped before matching and only the install's own
+    arguments are read, so a package named in the prose explaining why it is
+    installed cannot stand in for installing it.
+    """
+    instructions = "\n".join(
+        line for line in stage.body.splitlines() if not line.lstrip().startswith("#")
+    )
+    packages: set[str] = set()
+    for match in _APT_INSTALL.finditer(instructions):
+        arguments = match.group("arguments").replace("\\\n", " ").split("&&")[0]
+        packages.update(word for word in arguments.split() if not word.startswith("-"))
+    return packages
+
+
 def _port_specs(service: str) -> list[str]:
     """Return the raw ``ports`` entries of ``service``, un-interpolated."""
     compose = yaml.safe_load(_compose_text())
     return compose["services"][service]["ports"]
+
+
+def _environment(service: str) -> list[str]:
+    """Return the raw ``environment`` entries of ``service``, un-interpolated."""
+    compose = yaml.safe_load(_compose_text())
+    return list(compose["services"][service].get("environment") or [])
 
 
 def _render(spec: str, **env: str) -> str:
@@ -143,3 +214,95 @@ class TestComposeOverridesAreDocumented:
         assert {"APP_PORT", "APP_BIND_PREFIX", "IMAGE_TAG"} <= interpolated
         assert documented, "no '#   NAME — description' overrides block found"
         assert interpolated <= documented
+
+
+class TestComposeTimezonePassthrough:
+    """The app services hand the operator's ``TZ`` to the container.
+
+    Completion dates are narrowed to the calendar day of the zone the *process*
+    runs in (``src.utils.dates.local_date_from_iso_timestamp``), and a container
+    has no zone of its own — it runs on UTC unless ``TZ`` is set inside it.
+    Setting ``TZ`` in a shell or `.env` next to the compose file reaches the
+    container only for a variable the compose file names, so without a
+    passthrough here the documented remedy is inert and a viewer west of UTC
+    keeps seeing every evening watch dated a day forward.
+    """
+
+    @pytest.mark.parametrize("service", APP_SERVICES)
+    def test_tz_reaches_the_container(self, service: str) -> None:
+        """Regression test: the documented ``TZ`` override did nothing.
+
+        Bug reported: DOCKER.md documents ``TZ`` as the way a Docker user fixes
+        completion dates that land a day forward, but setting it in `.env` or
+        the shell changed nothing — dates stayed on UTC.
+        Root cause: ``docker-compose.yml`` never names ``TZ``. Compose passes a
+        host variable into a container only via ``environment``/``env_file``, so
+        an unnamed one is dropped at the container boundary.
+        Fix: both app services pass ``TZ`` through, empty by default so a host
+        that does not set it keeps today's UTC behaviour.
+        """
+        assert any(
+            entry.startswith("TZ=") for entry in _environment(service)
+        ), f"{service} does not pass TZ into the container"
+
+    @pytest.mark.parametrize("service", APP_SERVICES)
+    def test_tz_defaults_to_empty_rather_than_a_guessed_zone(
+        self, service: str
+    ) -> None:
+        """An operator who sets nothing is left exactly where they were.
+
+        Rendering with no environment must produce an empty value, not a
+        hardcoded zone: guessing one would silently re-date every completion for
+        someone who never asked for it.
+        """
+        spec = next(entry for entry in _environment(service) if entry.startswith("TZ="))
+        assert _render(spec) == "TZ="
+        assert _render(spec, TZ="America/Los_Angeles") == "TZ=America/Los_Angeles"
+
+
+class TestRuntimeImageCarriesTheZoneDatabase:
+    """The other half of the passthrough: the container can resolve the zone.
+
+    ``TZ`` names a zone; ``astimezone()`` resolves it through the C library's
+    ``/usr/share/zoneinfo``, not through Python's ``tzdata`` wheel. Passing the
+    variable in and being able to look it up are separate requirements, and a
+    zone that will not resolve fails silently — glibc falls back to UTC, which
+    is exactly the behaviour the ``TZ`` override exists to change.
+    """
+
+    def test_the_runtime_stage_installs_the_zone_database_regression(self) -> None:
+        """Regression test: the image did not ask for the zone database at all.
+
+        Bug reported: the ``TZ`` passthrough (and the operator documentation
+        promising it) could resolve to nothing in Docker, the only deployment
+        mode that ships.
+        Root cause: the runtime stage is ``python:3.11-slim`` and the Dockerfile
+        installed nothing into it, so whether ``/usr/share/zoneinfo`` existed
+        was a property of an upstream base image this repository neither pins
+        nor asserts — it could stop being true on any base-image bump, silently.
+        Fix: the shared runtime stage installs ``tzdata`` outright, so the
+        guarantee belongs to this repository and this test can hold it.
+
+        Matched against the install instruction rather than the stage text: the
+        instruction is explained by a comment that names ``tzdata`` too, so a
+        substring search over the stage would keep passing on a Dockerfile that
+        had lost the install and kept the comment.
+        """
+        runtime_base = _stages()[RUNTIME_BASE_STAGE]
+
+        assert "tzdata" in _apt_packages(runtime_base), (
+            f"the {RUNTIME_BASE_STAGE} stage does not install tzdata, so a zone "
+            "passed via TZ may not resolve inside the container"
+        )
+
+    @pytest.mark.parametrize("target", APP_TARGETS)
+    def test_every_shipped_target_builds_on_the_runtime_stage(
+        self, target: str
+    ) -> None:
+        """Both published images inherit the install rather than one of them.
+
+        Same reasoning as the two app services in compose: a target that
+        branched off somewhere else would ship without the zone database while
+        the test above kept passing.
+        """
+        assert _stages()[target].parent == RUNTIME_BASE_STAGE

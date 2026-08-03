@@ -16,6 +16,12 @@
 # omitting `app-ai` leaves both variants competing for the same host port.
 #
 # Environment overrides (set in your shell or a .env file next to this file):
+#   TZ                      — timezone the app containers run in, e.g.
+#                             "America/Los_Angeles" (default: unset, meaning
+#                             UTC). Watch and read timestamps arrive as UTC
+#                             instants and are dated by the calendar day in this
+#                             zone, so set it to your own or an evening watch is
+#                             dated a day forward west of UTC.
 #   IMAGE_TAG               — image tag to pull (default: latest)
 #   APP_PORT                — host port to expose the web UI on (default: 18473)
 #   APP_BIND_PREFIX         — host interface to publish that port on, written
@@ -32,6 +38,12 @@
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile ai up -d app-ai
 
 x-app-common: &app-common
+  environment:
+    # A container has no timezone of its own — it runs on UTC unless TZ is set
+    # inside it, and compose only carries a host variable in when the file names
+    # it. Empty by default so a host that sets nothing keeps UTC exactly as
+    # before; the app dates completions by this zone's calendar day.
+    - TZ=${TZ:-}
   ports:
     # APP_BIND_PREFIX is a prefix, not an address, so that unset renders the
     # bare "18473:8000" this has always been — which publishes on every
@@ -76,6 +88,9 @@ services:
     container_name: recommendinator-ai
     profiles: ["ai"]
     environment:
+      # A YAML merge key replaces `environment` wholesale rather than appending
+      # to the anchor's list, so TZ has to be repeated here to survive.
+      - TZ=${TZ:-}
       - OLLAMA_BASE_URL=http://ollama:11434
     depends_on:
       ollama:
