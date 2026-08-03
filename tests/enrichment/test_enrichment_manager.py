@@ -134,6 +134,104 @@ class RawRequestErrorProvider(EnrichmentProvider):
         raise self._error
 
 
+class WrappedRequestErrorProvider(EnrichmentProvider):
+    """Provider that wraps a ``requests`` failure in a ``ProviderError``.
+
+    Models the in-tree providers, which raise ``ProviderError(...) from error``.
+    The default message is the undisciplined form a third-party provider is
+    free to write: the raw exception interpolated into the text, request URL
+    and API key included.
+    """
+
+    def __init__(self, error: Exception, message: str | None = None) -> None:
+        self._error = error
+        self._message = message
+
+    @property
+    def name(self) -> str:
+        return "wrapped_request"
+
+    @property
+    def display_name(self) -> str:
+        return "Wrapped Request Provider"
+
+    @property
+    def content_types(self) -> list[ContentType]:
+        return [ContentType.MOVIE]
+
+    @property
+    def requires_api_key(self) -> bool:
+        return False
+
+    @property
+    def rate_limit_requests_per_second(self) -> float:
+        return 100.0
+
+    def get_config_schema(self) -> list[ConfigField]:
+        return []
+
+    def validate_config(self, config: dict[str, Any]) -> list[str]:
+        return []
+
+    def enrich(
+        self, item: ContentItem, config: dict[str, Any]
+    ) -> EnrichmentResult | None:
+        try:
+            raise self._error
+        except Exception as error:
+            raise ProviderError(
+                self.name, self._message or f"request failed: {error}"
+            ) from error
+
+
+def http_error(status_code: int, message: str = "") -> requests.HTTPError:
+    """Build the ``HTTPError`` ``raise_for_status`` would raise for a status."""
+    response = requests.Response()
+    response.status_code = status_code
+    return requests.HTTPError(message or f"{status_code} Error", response=response)
+
+
+def save_movie(storage_manager: StorageManager, title: str = "The Matrix") -> int:
+    """Store an unenriched movie and return its database ID."""
+    return storage_manager.save_content_item(
+        ContentItem(
+            id=title.lower().replace(" ", "-"),
+            title=title,
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+        )
+    )
+
+
+def queued_ids(storage_manager: StorageManager) -> set[int]:
+    """db_ids a plain (non-retry) enrichment run would pick up."""
+    return {
+        db_id
+        for db_id, _item in storage_manager.get_items_needing_enrichment(
+            content_type=ContentType.MOVIE, include_not_found=False
+        )
+    }
+
+
+def enrichment_buckets(storage_manager: StorageManager) -> dict[str, int]:
+    """The four reported enrichment states, proven to still partition the library.
+
+    ``get_enrichment_stats`` reports enriched/pending/not_found/failed side by
+    side, so an item landing in two of them reads to the operator as two items.
+    A caller wants the counts and that invariant together, never one without
+    the other, so this returns the first only after asserting the second.
+    """
+    stats = storage_manager.get_enrichment_stats()
+    buckets = {
+        state: stats[state] for state in ("enriched", "pending", "not_found", "failed")
+    }
+    assert sum(buckets.values()) == stats["total"], (
+        "the four reported states must account for each item exactly once, got "
+        f"{buckets} against a total of {stats['total']}"
+    )
+    return buckets
+
+
 class TestEnrichmentJobStatus:
     """Tests for EnrichmentJobStatus dataclass."""
 
@@ -523,6 +621,7 @@ class TestEnrichmentManager:
             user_id=None,
             limit=10,
             include_not_found=False,
+            after_db_id=None,
         )
         # The count query that drives total_items must propagate the same filter,
         # otherwise the UI would show a total for all types while processing one.
@@ -839,6 +938,775 @@ class TestEnrichmentProgressRegression:
             content_type=None,
             user_id=None,
         )
+
+
+class TestTransientProviderFailureIsRetryable:
+    """Regression: a transient provider failure must not settle as not_found.
+
+    Reported symptom: enriching while the network was down (or while TMDB was
+    rate-limiting) finished with every movie listed under "Items not found".
+    Restoring the network and re-running enriched nothing — recovery needed
+    ``enrichment reset`` or ``--retry-not-found``, and neither the CLI nor the
+    web UI said the items had been skipped for a transport reason.
+
+    Root cause: ``_process_item`` caught every provider exception and then fell
+    out of the provider loop into the same terminal branch used when a provider
+    genuinely reported no match, writing
+    ``mark_enrichment_complete(db_id, "none", "not_found")``. Because
+    ``get_items_needing_enrichment`` excludes not_found rows by default, those
+    items were never picked up again.
+
+    Fix: the manager tracks the providers that raised for an item. When the
+    loop ends with no match and at least one provider raised, it calls
+    ``mark_enrichment_failed`` — which leaves ``needs_enrichment = 1`` so a
+    later run retries the item — and counts the item under ``items_failed``.
+    The settled path, where every provider answered and none had a match, still
+    writes ``not_found``.
+    """
+
+    @pytest.fixture
+    def storage_manager(self, tmp_path: Path) -> StorageManager:
+        return StorageManager(sqlite_path=tmp_path / "test.db", ai_enabled=False)
+
+    @pytest.fixture
+    def registry(self) -> EnrichmentRegistry:
+        registry = EnrichmentRegistry()
+        registry._discovered = True
+        return registry
+
+    @pytest.fixture
+    def config(self) -> dict[str, Any]:
+        return {
+            "enrichment": {
+                "batch_size": 10,
+                "providers": {
+                    "mock": {"enabled": True},
+                    "raw_request": {"enabled": True},
+                },
+            }
+        }
+
+    def test_raising_provider_leaves_item_requeued_regression(
+        self,
+        storage_manager: StorageManager,
+        registry: EnrichmentRegistry,
+        config: dict[str, Any],
+    ) -> None:
+        """An unreachable provider leaves the item queued, not marked not_found."""
+        db_id = save_movie(storage_manager)
+        registry.register(
+            RawRequestErrorProvider(requests.ConnectionError("network is unreachable"))
+        )
+
+        manager = EnrichmentManager(storage_manager, config, registry)
+        manager.start_enrichment(content_type=ContentType.MOVIE)
+        assert manager._wait_for_completion()
+
+        status = storage_manager.get_enrichment_status(db_id)
+        assert status is not None
+        assert status["enrichment_quality"] != "not_found"
+        assert status["enrichment_error"] is not None
+        assert queued_ids(storage_manager) == {db_id}
+
+        job_status = manager.get_status()
+        assert job_status.completed is True
+        assert job_status.items_failed == 1
+        assert job_status.items_not_found == 0
+
+    def test_second_run_enriches_item_once_provider_recovers(
+        self,
+        storage_manager: StorageManager,
+        registry: EnrichmentRegistry,
+        config: dict[str, Any],
+    ) -> None:
+        """The retry is real: a run after the outage enriches the same item.
+
+        The reported counts have to move with it. ``write_enrichment_complete``
+        clears ``enrichment_error``, and only that clearing takes the recovered
+        item out of ``failed`` — left behind, it would be reported as enriched
+        *and* failed, which is the double-count the four-state partition was
+        just fixed for, one transition later.
+        """
+        db_id = save_movie(storage_manager)
+        registry.register(
+            RawRequestErrorProvider(requests.ConnectionError("network is unreachable"))
+        )
+
+        manager = EnrichmentManager(storage_manager, config, registry)
+        manager.start_enrichment(content_type=ContentType.MOVIE)
+        assert manager._wait_for_completion()
+        assert storage_manager.get_content_item(db_id).enriched is False
+        assert enrichment_buckets(storage_manager) == {
+            "enriched": 0,
+            "pending": 0,
+            "not_found": 0,
+            "failed": 1,
+        }
+
+        # Network is back: the same provider name now answers.
+        registry.unregister("raw_request")
+        recovered = MockProvider(name="raw_request")
+        registry.register(recovered)
+
+        manager.start_enrichment(content_type=ContentType.MOVIE)
+        assert manager._wait_for_completion()
+
+        assert [item.title for item in recovered.enrich_calls] == ["The Matrix"]
+        enriched_item = storage_manager.get_content_item(db_id)
+        assert enriched_item.enriched is True
+        assert enriched_item.metadata.get("genres") == ["Action", "Drama"]
+        assert manager.get_status().items_enriched == 1
+        assert enrichment_buckets(storage_manager) == {
+            "enriched": 1,
+            "pending": 0,
+            "not_found": 0,
+            "failed": 0,
+        }
+
+    def test_clean_no_match_still_settles_as_not_found(
+        self,
+        storage_manager: StorageManager,
+        registry: EnrichmentRegistry,
+        config: dict[str, Any],
+    ) -> None:
+        """Positive control: an answered no-match settles and is not re-queued.
+
+        Guards the over-correction where every miss becomes an infinite retry.
+        """
+        db_id = save_movie(storage_manager)
+        registry.register(MockProvider(should_not_find=True))
+
+        manager = EnrichmentManager(storage_manager, config, registry)
+        manager.start_enrichment(content_type=ContentType.MOVIE)
+        assert manager._wait_for_completion()
+
+        status = storage_manager.get_enrichment_status(db_id)
+        assert status is not None
+        assert status["enrichment_quality"] == "not_found"
+        assert status["enrichment_error"] is None
+        assert queued_ids(storage_manager) == set()
+
+        job_status = manager.get_status()
+        assert job_status.items_not_found == 1
+        assert job_status.items_failed == 0
+
+    def test_partial_failure_does_not_settle_as_not_found(
+        self,
+        storage_manager: StorageManager,
+        registry: EnrichmentRegistry,
+        config: dict[str, Any],
+    ) -> None:
+        """One provider answering "no match" cannot settle for one that errored.
+
+        The erroring provider may well have been the item's only chance of a
+        match, so the item stays queued even though the other provider replied.
+        """
+        db_id = save_movie(storage_manager)
+        answering = MockProvider(should_not_find=True)
+        registry.register(answering)
+        registry.register(
+            RawRequestErrorProvider(requests.ConnectionError("network is unreachable"))
+        )
+
+        manager = EnrichmentManager(storage_manager, config, registry)
+        manager.start_enrichment(content_type=ContentType.MOVIE)
+        assert manager._wait_for_completion()
+
+        assert len(answering.enrich_calls) == 1, "the healthy provider was consulted"
+        status = storage_manager.get_enrichment_status(db_id)
+        assert status is not None
+        assert status["enrichment_quality"] != "not_found"
+        assert queued_ids(storage_manager) == {db_id}
+
+        job_status = manager.get_status()
+        assert job_status.items_failed == 1
+        assert job_status.items_not_found == 0
+
+    def test_failed_item_is_attempted_once_per_run(
+        self,
+        storage_manager: StorageManager,
+        registry: EnrichmentRegistry,
+        config: dict[str, Any],
+    ) -> None:
+        """A queued failure must not be re-fetched forever inside the same run.
+
+        The failed item stays in the pending query, so the batch loop would
+        hand it back on every iteration if the manager did not skip the items
+        it already attempted.
+        """
+        save_movie(storage_manager)
+        failing = MockProvider(should_fail=True)
+        registry.register(failing)
+
+        manager = EnrichmentManager(storage_manager, config, registry)
+        manager.start_enrichment(content_type=ContentType.MOVIE)
+        assert manager._wait_for_completion()
+
+        assert len(failing.enrich_calls) == 1
+        assert manager.get_status().items_processed == 1
+
+    def test_run_reaches_the_items_queued_behind_a_failing_batch(
+        self,
+        storage_manager: StorageManager,
+        registry: EnrichmentRegistry,
+        config: dict[str, Any],
+    ) -> None:
+        """Failures in batch one must not starve the items behind them.
+
+        A failed item stays in the pending query, so the fetch window has to
+        widen past the items already attempted. Without that, the second fetch
+        would return the same failed rows, the skip filter would empty the
+        batch, and the run would break out with later items never tried.
+        """
+        config["enrichment"]["batch_size"] = 2
+        db_ids = {save_movie(storage_manager, f"Movie {index}") for index in range(5)}
+        failing = MockProvider(should_fail=True)
+        registry.register(failing)
+
+        manager = EnrichmentManager(storage_manager, config, registry)
+        manager.start_enrichment(content_type=ContentType.MOVIE)
+        assert manager._wait_for_completion()
+
+        attempted = [item.title for item in failing.enrich_calls]
+        assert sorted(attempted) == [
+            "Movie 0",
+            "Movie 1",
+            "Movie 2",
+            "Movie 3",
+            "Movie 4",
+        ]
+        assert len(attempted) == len(set(attempted)), "each item is attempted once"
+        assert queued_ids(storage_manager) == db_ids
+
+        job_status = manager.get_status()
+        assert job_status.completed is True
+        assert job_status.items_failed == 5
+        assert job_status.items_not_found == 0
+        # A re-fetched failure would be counted twice and push progress past
+        # 100%, so processed must still match the upfront total.
+        assert job_status.items_processed == 5
+        assert job_status.total_items == 5
+
+    def test_error_from_one_provider_does_not_block_a_later_match(
+        self,
+        storage_manager: StorageManager,
+        registry: EnrichmentRegistry,
+        config: dict[str, Any],
+    ) -> None:
+        """A provider that raises before a healthy one still ends enriched.
+
+        The recorded error must not outweigh a real match found afterwards:
+        the item settles as enriched and leaves the queue, while the transport
+        failure is still reported in the job status.
+        """
+        db_id = save_movie(storage_manager)
+        registry.register(
+            RawRequestErrorProvider(requests.ConnectionError("network is unreachable"))
+        )
+        registry.register(MockProvider())
+
+        manager = EnrichmentManager(storage_manager, config, registry)
+        manager.start_enrichment(content_type=ContentType.MOVIE)
+        assert manager._wait_for_completion()
+
+        status = storage_manager.get_enrichment_status(db_id)
+        assert status is not None
+        assert status["enrichment_provider"] == "mock"
+        assert status["enrichment_quality"] == "high"
+        assert status["enrichment_error"] is None
+        assert storage_manager.get_content_item(db_id).enriched is True
+        assert queued_ids(storage_manager) == set()
+
+        job_status = manager.get_status()
+        assert job_status.items_enriched == 1
+        assert job_status.items_failed == 0
+        assert any("raw_request" in error for error in job_status.errors)
+
+    def test_retry_not_found_run_records_a_failure_as_retryable(
+        self,
+        storage_manager: StorageManager,
+        registry: EnrichmentRegistry,
+        config: dict[str, Any],
+    ) -> None:
+        """A retry pass that hits an outage must not re-settle the item.
+
+        ``--retry-not-found`` pulls settled misses back in from a separate set.
+        If the provider errors on that pass, the item has to come back out as a
+        retryable failure rather than being written back as not_found, which
+        would need a second manual retry to recover.
+        """
+        db_id = save_movie(storage_manager)
+        storage_manager.mark_enrichment_complete(db_id, "none", "not_found")
+        registry.register(
+            RawRequestErrorProvider(requests.ConnectionError("network is unreachable"))
+        )
+
+        manager = EnrichmentManager(storage_manager, config, registry)
+        manager.start_enrichment(content_type=ContentType.MOVIE, include_not_found=True)
+        assert manager._wait_for_completion()
+
+        status = storage_manager.get_enrichment_status(db_id)
+        assert status is not None
+        assert status["enrichment_quality"] != "not_found"
+        assert status["enrichment_error"] is not None
+        assert queued_ids(storage_manager) == {db_id}
+
+        job_status = manager.get_status()
+        assert job_status.completed is True
+        assert job_status.items_failed == 1
+        assert job_status.items_not_found == 0
+
+    def test_retry_run_with_a_full_batch_still_terminates(
+        self,
+        storage_manager: StorageManager,
+        registry: EnrichmentRegistry,
+        config: dict[str, Any],
+    ) -> None:
+        """Failures from both queues must not loop, starve or double-count.
+
+        The nastiest corner of the batch loop: a batch size of one, a pending
+        item and a previously not_found item, and a provider that fails on
+        both. The pending failure has to be skipped on the next iteration
+        while the not_found item is still mixed in, and the run has to end
+        with each item attempted exactly once.
+        """
+        config["enrichment"]["batch_size"] = 1
+        pending_id = save_movie(storage_manager, "Pending Movie")
+        retried_id = save_movie(storage_manager, "Retried Movie")
+        storage_manager.mark_enrichment_complete(retried_id, "none", "not_found")
+        failing = MockProvider(should_fail=True)
+        registry.register(failing)
+
+        manager = EnrichmentManager(storage_manager, config, registry)
+        manager.start_enrichment(content_type=ContentType.MOVIE, include_not_found=True)
+        assert manager._wait_for_completion()
+
+        assert sorted(item.title for item in failing.enrich_calls) == [
+            "Pending Movie",
+            "Retried Movie",
+        ]
+        assert queued_ids(storage_manager) == {pending_id, retried_id}
+
+        job_status = manager.get_status()
+        assert job_status.completed is True
+        assert job_status.items_processed == 2
+        assert job_status.items_failed == 2
+        assert job_status.items_not_found == 0
+
+    def test_recorded_error_names_every_provider_that_raised(
+        self,
+        storage_manager: StorageManager,
+        registry: EnrichmentRegistry,
+        config: dict[str, Any],
+    ) -> None:
+        """The stored error has to say which providers failed, and how.
+
+        The reported symptom included "nothing tells the user the items were
+        skipped for a transport reason", so a failure that swallowed the
+        provider names would leave the same blind spot. Covers both catch
+        branches at once: a wrapped ``ProviderError`` and a raw ``requests``
+        exception. The reason recorded beside each name is the one the manager
+        derived, never the provider's own message — see
+        ``TestPersistedEnrichmentErrorIsDerived``.
+        """
+        db_id = save_movie(storage_manager)
+        registry.register(MockProvider(should_fail=True))
+        registry.register(
+            RawRequestErrorProvider(requests.ConnectionError("network is unreachable"))
+        )
+
+        manager = EnrichmentManager(storage_manager, config, registry)
+        manager.start_enrichment(content_type=ContentType.MOVIE)
+        assert manager._wait_for_completion()
+
+        status = storage_manager.get_enrichment_status(db_id)
+        assert status is not None
+        assert (
+            status["enrichment_error"]
+            == "mock: ProviderError; raw_request: ConnectionError"
+        )
+        assert queued_ids(storage_manager) == {db_id}
+
+    def test_mixed_batch_requeues_only_the_failed_item(
+        self,
+        storage_manager: StorageManager,
+        registry: EnrichmentRegistry,
+        config: dict[str, Any],
+    ) -> None:
+        """One item's failure must not drag its neighbours back into the queue.
+
+        A match, a settled miss and a transport failure in the same batch each
+        keep their own outcome.
+        """
+
+        class ScriptedProvider(MockProvider):
+            """Outcome per item: match, clean no-match, or raise."""
+
+            def enrich(
+                self, item: ContentItem, config: dict[str, Any]
+            ) -> EnrichmentResult | None:
+                self.enrich_calls.append(item)
+                if item.title == "Broken Movie":
+                    raise ProviderError(self._name, "upstream 503")
+                if item.title == "Missing Movie":
+                    return EnrichmentResult(
+                        match_quality="not_found", provider=self._name
+                    )
+                return EnrichmentResult(
+                    genres=["Action"], match_quality="high", provider=self._name
+                )
+
+        found_id = save_movie(storage_manager, "Found Movie")
+        missing_id = save_movie(storage_manager, "Missing Movie")
+        broken_id = save_movie(storage_manager, "Broken Movie")
+        registry.register(ScriptedProvider())
+
+        manager = EnrichmentManager(storage_manager, config, registry)
+        manager.start_enrichment(content_type=ContentType.MOVIE)
+        assert manager._wait_for_completion()
+
+        assert queued_ids(storage_manager) == {broken_id}
+        found_status = storage_manager.get_enrichment_status(found_id)
+        assert found_status is not None
+        assert found_status["enrichment_quality"] == "high"
+        missing_status = storage_manager.get_enrichment_status(missing_id)
+        assert missing_status is not None
+        assert missing_status["enrichment_quality"] == "not_found"
+        assert missing_status["enrichment_error"] is None
+        broken_status = storage_manager.get_enrichment_status(broken_id)
+        assert broken_status is not None
+        assert broken_status["enrichment_error"] is not None
+
+        job_status = manager.get_status()
+        assert job_status.items_processed == 3
+        assert job_status.items_enriched == 1
+        assert job_status.items_not_found == 1
+        assert job_status.items_failed == 1
+
+
+class TestPermanentProviderFailureStopsRetrying:
+    """Regression: a provider that rejects every request must not be retried.
+
+    Reported symptom: after a TMDB key was revoked, every enrichment run
+    re-attempted the whole library against TMDB. Each item got a 401, each 401
+    left the item queued, and the next run did it again — thousands of rejected
+    requests per run at a provider that could not answer any of them, which is
+    how an API key or an IP address gets rate-limited or banned outright.
+
+    Root cause: the fix for the transient-failure bug above routed *every*
+    ``ProviderError`` to ``mark_enrichment_failed``, which keeps
+    ``needs_enrichment = 1``. A rejected credential is not transient, so the
+    retry could never succeed and nothing bounded it.
+
+    Fix: the manager classifies a failure from the ``requests`` exception on
+    the exception chain — left there by the explicit ``raise ... from`` the
+    in-tree providers use, or by Python's implicit chaining for any raise
+    inside an ``except`` block, so no provider has to opt in. Transport
+    failures and 5xx/408/429 stay retryable; any other client error settles
+    the item as before, which takes it out of the queue.
+    """
+
+    @pytest.fixture
+    def storage_manager(self, tmp_path: Path) -> StorageManager:
+        return StorageManager(sqlite_path=tmp_path / "test.db", ai_enabled=False)
+
+    @pytest.fixture
+    def registry(self) -> EnrichmentRegistry:
+        registry = EnrichmentRegistry()
+        registry._discovered = True
+        return registry
+
+    @pytest.fixture
+    def config(self) -> dict[str, Any]:
+        return {
+            "enrichment": {
+                "batch_size": 10,
+                "providers": {
+                    "mock": {"enabled": True},
+                    "raw_request": {"enabled": True},
+                    "wrapped_request": {"enabled": True},
+                },
+            }
+        }
+
+    def test_rejected_api_key_settles_the_item_regression(
+        self,
+        storage_manager: StorageManager,
+        registry: EnrichmentRegistry,
+        config: dict[str, Any],
+    ) -> None:
+        """A 401 leaves the queue empty, so the next run does not re-ask."""
+        db_id = save_movie(storage_manager)
+        registry.register(WrappedRequestErrorProvider(http_error(401)))
+
+        manager = EnrichmentManager(storage_manager, config, registry)
+        manager.start_enrichment(content_type=ContentType.MOVIE)
+        assert manager._wait_for_completion()
+
+        status = storage_manager.get_enrichment_status(db_id)
+        assert status is not None
+        assert status["enrichment_quality"] == "not_found"
+        assert queued_ids(storage_manager) == set()
+
+        job_status = manager.get_status()
+        assert job_status.items_not_found == 1
+        assert job_status.items_failed == 0
+        assert any("wrapped_request" in error for error in job_status.errors)
+
+    def test_unwrapped_client_error_settles_the_item_regression(
+        self,
+        storage_manager: StorageManager,
+        registry: EnrichmentRegistry,
+        config: dict[str, Any],
+    ) -> None:
+        """The classification does not depend on the provider wrapping its error.
+
+        A 403 escaping ``enrich`` unwrapped reaches the manager's catch-all
+        branch rather than the ``ProviderError`` one, and has to settle there
+        too — otherwise a single sloppy provider still floods.
+        """
+        save_movie(storage_manager)
+        registry.register(RawRequestErrorProvider(http_error(403)))
+
+        manager = EnrichmentManager(storage_manager, config, registry)
+        manager.start_enrichment(content_type=ContentType.MOVIE)
+        assert manager._wait_for_completion()
+
+        assert queued_ids(storage_manager) == set()
+        assert manager.get_status().items_not_found == 1
+
+    @pytest.mark.parametrize("status_code", [408, 429, 500, 503])
+    def test_retryable_status_still_requeues_the_item(
+        self,
+        storage_manager: StorageManager,
+        registry: EnrichmentRegistry,
+        config: dict[str, Any],
+        status_code: int,
+    ) -> None:
+        """Positive control: throttling and server faults keep their retry.
+
+        Guards the over-correction where narrowing the retry swallows the
+        failures that really do clear on their own.
+        """
+        db_id = save_movie(storage_manager)
+        registry.register(WrappedRequestErrorProvider(http_error(status_code)))
+
+        manager = EnrichmentManager(storage_manager, config, registry)
+        manager.start_enrichment(content_type=ContentType.MOVIE)
+        assert manager._wait_for_completion()
+
+        status = storage_manager.get_enrichment_status(db_id)
+        assert status is not None
+        assert status["enrichment_error"] == f"wrapped_request: HTTP {status_code}"
+        assert queued_ids(storage_manager) == {db_id}
+        assert manager.get_status().items_failed == 1
+
+    def test_one_retryable_provider_keeps_the_item_queued(
+        self,
+        storage_manager: StorageManager,
+        registry: EnrichmentRegistry,
+        config: dict[str, Any],
+    ) -> None:
+        """A rejected provider must not settle an item another could still match.
+
+        The timing-out provider may be the item's only chance of a match, so
+        the permanent rejection from its neighbour does not get to retire it.
+        """
+        db_id = save_movie(storage_manager)
+        registry.register(WrappedRequestErrorProvider(http_error(401)))
+        registry.register(RawRequestErrorProvider(requests.Timeout("timed out")))
+
+        manager = EnrichmentManager(storage_manager, config, registry)
+        manager.start_enrichment(content_type=ContentType.MOVIE)
+        assert manager._wait_for_completion()
+
+        assert queued_ids(storage_manager) == {db_id}
+        assert manager.get_status().items_failed == 1
+
+    def test_failure_with_no_request_error_stays_retryable(
+        self,
+        storage_manager: StorageManager,
+        registry: EnrichmentRegistry,
+        config: dict[str, Any],
+    ) -> None:
+        """An unclassifiable failure keeps the benefit of the doubt.
+
+        Only a client error positively identifies a request that can never
+        succeed. A provider that fails some other way (its own parsing bug, a
+        non-``requests`` HTTP client) has nothing on the chain to classify, and
+        settling it would resurrect the bug the retry exists to fix.
+        """
+        db_id = save_movie(storage_manager)
+        registry.register(MockProvider(should_fail=True))
+
+        manager = EnrichmentManager(storage_manager, config, registry)
+        manager.start_enrichment(content_type=ContentType.MOVIE)
+        assert manager._wait_for_completion()
+
+        assert queued_ids(storage_manager) == {db_id}
+        assert manager.get_status().items_failed == 1
+
+
+class TestPersistedEnrichmentErrorIsDerived:
+    """Regression: a provider's own error text must never be written to disk.
+
+    Reported concern: enrichment errors are now persisted to
+    ``enrichment_status.enrichment_error``, an at-rest sink they never reached
+    before, and the SQLite database is the file users are told to back up and
+    copy between hosts. Enrichment providers are a documented extension point,
+    and a provider is free to write ``ProviderError(name, f"failed: {error}")``
+    around a bare ``requests`` exception — whose text is the full request URL,
+    ``?api_key=<secret>`` included. That would defeat the encryption at rest
+    the credential is otherwise held under.
+
+    Root cause: the ``ProviderError`` branch appended ``error.message``
+    verbatim, while the catch-all branch beside it scrubbed its exception.
+
+    Fix: the persisted text is assembled at the sink from values the manager
+    derives — the provider name plus the HTTP status or transport error class
+    ``requests`` reported — so it is bounded no matter what a provider writes.
+
+    Scope: the database is the sink under test here. The in-memory
+    ``status.errors`` list is a second, user-facing sink with a contract of its
+    own — it is returned verbatim by ``GET /api/enrichment/status`` and printed
+    by the CLI, and ``TestEnrichmentStatusApiKeyScrubbingRegression`` is what
+    pins it. So this test asserts only that the failure is still attributed
+    there, never the text of it: a provider's own words are not something this
+    class gets to declare safe.
+    """
+
+    @pytest.fixture
+    def storage_manager(self, tmp_path: Path) -> StorageManager:
+        return StorageManager(sqlite_path=tmp_path / "test.db", ai_enabled=False)
+
+    @pytest.fixture
+    def registry(self) -> EnrichmentRegistry:
+        registry = EnrichmentRegistry()
+        registry._discovered = True
+        return registry
+
+    @pytest.fixture
+    def config(self) -> dict[str, Any]:
+        return {
+            "enrichment": {
+                "batch_size": 10,
+                "providers": {"wrapped_request": {"enabled": True}},
+            }
+        }
+
+    def test_persisted_error_omits_the_provider_message_regression(
+        self,
+        storage_manager: StorageManager,
+        registry: EnrichmentRegistry,
+        config: dict[str, Any],
+    ) -> None:
+        """An API key in a provider's message does not reach the database."""
+        db_id = save_movie(storage_manager)
+        registry.register(
+            WrappedRequestErrorProvider(
+                http_error(
+                    503,
+                    "503 Server Error for url: https://api.example.test"
+                    "/3/search/movie?api_key=super-secret-key",
+                )
+            )
+        )
+
+        manager = EnrichmentManager(storage_manager, config, registry)
+        manager.start_enrichment(content_type=ContentType.MOVIE)
+        assert manager._wait_for_completion()
+
+        status = storage_manager.get_enrichment_status(db_id)
+        assert status is not None
+        assert status["enrichment_error"] == "wrapped_request: HTTP 503"
+
+        job_status = manager.get_status()
+        assert any(
+            error.startswith("wrapped_request: ") for error in job_status.errors
+        ), "the failing provider must still be named in the job status"
+
+
+class TestEnrichmentFetchWindowRegression:
+    """Regression: the fetch window must not widen as failures accumulate.
+
+    Nothing was reported, because this never shipped: on ``main`` a provider
+    failure settled as ``not_found`` and left the queue, so no run ever
+    accumulated queued failures for the window to widen around. It was
+    introduced by the transient-failure fix above and fixed here, both inside
+    this change. Had it shipped, an outage would have made enrichment slower
+    and heavier the larger the library got.
+
+    Root cause: a failed item stays queued, so the manager asked for
+    ``batch_size + len(failed_ids)`` rows and dropped the already-attempted
+    ones in Python. ``get_items_needing_enrichment`` fully hydrates every row
+    it returns into a ``ContentItem`` first, so during an outage — when every
+    item fails — round *k* built ``k * batch_size`` items to attempt
+    ``batch_size`` of them. Quadratic in the size of the library.
+
+    Fix: the queue is ordered by database ID, so the manager walks a cursor
+    forward and the exclusion happens in SQL. Every fetch is one batch wide
+    and every row is hydrated exactly once.
+    """
+
+    @pytest.fixture
+    def storage_manager(self, tmp_path: Path) -> StorageManager:
+        return StorageManager(sqlite_path=tmp_path / "test.db", ai_enabled=False)
+
+    @pytest.fixture
+    def registry(self) -> EnrichmentRegistry:
+        registry = EnrichmentRegistry()
+        registry._discovered = True
+        return registry
+
+    @pytest.fixture
+    def config(self) -> dict[str, Any]:
+        return {
+            "enrichment": {
+                "batch_size": 2,
+                "providers": {"mock": {"enabled": True}},
+            }
+        }
+
+    def test_every_fetch_stays_one_batch_wide_regression(
+        self,
+        storage_manager: StorageManager,
+        registry: EnrichmentRegistry,
+        config: dict[str, Any],
+    ) -> None:
+        """Five items failing at batch size two: four fetches, five rows built."""
+        for index in range(5):
+            save_movie(storage_manager, f"Movie {index}")
+        failing = MockProvider(should_fail=True)
+        registry.register(failing)
+
+        requested_limits: list[int] = []
+        hydrated_rows = 0
+        real_fetch = storage_manager.get_items_needing_enrichment
+
+        def spy(**kwargs: Any) -> list[tuple[int, ContentItem]]:
+            nonlocal hydrated_rows
+            requested_limits.append(kwargs["limit"])
+            fetched = real_fetch(**kwargs)
+            hydrated_rows += len(fetched)
+            return fetched
+
+        with patch.object(
+            storage_manager, "get_items_needing_enrichment", side_effect=spy
+        ):
+            manager = EnrichmentManager(storage_manager, config, registry)
+            manager.start_enrichment(content_type=ContentType.MOVIE)
+            assert manager._wait_for_completion()
+
+        assert requested_limits == [2, 2, 2, 2], (
+            "the window must stay at batch_size — pre-fix it grew with every "
+            f"failure, giving {requested_limits}"
+        )
+        assert hydrated_rows == 5, (
+            "each queued item must be built once — pre-fix the already-failed "
+            f"rows were re-fetched and re-built, giving {hydrated_rows}"
+        )
+        assert len(failing.enrich_calls) == 5
+        assert manager.get_status().items_failed == 5
 
 
 class TestManualEditEnrichmentProtectionRegression:
