@@ -1,5 +1,7 @@
 """Tests for CLI commands."""
 
+from datetime import UTC, date, datetime
+from inspect import signature
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -15,6 +17,7 @@ from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.engine import RecommendationEngine
 from src.storage.manager import StorageManager
+from tests.cli.conftest import _invoke_with_mocks
 from tests.factories import back_mock_settings_store
 
 
@@ -332,7 +335,7 @@ def test_complete_command_basic(mock_components):
     mock_components["embedding_gen"].generate_content_embedding.return_value = [
         0.1
     ] * 768
-    mock_components["storage"].save_content_item.return_value = 1
+    mock_components["storage"].complete_content_item.return_value = 1
 
     runner = CliRunner()
     result = runner.invoke(
@@ -351,7 +354,187 @@ def test_complete_command_basic(mock_components):
     )
 
     assert result.exit_code == 0
-    assert "Marked 'Test Book' as completed" in result.output
+    assert "Marked 'Test Book' as completed (ID: 1)" in result.output
+
+
+class TestCompleteCommandDate:
+    """Regression tests for the date `complete` records.
+
+    Bug reported: two of them, both about a date the user did not choose. An
+    item finished at 21:00 in America/Los_Angeles was dated tomorrow, because
+    the command stamped ``datetime.now(UTC).date()``; and completing an item
+    imported with ``date_completed = 2020-01-01`` rewrote that date to today,
+    because the command stamped a date at all and the sync door's
+    later-date-wins rule takes today over any past date. Both feed the variety
+    ladder's ordering, and the second is silent loss of a date the user owns.
+    Root cause: the command decided the completion date itself, in UTC, and
+    handed it to a door whose rule is "later wins".
+    Fix: the command sends no date. The storage door fills an empty one with
+    today in the host's zone and keeps a date the item already carries.
+    """
+
+    def test_complete_dates_by_the_host_calendar_day_regression(
+        self, tmp_path: Path, host_timezone
+    ) -> None:
+        """An evening completion is dated the day the user is living."""
+        host_timezone("America/Los_Angeles")
+        storage = StorageManager(sqlite_path=tmp_path / "complete.db")
+
+        with patch(
+            "src.utils.dates.utc_now",
+            return_value=datetime(2026, 3, 15, 4, 0, tzinfo=UTC),
+        ):
+            result = _invoke_with_mocks(
+                CliRunner(),
+                ["complete", "--type", "book", "--title", "Piranesi"],
+                storage,
+            )
+
+        assert result.exit_code == 0, result.output
+        stored = storage.get_content_items(content_type=ContentType.BOOK)
+        assert len(stored) == 1
+        assert stored[0].date_completed == date(2026, 3, 14)
+
+    def test_complete_preserves_an_imported_completion_date_regression(
+        self, tmp_path: Path
+    ) -> None:
+        """Completing an item that already has a date does not re-date it."""
+        storage = StorageManager(sqlite_path=tmp_path / "complete.db")
+        db_id = storage.save_content_item(
+            ContentItem(
+                id="book-1",
+                title="Dune",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                date_completed=date(2020, 1, 1),
+            )
+        )
+
+        result = _invoke_with_mocks(
+            CliRunner(),
+            ["complete", "--type", "book", "--title", "Dune", "--rating", "4"],
+            storage,
+        )
+
+        assert result.exit_code == 0, result.output
+        stored = storage.get_content_item(db_id)
+        assert stored is not None
+        assert stored.date_completed == date(2020, 1, 1)
+        assert stored.rating == 4
+
+
+class TestCompleteCommandUserOwnedFields:
+    """Regression tests for `complete` discarding an explicit rating/review.
+
+    Bug reported: `complete --type book --title Dune --rating 2` against a
+    library where Dune is already rated 5 prints "Marked 'Dune' as completed"
+    and exits 0, but `library show` still reports rating 5. The same holds for
+    `--review`. The user believes they corrected their taste signal;
+    preference analysis keeps scoring on the stale value. This is the same
+    silent-discard class as the chat re-rating defect, on the CLI path.
+    Root cause: the command persisted through
+    ``StorageManager.save_content_item`` — the ingestion/sync door, whose
+    fill-only rule never overwrites a user-owned field that already has a
+    value. `complete` is an explicit user action, so under the user-owned
+    fields rule its rating and review must win.
+    Fix: an explicit completion goes through ``complete_content_item``, the
+    storage door that applies the explicit-action rules, so the value the user
+    typed is the value stored.
+    """
+
+    def _seeded_storage(self, tmp_path: Path) -> tuple[StorageManager, int]:
+        """A real temp-DB storage holding one rated, reviewed book."""
+        storage = StorageManager(sqlite_path=tmp_path / "complete.db")
+        db_id = storage.save_content_item(
+            ContentItem(
+                id="book-1",
+                title="Dune",
+                author="Frank Herbert",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+                review="Loved it",
+            )
+        )
+        return storage, db_id
+
+    def test_complete_overwrites_existing_rating_regression(self, tmp_path):
+        """An explicit `complete --rating` replaces the stored rating."""
+        storage, db_id = self._seeded_storage(tmp_path)
+
+        result = _invoke_with_mocks(
+            CliRunner(),
+            ["complete", "--type", "book", "--title", "Dune", "--rating", "2"],
+            storage,
+        )
+
+        assert result.exit_code == 0, result.output
+        stored = storage.get_content_item(db_id)
+        assert stored is not None
+        assert stored.rating == 2
+
+    def test_complete_overwrites_existing_review_regression(self, tmp_path):
+        """An explicit `complete --review` replaces the stored review."""
+        storage, db_id = self._seeded_storage(tmp_path)
+
+        result = _invoke_with_mocks(
+            CliRunner(),
+            [
+                "complete",
+                "--type",
+                "book",
+                "--title",
+                "Dune",
+                "--review",
+                "On reflection, overrated",
+            ],
+            storage,
+        )
+
+        assert result.exit_code == 0, result.output
+        stored = storage.get_content_item(db_id)
+        assert stored is not None
+        assert stored.review == "On reflection, overrated"
+
+
+class TestCompleteCommandEmbeddingArgument:
+    """Regression test: `complete` hands the embedding to the wrong parameter.
+
+    Bug reported: with AI features and embeddings enabled, `complete` fails
+    with "Error marking content as completed" and stores nothing, and no
+    embedding ever reaches the vector DB.
+    Root cause: ``src/cli/commands.py`` called
+    ``storage.save_content_item(item, embedding)``, but the second positional
+    parameter of the storage method is ``user_id``, not ``embedding``
+    (``src/storage/manager.py``: ``(self, item, user_id=None,
+    embedding=None)``). The embedding vector was bound to ``user_id`` and then
+    used as a SQL bind parameter, while ``embedding`` stayed None so the vector
+    DB was never written. The web endpoint passes ``embedding=embedding`` by
+    keyword and is unaffected. Latent by default, since both feature flags
+    default to off.
+    Fix: pass the embedding by keyword, as the web endpoint does. The
+    signature is bound here rather than asserted by name so that renaming or
+    reordering the storage parameters fails this test.
+    """
+
+    def test_complete_passes_the_embedding_as_the_embedding_argument(self):
+        """The embedding must bind to ``embedding``, not to ``user_id``."""
+        mock_storage = Mock(spec=StorageManager)
+        mock_storage.complete_content_item.return_value = 1
+
+        _invoke_with_mocks(
+            CliRunner(),
+            ["complete", "--type", "book", "--title", "Dune"],
+            mock_storage,
+            config={"features": {"ai_enabled": True, "embeddings_enabled": True}},
+        )
+
+        call = mock_storage.complete_content_item.call_args
+        bound = signature(StorageManager.complete_content_item).bind(
+            mock_storage, *call.args, **call.kwargs
+        )
+        assert bound.arguments.get("user_id") is None
+        assert bound.arguments.get("embedding") is not None
 
 
 def test_complete_command_invalid_rating(mock_components):
