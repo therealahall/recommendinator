@@ -85,6 +85,13 @@ rank lower — it's a soft penalty, not a hard filter.
 Items without length metadata (common before enrichment) receive a small
 benefit-of-the-doubt score rather than being penalized.
 
+For video games the hours come from whatever playtime the library has recorded:
+Steam's hours on record, RAWG's playtime figure from enrichment, or — new in this
+release — the `hours_played` column of an imported CSV or JSON file, which now
+lands under the same key the scorer reads. A games file carrying `hours_played`
+therefore changes which games are recommended, where before the column was
+imported but never scored.
+
 ## Variety after completion
 
 Set the **"Variety After Completion"** preference above `0.0` (web UI slider, or
@@ -99,6 +106,23 @@ maximum to derive the top penalty *fraction* applied to a just-finished genre, s
 `4.0` reproduces the legacy full-strength behavior (a `0.8` fraction) and `5.0`
 is full strength — a just-finished genre's same-type candidates are zeroed
 entirely. There is **no score floor**.
+
+A completion is dated by the item's completion date, and finishing something in
+the app records one. Marking an item complete — from the web UI, the `complete`
+command, or chat — stamps today's date when the item does not already carry one,
+and leaves an imported date alone. Editing an item that was *already* completed
+never dates it, so fixing a genre on an undated import does not backdate the
+ladder to today. Chat is the one surface that can name a date instead ("I
+finished it last Tuesday"), and the date it names is written as given, including
+a correction pointing to an earlier day than the one already stored. So an item
+you finish today outranks one you imported with a years-old date, which is the
+whole point of the ladder.
+
+The date is the calendar day in the host's timezone, not UTC — see
+[DOCKER.md](DOCKER.md#environment-variables) for setting `TZ` on a container.
+Dates already in the database are not corrected by setting it, because the
+sync rule keeps the later of two dates and the corrected local date is the
+earlier one.
 
 The genres you most recently *completed* are penalized on a stepped ladder by
 recency. The most recently finished genre cluster takes the full penalty you set,
@@ -149,18 +173,32 @@ the variety penalty.
 
 Items can be marked as `ignored` to permanently exclude them from
 recommendations. Set `ignored: true` when importing via CSV or JSON templates, or
-use the **Ignore** button in the web UI's Library page (CLI:
-`library ignore --id <id>`). Ignored items remain in your library but are
-excluded from **all** recommendation processing — they never feed preference
-analysis, scoring, similarity search, or the "since you enjoyed X" explanation
-references, and they are never surfaced as candidates. The same exclusion
-applies to completed-but-unrated items in the *signal* set: an item you finished
-but never rated carries no taste signal, so it does not shape recommendations
-(though unrated items still appear as candidates — the backlog you might consume
-next is unrated by nature). This filtering is centralized in the storage
-layer's signal-set accessor, so every surface that shapes recommendations —
-the ranking engine, the conversational assistant, and the web's streaming
-blurbs — respects it uniformly.
+use the **Ignore** button on the web UI's Library or Recommendations page (CLI:
+`library ignore --id <id>`). The flag survives a re-import unless the file says
+otherwise: an absent `ignored` column, a blank cell or a JSON `null` all leave it
+exactly as you set it, while a stated `ignored: false` un-ignores the item, which
+is what makes the export-edit-re-import round trip usable.
+
+That "unless the file says otherwise" is doing real work for a file this app
+exported. Every exported row carries a real `true` or `false` in `ignored`, never
+a blank, so a re-imported export states the flag for **every** item and replaces
+the whole ignore list with the state it had at export time. Anything ignored
+since is un-ignored. Re-import an export once and remove the source; left
+configured, it re-applies the same stale snapshot on every sync.
+
+Consolidating an item with a duplicate row from another source never un-ignores
+it — an ignore on either row wins.
+
+Ignored items remain in your library but are excluded from **all** recommendation
+processing — they never feed preference analysis, scoring, similarity search, or
+the "since you enjoyed X" explanation references, and they are never surfaced as
+candidates. The same exclusion applies to completed-but-unrated items in the
+*signal* set: an item you finished but never rated carries no taste signal, so it
+does not shape recommendations (though unrated items still appear as candidates —
+the backlog you might consume next is unrated by nature). This filtering is
+centralized in the storage layer's signal-set accessor, so every surface that
+shapes recommendations — the ranking engine, the conversational assistant, and
+the web's streaming blurbs — respects it uniformly.
 
 Series *ordering* is the one deliberate exception: whether you have already
 consumed an earlier entry in a series is a consumption fact independent of

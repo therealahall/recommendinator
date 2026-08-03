@@ -25,7 +25,8 @@ yours to choose, so you can have several JSON sources for different files.
 | `content_type` | str | yes | One of: `book`, `movie`, `tv_show`, `video_game`. |
 
 ## Notes
-- Field names match the [generic CSV](../generic_csv/README.md) plugin.
+- Field names match the [generic CSV](../generic_csv/README.md) plugin, including the optional `ignored` field: omit it, or send `null`, and the import leaves the stored flag alone; send a real `true`/`false` and its value wins in either direction. A JSON file this app exported always carries a real `true`/`false` on every entry, so re-importing one replaces the whole ignore list with the state it had at export time — [the same snapshot warning](../generic_csv/README.md#recognized-columns) that applies to CSV exports.
+- The rest of the fields you own follow the same per-field rules as the CSV importer — rating and review are fill-only, status moves forward only (bar the completed-TV-show-gains-a-season case), `date_completed` is replaced only by a later date, `genre` is additive, `total_seasons` only increases, and every remaining metadata field, `seasons_watched` included, is fill-only. See [that README](../generic_csv/README.md#recognized-columns) for the detail.
 - File extension determines parsing mode: `.jsonl` → line-delimited; anything else → JSON array.
 
 ## Development

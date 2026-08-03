@@ -19,9 +19,22 @@ python3.11 -m src.cli update --source all
 python3.11 -m src.cli recommend --type book --count 10
 python3.11 -m src.cli recommend --type video_game --count 5
 
-# Mark content as completed
+# Mark content as completed (adds the item if your library does not have it yet)
 python3.11 -m src.cli complete --type book --title "Project Hail Mary" --rating 5
 ```
+
+`complete` records the completion in one step: it finds or creates the item, sets
+its status, and writes the rating and review you passed. It takes no date — the
+item is stamped with today's date when it has none yet, and an existing date is
+kept, so completing something already dated by an import does not re-date it.
+`POST /api/complete` behaves identically. Chat is the only surface that can name
+a different date ("I finished it last Tuesday"), and it writes the date as given.
+
+A review passed here **replaces** the stored one, so `--review ""` (or a value
+that is nothing but whitespace) is refused with an error rather than written.
+`POST /api/complete` refuses it too, with a 422. There is no clear-review flag on
+`complete` — completing something is not the moment to erase a review, and
+`library edit --clear-review` is.
 
 ## System status
 
@@ -42,7 +55,8 @@ python3.11 -m src.cli library list --format json
 python3.11 -m src.cli library list --enrichment not_enriched
 
 # Search by title or creator (matches web API search). Fuzzy and typo-tolerant;
-# combines with the type/status filters.
+# combines with the type/status filters. At most 200 characters, the same bound
+# the web API enforces (see below).
 python3.11 -m src.cli library list --search "die hard"
 
 # Surface completed items you haven't rated yet (forces completed status,
@@ -55,6 +69,10 @@ python3.11 -m src.cli library show --id 42
 
 # Edit item metadata
 python3.11 -m src.cli library edit --id 42 --rating 5 --status completed
+
+# Clear a rating or review back to empty (the only way to store nothing there)
+python3.11 -m src.cli library edit --id 42 --clear-rating
+python3.11 -m src.cli library edit --id 42 --clear-review
 
 # Mark watched TV seasons (comma-separated season numbers, each 1-200)
 python3.11 -m src.cli library edit --id 42 --seasons-watched 1,2,3
@@ -76,6 +94,35 @@ python3.11 -m src.cli library export --type video_game --format json
 only when a provider matched it cleanly (a real provider, no error, not "not
 found", and not pending re-enrichment); `not_enriched` is everything else. The
 list table shows an **Enriched** column.
+
+`--search` is capped at 200 characters because the term is fuzzy-matched against
+every candidate title, making its length a cost multiplier over the whole
+library. All three surfaces hold the same bound and each reports it in the way
+that suits it: the CLI aborts with an error, `GET /api/items` answers 422, and
+the web UI's search box stops accepting input at the cap and announces the limit
+to screen readers rather than failing a request.
+
+`library edit` only writes the flags you pass. Omitting `--rating` or
+`--review` leaves the stored value exactly as it was, so a status-only or
+genre-only edit cannot erase a rating; passing one replaces the stored value.
+
+Emptying a field is therefore a separate instruction: `--clear-rating` and
+`--clear-review` store nothing at all, and they are the only way to do that from
+the CLI. `--review ""` is refused with a message pointing at `--clear-review`,
+because an empty string is far more often a shell accident than an intention.
+Neither clear flag may be combined with its value flag. The web equivalent is
+`PATCH /api/items/{id}` with an explicit `null` for the field; a `rating` or
+`review` the request body omits is left alone there too, and a blank or
+all-whitespace `review` is refused there with a 422 for the same reason the CLI
+refuses it. In the web edit modal you do not have to send the null yourself:
+clearing the review textarea sends `null`, so emptying the box *is* the clear.
+
+An edit that moves an item to `--status completed` also records today's
+completion date when the item has none yet, which is what the variety penalty
+uses to tell a fresh completion from an old one (see
+[SCORING.md](SCORING.md#variety-after-completion)). Editing an item that is
+already completed never dates it, so fixing a genre on an undated import does
+not make the app think you finished it today.
 
 Passing any of `--genre`, `--tag`, or `--description` to `library edit` writes
 manual metadata. Repeated `--genre`/`--tag` replace the existing lists (they do
