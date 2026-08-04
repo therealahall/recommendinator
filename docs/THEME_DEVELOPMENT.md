@@ -1,30 +1,44 @@
 # Theme Development Guide
 
-Create custom themes for the Recommendinator web interface. Each theme is a folder in `src/web/static/themes/` containing color overrides.
+A theme is a folder in `src/web/static/themes/` that overrides CSS color
+variables.
 
-## Architecture Overview
+## How theming works
 
-The frontend uses **Vue 3 + Tailwind CSS v4** with a CSS custom property theming system:
+- **`:root` variables** in `resources/css/base.css` are the source of truth.
+- **Tailwind `@theme`** mappings in `resources/css/tailwind.css` bridge those
+  vars into utility classes such as `bg-bg-primary` and `text-text-primary`.
+- **A theme's `colors.css`** overrides the `:root` variables through a
+  dynamically loaded `<link>`.
+- Themes are **not part of the Vite build**. They are served from
+  `/static/themes/` and loaded at runtime.
 
-- **`:root` variables** are defined in `resources/css/base.css` (source of truth)
-- **Tailwind `@theme`** mappings in `resources/css/tailwind.css` bridge CSS vars into Tailwind's utility class system (e.g., `bg-bg-primary`, `text-text-primary`)
-- **Theme `colors.css`** files override `:root` variables via a dynamically loaded `<link>` element
-- Themes are **not part of the Vite build** — they're served separately from `/static/themes/` and loaded at runtime
+So an override works identically under Tailwind utilities and raw CSS. Both read
+the same custom properties, and no Tailwind rebuild is needed. `tailwind.css` is
+a bridge layer, and a theme author never touches it:
 
-This means your theme overrides work identically whether the UI is rendered by Tailwind utility classes or raw CSS — both read from the same CSS custom properties.
+```css
+@theme {
+  --color-bg-primary: var(--bg-primary);
+  --color-text-primary: var(--text-primary);
+  --color-accent: var(--accent);
+}
+```
 
-## Theme Directory Structure
+## Layout
 
 ```
 src/web/static/themes/
 └── my-theme/
-    ├── theme.json      # Required — theme metadata
-    ├── colors.css      # Required — CSS color variable overrides
-    ├── README.md       # Recommended — description and design notes
-    └── preview.png     # Optional — screenshot for documentation
+    ├── theme.json      # required: metadata
+    ├── colors.css      # required: color variable overrides
+    ├── README.md       # recommended: design notes
+    └── preview.png     # optional: screenshot
 ```
 
-## theme.json Schema
+## theme.json
+
+Every field is required.
 
 ```json
 {
@@ -36,116 +50,98 @@ src/web/static/themes/
 }
 ```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `name` | string | Display name shown in the theme switcher |
-| `description` | string | Brief description of the theme |
-| `author` | string | Theme author or "Built-in" for included themes |
-| `version` | string | Semantic version |
-| `type` | string | `"dark"` or `"light"` — informational label |
+| Field | Description |
+|-------|-------------|
+| `name` | Display name in the theme switcher |
+| `description` | Brief description |
+| `author` | Author, or "Built-in" for included themes |
+| `version` | Semantic version |
+| `type` | `"dark"` or `"light"`, an informational label |
 
-All fields are required.
+## Color variables
 
-## CSS Color Variables
+Override these in `colors.css` under a `:root` selector. Override only what you
+want to change. Anything unset keeps its dark-theme default.
 
-Override these variables in `colors.css` using a `:root` selector. You only need to override the variables you want to change — unset variables keep their dark-theme defaults.
+### Backgrounds
 
-### Background Colors
-
-| Variable | Default | Description |
+| Variable | Default | Used for |
 |----------|---------|-------------|
 | `--bg-primary` | `#2e3440` | Page background |
 | `--bg-card` | `#3b4252` | Card backgrounds |
-| `--bg-sidebar` | `#2e3440` | Sidebar background |
+| `--bg-sidebar` | `#2e3440` | Sidebar |
 | `--bg-elevated` | `#434c5e` | Elevated surfaces |
-| `--bg-input` | `#2e3440` | Input field backgrounds |
-| `--bg-hover` | `#434c5e` | Hover state backgrounds |
+| `--bg-input` | `#2e3440` | Input fields |
+| `--bg-hover` | `#434c5e` | Hover states |
 | `--bg-secondary` | `#3b4252` | Secondary surfaces (code blocks) |
-| `--bg-active` | `color-mix(in srgb, var(--accent) 20%, transparent)` | Active/selected state (auto-derived from accent) |
+| `--bg-active` | `color-mix(in srgb, var(--accent) 20%, transparent)` | Active/selected, derived from the accent |
 
-### Text Colors
+### Text
 
-| Variable | Default | Description |
+| Variable | Default | Used for |
 |----------|---------|-------------|
 | `--text-primary` | `#eceff4` | Primary text |
 | `--text-secondary` | `#d8dee9` | Secondary/dimmer text |
 | `--text-muted` | `#97abbe` | Muted/label text |
 | `--text-inverse` | `#2e3440` | Text on accent backgrounds |
 
-### Accent Colors
+### Accents
 
-| Variable | Default | Description |
+| Variable | Default | Used for |
 |----------|---------|-------------|
-| `--accent` | `#81a1c1` | Primary accent (buttons, links, active states) |
-| `--accent-light` | `#88c0d0` | Light accent (highlights) |
-| `--accent-teal` | `#8fbcbb` | Teal accent (supplementary) |
+| `--accent` | `#81a1c1` | Buttons, links, active states |
+| `--accent-light` | `#88c0d0` | Highlights |
+| `--accent-teal` | `#8fbcbb` | Supplementary |
 
-### Border Colors
+### Borders
 
-| Variable | Default | Description |
+| Variable | Default | Used for |
 |----------|---------|-------------|
 | `--border-default` | `#4c566a` | Standard borders |
 | `--border-subtle` | `#434c5e` | Subtle/secondary borders |
-| `--border-focus` | `var(--accent)` | Focus ring color |
+| `--border-focus` | `var(--accent)` | Focus ring |
 
-### Semantic Colors
+### Semantic
 
-| Variable | Default | Description |
+| Variable | Default | Used for |
 |----------|---------|-------------|
-| `--color-success` | `#a3be8c` | Success states (completed, unignore) |
-| `--color-warning` | `#ebcb8b` | Warning states (unread status badge, rating stars, ignored badge) |
-| `--color-error` | `#bf616a` | Error states (danger buttons, failures) |
-| `--color-info` | `var(--accent)` | Info states (loading, sync) |
+| `--color-success` | `#a3be8c` | Completed, unignore |
+| `--color-warning` | `#ebcb8b` | Unread badge, rating stars, ignored badge |
+| `--color-error` | `#bf616a` | Danger buttons, failures |
+| `--color-info` | `var(--accent)` | Loading, sync |
 
-### Overlay Colors
+### Overlays and shadows
 
-| Variable | Default | Description |
+| Variable | Default | Used for |
 |----------|---------|-------------|
-| `--overlay-dark` | `rgba(0, 0, 0, 0.6)` | Modal backdrop overlays |
+| `--overlay-dark` | `rgba(0, 0, 0, 0.6)` | Modal backdrops |
 | `--overlay-medium` | `rgba(0, 0, 0, 0.5)` | Sidebar mobile overlay |
-
-### Shadow Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
 | `--shadow-sm` | `0 1px 2px rgba(0, 0, 0, 0.3)` | Small shadow |
 | `--shadow-md` | `0 2px 8px rgba(0, 0, 0, 0.3)` | Medium shadow |
 | `--shadow-lg` | `0 4px 16px rgba(0, 0, 0, 0.4)` | Large shadow |
 | `--shadow-tooltip` | `0 4px 12px rgba(0, 0, 0, 0.25)` | Tooltip shadow |
 
-## How color-mix() Works
+## Transparent variants come free
 
-The stylesheet uses `color-mix()` to auto-derive transparent variants from your theme colors. For example:
+The stylesheet derives them with `color-mix()`:
 
 ```css
-/* In resources/css/base.css */
+/* resources/css/base.css */
 .badge-status {
     background: color-mix(in srgb, var(--color-success) 10%, transparent);
     border-color: color-mix(in srgb, var(--color-success) 30%, transparent);
 }
 ```
 
-When you override `--color-success` in your theme, the badge backgrounds and borders automatically adjust. You do **not** need to define the transparent variants yourself.
+Override `--color-success` and those badges follow. Do not define the transparent
+variants yourself.
 
-## Step-by-Step: Creating a Custom Theme
+## Creating a theme
 
-1. **Create the theme directory:**
-   ```bash
-   mkdir src/web/static/themes/my-theme
-   ```
+1. `mkdir src/web/static/themes/my-theme`
+2. Write `theme.json`, per the schema above.
+3. Write `colors.css`:
 
-2. **Create `theme.json`:**
-   ```json
-   {
-       "name": "My Theme",
-       "description": "A custom color scheme",
-       "author": "Your Name",
-       "version": "1.0.0",
-       "type": "dark"
-   }
-   ```
-
-3. **Create `colors.css`** with your color overrides:
    ```css
    :root {
        --accent: #e06c75;
@@ -153,48 +149,21 @@ When you override `--color-success` in your theme, the badge backgrounds and bor
        --color-success: #98c379;
        --color-warning: #d19a66;
        --color-error: #be5046;
-       /* ... override as many variables as needed */
    }
    ```
 
-4. **Test your theme:**
-   - Start the server
-   - Select your theme from the Preferences tab
-   - Check all pages: Recommendations, Library, Chat, Data, Preferences
-   - Verify text readability, badge contrast, and button visibility
+4. Start the server, select the theme from the Preferences tab, and check every
+   page for text readability, badge contrast and button visibility.
+5. Optionally add a `README.md` describing your design choices.
 
-5. **Optionally add a README.md** describing your design choices.
+## What themes cannot override
 
-## What Themes Cannot Override
+Color variables only. Spacing (`--space-*`), typography (`--font-*`, `--text-*`),
+radius (`--radius-*`), transitions (`--transition-*`) and layout dimensions
+(`--sidebar-width`) are fixed.
 
-Themes only affect **color** variables. The following are not theme-overridable:
+## Persistence
 
-- Spacing scale (`--space-*`)
-- Typography (`--font-sans`, `--font-mono`, `--text-*`)
-- Border radius (`--radius-*`)
-- Transitions (`--transition-*`)
-- Layout dimensions (`--sidebar-width`, etc.)
-
-## Tailwind CSS Integration
-
-Tailwind v4 maps CSS custom properties to its utility classes via `@theme` in `resources/css/tailwind.css`. Theme developers don't need to touch this file — it's a bridge layer.
-
-Example mappings:
-```css
-@theme {
-  --color-bg-primary: var(--bg-primary);
-  --color-text-primary: var(--text-primary);
-  --color-accent: var(--accent);
-}
-```
-
-Vue components can then use classes like `bg-bg-primary`, `text-text-primary`, or `border-accent` — and these respond automatically to theme changes because they read the underlying CSS variables.
-
-**Key point:** When you override `--bg-primary` in your theme's `colors.css`, both the Tailwind utility `bg-bg-primary` and any raw CSS using `var(--bg-primary)` update simultaneously. No Tailwind rebuild is needed.
-
-## Theme Persistence
-
-- Users select a theme via the Preferences tab and click Save
-- The selection is persisted to the backend per user (syncs across browsers/devices)
-- `localStorage` caches the theme for fast initial paint before preferences load
-- The system default is `nord` for all new users until they explicitly change it
+The selection is saved per user, so it follows them across browsers and devices.
+`localStorage` caches it for fast first paint before preferences load. New users
+get `nord`.
