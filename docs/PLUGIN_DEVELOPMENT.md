@@ -156,8 +156,12 @@ Eight columns accept a second spelling, and reach the same column either way:
 | `developer` | `developers` | `video_game` |
 | `publisher` | `publishers` | `video_game` |
 
-A list given to a text column is joined with commas, so the plural spellings
-above may be lists.
+A text column takes a string, a number, or a list of either, joined with commas
+— so the plural spellings above may be lists. An object is refused rather than
+stored as its Python repr, and the refusal fails the whole item's save: sync
+reports only `Failed to process '<title>'`, naming no field, while the log line
+beside it names the key. So `metadata["publisher"] = {"name": "X"}` loses the
+item, not just the publisher. Reduce the shape to names before handing it over.
 
 The blob is a shared namespace rather than scratch space. First-party code reads
 these keys out of it, and none of them is a recognised key:

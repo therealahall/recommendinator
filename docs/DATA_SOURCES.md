@@ -119,7 +119,7 @@ creator columns (`director`, `creator`, `developer`) used to export blank and no
 export correctly, so retake any export you keep as a backup — except a creator
 that arrived through a generic CSV or JSON import before this release, which the
 old write path never stored at all, so it stays blank until you re-import that
-file. Two things still need care:
+file. Three things still need care:
 
 - **`platform` on a GOG library synced before the platform-shape fix.** Starting
   the app rewrites the stored per-platform flag dict as the platform names it
