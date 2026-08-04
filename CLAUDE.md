@@ -48,6 +48,9 @@ src/
 │   └── providers/    # Enrichment providers (folder-per-provider, same layout as sources)
 ├── conversation/     # Conversational AI chat system
 ├── models/           # Data models (ContentItem, ContentType, UserPreferenceConfig)
+│                     # plus detail_fields.py: the single declaration of each
+│                     # content type's detail-table fields, which storage,
+│                     # ingestion and export all derive their field lists from
 └── utils/            # Utility functions (list_merge, series, sorting)
 resources/            # Frontend source (Vue 3 + Tailwind CSS v4)
 ├── js/               # Vue components, Pinia stores, composables, router, types

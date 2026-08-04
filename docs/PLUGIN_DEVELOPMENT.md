@@ -128,7 +128,8 @@ type and lifts those into the type's detail table (`book_details`,
 `movie_details`, `tv_show_details`, `video_game_details`). Anything else is kept
 verbatim in the detail row's free-form blob. **A misspelled key is not an error
 anywhere**, so spell a recognised one correctly: the value lands in the blob and
-never reaches the column the rest of the app queries.
+never reaches the column the rest of the app queries. Both tables below come
+from `src/models/detail_fields.py`, which declares every field once.
 
 | Content type | Recognised keys |
 |---|---|
