@@ -363,10 +363,13 @@ def create_schema(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_ci_normalized_title "
         "ON content_items(user_id, content_type, normalized_title)"
     )
+    # Repair detail rows still carrying shapes storage no longer writes. Runs
+    # before the merge below so each row folds its own stranded season count
+    # onto its own column: the merge then takes the higher of two real counts,
+    # rather than of whichever blob copy survived it.
+    _migrate_stranded_detail_shapes(cursor)
     # Merge any duplicates exposed by the corrected normalization
     _deduplicate_inline(cursor)
-    # Repair detail rows still carrying shapes storage no longer writes
-    _migrate_stranded_detail_shapes(cursor)
 
     # Core memories: significant preference signals
     cursor.execute(
