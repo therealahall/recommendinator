@@ -1,97 +1,51 @@
-# ChromaDB Setup Guide
+# ChromaDB Setup
 
-This guide explains how to set up ChromaDB locally for Recommendinator.
+ChromaDB holds the vector embeddings. It is only used when AI features are on
+(`features.ai_enabled`), and everything else works without it.
 
-## Installation
-
-ChromaDB is included in the `ai` optional dependency group. To install it:
+## Install
 
 ```bash
 uv sync --locked --extra ai
 ```
 
-## Python Version Compatibility
+Use Python 3.11 or 3.12. Newer versions may have no ChromaDB wheel, and the
+source build fails on `hnswlib`. See [PYTHON_VERSION.md](PYTHON_VERSION.md).
 
-**Note:** ChromaDB may not have full support for Python 3.14 yet. If you encounter installation issues:
-
-1. **Check your Python version:**
-   ```bash
-   python3.11 --version
-   ```
-
-2. **If using Python 3.14**, you may need to:
-   - Use Python 3.11 or 3.12 instead (recommended)
-   - Or wait for ChromaDB to release Python 3.14 wheels
-
-3. **Recommended Python versions:**
-   - Python 3.11 ✅ (fully supported)
-   - Python 3.12 ✅ (fully supported)
-   - Python 3.14 ⚠️ (may have compatibility issues)
-
-**Note:** ChromaDB is only required when AI features are enabled (`features.ai_enabled: true`). The system works fully without it.
-
-## Verification
-
-After installation, verify ChromaDB works:
+Verify:
 
 ```bash
-python3.11 -c "import chromadb; print(f'ChromaDB version: {chromadb.__version__}')"
+python3.11 -c "import chromadb; print(chromadb.__version__)"
+python3.11 -m pytest tests/test_vector_db.py tests/test_storage_manager.py
 ```
 
-## Testing
+## Storage location
 
-Run the vector database tests:
-
-```bash
-python3.11 -m pytest tests/test_vector_db.py -v
-python3.11 -m pytest tests/test_storage_manager.py -v
-```
-
-## Troubleshooting
-
-### Import Error: No module named 'chromadb'
-
-1. Verify installation:
-   ```bash
-   uv pip list | grep chromadb
-   ```
-
-2. Check Python version compatibility (see above)
-
-3. Try reinstalling:
-   ```bash
-   uv sync --locked --extra ai --reinstall-package chromadb
-   ```
-
-## ChromaDB Storage Location
-
-By default, ChromaDB stores data in:
-- Directory specified in `config/config.yaml` → `storage.vector_db_path`
-- Default: `data/chroma_db/`
-
-The database files include:
-- `chroma.sqlite3` - Metadata database
-- Collection directories with HNSW index files
+`storage.vector_db_path` in `config/config.yaml`, default `data/chroma_db/`. It
+holds `chroma.sqlite3` plus a directory of HNSW index files per collection.
 
 ## Usage
 
-The ChromaDB integration is handled automatically by `StorageManager`. You don't need to interact with ChromaDB directly unless you're debugging.
-
-Example usage:
+`StorageManager` drives ChromaDB for you. Reach for it directly only when
+debugging:
 
 ```python
 from pathlib import Path
 from src.storage.manager import StorageManager
 
-# Initialize storage manager
 storage = StorageManager(
     sqlite_path=Path("data/recommendations.db"),
     vector_db_path=Path("data/chroma_db"),
     ai_enabled=True,
 )
-
-# Save content with embedding
-item = ContentItem(...)
-embedding = [0.1, 0.2, 0.3, ...]  # Your embedding vector
 storage.save_content_item(item, embedding)
+```
+
+## `No module named 'chromadb'`
+
+You installed without the `ai` extra, or on a Python with no wheel. Check the
+version, then reinstall the package:
+
+```bash
+uv sync --locked --extra ai --reinstall-package chromadb
 ```

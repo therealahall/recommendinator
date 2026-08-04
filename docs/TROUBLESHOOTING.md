@@ -1,241 +1,174 @@
-# Troubleshooting Guide
+# Troubleshooting
 
-Common issues and solutions for Recommendinator.
+## Install
 
-## Installation Issues
+### `Failed to build hnswlib`
 
-### ChromaDB Installation Fails
+ChromaDB needs Python 3.11 or 3.12. Install under 3.11, or run without AI and
+skip ChromaDB.
 
-**Error:** `Failed to build hnswlib` or similar
+### `ModuleNotFoundError`
 
-**Solution:** ChromaDB requires Python 3.11 or 3.12. If you're using 3.13+, either:
-1. Use Python 3.11: `uv sync --locked --extra ai`
-2. Run without AI features (ChromaDB is optional)
-
-### Missing Dependencies
-
-**Error:** `ModuleNotFoundError: No module named 'xxx'`
-
-**Solution:**
 ```bash
-uv sync --locked --extra ai
-# or for development:
-uv sync --locked --extra ai --extra dev
+uv sync --locked --extra ai          # add --extra dev for the test tooling
 ```
 
-## Ollama Issues
+## Ollama
 
-### Ollama Not Running
+### `Connection refused` or `Failed to connect to Ollama`
 
-**Error:** `Connection refused` or `Failed to connect to Ollama`
+Start it with `ollama serve`, confirm with
+`curl http://localhost:11434/api/tags`, then check `ollama.base_url` points
+there. See [OLLAMA_SETUP_GUIDE.md](OLLAMA_SETUP_GUIDE.md).
 
-**Solution:**
-1. Start Ollama: `ollama serve`
-2. Check it's running: `curl http://localhost:11434/api/tags`
-3. Verify the URL in your config matches
+### `Model 'xxx' not found`
 
-### Model Not Found
-
-**Error:** `Model 'xxx' not found`
-
-**Solution:**
 ```bash
-# Pull the required models
-ollama pull llama3.2
-ollama pull nomic-embed-text
-
-# List available models
 ollama list
+ollama pull mistral:7b
+ollama pull nomic-embed-text
 ```
 
-### Slow Embeddings
+The names have to match `ollama.model` and `ollama.embedding_model`.
 
-**Symptom:** Ingestion takes a very long time
+### Ingestion crawls once embeddings are on
 
-**Solutions:**
-1. Use a faster embedding model (e.g., `nomic-embed-text`)
-2. Reduce batch size in config
-3. Run without AI features for initial import, add embeddings later
+Use `nomic-embed-text`, not a general model. Or import with
+`features.embeddings_enabled` off and re-sync later to backfill.
 
-## Database Issues
+## Database
 
-### Database Locked
+### `database is locked`
 
-**Error:** `database is locked`
+Only one process may write. Close SQLite browsers and check for a leftover
+instance.
 
-**Solution:**
-1. Ensure only one instance is running
-2. Close any SQLite browsers (DB Browser, etc.)
-3. Check for zombie processes: `ps aux | grep python`
+### `Schema version mismatch`
 
-### Schema Migration Failed
+Back the database up first. It is the only copy of your ratings.
 
-**Error:** `Schema version mismatch`
-
-**Solution:**
-1. Backup your data: `cp data/recommendations.db data/recommendations.db.backup`
-2. Delete and recreate: `rm data/recommendations.db`
-3. Re-import your data
-
-### Data Not Persisting
-
-**Symptom:** Items disappear after restart
-
-**Solution:**
-1. Check the database path in config
-2. Ensure the `data/` directory exists and is writable
-3. Verify you're using the same config file
-
-## Recommendation Issues
-
-### No Recommendations Generated
-
-**Symptom:** "No recommendations available"
-
-**Causes & Solutions:**
-
-Recommendations are based on items you **haven't consumed yet**. If all your items are marked as completed, there's nothing left to recommend.
-
-1. **All items completed:** Add new items to your wishlist/library that you haven't consumed yet
-2. **No consumed items:** You need some completed items so the engine can learn your preferences
-3. **Wrong content type:** Ensure you have unconsumed items of the requested type
-4. **Series filtering:** If all items are excluded by series rules, check series order settings
-
-### Poor Quality Recommendations
-
-**Symptom:** Recommendations don't match preferences
-
-**Solutions:**
-1. **Enable enrichment first** — This is the most common cause. Without enrichment, most items lack the genres, tags, and descriptions the scoring pipeline depends on. See [ENRICHMENT_SETUP.md](ENRICHMENT_SETUP.md) to set up TMDB, OpenLibrary, and RAWG.
-2. **Check enrichment coverage** — In the web UI Data page, check the enrichment percentage. Aim for 90%+ coverage.
-3. Rate more items (need variety for good preferences)
-4. Adjust scorer weights in preferences
-5. Add custom rules for specific preferences
-6. Check if AI features are enabled for better similarity
-
-### Custom Rules Not Working
-
-**Symptom:** Added rules but no change in recommendations
-
-**Solutions:**
-1. Verify rule was saved: `python3.11 -m src.cli preferences custom-rules list`
-2. Test interpretation: `python3.11 -m src.cli preferences custom-rules interpret "your rule"`
-3. Click "Save Preferences" in web UI
-4. Rules influence but don't completely override scoring
-
-## Import Issues
-
-### Goodreads Import Fails
-
-**Error:** `File not found` or `Invalid CSV format`
-
-**Solution:**
-1. Export from Goodreads: My Books → Import/Export → Export Library
-2. Place file in `inputs/` directory
-3. Update path in config
-4. Ensure CSV has required columns (Title, Author, etc.)
-
-### Steam Import Fails
-
-**Error:** `Steam API error` or `Invalid API key`
-
-**Solutions:**
-1. Get API key: https://steamcommunity.com/dev/apikey
-2. Find Steam ID: Profile → Edit Profile → Custom URL or use numeric ID
-3. Set profile to public (required for API access)
-4. Check rate limits (wait a few minutes if hitting limits)
-
-### Duplicate Items
-
-**Symptom:** Same items appear multiple times
-
-**Cause:** The system automatically deduplicates items from different sources using normalized title matching (strips punctuation, articles, edition suffixes, etc.). Duplicates should not occur under normal operation.
-
-**If duplicates still appear:**
-1. The items may have titles that don't match after normalization (try renaming one)
-2. Items imported before the dedup feature may exist as separate rows — re-running a sync will merge them
-3. Schema upgrades automatically re-normalize all titles and merge exposed duplicates
-
-## Web Interface Issues
-
-### Page Won't Load
-
-**Error:** Blank page or "Failed to connect"
-
-**Solutions:**
-1. Check server is running: `python3.11 -m src.web`
-2. Verify port (default: 18473)
-3. Check browser console for errors
-4. Try different browser or incognito mode
-
-### Changes Not Saving
-
-**Symptom:** Preferences reset after refresh
-
-**Solutions:**
-1. Click "Save Preferences" button
-2. Check browser network tab for errors
-3. Verify API is responding: `curl http://localhost:18473/api/status`
-
-## CLI Issues
-
-### Command Not Found
-
-**Error:** `No such command 'xxx'`
-
-**Solution:**
 ```bash
-# Run through module
-python3.11 -m src.cli --help
-
-# Or check if it's a subcommand
-python3.11 -m src.cli preferences --help
+cp data/recommendations.db data/recommendations.db.backup
+rm data/recommendations.db
 ```
 
-### Config File Not Found
+Then re-import.
 
-**Error:** `Configuration file not found`
+### Items disappear after a restart
 
-**Solution:**
-1. Copy example config: `cp config/example.yaml config/config.yaml`
-2. Specify path: `python3.11 -m src.cli --config path/to/config.yaml`
+The database is not where you think. Check `storage.database_path`, that `data/`
+exists and is writable, and that you pass the same `--config` every time.
 
-## Docker Issues
+## Recommendations
 
-### Container Won't Start
+### "No recommendations available"
 
-**Error:** `Container exited with code 1`
+Recommendations come from items you have **not** consumed, so:
 
-**Solutions:**
-1. Check logs: `docker compose logs app` (or `docker compose logs app-ai` if using `--profile ai`)
-2. Verify config file is mounted
-3. Ensure data directory permissions are correct
+- Everything is completed. Add items you have not finished.
+- Nothing is completed and rated. The engine learns only from completed, rated,
+  non-ignored items.
+- No unconsumed items of the requested `--type`.
+- Series ordering excluded the rest. Check `series_in_order`.
 
-### Ollama Sidecar Issues
+### They do not match your taste
 
-**Error:** `Connection refused to ollama:11434`
+- **Turn enrichment on**, much the most common cause. Without genres and tags
+  the scorers have nothing to work with. See
+  [ENRICHMENT_SETUP.md](ENRICHMENT_SETUP.md).
+- Check coverage on the Data page. Aim for 90% or better.
+- Rate more items, across more genres.
+- Tune scorer weights and rules. See [SCORING.md](SCORING.md) and
+  [CUSTOM_RULES.md](CUSTOM_RULES.md).
 
-**Solutions:**
-1. Wait for Ollama to be ready (check health status)
-2. Verify network configuration in docker compose config
-3. Check Ollama logs: `docker compose logs ollama`
+### A custom rule changes nothing
 
-### AI Features Disabled Despite Being Enabled in Config
+Confirm it saved with `preferences custom-rules list`, then see how it parses:
 
-**Symptom:** `features.ai_enabled: true` is set but AI features don't work
+```bash
+python3.11 -m src.cli preferences custom-rules interpret "your rule"
+```
 
-**Solutions:**
-1. Check logs for warnings about missing packages (`chromadb is not installed` or `ollama is not installed`)
-2. Install AI packages: `pip install recommendinator[ai]`
-3. For Docker: run the AI variant with `docker compose --profile ai up -d app-ai` (the explicit `app-ai` service name is required so the default no-AI `app` service does not also start)
+Rules bias scoring. They do not override it.
 
-The application gracefully degrades when AI packages are missing — it logs a warning and continues with AI features disabled rather than crashing.
+## Imports
 
-### GPU Not Working
+### Goodreads import fails
 
-**Symptom:** Ollama using CPU instead of GPU
+Export from Goodreads (My Books → Import/Export → Export Library), drop the file
+in `inputs/`, and point the source at it. The CSV needs Title and Author columns.
 
-**Solution:** Uncomment the `deploy` section under the `ollama` service in docker-compose.yml:
+```bash
+python3.11 -m src.cli source set my_books path inputs/goodreads_library_export.csv
+```
+
+### Steam import fails
+
+Get a key at <https://steamcommunity.com/dev/apikey> and set your numeric Steam
+ID. **Make the profile public**, or the API returns nothing.
+
+### Duplicate items
+
+Items deduplicate by normalized title, so this is rare. When it happens the
+titles still differ after normalization. Rename one and re-sync. Schema upgrades
+re-normalize every title and merge whatever that exposes.
+
+## Web interface
+
+### Blank page, or "Failed to connect"
+
+Is the server running (`python3.11 -m src.web`), on the port you are asking for
+(18473 by default)? Then check the browser console.
+
+### Preferences reset after a refresh
+
+Click **Save Preferences**, check the network tab, and confirm the API answers:
+
+```bash
+curl http://localhost:18473/api/status
+```
+
+## CLI
+
+### `No such command`
+
+```bash
+python3.11 -m src.cli --help
+python3.11 -m src.cli preferences --help    # it may be a subcommand
+```
+
+### `Configuration file not found`
+
+```bash
+cp config/example.yaml config/config.yaml
+python3.11 -m src.cli --config path/to/config.yaml status
+```
+
+## Docker
+
+[DOCKER.md](DOCKER.md) covers ports, permissions and volumes in full.
+
+### The container exits immediately
+
+`docker compose logs app`, or `app-ai` under the `ai` profile. Usually the config
+volume is not mounted, or `./data` is not writable by the container user.
+
+### `Connection refused to ollama:11434`
+
+The sidecar is still pulling models. Watch `docker compose logs ollama` and wait
+for its health check to pass.
+
+### AI stays off with `features.ai_enabled` true
+
+The AI packages are missing, so the app logs `chromadb is not installed` or
+`ollama is not installed` and carries on without them. Run the AI image
+(`docker compose --profile ai up -d app-ai`, naming the service), or install
+locally with `uv sync --locked --extra ai`.
+
+### Ollama uses the CPU with a GPU present
+
+Uncomment the `deploy` block under the `ollama` service in `docker-compose.yml`:
+
 ```yaml
 deploy:
   resources:
@@ -246,50 +179,27 @@ deploy:
           capabilities: [gpu]
 ```
 
-### Epic Games Authentication in Docker
+### `legendary auth` fails inside the container
 
-**Error:** `legendary auth` returns "unknown command" or can't open a browser inside a Docker container
+The `legendary` CLI is not a container entrypoint, and browser OAuth cannot work
+inside one. Use the web UI: **Data** tab, **+ Add source**, Epic Games, then
+**Connect Epic Games**, log in, and paste the authorization code back. Steps in
+the [Epic Games plugin README](../src/ingestion/sources/epic_games/README.md).
 
-**Cause:** The `legendary` CLI is not exposed as a container entrypoint, and browser-based OAuth cannot work inside a container.
+## Performance
 
-**Solution:** Use the **web UI OAuth flow** instead — it works in Docker without any host-side tools:
+### Slow startup
 
-1. Open the web UI → Data tab → **+ Add source** → Epic Games
-2. In the Epic Games source panel, click **"Connect Epic Games"**
-3. Log into Epic in the new tab, copy the authorization code from the JSON response
-4. Paste the code back into the web UI and click **Connect**
+Turn AI off if you are not using it, and pre-pull the Ollama models.
 
-See the [Epic Games Setup](../README.md#epic-games-setup) section in the README for full details.
+### High memory use
 
-## Performance Issues
+Ollama holds the model in memory. Pick a smaller one, or run it on another
+machine and point `ollama.base_url` there. See
+[MODEL_RECOMMENDATIONS.md](MODEL_RECOMMENDATIONS.md).
 
-### Slow Startup
+## Still stuck
 
-**Symptom:** App takes long to start
-
-**Solutions:**
-1. Disable AI features if not needed
-2. Use smaller embedding model
-3. Pre-download Ollama models before first run
-
-### High Memory Usage
-
-**Symptom:** App uses excessive RAM
-
-**Solutions:**
-1. Limit vector DB cache size
-2. Use pagination for large libraries
-3. Consider running Ollama on separate machine
-
-## Getting Help
-
-If you can't resolve an issue:
-
-1. Check existing GitHub issues
-2. Include in your report:
-   - Python version: `python3.11 --version`
-   - OS and version
-   - Error message (full traceback)
-   - Steps to reproduce
-   - Config file (remove secrets!)
-3. Enable debug logging for more details
+Raise the log level from the **Settings** page (Advanced), then open a GitHub
+issue with your Python version, OS, the full traceback and the steps to
+reproduce. **Strip secrets out of any config you paste.**
