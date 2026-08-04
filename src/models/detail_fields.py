@@ -45,6 +45,11 @@ def to_text(value: Any) -> str | None:
     already joins several directors into one ``director``. A None among the
     entries is dropped rather than joined in as the text "None".
 
+    A value naming nothing — an empty string as much as an empty list — is
+    None rather than "". Every text column is fill-only in
+    ``SQLiteDB._save_detail_table``, which tests ``is not None``, so an empty
+    string written once would lock the column against every later sync.
+
     Raises:
         TypeError: For anything but a scalar in :data:`_TEXT_SCALARS`, at the
             top level or inside a list. Its ``str()`` is a Python repr, and a
@@ -53,8 +58,8 @@ def to_text(value: Any) -> str | None:
             is the only outcome a caller can act on.
             :meth:`DetailField.store` adds the field it came from.
     """
-    if value is None or isinstance(value, str):
-        return value
+    if value is None:
+        return None
     entries = value if isinstance(value, list) else [value]
     for entry in entries:
         if entry is not None and not isinstance(entry, _TEXT_SCALARS):

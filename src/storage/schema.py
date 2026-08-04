@@ -671,10 +671,13 @@ def _higher_season_count(column_value: Any, blob_value: Any) -> Any:
 
 # The plural spellings GOG writes, now aliases of the singular video-game
 # columns that claim them, mapped to the column each one folds onto. They are
-# the only new aliases a legacy blob can strand in front of a text column: the
-# rest are read by ``to_int`` or ``to_json_array``, neither of which raises,
-# bar tv_show's ``creator`` — which no producer writes into metadata, so no
-# blob carries it.
+# the only aliases a legacy blob can strand in front of a text column: the rest
+# are read by ``to_int`` or ``to_json_array``, neither of which raises, bar
+# tv_show's ``creator``. That one is reachable — the markdown source turns any
+# ``Key: Value`` in a list item into a lowercased metadata key — but only ever
+# as a string, which ``to_text`` takes unchanged, so it folds onto ``creators``
+# on the next save rather than refusing it. What keeps a key out of this
+# mapping is the shape its producers can write, not the absence of a producer.
 _STRANDED_COMPANY_COLUMNS: dict[str, str] = {
     "developers": "developer",
     "publishers": "publisher",
@@ -692,6 +695,13 @@ def _fold_stranded_company_names(cursor: sqlite3.Cursor) -> None:
     failure, leaves the item queued, and fails the same way on every later
     run. Folding the names onto the column and dropping the key ends the
     shape, and recovers a name that until now existed only in the blob.
+
+    Written for two columns of one table and no more: the SELECT and the
+    UPDATE name ``developer``, ``publisher`` and ``video_game_details``
+    literally. A later alias stranded in front of a text column needs its own
+    pass — on another table it needs its own SELECT anyway — because a key
+    added to :data:`_STRANDED_COMPANY_COLUMNS` would be popped out of every
+    game blob here and written to no column at all.
     """
     cursor.execute(
         "SELECT content_item_id, developer, publisher, metadata"
@@ -707,9 +717,7 @@ def _fold_stranded_company_names(cursor: sqlite3.Cursor) -> None:
             continue
         # Popped whatever the columns hold: the stranded key ceases to exist
         # either way, and only then is the fold fill-only, like the write path
-        # — a name enrichment has already written stands. Driven by the mapping
-        # above rather than by literals, so a key added there cannot select a
-        # row and then fold nothing out of it.
+        # — a name enrichment has already written stands.
         folded = {
             column: to_text(text_names(blob.pop(key, None)))
             for key, column in _STRANDED_COMPANY_COLUMNS.items()

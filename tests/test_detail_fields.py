@@ -699,6 +699,7 @@ class TestWhatATextColumnStillAccepts:
             (["Joel Coen", None, "Ethan Coen"], "Joel Coen, Ethan Coen"),
             ([0], "0"),
             ([""], None),
+            ("", None),
             (7, "7"),
             (True, "True"),
         ],
@@ -707,7 +708,8 @@ class TestWhatATextColumnStillAccepts:
             "list_of_null",
             "names_around_a_null",
             "zero",
-            "empty_string",
+            "list_of_empty_string",
+            "bare_empty_string",
             "number",
             "boolean",
         ],
@@ -715,7 +717,13 @@ class TestWhatATextColumnStillAccepts:
     def test_a_value_with_a_text_form_is_still_flattened(
         self, value: Any, expected: str | None
     ) -> None:
-        """Every non-container a plugin can emit keeps the behaviour it had."""
+        """Every non-container a plugin can emit keeps the behaviour it had.
+
+        Naming nothing is None whichever shape it arrives in. A bare ``""``
+        used to be returned unchanged, and a text column is fill-only, so the
+        one storing it locked itself against every later sync — the same
+        failure the migration's empty-name cases exist to prevent.
+        """
         assert detail_fields.to_text(value) == expected
 
     def test_an_empty_object_is_refused_like_any_other(self) -> None:

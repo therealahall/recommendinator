@@ -1073,6 +1073,35 @@ class TestARefusedTextValueCostsOneRow:
         items = storage.get_content_items(user_id=1)
         assert items[0].metadata["isbn"] == "9780441013593, 9780441172719"
 
+    def test_the_log_names_the_key_the_report_withholds(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The operator's only route from a lost item back to the bad field.
+
+        ``result.errors`` is served to clients, so it names the item and no
+        field. Nothing else would say which key was refused if the
+        server-side line did not carry the codec's message whole, and
+        ``docs/PLUGIN_DEVELOPMENT.md`` sends plugin authors to it.
+        """
+        json_path = tmp_path / "books.json"
+        json_path.write_text(
+            json.dumps([{"title": "Neuromancer", "isbn": {"value": "9780441569595"}}])
+        )
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+
+        with caplog.at_level(logging.WARNING, logger="src.ingestion.sync"):
+            result = execute_sync(
+                plugin=JsonImportPlugin(),
+                plugin_config={"path": str(json_path), "content_type": "book"},
+                storage_manager=storage,
+            )
+
+        assert result.errors == ["Failed to process 'Neuromancer'"]
+        assert [message for message in caplog.messages if "Neuromancer" in message] == [
+            f"[SYNC] {JsonImportPlugin().display_name}: Failed to process"
+            " 'Neuromancer': 'isbn': a text column cannot hold a dict"
+        ]
+
 
 class TestIgnoreFlagSurvivesReimport:
     """Regression tests for a re-import un-ignoring items the user ignored.
