@@ -29,6 +29,14 @@ def unchanged(value: Any) -> Any:
     return value
 
 
+#: What a text column can hold: a JSON scalar, whose ``str()`` is the value
+#: itself rather than a Python repr. A bool is an int here. Named as what is
+#: allowed rather than what is not, because a plugin builds its metadata by
+#: hand and can reach for a container no JSON document produces — a tuple, a
+#: set, bytes — and a list of names to refuse would let each of those through.
+_TEXT_SCALARS: tuple[type, ...] = (str, int, float)
+
+
 def to_text(value: Any) -> str | None:
     """Flatten a metadata value into the one string its column holds.
 
@@ -38,19 +46,35 @@ def to_text(value: Any) -> str | None:
     entries is dropped rather than joined in as the text "None".
 
     Raises:
-        TypeError: For a mapping, or a list holding a mapping or a list. Its
-            ``str()`` is a Python repr, and a text column is neither
-            mergeable nor monotonic, so the repr would be written once and
-            never corrected by anything. Failing the write is the only
-            outcome a caller can act on.
+        TypeError: For anything but a scalar in :data:`_TEXT_SCALARS`, at the
+            top level or inside a list. Its ``str()`` is a Python repr, and a
+            text column is neither mergeable nor monotonic, so the repr would
+            be written once and never corrected by anything. Failing the write
+            is the only outcome a caller can act on.
+            :meth:`DetailField.store` adds the field it came from.
     """
     if value is None or isinstance(value, str):
         return value
     entries = value if isinstance(value, list) else [value]
     for entry in entries:
-        if isinstance(entry, Mapping | list):
-            raise TypeError(f"A text column cannot hold a {type(entry).__name__}")
+        if entry is not None and not isinstance(entry, _TEXT_SCALARS):
+            raise TypeError(f"a text column cannot hold a {type(entry).__name__}")
     return ", ".join(str(entry) for entry in entries if entry is not None) or None
+
+
+def text_names(value: Any) -> list[str]:
+    """Keep the names in *value* that a text column can hold.
+
+    An entry naming itself in an object — GOG's ``{"name": "CD Projekt Red"}``
+    — is read for that name, and anything with no text form is dropped rather
+    than stringified into a repr. A caller reducing a shape it knows uses
+    this; :func:`to_text` stays the backstop for a shape nobody reduced.
+    """
+    entries = value if isinstance(value, list) else [value]
+    names = [
+        entry.get("name") if isinstance(entry, Mapping) else entry for entry in entries
+    ]
+    return [str(name) for name in names if isinstance(name, _TEXT_SCALARS) and name]
 
 
 def to_int(value: Any) -> int | None:
@@ -172,6 +196,22 @@ class DetailField:
     def metadata_keys(self) -> tuple[str, ...]:
         """The canonical key first, then the aliases accepted for it."""
         return (self.metadata_key, *self.aliases)
+
+    def store(self, value: Any) -> Any:
+        """Convert *value* for this field's column, naming the field if it cannot.
+
+        A codec sees a value and no field, so its refusal names a type and
+        nothing to act on: every CREATOR and TEXT column shares
+        :func:`to_text`. The metadata key is all that is added — a provider's
+        value must not reach an exception message, a log line or an API body.
+
+        Raises:
+            TypeError: What the codec raised, naming this field's key.
+        """
+        try:
+            return self.codec.store(value)
+        except TypeError as error:
+            raise TypeError(f"{self.metadata_key!r}: {error}") from error
 
     def value_from(self, metadata: Mapping[str, Any]) -> Any:
         """Take this field's value out of an item's metadata.

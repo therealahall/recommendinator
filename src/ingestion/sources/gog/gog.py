@@ -17,6 +17,7 @@ from src.ingestion.plugin_base import (
     SourcePlugin,
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.models.detail_fields import text_names
 from src.utils.progress import log_progress
 
 if TYPE_CHECKING:
@@ -377,20 +378,6 @@ class GogPlugin(SourcePlugin):
             raise SourceError(self.name, str(error)) from error
 
 
-def _company_names(raw: Any) -> list[str]:
-    """Read GOG's developers/publishers as the names they hold.
-
-    GOG returns these as bare names on some products and as objects on
-    others, the way ``genres`` does. ``developer`` and ``publisher`` are text
-    columns, so an object reaching one has no representation to take.
-    """
-    entries = raw if isinstance(raw, list) else [raw]
-    names = [
-        entry.get("name") if isinstance(entry, dict) else entry for entry in entries
-    ]
-    return [str(name) for name in names if name]
-
-
 def _fetch_gog_games(
     refresh_token: str,
     include_wishlist: bool = True,
@@ -563,10 +550,13 @@ def _fetch_gog_games(
                     for genre in details["genres"]
                     if genre.get("name")
                 ]
+            # A company arrives as a bare name on some products and as an
+            # object holding one on others, and ``developer``/``publisher``
+            # are text columns, which hold neither an object nor its repr.
             if details.get("developers"):
-                metadata["developers"] = _company_names(details["developers"])
+                metadata["developers"] = text_names(details["developers"])
             if details.get("publishers"):
-                metadata["publishers"] = _company_names(details["publishers"])
+                metadata["publishers"] = text_names(details["publishers"])
             if details.get("description", {}).get("full"):
                 metadata["description"] = details["description"]["full"]
             if details.get("release_date"):

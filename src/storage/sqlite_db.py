@@ -673,7 +673,7 @@ class SQLiteDB:
             if detail_field.kind is FieldKind.CREATOR:
                 # The item's own author outranks whatever metadata carries.
                 raw = item.author or raw
-            new_value = detail_field.codec.store(raw)
+            new_value = detail_field.store(raw)
 
             # Decide final value based on existing data
             if col_name in MERGEABLE_DETAIL_COLUMNS and existing_data:
@@ -1166,7 +1166,10 @@ class SQLiteDB:
             if value:
                 metadata[detail_field.metadata_key] = value
 
-        # The leftover blob last: a key it carries is one no column claimed.
+        # The blob last, so a key it repeats wins over the column that claims
+        # it. Storage keeps a column's keys out of the blob it writes, but a
+        # row written before a key belonged to a column still carries one —
+        # the shape ``_migrate_stranded_detail_shapes`` repairs on open.
         # A blob that is not an object carries no keys, and reaches the
         # reader because the migration leaves such a row alone as well.
         if blob := row[spec.metadata_alias]:

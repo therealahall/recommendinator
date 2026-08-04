@@ -21,7 +21,7 @@ from unittest.mock import patch
 
 import pytest
 
-from src.ingestion.sources.generic_csv import LIST_VALUED_COLUMNS
+from src.ingestion.sources.generic_csv import CREATOR_COLUMNS, LIST_VALUED_COLUMNS
 from src.models import detail_fields
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.detail_fields import (
@@ -573,6 +573,25 @@ class TestEveryTypeNamesItsCreator:
             "video_game": "developer",
         }
 
+    def test_a_creator_column_is_never_a_key_an_import_stores(self) -> None:
+        """The word "creator" is a column heading and never a metadata key.
+
+        ``tv_show`` accepts ``creator`` as an alias but the detail-shape
+        repair leaves that key alone, on the grounds that nothing writes it.
+        This is what that rests on: an importer takes a creator column onto
+        ``ContentItem.author`` and skips it when building metadata, and the
+        key the library stores the field under is ``creators``.
+        """
+        creator_columns = {spec.creator_column for spec in DETAIL_FIELDS.values()}
+        stored_keys = {
+            key
+            for spec in DETAIL_FIELDS.values()
+            for key in spec.template_columns.values()
+        }
+
+        assert creator_columns <= CREATOR_COLUMNS
+        assert "creator" not in stored_keys
+
 
 class TestSingleStringColumnsCoerceWhatTheyAreGiven:
     """A column holding one string takes whatever a plugin hands it.
@@ -600,7 +619,7 @@ class TestSingleStringColumnsCoerceWhatTheyAreGiven:
         assert stored.metadata["isbn"] == "9780441013593"
 
 
-class TestATextColumnRefusesAnObject:
+class TestATextColumnRefusesAValueItCannotHold:
     """A value with no text form fails the write instead of taking a repr.
 
     ``to_text`` used to have a string for every input, ``str()`` of a dict
@@ -613,11 +632,33 @@ class TestATextColumnRefusesAnObject:
 
     @pytest.mark.parametrize(
         "value",
-        [{"name": "CD Projekt Red"}, [{"name": "CD Projekt Red"}], [["Joel Coen"]]],
-        ids=["mapping", "list_of_mapping", "list_of_list"],
+        [
+            {"name": "CD Projekt Red"},
+            [{"name": "CD Projekt Red"}],
+            [["Joel Coen"]],
+            ("Joel Coen", "Ethan Coen"),
+            {"Joel Coen"},
+            b"Joel Coen",
+            [b"Joel Coen"],
+        ],
+        ids=[
+            "mapping",
+            "list_of_mapping",
+            "list_of_list",
+            "tuple",
+            "set",
+            "bytes",
+            "list_of_bytes",
+        ],
     )
     def test_a_value_a_text_column_cannot_hold_raises(self, value: Any) -> None:
-        """A mapping, or a list holding a mapping or a list, is refused."""
+        """Every container is refused, not only the two JSON produces.
+
+        A plugin builds its metadata dict in Python rather than parsing it, so
+        it can hand over a tuple, a set or bytes as easily as a list — and
+        each of those has a ``str()`` that is a repr, which is the whole
+        reason a mapping is refused.
+        """
         with pytest.raises(TypeError, match="text column cannot hold"):
             detail_fields.to_text(value)
 
@@ -645,9 +686,9 @@ class TestATextColumnRefusesAnObject:
 class TestWhatATextColumnStillAccepts:
     """The refusal is narrow: only a value with no name inside it.
 
-    ``to_text`` is the codec behind eight columns and every shipped plugin
-    writes at least one of them, so a guard that reached one shape too far
-    would fail a sync rather than a repr.
+    ``to_text`` is the codec behind every CREATOR and TEXT column and every
+    shipped plugin writes at least one of them, so a guard that reached one
+    shape too far would fail a sync rather than a repr.
     """
 
     @pytest.mark.parametrize(
@@ -686,6 +727,148 @@ class TestWhatATextColumnStillAccepts:
         """The guard reads one level, and one level is where a container shows."""
         with pytest.raises(TypeError, match="text column cannot hold"):
             detail_fields.to_text([[["Joel Coen"]]])
+
+
+class TestARefusalNamesTheFieldItRefused:
+    """The message carries the metadata key, and nothing else from the item.
+
+    ``to_text`` is the codec behind every CREATOR and TEXT column, so a
+    refusal naming only a type leaves an operator with no way to tell which
+    import to go and fix.
+    The key is the whole of what is added: an exception message reaches the
+    log and the sync report, and no user or provider value may travel there.
+    """
+
+    @staticmethod
+    def _refuse_an_object_developer(db: SQLiteDB) -> str:
+        """Save a game naming its developer in an object, and return the refusal."""
+        with pytest.raises(TypeError) as refusal:
+            db.save_content_item(
+                ContentItem(
+                    id="1207658924",
+                    title="Cyberpunk 2077",
+                    content_type=ContentType.VIDEO_GAME,
+                    status=ConsumptionStatus.UNREAD,
+                    metadata={"developers": [{"name": "CD Projekt Red"}]},
+                )
+            )
+        return str(refusal.value)
+
+    def test_the_refusal_names_the_field(self, tmp_path: Path) -> None:
+        """The field is named by its own key, whichever spelling arrived.
+
+        ``developers`` is an alias of ``developer``, and the declaration is
+        indexed by the canonical key, so that is the name to look the field up
+        under.
+        """
+        db = SQLiteDB(tmp_path / "named-refusal.db")
+
+        assert "'developer'" in self._refuse_an_object_developer(db)
+
+    def test_the_refusal_carries_no_value_from_the_item(self, tmp_path: Path) -> None:
+        """The provider's name is in the value, so it stays out of the message."""
+        db = SQLiteDB(tmp_path / "quiet-refusal.db")
+
+        assert "CD Projekt Red" not in self._refuse_an_object_developer(db)
+
+    def test_the_refusal_is_the_key_and_a_type_and_nothing_else(
+        self, tmp_path: Path
+    ) -> None:
+        """Read whole, the message is two constants and no third thing.
+
+        Asserting the name is absent only rules out the name that was looked
+        for. The message reaches a log and a sync report, so what it may carry
+        is pinned in full rather than one value at a time.
+        """
+        db = SQLiteDB(tmp_path / "whole-refusal.db")
+
+        assert (
+            self._refuse_an_object_developer(db)
+            == "'developer': a text column cannot hold a dict"
+        )
+
+
+class TestReducingAKnownShapeToNames:
+    """``text_names`` keeps what a text column holds and drops the rest.
+
+    A plugin that knows its API's shape reduces it here rather than
+    stringifying it: a reduction that ``str()``\\ d whatever it did not
+    recognise would write the repr into the column one layer in front of the
+    guard, and ``to_text`` would never see the value it exists to refuse.
+    """
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            ("CD Projekt Red", ["CD Projekt Red"]),
+            (["CD Projekt Red", "Valve"], ["CD Projekt Red", "Valve"]),
+            ([{"name": "CD Projekt Red"}], ["CD Projekt Red"]),
+            ({"name": "CD Projekt Red"}, ["CD Projekt Red"]),
+            ([{"slug": "cdpr"}], []),
+            ([["CD Projekt Red"]], []),
+            ([{"name": {"text": "CD Projekt Red"}}], []),
+            ([None, ""], []),
+            (None, []),
+            ([7], ["7"]),
+        ],
+        ids=[
+            "bare_name",
+            "list_of_names",
+            "list_of_objects",
+            "lone_object",
+            "object_naming_nothing",
+            "nested_list",
+            "object_shaped_name",
+            "nothing_to_name",
+            "null",
+            "number",
+        ],
+    )
+    def test_only_a_name_a_text_column_can_hold_survives(
+        self, value: Any, expected: list[str]
+    ) -> None:
+        """A nested list and an object-shaped name are dropped, not stringified."""
+        assert detail_fields.text_names(value) == expected
+
+    def test_what_it_keeps_is_what_the_column_guard_accepts(self) -> None:
+        """The reduction and the refusal read one list of types, so they agree."""
+        reduced = detail_fields.text_names([{"name": ["Nested"]}, "Valve"])
+
+        assert detail_fields.to_text(reduced) == "Valve"
+
+    def test_a_reduced_shape_reaches_no_column_as_a_repr(self, tmp_path: Path) -> None:
+        """Stored, the row holds the one name and no bracket from the rest.
+
+        The two shapes the reduction used to ``str()`` — a nested list and a
+        name that is itself an object — are checked where it matters, on the
+        stored row: neither the column nor the blob beside it may hold their
+        repr.
+        """
+        db = SQLiteDB(tmp_path / "no-repr.db")
+
+        db_id = db.save_content_item(
+            ContentItem(
+                id="1207658924",
+                title="Cyberpunk 2077",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.UNREAD,
+                metadata={
+                    "developers": detail_fields.text_names(
+                        [["Nested"], {"name": {"text": "Deep"}}, "Valve"]
+                    )
+                },
+            )
+        )
+
+        with db.connection() as conn:
+            row = conn.execute(
+                "SELECT developer, metadata FROM video_game_details"
+                " WHERE content_item_id = ?",
+                (db_id,),
+            ).fetchone()
+        assert row["developer"] == "Valve"
+        assert "Nested" not in (row["metadata"] or "")
+        assert "Deep" not in (row["metadata"] or "")
 
 
 class TestARefusedWriteLeavesNothingBehind:
