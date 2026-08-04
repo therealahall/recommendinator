@@ -1,26 +1,17 @@
 # Docker Deployment
 
-Recommendinator ships official Docker images for both `linux/amd64` and `linux/arm64`,
-so it runs on x86 servers, Apple Silicon, modern NAS hardware (Synology DSM 7+, QNAP),
-and Raspberry Pi 4/5.
+Official images cover `linux/amd64` and `linux/arm64`, so x86 servers, Apple
+Silicon, Synology DSM 7+, QNAP and Raspberry Pi 4/5 all work. `linux/arm/v7` is
+unsupported, since ChromaDB has no wheels there. They live in
+[GHCR](https://github.com/therealahall/recommendinator/pkgs/container/recommendinator).
 
-The images live in [GitHub Container Registry](https://github.com/therealahall/recommendinator/pkgs/container/recommendinator).
-Two variants are published:
+| Image | Contents |
+|-------|----------|
+| `ghcr.io/therealahall/recommendinator:latest` | Default. Smaller, no Ollama or ChromaDB. |
+| `ghcr.io/therealahall/recommendinator:latest-ai` | Adds the Ollama client and ChromaDB, for semantic search and LLM explanations. |
+| `ghcr.io/therealahall/recommendinator-ollama:latest` | The Ollama sidecar the AI variant needs. Pulls its models on first start. |
 
-| Variant | Image | When to use |
-|---------|-------|-------------|
-| Default | `ghcr.io/therealahall/recommendinator:latest` | Recommendation engine without AI features. Smaller image; no Ollama / ChromaDB. |
-| AI | `ghcr.io/therealahall/recommendinator:latest-ai` | Adds Ollama client and ChromaDB. Use when you want semantic search and LLM-powered explanations. |
-
-The AI variant pairs with a published Ollama sidecar:
-
-| Image | Purpose |
-|-------|---------|
-| `ghcr.io/therealahall/recommendinator-ollama:latest` | Ollama LLM server pre-configured to pull the models named by `OLLAMA_MODEL`, `OLLAMA_EMBEDDING_MODEL`, and `OLLAMA_CONVERSATION_MODEL` on first start. |
-
-## Quick start (CLI)
-
-For a fast, no-AI try-out — single container, host-mounted data:
+## Quick start, no AI
 
 ```bash
 mkdir -p recommendinator/{config,data,inputs}
@@ -36,22 +27,18 @@ docker run -d \
   ghcr.io/therealahall/recommendinator:latest
 ```
 
-Then open <http://localhost:18473>. The container generates a starter `config/config.yaml`
-on first run from the bundled `example.yaml`. That file only carries the `web` bind
-settings and the `storage` paths — data sources, global settings, and all API keys
-are managed from the UI (the **Data** tab and the **Settings** page, or the `source`
-and `settings` CLI groups) and stored in the database, so there is nothing to edit
-by hand. Note the container overrides the `web` bind settings on its command line,
-so editing them in `config.yaml` has no effect — change the `-p 18473:8000`
-mapping above to publish on a different host port.
+Open <http://localhost:18473>. The container copies the bundled `example.yaml` to
+`config/config.yaml` on first run. Under Docker that file only matters for the
+`storage` paths and `web.debug`, because the image passes `--host` and `--port`
+on its command line and CLI flags beat `config.yaml`. **Publish a different port
+with the `-p` mapping, not `web.port`.** Sources, settings and API keys live in
+the database and are managed from inside the app.
 
-## Docker Compose (recommended)
+## Docker Compose
 
-Compose is the only sensible way to run the AI variant (it needs the Ollama sidecar
-and a private network). It's also the cleanest path for the default variant if you're
-running multiple services on the same host.
-
-Download the canonical compose file from the latest release:
+Compose is the only sensible way to run the AI variant, which needs the sidecar
+and a private network, and the cleaner path for the default variant on a busy
+host.
 
 ```bash
 mkdir -p recommendinator/{config,data,inputs}
@@ -61,110 +48,81 @@ curl -L https://github.com/therealahall/recommendinator/releases/latest/download
 docker compose up -d
 ```
 
-For the AI variant:
-
-```bash
-docker compose --profile ai up -d app-ai
-```
-
-Naming `app-ai` explicitly is required: the default `app` service has no profile
-and would otherwise start alongside `app-ai`, with both fighting for the same
-host port. Specifying the service name limits the up command to `app-ai` and its
-declared dependencies (the Ollama sidecar).
-
-To switch to a pinned version instead of `latest`, set `IMAGE_TAG` in your shell or in a
-`.env` file next to the compose file:
+Pin a version with `IMAGE_TAG`, in your shell or a `.env` file beside the compose
+file:
 
 ```bash
 IMAGE_TAG=0.7.0 docker compose up -d
 ```
 
-### Adapt the compose file to your setup
-
-Most users edit a few things — port, volume paths, restart policy. The file is a normal
-Docker Compose document; no helper tooling required. The fields you'll typically touch:
+It is an ordinary Compose document. Most people only touch the port, the volume
+paths and the restart policy:
 
 ```yaml
 services:
   app:
     image: ghcr.io/therealahall/recommendinator:${IMAGE_TAG:-latest}
     ports:
-      - "${APP_BIND_PREFIX:-}${APP_PORT:-18473}:8000"   # change 18473 if it collides
-        protocol: tcp
+      - "${APP_BIND_PREFIX:-}${APP_PORT:-18473}:8000"
     volumes:
-      - ./config:/app/config        # rw — entrypoint writes config.yaml on first run
-      - ./data:/app/data            # persistent SQLite + ChromaDB
-      - ./inputs:/app/inputs:ro     # mount your Goodreads exports etc. here
-      - ./private:/app/private:ro   # optional; private plugin directory
+      - ./config:/app/config
+      - ./data:/app/data
+      - ./inputs:/app/inputs:ro
+      - ./private:/app/private:ro   # optional
     restart: unless-stopped
 ```
 
-If you don't have private plugins, leave the `private/` directory empty or remove that
-volume entry — the application is happy without it.
+With no private plugins, leave `./private` empty or drop that volume.
 
 ## Parameters
 
 ### Volume mounts
 
-| Container path | Mode | Purpose |
-|----------------|------|---------|
-| `/app/config` | `rw` | Configuration. Container creates `config.yaml` from `example.yaml` on first run if missing; never overwrites an existing file. **Edit `./config/config.yaml` on the host.** |
-| `/app/data` | `rw` | SQLite database, ChromaDB vectors (AI variant), credential keys, cache. Backed by your host filesystem so it survives container restarts and updates. |
-| `/app/inputs` | `ro` | Source files for ingestion plugins (e.g., `goodreads_library_export.csv`). Read-only because the app shouldn't be modifying your exports. |
-| `/app/private` | `ro` | Optional. Private/personal plugin code (gitignored from the repo). Leave the host directory empty if you don't have any. |
+| Path | Mode | Holds |
+|------|------|-------|
+| `/app/config` | `rw` | `config.yaml`, created from `example.yaml` on first run and never overwritten. Edit it on the host. |
+| `/app/data` | `rw` | SQLite database, ChromaDB vectors, credential key, cache. **This is the volume to back up.** |
+| `/app/inputs` | `ro` | Source files for ingestion, such as `goodreads_library_export.csv`. |
+| `/app/private` | `ro` | Optional private plugin code. |
 
 ### Ports
 
-| Container port | Default host port | Purpose |
-|----------------|-------------------|---------|
-| `8000` | `18473` | Web UI and HTTP API. Change the host side via `APP_PORT` env var or by editing the `ports:` mapping. Restrict which host interface it lands on with `APP_BIND_PREFIX`. |
-
-The Ollama sidecar (AI variant only) runs on `11434` inside the network but is not
-exposed to the host by default — only `app-ai` talks to it.
+The app listens on `8000` inside the container, published on `18473`. Change the
+host side with `APP_PORT` or the `ports:` mapping. The Ollama sidecar listens on
+`11434` inside the network and is not published to the host at all.
 
 ### Environment variables
 
 | Variable | Default | Effect |
 |----------|---------|--------|
-| `TZ` | (unset — the containers run on UTC) | Timezone the `app` and `app-ai` containers run in; the compose file passes it into both, and the image installs the `tzdata` zone database so any IANA name (`America/Los_Angeles`, `Europe/Berlin`) resolves. The app dates a completion by the calendar day in this zone — both a watch timestamp arriving as a UTC instant and a completion you record in the app — so leaving it unset dates an evening watch a day forward if you are west of UTC. Set it in your shell or `.env` (`TZ=America/Los_Angeles`) and completion dates recorded from then on match the day you actually finished something. **Dates already in the database are not corrected by setting `TZ`, and a re-sync will not fix them either:** the corrected local date is the *earlier* one, and a sync keeps the later of the two dates. Only new completions get the right day. |
-| `IMAGE_TAG` | `latest` | Which image tag the compose file pulls. Set to a semver like `0.7.0` for pinned deployments. The `-ai` suffix is appended automatically for the AI service. |
-| `APP_PORT` | `18473` | Host-side port for the web UI. |
-| `APP_BIND_PREFIX` | (unset — every interface) | Host interface the port is published on, written **with a trailing colon**: `APP_BIND_PREFIX=127.0.0.1:`. It is prepended to the port mapping, so leaving it unset publishes on every interface exactly as before. Set it to make the app reachable only from the host itself, which is what you want when a reverse proxy on the host terminates TLS and forwards to it. |
-| `COMPOSE_PROFILES` | (unset) | Optional fallback for `--profile ai`. If you set this instead of using the flag, you still need to name `app-ai` on the up command (`docker compose up -d app-ai`) to skip the default `app` service. |
-| `OLLAMA_BASE_URL` | `http://ollama:11434` | Set inside the AI service automatically. Override only if you're pointing at a remote Ollama instance. |
-| `OLLAMA_MODEL` | `mistral:7b` | Generation model the sidecar pulls on first start. Must match the `ollama.model` setting the app requests. |
-| `OLLAMA_EMBEDDING_MODEL` | `nomic-embed-text` | Embedding model the sidecar pulls on first start. Must match the `ollama.embedding_model` setting. |
-| `OLLAMA_CONVERSATION_MODEL` | (unset — reuses `OLLAMA_MODEL`) | Set only if you point `ollama.conversation_model` at a separate chat model. Leave unset and the sidecar reuses the generation model, matching the app's own fallback. |
+| `TZ` | unset, so UTC | Timezone both app containers run in. Any IANA name resolves, the image carries `tzdata`. Completions are dated by the calendar day in this zone, so west of UTC an evening watch is dated a day forward until you set it. |
+| `IMAGE_TAG` | `latest` | Tag the compose file pulls. The `-ai` suffix is appended for the AI service. |
+| `APP_PORT` | `18473` | Host port for the web UI. |
+| `APP_BIND_PREFIX` | unset, so every interface | Host interface to publish on, written **with a trailing colon**: `APP_BIND_PREFIX=127.0.0.1:`. |
+| `COMPOSE_PROFILES` | unset | Alternative to `--profile ai`. You still have to name `app-ai` on the up command. |
+| `OLLAMA_BASE_URL` | `http://ollama:11434` | Set for you inside the AI service. Override only for a remote Ollama. |
+| `OLLAMA_MODEL` | `mistral:7b` | Generation model the sidecar pulls. Must match the app's `ollama.model`. |
+| `OLLAMA_EMBEDDING_MODEL` | `nomic-embed-text` | Embedding model the sidecar pulls. Must match `ollama.embedding_model`. |
+| `OLLAMA_CONVERSATION_MODEL` | unset, so reuses `OLLAMA_MODEL` | Set only when `ollama.conversation_model` names a separate chat model. |
+
+**Setting `TZ` does not correct dates already stored, and a re-sync will not
+either.** The corrected local date is the earlier one, and a sync keeps the later
+of two dates. Only new completions get the right day.
 
 ## First run
 
-The first `docker compose up` does three things:
+The entrypoint copies `example.yaml` to `config.yaml` when none exists, says so
+in the log, and starts the app. It never overwrites an existing file, so restarts
+are safe.
 
-1. Pulls the image from GHCR (or builds locally if you've layered the dev override).
-2. Starts the container, which runs `docker/entrypoint.sh` before the application.
-3. The entrypoint sees `/app/config/config.yaml` is missing and copies the bundled
-   `example.yaml` into the mounted volume. It logs:
-
-   ```
-   [entrypoint] No config.yaml found; copied example.yaml as a starting point.
-   [entrypoint] Under Docker it carries only the storage paths and web.debug; the bind comes from --host/--port (set the published port with APP_PORT).
-   [entrypoint] Data sources, settings, and API keys are managed in the app.
-   ```
-
-4. The application starts and serves the UI, but most ingestion sources will be
-   inert until you add them and their credentials.
-
-Sources are added from the **Data** tab (`+ Add source`) and global settings and
-API keys from the **Settings** page; both write to the database, so neither needs
-a config file edit or a restart. `config.yaml` is only for the `web` bind settings
-and the `storage` paths (a legacy file may also carry `inputs` entries, which are
-migrated into the database on boot). If you do edit it:
+The UI comes up with no sources, so ingestion does nothing until you add them
+from the **Data** tab or `source create`, with API keys from the **Settings**
+page or `settings set-secret`. Both write to the database and need no restart.
+After editing `config.yaml` itself:
 
 ```bash
 docker compose restart
 ```
-
-The entrypoint never overwrites an existing `config.yaml`, so restarts are safe.
 
 ## AI mode
 
@@ -172,24 +130,25 @@ The entrypoint never overwrites an existing `config.yaml`, so restarts are safe.
 docker compose --profile ai up -d app-ai
 ```
 
-This starts two containers: `recommendinator-ai` (the app with AI extras) and
-`recommendinator-ollama` (the LLM server, pulled in via `depends_on`).
-Naming `app-ai` explicitly is required so the default `app` service does not
-also start and grab the host port. The Ollama sidecar pulls the models named by
-`OLLAMA_MODEL`, `OLLAMA_EMBEDDING_MODEL`, and `OLLAMA_CONVERSATION_MODEL` on
-first start — this can take 5–15 minutes for a 4 GB model on a typical home
-connection.
+**Name `app-ai` explicitly.** The default `app` service has no profile, so
+leaving the name off starts it too and both fight over the same host port.
 
-Those three variables are the sidecar's only model configuration; it does not
-read `config.yaml` or the database. Keep them in step with the `ollama.model`,
-`ollama.embedding_model`, and `ollama.conversation_model` settings on the
-Settings page — if you switch the app to a model the sidecar never pulled,
-requests to Ollama will fail. `OLLAMA_CONVERSATION_MODEL` is the exception you
-can usually leave unset: it reuses `OLLAMA_MODEL`, which mirrors the app's own
-fallback for an empty `ollama.conversation_model`. To change models:
+That brings up `recommendinator-ai` and, through `depends_on`, the
+`recommendinator-ollama` sidecar. The sidecar pulls its models on first start,
+which runs 5 to 15 minutes for a 4 GB model on a home connection, and `app-ai`
+waits on its health check. Watch the download:
 
 ```bash
-# in .env next to docker-compose.yml
+docker compose logs -f ollama
+```
+
+The sidecar reads only `OLLAMA_MODEL`, `OLLAMA_EMBEDDING_MODEL` and
+`OLLAMA_CONVERSATION_MODEL`. It never sees `config.yaml` or the database, so keep
+those in step with the `ollama.*` settings. **Point the app at a model the
+sidecar never pulled and every Ollama request fails.** To switch models:
+
+```bash
+# in .env beside docker-compose.yml
 OLLAMA_MODEL=llama3.1:8b
 ```
 
@@ -197,25 +156,15 @@ OLLAMA_MODEL=llama3.1:8b
 docker compose --profile ai up -d ollama   # recreate the sidecar and pull
 ```
 
-then set the matching value on the Settings page.
-
-You can monitor model downloads with:
-
-```bash
-docker compose logs -f ollama
-```
-
-The `app-ai` service's `depends_on: ollama: condition: service_healthy` ensures the
-recommendation server doesn't start until the models are ready.
+Then set the matching value on the Settings page.
 
 ### GPU support (NVIDIA)
 
-For GPU-accelerated inference, uncomment the `deploy.resources.reservations.devices`
-block in the `ollama` service of `docker-compose.yml`:
+Uncomment the `deploy.resources.reservations.devices` block in the `ollama`
+service of `docker-compose.yml`:
 
 ```yaml
 ollama:
-  # ...
   deploy:
     resources:
       reservations:
@@ -225,13 +174,13 @@ ollama:
             capabilities: [gpu]
 ```
 
-This requires the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
+This needs the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
 on the host.
 
 ### Model storage
 
-Downloaded models are persisted in a named Docker volume (`recommendinator-ollama-data`)
-so they survive container restarts and updates. To inspect or relocate:
+Models persist in the `recommendinator-ollama-data` named volume, so they survive
+restarts and updates.
 
 ```bash
 docker volume inspect recommendinator-ollama-data
@@ -240,17 +189,16 @@ docker volume inspect recommendinator-ollama-data
 ## Updates
 
 ```bash
-docker compose pull        # fetch the latest images
-docker compose up -d       # recreate containers with the new image
+docker compose pull
+docker compose up -d
 ```
 
-To pin to a specific version, set `IMAGE_TAG=X.Y.Z` (in your shell or `.env`) and run
-the same commands.
+To pin, set `IMAGE_TAG=X.Y.Z` and run the same two commands.
 
 ## Reverse proxy
 
-Recommendinator exposes plain HTTP and assumes you'll terminate TLS in front of it.
-For a typical NAS deployment with [Caddy](https://caddyserver.com/), an entry like:
+The app speaks plain HTTP and expects TLS to terminate in front of it. With
+[Caddy](https://caddyserver.com/):
 
 ```caddyfile
 recommendinator.example.com {
@@ -258,68 +206,50 @@ recommendinator.example.com {
 }
 ```
 
-…is sufficient. nginx and Traefik configurations are conventional `proxy_pass` to
-the same host:port.
+nginx and Traefik are a conventional `proxy_pass` to the same host and port.
 
-When the proxy runs on the same host, set `APP_BIND_PREFIX=127.0.0.1:` (note the
-trailing colon) so the published port is bound to loopback. The proxy can still
-reach it, but nothing else on the network can reach the app over plain HTTP.
+With the proxy on the same host, set `APP_BIND_PREFIX=127.0.0.1:` (trailing colon
+included) so the published port binds to loopback. The proxy still reaches it,
+nothing else on the network does.
 
-The application is a single-user tool with **no authentication**, so any reverse
-proxy in front of it must enforce its own access controls (basic auth, OAuth
-forward-auth, IP allowlists, or a VPN). The application does not currently
-trust `X-Forwarded-*` headers for URL generation — links it emits use the host
-and port the request reached it on, which is correct for typical deployments
-where the proxy preserves `Host`.
+**The app has no authentication anywhere**, so the proxy has to enforce its own:
+basic auth, forward auth, an IP allowlist or a VPN. It does not trust
+`X-Forwarded-*` headers, so the links it emits use the host and port the request
+arrived on. That is correct wherever the proxy preserves `Host`.
 
 ## Architectures
 
-Both images are published as multi-arch manifests covering `linux/amd64` and `linux/arm64`.
-`docker pull` automatically selects the right architecture for your host. To force a
-specific architecture (e.g., to test arm64 on an x86 dev box with QEMU):
+`docker pull` picks yours. Force another to test it:
 
 ```bash
 docker pull --platform linux/arm64 ghcr.io/therealahall/recommendinator:latest
 ```
 
-`linux/arm/v7` (32-bit ARM, older Pi 2/3) is intentionally **not** supported — the
-Python 3.11 wheel ecosystem for ChromaDB is too thin there.
-
 ## Troubleshooting
 
-### Config changes don't take effect
+### A settings change did nothing
 
-Global settings changed on the **Settings** page save to the database and apply
-immediately, except those marked "restart required" — for those, run
-`docker compose restart`.
+Settings badged "restart required" need `docker compose restart`. Everything else
+on the **Settings** page applies immediately. `config.yaml` is only written on
+first run, so edit it on the host and restart.
 
-For `config.yaml` itself (the `web` bind settings and the `storage` paths): the
-entrypoint only writes the file on first run, so edit it on the host and run
-`docker compose restart` (or `docker restart recommendinator`) afterwards.
-
-### Port 18473 collides with another service
-
-Set `APP_PORT` to a different host port:
+### Port 18473 is taken
 
 ```bash
 APP_PORT=8080 docker compose up -d
 ```
 
-The container always listens on `8000` internally — only the host-side mapping changes.
+The container still listens on `8000` internally.
 
-### Ollama models never download
-
-Check the sidecar logs:
+### Models never download
 
 ```bash
 docker compose logs -f ollama
 ```
 
-If you see `pull manifest unauthorized` or `connection reset`, one of the
-`OLLAMA_MODEL`, `OLLAMA_EMBEDDING_MODEL`, or `OLLAMA_CONVERSATION_MODEL` values
-is likely wrong (typo, missing tag suffix). The
-sidecar logs the model names it resolved on startup. Run `ollama pull <model>`
-manually inside the sidecar to confirm:
+`pull manifest unauthorized` or `connection reset` usually means a typo or a
+missing tag in one of the model variables. The sidecar logs the names it
+resolved. Confirm one by hand:
 
 ```bash
 docker compose exec ollama ollama pull mistral:7b
@@ -327,41 +257,34 @@ docker compose exec ollama ollama pull mistral:7b
 
 ### `permission denied` writing to `/app/data`
 
-The container runs as a non-root user (UID derived from the image's `appuser`).
-On hosts with restrictive umasks or SELinux, you may need to chown the host data
-directory:
+The container runs as non-root. On hosts with a restrictive umask or SELinux,
+chown the host directories:
 
 ```bash
 chown -R 1000:1000 ./data ./config
 ```
 
-Adjust `1000:1000` to match your appuser's UID/GID inside the image — `docker exec`
-into a running container and run `id appuser` to confirm.
+If 1000 is wrong, `docker exec <container> id appuser` gives you the real UID.
 
-### My private plugins aren't loading
+### Private plugins do not load
 
-Confirm the host `./private/` directory exists and contains your plugin files. The
-volume mount is `:ro` so the container can read your plugins but not modify them.
-If the directory doesn't exist on the host, Docker may auto-create it as `root`,
-which the appuser can't read — `chown` it as above.
+The host `./private/` directory has to exist and hold your plugin files. If it
+did not exist, Docker created it owned by root and the container user cannot read
+it. Chown it as above.
 
 ## Local development
-
-If you're contributing to Recommendinator and want hot reload instead of rebuilding
-the image on every change, layer the dev override on top of the production compose:
 
 ```bash
 # default variant
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 
-# AI variant — name app-ai so the default app service is skipped
+# AI variant, naming app-ai so the default service is skipped
 docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile ai up -d app-ai
 ```
 
-This builds the image locally instead of pulling, bind-mounts `./src`, `./templates`,
-and `./pyproject.toml` into the container, and runs uvicorn with `--reload` so Python
-changes trigger a ~1s restart. The `pyproject.toml` mount keeps the runtime
-`__version__` in sync with semantic-release bumps without rebuilding the image.
-For frontend hot reload, run `pnpm dev` on the host (Vite serves on port 5173
-and proxies API calls to the container). See [CONTRIBUTING.md](../CONTRIBUTING.md)
-for the full developer workflow.
+The dev override builds locally instead of pulling, bind-mounts `./src`,
+`./templates` and `./pyproject.toml`, and runs uvicorn with `--reload`. Mounting
+`pyproject.toml` keeps the runtime `__version__` in step with semantic-release
+bumps without a rebuild. For frontend hot reload, run `pnpm dev` on the host:
+Vite serves on 5173 and proxies API calls to the container. See
+[CONTRIBUTING.md](../CONTRIBUTING.md).

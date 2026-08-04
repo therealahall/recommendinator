@@ -1,199 +1,97 @@
 # Ollama Model Recommendations
 
-This guide helps you choose the best Ollama models for Recommendinator.
+Recommendinator uses two Ollama models: an embedding model that turns items into
+similarity vectors, and a text generation model that writes explanations and
+chat. These are the general defaults. For picks tuned to higher output quality,
+see [OLLAMA_SETUP_GUIDE.md](OLLAMA_SETUP_GUIDE.md).
 
-## Model Strategy
+## Embeddings
 
-We recommend using **two different models**:
-
-1. **Embedding Model**: Specialized model for generating embeddings
-2. **Recommendation Model**: General-purpose model for text generation and reasoning
-
-## Recommended Models
-
-### For Embeddings (Required)
-
-**Primary Recommendation: `nomic-embed-text`**
-```bash
-ollama pull nomic-embed-text
-```
-
-- **Size**: ~274 MB
-- **Purpose**: Generate high-quality embeddings for semantic search
-- **Why**: Optimized specifically for embeddings, much better than using general models
-- **AMD Compatible**: ✅ Yes
-
-**Alternative: `all-minilm`**
-```bash
-ollama pull all-minilm
-```
-- Smaller model, faster but potentially lower quality embeddings
-
-### For Recommendations (Text Generation)
-
-**Option 1: `mistral:7b`**
-- **Size**: ~4.4 GB
-- **Purpose**: Generate recommendations and reasoning
-- **Why**: Good balance of quality and performance
-- **AMD Compatible**: ✅ Yes
-- **Best for**: General recommendations
-
-**Option 2: `deepseek-r1:latest`**
-- **Size**: ~4.7 GB
-- **Purpose**: Advanced reasoning for recommendations
-- **Why**: Better at understanding complex preferences and reasoning
-- **AMD Compatible**: ✅ Yes
-- **Best for**: More nuanced, detailed recommendations
-
-**Option 3: `llama3.2:3b`** (If you want something smaller)
-```bash
-ollama pull llama3.2:3b
-```
-- **Size**: ~2.0 GB
-- **Purpose**: Faster recommendations with lower resource usage
-- **AMD Compatible**: ✅ Yes
-
-## Installation
-
-### Step 1: Install Embedding Model (Required)
+`nomic-embed-text` (~274 MB) is the default and the right answer for nearly
+everyone. `all-minilm` is smaller and faster with lower quality vectors.
 
 ```bash
 ollama pull nomic-embed-text
 ```
 
-### Step 2: Verify Installation
+## Text generation
+
+| Model | Size | Quality | Speed | Pick it for |
+|-------|------|---------|-------|-------------|
+| `mistral:7b` | 4.4 GB | Good | Medium | The default. Balanced. |
+| `deepseek-r1:latest` | 4.7 GB | Better | Medium | More nuanced reasoning over preferences |
+| `llama3.2:3b` | 2.0 GB | Fair | Fast | Low RAM, or fast iteration |
+
+All of them run on AMD hardware, under ROCm or CPU only.
 
 ```bash
-ollama list
+ollama pull mistral:7b
+ollama list          # confirm both models are present
 ```
 
-You should see:
-- `nomic-embed-text` (for embeddings)
-- `mistral:7b` or `deepseek-r1:latest` (for recommendations)
+## Point the app at them
 
-### Step 3: Point the App at Them
-
-These are database-backed settings, not file settings. Set them from the
-**Settings** page, or the `settings` CLI:
+These are database-backed settings. Use the **Settings** page or the `settings`
+CLI:
 
 ```bash
-python3.11 -m src.cli settings set ollama.model mistral:7b          # or deepseek-r1:latest
+python3.11 -m src.cli settings set ollama.model mistral:7b
 python3.11 -m src.cli settings set ollama.embedding_model nomic-embed-text
 python3.11 -m src.cli settings set ollama.base_url http://ollama:11434
 ```
 
-Under Docker, name the same models in your compose environment too — the Ollama
-sidecar reads `OLLAMA_MODEL`, `OLLAMA_EMBEDDING_MODEL`, and
-`OLLAMA_CONVERSATION_MODEL`, and cannot see these settings. See
-[docs/DOCKER.md](DOCKER.md).
+**Under Docker, name the same models in your compose environment.** The Ollama
+sidecar reads `OLLAMA_MODEL`, `OLLAMA_EMBEDDING_MODEL` and
+`OLLAMA_CONVERSATION_MODEL`, and cannot see these settings. Point the app at a
+model the sidecar never pulled and every request to Ollama fails. See
+[DOCKER.md](DOCKER.md).
 
-## Model Comparison
+## Small hardware: a second chat model
 
-| Model | Size | Use Case | Quality | Speed | AMD Support |
-|-------|------|----------|---------|-------|-------------|
-| nomic-embed-text | 274 MB | Embeddings | ⭐⭐⭐⭐⭐ | Fast | ✅ |
-| mistral:7b | 4.4 GB | Recommendations | ⭐⭐⭐⭐ | Medium | ✅ |
-| deepseek-r1:latest | 4.7 GB | Recommendations | ⭐⭐⭐⭐⭐ | Medium | ✅ |
-| llama3.2:3b | 2.0 GB | Recommendations | ⭐⭐⭐ | Fast | ✅ |
-
-## Small Hardware / Dual-Model Setup
-
-If your GPU VRAM is limited (e.g., 2 GB AMD mobile GPU), a 7B+ model will fall back to CPU, causing ~200s time-to-first-token in chat. The solution: use a **small model for conversation** and keep the larger model for recommendations.
-
-### Configuration
-
-Set these from the **Settings** page, or the `settings` CLI:
+On a small GPU (2 GB VRAM, say) a 7B model falls back to CPU and chat takes
+around 200 seconds to first token. Run a small model for chat and keep the large
+one for recommendation reasoning:
 
 ```bash
-python3.11 -m src.cli settings set ollama.model qwen2.5:14b              # Recommendation reasoning
-python3.11 -m src.cli settings set ollama.conversation_model qwen2.5:3b  # Fast chat
+python3.11 -m src.cli settings set ollama.model qwen2.5:14b              # reasoning
+python3.11 -m src.cli settings set ollama.conversation_model qwen2.5:3b  # chat
 python3.11 -m src.cli settings set conversation.llm.context_window_size 4096
 python3.11 -m src.cli settings set conversation.context.compact_mode true
 ```
 
-Under Docker, name the same models in your compose environment — the Ollama
-sidecar reads `OLLAMA_MODEL`, `OLLAMA_EMBEDDING_MODEL`, and
-`OLLAMA_CONVERSATION_MODEL`, and does not see these settings. See
-[docs/DOCKER.md](DOCKER.md).
+Leave `ollama.conversation_model` empty and chat uses `ollama.model`.
 
-### What `compact_mode` Does
+Compact mode swaps in a condensed system prompt (~800 tokens instead of ~3,000),
+cuts context to 5 items formatted without genres, reviews or score breakdowns,
+and answers common actions like "I finished X" before the LLM is called at all.
 
-When enabled, compact mode:
-- Uses a **condensed system prompt** (~800 tokens vs ~3,000) with a single few-shot example instead of 30+ rule bullets
-- Reduces **context items** (5 items instead of 10-20) using compact formatting (no genres, reviews, or score breakdowns)
-- Enables **pre-LLM intent detection** — common actions like "I finished X" or "rate X 4/5" are handled instantly without calling the LLM
-- Skips tool descriptions in the prompt (tools are handled pre-LLM)
+| Setup | Time to first token | Tokens |
+|-------|---------------------|--------|
+| 14B on CPU | ~200s | 6,000-8,000 |
+| 3B plus compact mode | ~10-20s | 2,000-3,000 |
 
-### Expected Performance
+Good 3B chat models, all around 2 GB: `qwen2.5:3b`, `llama3.2:3b`,
+`phi-3.5-mini`.
 
-| Setup | TTFT (Chat) | Token Count |
-|-------|-------------|-------------|
-| 14B on CPU (default) | ~200s | ~6,000-8,000 |
-| 3B + compact mode | ~10-20s | ~2,000-3,000 |
-
-### Recommended 3B Models
-
-| Model | Size | Chat Quality | Speed |
-|-------|------|-------------|-------|
-| qwen2.5:3b | ~2.0 GB | Good | Fast |
-| llama3.2:3b | ~2.0 GB | Good | Fast |
-| phi-3.5-mini | ~2.2 GB | Good | Fast |
-
-Install with: `ollama pull qwen2.5:3b`
-
-## Why Two Models?
-
-1. **Embedding models** are optimized for creating vector representations
-   - Better semantic understanding
-   - More efficient for similarity search
-   - Smaller and faster
-
-2. **Text generation models** are optimized for reasoning and language
-   - Better at understanding context
-   - Can provide detailed explanations
-   - Better at following complex instructions
-
-## Testing Your Setup
-
-After installing models, verify the LLM client can connect:
+## Check the connection
 
 ```python
 from src.llm.client import OllamaClient
 
-client = OllamaClient()
-print("Available models:", client.list_available_models())
-print("Embedding model available:", client.check_model_available("nomic-embed-text"))
+client = OllamaClient(base_url="http://localhost:11434")
+print(client.list_available_models())
+print(client.check_model_available("nomic-embed-text"))
 ```
 
 ## Troubleshooting
 
-### Model Not Found
+**"Model not found".** Check Ollama is running, then `ollama list` for what is
+there and `ollama pull <model>` for what is not. Under Docker the sidecar only
+holds what `OLLAMA_MODEL` and its siblings named.
 
-If you get "model not found" errors:
-1. Verify Ollama is running: `ollama serve`
-2. Check available models: `ollama list`
-3. Pull the model: `ollama pull <model-name>`
+**Slow.** Drop to a smaller model, or turn on compact mode for chat.
 
-### Slow Performance
+**Out of memory.** Smaller model, and close whatever else is holding GPU memory.
 
-- Use smaller models if speed is more important than quality
-- Consider `llama3.2:3b` for faster recommendations
-- Embeddings are typically fast with `nomic-embed-text`
-
-### Out of Memory
-
-- Use smaller models (3B instead of 7B)
-- Process embeddings in smaller batches
-- Close other applications using GPU/VRAM
-
-## AMD-Specific Notes
-
-All recommended models work well on AMD processors with:
-- ROCm (AMD's GPU compute platform)
-- CPU-only mode (slower but works)
-- Ollama's automatic hardware detection
-
-If you encounter issues:
-1. Check Ollama logs: `journalctl -u ollama` (if running as service)
-2. Verify GPU detection: Check Ollama startup messages
-3. Use CPU mode if needed (automatic fallback)
+**AMD.** Ollama detects ROCm itself and falls back to CPU. Its startup log says
+which it chose, or `journalctl -u ollama` when it runs as a service.

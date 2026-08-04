@@ -1,19 +1,17 @@
-# Quick Start Guide
+# Quick Start
 
-Get up and running with Recommendinator in under 5 minutes.
+Up and running in under five minutes.
 
 ## Prerequisites
 
-- **Docker** (recommended) — or Python 3.11 if you'd rather run from source
-- Your data (Goodreads export, Steam account, etc.)
+Docker, or Python 3.11 to run from source. Plus your data: a Goodreads export, a
+Steam account, whatever you already have. No AI and no external services needed.
 
-That's it. No AI, no external services required.
+## Install
 
-## Installation
+### Docker
 
-### Option 1: Docker (recommended)
-
-No git clone needed. Pull a published image and mount your data directories:
+No clone needed. Pull a published image and mount your directories:
 
 ```bash
 mkdir -p recommendinator/{config,data,inputs} && cd recommendinator
@@ -28,16 +26,14 @@ docker run -d \
   ghcr.io/therealahall/recommendinator:latest
 ```
 
-The container generates a starter `config/config.yaml` from the bundled example on
-first run. Under Docker that file only carries the `storage` paths — the bind comes
-from the image's `--host`/`--port` command line, which beats `config.yaml`, so change
-the published port with the `-p` mapping above (or `APP_PORT` under Compose) rather
-than editing `web.port`. Data sources, global
-settings, and all API keys are managed from the UI (the **Data** tab and the
-**Settings** page, or the `source` and `settings` CLI groups) and stored in the
-database, so there is normally nothing to edit by hand.
+The container writes a starter `config/config.yaml` on first run. You do not need
+to edit it. Under Docker the bind comes from the image's `--host` and `--port`,
+which beat `config.yaml`, so **publish a different port with the `-p` mapping**
+(or `APP_PORT` under Compose) rather than `web.port`. Sources, settings and API
+keys live in the database and are managed from the app.
 
-For AI features (Ollama sidecar with auto model download), use Docker Compose:
+For AI features, with an Ollama sidecar that downloads models for you, use
+Compose:
 
 ```bash
 curl -L https://github.com/therealahall/recommendinator/releases/latest/download/docker-compose.yml \
@@ -45,57 +41,43 @@ curl -L https://github.com/therealahall/recommendinator/releases/latest/download
 docker compose --profile ai up -d app-ai
 ```
 
-Naming `app-ai` is required — the default `app` service has no profile and
-would otherwise start alongside the AI variant, colliding on the same host port.
+**Naming `app-ai` is required.** The default `app` service has no profile, so
+otherwise it starts too and both fight over the same host port.
 
-See [docs/DOCKER.md](docs/DOCKER.md) for parameters, GPU setup, reverse proxy
-notes, and troubleshooting.
+[docs/DOCKER.md](docs/DOCKER.md) covers parameters, GPU setup and reverse
+proxies.
 
-### Option 2: Local Installation (for contributors)
-
-If you're contributing to Recommendinator or prefer running from source:
+### From source
 
 ```bash
-# Clone the repository
-git clone https://github.com/ahall/recommendinator.git
+git clone https://github.com/therealahall/recommendinator.git
 cd recommendinator
 
-# Install uv (if not already installed)
-curl -LsSf https://astral.sh/uv/install.sh | sh
+curl -LsSf https://astral.sh/uv/install.sh | sh   # if you do not have uv
+uv sync --locked                                  # add --extra ai for AI features
 
-# Install dependencies (base only, no AI)
-uv sync --locked
-
-# Or install with AI features (ollama, chromadb)
-uv sync --locked --extra ai
-
-# Install and build the frontend (Node.js 18+ required for web UI)
-corepack enable    # enables pnpm via Node.js corepack
+corepack enable                                   # pnpm, needs Node.js 18+
 pnpm install --frozen-lockfile
 pnpm build
 
-# Set up configuration
 cp config/example.yaml config/config.yaml
 ```
 
-> **Note:** The web UI requires Node.js 18+ to build. If you only use the CLI, Node.js is not required.
+Node.js is only needed to build the web UI. CLI-only users can skip those three
+lines. Start the server with `python3.11 -m src.web` and open
+<http://localhost:18473>.
 
-Access the web interface at http://localhost:18473.
+## Set up enrichment first
 
-## Set Up Enrichment (Do This First)
+**Do this before importing anything.** Enrichment fills in the genres, tags and
+descriptions the scoring pipeline runs on. Without it recommendations are poor.
+All three providers are free, and only two need a key: **TMDB** for movies and TV
+([themoviedb.org](https://www.themoviedb.org/settings/api)), **RAWG** for games
+([rawg.io](https://rawg.io/apidocs)), and **OpenLibrary** for books, which needs
+nothing.
 
-**Before importing any data**, set up metadata enrichment. This is the most important step for getting useful recommendations. Enrichment fills in missing genres, tags, and descriptions from external databases — without it, the scoring pipeline has little to work with and recommendations will be poor.
-
-All three providers are **free**:
-
-1. **TMDB** (movies/TV) — Get API key from [themoviedb.org/settings/api](https://www.themoviedb.org/settings/api)
-2. **RAWG** (games) — Get API key from [rawg.io/apidocs](https://rawg.io/apidocs)
-3. **OpenLibrary** (books) — No API key needed
-
-Enrichment settings live in the database and are managed from the web
-**Settings** page or the `settings` CLI (not `config.yaml`). Turn on enrichment
-and each provider, then store the API keys — they go into the encrypted
-`credentials` table, never plaintext:
+These are database settings, from the **Settings** page or the `settings` CLI.
+Keys go into the encrypted `credentials` table, never `config.yaml`:
 
 ```bash
 python3.11 -m src.cli settings set enrichment.enabled true
@@ -110,321 +92,172 @@ python3.11 -m src.cli settings set-secret enrichment.providers.rawg.api_key
 python3.11 -m src.cli settings set enrichment.providers.openlibrary.enabled true
 ```
 
-With `enrichment.auto_enrich_on_sync` on, enrichment runs automatically every
-time you sync data — no extra step needed. See
-[docs/ENRICHMENT_SETUP.md](docs/ENRICHMENT_SETUP.md) for the full setup guide.
+`auto_enrich_on_sync` runs enrichment after every sync, so there is no extra
+step. Full guide: [docs/ENRICHMENT_SETUP.md](docs/ENRICHMENT_SETUP.md).
 
-## Import Your Data
+## Import your data
 
-The system supports multiple data sources through a plugin architecture. See [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md) for the full list of available plugins and their configuration options.
+Plugins cover Goodreads, The StoryGraph, Calibre-Web, Steam, GOG, Epic Games,
+Sonarr, Radarr, Trakt, a ROM library, and generic CSV, JSON and Markdown files.
+[docs/DATA_SOURCES.md](docs/DATA_SOURCES.md) lists them all.
 
-**Available plugins:** Goodreads (books), The StoryGraph (books), Calibre-Web (books), Steam (games), GOG (games), Epic Games (games), Sonarr (TV shows), Radarr (movies), Trakt (TV shows/movies), ROM Library (games), and generic CSV/JSON/Markdown importers for any content type.
+### Add a source
 
-### Configure a source
-
-Sources are added from the **Data** tab with **+ Add source**, which builds the
-form from the plugin's own field list and takes any secret at create time. The
-equivalent from the CLI:
+From the **Data** tab, **+ Add source** builds the form from the plugin's own
+field list and takes any secret up front. The same from the CLI:
 
 ```bash
-# A file-based source needs no credentials
+# A file source needs no credentials
 python3.11 -m src.cli source create my_books goodreads_csv
 python3.11 -m src.cli source set my_books path inputs/goodreads_library_export.csv
 
-# A source with a secret takes it separately, via a hidden prompt
+# A secret is set separately, through a hidden prompt
 python3.11 -m src.cli source create my_steam steam
 python3.11 -m src.cli source set my_steam steam_id 76561198000000000
 python3.11 -m src.cli source set-secret my_steam api_key
 ```
 
-Sources are stored in the database, not `config.yaml` — there is nothing to edit
-by hand and no restart needed.
+Sources live in the database, so there is nothing to edit by hand and no restart.
+Later on, `source show`, `source set`, `source enable`, `source disable` and
+`source remove` do the rest, and the **Data** tab does all of it too.
 
-Some sources (GOG, Epic Games, Trakt) require OAuth setup — see that source's setup guide
-(e.g. [GOG](src/ingestion/sources/gog/README.md), [Epic Games](src/ingestion/sources/epic_games/README.md),
-[Trakt](src/ingestion/sources/trakt/README.md))
-for step-by-step instructions. [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md) lists
-every source and covers managing them in the UI.
+GOG, Epic Games and Trakt need OAuth. Follow that plugin's guide:
+[GOG](src/ingestion/sources/gog/README.md),
+[Epic Games](src/ingestion/sources/epic_games/README.md),
+[Trakt](src/ingestion/sources/trakt/README.md).
 
-### Generic CSV/JSON/Markdown
+### Generic CSV, JSON and Markdown
 
-For sources without a dedicated plugin, use the generic importers. Templates for each content type are in the `templates/` directory:
+For anything without a dedicated plugin. `templates/` has a starter file per
+content type:
 
 ```bash
-# Copy a template and fill in your data
 cp templates/movies.csv inputs/my_movies.csv
-```
 
-Then add the source — from the **Data** tab with **+ Add source**, or from the CLI:
-
-```bash
 python3.11 -m src.cli source create my_movies csv_import
 python3.11 -m src.cli source set my_movies path inputs/my_movies.csv
 python3.11 -m src.cli source set my_movies content_type movie
 ```
 
-You can have multiple instances of the same plugin (e.g., two `json_import` sources for different files) — just give each a unique id.
+Give each source a unique id and you can run as many of the same plugin as you
+like.
 
-### Sync your data
-
-```bash
-# Sync a specific source
-python3.11 -m src.cli update --source goodreads_csv
-
-# Sync all enabled sources
-python3.11 -m src.cli update --source all
-
-# List configured sources
-python3.11 -m src.cli update --source list
-```
-
-### Manage sources
-
-Once you've started up the app you can add, edit, enable/disable, and
-remove sources from the web **Data** tab (each source is an accordion
-that expands to reveal settings) or from the CLI. YAML is no longer
-required for new sources — sources can live in YAML (bootstrap), in the
-database (post-migration or freshly created), or both.
+### Sync
 
 ```bash
-# Create a brand-new source directly in the database (no YAML edit needed)
-python3.11 -m src.cli source plugins             # see what plugins are available
-python3.11 -m src.cli source create my_books goodreads_csv
-python3.11 -m src.cli source set my_books path inputs/goodreads_library_export.csv
-
-# Move an existing YAML source into the database (one-time, idempotent)
-python3.11 -m src.cli source migrate goodreads_csv
-
-# Inspect / edit fields after migration or creation
-python3.11 -m src.cli source show goodreads_csv
-python3.11 -m src.cli source set goodreads_csv path inputs/new_export.csv
-python3.11 -m src.cli source disable goodreads_csv          # disabled sources are skipped during sync
-python3.11 -m src.cli source enable goodreads_csv
-python3.11 -m src.cli source set-secret my_steam api_key   # hidden prompt, sources with secrets only
-
-# Remove a DB-backed source entirely (clears stored secrets too)
-python3.11 -m src.cli source remove my_books
+python3.11 -m src.cli update --source list      # what is configured
+python3.11 -m src.cli update --source my_books
+python3.11 -m src.cli update --source all       # every enabled source
 ```
 
-All `source` subcommands except `set-secret` and `clear-secret` accept
-`--format json` for scripting parity with the web API:
-
-```bash
-python3.11 -m src.cli source show goodreads_csv --format json
-python3.11 -m src.cli source migrate goodreads_csv --format json
-```
-
-For atomic multi-field updates (the CLI equivalent of the web
-`PUT /api/sync/sources/<id>/config` bulk endpoint), use `source apply` with
-a JSON dict of values from a file or stdin. The example below uses
-`generic_csv` because it has both `path` and `content_type` in its schema —
-plugin-specific sources like `goodreads_csv` only expose the fields their
-schema declares (run `python3.11 -m src.cli source schema <id>` to see them):
-
-```bash
-echo '{"path": "inputs/new.csv", "content_type": "book"}' \
-  | python3.11 -m src.cli source apply my_csv --from-json -
-```
-
-For non-interactive secret rotation (Docker entrypoints, CI), set
-`RECOMMENDINATOR_SECRET_VALUE` instead of typing at the prompt:
-
-```bash
-RECOMMENDINATOR_SECRET_VALUE="$STEAM_API_KEY" \
-  python3.11 -m src.cli source set-secret my_steam api_key
-```
-
-The env-var path keeps the secret out of shell history and the visible
-process list (unlike a `--value` flag would).
-
-If you enabled `auto_enrich_on_sync`, enrichment runs automatically after each sync. Otherwise, run it manually:
+Without `auto_enrich_on_sync`, run enrichment yourself:
 
 ```bash
 python3.11 -m src.cli enrichment start
 python3.11 -m src.cli enrichment status
-
-# Retry items that providers couldn't find previously
-python3.11 -m src.cli enrichment start --retry-not-found
+python3.11 -m src.cli enrichment start --retry-not-found   # providers drift
 ```
 
-## Get Recommendations
+## Get recommendations
 
 ```bash
-# Books
-python3.11 -m src.cli recommend --type book --count 5
-
-# Movies
-python3.11 -m src.cli recommend --type movie --count 5
-
-# Video games
-python3.11 -m src.cli recommend --type video_game --count 5
-
-# TV shows
-python3.11 -m src.cli recommend --type tv_show --count 5
+python3.11 -m src.cli recommend --type book --count 5   # or movie, tv_show, video_game
 ```
 
-## Check System Status
+## Everyday commands
+
+The full reference is [docs/CLI.md](docs/CLI.md). Most read-only commands take
+`--format json`.
 
 ```bash
-# See component health, database stats, and feature flags
-python3.11 -m src.cli status
-```
+python3.11 -m src.cli status                    # component health and feature flags
 
-## Browse & Edit Your Library
-
-```bash
-# List your completed books, sorted by rating
 python3.11 -m src.cli library list --type book --status completed --sort rating
-
-# Show full details for a single item
 python3.11 -m src.cli library show --id 42
-
-# Edit an item's rating or status
 python3.11 -m src.cli library edit --id 42 --rating 5 --status completed
+python3.11 -m src.cli library edit --id 42 --seasons-watched 1,2,3   # each 1-200
+python3.11 -m src.cli library ignore --id 42    # and library unignore
 
-# Mark watched TV seasons (comma-separated season numbers, each 1-200)
-python3.11 -m src.cli library edit --id 42 --seasons-watched 1,2,3
-
-# Exclude an item from recommendations (or reverse it)
-python3.11 -m src.cli library ignore --id 42
-python3.11 -m src.cli library unignore --id 42
-```
-
-## Authenticate OAuth Sources (GOG/Epic/Trakt)
-
-```bash
-# Connect your GOG account via browser OAuth
-python3.11 -m src.cli auth connect --source gog
-
-# Connect your Trakt account via the device-code flow
-python3.11 -m src.cli auth connect --source trakt
-
-# Check connection status
+python3.11 -m src.cli auth connect --source gog     # or epic, trakt
 python3.11 -m src.cli auth status
 ```
 
-## Chat with Your Library (requires AI)
+With AI on, chat and the memories behind it:
 
 ```bash
-# Start an interactive chat session
 python3.11 -m src.cli chat start
-
-# Or send a single question
 python3.11 -m src.cli chat send --message "What should I read next?"
-```
 
-## Manage Memories (requires AI)
-
-Memories are persistent preference signals the chat system remembers across
-conversations:
-
-```bash
-# List, add, and remove memories
 python3.11 -m src.cli memory list
 python3.11 -m src.cli memory add --text "I love hard sci-fi"
-python3.11 -m src.cli memory toggle --id 3    # flip active/inactive
-python3.11 -m src.cli memory delete --id 3
-```
+python3.11 -m src.cli memory toggle --id 3      # flip active/inactive
 
-## View Your Profile
-
-Your computed preference profile summarizes what the engine has learned from your
-library:
-
-```bash
-# Show the profile, or regenerate it from current library data
-python3.11 -m src.cli profile show
+python3.11 -m src.cli profile show              # what the engine learned
 python3.11 -m src.cli profile regenerate
 ```
 
-## Use the Web Interface
+## Use the web interface
 
 ```bash
 python3.11 -m src.web
 ```
 
-Open http://localhost:18473 in your browser. The web UI provides browsing, syncing, recommendations, a **Settings** page for the global/system config (feature flags, enrichment, scorer defaults, provider secrets, and advanced infra/security options), and (with AI enabled) a conversational chat interface. The version number in the sidebar (e.g., "v0.3.0") shows the running application version. If a new version becomes available while you have the page open, a banner will prompt you to reload.
+Open <http://localhost:18473>. Browsing, syncing, recommendations, a **Settings**
+page for feature flags, enrichment, scorer defaults, provider secrets and the
+advanced infrastructure options, and chat when AI is on. The sidebar shows the
+running version and banners a reload when a newer one appears.
 
-Each card on the Recommendations view has two actions:
+Each recommendation card has two actions. **Ignore** drops the item out of future
+recommendations. **Mark complete** opens an edit dialog for status, rating and
+review, then saves it to your library. Both remove the card and leave the rest of
+the list alone.
 
-- **Ignore** — excludes the item from future recommendations and removes its card.
-- **Mark complete** — opens an edit dialog to set the item's status, rating, and review, saves it to your library, and removes the card.
-
-Neither action regenerates the list; the other recommendations stay as they are.
-
-## Customize Your Preferences
-
-### View current preferences
+## Tune your preferences
 
 ```bash
-# Show current weights, length preferences, and custom rules
 python3.11 -m src.cli preferences get
-```
 
-### Set scoring weights
-
-```bash
-# Emphasize genre matching
 python3.11 -m src.cli preferences set-weight genre_match 3.0
-
-# De-emphasize creator matching
-python3.11 -m src.cli preferences set-weight creator_match 0.5
-```
-
-### Add custom rules
-
-```bash
+python3.11 -m src.cli preferences set-length book short        # or any, long
 python3.11 -m src.cli preferences custom-rules add "avoid horror"
-python3.11 -m src.cli preferences custom-rules add "prefer science fiction"
-python3.11 -m src.cli preferences custom-rules add "only short books"
+python3.11 -m src.cli preferences set-variety 4.0              # 0.0 off, 5.0 full
 ```
 
-### Set length preferences
+`set-variety` demotes genres you recently finished, per content type, so
+recommendations stay varied. The next entry in a series you are actively reading
+takes half the penalty, nudged down rather than buried. See
+[docs/SCORING.md](docs/SCORING.md) and
+[docs/CUSTOM_RULES.md](docs/CUSTOM_RULES.md).
 
-```bash
-python3.11 -m src.cli preferences set-length book short
-python3.11 -m src.cli preferences set-length movie any
-python3.11 -m src.cli preferences set-length video_game long
-```
+## Optional: enable AI
 
-### Set variety after completion
+For semantic similarity and LLM explanations:
 
-```bash
-# Demote genres you've recently finished so recommendations vary (per content
-# type). The value (0.0-5.0, same scale as scorer weights) is the penalty
-# strength; 0.0 turns it off and 5.0 is full strength. The next entry in a series
-# you're actively reading gets a softened (halved) penalty, so it's nudged down
-# but not buried under unrelated content.
-python3.11 -m src.cli preferences set-variety 4.0
-```
+1. Install [Ollama](https://ollama.ai).
+2. `ollama pull mistral:7b` and `ollama pull nomic-embed-text`.
+3. Turn the flags on, from the **Settings** page or the CLI:
 
-## Optional: Enable AI Features
-
-If you want semantic similarity and LLM-powered explanations:
-
-1. Install Ollama: https://ollama.ai
-2. Pull a model: `ollama pull mistral:7b`
-3. Pull an embedding model: `ollama pull nomic-embed-text`
-4. Turn on the AI feature flags from the web **Settings** page (Features section)
-   or the CLI:
    ```bash
    python3.11 -m src.cli settings set features.ai_enabled true
    python3.11 -m src.cli settings set features.embeddings_enabled true
    python3.11 -m src.cli settings set features.llm_reasoning_enabled true
    ```
-   These are restart-required — restart the app after enabling them.
 
-See [docs/MODEL_RECOMMENDATIONS.md](docs/MODEL_RECOMMENDATIONS.md) for model guidance.
+4. Restart the app. All three flags need one.
 
-## Next Steps
+Model guidance:
+[docs/MODEL_RECOMMENDATIONS.md](docs/MODEL_RECOMMENDATIONS.md).
 
-- [docs/ENRICHMENT_SETUP.md](docs/ENRICHMENT_SETUP.md) — Metadata enrichment setup (do this first)
-- [README.md](README.md) — Full feature overview
-- [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md) — Managing sources, parallel sync, export
-- [docs/CLI.md](docs/CLI.md) — Full CLI command reference
-- [docs/SCORING.md](docs/SCORING.md) — How the recommendation engine scores
-- [docs/CONVERSATION_GUIDE.md](docs/CONVERSATION_GUIDE.md) — Chat interface setup (AI only)
-- [ARCHITECTURE.md](ARCHITECTURE.md) — How the system works
-- [docs/PLUGIN_DEVELOPMENT.md](docs/PLUGIN_DEVELOPMENT.md) — Creating custom data source plugins
-- [docs/CUSTOM_RULES.md](docs/CUSTOM_RULES.md) — Advanced preference rules
-- [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) — Common issues
+## Next steps
+
+| Document | Covers |
+|----------|--------|
+| [docs/ENRICHMENT_SETUP.md](docs/ENRICHMENT_SETUP.md) | Enrichment in full. Do it first |
+| [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md) | Managing sources, parallel sync, export |
+| [docs/CLI.md](docs/CLI.md) | Full CLI reference |
+| [docs/SCORING.md](docs/SCORING.md) | How recommendations are scored |
+| [docs/CONVERSATION_GUIDE.md](docs/CONVERSATION_GUIDE.md) | The chat interface |
+| [docs/CUSTOM_RULES.md](docs/CUSTOM_RULES.md) | Preference rules |
+| [docs/PLUGIN_DEVELOPMENT.md](docs/PLUGIN_DEVELOPMENT.md) | Writing a data source plugin |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | How the system works |
+| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Common issues |
