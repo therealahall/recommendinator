@@ -368,9 +368,9 @@ class CsvImportPlugin(SourcePlugin):
         source = self.get_source_identifier(config)
         logger.info("Parsing CSV file: %s", file_path)
         expected_columns = COMMON_COLUMNS | set(
-            CONTENT_TYPE_COLUMNS.get(content_type.value, {})
+            CONTENT_TYPE_COLUMNS[content_type.value]
         )
-        creator_field = CREATOR_FIELD.get(content_type.value)
+        creator_field = CREATOR_FIELD[content_type.value]
 
         with open(file_path, encoding="utf-8") as csv_file:
             reader = csv.DictReader(csv_file)
@@ -427,9 +427,7 @@ class CsvImportPlugin(SourcePlugin):
             notes = row.get("notes", "").strip() or None
 
             # Get creator (author/director/creator/developer)
-            author = None
-            if creator_field:
-                author = row.get(creator_field, "").strip() or None
+            author = row.get(creator_field, "").strip() or None
 
             # Parse ignored flag (absent or blank leaves the stored flag alone)
             ignored = parse_ignored_field(row)
@@ -478,7 +476,7 @@ def _build_metadata(row: dict[str, str], content_type: ContentType) -> dict[str,
         Metadata dictionary with non-empty values
     """
     metadata: dict[str, Any] = {}
-    type_columns = CONTENT_TYPE_COLUMNS.get(content_type.value, {})
+    type_columns = CONTENT_TYPE_COLUMNS[content_type.value]
 
     for column, metadata_key in type_columns.items():
         if column in CREATOR_COLUMNS:

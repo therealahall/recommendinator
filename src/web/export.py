@@ -46,7 +46,7 @@ def _item_to_export_dict(
         Dictionary with template-matching keys
     """
     content_type_value = get_enum_value(content_type)
-    creator_field = CREATOR_FIELD.get(content_type_value, "author")
+    creator_field = CREATOR_FIELD[content_type_value]
 
     result: dict[str, Any] = {
         "title": item.title,
@@ -66,7 +66,7 @@ def _item_to_export_dict(
     # Add type-specific metadata fields, read under the key the library
     # stores each template column as (a template says "year", the library
     # stores "release_year").
-    type_columns = CONTENT_TYPE_COLUMNS.get(content_type_value, {})
+    type_columns = CONTENT_TYPE_COLUMNS[content_type_value]
 
     for column, metadata_key in type_columns.items():
         if column in CREATOR_COLUMNS or column in result:
@@ -97,7 +97,7 @@ def export_items_csv(items: list[ContentItem], content_type: ContentType) -> str
         CSV string with header and data rows
     """
     content_type_value = get_enum_value(content_type)
-    columns = _CSV_COLUMN_ORDER.get(content_type_value, [])
+    columns = _CSV_COLUMN_ORDER[content_type_value]
 
     output = io.StringIO()
     writer = csv.DictWriter(output, fieldnames=columns, extrasaction="ignore")
