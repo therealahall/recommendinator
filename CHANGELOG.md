@@ -1,6 +1,73 @@
 # CHANGELOG
 
 
+## v0.25.0 (2026-08-04)
+
+### Bug Fixes
+
+- **cli,web,chat**: Send explicit user actions through the doors
+  ([`ce37747`](https://github.com/therealahall/recommendinator/commit/ce3774750b7529f200cceb31bdd8426687febe12))
+
+- **dates**: Date completions by the host's calendar day, not UTC's
+  ([`e9bd1e1`](https://github.com/therealahall/recommendinator/commit/e9bd1e1a5cc2d07133bf80821a61a4299c622213))
+
+- **docker**: Install tzdata and pass TZ into the app containers
+  ([`160a51e`](https://github.com/therealahall/recommendinator/commit/160a51ead1fffcfb8ec70ae90b385a362c0cbb62))
+
+- **enrichment**: Retry a provider failure instead of settling it
+  ([`80944f5`](https://github.com/therealahall/recommendinator/commit/80944f53f588327d166115304ef8c1137b3cb5a9))
+
+- **ingestion**: Store imported metadata under the keys the library reads
+  ([`02d88b3`](https://github.com/therealahall/recommendinator/commit/02d88b370f667d2455cb08472d204d2f166cc915))
+
+- **search**: Find non Latin titles, and set a bound on the term
+  ([`30e8660`](https://github.com/therealahall/recommendinator/commit/30e8660267adfdc62bf298f60b26f503f7ca55a6))
+
+- **storage**: Put every write to a user owned field through a door
+  ([`046ee07`](https://github.com/therealahall/recommendinator/commit/046ee076a0d9988d1cd5f4065e6e5910a2684d79))
+
+### Chores
+
+- **agents**: Give every review agent the same shared guidance
+  ([`a3d8535`](https://github.com/therealahall/recommendinator/commit/a3d85354eb5f49035340b71128e46f2334045b72))
+
+- **review-gate**: Commit the mandated agents and verify they load
+  ([`8d6972f`](https://github.com/therealahall/recommendinator/commit/8d6972f4c4b821c6a2edc4da3ba2bcbf3e233878))
+
+- **settings**: Pin tracked permissions and deny the execution escapes
+  ([`027a397`](https://github.com/therealahall/recommendinator/commit/027a397e637057e4f508c1afff0841ed1002d1fb))
+
+### Continuous Integration
+
+- Check the repository root conftest.py alongside src and tests
+  ([`9988a1a`](https://github.com/therealahall/recommendinator/commit/9988a1a88e688dc6a09a1d7b6d8e9d6015a28a48))
+
+### Documentation
+
+- Describe who owns rating, review, status and the rest
+  ([`7ec5d67`](https://github.com/therealahall/recommendinator/commit/7ec5d6742b5584a4374795d8a24e6b66813190e3))
+
+- **contributing**: Document the root conftest and its fixtures
+  ([`53bb3b7`](https://github.com/therealahall/recommendinator/commit/53bb3b7b2d922244093ebd87f6db6f8003f08f38))
+
+- **workflow**: Freeze scope and stop the review loop at convergence
+  ([`6dc52b0`](https://github.com/therealahall/recommendinator/commit/6dc52b0f00c139f3fc0f7793479e505c5bd9116f))
+
+### Testing
+
+- **conftest**: Give every collected tree the isolation fixtures
+  ([`39c2ff8`](https://github.com/therealahall/recommendinator/commit/39c2ff8d3101657abbcc57f54c494bccc85fd7d5))
+
+- **package-version**: Assert the dev tree layout instead of skipping
+  ([`c75c194`](https://github.com/therealahall/recommendinator/commit/c75c1940202405735af975cec99260e9339bbb69))
+
+- **parity**: Pin the bounds the interfaces have to share
+  ([`af4dfeb`](https://github.com/therealahall/recommendinator/commit/af4dfeb4b3c3b9a08deac18bc865b67c8abd827a))
+
+- **review-gate**: Pin the guidance, the grants and the marker syntax
+  ([`96a0c42`](https://github.com/therealahall/recommendinator/commit/96a0c42fdada1b3fb539f1976e0d075da7aad16e))
+
+
 ## v0.24.0 (2026-07-29)
 
 ### Features
