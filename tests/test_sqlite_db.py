@@ -6689,9 +6689,9 @@ class TestUnreadableMetadataBlobRegression:
     Root cause: the read path assumed a blob that parses is an object.
 
     Fix: keys are taken from the blob only when it parses to a dict, the guard
-    ``_fold_row_column_keys`` already applies. The migration deliberately
-    leaves such a row alone, so the rows it spares are exactly the ones that
-    reach here.
+    ``_move_stranded_total_seasons`` already applies. The migration
+    deliberately leaves such a row alone, so the rows it spares are exactly the
+    ones that reach here.
     """
 
     @staticmethod
