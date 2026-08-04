@@ -221,7 +221,7 @@ def _parse_entries(
     Yields:
         ContentItem objects
     """
-    creator_field = CREATOR_FIELD.get(content_type.value)
+    creator_field = CREATOR_FIELD[content_type.value]
     total = len(entries)
     count = 0
 
@@ -259,9 +259,7 @@ def _parse_entries(
         notes = str(entry.get("notes", "")).strip() or None
 
         # Get creator
-        author = None
-        if creator_field:
-            author = str(entry.get(creator_field, "")).strip() or None
+        author = str(entry.get(creator_field, "")).strip() or None
 
         # Parse ignored flag (absent or null leaves the stored flag alone)
         ignored = parse_ignored_field(entry)
@@ -333,7 +331,7 @@ def _build_json_metadata(
         Metadata dictionary with non-empty values
     """
     metadata: dict[str, Any] = {}
-    type_columns = CONTENT_TYPE_COLUMNS.get(content_type.value, {})
+    type_columns = CONTENT_TYPE_COLUMNS[content_type.value]
 
     for column, metadata_key in type_columns.items():
         if column in CREATOR_COLUMNS:

@@ -760,9 +760,9 @@ class TestGogPluginFetch:
         ``developer`` and ``publisher`` are text columns, which refuse a
         mapping outright, so a product describing its companies as objects
         rather than bare names has to be reduced here or its whole row fails
-        the sync. A bare name, an object, a nameless object and a lone
-        object standing in for the list are all covered because the field is
-        the same one ``genres`` is, and ``genres`` arrives in all of them.
+        the sync. Both shapes appear in the fixtures this file already had, so
+        a nameless object and a lone object standing in for the list are
+        covered beside them.
         """
         mock_refresh.return_value = {
             "access_token": "access",
