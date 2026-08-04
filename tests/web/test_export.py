@@ -12,8 +12,9 @@ import pytest
 
 from src.ingestion.sources.arr_base import ArrPlugin
 from src.ingestion.sources.generic_csv import (
-    COMMON_COLUMNS,
     CONTENT_TYPE_COLUMNS,
+    CREATOR_COLUMNS,
+    CREATOR_FIELD,
     CsvImportPlugin,
 )
 from src.ingestion.sources.generic_json import JsonImportPlugin
@@ -23,7 +24,7 @@ from src.ingestion.sources.sonarr.sonarr import SonarrPlugin
 from src.ingestion.sources.steam.steam import SteamPlugin
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.sqlite_db import SQLiteDB
-from src.web.export import _CSV_COLUMN_ORDER, export_items_csv, export_items_json
+from src.web.export import export_items_csv, export_items_json
 
 
 class TestExportSerialization:
@@ -932,18 +933,21 @@ class TestCreatorExportEdges:
 
 
 class TestExportColumnConsistency:
-    """Ensures the export column order stays in sync with the templates."""
+    """No type declares a column another type uses for its creator."""
 
-    def test_csv_column_order_matches_template_columns(self) -> None:
-        """Every template column is exported, and nothing else is.
+    def test_no_type_borrows_another_types_creator_column(self) -> None:
+        """A borrowed creator column would be dropped from the export silently.
 
-        ``_CSV_COLUMN_ORDER`` fixes the export layout while
-        ``CONTENT_TYPE_COLUMNS`` declares what the templates hold. A column
-        added to one and not the other either exports blank forever or never
-        exports at all.
+        The export writes the creator cell from ``ContentItem.author`` and so
+        skips every column in ``CREATOR_COLUMNS`` when walking a type's own
+        columns. That set is global rather than per type, so an ordinary
+        column named after another type's creator — a book field called
+        "director" — would never be exported and never raise.
         """
         for content_type, columns in CONTENT_TYPE_COLUMNS.items():
-            assert set(_CSV_COLUMN_ORDER[content_type]) == COMMON_COLUMNS | set(columns)
+            borrowed = set(columns) & (CREATOR_COLUMNS - {CREATOR_FIELD[content_type]})
+
+            assert not borrowed, f"{content_type} declares {sorted(borrowed)}"
 
 
 # The exact header every export writes, which users' saved spreadsheets and
