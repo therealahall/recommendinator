@@ -4809,9 +4809,7 @@ class TestDetailTableColumnsConsistency:
         Membership is compared, not order: _DETAIL_TABLE_COLUMNS' order
         reaches nothing but the order of SET clauses in merge_detail_tables,
         so pinning it to the declaration would force cosmetic edits to
-        merge.py every time this one is reordered. Declaration order is not
-        inert in the same way — it is the CSV export column order — but that
-        is tests/test_detail_fields.py's business, not this test's.
+        merge.py every time this one is reordered.
 
         Duplicates are rejected on both sides, since a column named twice is
         invisible to the set comparison: two DetailFields declaring the same
