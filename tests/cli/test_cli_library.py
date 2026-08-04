@@ -459,6 +459,41 @@ class TestLibraryList:
         assert call_kwargs["unrated_only"] is True
 
 
+class TestLibraryListCreatorColumnRegression:
+    """`library list` headed the creator column "Author" for every type.
+
+    Bug reported: a movie printed its director under a column headed
+    "Author". Root cause: the header was hardcoded, which only looked right
+    while non-book items read back with no author at all and the column said
+    "N/A". Fix: one listing mixes the types, so the header is the name they
+    share.
+    """
+
+    def test_a_mixed_listing_heads_its_creator_column_creator_regression(
+        self, cli_runner: CliRunner
+    ) -> None:
+        """A book's author and a movie's director sit under one honest header."""
+        items = [
+            _make_item(db_id=1, title="The Name of the Wind", author="Rothfuss"),
+            _make_item(
+                db_id=2,
+                title="Arrival",
+                author="Villeneuve",
+                content_type=ContentType.MOVIE,
+            ),
+        ]
+        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage.get_content_items.return_value = items
+
+        result = _invoke_with_mocks(cli_runner, ["library", "list"], mock_storage)
+
+        assert result.exit_code == 0
+        assert "Creator" in result.output
+        assert "Author" not in result.output
+        assert "Rothfuss" in result.output
+        assert "Villeneuve" in result.output
+
+
 class TestLibraryShow:
     """Tests for library show command."""
 

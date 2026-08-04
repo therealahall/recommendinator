@@ -181,6 +181,49 @@ class TestRecommendJsonOutput:
         assert rec["score_breakdown"] == {"genre": 0.5, "theme": 0.4}
 
 
+class TestRecommendCreatorColumnRegression:
+    """`recommend` headed the creator column "Author" for every type.
+
+    Bug reported: `recommend --type movie` printed directors under a column
+    headed "Author". Root cause: the header was hardcoded, which only looked
+    right while non-book items read back with no author at all. Fix: every
+    row is the one requested type, so the header is that type's own creator
+    column.
+    """
+
+    def test_a_movie_run_heads_its_creator_column_director_regression(
+        self, cli_runner: CliRunner
+    ) -> None:
+        """The column naming a director says so."""
+        item = ContentItem(
+            id="ext-1",
+            title="Arrival",
+            author="Villeneuve",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+        )
+        item.db_id = 7
+        mock_engine = MagicMock(spec=RecommendationEngine)
+        mock_engine.generate_recommendations.return_value = [
+            {
+                "item": item,
+                "score": 0.9,
+                "similarity_score": 0.7,
+                "preference_score": 0.8,
+                "reasoning": "Great match",
+            }
+        ]
+
+        result = _invoke_recommend_with_engine(
+            cli_runner, ["recommend", "--type", "movie"], mock_engine
+        )
+
+        assert result.exit_code == 0
+        assert "Director" in result.output
+        assert "Author" not in result.output
+        assert "Villeneuve" in result.output
+
+
 class TestRecommendLlmFlag:
     """Tests for --use-llm/--no-use-llm flag behavior."""
 
