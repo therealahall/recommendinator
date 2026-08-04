@@ -21,6 +21,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+from src.models.content import ContentType
+
 
 def unchanged(value: Any) -> Any:
     """Return the value as it stands, for columns needing no conversion."""
@@ -485,5 +487,27 @@ def _assert_one_creator_column() -> None:
         _ = spec.creator_column
 
 
+def _assert_every_content_type_is_declared() -> None:
+    """Fail at import when a content type has no declaration, or vice versa.
+
+    Callers index this mapping by content type and expect a hit — the CLI's
+    creator label and the export column order both do. Without this an added
+    ``ContentType`` raises ``KeyError`` wherever it is first read, which is
+    exactly the write-but-never-read class of failure the declaration exists
+    to stop.
+    """
+    declared = set(DETAIL_FIELDS)
+    known = {content_type.value for content_type in ContentType}
+    if undeclared := known - declared:
+        raise ValueError(
+            f"Content types with no field declaration: {sorted(undeclared)}"
+        )
+    if unknown := declared - known:
+        raise ValueError(
+            f"Field declarations for unknown content types: {sorted(unknown)}"
+        )
+
+
 _assert_select_aliases_are_unique()
 _assert_one_creator_column()
+_assert_every_content_type_is_declared()
