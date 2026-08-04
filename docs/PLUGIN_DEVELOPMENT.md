@@ -138,7 +138,12 @@ from `src/models/detail_fields.py`, which declares every field once.
 | `tv_show` | `creators`, `seasons`, `episodes`, `network`, `release_year`, `genres`, `tags`, `description` |
 | `video_game` | `developer`, `publisher`, `platforms`, `genres`, `release_year`, `tags`, `description` |
 
-Five columns accept a second spelling, and reach the same column either way:
+The first key of each row above is that type's creator, and it is the one
+exception to metadata in and metadata out: storage reads it back on
+`ContentItem.author`, not in `metadata`. Setting `author` on the item works
+just as well, and wins if you do both.
+
+Eight columns accept a second spelling, and reach the same column either way:
 
 | Column | Also accepted as | Where |
 |---|---|---|
@@ -147,6 +152,12 @@ Five columns accept a second spelling, and reach the same column either way:
 | `seasons` | `total_seasons` | `tv_show` |
 | `runtime` | `runtime_minutes` | `movie` |
 | `release_year` | `year` | `movie`, `tv_show` (**not** `video_game`, which takes `release_year` only) |
+| `creators` | `creator` | `tv_show` |
+| `developer` | `developers` | `video_game` |
+| `publisher` | `publishers` | `video_game` |
+
+A list given to a text column is joined with commas, so the plural spellings
+above may be lists.
 
 The blob is a shared namespace rather than scratch space. First-party code reads
 these keys out of it, and none of them is a recognised key:

@@ -95,7 +95,7 @@ fields it is less than you would expect:
 | `total_seasons` | Raise it. A smaller number is discarded |
 | `seasons_watched` | Fill an empty list. An existing list always wins, so edit seasons from the season checklist or `library edit --seasons-watched` |
 | `year`, `year_published`, `pages`, `isbn`, `runtime_minutes`, `platform`, `hours_played`, `notes` | Fill an empty value, and nothing else ever. There is no edit surface for these either, so fix them at the source they came from |
-| creator: `author`, `director`, `creator`, `developer` | Books only. The other three types have nowhere to store a creator, so the column is read, dropped, and exported blank |
+| creator: `author`, `director`, `creator`, `developer` | Fill an empty value, and nothing else. There is no edit surface for it either |
 
 The edit modal and `library edit` cover status, rating, review, seasons watched,
 genres, tags and description, and nothing else. `notes` is the fill-only column
@@ -114,13 +114,11 @@ import raises its `total_seasons` above the seasons you have watched.
 > as a standing source**. Left configured, it re-asserts that stale snapshot on
 > every sync. Import it, then remove or disable the source.
 
-`year`, `runtime_minutes`, `total_seasons`, `platform` and `hours_played` used
-to export blank and now export correctly, so retake any export you keep as a
-backup. Three things still do not round trip:
+`year`, `runtime_minutes`, `total_seasons`, `platform`, `hours_played` and the
+creator columns (`director`, `creator`, `developer`) used to export blank and now
+export correctly, so retake any export you keep as a backup. Two things still do
+not round trip:
 
-- **The creator** on movies, TV shows and video games, per the table above. The
-  director, creators and developer the app shows come from a plugin or an
-  enrichment provider, and no template column reaches them. Books are fine.
 - **`platform` on a GOG library synced before the platform-shape fix.** It is
   fill-only, so the stale value beats every later sync and exports as a Python
   repr (`{'windows': True, ...}`), which a re-import would store straight back
