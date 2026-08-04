@@ -23,6 +23,7 @@ from src.models.detail_fields import (
     ContentTypeFields,
     DetailField,
     FieldKind,
+    _assert_every_content_type_is_declared,
     _assert_one_creator_column,
     _assert_select_aliases_are_unique,
 )
@@ -453,6 +454,29 @@ class TestFieldDeclarationGuards:
         with patch.dict(DETAIL_FIELDS, {"movie": doubled}):
             with pytest.raises(ValueError, match="creator template columns"):
                 _assert_one_creator_column()
+
+    def test_content_type_without_a_declaration_is_rejected(self) -> None:
+        """Callers index this mapping expecting a hit, so a gap must not wait.
+
+        The CLI's creator label and the export column order both look a
+        content type up directly, so an undeclared one raises KeyError at
+        whichever call site reads it first rather than at import.
+        """
+        without_movie = {
+            content_type: spec
+            for content_type, spec in DETAIL_FIELDS.items()
+            if content_type != "movie"
+        }
+
+        with patch.dict(DETAIL_FIELDS, without_movie, clear=True):
+            with pytest.raises(ValueError, match="no field declaration"):
+                _assert_every_content_type_is_declared()
+
+    def test_declaration_for_an_unknown_content_type_is_rejected(self) -> None:
+        """A declaration nothing can reach is a rename that half landed."""
+        with patch.dict(DETAIL_FIELDS, {"audiobook": DETAIL_FIELDS["book"]}):
+            with pytest.raises(ValueError, match="unknown content types"):
+                _assert_every_content_type_is_declared()
 
 
 class TestEveryTypeNamesItsCreator:
