@@ -4,11 +4,18 @@ import json
 import sqlite3
 from typing import Any, TypedDict
 
+from src.models.detail_fields import DETAIL_FIELDS, ContentTypeFields, DetailField
 from src.storage.merge import (
+    ALLOWED_DETAIL_TABLES,
+    MERGEABLE_DETAIL_COLUMNS,
+    MONOTONIC_DETAIL_COLUMNS,
+    assert_safe_identifier,
     merge_detail_tables,
     merge_scalar_columns,
     normalize_title_for_matching,
+    parse_json_list,
 )
+from src.utils.list_merge import merge_string_lists
 
 
 class EnrichmentStatusDict(TypedDict):
@@ -606,48 +613,129 @@ def _migrate_stranded_detail_shapes(cursor: sqlite3.Cursor) -> None:
     existing keys win, and ``platforms`` is fill-only in
     ``SQLiteDB._save_detail_table`` — so a one-off rewrite is the only fix.
     Both passes skip rows already in the current shape, so re-running is a
-    no-op.
+    no-op. The blob pass runs first: a ``platforms`` value it folds onto the
+    column may itself be a flag dict for the second pass to rewrite.
     """
-    _move_stranded_total_seasons(cursor)
+    for spec in DETAIL_FIELDS.values():
+        _fold_stranded_column_keys(cursor, spec)
     _rewrite_platform_flag_dicts(cursor)
 
 
-def _move_stranded_total_seasons(cursor: sqlite3.Cursor) -> None:
-    """Move a blob ``total_seasons`` onto the ``seasons`` column.
+def _fold_stranded_column_keys(cursor: sqlite3.Cursor, spec: ContentTypeFields) -> None:
+    """Move blob keys a detail column consumes onto that column.
 
-    Shows written before the column accepted ``total_seasons`` as an alias
-    kept the count in the free-form metadata blob. ``src/utils/series.py``
-    prefers that copy, so leaving it there means a later sync raising the
-    column drifts away from the number the recommender reads — a completed
-    show reappears as in-progress, and the variety ladder mis-ranks it.
+    A key the column claims has no business in the blob beside it, but a row
+    written before it claimed that key kept the value in both places —
+    ``total_seasons`` beside ``seasons``, ``year`` beside ``release_year``,
+    ``runtime_minutes`` beside ``runtime`` — and the blob merge lets the
+    stale copy win over every later sync. ``src/utils/series.py`` reads the
+    blob's ``total_seasons`` in preference to the column, so that one drifts
+    the moment a sync raises the column; the rest are inert duplication until
+    some reader does the same.
+
+    Which keys those are comes from
+    :attr:`~src.models.detail_fields.ContentTypeFields.known_keys`, the same
+    set the write path drops from the blob, so the two cannot disagree about
+    what belongs in a column.
     """
+    if spec.table not in ALLOWED_DETAIL_TABLES:
+        raise ValueError(f"Unknown detail table: {spec.table!r}")
+
+    column_fields: list[tuple[str, DetailField]] = []
+    for field in spec.fields:
+        column = field.column
+        if column is None:
+            continue
+        assert_safe_identifier(column)
+        column_fields.append((column, field))
+
+    # Cheap prefilter: a row mentioning none of the keys cannot be stranded.
+    # A false positive (a key name appearing in a value, or nested inside an
+    # object) costs the row a parse and nothing more.
+    keys = sorted(spec.known_keys)
+    key_filter = " OR ".join("metadata LIKE ?" for _ in keys)
+    select_list = ", ".join(column for column, _ in column_fields)
     cursor.execute(
-        "SELECT content_item_id, seasons, metadata FROM tv_show_details"
-        " WHERE metadata LIKE '%total_seasons%'"
+        f"SELECT content_item_id, metadata, {select_list} FROM {spec.table}"
+        f" WHERE metadata IS NOT NULL AND ({key_filter})",
+        [f'%"{key}"%' for key in keys],
     )
     for row in cursor.fetchall():
-        try:
-            blob = json.loads(row["metadata"])
-        except (json.JSONDecodeError, TypeError):
+        _fold_row_column_keys(cursor, spec.table, column_fields, row)
+
+
+def _fold_row_column_keys(
+    cursor: sqlite3.Cursor,
+    table: str,
+    column_fields: list[tuple[str, DetailField]],
+    row: sqlite3.Row,
+) -> None:
+    """Rewrite one detail row without the blob keys its columns consume."""
+    try:
+        blob = json.loads(row["metadata"])
+    except (json.JSONDecodeError, TypeError):
+        return
+    if not isinstance(blob, dict):
+        return
+
+    updates: dict[str, Any] = {}
+    stranded = False
+    for column, field in column_fields:
+        keys = [key for key in field.metadata_keys if key in blob]
+        if not keys:
             continue
-        if not isinstance(blob, dict) or "total_seasons" not in blob:
-            continue
-        seasons = _higher_season_count(row["seasons"], blob.pop("total_seasons"))
-        cursor.execute(
-            "UPDATE tv_show_details SET seasons = ?, metadata = ?"
-            " WHERE content_item_id = ?",
-            # An emptied blob is stored as NULL, which is what the write path
-            # leaves when an item has no leftover metadata.
-            (seasons, json.dumps(blob) if blob else None, row["content_item_id"]),
+        stranded = True
+        folded = _folded_column_value(field, row[column], field.value_from(blob))
+        for key in keys:
+            del blob[key]
+        if folded != row[column]:
+            updates[column] = folded
+    if not stranded:
+        return
+
+    assignments = ", ".join(f"{column} = ?" for column in ("metadata", *updates))
+    cursor.execute(
+        f"UPDATE {table} SET {assignments} WHERE content_item_id = ?",
+        # An emptied blob is stored as NULL, which is what the write path
+        # leaves when an item has no leftover metadata.
+        [
+            json.dumps(blob) if blob else None,
+            *updates.values(),
+            row["content_item_id"],
+        ],
+    )
+
+
+def _folded_column_value(field: DetailField, column_value: Any, blob_value: Any) -> Any:
+    """Fold a stranded blob value into its column the way a sync would.
+
+    Follows ``SQLiteDB._save_detail_table``'s rules, so the repaired row is
+    the one a re-sync would have written had the column always claimed the
+    key: a monotonic column keeps the higher value, a mergeable one the
+    union, and every other column keeps whatever it already holds. The blob
+    copy therefore only fills a column that is empty — which, on a row
+    written before the key was claimed, is where the value has been all
+    along, so dropping the key without folding it in would lose it.
+    """
+    if field.column in MONOTONIC_DETAIL_COLUMNS:
+        return _higher_count(column_value, blob_value)
+    stored = field.codec.store(blob_value)
+    if field.column in MERGEABLE_DETAIL_COLUMNS:
+        merged = merge_string_lists(
+            parse_json_list(column_value), parse_json_list(stored)
         )
+        return json.dumps(merged) if merged else column_value
+    return column_value if column_value is not None else stored
 
 
-def _higher_season_count(column_value: Any, blob_value: Any) -> Any:
-    """Return the higher of a column and blob season count.
+def _higher_count(column_value: Any, blob_value: Any) -> Any:
+    """Return the higher of a column and blob count.
 
-    ``seasons`` is monotonic (:data:`~src.storage.merge.MONOTONIC_DETAIL_COLUMNS`),
-    so folding the blob copy in must never lower it — and on a row written
-    before the alias existed the blob holds the only count there is.
+    A monotonic column (:data:`~src.storage.merge.MONOTONIC_DETAIL_COLUMNS`)
+    can only rise, so folding the blob copy in must never lower it — and on a
+    row written before the column claimed the key, the blob holds the only
+    count there is. A value that is not a number never reaches the column,
+    which every reader reads with ``int()``.
     """
     counts: list[int] = []
     for value in (column_value, blob_value):
