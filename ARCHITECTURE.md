@@ -190,12 +190,21 @@ what stop it reverting a completion or un-ignoring an item.
 #### Detail-shape repairs
 
 `_migrate_stranded_detail_shapes`, in the same `create_schema` pass, rewrites
-detail rows left in shapes storage no longer writes and no re-sync corrects. A
-`total_seasons` duplicated in a TV show's metadata blob moves onto the `seasons`
-column, never lowering it, and GOG's old per-platform flag dict becomes the list
-of names every other producer writes — or nothing, since the dict was truthy
-even when it named no supported platform. Rows already in the current shape are
-untouched, so re-running is a no-op.
+detail rows left in shapes storage no longer writes and no re-sync corrects.
+
+Any metadata blob key that duplicates one of its content type's detail columns
+is folded onto that column and removed from the blob. Which keys those are comes
+from the field declaration's `known_keys`, so an alias added later is repaired
+without touching this pass. Folding follows the same rules a re-sync would:
+monotonic columns such as `seasons` take the higher of the two values, mergeable
+ones such as `genres` take the union, and the rest are filled only when empty.
+That is what stops the repair lowering a season count or dropping a genre.
+
+GOG's old per-platform flag dict also becomes the list of names every other
+producer writes, or nothing at all, since the dict was truthy even when it named
+no supported platform.
+
+Rows already in the current shape are untouched, so re-running is a no-op.
 
 #### Thread safety
 
