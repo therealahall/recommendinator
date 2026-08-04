@@ -1,144 +1,63 @@
-# Custom Rules Guide
+# Custom Rules
 
-Custom rules let you fine-tune recommendations using natural language preferences. Rules are interpreted automatically and influence the scoring of recommended items.
+Custom rules are natural language preferences that adjust how candidates are
+scored.
 
-## Quick Start
-
-### CLI
+## Adding rules
 
 ```bash
-# Add a rule
 python3.11 -m src.cli preferences custom-rules add "avoid horror"
-
-# List your rules
 python3.11 -m src.cli preferences custom-rules list
-
-# Remove a rule by index
+python3.11 -m src.cli preferences custom-rules interpret "prefer sci-fi"   # dry run
 python3.11 -m src.cli preferences custom-rules remove 0
-
-# Clear all rules
 python3.11 -m src.cli preferences custom-rules clear --yes
-
-# Test how a rule will be interpreted
-python3.11 -m src.cli preferences custom-rules interpret "prefer sci-fi"
 ```
 
-### Web UI
+In the web UI: **Preferences** tab, **Rules** section, **Custom rules**. Type
+the rule, click **Add Rule**, then **Save Preferences**.
 
-1. Go to the **Preferences** tab
-2. Scroll to the **Rules** section and find **Custom rules**
-3. Type your rule and click **Add Rule**
-4. Click **Save Preferences** to apply
+## Supported patterns
 
-## Supported Rule Patterns
+| Kind | Phrasings |
+|------|-----------|
+| Boost a genre | "prefer horror", "love sci-fi", "in the mood for comedy" |
+| Penalise a genre | "avoid horror", "no romance", "tired of action" |
+| Focus on a type | "only books", "just movies", "exclusively TV shows" |
+| Exclude a type | "no video games", "skip movies" |
+| Length | "short books", "long movies", "epic novels" |
 
-### Genre Preferences
+Common aliases resolve to a canonical genre: sci-fi, scifi and sf all mean
+science fiction, scary means horror, role-playing means rpg, shooter means fps.
+Aliases exist for around fifty genres.
 
-**Boost genres you like:**
-- "prefer horror"
-- "love sci-fi"
-- "more fantasy"
-- "give me mystery"
-- "in the mood for comedy"
+## How rules affect scoring
 
-**Penalize genres you want to avoid:**
-- "avoid horror"
-- "no romance"
-- "skip thriller"
-- "hate drama"
-- "tired of action"
+`CustomPreferenceScorer` starts a candidate at a neutral `0.5` and moves it:
 
-### Content Type Filters
+- A matching genre boost pushes toward `1.0`, by up to `0.5`
+- A matching genre penalty pushes toward `0.0`, by up to `0.5`
+- Content type preferences shape the score for matching types
+- Length preferences apply a soft penalty, so an item that does not match ranks
+  lower rather than disappearing
 
-**Focus on specific types:**
-- "only books"
-- "just movies"
-- "exclusively TV shows"
+Rules merge, and a later rule wins a conflict. They influence the score rather
+than overriding it, so a strong candidate can still surface despite a penalty.
+Check your scorer weights too, see [SCORING.md](SCORING.md).
 
-**Exclude types:**
-- "no video games"
-- "skip movies"
+## LLM interpretation
 
-### Length Preferences
-
-**Prefer short, medium, or long content:**
-- "short books"
-- "long movies"
-- "quick games"
-- "epic novels"
-
-## Genre Aliases
-
-The system recognizes common aliases:
-
-| Canonical Name | Aliases |
-|----------------|---------|
-| science fiction | sci-fi, scifi, sf |
-| horror | scary, terrifying |
-| mystery | mysteries, detective |
-| romance | romantic, love story |
-| comedy | comedies, funny, humor |
-| rpg | role-playing |
-| fps | first-person shooter, shooter |
-
-## How Rules Affect Scoring
-
-Rules adjust the scoring pipeline via the `CustomPreferenceScorer`:
-
-1. **Genre boosts** increase scores for matching items (up to +0.5)
-2. **Genre penalties** decrease scores for matching items (up to -0.5)
-3. **Content type preferences** influence scoring for matching types
-4. **Length preferences** apply a soft scoring penalty (non-matching items rank lower but are not excluded)
-
-Multiple rules are merged together. Later rules take precedence for conflicts.
-
-## LLM-Enhanced Interpretation
-
-When AI features are enabled, complex rules can use LLM interpretation:
+With AI enabled, `--use-llm` handles compound and nuanced rules:
 
 ```bash
-# Use LLM for nuanced rule interpretation
-python3.11 -m src.cli preferences custom-rules interpret "I'm burnt out on grimdark fantasy but still enjoy lighter fantasy with humor" --use-llm
+python3.11 -m src.cli preferences custom-rules interpret \
+  "I'm burnt out on grimdark fantasy but still enjoy lighter fantasy with humor" \
+  --use-llm
 ```
 
-The LLM interpreter handles:
-- Complex compound rules
-- Nuanced preferences
-- Context-dependent meanings
+Results are cached, so a repeated rule costs no further LLM calls.
 
-Results are cached to avoid repeated LLM calls.
+## If a rule is not working
 
-## Examples
-
-```bash
-# Avoid a genre you're tired of
-python3.11 -m src.cli preferences custom-rules add "tired of superhero movies"
-
-# Focus on a specific mood
-python3.11 -m src.cli preferences custom-rules add "in the mood for cozy mysteries"
-
-# Multiple rules work together
-python3.11 -m src.cli preferences custom-rules add "prefer sci-fi"
-python3.11 -m src.cli preferences custom-rules add "avoid romance"
-python3.11 -m src.cli preferences custom-rules add "short books"
-```
-
-## Tips
-
-1. **Be specific**: "avoid horror movies" is clearer than "no scary stuff"
-2. **Use common terms**: The system recognizes standard genre names
-3. **Test first**: Use `interpret` to see how a rule will be parsed
-4. **Combine rules**: Multiple simple rules often work better than one complex rule
-5. **Review periodically**: Your preferences change over time
-
-## Troubleshooting
-
-**Rule not working?**
-1. Check interpretation: `python3.11 -m src.cli preferences custom-rules interpret "your rule"`
-2. Verify it was saved: `python3.11 -m src.cli preferences custom-rules list`
-3. Make sure you clicked "Save Preferences" in the web UI
-
-**Unexpected recommendations?**
-- Rules influence but don't completely override the scoring system
-- High-scoring items may still appear despite penalties
-- Check your other preference settings (scorer weights, etc.)
+`custom-rules interpret "your rule"` shows how it parses, `custom-rules list`
+confirms it saved, and in the web UI check that you clicked **Save Preferences**.
+Use standard genre names, and prefer several simple rules over one complex one.
