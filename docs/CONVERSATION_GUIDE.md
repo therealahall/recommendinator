@@ -1,49 +1,49 @@
-# Conversation & Chat Guide
+# Conversation and Chat Guide
 
-The Recommendinator includes a conversational AI chat interface that lets you interact with your library using natural language. You can ask for recommendations, mark items as completed, rate content, and build up a preference profile — all through conversation.
-
-**This feature requires AI to be enabled.** It is entirely opt-in and the Recommendinator works fully without it.
+Chat lets you ask for recommendations, mark items completed, rate content and
+build a preference profile in natural language. **It requires AI.** The app
+works fully without it.
 
 ## Prerequisites
 
-1. **Ollama installed and running** — See [OLLAMA_SETUP_GUIDE.md](OLLAMA_SETUP_GUIDE.md)
-2. **AI features enabled** — from the **Settings** page, or the CLI:
-   ```bash
-   python3.11 -m src.cli settings set features.ai_enabled true
-   ```
-3. **A conversation model configured** (optional — falls back to your main model):
-   ```bash
-   python3.11 -m src.cli settings set ollama.model mistral:7b            # Recommendations and chat
-   python3.11 -m src.cli settings set ollama.conversation_model qwen2.5:3b  # Separate chat model
-   ```
+1. Ollama installed and running, see
+   [OLLAMA_SETUP_GUIDE.md](OLLAMA_SETUP_GUIDE.md).
+2. AI enabled, from the **Settings** page or
+   `settings set features.ai_enabled true`.
+3. Optionally a separate chat model. Left unset it falls back to `ollama.model`:
+
+```bash
+python3.11 -m src.cli settings set ollama.model mistral:7b
+python3.11 -m src.cli settings set ollama.conversation_model qwen2.5:3b
+```
 
 ## Configuration
 
-The conversation system is configured from the **Settings** page (Conversation
-section) or the `settings` CLI. Every value below is stored in the database, not
-in a config file:
+From the **Settings** page (Conversation section) or the `settings` CLI. Every
+value is stored in the database, not a config file:
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `conversation.enabled` | true | Master toggle for chat |
+| `conversation.max_history_messages` | 50 | Messages kept in context |
+| `conversation.memory_extraction_enabled` | true | Auto-extract preferences |
+| `conversation.profile_regeneration_interval` | 24 | Hours, 0 to disable |
+| `conversation.llm.temperature` | 0.7 | Response creativity, 0.0 to 2.0 |
+| `conversation.llm.max_tokens` | 2000 | Maximum response length |
+| `conversation.llm.context_window_size` | 0 | Ollama's `num_ctx`, 0 uses the model's default |
+| `conversation.context.max_relevant_items` | 10 | Items pulled in by semantic search |
+| `conversation.context.max_unconsumed_items` | 20 | Backlog items in context |
+| `conversation.context.include_algorithmic_recs` | true | Add ranked recommendations |
+| `conversation.context.compact_mode` | false | Enable for 3B models |
 
 ```bash
-python3.11 -m src.cli settings set conversation.enabled true                      # Master toggle for chat
-python3.11 -m src.cli settings set conversation.max_history_messages 50           # Messages kept in context
-python3.11 -m src.cli settings set conversation.memory_extraction_enabled true    # Auto-extract preferences
-python3.11 -m src.cli settings set conversation.profile_regeneration_interval 24  # Hours (0 to disable)
-
-python3.11 -m src.cli settings set conversation.llm.temperature 0.7               # Response creativity (0.0-2.0)
-python3.11 -m src.cli settings set conversation.llm.max_tokens 2000               # Maximum response length
-python3.11 -m src.cli settings set conversation.llm.context_window_size 4096      # 0 = use the model's default
-
-python3.11 -m src.cli settings set conversation.context.max_relevant_items 10     # Items via semantic search
-python3.11 -m src.cli settings set conversation.context.max_unconsumed_items 20   # Backlog items in context
-python3.11 -m src.cli settings set conversation.context.include_algorithmic_recs true
-python3.11 -m src.cli settings set conversation.context.compact_mode false        # Enable for 3B models
+python3.11 -m src.cli settings set conversation.llm.temperature 0.7
+python3.11 -m src.cli settings list --section conversation   # current values
 ```
 
-Run `settings list --section conversation` to see the current values.
+### Compact mode (small models)
 
-### Compact Mode (Small Models)
-
-If you're running a 3B parameter model (e.g., `qwen2.5:3b`), enable compact mode to reduce prompt size by 60-70%:
+On a 3B model such as `qwen2.5:3b`, compact mode cuts prompt size by 60-70%:
 
 ```bash
 python3.11 -m src.cli settings set ollama.conversation_model qwen2.5:3b
@@ -51,187 +51,116 @@ python3.11 -m src.cli settings set conversation.llm.context_window_size 4096
 python3.11 -m src.cli settings set conversation.context.compact_mode true
 ```
 
-Note: the Ollama sidecar pulls only the models named in your compose
-environment, and it cannot see these settings. If you point
-`ollama.conversation_model` at a model other than `ollama.model`, set
-`OLLAMA_CONVERSATION_MODEL` to match and recreate the sidecar — left unset, it
-reuses `OLLAMA_MODEL`, which mirrors the app's own fallback. See
-[docs/DOCKER.md](DOCKER.md).
+It swaps in a condensed system prompt with examples instead of detailed rules,
+drops context to 5 completed and 5 backlog items, detects simple intents before
+the LLM runs (so "I finished Book X" skips it entirely), and picks a single
+recommendation rather than a list.
 
-Compact mode uses:
-- A condensed system prompt with examples instead of detailed rules
-- Fewer context items (5 completed, 5 backlog vs 10/20)
-- Pre-LLM intent detection for simple actions (skips the LLM entirely for things like "I finished Book X")
-- Single recommendation picks instead of full lists
+The Ollama sidecar pulls only the models named in your compose environment and
+cannot see these settings. If `ollama.conversation_model` differs from
+`ollama.model`, set `OLLAMA_CONVERSATION_MODEL` to match and recreate the
+sidecar. Left unset it reuses `OLLAMA_MODEL`, mirroring the app's own fallback.
+See [DOCKER.md](DOCKER.md).
 
-## Using the Chat
+## Using the chat
 
-Chat is available through both the **web interface** and the **CLI**. In the web UI, navigate to the Chat tab. From the command line, use the `chat` command group (see below).
+The web UI's **Chat** tab, or the `chat` CLI group below. What you can say:
 
-### What You Can Do
+| Intent | Example |
+|--------|---------|
+| Ask for a recommendation | "What should I read next?", "I'm in the mood for a short sci-fi book" |
+| Mark something completed | "I just read Project Hail Mary, 5 out of 5" |
+| Date a completion | "I finished Dune on 12 March" |
+| Rate or re-rate | "Rate Dune 4 out of 5", then "Actually, make that a 3" |
+| State a preference | "I don't enjoy first-person shooters" |
+| Search your library | "Do I have any Dragon Age games?" |
 
-**Ask for recommendations:**
-- "What should I read next?"
-- "Recommend a video game similar to Baldur's Gate 3"
-- "I'm in the mood for a short sci-fi book"
+A rating you state **replaces** the one on record, the same way the edit modal
+and `library edit` do.
 
-**Mark items as completed:**
-- "I finished watching Fallout Season 2"
-- "I just read Project Hail Mary, 5 out of 5"
-- "Completed The Witcher 3"
-- "I finished Dune on 12 March" — chat is the only place you can say *when*
+Chat is the only surface that can put a completion date on an item. The date you
+name is written exactly as given, **including one earlier than the date already
+stored**, which is how you fix a completion an import dated wrongly. It has to
+resolve to a real calendar day, and a completion that does not is refused and
+reported rather than stored as a guess. Everywhere else the date is decided for
+you, see [ARCHITECTURE.md](../ARCHITECTURE.md#user-owned-fields).
 
-Chat is the only surface that can put a completion date on an item. Name a date
-and it is written exactly as you gave it, *including* one earlier than the date
-already stored. That is how you fix a completion an import dated wrongly: "I
-actually finished that in January". The date has to resolve to a real calendar
-day; if what the assistant works out is not one, the completion is refused and
-the problem reported rather than stored as a guess.
-
-Everywhere else the date is decided for you, and the two kinds of surface do it
-differently:
-
-- The `complete` command and `POST /api/complete` always date a completion:
-  today's date if the item has none, and the stored date is kept if it has one.
-- The Library page, the Recommendations page and `library edit` are edit
-  surfaces, so they date an item only when the edit is what *moves* it into
-  completed and it has no date yet. An item that was already completed and
-  undated stays undated — that is deliberate, so that fixing the genres on a
-  years-old import cannot record it as finished today.
-
-**Rate or update items:**
-- "Rate Dune 4 out of 5"
-- "I'd give Succession a 5"
-- "Actually, make that a 3" — a new rating **replaces** the one on record
-
-Re-rating something you have already rated works. It is an explicit thing you
-said, so it overwrites, the same way the edit modal and `library edit` do.
-Previously chat routed a rating through the fill-only sync door, which left an
-existing rating in place and reported the change anyway.
-
-**State preferences:**
-- "I love steampunk settings"
-- "I don't enjoy first-person shooters"
-- "I prefer shorter books lately"
-
-**Search your library:**
-- "Do I have any Dragon Age games?"
-- "What Sanderson books do I own?"
-
-### How It Works
-
-1. You send a message
-2. The system assembles context from your library, memories, and preferences
-3. Your message and context are sent to the local LLM
-4. The LLM can call tools (mark completed, save memory, search, etc.)
-5. The response streams back to you in real time
-
-When the LLM updates your library (marking something completed, changing a rating), those changes are immediately reflected in your recommendations.
+The system assembles context from your library, memories and preferences, sends
+it to the local LLM with your message, lets the LLM call tools (mark completed,
+save memory, search) and streams the reply back. A library change it makes shows
+up in your recommendations immediately.
 
 ## Memories
 
-Memories are persistent preference signals that carry across conversations. They come in two forms:
+Memories are preference signals that carry across conversations. **User-stated**
+ones, things you tell the chat, carry full confidence. **Inferred** ones, pulled
+from your history, score lower.
 
-- **User-stated** — Things you explicitly tell the chat ("I love sci-fi", "avoid horror"). These have full confidence.
-- **Inferred** — Preferences the system extracts from your conversation history. These have lower confidence scores.
+View, add, edit and delete them from the **Memories** panel in the web chat, or
+the `memory` CLI below. They shape the recommendations chat gives you, so
+deleting a wrong one ("dislikes psychological thrillers") improves them.
 
-### Managing Memories
+With `conversation.memory_extraction_enabled` on, a secondary LLM pass after a
+conversation saves memories by itself. Say "I've been really into strategy games
+lately" and it may record that.
 
-In the web UI, the chat interface shows a **Memories** panel. You can also manage memories via the `memory` CLI commands (see [CLI Commands](#cli-commands) below). Both interfaces let you:
-- View all active memories
-- Add new memories manually
-- Edit existing memories
-- Delete memories that are no longer accurate
+## User profiles
 
-Memories directly influence the recommendations the chat gives you. If the system has an incorrect memory (e.g., "dislikes psychological thrillers" when you actually enjoy them), deleting or correcting that memory will improve future recommendations.
+The profile summarises your completed and rated items into the LLM's context. It
+captures:
 
-### Automatic Memory Extraction
+- **Genre affinities**, genres you rate highly, needing 2 or more rated items each
+- **Theme preferences**, keywords from items you rated 4 or better
+- **Anti-preferences**, genres where your average rating is low
+- **Cross-media patterns**, "loves sci-fi in books but prefers fantasy in games"
 
-When `memory_extraction_enabled: true`, the system runs a secondary LLM pass after conversations to extract preferences. For example, if you say "I've been really into strategy games lately," the system may save a memory noting your current interest in strategy games.
+It regenerates on `conversation.profile_regeneration_interval`, every 24 hours by
+default. Rebuild it now from the web chat or with `profile regenerate`. It is
+derived from your data, so it can mischaracterise a genre you have barely rated.
+More ratings make it more accurate.
 
-## User Profiles
-
-The profile system analyzes your completed and rated items to build a preference summary. This summary is included in the LLM's context so it understands your tastes.
-
-**What the profile captures:**
-- **Genre affinities** — Genres you rate highly (requires 2+ rated items per genre)
-- **Theme preferences** — Keywords from your highly-rated items (4+ stars)
-- **Anti-preferences** — Genres where your average rating is low
-- **Cross-media patterns** — e.g., "Loves sci-fi in books but prefers fantasy in games"
-
-**Profile regeneration** happens automatically on a configurable interval (default: every 24 hours). You can also manually regenerate your profile from the web UI if you've added a lot of new ratings and want the profile to update immediately.
-
-The profile is not always perfect — it's derived from your data and may occasionally mischaracterize your preferences (e.g., reporting you dislike a genre when you actually just haven't rated enough items in it). As you rate more content, the profile becomes more accurate.
-
-## CLI Commands
-
-The `chat` and `memory` CLI command groups provide terminal-based alternatives to the web UI.
-
-### Chat Commands
+## CLI commands
 
 ```bash
-# Start an interactive REPL session
-python3.11 -m src.cli chat start
-
-# Filter to a specific content type
-python3.11 -m src.cli chat start --type book
-
-# Send a single message without entering the REPL
+python3.11 -m src.cli chat start                   # interactive REPL
+python3.11 -m src.cli chat start --type book       # filter to a content type
 python3.11 -m src.cli chat send --message "Recommend a sci-fi book"
-
-# View recent conversation history
 python3.11 -m src.cli chat history --limit 10
-
-# Clear conversation history
-python3.11 -m src.cli chat reset
+python3.11 -m src.cli chat reset                   # clear history
 ```
 
-### Memory Commands
-
 ```bash
-# List all memories
 python3.11 -m src.cli memory list
-
-# Add a memory manually
 python3.11 -m src.cli memory add --text "I love hard sci-fi"
-
-# Edit a memory's text and/or active state (matches web API PUT /api/memories/{id})
-python3.11 -m src.cli memory edit --id 3 --text "I love hard sci-fi and space opera"
-python3.11 -m src.cli memory edit --id 3 --inactive
-python3.11 -m src.cli memory edit --id 3 --text "..." --inactive
-
-# Flip a memory's active state (convenience shortcut)
-python3.11 -m src.cli memory toggle --id 3
-
-# Delete a memory
+python3.11 -m src.cli memory edit --id 3 --text "..." --inactive  # text and state together
+python3.11 -m src.cli memory toggle --id 3                        # flip active/inactive
 python3.11 -m src.cli memory delete --id 3
 ```
+
+`memory edit` matches `PUT /api/memories/{id}`, and takes `--text`, `--inactive`
+or both.
 
 ## Troubleshooting
 
 ### Chat returns "LLM not configured"
 
-Ensure all of these are set:
-- `features.ai_enabled: true`
-- `conversation.enabled: true`
-- Ollama is running and accessible at the configured `ollama.base_url`
-- At least one model is available (`ollama.model` or `ollama.conversation_model`)
+Check all of these: `features.ai_enabled` true, `conversation.enabled` true,
+Ollama reachable at `ollama.base_url`, and at least one model available
+(`ollama.model` or `ollama.conversation_model`).
 
 ### Chat is slow
 
-- You might be CPU bound as models rely on GPU memory to be effective
-- Use a smaller model for chat: set `ollama.conversation_model` to a faster model (e.g., `qwen2.5:3b`)
-- Enable `compact_mode` to reduce prompt size
-- Set `context_window_size` to limit context for small models
-- Reduce `max_relevant_items` and `max_unconsumed_items` to minimize context assembly time
+Models want GPU memory, so a CPU-bound host will crawl. Point
+`ollama.conversation_model` at something smaller, turn on `compact_mode`, set
+`context_window_size`, and lower `max_relevant_items` and
+`max_unconsumed_items`.
 
-### Recommendations in chat don't match web recommendations
+### Chat recommendations differ from the web ones
 
-Chat recommendations include additional context from your conversation history and memories, so they may differ from the pure algorithmic recommendations on the Recommendations page. This is expected — the chat has more context about your current mood and recent preferences.
+Expected. Chat adds your conversation history and memories on top of the purely
+algorithmic recommendations.
 
 ### Profile seems inaccurate
 
-The profile is data-driven. If it says you dislike a genre you actually enjoy, it may be because:
-- You haven't rated enough items in that genre (minimum 2 items required)
-- Your ratings in that genre happen to be lower than average
-- Regenerate the profile after adding more ratings to improve accuracy
+A genre needs 2 rated items to register at all, and your ratings in it may
+genuinely sit below your average. Regenerate after rating more.

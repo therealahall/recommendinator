@@ -1,269 +1,174 @@
 # Enrichment Setup Guide
 
-**Note:** Enrichment is **disabled by default**. You must explicitly enable it and configure providers before enrichment will run. Do this immediately after your first data import.
+Enrichment is **disabled by default**. Enable it and configure providers
+immediately after your first import.
 
-Enrichment settings are part of the global/system config: they live in the database and are managed from the web **Settings** page or the `settings` CLI group, not `config.yaml`. Provider API keys are stored encrypted in the `credentials` table (via `settings set-secret`), never in plaintext. The `settings set` / `settings set-secret` commands below are equivalent to the corresponding controls on the Settings page.
+Enrichment settings live in the database and are managed from the web
+**Settings** page or the `settings` CLI, not `config.yaml`. Provider API keys
+are stored encrypted in the `credentials` table via `settings set-secret`, never
+in plaintext.
 
-## Why Enrichment is Critical
+## Why it matters
 
-Enrichment is **paramount** to making sure that the Recommendinator's recommendations are of any value. While some ingestion sources provide rich metadata out of the gate (e.g., Sonarr and Radarr include genres), others are extremely limited or even non-existent. A Goodreads CSV export gives you titles and authors but no genres, tags, or descriptions. Steam provides game names and playtime but limited categorization.
+Enrichment fills in the genres, tags and descriptions the scoring pipeline runs
+on. A few sources arrive rich, Sonarr and Radarr carry genres, but most do not:
+a Goodreads CSV gives you titles and authors, Steam gives names and playtime.
+Genre matching, tag overlap, series affinity and creator matching all need that
+metadata, so a library half without it produces poor or seemingly random
+recommendations.
 
-Without enrichment, the recommendation engine is working with incomplete data. The scorers that drive recommendations — genre matching, tag overlap, series affinity, creator matching — all depend on having rich metadata for every item in your library. If half your library has no genres or tags, those scorers can't do their job, and you'll get poor or seemingly random recommendations.
+## Providers
 
-**Bottom line:** If you skip enrichment, the Recommendinator is flying blind. Set up your enrichment providers before expecting useful recommendations.
+Enable all three for full coverage.
 
-## How Enrichment Works
+| Provider | Content | API key | Rate limit |
+|----------|---------|---------|------------|
+| OpenLibrary | Books | None | 1 request/second |
+| TMDB | Movies, TV shows | Free, v3 auth | 40 requests/second |
+| RAWG | Video games | Free | 5 requests/second |
 
-The enrichment system compares your library items against known metadata databases — TMDB for movies and TV shows, RAWG for video games, and OpenLibrary for books. It uses a **gap-filling strategy**: it only adds metadata that's missing, never overwriting data you already have from your ingestion sources.
+**OpenLibrary** matches by ISBN when your source supplies one, otherwise by
+title and author search. It fills genres, description, page count, publisher and
+publish year. No account needed.
 
-The process:
-
-1. **Sync your data** from ingestion sources (Goodreads, Steam, Sonarr, etc.)
-2. **Run enrichment** — it processes unenriched items in batches, querying the appropriate provider for each content type
-3. **Metadata is merged** — genres, tags, descriptions, and additional metadata (runtime, page count, developer, series position, etc.) are filled in
-
-You can run enrichment from the CLI or the web interface, and optionally enable auto-enrichment to run automatically after every sync.
-
-## Provider Setup
-
-There are three enrichment providers, one for each content type category. **All three should be enabled** to get full coverage across your library.
-
-### OpenLibrary (Books)
-
-**Content types:** Books
-**API key required:** No
-**Rate limit:** 1 request per second (polite limit)
-**Cost:** Free
-
-OpenLibrary is the easiest provider to set up — no API key needed. It matches books by ISBN (if available from your ingestion source) or by title and author search. It provides:
-
-- Genres (filtered from library subject headings)
-- Descriptions
-- Page count
-- Publisher
-- Publish year
-
-**Setup:**
+**TMDB** fills genres, tags from keywords, the overview, runtime for movies or
+season and episode counts for TV, ratings, release dates, studio or network, up
+to three directors or creators, and collection info with series position. Create
+a free account at [themoviedb.org](https://www.themoviedb.org/), go to
+**Settings > API**, request a Developer key, and copy the **API Key (v3 auth)**.
+Two optional fields:
 
 ```bash
-python3.11 -m src.cli settings set enrichment.enabled true
-python3.11 -m src.cli settings set enrichment.providers.openlibrary.enabled true
-```
-
-That's it. No API key, no account creation.
-
-### TMDB — The Movie Database (Movies & TV Shows)
-
-**Content types:** Movies, TV Shows
-**API key required:** Yes (free)
-**Rate limit:** 40 requests per second
-**Cost:** Free
-
-TMDB provides comprehensive metadata for movies and TV shows. It's the backbone of enrichment for visual media. It provides:
-
-- Genres
-- Tags (derived from TMDB keywords)
-- Description (overview)
-- Runtime (movies) / season and episode counts (TV)
-- Ratings
-- Release dates
-- Studio/network information
-- Director (movies, from credits; up to 3 directors comma-joined)
-- Creator credits (TV shows; up to 3 creators comma-joined)
-- Collection/franchise info with series position ordering (e.g., knowing that *The Dark Knight* is the 2nd film in the Dark Knight trilogy)
-
-**Getting your API key:**
-
-1. Go to [themoviedb.org](https://www.themoviedb.org/) and create a free account
-2. Navigate to **Settings** > **API** (or go directly to [themoviedb.org/settings/api](https://www.themoviedb.org/settings/api))
-3. Request an API key — select "Developer" for the use type
-4. Fill out the short application form (personal/hobby use is fine)
-5. Copy the **API Key (v3 auth)** value
-
-**Setup:**
-
-```bash
-python3.11 -m src.cli settings set enrichment.enabled true
-python3.11 -m src.cli settings set enrichment.providers.tmdb.enabled true
-python3.11 -m src.cli settings set-secret enrichment.providers.tmdb.api_key
-```
-
-`set-secret` prompts for the key with hidden input (or reads
-`RECOMMENDINATOR_SECRET_VALUE`) and stores it encrypted.
-
-**Optional settings:** the TMDB provider honors two tuning fields, both on the
-Settings page under Enrichment (or via the `settings` CLI):
-
-```bash
-# Language for results — ISO 639-1, optionally with a region (default: en-US)
+# ISO 639-1, optionally with a region (default en-US)
 python3.11 -m src.cli settings set enrichment.providers.tmdb.language de-DE
-
-# Fetch keywords as tags (default: true, costs 1 extra API call per item)
+# keywords as tags, default true, costs one extra call per item
 python3.11 -m src.cli settings set enrichment.providers.tmdb.include_keywords false
 ```
 
-### RAWG — Video Game Database (Video Games)
+**RAWG** fills genres, up to 20 tags, description, developer and publisher,
+platforms, RAWG and Metacritic scores, ESRB rating, playtime estimates, and
+franchise info ordered by release. It strips edition suffixes, trademark symbols
+and DLC indicators from a title before searching, so it copes with messy names.
+Get a key from [rawg.io/apidocs](https://rawg.io/apidocs).
 
-**Content types:** Video Games
-**API key required:** Yes (free)
-**Rate limit:** 5 requests per second
-**Cost:** Free
-
-RAWG provides detailed video game metadata. It's particularly good at matching games even with messy titles (edition suffixes, trademark symbols, and DLC indicators are automatically cleaned before searching). It provides:
-
-- Genres
-- Tags (up to 20 per game)
-- Description
-- Developer and publisher
-- Platforms
-- RAWG rating and Metacritic score
-- ESRB rating
-- Playtime estimates
-- Franchise/series info with release-order positioning
-
-**Getting your API key:**
-
-1. Go to [rawg.io/apidocs](https://rawg.io/apidocs)
-2. Click **Get API Key**
-3. Create a free account
-4. Your API key will be displayed on your dashboard
-
-**Setup:**
+## Full setup
 
 ```bash
 python3.11 -m src.cli settings set enrichment.enabled true
-python3.11 -m src.cli settings set enrichment.providers.rawg.enabled true
-python3.11 -m src.cli settings set-secret enrichment.providers.rawg.api_key
-```
+python3.11 -m src.cli settings set enrichment.auto_enrich_on_sync true   # recommended
+python3.11 -m src.cli settings set enrichment.batch_size 50              # items per batch
 
-## Full Configuration Example
-
-Here's a complete enrichment configuration with all three providers enabled:
-
-```bash
-python3.11 -m src.cli settings set enrichment.enabled true
-python3.11 -m src.cli settings set enrichment.auto_enrich_on_sync true   # Recommended
-python3.11 -m src.cli settings set enrichment.batch_size 50              # Items per batch
+python3.11 -m src.cli settings set enrichment.providers.openlibrary.enabled true
 
 python3.11 -m src.cli settings set enrichment.providers.tmdb.enabled true
 python3.11 -m src.cli settings set-secret enrichment.providers.tmdb.api_key
 
-python3.11 -m src.cli settings set enrichment.providers.openlibrary.enabled true
-
 python3.11 -m src.cli settings set enrichment.providers.rawg.enabled true
 python3.11 -m src.cli settings set-secret enrichment.providers.rawg.api_key
 ```
 
-The same values can be set from the web **Settings** page (Enrichment section),
-including the masked API-key controls. `settings list --section enrichment`
-shows the current state.
+`set-secret` prompts with hidden input, or reads `RECOMMENDINATOR_SECRET_VALUE`,
+and stores the value encrypted. The same controls are on the **Settings** page
+(Enrichment section) with masked key fields, and
+`settings list --section enrichment` shows the current state.
 
-**Tip:** Set up enrichment *before* your first data import and enable `auto_enrich_on_sync`. That way, every time you sync a data source, enrichment runs automatically — no extra step needed.
+Set this up *before* your first import and leave `auto_enrich_on_sync` on. Then
+every sync enriches straight afterwards.
 
-## Running Enrichment
-
-### From the CLI
+## Running enrichment
 
 ```bash
-# Enrich all unenriched items
 python3.11 -m src.cli enrichment start
-
-# Enrich only a specific content type
-python3.11 -m src.cli enrichment start --type movie
-python3.11 -m src.cli enrichment start --type tv_show
-python3.11 -m src.cli enrichment start --type book
-python3.11 -m src.cli enrichment start --type video_game
-
-# Check enrichment progress
+python3.11 -m src.cli enrichment start --type movie   # or tv_show, book, video_game
 python3.11 -m src.cli enrichment status
 ```
 
-### From the Web Interface
+The **Data** page's **Metadata Enrichment** section shows coverage broken down
+by provider and starts a run. To find items still missing metadata, filter the
+**Library** page instead.
 
-On the **Data** page, the **Metadata Enrichment** section shows your current enrichment coverage with a breakdown by provider. Click the enrichment button to start a new enrichment run.
+## Manual enrichment editing
 
-The **Data** page is where you run and monitor enrichment jobs. To see and filter your library by enrichment state — for example, to find the items that are still missing metadata — use the **Library** page instead (see Manual Enrichment Editing below).
+Some items never match a provider, being niche, very new or oddly titled. Fill
+those in yourself. A manual edit marks the item enriched, so it leaves the
+unenriched set and is never queued automatically again.
 
-### Auto-Enrichment
+**Finding them.** An item counts as enriched only when a provider matched it
+cleanly: a real provider, no error, not marked "not found", and not pending
+re-enrichment. Everything else is unenriched.
 
-Run `python3.11 -m src.cli settings set enrichment.auto_enrich_on_sync true` (or toggle it on the Settings page) to automatically queue enrichment after every data sync. This is convenient if you want a hands-off workflow — sync your sources and enrichment runs immediately after.
+- Web: the **Library** page's **Enrichment** filter, set to **Not enriched** or
+  **Enriched**. Unenriched items also carry a "Not enriched" badge.
+- CLI: `library list --enrichment not_enriched`. The table has an **Enriched**
+  column, and `library show --id <id>` prints the state alongside genres, tags
+  and description.
 
-## Manual Enrichment Editing
-
-Automatic enrichment covers most of your library, but some items never match a provider database (niche, very new, or oddly titled content). For those, you can fill in the metadata yourself. A manual edit marks the item enriched, so it leaves the unenriched set and is never re-queued for automatic enrichment.
-
-### Finding unenriched items
-
-An item counts as enriched only when a provider matched it cleanly (a real provider, no error, not marked "not found", and not pending re-enrichment). Everything else is unenriched.
-
-- **Web:** on the **Library** page, use the **Enrichment** filter in the toolbar to show only **Not enriched** items (or only **Enriched** ones). Unenriched items also carry a "Not enriched" badge on their library card.
-- **CLI:** `python3.11 -m src.cli library list --enrichment not_enriched` lists the items still missing metadata. The `library list` table includes an **Enriched** column, and `library show --id <id>` displays the item's enriched state alongside its genres, tags, and description.
-
-### Editing metadata in the web edit modal
-
-On the **Library** page, open an item's edit modal. Under **Enrichment metadata** you can edit:
-
-- **Genres** — add or remove genre chips
-- **Tags** — add or remove tag chips
-- **Description** — free text
-
-Save the modal to write the values. If the item was unenriched, saving these fields marks it enriched and clears its "Not enriched" badge.
-
-### Editing metadata from the CLI
-
-`library edit` accepts the same three fields:
+**Editing.** The web edit modal's **Enrichment metadata** section takes genres,
+tags and a description. `library edit` takes the same three:
 
 ```bash
 python3.11 -m src.cli library edit --id 42 \
-  --genre Action --genre RPG \
-  --tag co-op --tag open-world \
-  --description "A grand adventure."
+  --genre Action --genre RPG --tag co-op --description "A grand adventure."
 ```
 
-Repeated `--genre` and `--tag` values replace the existing lists rather than appending. `--description` replaces the existing description.
+Repeated `--genre` and `--tag` replace the existing lists rather than appending,
+and `--description` replaces the description.
 
-### How manual edits interact with automatic enrichment
-
-Manual genres, tags, and descriptions **overwrite** the existing detail values (unlike the gap-filling merge that sync and automatic enrichment use). Providing any one of them marks the item enriched with the provider `"manual"`. That has two effects:
-
-- The item drops out of the `not_enriched` filter (and stops showing the "Not enriched" badge).
-- Automatic enrichment never re-queues the item, so your manual values are not overwritten on a later enrichment run.
+Manual values **overwrite** the stored detail, unlike the gap-filling merge that
+sync and automatic enrichment use. Supplying any of the three marks the item
+enriched with the provider `"manual"`, which drops it from the `not_enriched`
+filter and stops automatic enrichment ever re-queuing it, so your values survive
+later runs.
 
 ## Troubleshooting
 
 ### "No providers for [content type]"
 
-This means no enrichment provider is enabled for that content type. Check your settings with `python3.11 -m src.cli settings list --section enrichment`:
-
-- Books need `enrichment.providers.openlibrary.enabled` on
-- Movies and TV shows need `enrichment.providers.tmdb.enabled` on (with a stored API key)
-- Video games need `enrichment.providers.rawg.enabled` on (with a stored API key)
+No provider is enabled for that type. Check
+`settings list --section enrichment`: books need `openlibrary.enabled`, movies
+and TV shows need `tmdb.enabled` plus a stored key, video games need
+`rawg.enabled` plus a stored key.
 
 ### Items showing as "not found"
 
-Some items may not be found in the provider databases. This is normal — niche or very new content may not have entries yet. A not-found item is a settled answer: the provider replied and had nothing, so ordinary runs skip it from then on. You can retry not-found items later (the data may have been added upstream) with `python3.11 -m src.cli enrichment start --retry-not-found`.
+A settled answer: the provider replied and had nothing, which is normal for
+niche or very new content. Ordinary runs skip the item from then on. Retry later,
+once the data may have been added upstream, with
+`python3.11 -m src.cli enrichment start --retry-not-found`.
 
 ### Items showing as "failed"
 
-"Failed" is different from "not found". It means the provider never answered — it timed out, was unreachable, was throttling you, or returned a server error — so nothing is known about the item yet. Failed items stay in the queue and the next enrichment run picks them up automatically. No flag is needed, and there is nothing to do beyond running enrichment again once the provider is healthy.
+Different from "not found". The provider never answered, having timed out, been
+unreachable, throttled you or returned a server error, so nothing is known about
+the item yet. Failed items stay queued and the next run picks them up. There is
+nothing to do but run enrichment again once the provider is healthy.
+`enrichment status` counts each item once, so a failed item reports under
+**Failed** rather than **Pending** even though it is queued.
 
-`enrichment status` counts each item once, so a failed item is reported under **Failed** rather than **Pending** even though it is queued.
+**Keeping a failure queued is new.** Before, *any* provider error settled the
+item as "not found", so a library enriched under an older version can hold items
+that were never really missing, only skipped because a provider was down or
+throttling at the time. Ordinary runs keep skipping them, because "not found" is
+settled. Run `enrichment start --retry-not-found` once after upgrading to sweep
+them back in.
 
-**This only applies going forward.** Keeping a failure in the queue is new in this release; before it, *any* provider error settled the item as "not found". So a library enriched under an older version can hold items that were never really missing — they were skipped because a provider was down or throttling at the time — and ordinary runs will keep skipping them, because "not found" is a settled answer. Run `python3.11 -m src.cli enrichment start --retry-not-found` once after upgrading to sweep them back in.
-
-One case does not retry: if the provider rejected the request itself — an invalid, revoked or expired API key returning 401 or 403, most often — the same request would be rejected on every later run, so the item settles as "not found" instead of re-asking the provider for your whole library on every run. Fix the key (see "API key errors" below), then re-run with `--retry-not-found`.
+One case never retries: the provider rejecting the request itself, most often an
+invalid, revoked or expired API key returning 401 or 403. That request would be
+rejected identically every run, so the item settles as "not found" rather than
+re-asking the provider for your whole library each time. Fix the key, then run
+`--retry-not-found`.
 
 ### API key errors
 
-If you see authentication errors:
-
-- **TMDB:** Verify your key at [themoviedb.org/settings/api](https://www.themoviedb.org/settings/api). Make sure you're using the v3 API key, not the v4 access token.
-- **RAWG:** Verify your key at [rawg.io/apidocs](https://rawg.io/apidocs). Free tier keys work fine.
-
-### Rate limiting
-
-The enrichment system has built-in rate limiting per provider to stay within API limits. If you have a very large library (thousands of items), the initial enrichment run may take some time — this is normal. Subsequent runs process new unenriched items plus anything a previous run failed on (see "Items showing as failed" above); items that were matched, or that settled as not found, are skipped.
+- **TMDB**: verify at
+  [themoviedb.org/settings/api](https://www.themoviedb.org/settings/api). Use the
+  v3 API key, not the v4 access token.
+- **RAWG**: verify at [rawg.io/apidocs](https://rawg.io/apidocs). Free tier keys
+  work fine.
 
 ### Enrichment seems slow
 
-OpenLibrary is rate-limited to 1 request per second to be a polite API consumer. If you have hundreds of books, this step will naturally take a few minutes. TMDB (40 req/s) and RAWG (5 req/s) are significantly faster.
+OpenLibrary is held to 1 request per second to stay a polite consumer, so
+hundreds of books take a few minutes. TMDB and RAWG are much faster. A run
+processes new unenriched items plus anything a previous run failed on, and skips
+items already matched or settled as not found.
