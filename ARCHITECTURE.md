@@ -2,265 +2,387 @@
 
 ## Overview
 
-Recommendinator ingests data from multiple sources and generates personalized recommendations using a smart scoring pipeline. **AI is entirely optional** — the system works fully without it. When enabled, a local LLM (via Ollama) provides semantic similarity, natural language explanations, and a conversational chat interface.
-
-The architecture emphasizes modularity, testability, and extensibility.
+Recommendinator ingests from multiple sources and ranks recommendations through a
+scoring pipeline. AI is optional. When enabled, a local LLM via Ollama adds
+semantic similarity, natural language explanations, and chat.
 
 ## System Components
 
-### 1. Data Ingestion Layer (`src/ingestion/`)
+### 1. Data Ingestion (`src/ingestion/`)
 
-Responsible for parsing and normalizing data from various sources.
+Parses and normalizes data from external sources.
 
-**Current Sources:**
-- Goodreads CSV exports (books)
-- Goodreads public shelves via RSS (books)
-- The StoryGraph CSV exports (books)
-- Calibre-Web OPDS catalog (books)
-- Steam Web API (video games)
-- GOG OAuth API (video games)
-- Epic Games via Legendary (video games)
-- Sonarr API (TV shows)
-- Radarr API (movies)
-- Trakt OAuth device-code API (TV shows and movies — watched history, ratings, watchlist)
-- ROM Library — local filesystem scanner with curated ROM extensions, built-in No-Intro/Redump/TOSEC title cleaner, and multi-disc collapse
-- Generic CSV, JSON, Markdown (any content type)
+| Sources | Content |
+|---------|---------|
+| Goodreads CSV, Goodreads RSS shelves, The StoryGraph CSV, Calibre-Web OPDS | Books |
+| Steam Web API, GOG OAuth, Epic via Legendary, ROM library scanner | Video games |
+| Sonarr | TV shows |
+| Radarr | Movies |
+| Trakt device-code OAuth | TV shows and movies |
+| Generic CSV, JSON, Markdown | Any |
 
-**Design:**
-- Plugin-based architecture (`SourcePlugin` ABC in `plugin_base.py`)
-- Auto-discovered from `src/ingestion/sources/` via `PluginRegistry`
-- **Named source instances**: Each entry under `inputs:` has a user-defined key name (e.g., `my_books`, `tv_shows`) with a `plugin:` field specifying the plugin type. Multiple instances of the same plugin are supported (e.g., two `json_import` sources with different files). The `resolve_inputs()` function in `src/web/sync_sources.py` is the central resolver that maps config entries to `(source_id, plugin, config)` tuples.
-- `ContentItem.source` reflects the user-defined key name, not the plugin name, enabling per-instance tracking
-- Each plugin handles config validation, fetching, and rating normalization
-- Shared sync executor (`execute_multi_source_sync`) used by both CLI and web
-- **Parallel multi-source sync**: `execute_multi_source_sync` accepts `max_workers` (configured via `sync.max_workers`, default 4; CLI override `--workers N`). Each enabled source runs on its own thread in a `concurrent.futures.ThreadPoolExecutor`; per-source results preserve input ordering. Plugin-internal rate limits (e.g. GOG's `rate_limit_seconds`) remain enforced per source so cross-source parallelism is safe.
-- Progress callbacks for long-running operations; the web `SyncManager` aggregates per-source progress into a `sources` map for UI rendering
-- Generic CSV/JSON importers support `ignored` field and `seasons_watched` as a list of specific season numbers
+- Plugins subclass `SourcePlugin` (`plugin_base.py`), auto-discovered from
+  `src/ingestion/sources/` by `PluginRegistry`. Each validates its own config,
+  fetches, and normalizes ratings.
+- Sources are **named instances**: a user-defined id plus a `plugin:` naming the
+  type, so one plugin can back several. `ContentItem.source` carries the id, not
+  the plugin name. `resolve_inputs()` (`src/web/sync_sources.py`) resolves
+  entries to `(source_id, plugin, config)`.
+- `execute_multi_source_sync` is shared by CLI and web. Each enabled source runs
+  on its own thread (`sync.max_workers`, default 4) and results keep input
+  order. Rate limits are per source, so cross-source parallelism is safe.
+- The web `SyncManager` aggregates progress callbacks into a `sources` map.
 
-### 2. Storage Layer (`src/storage/`)
+### 2. Storage (`src/storage/`)
 
-Manages persistent storage of processed data and embeddings.
+SQLite holds everything structured. ChromaDB holds vector embeddings and is
+initialized only when AI is enabled.
 
-**Components:**
-- **SQLite Database**: Primary store for all structured data — content items, users, preferences, enrichment status, conversation history, core memories
-- **ChromaDB** (optional): Vector embeddings for semantic search, only initialized when AI is enabled
+| Table | Holds |
+|-------|-------|
+| `users` | Per-user settings (JSON) |
+| `content_items` | Library items, scoped by `user_id` |
+| `book_details`, `movie_details`, `tv_show_details`, `video_game_details` | Per-type detail |
+| `credentials` | Encrypted OAuth tokens and API keys, per-source and global |
+| `source_configs` | Non-sensitive per-source config |
+| `settings` | Global config, dotted leaf key to JSON value, only what a user set |
+| `enrichment_status` | Enrichment tracking |
+| `core_memories`, `conversation_messages`, `preference_profiles` | Chat |
 
-**Schema:**
-- `users` table with per-user settings (JSON)
-- `content_items` table scoped by `user_id`
-- Type-specific detail tables (`book_details`, `movie_details`, `tv_show_details`, `video_game_details`)
-- `credentials` table for encrypted OAuth tokens and API keys — both per-source secrets and global provider secrets (e.g. `enrichment.providers.tmdb.api_key`), auto-migrated out of `config.yaml` on startup; see [Global configuration precedence](#global-configuration-precedence) below
-- `source_configs` table for non-sensitive per-source config that has been migrated from `config.yaml` via the web UI ("Migrate to DB" button); see [Source configuration precedence](#source-configuration-precedence) below
-- `settings` table for global/system config (dotted leaf key -> JSON value). It holds **only** the leaves a user explicitly set via the Settings page or `settings` CLI — nothing is seeded on boot; see [Global configuration precedence](#global-configuration-precedence) below
-- `enrichment_status` for tracking metadata enrichment
-- `core_memories`, `conversation_messages`, `preference_profiles` for chat system
+#### User-owned fields
 
-**User-owned fields:**
-`rating`, `review`, `status`, `date_completed` and `ignored` belong to the user. Every write a sync or a user action can trigger goes through one of four methods on `SQLiteDB`: one sync door and three explicit-user-action doors. The rules are **not** uniform across the five fields, so read the field you care about rather than a summary of the door.
+`rating`, `review`, `status`, `date_completed` and `ignored` belong to the user.
+Four methods on `SQLiteDB` write them.
 
-Duplicate consolidation is the other writer of all five, and it answers to the merge rules under **Cross-Source Deduplication** below rather than to any door's. It runs inside the sync and completion doors, whose shared upsert merges a duplicate it finds, and from two places outside them: `SQLiteDB.deduplicate_items`, public but with no production caller today, and the schema-migration merge, which is not a method on `SQLiteDB` at all. All three go through `merge_scalar_columns` (`src/storage/merge.py`).
+`save_content_item` is the sync door:
 
-- `SQLiteDB.save_content_item` is the ingestion/sync door, and each field it may touch has its own guarantee:
-  - `rating` and `review` are **fill-only** — written while the stored value is empty, never over one that is not, so a re-import cannot erase a rating or a review.
-  - `status` is **forward-only**, which is weaker than fill-only: a sync can still advance a status you moved backward (unread → consuming → completed), and `resolve_status_forward` (`src/storage/merge.py`) never resolves to an earlier one. There is one deliberate exception, and it sits *outside* that resolution: after the upsert, `_handle_tv_season_change` regresses a **completed TV show** to `currently_consuming` when the sync raises its total season count above the number of seasons the user has checked off. New seasons mean the show is no longer finished. It fires only for a show whose `seasons_watched` list exists (the season checklist has been used at least once) and skips ignored items, whose season count still updates while their status stands. So "a sync can never revert a completion" is true of every field-level rule and false of this one path.
-  - `date_completed` is **later-date-wins** — an incoming date is written only when it is later than the stored one.
-  - `ignored` counts **only a stated value**. A real `True` or `False` wins in both directions, which is what makes the documented export-edit-re-import round trip work, un-ignoring included; `None` means the source said nothing about the flag and the stored value stands. A missing column, a blank CSV cell and a JSON `null` all arrive as `None` (`parse_ignored_field` in `src/ingestion/sources/generic_csv/generic_csv.py`). The blank cell matters because `csv.DictReader` puts every header key into every row: a file that carries the column but leaves a row's cell empty says nothing about *that row*. **That rule protects a hand-maintained file, and nothing about this project's own exports.** `_item_to_export_dict` (`src/web/export.py`) writes a concrete `true`/`false` into `ignored` for **every** exported row — never blank, never null — so re-importing an export replaces the ignore list wholesale with the state as of the moment the export was taken, clearing every ignore added since. That is the price of the bulk un-ignore round trip, and it makes an export a snapshot rather than a patch. The decision is the door's, not the importer's: storage acts on the value it is handed. That leaves one honest limit for plugin authors — storage receives a boolean or nothing, so it cannot distinguish a file's explicit `false` from a defaulted `False`. `ignored=False` is a statement; `None` is silence. The first-party exporter is the deliberate in-tree exception: it always makes the statement, which is why [PLUGIN_DEVELOPMENT.md](docs/PLUGIN_DEVELOPMENT.md#best-practices) tells third-party plugins not to.
-- `SQLiteDB.complete_content_item` is the completion door, behind the `complete` CLI command, `POST /api/complete` and chat's `mark_completed`. It finds or creates the row and applies the user's own values in a single transaction, so no interruption can leave an item completed carrying the rating it had before. Completing is an explicit action, so a rating, review or completion date supplied here wins over what is stored — a date included, even one *earlier* than the stored date, which is how a user corrects a completion an import dated too late. `status` is written outright rather than resolved forward, because "I finished this" outranks the sync rule that would regress a TV show whose season count has grown. Only chat can name a date; the CLI command and the API endpoint accept none. A **blank review is not a supplied one**: `_write_completion` writes `review` only when it is non-blank, and both `POST /api/complete` and `complete --review` refuse a blank with an error rather than sending it. This door overwrites, so a stored `""` would read as a review the user wrote and would stop a later import from ever filling the field; the rule is repeated at the door so no surface can slip a blank past by accident.
-- `SQLiteDB.update_item_from_ui` is the edit door, used by the web edit modal, `library edit` and the chat tool executor. An edit here may overwrite those fields freely, and it writes *only* the fields the caller supplied — but the arguments say "not supplied" in **three** different ways, so read the one you are passing:
-  - `status` is required and always written.
-  - `rating` and `review` use the module's `UNSET` sentinel for "leave it alone", because they are nullable and an explicit `None` therefore has to mean "clear it". That distinction is what stops a status-only edit from nulling a rating it never mentioned, and it is why the web request model keys off `model_fields_set` rather than a `None` default. A blank review lands on the same branch as an explicit `None` and clears the column, so the only two things this door can leave in `review` are text the user wrote and NULL. No door stores a blank review, to three different ends: the sync door declines to fill from one, the completion door drops one, and this one clears.
-  - `seasons_watched`, `genres`, `tags` and `description` use `None` for "leave it alone", so for these four an explicit `null` is a no-op rather than a clear — `{"genres": null}` changes nothing. **The empty value is the clear:** `_write_manual_metadata` guards on `is not None`, so `[]` writes `"[]"` over the stored genres or tags and `""` blanks the description, and `seasons_watched=[]` empties the checklist *and* re-derives a TV show's status to `unread`. This is the routine path, not a corner case: the web edit dialog sends `genres` and `tags` on every save, so removing the last genre in the dialog clears the stored genres, and unchecking every season sends `[]`. Which clears are reachable therefore differs by surface. The dialog can clear genres, tags and seasons but not the description — it sends `null` for an emptied description box, so that takes `library edit --description ""` or a literal `""` in the request body. The CLI is the mirror image: `--description ""` clears, but `--genre` / `--tag` / `--seasons-watched` have no way to spell an empty list, so those three cannot be cleared from it. `PATCH /api/items/{id}` can clear all four.
+| Field | Rule |
+|-------|------|
+| `rating`, `review` | Fill-only, written only into an empty column, so a re-import cannot erase either |
+| `status` | Forward-only, through `resolve_status_forward` (`src/storage/merge.py`) |
+| `date_completed` | Later date wins |
+| `ignored` | Only a stated `True` or `False` wins, in either direction. `None` leaves the stored flag alone |
 
-  It stamps a completion date only on a genuine transition *into* `completed` on a row that has none; an item that was already completed keeps whatever date it had, including none, so an unrelated genre or tag edit cannot date a years-old import as finished today. A status moving away from `completed` leaves the stored date alone.
-- `SQLiteDB.set_item_ignored` is the third user-action path, behind the Library page's Ignore button, the Recommendations page's Ignore button (both `PATCH /api/items/{id}/ignore`) and `library ignore` / `library unignore`. It writes `ignored` and nothing else, in either direction.
+One exception to forward-only sits outside that resolution. After the upsert,
+`_handle_tv_season_change` regresses a completed TV show to
+`currently_consuming` when the sync raises its season count above the seasons the
+user checked off, because new seasons mean the show is not finished. It needs an
+existing `seasons_watched` list, and it skips ignored items.
 
-**Completion dates:** `date_completed` is the field no door replaces silently. A completion carrying no date fills an empty column with today and keeps a date the item already has — "I finished this" is not "I finished this today". Only a caller passing an explicit date overwrites one, and that date is written as given. The date is the host's **local calendar day**, not UTC, for imported dates (`local_date_from_iso_timestamp`) and in-app completions (`local_today`) alike, so an evening completion west of UTC is not dated tomorrow; a container inherits the zone from the `TZ` the operator sets (see [DOCKER.md](docs/DOCKER.md#environment-variables)). Dates already stored do not self-heal: the corrected local date is *earlier* than the stale UTC one, and the sync door is later-date-wins, so a re-sync will not repair history. That date is what the [variety ladder](docs/SCORING.md#variety-after-completion) uses to order completion events.
+A missing column, a blank CSV cell and a JSON `null` all reach storage as `None`
+(`parse_ignored_field`, `src/ingestion/sources/generic_csv/generic_csv.py`). That
+protects a hand-maintained file, not this project's exports.
+`_item_to_export_dict` (`src/web/export.py`) states `true` or `false` on every
+row, so re-importing an export replaces the ignore list wholesale with the state
+at export time. Storage cannot tell a stated `false` from a plugin's defaulted
+`False`, so a plugin states the flag only when its source does. See
+[PLUGIN_DEVELOPMENT.md](docs/PLUGIN_DEVELOPMENT.md#best-practices).
 
-**Source configuration precedence:**
-Each ingestion source can live in any of three states:
+The three user-action doors overwrite freely and write only what the caller
+supplied:
 
-1. **YAML only** (`config/config.yaml`, `inputs:` section). The bootstrap path: edit YAML, sync, and optionally click "Migrate to DB" later to make the entry editable from the UI.
-2. **YAML + DB** (post-migration). The DB row is authoritative; the YAML entry is ignored by `resolve_inputs` so subsequent edits in the UI are the only ones that take effect.
-3. **DB only**. Created directly via `+ Add source` in the web UI or `python3.11 -m src.cli source create <id> <plugin>`. Never touches `config.yaml`.
+- **`complete_content_item`** backs the `complete` CLI command,
+  `POST /api/complete` and chat's `mark_completed`. It finds or creates the row
+  and applies rating, review, status and date in one transaction. `status` is
+  written outright rather than resolved forward. Only chat can name a date, and a
+  named date is written as given even when it precedes the stored one.
+- **`update_item_from_ui`** backs the web edit modal, `library edit` and the chat
+  tool executor. "Not supplied" is spelled three ways. `status` is required.
+  `rating` and `review` use the `UNSET` sentinel, because `None` has to mean
+  clear. `seasons_watched`, `genres`, `tags` and `description` use `None`, so for
+  those the *empty* value is the clear: `[]` or `""`. `PATCH /api/items/{id}` can
+  clear all four. The web dialog sends `null` for an emptied description, and the
+  CLI cannot spell an empty list, so each surface reaches a different subset.
+- **`set_item_ignored`** backs the Ignore buttons
+  (`PATCH /api/items/{id}/ignore`) and `library ignore` / `library unignore`. It
+  writes `ignored` alone.
 
-Listing endpoints (`GET /api/sync/sources`, `recommendinator source list`) return every known source — enabled and disabled — each carrying its current `enabled` flag so the UI can render disabled sources in a muted state. `resolve_inputs` is the gate for sync execution; it filters disabled and unknown-plugin entries before invoking any plugin.
+**No door stores a blank review.** A stored `""` reads as a review the user wrote
+and blocks every later import from filling the field. The sync door declines to
+fill from one, `_write_completion` drops one, `update_item_from_ui` clears the
+column, and `complete --review`, `POST /api/complete` and
+`PATCH /api/items/{id}` all refuse one outright.
 
-Sensitive fields (any `ConfigField` with `sensitive=True`) always live in the encrypted `credentials` table regardless of which side owns the rest of the config. `resolve_inputs` merges encrypted credentials over the rest of the config at sync time. The migration endpoint (`POST /api/sync/sources/<id>/migrate`) splits a YAML entry into both tables on first call and is idempotent on subsequent calls. The create endpoint (`POST /api/sync/sources`) skips YAML entirely and writes only the non-sensitive values; sensitive fields are set afterwards via `PUT /api/sync/sources/<id>/secret/<key>`.
+**`date_completed` is never replaced silently.** A completion carrying no date
+fills an empty column with today and keeps an existing date.
+`update_item_from_ui` stamps a date only on a transition *into* `completed` on an
+undated row, so an unrelated edit cannot date a years-old import as finished
+today. Dates are the host's local calendar day rather than UTC (`local_today`,
+`local_date_from_iso_timestamp`), and a container takes its zone from `TZ`. See
+[DOCKER.md](docs/DOCKER.md#environment-variables). The
+[variety ladder](docs/SCORING.md#variety-after-completion) orders completions by
+this date.
 
-**Global configuration precedence:**
-The global/system config sections (`features`, `ollama`, `recommendations`, `conversation`, `sync`, `enrichment`, `web`, `logging`) resolve with three layers, lowest to highest:
+Duplicate consolidation also writes all five, under the
+[dedup rules](#cross-source-deduplication). It runs in the shared upsert, in
+`SQLiteDB.deduplicate_items` (public, no production caller today), and in the
+schema-migration merge, all through `merge_scalar_columns`
+(`src/storage/merge.py`).
 
-1. **Const defaults** — the hardcoded fallback for every in-scope leaf, declared once in the registry `src/settings/metadata.py` (`default_config()`).
-2. **YAML** — `config.yaml`, now optional beyond bootstrap. Any in-scope section a user keeps is deep-merged on top of the const defaults.
-3. **Database** — the `settings` table, authoritative. It stores only the leaves a user explicitly set via the Settings page / `settings` CLI, keyed by dotted leaf path (e.g. `recommendations.default_count`, `recommendations.scorer_weights.genre_match`).
+#### Source configuration precedence
 
-`migrate_config_settings` performs this assembly on every boot (and on config hot-reload): for each in-scope section it deep-merges the YAML section over the const defaults, then overlays the DB leaves for that section on top, and replaces `config[section]` in place so existing `config[section][key]` read sites resolve the layered value. **Nothing is written to the database here** — on a fresh install the `settings` table is empty and the app runs purely on const defaults plus whatever the operator kept in `config.yaml`. A section absent from YAML still resolves fully from the const defaults, so a user may trim `config.yaml` to bootstrap-only.
+A source lives in YAML only (bootstrap), YAML plus DB (migrated, DB authoritative
+and the YAML entry ignored), or DB only (`+ Add source` or `source create`, never
+touching `config.yaml`).
 
-The `storage` section (database/vector/cache paths) is out of scope: it bootstraps the database itself and stays YAML/env only. `inputs` (sources) and credentials are owned by the `source_configs` / `credentials` migrations instead.
+- Listing endpoints return every known source with its `enabled` flag.
+- `resolve_inputs` gates sync execution, filtering disabled and unknown-plugin
+  entries before any plugin runs, and merging encrypted credentials over the rest
+  of the config.
+- Sensitive fields (`ConfigField(sensitive=True)`) always live in `credentials`,
+  whichever side owns the rest.
+- `POST /api/sync/sources/<id>/migrate` splits a YAML entry across both tables
+  and is idempotent. `POST /api/sync/sources` writes only non-sensitive values,
+  and secrets follow through `PUT /api/sync/sources/<id>/secret/<key>`.
 
-**Secrets are never stored plaintext.** Global provider secrets — registry leaves flagged `sensitive` (today `enrichment.providers.tmdb.api_key` and `enrichment.providers.rawg.api_key`) — are never written to `config.yaml` long-term nor to the plaintext `settings` table. After the config assembly, `migrate_config_secrets` (`src/storage/global_secrets.py`) sweeps any such value out of the in-memory config into the encrypted `credentials` table (under a reserved `settings:` `source_id` namespace) and strips it from the running config. At runtime the enrichment layer reads these keys back from `credentials`; the Settings page / `settings` CLI manage them through a write-only masked-secret surface. Per-source secrets (Trakt/GOG/Epic tokens, etc.) already live in `credentials` via their own connect flows and migrations.
+#### Global configuration precedence
 
-**One-time cleanup migration.** An earlier iteration seeded the `settings` table on every boot. That design was removed before release, so on upgrade a `PRAGMA user_version`-guarded step in `create_schema` (`_clear_seeded_settings`) clears every pre-existing `settings` row exactly once — every such row is a seed artifact, never genuine user input. The version bump guarantees the clear fires once and never again, so a leaf a user sets after upgrading survives every later init.
+**const default < YAML < database**, for `features`, `ollama`,
+`recommendations`, `conversation`, `sync`, `enrichment`, `web` and `logging`.
 
-**Cross-Source Deduplication:**
-Items imported from different sources (e.g., Steam and a personal blog) are automatically deduplicated by normalized title. When saving an item, the system first looks up an existing row by `(user_id, external_id, content_type)`. If found, it then checks for a *different* row with the same `(user_id, content_type, normalized_title)` and merges any such duplicate into the kept row. If no external_id match exists, it falls back to a direct normalized_title lookup to merge items from different sources. Merge rules: rating/review are filled from the duplicate only if the kept row is null; `date_completed` keeps the later date; `status` resolves to the further-advanced of the two under the same forward-only ordering the sync path uses, and `ignored` is the OR of both rows, so consolidating duplicates (which deletes one row outright) cannot revert a completion or un-ignore an item; genres/tags are merged additively; monotonic columns (seasons/episodes) keep the higher value; detail-table metadata is merged existing-wins — except `seasons_watched_dates`, which merges per season keeping the later watch date on both the normal-save/sync path and duplicate-row consolidation, so an earlier ingestion date never overrides a later user date, a newer Trakt watch still updates it, and new seasons are added. Schema migrations re-normalize all titles and merge any duplicates exposed by the corrected normalization.
+1. Const defaults for every in-scope leaf, declared in `src/settings/metadata.py`
+   (`default_config()`).
+2. `config.yaml`, deep-merged over them.
+3. The `settings` table, keyed by dotted leaf path, holding only what a user set.
 
-**Thread Safety:**
-SQLite runs in WAL mode and `_get_connection` issues `PRAGMA busy_timeout = 5000` so concurrent writers block rather than raising `SQLITE_BUSY`. The read-resolve-write sequence that performs the cross-source dedup merge is serialised via a per-`StorageManager` `threading.Lock` so the parallel multi-source sync executor cannot interleave merges on the same normalized title. Both doors that run that sequence take the lock: `StorageManager.save_content_item` and `StorageManager.complete_content_item`, which shares the same upsert. `save_credential` takes it too, for its own encrypt-then-write gap.
+`migrate_config_settings` assembles this on every boot and hot-reload, replacing
+`config[section]` in place. **Nothing is written to the database here**, so a
+fresh install runs on an empty `settings` table.
 
-### 3. LLM Interaction Layer (`src/llm/`) — Optional
+`storage` is out of scope and stays YAML-only, because it bootstraps the database
+itself. `inputs` and credentials belong to the `source_configs` and `credentials`
+migrations.
 
-Handles communication with Ollama when AI features are enabled. **This entire layer is optional** — the system works fully without it.
+**Secrets are never plaintext.** `migrate_config_secrets`
+(`src/storage/global_secrets.py`) sweeps every `sensitive` registry leaf out of
+the in-memory config into `credentials`, under a reserved `settings:`
+`source_id`, and strips it from the running config. Enrichment reads them back at
+runtime. The Settings page and `settings` CLI expose them write-only.
 
-**When Enabled, Provides:**
-- Semantic embeddings for content similarity (ChromaDB)
-- Natural language recommendation explanations
-- Advanced preference rule interpretation
+**Settings-table migrations.** `_migrate_settings_table`
+(`src/storage/schema.py`), called from `create_schema`, is guarded by
+`PRAGMA user_version`. Version 1 clears every pre-existing row and version 2
+prunes `_ORPHANED_SETTING_KEYS`. The guard advances the version, so anything a
+user sets afterwards survives.
 
-**Text Sanitization (`src/utils/text.py`):**
-All user-provided text (memories, messages, metadata) is sanitized before interpolation into LLM prompts to prevent prompt injection:
-- `sanitize_prompt_text(text)` — Strips newlines, control characters, and injection markers; caps at 100 chars
-- `sanitize_prompt_text_long(text, max_length=200)` — Same sanitization with configurable cap, for conversation history where 100 chars is too restrictive
-- `sanitize_prompt_text_with_truncation(text)` — Returns `(sanitized_text, was_truncated)` so callers can append ellipsis only on actual truncation
-- `_sanitize_genre(text)` — Stricter allowlist for genre tags (no parentheses or colons); caps at 50 chars
+#### Cross-source deduplication
 
-**Feature Flags:**
-- `features.ai_enabled` — Master toggle for all AI features
-- `features.embeddings_enabled` — Vector similarity (requires ai_enabled)
-- `features.llm_reasoning_enabled` — Natural language explanations (requires ai_enabled)
+Items are deduplicated by normalized title. A save looks up
+`(user_id, external_id, content_type)`, then merges any *different* row sharing
+`(user_id, content_type, normalized_title)`. With no external_id match it falls
+back to a direct normalized-title lookup. Schema migrations re-normalize every
+title and merge whatever that exposes.
 
-### 4. Recommendation Engine (`src/recommendations/`)
+Merge rules:
 
-Core logic for generating recommendations with **cross-content-type support**.
+- `rating` and `review` fill from the duplicate only into a null
+- `date_completed` keeps the later date
+- `status` takes the further-advanced under the sync ordering
+- `ignored` is the OR of both rows
+- Genres and tags merge additively, monotonic columns (seasons, episodes) keep
+  the higher value, and detail metadata merges existing-wins
+- `seasons_watched_dates` is the exception, merged per season keeping the later
+  watch date, so an ingestion date never overrides a user date
 
-**Architecture:** The engine uses a **unified scoring pipeline** that always runs. AI (embeddings, LLM reasoning) is an optional enhancement, not a requirement. Per-user preferences can override scorer weights at runtime.
+Consolidation deletes a row outright, so the `status` and `ignored` rules are
+what stop it reverting a completion or un-ignoring an item.
+
+#### Thread safety
+
+WAL mode, and `_get_connection` sets `PRAGMA busy_timeout = 5000` so concurrent
+writers block instead of raising `SQLITE_BUSY`. A per-`StorageManager`
+`threading.Lock` serialises the read-resolve-write dedup merge against the
+parallel sync executor. `StorageManager.save_content_item`,
+`complete_content_item` and `save_credential` all take it.
+
+### 3. LLM (`src/llm/`), optional
+
+Talks to Ollama when AI is enabled, providing embeddings for similarity, natural
+language explanations, and preference rule interpretation.
+
+Flags: `features.ai_enabled` is the master toggle, and both
+`features.embeddings_enabled` and `features.llm_reasoning_enabled` require it.
+
+**All user text is sanitized before it reaches a prompt** (`src/utils/text.py`),
+against prompt injection:
+
+- `sanitize_prompt_text` strips newlines, control characters and injection
+  markers, capping at 100 chars
+- `sanitize_prompt_text_long` does the same with a configurable cap, for
+  conversation history
+- `sanitize_prompt_text_with_truncation` returns `(text, was_truncated)`, so a
+  caller appends an ellipsis only on real truncation
+- `_sanitize_genre` uses a stricter allowlist, capping at 50 chars
+
+### 4. Recommendations (`src/recommendations/`)
+
+A unified scoring pipeline that always runs, across content types. AI is an
+enhancement on top of it.
 
 ```
 RecommendationEngine
   |-- ScoringPipeline (always runs)
-  |     |-- GenreMatchScorer      — genre preference scoring
-  |     |-- CreatorMatchScorer    — author/director/developer matching
-  |     |-- TagOverlapScorer      — threshold + cluster-based tag overlap
-  |     |-- SeriesOrderScorer     — next-in-sequence boosting
-  |     |-- RatingPatternScorer   — rating history in matching genres
-  |     |-- ContentLengthScorer   — soft penalty for length preference mismatch
-  |     |-- ContinuationScorer   — boost items the user is actively consuming (automatically excluded from pipeline when no actively-consumed items exist)
-  |     |-- SeriesAffinityScorer — boost items in well-rated franchises (avg >= 4)
-  |     |-- CustomPreferenceScorer — user natural language rules
-  |     |-- [SemanticSimilarityScorer]  (when AI enabled)
+  |     |-- GenreMatchScorer        genre preference
+  |     |-- CreatorMatchScorer      author/director/developer
+  |     |-- TagOverlapScorer        threshold and cluster tag overlap
+  |     |-- SeriesOrderScorer       next in sequence
+  |     |-- RatingPatternScorer     rating history in matching genres
+  |     |-- ContentLengthScorer     soft penalty for length mismatch
+  |     |-- ContinuationScorer      actively consumed items (dropped when none exist)
+  |     |-- SeriesAffinityScorer    well-rated franchises (avg >= 4)
+  |     |-- CustomPreferenceScorer  natural language rules
+  |     |-- [SemanticSimilarityScorer]  when AI enabled
   |
-  |-- UserPreferenceConfig (optional per-user weight overrides, diversity_weight)
-  |-- Ranker (adaptation bonus, series bonus, diversity bonus, preference adjustments)
-  |-- Variety penalty (when variety_penalty > 0) — stepped genre-fatigue
-  |     multiplier scoped to the recommended content type (see variety.py)
-  |-- [LLM reasoning post-processing]  (when AI enabled)
+  |-- UserPreferenceConfig (per-user weight overrides, diversity_weight)
+  |-- Ranker (adaptation, series, diversity, preference adjustments)
+  |-- Variety penalty (variety.py) when variety_penalty > 0
+  |-- [LLM reasoning] when AI enabled
 ```
 
-**Weight Resolution Order (last wins):**
-1. Registry const defaults (`src/settings/metadata.py`, e.g. `recommendations.scorer_weights.genre_match` = 2.0)
-2. `config.yaml` `recommendations.scorer_weights` section (optional)
-3. Global `settings` table leaves (the DB-backed defaults edited from the Settings page / `settings` CLI)
+**Weights resolve const default < `config.yaml` < `settings` table < per-user.**
+The first three assemble into the effective global. A per-user override
+(`users.settings` JSON, `"preference_config"`) then wins per key, and an unset key
+keeps the global. `min_rating_for_preference` and the counts have no per-user
+field.
 
-Layers 1–3 are assembled by `migrate_config_settings` into the effective global `recommendations.*`, which is the fallback a user inherits when they have **not** set their own preference. A per-user override then wins per-key on top:
+Invariants:
 
-4. Per-user DB settings (`users.settings` JSON → `"preference_config"` key). The per-user Preferences page overrides `scorer_weights` per-key; an unset key keeps the global default. (`min_rating_for_preference` and the counts have no per-user field — they resolve purely from the assembled global.)
+- The taste signal is completed items that are **rated** and **not ignored**,
+  across all content types. Nothing else shapes preferences, scoring, similarity
+  or explanations.
+- Ignored items are filtered from the candidate pool at fetch time, as they are
+  from the signal set. Consumed items are excluded too.
+- Series filtering with substitution (`series_in_order`) replaces a candidate
+  failing the ordering rules with the earliest recommendable entry in its series,
+  scored on its own merits, once per series.
+- The variety penalty multiplies a candidate's final score by `1 - penalty`,
+  taking the strongest penalty among its recently finished genre clusters. The
+  ladder is built from completions **of the recommended content type**, its top
+  rung the user's `variety_penalty` over the `5.0` maximum. A finished season of
+  an ongoing show counts as a completion, dated by that season's watch timestamp.
+  The penalty halves for an active series continuation
+  (`is_active_series_continuation`). See
+  [SCORING.md](docs/SCORING.md#variety-after-completion).
 
-**Process:**
-1. Analyze the user's **taste-signal set across ALL content types** — completed items that are **rated** and **not ignored**. Ignored items and completed-but-unrated items carry no reliable taste signal and never shape recommendations (preferences, scoring, similarity, or explanations)
-2. Extract preferences and patterns (genres, themes, authors) from that signal set
-3. Load per-user preference config (if available), apply scorer weight overrides
-4. Score all unconsumed candidates through the scoring pipeline
-5. Optionally blend vector-similarity scores when AI is enabled
-6. Apply series filtering with substitution (when `series_in_order` is enabled): candidates that fail series ordering rules are replaced with the earliest recommendable entry from the same series, using the substitute's own pipeline score. Duplicate substitutions per series are prevented. Also apply diversity bonus (genre-hopping) and ranking adjustments
-7. Apply the variety penalty (when `variety_penalty` > 0): build a stepped genre-fatigue ladder from the user's recently completed items **of the recommended content type**, deriving the ladder's top rung from the user's `variety_penalty` (0.0-5.0) divided by its `5.0` maximum (so `4.0` reproduces the legacy `0.8` top fraction and `5.0` fully zeroes a just-finished genre), then multiply each candidate's final score by `1 - penalty` where the penalty is the strongest among the candidate's recently finished genre clusters (`variety.py`). A finished season of an otherwise in-progress TV show also counts as a completion event for the ladder, dated by that season's watch timestamp rather than the show's (absent) `date_completed` — see [SCORING.md](docs/SCORING.md#variety-after-completion). The penalty is softened (halved) for an item that continues a series the user is actively progressing through (`is_active_series_continuation`), so the next book in an unfinished series is not buried by genre fatigue. The applied penalty is surfaced per recommendation
-8. Exclude candidates that are already consumed or marked as `ignored` (ignored items are filtered from the candidate pool at fetch time, the same way they are excluded from the signal set)
-9. Generate ranked recommendations with score breakdowns
+**Cross-content-type matching works without AI.** Semantic genre clusters
+(`genre_clusters.py`) map raw genre and tag terms onto a fixed set of thematic
+clusters, so a book tagged "space warfare" reaches a TV show tagged "war".
+Compound terms like "Sci-Fi & Fantasy" split first (`genre_normalizer.py`).
+Cross-type reference items use cluster overlap rather than raw Jaccard, so
+broadly-matching items cannot dominate.
 
-**Cross-Content-Type Recommendations:**
-- Preferences from all content types influence recommendations
-- Metadata-based matching (genre/creator overlap) works without AI
-- **Semantic genre clusters** (`genre_clusters.py`) group raw genre/tag terms into a fixed set of thematic clusters (e.g. science_fiction, war_military, fantasy) so items with related but different raw terms (e.g. book "space warfare" + TV "war") can connect
-- **Compound genre splitting** (`genre_normalizer.py`) expands provider terms like "Sci-Fi & Fantasy" into constituent parts before normalization
-- Cross-type reference items use cluster overlap instead of raw Jaccard to avoid broadly-matching items dominating all recommendations
-- Optional vector embeddings for semantic similarity across content types
+### 5. Enrichment (`src/enrichment/`)
 
-### 5. Metadata Enrichment (`src/enrichment/`)
+Background metadata gap-filling from external APIs. Providers subclass
+`EnrichmentProvider`, auto-discovered from `src/enrichment/providers/`, each with
+its own token-bucket rate limiter. A background worker runs them in configurable
+batches, and an optional hook fires it after a sync.
 
-Background system that fills gaps in content metadata from external APIs.
+| Provider | Content | Franchise source |
+|----------|---------|------------------|
+| TMDB | Movies, TV | `belongs_to_collection`, position by release date |
+| OpenLibrary | Books, no API key | none |
+| RAWG | Video games | `GET /games/{id}/game-series`, position by release date |
 
-**Providers:**
-- TMDB — movies and TV shows (includes collection/franchise extraction for series ordering)
-- OpenLibrary — books (no API key required)
-- RAWG — video games (includes franchise extraction via `game-series` endpoint)
+RAWG derives a franchise name from the longest common prefix of the related
+titles, after majority first-word voting drops outliers, and strips DLC suffixes
+before searching. Both providers store `franchise` and `series_position` in
+`extra_metadata` for series ordering.
 
-**Franchise/Series Extraction:**
-- TMDB: `belongs_to_collection` field provides franchise name and `series_position` via release-date ordering within the collection
-- RAWG: `GET /games/{id}/game-series` returns related games; franchise name is derived from the longest common prefix of all game titles (e.g., "Dragon Age: Origins" + "Dragon Age II" -> "Dragon Age"), and position is determined by release-date ordering. Before computing the prefix, outlier titles are filtered out via majority-based first-word voting (e.g., "Lightning Returns: Final Fantasy XIII" is excluded when the other two titles start with "Final"). DLC suffixes like "+ Re Mind (DLC)" are stripped from titles before RAWG search to improve base-game matching. This handles games where title parsing fails (Dragon Age has no number, Kingdom Hearts uses decimals, Final Fantasy uses Roman numerals with slashes in HD remasters)
-- Both store `franchise` and `series_position` in `extra_metadata` for consumption by the series ordering system
+Rules:
 
-**Design:**
-- `EnrichmentProvider` ABC with auto-discovery from `src/enrichment/providers/`
-- Gap-filling merge strategy (never overwrites existing metadata)
-- Token bucket rate limiter per provider
-- Background worker with configurable batch size
-- Optional auto-enrichment hook after sync
-- **Manual metadata editing**: users can set genres, tags, and a description by hand from the web edit modal or `library edit --genre/--tag/--description`. Unlike the gap-filling merge, manual values overwrite the detail-table fields. The edit records the `"manual"` provider via `mark_enrichment_complete`, which marks the item enriched (so it leaves the `not_enriched` filter) and keeps it out of the automatic re-enrichment queue so manual values are never overwritten
-- **Settled miss vs retryable failure**: "every provider answered and none has this item" is a settled negative — `mark_enrichment_complete(..., "not_found")` retires the item from the queue. A failure is classified before it is acted on (`_classify_failure` / `_is_retryable`): a transport error, a 5xx, a 408 or a 429 is **retryable** — repeating it could plausibly succeed — so the manager calls `mark_enrichment_failed`, which records the error and leaves `needs_enrichment=1` for the next run. Any other 4xx (a 401 or 403 from an invalid, revoked or expired key, most often) is the provider rejecting the request itself, which would be rejected identically every run, so it is **not** retryable. One provider erroring is enough to keep the item queued *when that error is retryable*; when failures exist and none of them is, the item settles as `not_found` rather than re-asking a provider that answers none of the library. Reaching those items again takes `--retry-not-found`. A run skips the items it already attempted, so a queued failure is tried once per run
-- **Enrichment-state filtering**: `get_content_items(enrichment="enriched"|"not_enriched")` and the per-row `enriched` flag share a single predicate (`_ENRICHED_PREDICATE`) over the joined `enrichment_status` row — an item is enriched only with a real provider, no error, not `not_found`, and `needs_enrichment=0`
+- The merge is gap-filling and never overwrites existing metadata. Manual edits
+  are the exception: genres, tags and a description set from the edit modal or
+  `library edit` overwrite the detail table, record the `"manual"` provider, and
+  leave the automatic queue for good.
+- **A settled miss is not a failure.** Every provider answering "not this one"
+  retires the item through `mark_enrichment_complete(..., "not_found")`. Reaching
+  it again takes `--retry-not-found`.
+- **A failure is classified before it is acted on** (`_classify_failure`,
+  `_is_retryable`). Transport errors, 5xx, 408 and 429 are retryable, so
+  `mark_enrichment_failed` records the error and leaves `needs_enrichment=1`. Any
+  other 4xx would be rejected identically every run and is not retryable. One
+  retryable failure keeps the item queued. Failures that are all non-retryable
+  settle it as `not_found`.
+- An item counts as enriched only with a real provider, no error, not
+  `not_found`, and `needs_enrichment=0`. `get_content_items(enrichment=...)` and
+  the per-row `enriched` flag share that predicate (`_ENRICHED_PREDICATE`).
+- A run skips items it already attempted, so a queued failure is tried once per
+  run.
 
-### 6. Conversation System (`src/conversation/`) — Optional
+### 6. Conversation (`src/conversation/`), optional
 
-Conversational AI chat interface, requires AI to be enabled.
+Requires AI. `ConversationEngine` orchestrates streaming responses over
+`MemoryManager` (core memories), `ContextAssembler`, `ToolExecutor` (mark
+completed, update rating, save memory), `IntentDetector` (`intent.py`),
+`MemoryExtractor` and `ProfileGenerator`.
 
-**Components:**
-- `MemoryManager` — CRUD for core memories (preference signals)
-- `ContextAssembler` — Builds dynamic context for LLM queries with safeguards:
-  - **Single top-pick pipeline**: When the recommendation engine is available, only the single highest-ranked item is included in context (not a ranked list), keeping the LLM focused on hyping one pick
-  - **Role-differentiated message sanitization**: User messages are sanitized via `sanitize_prompt_text()` / `sanitize_prompt_text_long()` to prevent prompt injection; assistant messages are only length-truncated (preserving LLM output formatting)
-  - **Consumption status tagging**: Backlog items are tagged `[NOT YET CONSUMED]` in context to prevent the LLM from claiming the user enjoyed them
-  - **Contributing items filter**: Only `COMPLETED`-status items appear in "Recently Completed" context, preventing backlog items from being misrepresented
-  - **Qualitative fit labels**: Match scores (0–1) are converted to labels ("Excellent fit", "Strong fit", etc.) via `_score_to_qualitative()` instead of exposing raw percentages
-- `ToolExecutor` — Tool-calling for data updates (mark completed, update rating, save memory)
-- `IntentDetector` (`intent.py`) — Pre-LLM regex-based intent detection for tool actions (mark completed, rate, wishlist, preferences). When a high-confidence match is found, the tool action executes instantly without invoking the LLM
-- `MemoryExtractor` — Extracts preferences from conversations
-- `ProfileGenerator` — Computes genre affinities and preference profiles
-- `ConversationEngine` — Orchestrator with streaming responses
+`IntentDetector` matches tool actions by regex before the LLM runs, and a
+high-confidence match executes without invoking it.
 
-**Compact Mode** (`conversation.context.compact_mode`):
-When enabled (recommended for 3B models), the engine uses a condensed system prompt (~800 tokens), reduced context limits, compact item formatting, and pre-LLM intent detection. A separate `conversation_model` can be configured in `ollama` config to use a smaller model for chat while keeping the larger model for recommendations. See `docs/MODEL_RECOMMENDATIONS.md` for setup details.
+`ContextAssembler` safeguards:
 
-### 7. Interface Layer
+- Only the single highest-ranked item enters context, never a ranked list
+- User messages are sanitized, assistant messages only length-truncated, which
+  preserves LLM formatting
+- Backlog items are tagged `[NOT YET CONSUMED]`, so the LLM cannot claim the user
+  enjoyed them
+- Only `COMPLETED` items appear under "Recently Completed"
+- Match scores become qualitative labels through `_score_to_qualitative()`, never
+  raw percentages
 
-The CLI and the web UI are **alternative interfaces to the same capabilities** —
-neither is a subset of the other. Both call into the same recommendation,
-ingestion, storage, and conversation services, so anything you can do in one you
-can do in the other (browse and edit your library, manage sources, tune
-preferences, run enrichment, authenticate sources, chat, manage memories, and
-view your profile). New capabilities are expected to land in both interfaces; the
-`parity-review` agent enforces this on any change under `src/web/` or `src/cli/`.
+**Compact mode** (`conversation.context.compact_mode`) swaps in a condensed
+system prompt of around 800 tokens, tighter context limits, compact item
+formatting and pre-LLM intent detection. `ollama.conversation_model` can point
+chat at a smaller model than recommendations use. See
+[MODEL_RECOMMENDATIONS.md](docs/MODEL_RECOMMENDATIONS.md).
 
-#### CLI (`src/cli/`)
-- Click-based command structure
-- Commands: `status`, `recommend`, `update`, `complete`, `source`, `settings`, `preferences`, `enrichment`, `library`, `auth`, `memory`, `profile`, `chat` (full reference: [docs/CLI.md](docs/CLI.md))
-- Supports batch operations and multiple output formats
+### 7. Interfaces
 
-#### Web (`src/web/` + `resources/`)
-- **Backend**: FastAPI web server with REST API
-- **Frontend**: Vue 3 SPA with Tailwind CSS v4, built with Vite
-  - Source: `resources/js/` (Vue components, Pinia stores, composables, router) and `resources/css/` (CSS variables, Tailwind config)
-  - Build output: `src/web/static/dist/` (Vite generates content-hashed asset bundles)
-  - Dev server: Vite on `:5173` proxies `/api/*` and `/static/themes/*` to FastAPI on `:18473`. Both ports, the proxy target and the HMR client port/protocol default to those values and are overridable via `DEV_SERVER_*` env vars for running behind a reverse proxy — see `resources/vite/devServer.ts` and [CONTRIBUTING.md](CONTRIBUTING.md)
-- Tabbed UI: Recommendations, Library, Chat, Data, Preferences, Settings (Chat hidden when AI is disabled)
-  - **Settings** page (`/settings`) manages the global/system config: sections of controls (toggle/number/text/tags/select) with curated labels/help and per-setting validation, an **Advanced** group for infra/security leaves (`web.allowed_origins` CORS, `logging.*`) badged **restart required**, per-setting **reset to default**, and masked **write-only** controls for provider secrets. It is the UI peer of the `settings` CLI group, backed by the shared `src/settings/service.py`.
-  - Recommendations cards offer two actions: **ignore** (excludes the item from future recommendations and removes its card) and **mark complete** (opens the shared edit dialog to set status/rating/review, saves to the library, and removes the card). Neither regenerates the list.
-  - The edit dialog sends a **blank review as `null`**, so clearing the textarea is the clear. It cannot send `""`: the API rejects a blank or all-whitespace review with a 422 (`EditReviewText` in `src/web/api.py`), matching `library edit --review ""`, because a stored `""` reads as a review the user wrote and blocks a later import from filling the field.
-- **Library search is bounded at 200 characters in four places, with a different failure at each** — the term drives a per-candidate fuzzy match over the whole library, so its length is a cost multiplier (`MAX_SEARCH_LENGTH` in `src/utils/sorting.py`, mirrored in `resources/js/constants/library.ts`). `GET /api/items` rejects a longer term with a 422; `library list --search` rejects it with an error message; the search input caps typing at the bound and announces the cap through a persistent live region once it is reached; and the library store's `setFilter('search', …)` truncates the term to the bound, so a programmatic caller that bypasses the input cannot produce a request the API would answer with a 422. Within the bound, matching normalizes titles on Python's `\w`, which spans every script, so a Cyrillic or Japanese title is searchable — an ASCII-only class previously normalized one to the empty string and made it unreachable.
-- SSE streaming for chat responses and AI recommendation blurbs
-- Library export: `GET /api/items/export?type=book&format=csv` (CSV or JSON download)
-- **Themeable UI**: CSS custom properties system with folder-per-theme in `src/web/static/themes/`. Each theme provides a `theme.json` metadata file and a `colors.css` override. Tailwind `@theme` maps CSS vars to utility classes. Theme selection persisted per user via backend preferences (system default: `nord`). CSS uses `color-mix()` so themes only need to define core color variables. See `docs/THEME_DEVELOPMENT.md`.
-- **Version display and update detection**: Version fetched from `GET /api/status`; UI polls every 5 minutes and displays a banner when a newer server version is detected
-- **Asset cache busting**: Vite content-hashed filenames (e.g., `index-i5AIV_mm.js`)
-- Internal network only (no external exposure)
+The CLI and the web UI are **alternative interfaces to the same capabilities**,
+neither a subset of the other. Both call the same recommendation, ingestion,
+storage and conversation services. New capabilities land in both, and
+`parity-review` enforces that on any change under `src/web/` or `src/cli/`.
+
+**CLI** (`src/cli/`): Click groups `status`, `recommend`, `update`, `complete`,
+`source`, `settings`, `preferences`, `enrichment`, `library`, `auth`, `memory`,
+`profile`, `chat`, most carrying a `--format json` view. Full reference in
+[docs/CLI.md](docs/CLI.md).
+
+**Web** (`src/web/` + `resources/`): a FastAPI REST backend and a Vue 3 SPA with
+Tailwind v4, built by Vite from `resources/js/` and `resources/css/` into
+`src/web/static/dist/` with content-hashed filenames. Tabs are Recommendations,
+Library, Chat, Data, Preferences and Settings, with Chat hidden when AI is off.
+SSE streams chat responses and recommendation blurbs. Internal network only.
+
+- The **Settings** page is the UI peer of the `settings` CLI group, over the
+  shared `src/settings/service.py`. Infra and security leaves
+  (`web.allowed_origins`, `logging.*`) sit in an **Advanced** group badged
+  **restart required**. Provider secrets get masked write-only controls.
+- Recommendation cards **ignore** or **mark complete**, each removing the card
+  without regenerating the list.
+- **Library search is bounded at 200 characters in four places**
+  (`MAX_SEARCH_LENGTH` in `src/utils/sorting.py`, mirrored in
+  `resources/js/constants/library.ts`), because the term is fuzzy-matched per
+  candidate over the whole library. `GET /api/items` answers 422,
+  `library list --search` errors, the input caps typing and announces the cap to
+  screen readers, and the library store truncates in `setFilter`. Within the
+  bound, titles normalize on Python's `\w`, which spans every script. An
+  ASCII-only class normalizes a Cyrillic or Japanese title to the empty string
+  and makes it unreachable.
+- Themes are folder-per-theme in `src/web/static/themes/`, each a `theme.json`
+  and a `colors.css`. Tailwind `@theme` maps the vars to utilities, and
+  `color-mix()` means a theme defines only core colors. Selection persists per
+  user, defaulting to `nord`. See
+  [THEME_DEVELOPMENT.md](docs/THEME_DEVELOPMENT.md).
+- The UI polls `GET /api/status` every 5 minutes and banners a newer server
+  version.
+- Library export: `GET /api/items/export?type=book&format=csv`.
+
+Dev server: Vite on `:5173` proxies `/api/*` and `/static/themes/*` to FastAPI on
+`:18473`. Ports, proxy target and HMR client settings default to those and take
+`DEV_SERVER_*` overrides. See `resources/vite/devServer.ts` and
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Data Flow
 
@@ -269,7 +391,7 @@ Data Sources (APIs, CSV, JSON, Markdown)
     ↓
 Ingestion Layer (SourcePlugin → parse & normalize)
     ↓
-Storage Layer (persist to SQLite; deduplicate cross-source items; optionally ChromaDB if AI enabled)
+Storage Layer (SQLite, cross-source dedup, ChromaDB when AI is enabled)
     ↓                                      ↓
 Enrichment (background)           Recommendation Engine
   TMDB, OpenLibrary, RAWG           ├── Scoring Pipeline (always runs)
@@ -285,26 +407,16 @@ Enrichment (background)           Recommendation Engine
 
 ## Configuration
 
-Configuration files in `config/`:
-- `config.yaml`: Bootstrap configuration (git-ignored). Holds the `web` bind settings and the `storage` paths. A legacy file may still carry `inputs` sources and secrets; both are migrated into the database on boot, and a secret found here logs a deprecation warning
-- `example.yaml`: Minimal template — `web` + `storage`, nothing else
+`config/config.yaml` (git-ignored) holds the bootstrap: the `web` bind settings
+and the `storage` paths, both read before the database opens.
+`config/example.yaml` is that template and nothing more. Everything else resolves
+through [global configuration precedence](#global-configuration-precedence), and
+sources through
+[source configuration precedence](#source-configuration-precedence).
 
-The global/system sections (`features`, `ollama`, `recommendations`, `conversation`, `sync`, `enrichment`, `web`, `logging`) are optional in YAML — they have const defaults and are managed via the Settings page / `settings` CLI. `storage` and the `web` bind settings (`host`, `port`, `debug`) are the bootstrap config that stays in YAML — they are read before the database is open, so a database-backed value could never be honoured.
-
-**`config.yaml` is minimal and mostly optional beyond bootstrap.** The global/system
-sections (`features`, `ollama`, `recommendations`, `conversation`,
-`sync`, `enrichment`, `web`, `logging`) all ship with const defaults and are
-managed from the Settings page / `settings` CLI, which write to the `settings`
-table; precedence is **const default < YAML < database** — see
-[Global configuration precedence](#global-configuration-precedence). A user MAY
-still add any of those sections to `config.yaml` to override the const defaults
-on a fresh boot, but need not. The `storage` paths stay YAML-only (they bootstrap
-the database itself). Provider secrets such as `enrichment.providers.*.api_key`
-are **not** required in `config.yaml`: any value found there is swept into the
-encrypted `credentials` table on boot and stripped from the plaintext config, and
-they are otherwise entered in-app via the Settings page / `settings set-secret`.
-
-Sources use **named instances**: each has a user-defined id and a plugin name, so the same plugin can back several sources (e.g., separate JSON imports for books and movies). File-based plugins use a standardized `path` field. Sources are stored in the `source_configs` table; the legacy `inputs` YAML form below expresses the same shape and is still read on boot for migration:
+A legacy file may still carry `inputs` sources and secrets. Both migrate into the
+database on boot, and a secret found there logs a deprecation warning. The legacy
+shape, which the `source_configs` table now expresses:
 
 ```yaml
 inputs:
@@ -313,133 +425,100 @@ inputs:
     path: "inputs/books.json"
     content_type: "book"
     enabled: true
-  my_movies:
-    plugin: json_import
-    path: "inputs/movies.json"
-    content_type: "movie"
-    enabled: true
 ```
-
-**YAML is the bootstrap; the database is the long-term source of truth.**
-Once a source is migrated to the database (via the "Migrate to DB" button in
-the data accordion or `python3.11 -m src.cli source migrate <id>`), its YAML
-entry is ignored. Subsequent edits to the source — including enabling/disabling
-it — happen through the web UI or `python3.11 -m src.cli source` CLI commands,
-which write back to `source_configs` (non-sensitive fields) and `credentials`
-(sensitive fields). See [Source configuration precedence](#source-configuration-precedence).
 
 ## Extension Points
 
-### Adding New Data Sources
-1. Create a plugin folder `src/ingestion/sources/<name>/` containing `<name>.py` (the `SourcePlugin` subclass), `__init__.py` (one-line re-export), and `README.md`
-2. Plugin is auto-discovered by `PluginRegistry`
-3. Add `test_<name>.py` next to the implementation with mocked APIs
-4. See `docs/PLUGIN_DEVELOPMENT.md` for details
+**A data source**: create `src/ingestion/sources/<name>/` holding `<name>.py`
+(the `SourcePlugin` subclass), `__init__.py` (a one-line re-export), `README.md`
+and `test_<name>.py` with mocked APIs. `PluginRegistry` discovers it. See
+[PLUGIN_DEVELOPMENT.md](docs/PLUGIN_DEVELOPMENT.md).
 
-### Adding New Enrichment Providers
-1. Create a provider folder `src/enrichment/providers/<name>/` with the same layout (`<name>.py`, `__init__.py`, `README.md`)
-2. Provider is auto-discovered by `EnrichmentRegistry`
-3. Add rate limiting configuration in the provider class
-4. Add `test_<name>.py` next to the implementation
+**An enrichment provider**: the same layout under
+`src/enrichment/providers/<name>/`, with rate limiting configured in the provider
+class. `EnrichmentRegistry` discovers it.
 
-### Adding New Content Types
-1. Extend `ContentType` enum
-2. Add type-specific detail table in schema
-3. Add type-specific recommendation logic
-4. Update data models
+**A content type**: extend the `ContentType` enum, add its detail table to the
+schema, add type-specific recommendation logic, update the data models.
 
 ## Technology Stack
 
-- **Python**: 3.11+
-- **LLM**: Ollama (local, AMD-compatible)
-- **Vector DB**: ChromaDB (optional, AI-only)
-- **SQL Database**: SQLite
-- **Web Framework**: FastAPI
-- **CLI Framework**: Click
-- **Testing**: pytest
-- **Quality**: Black, MyPy (strict), Ruff
+Python 3.11+, SQLite, FastAPI, Click, Ollama (local, AMD-compatible) and
+ChromaDB (optional, AI only). Tested with pytest, checked with Black, MyPy strict
+and Ruff.
 
 ### Development Tooling (Claude Code)
 
-- **Pyright LSP Plugin** — Real-time static type analysis via Language Server Protocol, catches type errors and missing annotations
-- **Frontend Design Plugin** — Generates production-grade UI components for the web interface
-- **Security-Review Agent** — Pre-commit security audit agent that checks for credential exposure, injection vulnerabilities, CORS misconfigurations, and project-specific security rules. See `docs/SECURITY.md` for details.
-- **Code-Review Agent** — Pre-commit code quality agent that performs line-by-line review for dead code, code smells, DRY violations, naming, type safety, over/under-engineering, and project standards compliance.
-- **Test-Review Agent** — Pre-commit test coverage and quality audit agent that verifies test completeness, mock hygiene, regression test format, and edge case coverage.
-- **Document-Review Agent** — Documentation accuracy and completeness audit agent that checks for staleness, cross-document consistency, and missing documentation.
-- **Accessibility-Review Agent** — Pre-commit accessibility audit agent that verifies WCAG 2.1 Level AA compliance for frontend code (semantic HTML, ARIA attributes, keyboard navigation, focus management, color contrast). Self-gates on frontend file presence — immediately approves backend-only changes.
-- **Commit-Hygiene Agent** — Atomic commit structure and conventional format enforcement agent that plans commit splits and verifies message quality.
+Two plugins, configured in `.claude/settings.json`: **Pyright LSP** for real-time
+type analysis, **Frontend Design** for UI component generation.
 
-- **Parity-Review Agent** — CLI/web feature parity enforcement agent that flags capabilities exposed in one interface but not the other.
+Seven review agents, all committed under `.claude/agents/`:
 
-All seven agents are checked in under `.claude/agents/`. The six above Parity-Review are project-agnostic and shared across repositories, so their canonical source is maintained outside this repository and the copies here are what a checkout gets; they read `CLAUDE.md` and `docs/` to pick up this project's rules. Parity-Review is native to this repository.
+| Agent | Covers |
+|-------|--------|
+| `security-review` | Credential exposure, injection, CORS, the rules in `docs/SECURITY.md` |
+| `code-review` | Dead code, DRY, naming, type safety, over/under-engineering |
+| `test-review` | Coverage, mock hygiene, regression test format, edge cases |
+| `document-review` | Staleness, cross-document consistency, missing documentation |
+| `accessibility-review` | WCAG 2.1 AA for frontend code, approving backend-only diffs immediately |
+| `commit-hygiene` | Atomic commit structure, conventional format, message quality |
+| `parity-review` | Capabilities exposed in one interface but not the other |
 
-Plugin configuration: `.claude/settings.json` | Review agents: `.claude/agents/`
+The first six are project-agnostic and shared across repositories, so their
+canonical source lives outside this repository and the committed copies are what
+a checkout gets. They read `CLAUDE.md` and `docs/` for this project's rules.
+`parity-review` is native here.
 
 ## Container Artifacts
 
-Recommendinator publishes Docker images for end-user deployment. The full
-deployment guide is [docs/DOCKER.md](docs/DOCKER.md); this section captures
-the architecture-level shape.
-
-### Variants
+The deployment guide is [docs/DOCKER.md](docs/DOCKER.md). This is the shape.
 
 | Variant | Image | Contents |
 |---------|-------|----------|
-| Default | `ghcr.io/therealahall/recommendinator:VERSION` | Application, frontend build, base Python deps. Smaller image. |
-| AI | `ghcr.io/therealahall/recommendinator:VERSION-ai` | Default + `ai` extras (`ollama` and `chromadb` Python clients). |
-| Ollama sidecar | `ghcr.io/therealahall/recommendinator-ollama:VERSION` | Thin layer on `ollama/ollama` that bakes in the model-pull entrypoint script. Required by the AI variant; not used by the default variant. |
+| Default | `ghcr.io/therealahall/recommendinator:VERSION` | Application, frontend build, base Python deps |
+| AI | `ghcr.io/therealahall/recommendinator:VERSION-ai` | Default plus the `ai` extras, `ollama` and `chromadb` |
+| Ollama sidecar | `ghcr.io/therealahall/recommendinator-ollama:VERSION` | `ollama/ollama` plus the model-pull entrypoint, required by the AI variant |
 
-All three images publish multi-arch manifests for `linux/amd64` and `linux/arm64`.
-`linux/arm/v7` is intentionally unsupported because the Python 3.11 wheel
-ecosystem (notably ChromaDB) is too thin there.
+All three publish multi-arch manifests for `linux/amd64` and `linux/arm64`.
+`linux/arm/v7` is unsupported because the Python 3.11 wheel ecosystem, ChromaDB
+especially, is too thin there.
 
-### Image structure
+`Dockerfile` is multi-stage with two targets:
 
-The application images are built by `Dockerfile` (multi-stage, two targets):
+1. **frontend-builder**, `node:20-slim` running `pnpm build` into
+   `src/web/static/dist/`.
+2. **builder-base** → **builder-default** / **builder-ai**, `python:3.11-slim`
+   running `uv sync --locked` (plus `--extra ai`) into `/app/.venv`.
+3. **runtime-base**, `python:3.11-slim` with the `appuser` non-root account,
+   application source, frontend dist and the entrypoint script.
+4. **default** / **ai**, copying the right venv, setting `ENTRYPOINT` to
+   `/app/docker/entrypoint.sh` (which bootstraps `config.yaml` from
+   `example.yaml` on first run), starting uvicorn through `CMD`.
 
-1. **frontend-builder** — `node:20-slim` running `pnpm build` to produce the
-   Vue 3 / Vite output in `src/web/static/dist/`.
-2. **builder-base** → **builder-default** / **builder-ai** — `python:3.11-slim`
-   running `uv sync --locked` (with `--extra ai` for the AI variant) into a
-   `/app/.venv` virtualenv.
-3. **runtime-base** — `python:3.11-slim` with the `appuser` non-root account,
-   application source, frontend dist, and the entrypoint script.
-4. **default** / **ai** — copy the appropriate venv, set `ENTRYPOINT` to
-   `/app/docker/entrypoint.sh` (which bootstraps `config.yaml` from `example.yaml`
-   on first run), and start uvicorn via the `CMD`.
+`docker/Dockerfile.ollama` is a thin extension of `ollama/ollama` adding the
+model-pull entrypoint.
 
-The Ollama sidecar is built by `docker/Dockerfile.ollama`, which is a four-line
-extension of `ollama/ollama` adding the model-pull entrypoint.
+`.github/workflows/docker.yml` builds all three on `linux/amd64` for a
+`pull_request`, without pushing, and smoke-tests the default variant against
+`/api/status`. On a `v*` tag it builds multi-arch, generates semver tags
+(`X.Y.Z`, `X.Y`, `X`, `latest`), attaches provenance and SBOM attestations, and
+pushes to GHCR. `.github/workflows/release.yml` creates that tag by running
+python-semantic-release on every push to `main`, and uploads
+`docker-compose.yml` as a release asset.
 
-### Publish pipeline
+## Security and Privacy
 
-`.github/workflows/docker.yml` has two jobs:
-
-- **PR build** — on `pull_request`, builds all three images on `linux/amd64`
-  only (no push) so a broken Dockerfile fails before merge. The default variant
-  is smoke-tested by hitting `/api/status` after `docker run`.
-- **Tag publish** — on `push` to a `v*` tag, builds all three images
-  multi-arch with `docker/build-push-action`, generates semver tags
-  (`X.Y.Z`, `X.Y`, `X`, `latest`) via `docker/metadata-action`, attaches
-  build provenance and SBOM attestations, and pushes to GHCR.
-
-The tag is created automatically by `.github/workflows/release.yml` (which
-runs python-semantic-release on every push to `main`), so `feat:` and `fix:`
-commits flow through to a published image without manual intervention. The
-release workflow also uploads `docker-compose.yml` as a release asset, enabling
-the `curl -L .../latest/download/docker-compose.yml` flow for end users.
-
-## Security & Privacy
-
-- All processing happens locally
-- External API calls limited to: data source APIs (Steam, GOG, Epic, Sonarr, Radarr, Trakt), enrichment APIs (TMDB, OpenLibrary, RAWG), and Ollama (local)
-- Web interface accessible on internal network only
-- API keys and OAuth tokens are stored encrypted in the `credentials` table, not in plaintext; any secret placed in git-ignored `config/config.yaml` for bootstrap is swept into encrypted storage on startup
-- See `docs/SECURITY.md` for details
+- All processing happens locally. External calls reach data source APIs (Steam,
+  GOG, Epic, Sonarr, Radarr, Trakt), enrichment APIs (TMDB, OpenLibrary, RAWG)
+  and a local Ollama, and nothing else.
+- The web interface is internal network only.
+- API keys and OAuth tokens are stored encrypted in `credentials`. A secret
+  placed in git-ignored `config/config.yaml` for bootstrap is swept into
+  encrypted storage on startup.
+- See [SECURITY.md](docs/SECURITY.md).
 
 ## Future Enhancements
 
-- Discovery mode (surface things you didn't know about)
+- Discovery mode, surfacing things you did not know about
 - Interactive refinement ("I'm burnt out on sci-fi")
-- Scheduled sync (cron-style)
+- Scheduled sync, cron-style

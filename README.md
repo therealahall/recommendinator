@@ -1,24 +1,20 @@
 # Recommendinator
 
 A privacy-focused recommendation engine that learns from your ratings and reviews
-across books, movies, TV shows, and video games. Runs entirely on your machine
-with **no AI required** — AI features are opt-in for users who want them.
+across books, movies, TV shows, and video games.
 
-- **Runs locally** — your data never leaves your machine
-- **Works without AI** — smart scoring algorithms that don't need an LLM
-- **AI is optional** — enable Ollama integration when you want deeper insights
-- **You own your data** — a SQLite database you can query, back up, or delete
+- **Runs locally**. Your data never leaves your machine
+- **Works without AI**. Smart scoring algorithms that don't need an LLM
+- **AI is optional**. Enable Ollama integration when you want deeper insights
+- **You own your data**. A SQLite database you can query, back up, or delete
 
-It imports from sources you already use (Goodreads, Calibre-Web, Steam, GOG, Epic, Sonarr,
-Radarr, Trakt, ROM libraries, or plain CSV/JSON/Markdown), enriches items with metadata,
-and ranks recommendations through a transparent scoring pipeline. Your love of
-sci-fi books can influence game and movie suggestions via semantic genre clusters.
-Browse and tune everything from a themeable web UI or the CLI — they are
-[interchangeable interfaces](ARCHITECTURE.md#7-interface-layer) to the same engine.
+It imports from sources you already use, enriches items with metadata, and ranks
+recommendations through a transparent scoring pipeline. Your love of sci-fi books
+can influence game and movie suggestions through semantic genre clusters. Browse
+and tune everything from a themeable web UI or the CLI, which are
+[interchangeable interfaces](ARCHITECTURE.md#7-interfaces) to the same engine.
 
 ## 30-second start
-
-Pull the published Docker image, mount your config and data, run:
 
 ```bash
 mkdir -p recommendinator/{config,data,inputs} && cd recommendinator
@@ -33,19 +29,15 @@ docker run -d \
   ghcr.io/therealahall/recommendinator:latest
 ```
 
-The container writes a starter `config/config.yaml` on first run holding only
-the storage paths — there is nothing in it you need to edit. Open
-**http://localhost:18473** and set everything up from the app: data sources from
-the **Data** tab, and API keys, models, and tuning from the **Settings** page.
-Keys are stored encrypted in the database, never in the config file.
+The container writes a starter `config/config.yaml` you do not need to edit. Open
+**http://localhost:18473** and set everything up from the app. Then, in order:
 
-Then, in order:
-
-1. **[Set up enrichment](docs/ENRICHMENT_SETUP.md) first** — it fills in the
+1. **[Set up enrichment](docs/ENRICHMENT_SETUP.md) first.** It fills in the
    genres, tags, and descriptions the scoring pipeline depends on. Skipping it
    produces poor recommendations.
-2. **Connect a data source** — pick yours from the table below.
-3. **Get recommendations** — in the web UI, or `python3.11 -m src.cli recommend --type book --count 5`.
+2. **Connect a data source**, from the table below.
+3. **Get recommendations**, in the web UI or with
+   `python3.11 -m src.cli recommend --type book --count 5`.
 
 > Running from source instead of Docker? See the [Quick Start guide](QUICKSTART.md).
 > For AI features, GPU support, reverse proxies, and the full deployment
@@ -53,18 +45,14 @@ Then, in order:
 
 ## Security notice
 
-This is a **personal, single-user tool** designed to run on your own machine. It
-has **no authentication or authorization** on any endpoint. By default it binds
-to `127.0.0.1` (localhost only).
-
-If you change the host to `0.0.0.0` to allow LAN access, **anyone on your network
-can view and modify your data**. Do not expose this application to the public
-internet. See [docs/SECURITY.md](docs/SECURITY.md).
+This is a **personal, single-user tool** with **no authentication on any
+endpoint**. It binds to `127.0.0.1` by default. Change the host to `0.0.0.0` for
+LAN access and **anyone on your network can view and modify your data**. Do not
+expose it to the public internet. See [docs/SECURITY.md](docs/SECURITY.md).
 
 ## Data sources
 
-Each source has its own setup guide. Pick the ones you use — you can ignore the
-rest.
+Each source has its own setup guide. Pick the ones you use.
 
 | Source | Type | Setup |
 |--------|------|-------|
@@ -81,156 +69,112 @@ rest.
 | **ROM Library** | Games | [roms](src/ingestion/sources/roms/README.md) |
 | **CSV / JSON / Markdown** | Any | [generic_csv](src/ingestion/sources/generic_csv/README.md) · [generic_json](src/ingestion/sources/generic_json/README.md) · [markdown](src/ingestion/sources/markdown/README.md) |
 
-For adding/editing/removing sources in the UI, parallel sync, and library export,
-see **[docs/DATA_SOURCES.md](docs/DATA_SOURCES.md)**.
+For adding, editing and removing sources in the UI, parallel sync, and library
+export, see **[docs/DATA_SOURCES.md](docs/DATA_SOURCES.md)**.
 
 ## Features
 
-**Core (no AI required)**
+**Core, no AI required**
 
-- Multi-source ingestion with cross-content recommendations via semantic genre clusters
-- Transparent scoring pipeline — genre, creator, series order, tag overlap, rating patterns ([how it works](docs/SCORING.md))
-- Natural-language [custom rules](docs/CUSTOM_RULES.md) like "avoid horror" or "prefer short books"
-- Content-length filtering, multi-user support, [metadata enrichment](docs/ENRICHMENT_SETUP.md) (TMDB/OpenLibrary/RAWG) — automatic, plus manual editing of genres, tags, and descriptions and a library filter by enrichment state
-- Searchable library — fuzzy, typo-tolerant matching on title and creator (author/director/creators/developer), in both the web UI and CLI
-- Themeable web UI (ships with Nord and Snowstorm) with version display and update detection
-- Dual interface — CLI for automation, web UI for browsing
+- Multi-source ingestion, with cross-content recommendations through semantic
+  genre clusters
+- A transparent scoring pipeline over genre, creator, series order, tag overlap
+  and rating patterns ([how it works](docs/SCORING.md))
+- Natural-language [custom rules](docs/CUSTOM_RULES.md) like "avoid horror"
+- [Metadata enrichment](docs/ENRICHMENT_SETUP.md) from TMDB, OpenLibrary and
+  RAWG, automatic or edited by hand
+- Content-length filtering, multi-user support, fuzzy library search, themes
 
-**Optional AI (opt-in, local Ollama)**
+**Optional AI, opt-in and local**
 
-- Conversational chat over your library with memory and user profiling
+- Conversational chat over your library, with memory and user profiling
 - Semantic similarity, LLM-reasoned explanations, smart rule interpretation
 
 See [Enabling AI features](#enabling-ai-features) below.
 
 ## Configuration
 
-Copy `config/example.yaml` to `config/config.yaml`. This file holds only what is
-needed to stand the app up — where the server binds and where the database lives.
-Both are read before the database is open, which is the only reason they are
-still in a file:
+Copy `config/example.yaml` to `config/config.yaml`. It holds only what is needed
+to stand the app up, which is where the server binds and where the database
+lives:
 
 ```yaml
-# Where the web server binds
 web:
   host: "127.0.0.1"
   port: 18473
 
-# Where the database, vector store, and cache live
 storage:
   database_path: "data/recommendations.db"
 ```
 
-Under Docker, `web.host` and `web.port` are inert: the image starts with
-`--host`/`--port` on the command line and CLI flags beat `config.yaml`. Publish a
-different port with `APP_PORT` instead — see [docs/DOCKER.md](docs/DOCKER.md).
+Under Docker those two are inert, because the image passes `--host` and `--port`
+on the command line and CLI flags beat `config.yaml`. Publish a different port
+with `APP_PORT` instead. See [docs/DOCKER.md](docs/DOCKER.md).
 
-Everything else lives in the database and is managed from inside the app. **Data
-sources** are added from the **Data** tab with **+ Add source** (or the `source`
-CLI). **Global settings** — AI toggles, scorer weights, sync workers, enrichment
-providers, conversation tuning, CORS origins, and logging — come from the
-**Settings** page (or the `settings` CLI). Precedence for global settings is
-**const default < `config.yaml` < database**, so you MAY still add a section to
-`config.yaml` to change a value before anything is saved to the database, but you
-no longer need to.
+Everything else lives in the database and is set from the app. Data sources come
+from the **Data** tab or the `source` CLI. Global settings, from AI toggles to
+scorer weights to logging, come from the **Settings** page or the `settings` CLI.
 
 ```bash
-python3.11 -m src.cli settings list                       # see every setting
+python3.11 -m src.cli settings list
 python3.11 -m src.cli settings set features.ai_enabled true
 python3.11 -m src.cli settings set-secret enrichment.providers.tmdb.api_key
 ```
 
-Provider API keys and OAuth tokens are stored encrypted in the database — enter
-them from the Settings page or `settings set-secret`, not in `config.yaml`. See
-[docs/SCORING.md](docs/SCORING.md) for what each scorer weight does and
-[ARCHITECTURE.md](ARCHITECTURE.md#global-configuration-precedence) for the full
-precedence model.
+API keys and OAuth tokens are stored encrypted, so enter them from the Settings
+page or `settings set-secret`, never `config.yaml`. See
+[docs/SCORING.md](docs/SCORING.md) for what the weights do and
+[ARCHITECTURE.md](ARCHITECTURE.md#global-configuration-precedence) for
+precedence.
 
-**Your ratings are yours:** a sync fills in around what you have said, it does
-not talk over you. The exact promise differs a little by field:
+### Your ratings are yours
 
-- **Rating and review** are filled only while they are empty. A re-import can
-  never erase or replace one you wrote.
-- **Status** only moves forward (unread → consuming → completed). A sync can
-  still advance a status you moved backward, but it can never revert a
-  completion — with one deliberate exception: a completed TV show whose season
-  checklist you have filled in goes back to in-progress when a sync brings new
-  seasons, because it is no longer finished.
-- **Completion date** is kept unless the file carries a later one.
-- **Ignore flag** does what the file actually says. Leave the `ignored` column
-  out, or leave a cell blank, and the import says nothing about the flag, so
-  what you ignored in the app stays ignored. Put a real `true` or `false` in
-  the cell and it wins — which is how you un-ignore items by exporting your
-  library, editing it and re-importing.
+A sync fills in around what you have said, it does not talk over you. Ratings and
+reviews are only ever written into an empty field, completion dates give way only
+to later ones, and status moves forward, never back. The single exception is a
+completed TV show whose season checklist you have filled in, which returns to
+in-progress when a sync brings new seasons.
+Your own edits win outright, and any field you do not mention is left alone. The
+[full rules](ARCHITECTURE.md#user-owned-fields) cover every case.
 
-  That blank-cell rule protects a file you maintain by hand. **It does not
-  protect you from your own exports.** Every row this app exports carries a real
-  `true` or `false` in `ignored`, so re-importing an export replaces your whole
-  ignore list with the one you had on the day you exported — anything you have
-  ignored since is un-ignored. An export is a snapshot, not a patch. Import it
-  once and remove it; leaving it configured as a source means every sync from
-  then on re-applies that stale snapshot.
-
-Editing an item yourself is the other side of the rule: your edit wins, and any
-field you do not mention is left exactly as it was. Marking something complete —
-from the Library page, the Recommendations page, `library edit`, the `complete`
-command, or chat — dates it today when it has no date yet, and leaves an existing
-date alone. Editing an item that was already complete never dates it, so tidying
-up an old import's genres cannot make the app think you finished it this
-afternoon.
-
-Chat is the one exception, and deliberately so: it is the only place you can say
-*when* you finished something ("I actually finished that in January"), and a date
-you name **replaces** the stored one, even if it is earlier. That is how you
-correct a date an import got wrong.
-
-**Duplicate items:** when the same title is imported from more than one source,
-the rows are merged into one on the next sync, matched by normalized title. The
-merged row keeps the strongest state from either side — the rating, review,
-later completion date, further-advanced status and any ignore flag — and
-metadata (genres, tags) is merged additively, so consolidating duplicates
-cannot lose data you already have. Status only moves forward (unread →
-consuming → completed), with one deliberate exception: a completed TV show
-whose season checklist you have filled in returns to in-progress when a sync
-brings new seasons.
+**An export is a snapshot, not a patch.** Every row it writes states whether that
+item is ignored, so re-importing one replaces your whole ignore list with the one
+you had on the day you exported. That is how you un-ignore things in bulk, and it
+is why you import an export once and remove it rather than leaving it configured
+as a source.
 
 ### Upgrading
 
 The Goodreads CSV plugin was renamed from `goodreads` to `goodreads_csv`.
-Existing Goodreads items and any DB-stored source configs are relabeled from
-`goodreads` to `goodreads_csv` automatically on first startup, so no action is
-needed there. If you configure Goodreads via `config.yaml`, rename
+Existing items and DB-stored source configs are relabeled automatically on first
+startup. If you configure Goodreads through `config.yaml`, rename
 `plugin: goodreads` to `plugin: goodreads_csv`.
 
 ## CLI usage
 
-The CLI is a full peer to the web UI. A taste:
-
 ```bash
-python3.11 -m src.cli update --source all          # import everything
+python3.11 -m src.cli update --source all
 python3.11 -m src.cli recommend --type book --count 10
 python3.11 -m src.cli library list --type book --status completed --sort rating
-python3.11 -m src.cli library list --search "die hard"   # fuzzy title/creator search
-python3.11 -m src.cli chat start                   # conversational mode (AI)
+python3.11 -m src.cli library list --search "die hard"
+python3.11 -m src.cli chat start
 ```
 
 Full command reference: **[docs/CLI.md](docs/CLI.md)**.
 
 ## Enabling AI features
 
-AI is entirely optional. To enable semantic similarity and LLM-powered
-explanations:
+For semantic similarity and LLM-powered explanations:
 
-- **Docker:** `docker compose --profile ai up -d app-ai` — Ollama and models are
-  set up automatically.
-- **Local:** install [Ollama](https://ollama.ai), `ollama pull mistral:7b`, then
-  turn on `features.ai_enabled`, `features.embeddings_enabled`, and
-  `features.llm_reasoning_enabled` from the Settings page (or
-  `settings set features.ai_enabled true`). These are restart-required, so
-  restart the app after toggling them.
+- **Docker**: `docker compose --profile ai up -d app-ai` sets up Ollama and the
+  models for you.
+- **Local**: install [Ollama](https://ollama.ai), run `ollama pull mistral:7b`,
+  then turn on `features.ai_enabled`, `features.embeddings_enabled` and
+  `features.llm_reasoning_enabled` from the Settings page. All three are
+  restart-required.
 
 See [docs/MODEL_RECOMMENDATIONS.md](docs/MODEL_RECOMMENDATIONS.md) for model
-selection guidance.
+selection.
 
 ## Documentation
 
@@ -257,11 +201,9 @@ selection guidance.
 
 ## Requirements
 
-- Python 3.11 (recommended; see [docs/PYTHON_VERSION.md](docs/PYTHON_VERSION.md))
-- SQLite (included with Python)
-- Ollama (optional, for AI features)
+Python 3.11 recommended (see [docs/PYTHON_VERSION.md](docs/PYTHON_VERSION.md)),
+SQLite, and Ollama if you want the AI features.
 
 ## License
 
-[PolyForm Noncommercial 1.0.0](LICENSE) — free for personal and noncommercial
-use. See LICENSE for details.
+[PolyForm Noncommercial 1.0.0](LICENSE), free for personal and noncommercial use.

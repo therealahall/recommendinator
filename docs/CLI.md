@@ -1,173 +1,150 @@
 # CLI Reference
 
-The CLI provides full access to every Recommendinator feature — it is an
-alternative interface to the same capabilities as the web UI, not a subset.
-Commands are organized into groups.
+Every Recommendinator feature is reachable from the CLI. It is a peer of the web
+UI, not a subset. Run commands as `python3.11 -m src.cli <command>`. Most
+read-only commands accept `--format json`.
 
-All commands are run as `python3.11 -m src.cli <command>`. Most read-only
-commands accept `--format json` for scripting.
+## Import and recommend
 
-## Import & recommend
+### `update`
+
+Imports from one source or all of them.
 
 ```bash
-# Import data
 python3.11 -m src.cli update --source goodreads_csv
-python3.11 -m src.cli update --source steam
 python3.11 -m src.cli update --source all
+```
 
-# Get recommendations
+### `recommend`
+
+```bash
 python3.11 -m src.cli recommend --type book --count 10
-python3.11 -m src.cli recommend --type video_game --count 5
+```
 
-# Mark content as completed (adds the item if your library does not have it yet)
+### `complete`
+
+Marks something finished, adding it to the library if it is not there yet.
+
+```bash
 python3.11 -m src.cli complete --type book --title "Project Hail Mary" --rating 5
 ```
 
-`complete` records the completion in one step: it finds or creates the item, sets
-its status, and writes the rating and review you passed. It takes no date — the
-item is stamped with today's date when it has none yet, and an existing date is
-kept, so completing something already dated by an import does not re-date it.
-`POST /api/complete` behaves identically. Chat is the only surface that can name
-a different date ("I finished it last Tuesday"), and it writes the date as given.
+It takes no date. An item with no date is stamped today, and an existing date is
+kept, so completing something an import already dated does not re-date it. Only
+chat can name a different date.
 
-A review passed here **replaces** the stored one, so `--review ""` (or a value
-that is nothing but whitespace) is refused with an error rather than written.
-`POST /api/complete` refuses it too, with a 422. There is no clear-review flag on
-`complete` — completing something is not the moment to erase a review, and
-`library edit --clear-review` is.
+`--review` replaces the stored review, so a blank one is refused rather than
+written. To erase a review, use `library edit --clear-review`.
 
 ## System status
 
+`status` reports system health, component readiness and feature flags.
+
 ```bash
-# Check system health, component readiness, and feature flags
-python3.11 -m src.cli status
 python3.11 -m src.cli status --format json
 ```
 
 ## Library management
 
+### `library list`
+
+Filters and sorts the library.
+
 ```bash
-# List items with filtering and sorting
 python3.11 -m src.cli library list --type book --status completed --sort rating --limit 20
-python3.11 -m src.cli library list --format json
-
-# Filter by enrichment state (enriched or not_enriched)
 python3.11 -m src.cli library list --enrichment not_enriched
-
-# Search by title or creator (matches web API search). Fuzzy and typo-tolerant;
-# combines with the type/status filters. At most 200 characters, the same bound
-# the web API enforces (see below).
 python3.11 -m src.cli library list --search "die hard"
-
-# Surface completed items you haven't rated yet (forces completed status,
-# overriding --status; composes with --type). Rate them with `library edit`.
-python3.11 -m src.cli library list --needs-rating
 python3.11 -m src.cli library list --needs-rating --type movie
-
-# Show item details
-python3.11 -m src.cli library show --id 42
-
-# Edit item metadata
-python3.11 -m src.cli library edit --id 42 --rating 5 --status completed
-
-# Clear a rating or review back to empty (the only way to store nothing there)
-python3.11 -m src.cli library edit --id 42 --clear-rating
-python3.11 -m src.cli library edit --id 42 --clear-review
-
-# Mark watched TV seasons (comma-separated season numbers, each 1-200)
-python3.11 -m src.cli library edit --id 42 --seasons-watched 1,2,3
-
-# Set manual enrichment metadata (repeated --genre/--tag replace the existing
-# lists; any provided field marks the item enriched)
-python3.11 -m src.cli library edit --id 42 --genre Action --genre RPG --tag co-op --description "A grand adventure."
-
-# Ignore/unignore items (excluded from recommendations)
-python3.11 -m src.cli library ignore --id 42
-python3.11 -m src.cli library unignore --id 42
-
-# Export library data
-python3.11 -m src.cli library export --type book --format csv --output books.csv
-python3.11 -m src.cli library export --type video_game --format json
 ```
 
-`library list --enrichment` filters by enrichment state. An item is "enriched"
-only when a provider matched it cleanly (a real provider, no error, not "not
-found", and not pending re-enrichment); `not_enriched` is everything else. The
-list table shows an **Enriched** column.
+- `--enrichment` takes `enriched` or `not_enriched`, matching the table's
+  **Enriched** column.
+- `--search` matches title or creator, fuzzy and typo-tolerant, and combines with
+  the other filters. It is capped at 200 characters, the same bound
+  `GET /api/items` and the web search box enforce.
+- `--needs-rating` forces completed status, overriding `--status`, and composes
+  with `--type`.
 
-`--search` is capped at 200 characters because the term is fuzzy-matched against
-every candidate title, making its length a cost multiplier over the whole
-library. All three surfaces hold the same bound and each reports it in the way
-that suits it: the CLI aborts with an error, `GET /api/items` answers 422, and
-the web UI's search box stops accepting input at the cap and announces the limit
-to screen readers rather than failing a request.
+### `library show`
 
-`library edit` only writes the flags you pass. Omitting `--rating` or
-`--review` leaves the stored value exactly as it was, so a status-only or
-genre-only edit cannot erase a rating; passing one replaces the stored value.
+```bash
+python3.11 -m src.cli library show --id 42
+```
 
-Emptying a field is therefore a separate instruction: `--clear-rating` and
-`--clear-review` store nothing at all, and they are the only way to do that from
-the CLI. `--review ""` is refused with a message pointing at `--clear-review`,
-because an empty string is far more often a shell accident than an intention.
-Neither clear flag may be combined with its value flag. The web equivalent is
-`PATCH /api/items/{id}` with an explicit `null` for the field; a `rating` or
-`review` the request body omits is left alone there too, and a blank or
-all-whitespace `review` is refused there with a 422 for the same reason the CLI
-refuses it. In the web edit modal you do not have to send the null yourself:
-clearing the review textarea sends `null`, so emptying the box *is* the clear.
+### `library edit`
 
-An edit that moves an item to `--status completed` also records today's
-completion date when the item has none yet, which is what the variety penalty
-uses to tell a fresh completion from an old one (see
-[SCORING.md](SCORING.md#variety-after-completion)). Editing an item that is
-already completed never dates it, so fixing a genre on an undated import does
-not make the app think you finished it today.
+```bash
+python3.11 -m src.cli library edit --id 42 --rating 5 --status completed
+python3.11 -m src.cli library edit --id 42 --clear-rating
+python3.11 -m src.cli library edit --id 42 --clear-review
+python3.11 -m src.cli library edit --id 42 --seasons-watched 1,2,3
+python3.11 -m src.cli library edit --id 42 --genre Action --tag co-op --description "A grand adventure."
+```
 
-Passing any of `--genre`, `--tag`, or `--description` to `library edit` writes
-manual metadata. Repeated `--genre`/`--tag` replace the existing lists (they do
-not append), and `--description` replaces the existing text. Providing any of
-these marks the item enriched via the `manual` provider, so it drops out of the
-`not_enriched` set and is never re-queued for automatic enrichment.
+**Only the flags you pass are written**, so a status-only edit cannot erase a
+rating. Passing one replaces it.
+
+Emptying a field is a separate instruction. `--clear-rating` and `--clear-review`
+are the only way to store nothing there, and neither may be combined with its
+value flag. `--review ""` is refused, pointing you at `--clear-review`, because
+an empty string is far more often a shell accident than an intention.
+
+`--seasons-watched` takes comma-separated season numbers, each 1-200. Repeated
+`--genre` and `--tag` replace the existing lists rather than appending. Any of
+`--genre`, `--tag` or `--description` marks the item enriched through the
+`manual` provider, dropping it out of `not_enriched` and out of the automatic
+queue.
+
+### `library ignore` / `library unignore`
+
+Ignored items are excluded from recommendations.
+
+```bash
+python3.11 -m src.cli library ignore --id 42
+python3.11 -m src.cli library unignore --id 42
+```
+
+### `library export`
+
+```bash
+python3.11 -m src.cli library export --type book --format csv --output books.csv
+```
 
 ## Source management
 
-Add, edit, enable/disable, and remove data sources without editing YAML. Sources
-can live in YAML (bootstrap), in the database (created or migrated), or both.
+Add, edit, enable, disable and remove data sources without touching YAML.
 
 ```bash
-# Create a brand-new source directly in the database (no YAML edit needed)
-python3.11 -m src.cli source plugins             # see what plugins are available
+# Create one directly in the database
+python3.11 -m src.cli source plugins             # available plugin types
 python3.11 -m src.cli source create my_books goodreads_csv
 python3.11 -m src.cli source set my_books path inputs/goodreads_library_export.csv
 
-# Move an existing YAML source into the database (one-time, idempotent)
+# Or move an existing YAML source in (one-time, idempotent)
 python3.11 -m src.cli source migrate goodreads_csv
 
-# Inspect / edit fields after migration or creation
+# Inspect and edit
 python3.11 -m src.cli source show goodreads_csv
-python3.11 -m src.cli source schema goodreads_csv           # list editable fields
-python3.11 -m src.cli source set goodreads_csv path inputs/new_export.csv
-python3.11 -m src.cli source disable goodreads_csv          # disabled sources are skipped during sync
+python3.11 -m src.cli source schema goodreads_csv           # editable fields
+python3.11 -m src.cli source disable goodreads_csv          # skipped during sync
 python3.11 -m src.cli source enable goodreads_csv
-
-# Remove a DB-backed source entirely (clears stored secrets too)
-python3.11 -m src.cli source remove my_books
+python3.11 -m src.cli source remove my_books                # clears its secrets too
 ```
 
-All `source` subcommands except `set-secret` and `clear-secret` accept
-`--format json` for scripting parity with the web API. For atomic multi-field
-updates (the CLI equivalent of `PUT /api/sync/sources/<id>/config`), use
-`source apply` with a JSON dict from a file or stdin:
+Every `source` subcommand except `set-secret` and `clear-secret` accepts
+`--format json`.
+
+`source apply` is the atomic multi-field update, the equivalent of
+`PUT /api/sync/sources/<id>/config`. It reads a JSON dict from a file or stdin:
 
 ```bash
 echo '{"path": "inputs/new.csv", "content_type": "book"}' \
   | python3.11 -m src.cli source apply my_csv --from-json -
 ```
 
-For non-interactive secret rotation (Docker entrypoints, CI), set
-`RECOMMENDINATOR_SECRET_VALUE` instead of typing at the prompt — this keeps the
-secret out of shell history and the visible process list:
+`source set-secret` prompts with hidden input. For Docker entrypoints and CI, set
+`RECOMMENDINATOR_SECRET_VALUE` instead, which keeps the value out of shell
+history and the visible process list:
 
 ```bash
 RECOMMENDINATOR_SECRET_VALUE="$STEAM_API_KEY" \
@@ -176,104 +153,86 @@ RECOMMENDINATOR_SECRET_VALUE="$STEAM_API_KEY" \
 
 ## Global settings
 
-Manage the global/system config (the sections that used to live in
-`config.yaml`: `features`, `ollama`, `recommendations`, `conversation`, `sync`,
-`enrichment`, `web`, `logging`). `web.host`, `web.port` and `web.debug` are the
-exception — the server reads them to bind its socket before the database is
-open, so they stay in `config.yaml`. These commands mirror
-the web **Settings** page and the `/api/settings` endpoints; both call the same
-`src/settings/service.py`, so behaviour is identical. Values persist to the
-`settings` table, which wins over `config.yaml` and the built-in defaults
-(precedence: **const default < YAML < database**).
+Manages `features`, `ollama`, `recommendations`, `conversation`, `sync`,
+`enrichment`, `web` and `logging`. `web.host`, `web.port` and `web.debug` are the
+exception, staying in `config.yaml` because the server binds its socket before
+the database opens.
+
+The web **Settings** page is the same thing over the same
+`src/settings/service.py`. Values persist to the `settings` table.
+
+### `settings list` / `settings get`
 
 ```bash
-# List every setting grouped by section (secrets show presence only).
-# Advanced infra/security settings (CORS origins, logging) are hidden
-# unless --advanced is given or a specific --section is requested.
 python3.11 -m src.cli settings list
 python3.11 -m src.cli settings list --advanced
 python3.11 -m src.cli settings list --section recommendations
-python3.11 -m src.cli settings list --format json   # full view, matches GET /api/settings
-
-# Show one setting's metadata and current value (dotted registry key)
 python3.11 -m src.cli settings get recommendations.default_count
-python3.11 -m src.cli settings get logging.level --format json
+```
 
-# Set a non-sensitive setting. The value is parsed to the setting's type:
-# booleans accept true/false, lists are comma-separated, numbers/strings/enums
-# are parsed as written. Validation (bounds, choices) is enforced.
+Advanced infra and security settings (CORS origins, logging) stay hidden unless
+`--advanced` or a specific `--section` asks for them. Neither command ever prints
+a secret's value, only whether one is set.
+
+### `settings set` / `settings reset`
+
+```bash
 python3.11 -m src.cli settings set recommendations.default_count 8
 python3.11 -m src.cli settings set features.ai_enabled true
-python3.11 -m src.cli settings set web.allowed_origins "http://localhost:18473"
-
-# Reset a setting to its default by dropping the database override
 python3.11 -m src.cli settings reset recommendations.default_count
 ```
 
-`set`, `apply`, and `reset` also accept `--format json`, which emits the full
-refreshed settings view instead of the one-line confirmation — the same body
-`PUT /api/settings` and `DELETE /api/settings/{key}` return, so a script gets
-the resulting state from the call that changed it rather than a follow-up
-`settings list`.
+The value is parsed to the setting's type, with booleans as true/false and lists
+comma-separated, and bounds and choices are enforced. `reset` drops the database
+override.
 
-Non-restart settings take effect immediately; restart-required settings
-(`features.*`, `web.*`, `logging.*`) persist and apply on the next boot — the
-CLI tells you when a change needs a restart.
+`set`, `apply` and `reset` accept `--format json`, emitting the full refreshed
+view rather than a one-line confirmation.
 
-For atomic multi-key updates (the CLI equivalent of `PUT /api/settings`), use
-`settings apply` with a JSON object of `{"<dotted.key>": <value>}` from a file
-or stdin. Every key is validated up front through a single service call, so one
-bad key rejects the whole batch and nothing is written (all-or-nothing) — the
-offending key and reason are printed and the command exits non-zero. Sensitive
-keys are rejected here too; store them with `settings set-secret`.
+Restart-required settings (`features.*`, `web.*`, `logging.*`) persist and apply
+on the next boot. The CLI says so when a change needs one.
+
+### `settings apply`
+
+The atomic multi-key update, the equivalent of `PUT /api/settings`:
 
 ```bash
 echo '{"recommendations.default_count": 8, "recommendations.max_count": 30}' \
   | python3.11 -m src.cli settings apply --from-json -
 ```
 
+Every key is validated up front, so **one bad key rejects the whole batch** and
+nothing is written. The offending key and reason are printed and the command
+exits non-zero. Sensitive keys are rejected here too.
+
 ### Secrets
 
-Sensitive settings (provider API keys like `enrichment.providers.tmdb.api_key`)
-are stored encrypted in the `credentials` table, never in plaintext. `settings
-set` refuses them; use the write-only secret commands instead:
+Provider API keys are stored encrypted in the `credentials` table, never in
+plaintext, so `settings set` refuses them. `set-secret` prompts with hidden
+input, or reads `RECOMMENDINATOR_SECRET_VALUE` for non-interactive use.
 
 ```bash
-# Store or rotate a secret. Prompts with hidden input, or reads
-# RECOMMENDINATOR_SECRET_VALUE for non-interactive use (Docker entrypoints, CI)
-# — this keeps the value out of shell history and the visible process list.
 python3.11 -m src.cli settings set-secret enrichment.providers.tmdb.api_key
-RECOMMENDINATOR_SECRET_VALUE="$TMDB_KEY" \
-  python3.11 -m src.cli settings set-secret enrichment.providers.tmdb.api_key
-
-# Delete a stored secret
 python3.11 -m src.cli settings clear-secret enrichment.providers.tmdb.api_key
 ```
 
-`settings list`/`get` never print a secret's value — they show only whether one
-is set.
-
 ## Preferences
 
-```bash
-# View current preferences (table or JSON)
-python3.11 -m src.cli preferences get
-python3.11 -m src.cli preferences get --format json
+See [SCORING.md](SCORING.md) for what each weight does and
+[CUSTOM_RULES.md](CUSTOM_RULES.md) for rule syntax.
 
-# Adjust scorer weights and content length preferences
+```bash
+python3.11 -m src.cli preferences get --format json
 python3.11 -m src.cli preferences set-weight genre_match 3.0
 python3.11 -m src.cli preferences set-length book short
-
-# Toggle boolean preferences (series_in_order)
 python3.11 -m src.cli preferences set-toggle series_in_order off
-
-# Set the variety-after-completion penalty (0.0-5.0; 0.0 = off, 5.0 = full strength)
-python3.11 -m src.cli preferences set-variety 4.0
-
-# Reset all preferences to defaults
+python3.11 -m src.cli preferences set-variety 4.0      # 0.0 off to 5.0 full strength
 python3.11 -m src.cli preferences reset
+```
 
-# Custom rules (natural-language preferences interpreted by the LLM)
+Custom rules are natural-language preferences interpreted by the LLM:
+
+```bash
 python3.11 -m src.cli preferences custom-rules add "avoid horror"
 python3.11 -m src.cli preferences custom-rules list
 python3.11 -m src.cli preferences custom-rules interpret "avoid horror" --use-llm
@@ -281,82 +240,53 @@ python3.11 -m src.cli preferences custom-rules remove 0
 python3.11 -m src.cli preferences custom-rules clear --yes
 ```
 
-See [SCORING.md](SCORING.md) for what each weight does and [CUSTOM_RULES.md](CUSTOM_RULES.md)
-for custom rule syntax.
-
 ## Enrichment
 
+Enrichment is critical for recommendation quality. See
+[ENRICHMENT_SETUP.md](ENRICHMENT_SETUP.md).
+
 ```bash
-# Run enrichment (all items or filtered by content type)
 python3.11 -m src.cli enrichment start
 python3.11 -m src.cli enrichment start --type movie
-
-# Re-process items previously marked as not_found (providers can drift over time)
-python3.11 -m src.cli enrichment start --retry-not-found
-python3.11 -m src.cli enrichment start --type movie --retry-not-found
-
-# Check enrichment statistics
+python3.11 -m src.cli enrichment start --retry-not-found   # providers drift over time
 python3.11 -m src.cli enrichment status
-
-# Reset enrichment status so items are re-processed on the next run
-python3.11 -m src.cli enrichment reset
+python3.11 -m src.cli enrichment reset                     # re-process on the next run
 ```
-
-See [ENRICHMENT_SETUP.md](ENRICHMENT_SETUP.md) — enrichment is critical for
-recommendation quality.
 
 ## Authentication (GOG/Epic/Trakt)
 
 ```bash
-# Check OAuth connection status
 python3.11 -m src.cli auth status
-
-# Connect via browser OAuth flow
-python3.11 -m src.cli auth connect --source gog
-python3.11 -m src.cli auth connect --source epic
-
-# Connect via the Trakt device-code flow (prints a verification URL + code)
-python3.11 -m src.cli auth connect --source trakt
-
-# Disconnect stored credentials
+python3.11 -m src.cli auth connect --source gog     # browser OAuth
+python3.11 -m src.cli auth connect --source trakt   # device code, prints a URL
 python3.11 -m src.cli auth disconnect --source gog
-python3.11 -m src.cli auth disconnect --source trakt
 ```
 
-## Conversation & memories (requires AI)
-
-```bash
-# Interactive chat session
-python3.11 -m src.cli chat start
-python3.11 -m src.cli chat start --type book    # filter to books only
-
-# Single-shot message
-python3.11 -m src.cli chat send --message "What should I read next?"
-
-# Conversation history
-python3.11 -m src.cli chat history --limit 20
-python3.11 -m src.cli chat reset
-
-# Manage memories (persistent preference signals)
-python3.11 -m src.cli memory list
-python3.11 -m src.cli memory add --text "I love hard sci-fi"
-python3.11 -m src.cli memory edit --id 3 --text "I love hard sci-fi and space opera"
-python3.11 -m src.cli memory edit --id 3 --active            # explicitly set active
-python3.11 -m src.cli memory edit --id 3 --inactive          # explicitly set inactive
-python3.11 -m src.cli memory edit --id 3 --text "..." --inactive  # text + state in one call
-python3.11 -m src.cli memory toggle --id 3                   # flip active/inactive
-python3.11 -m src.cli memory delete --id 3
-```
+## Conversation and memories (requires AI)
 
 See [CONVERSATION_GUIDE.md](CONVERSATION_GUIDE.md) for the chat interface.
+
+```bash
+python3.11 -m src.cli chat start
+python3.11 -m src.cli chat start --type book
+python3.11 -m src.cli chat send --message "What should I read next?"
+python3.11 -m src.cli chat history --limit 20
+python3.11 -m src.cli chat reset
+```
+
+Memories are persistent preference signals:
+
+```bash
+python3.11 -m src.cli memory list
+python3.11 -m src.cli memory add --text "I love hard sci-fi"
+python3.11 -m src.cli memory edit --id 3 --text "..." --inactive  # text and state together
+python3.11 -m src.cli memory toggle --id 3                        # flip active/inactive
+python3.11 -m src.cli memory delete --id 3
+```
 
 ## User profile
 
 ```bash
-# View your computed preference profile
-python3.11 -m src.cli profile show
 python3.11 -m src.cli profile show --format json
-
-# Regenerate profile from current library data
-python3.11 -m src.cli profile regenerate
+python3.11 -m src.cli profile regenerate    # rebuild from current library data
 ```
