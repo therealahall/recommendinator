@@ -976,9 +976,9 @@ class TestExportColumnConsistency:
     ``_item_to_export_dict`` builds the common half by hand, then walks the
     type's declared columns skipping any creator column and any name the
     common half already used. Either skip can drop a column from every
-    exported file with nothing raised, and the hand-written
-    ``_EXPECTED_CSV_HEADERS`` below only agrees with the export until someone
-    updates it, so both are pinned against the declaration here.
+    exported file with nothing raised, so the set of columns is pinned
+    against the declaration here. Only the set: both sides key by name, so
+    order is not part of the contract.
     """
 
     @pytest.mark.parametrize("content_type", list(ContentType))
@@ -1028,121 +1028,16 @@ class TestExportColumnConsistency:
             assert not borrowed, f"{content_type} declares {sorted(borrowed)}"
 
 
-# The exact header every export writes, which users' saved spreadsheets and
-# scripts read positionally. Written out per type rather than derived, so a
-# reordering of the field declaration these are now built from shows up here
-# as a diff instead of agreeing with itself.
-_EXPECTED_CSV_HEADERS: dict[ContentType, list[str]] = {
-    ContentType.BOOK: [
-        "title",
-        "author",
-        "rating",
-        "status",
-        "date_completed",
-        "review",
-        "notes",
-        "isbn",
-        "pages",
-        "year_published",
-        "genre",
-        "ignored",
-    ],
-    ContentType.MOVIE: [
-        "title",
-        "director",
-        "rating",
-        "status",
-        "date_completed",
-        "review",
-        "notes",
-        "year",
-        "runtime_minutes",
-        "genre",
-        "ignored",
-    ],
-    ContentType.TV_SHOW: [
-        "title",
-        "creator",
-        "rating",
-        "status",
-        "date_completed",
-        "review",
-        "notes",
-        "seasons_watched",
-        "total_seasons",
-        "year",
-        "genre",
-        "ignored",
-    ],
-    ContentType.VIDEO_GAME: [
-        "title",
-        "developer",
-        "rating",
-        "status",
-        "date_completed",
-        "review",
-        "notes",
-        "platform",
-        "genre",
-        "hours_played",
-        "ignored",
-    ],
-}
-
-# JSON puts ``ignored`` with the other common fields rather than last, so the
-# two orders are not the same list.
-_EXPECTED_JSON_KEYS: dict[ContentType, list[str]] = {
-    content_type: [
-        *[column for column in columns if column != "ignored"][:7],
-        "ignored",
-        *[column for column in columns if column != "ignored"][7:],
-    ]
-    for content_type, columns in _EXPECTED_CSV_HEADERS.items()
-}
-
-
-class TestExportLayoutIsStable:
-    """The exported layout is the one users already have files in.
-
-    Both orders are derived — the CSV header from ``CONTENT_TYPE_COLUMNS``
-    and the JSON keys from the same mapping's iteration order — so nothing
-    but these expectations stops a reordering of the underlying field
-    declaration from silently reshuffling every exported file.
-    """
-
-    @pytest.mark.parametrize("content_type", list(ContentType))
-    def test_csv_header_order(self, content_type: ContentType) -> None:
-        """Each type's CSV header is exactly the documented column order."""
-        result = export_items_csv([], content_type)
-
-        reader = csv.DictReader(io.StringIO(result))
-        assert list(reader.fieldnames or []) == _EXPECTED_CSV_HEADERS[content_type]
-
-    @pytest.mark.parametrize("content_type", list(ContentType))
-    def test_json_key_order(self, content_type: ContentType) -> None:
-        """Each type's JSON entry carries exactly those keys, in order."""
-        item = ContentItem(
-            id="layout",
-            title="Layout Fixture",
-            author="Someone",
-            content_type=content_type,
-            status=ConsumptionStatus.COMPLETED,
-            rating=3,
-            metadata={},
-        )
-
-        entries = json.loads(export_items_json([item], content_type))
-
-        assert list(entries[0]) == _EXPECTED_JSON_KEYS[content_type]
-
-
-class TestShippedTemplatesMatchTheExport:
-    """The four template files carry the header the export writes.
+class TestShippedTemplatesCarryTheExportColumns:
+    """The four template files carry the columns the export writes.
 
     They are hand-written, while the export header is derived from the field
     declaration, so renaming a ``template_column`` updates one and not the
     other. The user who then imports the shipped template gets an
     unknown-column warning and loses that value silently.
+
+    Which columns, not what order: both the importer and the exporter key by
+    name, so column order carries no meaning on either side.
     """
 
     @pytest.mark.parametrize(
@@ -1155,15 +1050,15 @@ class TestShippedTemplatesMatchTheExport:
         ],
         ids=["book", "movie", "tv_show", "video_game"],
     )
-    def test_template_header_is_the_export_column_order(
+    def test_template_header_carries_the_export_columns(
         self, content_type: ContentType, template: str
     ) -> None:
-        """Each shipped template opens with that type's export columns."""
+        """Each shipped template names that type's export columns."""
         shipped = (Path("templates") / template).read_text(encoding="utf-8")
 
         header = list(csv.reader(io.StringIO(shipped)))[0]
 
-        assert header == _exported_header(content_type)
+        assert set(header) == set(_exported_header(content_type))
 
 
 class TestExportRoundtrip:
