@@ -116,15 +116,17 @@ import raises its `total_seasons` above the seasons you have watched.
 
 `year`, `runtime_minutes`, `total_seasons`, `platform`, `hours_played` and the
 creator columns (`director`, `creator`, `developer`) used to export blank and now
-export correctly, so retake any export you keep as a backup. Two things still do
-not round trip:
+export correctly, so retake any export you keep as a backup. Two things still
+need care:
 
-- **`platform` on a GOG library synced before the platform-shape fix.** It is
-  fill-only, so the stale value beats every later sync and exports as a Python
-  repr (`{'windows': True, ...}`), which a re-import would store straight back
-  as that literal string. Nothing in the app clears it, and removing the GOG
-  source and re-adding it does not either, because the items stay and fill-only
-  keeps the value.
+- **`platform` on a GOG library synced before the platform-shape fix.** Starting
+  the app rewrites the stored per-platform flag dict as the platform names it
+  meant, so a row still holding that dict repairs itself. It happens once, when
+  the database opens, so restart the app rather than looking for it in the UI.
+  One shape is beyond the repair: a row whose value has already been through an
+  export and a re-import holds the dict's Python repr
+  (`{'windows': True, ...}`) as a literal string, which the repair does not
+  recognise. The column is fill-only, so no later sync replaces it either.
 - **`hours_played` on a video game a generic CSV or JSON import brought in
   before that column was renamed** to the library's own `playtime_hours`. Those
   rows still carry the old key and export blank. The number is not lost, and
