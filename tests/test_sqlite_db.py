@@ -6817,7 +6817,9 @@ class TestUndeclaredContentTypeWriteRegression:
 
         with patch.dict(DETAIL_FIELDS):
             del DETAIL_FIELDS["movie"]
-            with pytest.raises(KeyError):
+            # Both paths do a lot of dict work, so the message is pinned to
+            # the declaration lookup rather than to KeyError alone.
+            with pytest.raises(KeyError, match=r"^'movie'$"):
                 temp_db.save_content_item(item)
 
         with temp_db.connection() as conn:
@@ -6866,7 +6868,9 @@ class TestUndeclaredContentTypeReadRegression:
 
         with patch.dict(DETAIL_FIELDS):
             del DETAIL_FIELDS["movie"]
-            with pytest.raises(KeyError):
+            # Pinned to the declaration lookup: a KeyError from anywhere else
+            # in the read would otherwise keep this green.
+            with pytest.raises(KeyError, match=r"^'movie'$"):
                 temp_db.get_content_item(db_id)
 
         item = temp_db.get_content_item(db_id)
