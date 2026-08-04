@@ -1011,6 +1011,69 @@ class TestSyncEmbeddingLogging:
         assert "Embeddings" not in completed_messages[0]
 
 
+class TestARefusedTextValueCostsOneRow:
+    """A value no text column can hold fails its own row and nothing else.
+
+    ``isbn`` is the one text column the import templates expose, and
+    ``generic_json`` forwards whatever the file gives for it, so a
+    hand-written file can hand storage an object. ``to_text`` refuses it
+    rather than writing a Python repr into a fill-only column, and the
+    executor's per-item guard is what keeps that refusal from taking the
+    rest of the file down with it.
+    """
+
+    def test_the_rest_of_the_file_still_imports(self, tmp_path: Path) -> None:
+        """The bad entry is reported, the good ones are stored."""
+        json_path = tmp_path / "books.json"
+        json_path.write_text(
+            json.dumps(
+                [
+                    {"title": "Dune", "author": "Frank Herbert", "status": "read"},
+                    {"title": "Neuromancer", "isbn": {"value": "9780441569595"}},
+                    {"title": "Ubik", "author": "Philip K. Dick", "status": "read"},
+                ]
+            )
+        )
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+
+        result = execute_sync(
+            plugin=JsonImportPlugin(),
+            plugin_config={"path": str(json_path), "content_type": "book"},
+            storage_manager=storage,
+        )
+
+        assert result.items_synced == 2
+        assert result.errors == ["Failed to process 'Neuromancer'"]
+        assert sorted(item.title for item in storage.get_content_items(user_id=1)) == [
+            "Dune",
+            "Ubik",
+        ]
+
+    def test_a_list_of_names_in_the_same_field_still_imports(
+        self, tmp_path: Path
+    ) -> None:
+        """The refusal stops at containers with no name in them.
+
+        A file listing two ISBNs is the shape a text column already flattens,
+        and it has to keep doing so or the guard has cost a real import.
+        """
+        json_path = tmp_path / "books.json"
+        json_path.write_text(
+            json.dumps([{"title": "Dune", "isbn": ["9780441013593", "9780441172719"]}])
+        )
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+
+        result = execute_sync(
+            plugin=JsonImportPlugin(),
+            plugin_config={"path": str(json_path), "content_type": "book"},
+            storage_manager=storage,
+        )
+
+        assert result.errors == []
+        items = storage.get_content_items(user_id=1)
+        assert items[0].metadata["isbn"] == "9780441013593, 9780441172719"
+
+
 class TestIgnoreFlagSurvivesReimport:
     """Regression tests for a re-import un-ignoring items the user ignored.
 

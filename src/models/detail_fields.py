@@ -36,12 +36,21 @@ def to_text(value: Any) -> str | None:
     ``developers`` against ``developer`` — so a list is joined the way TMDB
     already joins several directors into one ``director``. A None among the
     entries is dropped rather than joined in as the text "None".
+
+    Raises:
+        TypeError: For a mapping, or a list holding a mapping or a list. Its
+            ``str()`` is a Python repr, and a text column is neither
+            mergeable nor monotonic, so the repr would be written once and
+            never corrected by anything. Failing the write is the only
+            outcome a caller can act on.
     """
     if value is None or isinstance(value, str):
         return value
-    if isinstance(value, list):
-        return ", ".join(str(entry) for entry in value if entry is not None) or None
-    return str(value)
+    entries = value if isinstance(value, list) else [value]
+    for entry in entries:
+        if isinstance(entry, Mapping | list):
+            raise TypeError(f"A text column cannot hold a {type(entry).__name__}")
+    return ", ".join(str(entry) for entry in entries if entry is not None) or None
 
 
 def to_int(value: Any) -> int | None:

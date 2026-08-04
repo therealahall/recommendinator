@@ -12,6 +12,7 @@ import pytest
 
 from src.ingestion.sources.arr_base import ArrPlugin
 from src.ingestion.sources.generic_csv import (
+    COMMON_COLUMNS,
     CONTENT_TYPE_COLUMNS,
     CREATOR_COLUMNS,
     CREATOR_FIELD,
@@ -776,6 +777,37 @@ class TestCreatorSurvivesStorage:
         assert stored.metadata["publisher"] == "CD Projekt"
         assert rows[0]["developer"] == "CD Projekt Red"
 
+    def test_gog_object_shaped_companies_export_as_their_names(
+        self, tmp_path: Path
+    ) -> None:
+        """GOG names a company as an object on some products, as ``genres`` is.
+
+        ``developer`` and ``publisher`` are text columns, which refuse an
+        object outright, so forwarding one raw would fail the sync for that
+        game. The plugin reduces both to names before they leave it.
+        """
+        stored = _store_and_read_back(
+            tmp_path,
+            _gog_wishlist_game(
+                1207658924,
+                {
+                    "title": "Cyberpunk 2077",
+                    "developers": [{"name": "CD Projekt Red"}],
+                    "publishers": [{"name": "CD Projekt"}],
+                },
+            ),
+        )
+
+        rows = list(
+            csv.DictReader(
+                io.StringIO(export_items_csv([stored], ContentType.VIDEO_GAME))
+            )
+        )
+
+        assert stored.author == "CD Projekt Red"
+        assert stored.metadata["publisher"] == "CD Projekt"
+        assert rows[0]["developer"] == "CD Projekt Red"
+
 
 class TestCreatorExportEdges:
     """The creator cell at its boundaries, for every content type.
@@ -932,8 +964,54 @@ class TestCreatorExportEdges:
         assert entries[0][creator_column] == creator
 
 
+def _exported_header(content_type: ContentType) -> list[str]:
+    """The header row a CSV export of *content_type* writes."""
+    reader = csv.DictReader(io.StringIO(export_items_csv([], content_type)))
+    return list(reader.fieldnames or [])
+
+
 class TestExportColumnConsistency:
-    """No type declares a column another type uses for its creator."""
+    """The export writes exactly the columns the importer accepts.
+
+    ``_item_to_export_dict`` builds the common half by hand, then walks the
+    type's declared columns skipping any creator column and any name the
+    common half already used. Either skip can drop a column from every
+    exported file with nothing raised, and the hand-written
+    ``_EXPECTED_CSV_HEADERS`` below only agrees with the export until someone
+    updates it, so both are pinned against the declaration here.
+    """
+
+    @pytest.mark.parametrize("content_type", list(ContentType))
+    def test_the_export_writes_every_column_the_importer_accepts(
+        self, content_type: ContentType
+    ) -> None:
+        """Each header is the common columns, the creator, and the rest.
+
+        ``COMMON_COLUMNS`` is read by the importer and by nothing in the
+        export, so a column added to it is accepted on import for every
+        content type and never written back out.
+        """
+        columns = CONTENT_TYPE_COLUMNS[content_type.value]
+        expected = (
+            COMMON_COLUMNS
+            | {CREATOR_FIELD[content_type.value]}
+            | (set(columns) - CREATOR_COLUMNS)
+        )
+
+        assert set(_exported_header(content_type)) == expected
+
+    def test_no_type_declares_a_column_the_common_set_owns(self) -> None:
+        """A shadowed column would be written twice and read back wrong.
+
+        ``_item_to_export_dict`` fills the common columns first and skips a
+        declared column already among them, so a type declaring ``notes`` or
+        ``rating`` would export the common value under that name — twice in
+        the header — and lose the declared field entirely.
+        """
+        for content_type, columns in CONTENT_TYPE_COLUMNS.items():
+            shadowed = set(columns) & COMMON_COLUMNS
+
+            assert not shadowed, f"{content_type} declares {sorted(shadowed)}"
 
     def test_no_type_borrows_another_types_creator_column(self) -> None:
         """A borrowed creator column would be dropped from the export silently.
@@ -1056,6 +1134,36 @@ class TestExportLayoutIsStable:
         entries = json.loads(export_items_json([item], content_type))
 
         assert list(entries[0]) == _EXPECTED_JSON_KEYS[content_type]
+
+
+class TestShippedTemplatesMatchTheExport:
+    """The four template files carry the header the export writes.
+
+    They are hand-written, while the export header is derived from the field
+    declaration, so renaming a ``template_column`` updates one and not the
+    other. The user who then imports the shipped template gets an
+    unknown-column warning and loses that value silently.
+    """
+
+    @pytest.mark.parametrize(
+        ("content_type", "template"),
+        [
+            (ContentType.BOOK, "books.csv"),
+            (ContentType.MOVIE, "movies.csv"),
+            (ContentType.TV_SHOW, "tv_shows.csv"),
+            (ContentType.VIDEO_GAME, "video_games.csv"),
+        ],
+        ids=["book", "movie", "tv_show", "video_game"],
+    )
+    def test_template_header_is_the_export_column_order(
+        self, content_type: ContentType, template: str
+    ) -> None:
+        """Each shipped template opens with that type's export columns."""
+        shipped = (Path("templates") / template).read_text(encoding="utf-8")
+
+        header = list(csv.reader(io.StringIO(shipped)))[0]
+
+        assert header == _exported_header(content_type)
 
 
 class TestExportRoundtrip:
