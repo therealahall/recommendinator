@@ -14,62 +14,21 @@ from src.ingestion.sources.generic_csv import (
 )
 from src.models.content import ContentItem, ContentType, get_enum_value
 
-# Column order for CSV export, matching the templates
+# Column order for CSV export: the common columns bracket the type-specific
+# ones, which follow the templates because both come off CONTENT_TYPE_COLUMNS.
 _CSV_COLUMN_ORDER: dict[str, list[str]] = {
-    "book": [
+    content_type: [
         "title",
-        "author",
+        CREATOR_FIELD[content_type],
         "rating",
         "status",
         "date_completed",
         "review",
         "notes",
-        "isbn",
-        "pages",
-        "year_published",
-        "genre",
+        *(column for column in columns if column not in CREATOR_COLUMNS),
         "ignored",
-    ],
-    "movie": [
-        "title",
-        "director",
-        "rating",
-        "status",
-        "date_completed",
-        "review",
-        "notes",
-        "year",
-        "runtime_minutes",
-        "genre",
-        "ignored",
-    ],
-    "tv_show": [
-        "title",
-        "creator",
-        "rating",
-        "status",
-        "date_completed",
-        "review",
-        "notes",
-        "seasons_watched",
-        "total_seasons",
-        "year",
-        "genre",
-        "ignored",
-    ],
-    "video_game": [
-        "title",
-        "developer",
-        "rating",
-        "status",
-        "date_completed",
-        "review",
-        "notes",
-        "platform",
-        "genre",
-        "hours_played",
-        "ignored",
-    ],
+    ]
+    for content_type, columns in CONTENT_TYPE_COLUMNS.items()
 }
 
 

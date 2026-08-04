@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+import pytest
+
 from src.ingestion.sources.arr_base import ArrPlugin
 from src.ingestion.sources.generic_csv import (
     COMMON_COLUMNS,
@@ -674,6 +676,114 @@ class TestExportColumnConsistency:
         """
         for content_type, columns in CONTENT_TYPE_COLUMNS.items():
             assert set(_CSV_COLUMN_ORDER[content_type]) == COMMON_COLUMNS | set(columns)
+
+
+# The exact header every export writes, which users' saved spreadsheets and
+# scripts read positionally. Written out per type rather than derived, so a
+# reordering of the field declaration these are now built from shows up here
+# as a diff instead of agreeing with itself.
+_EXPECTED_CSV_HEADERS: dict[ContentType, list[str]] = {
+    ContentType.BOOK: [
+        "title",
+        "author",
+        "rating",
+        "status",
+        "date_completed",
+        "review",
+        "notes",
+        "isbn",
+        "pages",
+        "year_published",
+        "genre",
+        "ignored",
+    ],
+    ContentType.MOVIE: [
+        "title",
+        "director",
+        "rating",
+        "status",
+        "date_completed",
+        "review",
+        "notes",
+        "year",
+        "runtime_minutes",
+        "genre",
+        "ignored",
+    ],
+    ContentType.TV_SHOW: [
+        "title",
+        "creator",
+        "rating",
+        "status",
+        "date_completed",
+        "review",
+        "notes",
+        "seasons_watched",
+        "total_seasons",
+        "year",
+        "genre",
+        "ignored",
+    ],
+    ContentType.VIDEO_GAME: [
+        "title",
+        "developer",
+        "rating",
+        "status",
+        "date_completed",
+        "review",
+        "notes",
+        "platform",
+        "genre",
+        "hours_played",
+        "ignored",
+    ],
+}
+
+# JSON puts ``ignored`` with the other common fields rather than last, so the
+# two orders are not the same list.
+_EXPECTED_JSON_KEYS: dict[ContentType, list[str]] = {
+    content_type: [
+        *[column for column in columns if column != "ignored"][:7],
+        "ignored",
+        *[column for column in columns if column != "ignored"][7:],
+    ]
+    for content_type, columns in _EXPECTED_CSV_HEADERS.items()
+}
+
+
+class TestExportLayoutIsStable:
+    """The exported layout is the one users already have files in.
+
+    Both orders are derived — the CSV header from ``CONTENT_TYPE_COLUMNS``
+    and the JSON keys from the same mapping's iteration order — so nothing
+    but these expectations stops a reordering of the underlying field
+    declaration from silently reshuffling every exported file.
+    """
+
+    @pytest.mark.parametrize("content_type", list(ContentType))
+    def test_csv_header_order(self, content_type: ContentType) -> None:
+        """Each type's CSV header is exactly the documented column order."""
+        result = export_items_csv([], content_type)
+
+        reader = csv.DictReader(io.StringIO(result))
+        assert list(reader.fieldnames or []) == _EXPECTED_CSV_HEADERS[content_type]
+
+    @pytest.mark.parametrize("content_type", list(ContentType))
+    def test_json_key_order(self, content_type: ContentType) -> None:
+        """Each type's JSON entry carries exactly those keys, in order."""
+        item = ContentItem(
+            id="layout",
+            title="Layout Fixture",
+            author="Someone",
+            content_type=content_type,
+            status=ConsumptionStatus.COMPLETED,
+            rating=3,
+            metadata={},
+        )
+
+        entries = json.loads(export_items_json([item], content_type))
+
+        assert list(entries[0]) == _EXPECTED_JSON_KEYS[content_type]
 
 
 class TestExportRoundtrip:

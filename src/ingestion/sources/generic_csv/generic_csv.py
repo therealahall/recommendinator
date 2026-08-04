@@ -16,6 +16,7 @@ from src.ingestion.plugin_base import (
     SourcePlugin,
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.models.detail_fields import DETAIL_FIELDS, FieldKind
 from src.utils.series import MAX_SEASONS
 
 if TYPE_CHECKING:
@@ -35,7 +36,8 @@ COMMON_COLUMNS = {
 }
 
 # Additional columns per content type, each mapped to the metadata key the
-# library stores that value under. The two are not always the same word — a
+# library stores that value under, derived from the field declaration the
+# storage layer reads too. The two names are not always the same word — a
 # template says "year", the library stores "release_year" — and both the
 # import and the export path read this table, so a column can only ever be
 # written and read back under one name.
@@ -43,32 +45,7 @@ COMMON_COLUMNS = {
 # The creator column (author/director/creator/developer) maps to itself and
 # is never read from here: it becomes ContentItem.author, not metadata.
 CONTENT_TYPE_COLUMNS: dict[str, dict[str, str]] = {
-    "book": {
-        "author": "author",
-        "isbn": "isbn",
-        "pages": "pages",
-        "year_published": "year_published",
-        "genre": "genres",
-    },
-    "movie": {
-        "director": "director",
-        "year": "release_year",
-        "runtime_minutes": "runtime",
-        "genre": "genres",
-    },
-    "tv_show": {
-        "creator": "creator",
-        "seasons_watched": "seasons_watched",
-        "total_seasons": "seasons",
-        "year": "release_year",
-        "genre": "genres",
-    },
-    "video_game": {
-        "developer": "developer",
-        "platform": "platforms",
-        "genre": "genres",
-        "hours_played": "playtime_hours",
-    },
+    content_type: spec.template_columns for content_type, spec in DETAIL_FIELDS.items()
 }
 
 # Template columns the library stores as a list. A template cell holds a
@@ -76,7 +53,13 @@ CONTENT_TYPE_COLUMNS: dict[str, dict[str, str]] = {
 # lists, and readers such as ``extract_raw_genres`` (which builds the
 # embedding text before the item is ever saved) only recognise the list form
 # — and an export writes the first entry back out.
-LIST_VALUED_COLUMNS: frozenset[str] = frozenset({"genre", "platform"})
+LIST_VALUED_COLUMNS: frozenset[str] = frozenset(
+    detail_field.template_column
+    for spec in DETAIL_FIELDS.values()
+    for detail_field in spec.fields
+    if detail_field.template_column is not None
+    and detail_field.kind is FieldKind.STRING_LIST
+)
 
 # Status string mapping
 STATUS_MAP: dict[str, ConsumptionStatus] = {
@@ -126,10 +109,7 @@ STATUS_DISPLAY: dict[str, dict[str, str]] = {
 
 # Map content type string to creator field name
 CREATOR_FIELD: dict[str, str] = {
-    "book": "author",
-    "movie": "director",
-    "tv_show": "creator",
-    "video_game": "developer",
+    content_type: spec.creator_column for content_type, spec in DETAIL_FIELDS.items()
 }
 
 # Every creator column, whichever type it belongs to. These become
