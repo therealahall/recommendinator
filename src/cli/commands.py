@@ -33,6 +33,7 @@ from src.models.content import (
     EnrichmentFilter,
     get_enum_value,
 )
+from src.models.detail_fields import DETAIL_FIELDS
 from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.preference_interpreter import (
     LLMPreferenceInterpreter,
@@ -1389,10 +1390,14 @@ def library_show(
         genres = serialized["genres"]
         tags = serialized["tags"]
         description = serialized["description"]
+        content_type = get_enum_value(item.content_type)
+        # A book has an author and a movie a director, so the row is labelled
+        # with the creator column the type declares: "director" as "Director".
+        creator_label = DETAIL_FIELDS[content_type].creator_column.title()
         table_data = [
             ["Title", item.title],
-            ["Author", item.author or "N/A"],
-            ["Type", get_enum_value(item.content_type)],
+            [creator_label, item.author or "N/A"],
+            ["Type", content_type],
             ["Status", get_enum_value(item.status)],
             ["Rating", "N/A" if item.rating is None else item.rating],
             ["Review", item.review or "N/A"],
