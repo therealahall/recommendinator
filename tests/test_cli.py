@@ -357,6 +357,41 @@ def test_complete_command_basic(mock_components):
     assert "Marked 'Test Book' as completed (ID: 1)" in result.output
 
 
+class TestCompleteCommandCreator:
+    """Regression: ``complete --author`` was dropped for everything but books.
+
+    Bug reported: ``complete --type movie --title Arrival --author "Denis
+    Villeneuve"`` reported the movie completed and stored no director.
+    Root cause: the command passed ``author`` through for books alone,
+    because no other content type had anywhere to keep a creator.
+    Fix: every type stores its creator in the column its type declares, so
+    the command hands the value over whatever the type. The web door's half
+    of this is in ``tests/test_web_api.py``.
+    """
+
+    def test_complete_stores_a_movie_director_regression(self, tmp_path: Path) -> None:
+        """A director given to the command is the stored movie's author."""
+        storage = StorageManager(sqlite_path=tmp_path / "creator.db")
+
+        result = _invoke_with_mocks(
+            CliRunner(),
+            [
+                "complete",
+                "--type",
+                "movie",
+                "--title",
+                "Arrival",
+                "--author",
+                "Denis Villeneuve",
+            ],
+            storage,
+        )
+
+        assert result.exit_code == 0, result.output
+        stored = storage.get_content_items(content_type=ContentType.MOVIE)
+        assert [item.author for item in stored] == ["Denis Villeneuve"]
+
+
 class TestCompleteCommandDate:
     """Regression tests for the date `complete` records.
 

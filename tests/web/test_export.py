@@ -497,6 +497,28 @@ def _gog_game(product: dict[str, Any]) -> ContentItem:
         )
 
 
+def _gog_wishlist_game(product_id: int, details: dict[str, Any]) -> ContentItem:
+    """Fetch the item GOG's wishlist path yields, minus the network."""
+    with (
+        patch(
+            "src.ingestion.sources.gog.gog.refresh_access_token",
+            return_value={"access_token": "access", "refresh_token": "refresh"},
+        ),
+        patch("src.ingestion.sources.gog.gog.get_owned_games", return_value=[]),
+        patch(
+            "src.ingestion.sources.gog.gog.get_wishlist_product_ids",
+            return_value=[product_id],
+        ),
+        patch(
+            "src.ingestion.sources.gog.gog.get_multiple_product_details",
+            return_value={product_id: details},
+        ),
+    ):
+        return next(
+            GogPlugin().fetch({"refresh_token": "token", "include_wishlist": True})
+        )
+
+
 def _steam_game(game: dict[str, Any]) -> ContentItem:
     """Fetch the item the Steam plugin yields for *game*, minus the network."""
     with patch(
@@ -661,6 +683,252 @@ class TestExportOfStoredItems:
         assert rows[0]["pages"] == "662"
         assert rows[0]["year_published"] == "2007"
         assert rows[0]["genre"] == "Fantasy"
+
+
+class TestCreatorSurvivesStorage:
+    """The creator column round-trips for every content type, not just books.
+
+    Bug reported: a movie, TV show or video game exported a blank
+    director/creator/developer cell, and a row imported from the documented
+    template lost the value outright. Books were unaffected.
+
+    Root cause: the creator was a special case rather than an ordinary
+    column. The write path only took ``item.author`` for a book, so an
+    imported director never reached ``movie_details.director``; the read path
+    only produced ``ContentItem.author`` for a book, so the exporter — which
+    writes the creator cell from ``item.author`` — had nothing to write even
+    for the TMDB-enriched items whose column was filled. On top of that the
+    tv_show template column ``creator`` was declared against a metadata key
+    of the same name, while storage stores ``creators``.
+
+    Fix: every content type declares one ``FieldKind.CREATOR`` column, and
+    the tv_show template column maps to the stored ``creators`` key.
+
+    Every fixture below goes through storage, because an item built by hand
+    with ``author`` already set is what let this bug pass a green suite.
+    """
+
+    @pytest.mark.parametrize(
+        ("content_type", "creator_column", "creator"),
+        [
+            (ContentType.BOOK, "author", "Patrick Rothfuss"),
+            (ContentType.MOVIE, "director", "Denis Villeneuve"),
+            (ContentType.TV_SHOW, "creator", "Vince Gilligan"),
+            (ContentType.VIDEO_GAME, "developer", "Team Cherry"),
+        ],
+        ids=["book", "movie", "tv_show", "video_game"],
+    )
+    def test_imported_creator_exports_after_storage_regression(
+        self,
+        tmp_path: Path,
+        content_type: ContentType,
+        creator_column: str,
+        creator: str,
+    ) -> None:
+        """A template row's creator survives import, storage and export."""
+        csv_path = tmp_path / f"{content_type.value}.csv"
+        csv_path.write_text(
+            f"title,{creator_column},status\nRound Trip,{creator},unread\n",
+            encoding="utf-8",
+        )
+        imported = next(
+            CsvImportPlugin().fetch(
+                {"path": str(csv_path), "content_type": content_type.value}
+            )
+        )
+
+        stored = _store_and_read_back(tmp_path, imported)
+
+        assert stored.author == creator
+
+        rows = list(
+            csv.DictReader(io.StringIO(export_items_csv([stored], content_type)))
+        )
+        assert rows[0][creator_column] == creator
+
+        entries = json.loads(export_items_json([stored], content_type))
+        assert entries[0][creator_column] == creator
+
+    def test_gog_wishlist_developers_export_as_the_developer_regression(
+        self, tmp_path: Path
+    ) -> None:
+        """GOG's plural ``developers`` reaches the singular column."""
+        stored = _store_and_read_back(
+            tmp_path,
+            _gog_wishlist_game(
+                1207658924,
+                {
+                    "title": "Cyberpunk 2077",
+                    "developers": ["CD Projekt Red"],
+                    "publishers": ["CD Projekt"],
+                },
+            ),
+        )
+
+        rows = list(
+            csv.DictReader(
+                io.StringIO(export_items_csv([stored], ContentType.VIDEO_GAME))
+            )
+        )
+
+        assert stored.author == "CD Projekt Red"
+        assert stored.metadata["publisher"] == "CD Projekt"
+        assert rows[0]["developer"] == "CD Projekt Red"
+
+
+class TestCreatorExportEdges:
+    """The creator cell at its boundaries, for every content type.
+
+    Each case stores the item first, because the exporter reads the creator
+    off ``ContentItem.author`` and only storage puts it there.
+    """
+
+    @pytest.mark.parametrize(
+        ("content_type", "creator_column"),
+        [
+            (ContentType.BOOK, "author"),
+            (ContentType.MOVIE, "director"),
+            (ContentType.TV_SHOW, "creator"),
+            (ContentType.VIDEO_GAME, "developer"),
+        ],
+        ids=["book", "movie", "tv_show", "video_game"],
+    )
+    def test_an_item_with_no_creator_exports_a_blank_cell(
+        self, tmp_path: Path, content_type: ContentType, creator_column: str
+    ) -> None:
+        """A missing creator is an empty cell, never the string "None"."""
+        stored = _store_and_read_back(
+            tmp_path,
+            ContentItem(
+                id=f"creatorless-{content_type.value}",
+                title="Anonymous",
+                content_type=content_type,
+                status=ConsumptionStatus.UNREAD,
+            ),
+        )
+
+        rows = list(
+            csv.DictReader(io.StringIO(export_items_csv([stored], content_type)))
+        )
+        entries = json.loads(export_items_json([stored], content_type))
+
+        assert stored.author is None
+        assert rows[0][creator_column] == ""
+        assert entries[0][creator_column] == ""
+
+    def test_a_creator_holding_a_comma_survives_the_csv_round_trip(
+        self, tmp_path: Path
+    ) -> None:
+        """A joined multi-director name re-imports as one name, not two columns.
+
+        ``to_text`` joins several directors with a comma, which is also the
+        CSV delimiter, so the export/edit/re-import loop is the case that
+        would shear the value in half if the writer stopped quoting it.
+        """
+        stored = _store_and_read_back(
+            tmp_path,
+            ContentItem(
+                id="movie-comma",
+                title="Fargo",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.UNREAD,
+                metadata={"director": ["Joel Coen", "Ethan Coen"]},
+            ),
+        )
+        assert stored.author == "Joel Coen, Ethan Coen"
+
+        exported = tmp_path / "movies.csv"
+        exported.write_text(
+            export_items_csv([stored], ContentType.MOVIE), encoding="utf-8"
+        )
+        reimported = next(
+            CsvImportPlugin().fetch({"path": str(exported), "content_type": "movie"})
+        )
+
+        assert reimported.author == "Joel Coen, Ethan Coen"
+
+    @pytest.mark.parametrize(
+        ("content_type", "creator_column", "creator"),
+        [
+            (ContentType.BOOK, "author", "Åsa Larsson"),
+            (ContentType.MOVIE, "director", "宮崎駿"),
+            (ContentType.TV_SHOW, "creator", "Ólafur Ólafsson"),
+            (ContentType.VIDEO_GAME, "developer", "ゲームフリーク"),
+        ],
+        ids=["book", "movie", "tv_show", "video_game"],
+    )
+    def test_a_non_latin_creator_exports_and_re_imports_unchanged(
+        self,
+        tmp_path: Path,
+        content_type: ContentType,
+        creator_column: str,
+        creator: str,
+    ) -> None:
+        """A creator outside ASCII survives storage, export and re-import."""
+        stored = _store_and_read_back(
+            tmp_path,
+            ContentItem(
+                id=f"unicode-{content_type.value}",
+                title="Untitled",
+                content_type=content_type,
+                status=ConsumptionStatus.UNREAD,
+                author=creator,
+            ),
+        )
+
+        exported = tmp_path / f"{content_type.value}.csv"
+        exported.write_text(export_items_csv([stored], content_type), encoding="utf-8")
+        reimported = next(
+            CsvImportPlugin().fetch(
+                {"path": str(exported), "content_type": content_type.value}
+            )
+        )
+
+        entries = json.loads(export_items_json([stored], content_type))
+
+        assert entries[0][creator_column] == creator
+        assert reimported.author == creator
+
+    @pytest.mark.parametrize(
+        ("content_type", "creator_column", "creator"),
+        [
+            (ContentType.BOOK, "author", "Patrick Rothfuss"),
+            (ContentType.MOVIE, "director", "Denis Villeneuve"),
+            (ContentType.TV_SHOW, "creator", "Vince Gilligan"),
+            (ContentType.VIDEO_GAME, "developer", "Team Cherry"),
+        ],
+        ids=["book", "movie", "tv_show", "video_game"],
+    )
+    def test_a_json_template_row_keeps_its_creator_through_storage(
+        self,
+        tmp_path: Path,
+        content_type: ContentType,
+        creator_column: str,
+        creator: str,
+    ) -> None:
+        """The JSON importer's creator field reaches the column too.
+
+        The JSON door reads the same declaration as the CSV one, so a type
+        whose creator only worked on one of them would be half-fixed.
+        """
+        json_path = tmp_path / f"{content_type.value}.json"
+        json_path.write_text(
+            json.dumps(
+                [{"title": "Round Trip", creator_column: creator, "status": "unread"}]
+            ),
+            encoding="utf-8",
+        )
+        imported = next(
+            JsonImportPlugin().fetch(
+                {"path": str(json_path), "content_type": content_type.value}
+            )
+        )
+
+        stored = _store_and_read_back(tmp_path, imported)
+
+        entries = json.loads(export_items_json([stored], content_type))
+        assert stored.author == creator
+        assert entries[0][creator_column] == creator
 
 
 class TestExportColumnConsistency:

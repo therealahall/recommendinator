@@ -23,6 +23,7 @@ from src.models.detail_fields import (
     ContentTypeFields,
     DetailField,
     FieldKind,
+    _assert_one_creator_column,
     _assert_select_aliases_are_unique,
 )
 from src.storage import sqlite_db
@@ -94,11 +95,14 @@ _EXPECTED_ALIASES: frozenset[tuple[str, str, str]] = frozenset(
         ("movie", "genres", "genre"),
         ("movie", "release_year", "year"),
         ("movie", "runtime", "runtime_minutes"),
+        ("tv_show", "creators", "creator"),
         ("tv_show", "genres", "genre"),
         ("tv_show", "release_year", "year"),
         ("tv_show", "seasons", "total_seasons"),
+        ("video_game", "developer", "developers"),
         ("video_game", "genres", "genre"),
         ("video_game", "platforms", "platform"),
+        ("video_game", "publisher", "publishers"),
     }
 )
 
@@ -145,6 +149,7 @@ _EXPECTED_KNOWN_KEYS: dict[str, frozenset[str]] = {
             "genres",
             "genre",
             "creators",
+            "creator",
             "episodes",
             "network",
             "tags",
@@ -154,11 +159,13 @@ _EXPECTED_KNOWN_KEYS: dict[str, frozenset[str]] = {
     "video_game": frozenset(
         {
             "developer",
+            "developers",
             "platforms",
             "platform",
             "genres",
             "genre",
             "publisher",
+            "publishers",
             "release_year",
             "tags",
             "description",
@@ -413,6 +420,62 @@ class TestFieldDeclarationGuards:
             with pytest.raises(ValueError, match="declared twice"):
                 _assert_select_aliases_are_unique()
 
+    def test_type_naming_no_creator_column_is_rejected(self) -> None:
+        """A type with no creator would export a column nothing fills."""
+        creatorless = replace(
+            DETAIL_FIELDS["movie"],
+            fields=tuple(
+                detail_field
+                for detail_field in DETAIL_FIELDS["movie"].fields
+                if detail_field.kind is not FieldKind.CREATOR
+            ),
+        )
+
+        with patch.dict(DETAIL_FIELDS, {"movie": creatorless}):
+            with pytest.raises(ValueError, match="creator template columns"):
+                _assert_one_creator_column()
+
+    def test_type_naming_two_creator_columns_is_rejected(self) -> None:
+        """A second creator would export whichever field came first."""
+        doubled = replace(
+            DETAIL_FIELDS["movie"],
+            fields=(
+                *DETAIL_FIELDS["movie"].fields,
+                DetailField(
+                    "studio",
+                    FieldKind.CREATOR,
+                    column="studio",
+                    template_column="studio",
+                ),
+            ),
+        )
+
+        with patch.dict(DETAIL_FIELDS, {"movie": doubled}):
+            with pytest.raises(ValueError, match="creator template columns"):
+                _assert_one_creator_column()
+
+
+class TestEveryTypeNamesItsCreator:
+    """Each content type states which template column carries its creator.
+
+    ``creator_column`` is derived from the one field marked
+    ``FieldKind.CREATOR``, and both the import templates and the export
+    header take the creator's name from it, so a rename here renames a
+    column in every file users import and export.
+    """
+
+    def test_creator_columns_are_the_documented_template_columns(self) -> None:
+        """The four creator columns are the ones the templates document."""
+        assert {
+            content_type: spec.creator_column
+            for content_type, spec in DETAIL_FIELDS.items()
+        } == {
+            "book": "author",
+            "movie": "director",
+            "tv_show": "creator",
+            "video_game": "developer",
+        }
+
 
 class TestSelectAliasesDoNotShadowContentItems:
     """No detail alias collides with a column ``ci.*`` already contributes.
@@ -457,7 +520,6 @@ class TestSelectIdentifiersAreGuarded:
             table="rogue_details; DROP TABLE content_items; --",
             table_alias="rd",
             metadata_alias="rogue_metadata",
-            creator_column="title",
             fields=(
                 DetailField(
                     "title",

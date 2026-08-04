@@ -1134,6 +1134,39 @@ def test_complete_endpoint_preserves_an_imported_completion_date_regression(
     assert stored.rating == 2
 
 
+def test_complete_endpoint_stores_a_movie_director_regression(
+    client, mock_components, tmp_path
+):
+    """POST /api/complete keeps the creator of a non-book content type.
+
+    Bug reported: posting a movie with ``author`` set returned 200 and stored
+    no director, so the completed item showed none and exported a blank
+    creator cell.
+    Root cause: the endpoint passed ``author`` through for books alone,
+    because no other content type had anywhere to keep a creator.
+    Fix: every type stores its creator in the column its type declares, so
+    the endpoint hands the value over whatever the type. The CLI door's half
+    of this is in ``tests/test_cli.py``.
+    """
+    storage = StorageManager(sqlite_path=tmp_path / "creator.db")
+    app_state.storage = storage
+    app_state.embedding_gen = None
+
+    response = client.post(
+        "/api/complete",
+        json={
+            "content_type": "movie",
+            "title": "Arrival",
+            "author": "Denis Villeneuve",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    stored = storage.get_content_item(response.json()["id"])
+    assert stored is not None
+    assert stored.author == "Denis Villeneuve"
+
+
 def test_complete_endpoint_overwrites_existing_rating_regression(
     client, mock_components, tmp_path
 ):
