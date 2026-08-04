@@ -74,6 +74,12 @@ from src.models.content import (
     EnrichmentFilter,
     get_enum_value,
 )
+from src.models.detail_fields import (
+    DETAIL_FIELDS,
+    ContentTypeFields,
+    FieldKind,
+    to_int,
+)
 from src.storage.merge import (
     ALLOWED_DETAIL_TABLES,
     MERGEABLE_DETAIL_COLUMNS,
@@ -139,37 +145,73 @@ VALID_SORT_OPTIONS: frozenset[str] = frozenset(
     {"title", "updated_at", "rating", "created_at"}
 )
 
-# Shared SELECT query for content items with all detail joins.
-# Used by get_content_item_by_id and get_content_items.
-_CONTENT_ITEM_SELECT = """
-    SELECT ci.*,
-           bd.author as book_author, bd.pages, bd.isbn, bd.isbn13,
-           bd.publisher, bd.year_published as book_year,
-           bd.genres as book_genres, bd.tags as book_tags,
-           bd.description as book_description, bd.metadata as book_metadata,
-           md.director, md.runtime, md.release_year as movie_year,
-           md.genres as movie_genres, md.studio,
-           md.tags as movie_tags, md.description as movie_description,
-           md.metadata as movie_metadata,
-           td.creators, td.seasons, td.episodes, td.network,
-           td.release_year as tv_year, td.genres as tv_genres,
-           td.tags as tv_tags, td.description as tv_description,
-           td.metadata as tv_metadata,
-           vgd.developer, vgd.publisher as game_publisher,
-           vgd.platforms, vgd.genres as game_genres,
-           vgd.release_year as game_year,
-           vgd.tags as game_tags, vgd.description as game_description,
-           vgd.metadata as game_metadata,
-           es.content_item_id as enrichment_item_id,
-           es.needs_enrichment, es.enrichment_provider,
-           es.enrichment_quality, es.enrichment_error
-    FROM content_items ci
-    LEFT JOIN book_details bd ON ci.id = bd.content_item_id
-    LEFT JOIN movie_details md ON ci.id = md.content_item_id
-    LEFT JOIN tv_show_details td ON ci.id = td.content_item_id
-    LEFT JOIN video_game_details vgd ON ci.id = vgd.content_item_id
-    LEFT JOIN enrichment_status es ON ci.id = es.content_item_id
-"""
+# Columns the enrichment join contributes, read back by _row_is_enriched.
+_ENRICHMENT_SELECT_TERMS = (
+    "es.content_item_id as enrichment_item_id",
+    "es.needs_enrichment",
+    "es.enrichment_provider",
+    "es.enrichment_quality",
+    "es.enrichment_error",
+)
+
+
+def _select_term(table_alias: str, column: str, alias: str) -> str:
+    """One aliased column of a detail join, with its identifiers validated."""
+    assert_safe_identifier(column)
+    assert_safe_identifier(alias)
+    if alias == column:
+        return f"{table_alias}.{column}"
+    return f"{table_alias}.{column} as {alias}"
+
+
+def _detail_select_terms(spec: ContentTypeFields) -> list[str]:
+    """Aliased columns one detail table contributes to the joined SELECT.
+
+    The table name is checked against the fixed allow-list, and every column
+    and alias against the identifier pattern, before any of them reaches SQL.
+    """
+    if spec.table not in ALLOWED_DETAIL_TABLES:
+        raise ValueError(f"Unknown detail table: {spec.table!r}")
+    assert_safe_identifier(spec.table_alias)
+
+    terms = []
+    for detail_field in spec.fields:
+        column = detail_field.column
+        if column is None:
+            continue
+        terms.append(
+            _select_term(spec.table_alias, column, detail_field.select_alias or column)
+        )
+    terms.append(_select_term(spec.table_alias, "metadata", spec.metadata_alias))
+    return terms
+
+
+def _build_content_item_select() -> str:
+    """Build the content-item read query from the field declaration.
+
+    One five-way join covering every detail table plus the enrichment status,
+    used by get_content_item_by_id and get_content_items. Callers append their
+    own WHERE clause.
+    """
+    terms = ["ci.*"]
+    joins = []
+    for spec in DETAIL_FIELDS.values():
+        # Validates spec.table against ALLOWED_DETAIL_TABLES before the join
+        # below interpolates it.
+        terms.extend(_detail_select_terms(spec))
+        joins.append(
+            f"LEFT JOIN {spec.table} {spec.table_alias}"
+            f" ON ci.id = {spec.table_alias}.content_item_id"
+        )
+    terms.extend(_ENRICHMENT_SELECT_TERMS)
+    joins.append("LEFT JOIN enrichment_status es ON ci.id = es.content_item_id")
+
+    select_list = ",\n           ".join(terms)
+    join_list = "\n    ".join(joins)
+    return f"\n    SELECT {select_list}\n    FROM content_items ci\n    {join_list}\n"
+
+
+_CONTENT_ITEM_SELECT = _build_content_item_select()
 
 # An item is enriched when it has a clean enrichment_status row: a real
 # provider found a match, no error, and re-enrichment is not pending. Anything
@@ -566,159 +608,6 @@ class SQLiteDB:
 
         return db_id
 
-    # Configuration for type-specific detail tables.
-    # Each entry maps content_type value to:
-    #   table: SQL table name
-    #   columns: list of (column_name, metadata_key, converter) tuples
-    #            converter is "str" (default), "int" (safe_int), "json" (to_json_array),
-    #            or "author" (special: use item.author or metadata)
-    #            The "*_or_*" converters accept a second metadata key for the
-    #            same column, because the plugins do not all agree on the
-    #            name: "genre"/"genres", "platform"/"platforms",
-    #            "seasons"/"total_seasons", "runtime"/"runtime_minutes" and
-    #            "release_year"/"year" each reach one column. One converter tag
-    #            per alias pair does not scale; the target shape is a tuple of
-    #            accepted keys per column, and that refactor must keep every
-    #            alias listed here.
-    #   known_keys: metadata keys the columns above consume, aliases included,
-    #               so they are not duplicated into the leftover metadata blob
-    _DETAIL_TABLE_CONFIG: dict[str, dict[str, Any]] = {
-        "book": {
-            "table": "book_details",
-            "columns": [
-                ("author", "author", "author"),
-                ("pages", "pages", "int"),
-                ("isbn", "isbn", "str"),
-                ("isbn13", "isbn13", "str"),
-                ("publisher", "publisher", "str"),
-                ("year_published", "year_published", "int"),
-                ("genres", "genres", "json_or_genre"),
-                ("tags", "tags", "json"),
-                ("description", "description", "str"),
-            ],
-            "known_keys": {
-                "author",
-                "pages",
-                "isbn",
-                "isbn13",
-                "publisher",
-                "year_published",
-                "genres",
-                "genre",
-                "tags",
-                "description",
-            },
-        },
-        "movie": {
-            "table": "movie_details",
-            "columns": [
-                ("director", "director", "str"),
-                ("runtime", "runtime", "int_or_runtime_minutes"),
-                ("release_year", "release_year", "int_or_year"),
-                ("genres", "genres", "json_or_genre"),
-                ("studio", "studio", "str"),
-                ("tags", "tags", "json"),
-                ("description", "description", "str"),
-            ],
-            "known_keys": {
-                "director",
-                "runtime",
-                "runtime_minutes",
-                "release_year",
-                "year",
-                "genres",
-                "genre",
-                "studio",
-                "tags",
-                "description",
-            },
-        },
-        "tv_show": {
-            "table": "tv_show_details",
-            "columns": [
-                ("creators", "creators", "str"),
-                ("seasons", "seasons", "int_or_total_seasons"),
-                ("episodes", "episodes", "int"),
-                ("network", "network", "str"),
-                ("release_year", "release_year", "int_or_year"),
-                ("genres", "genres", "json_or_genre"),
-                ("tags", "tags", "json"),
-                ("description", "description", "str"),
-            ],
-            "known_keys": {
-                "creators",
-                "seasons",
-                "total_seasons",
-                "episodes",
-                "network",
-                "release_year",
-                "year",
-                "genres",
-                "genre",
-                "tags",
-                "description",
-            },
-        },
-        "video_game": {
-            "table": "video_game_details",
-            "columns": [
-                ("developer", "developer", "str"),
-                ("publisher", "publisher", "str"),
-                ("platforms", "platforms", "json_or_platform"),
-                ("genres", "genres", "json_or_genre"),
-                ("release_year", "release_year", "int"),
-                ("tags", "tags", "json"),
-                ("description", "description", "str"),
-            ],
-            "known_keys": {
-                "developer",
-                "publisher",
-                "platforms",
-                "platform",
-                "genres",
-                "genre",
-                "release_year",
-                "tags",
-                "description",
-            },
-        },
-    }
-
-    @staticmethod
-    def _safe_int(val: Any) -> int | None:
-        """Safely convert a value to int."""
-        if val is None:
-            return None
-        if isinstance(val, int):
-            return val
-        try:
-            return int(val)
-        except (ValueError, TypeError):
-            return None
-
-    @staticmethod
-    def _to_json_array(val: Any) -> str | None:
-        """Convert a value to a JSON array string.
-
-        Bare strings are wrapped in a JSON array.  Strings that already
-        look like a JSON array (start with ``[``) are returned as-is.
-
-        Args:
-            val: Value to convert (str, list, or other).
-
-        Returns:
-            JSON array string, or None if *val* is None.
-        """
-        if val is None:
-            return None
-        if isinstance(val, str):
-            if val.startswith("["):
-                return val  # Already JSON array
-            return json.dumps([val])  # Wrap bare string
-        if isinstance(val, list):
-            return json.dumps(val)
-        return json.dumps([val])
-
     def _save_detail_table(
         self, cursor: sqlite3.Cursor, db_id: int, item: ContentItem, content_type: str
     ) -> None:
@@ -741,16 +630,15 @@ class SQLiteDB:
             item: ContentItem to save
             content_type: Content type as string
         """
-        config = self._DETAIL_TABLE_CONFIG.get(content_type)
-        if not config:
+        spec = DETAIL_FIELDS.get(content_type)
+        if spec is None:
             return
 
         metadata = item.metadata or {}
-        table = config["table"]
+        table = spec.table
         if table not in ALLOWED_DETAIL_TABLES:
             raise ValueError(f"Unknown detail table: {table!r}")
-        columns = config["columns"]
-        known_keys = config["known_keys"]
+        known_keys = spec.known_keys
 
         # Check for an existing row
         cursor.execute(
@@ -773,32 +661,16 @@ class SQLiteDB:
         col_names = ["content_item_id"]
         values: list[Any] = [db_id]
 
-        for col_name, meta_key, converter in columns:
-            # Compute the incoming value from metadata
-            new_value: Any
-            if converter == "author":
-                new_value = item.author or metadata.get(meta_key)
-            elif converter == "int":
-                new_value = self._safe_int(metadata.get(meta_key))
-            elif converter == "json":
-                new_value = self._to_json_array(metadata.get(meta_key))
-            elif converter == "json_or_genre":
-                raw = metadata.get("genres") or metadata.get("genre")
-                new_value = self._to_json_array(raw)
-            elif converter == "json_or_platform":
-                raw = metadata.get("platforms") or metadata.get("platform")
-                new_value = self._to_json_array(raw)
-            elif converter == "int_or_total_seasons":
-                raw = metadata.get("seasons") or metadata.get("total_seasons")
-                new_value = self._safe_int(raw)
-            elif converter == "int_or_runtime_minutes":
-                raw = metadata.get("runtime") or metadata.get("runtime_minutes")
-                new_value = self._safe_int(raw)
-            elif converter == "int_or_year":
-                raw = metadata.get("release_year") or metadata.get("year")
-                new_value = self._safe_int(raw)
-            else:
-                new_value = metadata.get(meta_key)
+        for detail_field in spec.fields:
+            col_name = detail_field.column
+            if col_name is None:
+                continue
+
+            raw = detail_field.value_from(metadata)
+            if detail_field.kind is FieldKind.CREATOR:
+                # The item's own author outranks whatever metadata carries.
+                raw = item.author or raw
+            new_value = detail_field.codec.store(raw)
 
             # Decide final value based on existing data
             if col_name in MERGEABLE_DETAIL_COLUMNS and existing_data:
@@ -809,8 +681,8 @@ class SQLiteDB:
                 values.append(json.dumps(merged) if merged else new_value)
             elif col_name in MONOTONIC_DETAIL_COLUMNS and existing_data:
                 # Seasons/episodes: take the higher value
-                existing_val = self._safe_int(existing_data.get(col_name))
-                incoming_val = self._safe_int(new_value)
+                existing_val = to_int(existing_data.get(col_name))
+                incoming_val = to_int(new_value)
                 if existing_val is not None and incoming_val is not None:
                     values.append(max(existing_val, incoming_val))
                 elif incoming_val is not None:
@@ -1265,66 +1137,6 @@ class SQLiteDB:
             include_ignored=include_ignored,
         )
 
-    # Configuration for reading detail table columns back into metadata.
-    # Each entry: (row_column, metadata_key, parse_type)
-    # parse_type: "str", "json_array", "remaining_json"
-    _READ_DETAIL_CONFIG: dict[str, dict[str, Any]] = {
-        "book": {
-            "author_column": "book_author",
-            "fields": [
-                ("pages", "pages", "str"),
-                ("isbn", "isbn", "str"),
-                ("isbn13", "isbn13", "str"),
-                ("publisher", "publisher", "str"),
-                ("book_year", "year_published", "str"),
-                ("book_genres", "genres", "json_array"),
-                ("book_tags", "tags", "json_array"),
-                ("book_description", "description", "str"),
-                ("book_metadata", None, "remaining_json"),
-            ],
-        },
-        "movie": {
-            "author_column": None,
-            "fields": [
-                ("director", "director", "str"),
-                ("runtime", "runtime", "str"),
-                ("movie_year", "release_year", "str"),
-                ("movie_genres", "genres", "json_array"),
-                ("studio", "studio", "str"),
-                ("movie_tags", "tags", "json_array"),
-                ("movie_description", "description", "str"),
-                ("movie_metadata", None, "remaining_json"),
-            ],
-        },
-        "tv_show": {
-            "author_column": None,
-            "fields": [
-                ("creators", "creators", "str"),
-                ("seasons", "seasons", "str"),
-                ("episodes", "episodes", "str"),
-                ("network", "network", "str"),
-                ("tv_year", "release_year", "str"),
-                ("tv_genres", "genres", "json_array"),
-                ("tv_tags", "tags", "json_array"),
-                ("tv_description", "description", "str"),
-                ("tv_metadata", None, "remaining_json"),
-            ],
-        },
-        "video_game": {
-            "author_column": None,
-            "fields": [
-                ("developer", "developer", "str"),
-                ("game_publisher", "publisher", "str"),
-                ("platforms", "platforms", "json_array"),
-                ("game_genres", "genres", "json_array"),
-                ("game_year", "release_year", "str"),
-                ("game_tags", "tags", "json_array"),
-                ("game_description", "description", "str"),
-                ("game_metadata", None, "remaining_json"),
-            ],
-        },
-    }
-
     @staticmethod
     def _get_row_value(row: sqlite3.Row, key: str, default: Any = None) -> Any:
         """Safely get value from sqlite3.Row."""
@@ -1333,21 +1145,6 @@ class SQLiteDB:
             return value if value is not None else default
         except (KeyError, IndexError):
             return default
-
-    @staticmethod
-    def _parse_json_array(val: Any) -> list[str] | None:
-        """Parse a JSON array value from the database."""
-        if val is None:
-            return None
-        if isinstance(val, list):
-            return val
-        try:
-            parsed = json.loads(val)
-            if isinstance(parsed, list):
-                return parsed
-            return [parsed]
-        except (json.JSONDecodeError, TypeError):
-            return [val] if val else None
 
     def _row_to_content_item(self, row: sqlite3.Row) -> ContentItem:
         """Convert a database row to ContentItem.
@@ -1362,32 +1159,26 @@ class SQLiteDB:
         metadata: dict[str, Any] = {}
         author: str | None = None
 
-        config = self._READ_DETAIL_CONFIG.get(content_type.value)
-        if config:
-            # Get author from dedicated column if configured
-            if config["author_column"]:
-                author = self._get_row_value(row, config["author_column"])
+        spec = DETAIL_FIELDS.get(content_type.value)
+        if spec:
+            for detail_field in spec.fields:
+                column = detail_field.column
+                if column is None:
+                    continue
+                raw = self._get_row_value(row, detail_field.select_alias or column)
+                if detail_field.kind is FieldKind.CREATOR:
+                    author = raw
+                    continue
+                value = detail_field.codec.load(raw)
+                if value:
+                    metadata[detail_field.metadata_key] = value
 
-            # Build metadata from detail table fields
-            for row_column, meta_key, parse_type in config["fields"]:
-                if parse_type == "remaining_json":
-                    raw = self._get_row_value(row, row_column)
-                    if raw:
-                        try:
-                            remaining = json.loads(raw)
-                            metadata.update(remaining)
-                        except (json.JSONDecodeError, TypeError):
-                            pass
-                elif parse_type == "json_array":
-                    parsed = self._parse_json_array(
-                        self._get_row_value(row, row_column)
-                    )
-                    if parsed:
-                        metadata[meta_key] = parsed
-                else:
-                    value = self._get_row_value(row, row_column)
-                    if value:
-                        metadata[meta_key] = value
+            # The leftover blob last: a key it carries is one no column claimed.
+            if blob := self._get_row_value(row, spec.metadata_alias):
+                try:
+                    metadata.update(json.loads(blob))
+                except (json.JSONDecodeError, TypeError):
+                    pass
 
         # Parse date_completed
         date_completed = None
@@ -1659,10 +1450,10 @@ class SQLiteDB:
         Raises ``ValueError`` for an unknown content_type so the caller never
         marks an item enriched without having written any metadata.
         """
-        config = self._DETAIL_TABLE_CONFIG.get(content_type)
-        if not config:
+        spec = DETAIL_FIELDS.get(content_type)
+        if spec is None:
             raise ValueError(f"Unknown content_type: {content_type!r}")
-        table = config["table"]
+        table = spec.table
         if table not in ALLOWED_DETAIL_TABLES:
             raise ValueError(f"Unknown detail table: {table!r}")
 

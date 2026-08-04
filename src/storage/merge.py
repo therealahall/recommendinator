@@ -76,10 +76,14 @@ def parse_json_list(raw: str | None) -> list[str]:
 # Detail table constants
 # ---------------------------------------------------------------------------
 
-# Detail table columns for merge operations.  Kept in sync with
-# SQLiteDB._DETAIL_TABLE_CONFIG — enforced by TestDetailTableColumnsConsistency.
-# Used by merge_detail_tables so that column names are never read from the
-# live database schema at runtime.
+# Detail table columns for merge operations.  Deliberately an independent
+# hand-written list rather than a derivation of ``models.detail_fields``: it
+# is the source of ALLOWED_DETAIL_TABLES, which guards every SQL identifier
+# this module and sqlite_db interpolate, so it must not move with the
+# declaration it checks.  TestDetailTableColumnsConsistency proves the two
+# name the same columns; order is not compared, because it only reaches the
+# order of SET clauses in merge_detail_tables.  Used by merge_detail_tables so
+# that column names are never read from the live database schema at runtime.
 _DETAIL_TABLE_COLUMNS: dict[str, tuple[str, ...]] = {
     "book_details": (
         "author",
@@ -123,8 +127,9 @@ _DETAIL_TABLE_COLUMNS: dict[str, tuple[str, ...]] = {
 }
 
 # Derived from _DETAIL_TABLE_COLUMNS so there is no independent list to keep
-# in sync.  Used by SQLiteDB._save_detail_table to validate table names from
-# _DETAIL_TABLE_CONFIG before SQL identifier interpolation.
+# in sync.  Used by SQLiteDB._save_detail_table and by the joined SELECT
+# builder to validate table names from the field declaration in
+# src/models/detail_fields.py before SQL identifier interpolation.
 ALLOWED_DETAIL_TABLES: frozenset[str] = frozenset(_DETAIL_TABLE_COLUMNS.keys())
 
 # Columns merged additively (union of both rows' lists) during dedup.

@@ -11,6 +11,13 @@ import pytest
 from src.ingestion.sources.radarr.radarr import RadarrPlugin
 from src.ingestion.sources.sonarr.sonarr import SonarrPlugin
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.models.detail_fields import (
+    DETAIL_FIELDS,
+    ContentTypeFields,
+    DetailField,
+    FieldKind,
+    to_json_array,
+)
 from src.storage.merge import (
     _DETAIL_TABLE_COLUMNS,
     assert_safe_identifier,
@@ -1699,14 +1706,14 @@ class TestPaginationWithoutLimit:
 
 
 class TestToJsonArrayRegression:
-    """Regression tests for _to_json_array() bare string handling.
+    """Regression tests for to_json_array() bare string handling.
 
     Bug reported: TV show genres stored as bare strings like ``"Drama"``
     instead of JSON arrays ``'["Drama"]'``.  Downstream code expecting
     JSON arrays would fail to parse them, resulting in single-genre
     items that weakly matched everything via broad Jaccard overlap.
 
-    Root cause: ``_to_json_array()`` returned bare strings unchanged
+    Root cause: ``to_json_array()`` returned bare strings unchanged
     (``if isinstance(val, str): return val``).
 
     Fix: Bare strings are now wrapped in a JSON array; only strings
@@ -1715,27 +1722,27 @@ class TestToJsonArrayRegression:
 
     def test_bare_string_wrapped_in_json_array_regression(self) -> None:
         """A bare string like 'Drama' should become '["Drama"]'."""
-        result = SQLiteDB._to_json_array("Drama")
+        result = to_json_array("Drama")
         assert result == '["Drama"]'
 
     def test_existing_json_array_unchanged(self) -> None:
         """A string that is already a JSON array should be returned as-is."""
-        result = SQLiteDB._to_json_array('["Drama", "Action"]')
+        result = to_json_array('["Drama", "Action"]')
         assert result == '["Drama", "Action"]'
 
     def test_list_converted_to_json(self) -> None:
         """A Python list should be serialized to JSON."""
-        result = SQLiteDB._to_json_array(["Drama"])
+        result = to_json_array(["Drama"])
         assert result == '["Drama"]'
 
     def test_none_returns_none(self) -> None:
         """None input should return None."""
-        result = SQLiteDB._to_json_array(None)
+        result = to_json_array(None)
         assert result is None
 
     def test_multi_element_list(self) -> None:
         """A multi-element list should serialize correctly."""
-        result = SQLiteDB._to_json_array(["Drama", "Action", "Comedy"])
+        result = to_json_array(["Drama", "Action", "Comedy"])
         assert result == '["Drama", "Action", "Comedy"]'
 
 
@@ -4327,11 +4334,13 @@ class TestDetailTableWhitelist:
         Validates the SQL injection defense-in-depth guard on ALLOWED_DETAIL_TABLES.
         """
         malicious_config = {
-            "injected": {
-                "table": "malicious_table; DROP TABLE users; --",
-                "columns": ["title"],
-                "known_keys": {"title"},
-            }
+            "injected": ContentTypeFields(
+                table="malicious_table; DROP TABLE users; --",
+                table_alias="mt",
+                metadata_alias="injected_metadata",
+                creator_column="title",
+                fields=(DetailField("title", FieldKind.TEXT, column="title"),),
+            )
         }
         item = ContentItem(
             id="test_1",
@@ -4347,7 +4356,7 @@ class TestDetailTableWhitelist:
         cursor = conn.cursor()
 
         with (
-            patch.dict(SQLiteDB._DETAIL_TABLE_CONFIG, malicious_config),
+            patch.dict(DETAIL_FIELDS, malicious_config),
             pytest.raises(ValueError, match="Unknown detail table"),
         ):
             temp_db._save_detail_table(cursor, db_id, item, "injected")
@@ -4406,67 +4415,41 @@ class TestAssertSafeIdentifier:
 
 
 class TestDetailTableColumnsConsistency:
-    """Ensures _DETAIL_TABLE_COLUMNS stays in sync with _DETAIL_TABLE_CONFIG."""
+    """Ensures _DETAIL_TABLE_COLUMNS stays in sync with the field declaration."""
 
-    def test_detail_table_columns_matches_config(self) -> None:
-        """_DETAIL_TABLE_COLUMNS must list exactly the same columns as _DETAIL_TABLE_CONFIG.
+    def test_detail_table_columns_matches_declaration(self) -> None:
+        """_DETAIL_TABLE_COLUMNS must list exactly the declared columns.
 
-        Both constants describe the detail table schema.  If a column is added
-        to _DETAIL_TABLE_CONFIG but not _DETAIL_TABLE_COLUMNS, the merge logic
-        in merge_detail_tables silently skips the new column.
+        Both describe the detail table schema, and _DETAIL_TABLE_COLUMNS is
+        deliberately independent of the declaration because it is the source
+        of the ALLOWED_DETAIL_TABLES guard.  If a column is added to the
+        declaration but not here, the merge logic in merge_detail_tables
+        silently skips the new column.
+
+        Membership is compared, not order: the only thing column order reaches
+        is the order of SET clauses in merge_detail_tables, so requiring the
+        two lists to agree on it would force cosmetic edits to this file every
+        time the declaration is reordered for readability.
         """
-        for content_type, config in SQLiteDB._DETAIL_TABLE_CONFIG.items():
-            table = config["table"]
-            config_cols = tuple(col_name for col_name, _, _ in config["columns"])
-            assert table in _DETAIL_TABLE_COLUMNS, (
-                f"Table {table!r} (content_type={content_type!r}) "
+        for content_type, spec in DETAIL_FIELDS.items():
+            assert spec.table in _DETAIL_TABLE_COLUMNS, (
+                f"Table {spec.table!r} (content_type={content_type!r}) "
                 f"missing from _DETAIL_TABLE_COLUMNS"
             )
-            assert _DETAIL_TABLE_COLUMNS[table] == config_cols, (
-                f"Column mismatch for {table!r}: "
-                f"_DETAIL_TABLE_COLUMNS={_DETAIL_TABLE_COLUMNS[table]!r} "
-                f"vs _DETAIL_TABLE_CONFIG={config_cols!r}"
+            assert set(_DETAIL_TABLE_COLUMNS[spec.table]) == set(spec.columns), (
+                f"Column mismatch for {spec.table!r}: "
+                f"_DETAIL_TABLE_COLUMNS={sorted(_DETAIL_TABLE_COLUMNS[spec.table])!r} "
+                f"vs DETAIL_FIELDS={sorted(spec.columns)!r}"
             )
+            assert len(set(_DETAIL_TABLE_COLUMNS[spec.table])) == len(
+                _DETAIL_TABLE_COLUMNS[spec.table]
+            ), f"Duplicate column in _DETAIL_TABLE_COLUMNS[{spec.table!r}]"
 
-        # Reverse check: every table in _DETAIL_TABLE_COLUMNS must exist in config
-        config_tables = {cfg["table"] for cfg in SQLiteDB._DETAIL_TABLE_CONFIG.values()}
+        declared_tables = {spec.table for spec in DETAIL_FIELDS.values()}
         for table in _DETAIL_TABLE_COLUMNS:
-            assert table in config_tables, (
-                f"Table {table!r} in _DETAIL_TABLE_COLUMNS "
-                f"but not in _DETAIL_TABLE_CONFIG"
-            )
-
-
-class TestDetailColumnAliasesConsistency:
-    """Ensures known_keys lists exactly the metadata keys the columns consume.
-
-    Nothing else checks the two halves of _DETAIL_TABLE_CONFIG against each
-    other, and drift is silent in both directions. A key a converter reads but
-    known_keys omits is consumed by the column *and* duplicated into the
-    free-form metadata blob. A known_keys entry no converter reads makes that
-    value vanish: it is dropped from the blob as "already consumed" by a
-    column that never asked for it.
-
-    A ``*_or_*`` converter names its own alias after the separator, so the set
-    of keys the columns consume is derivable from ``columns`` alone. This
-    pins the derivation, which is what makes "preserve every alias" checkable
-    through the refactor the config comment describes.
-    """
-
-    def test_known_keys_matches_the_keys_the_columns_read(self) -> None:
-        """No alias is missing from known_keys, and none is listed spuriously."""
-        for content_type, config in SQLiteDB._DETAIL_TABLE_CONFIG.items():
-            consumed = set()
-            for _col_name, meta_key, converter in config["columns"]:
-                consumed.add(meta_key)
-                if "_or_" in converter:
-                    consumed.add(converter.split("_or_", 1)[1])
-
-            assert config["known_keys"] == consumed, (
-                f"known_keys mismatch for content_type={content_type!r}: "
-                f"known_keys={sorted(config['known_keys'])!r} "
-                f"vs keys read by columns={sorted(consumed)!r}"
-            )
+            assert (
+                table in declared_tables
+            ), f"Table {table!r} in _DETAIL_TABLE_COLUMNS but not in DETAIL_FIELDS"
 
 
 class TestCrossSourceDuplicateDetectionRegression:
