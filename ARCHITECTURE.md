@@ -190,12 +190,17 @@ what stop it reverting a completion or un-ignoring an item.
 #### Detail-shape repairs
 
 `_migrate_stranded_detail_shapes`, in the same `create_schema` pass, rewrites
-two shapes storage no longer writes and no re-sync corrects. A `total_seasons`
+three shapes storage no longer writes and no re-sync corrects. A `total_seasons`
 duplicated in a TV show's metadata blob moves onto the `seasons` column, taking
 the higher of the two so the count is never lowered. It runs *before*
-consolidation, so each row folds its own stranded count onto its own column and
-the merge above then weighs two real counts rather than whichever blob copy
-survived it. GOG's old per-platform flag dict becomes the list of names every
+consolidation — inside the one transaction `create_schema` commits, so a failure
+in either discards both — so each row folds its own stranded count onto its own
+column and the merge above then weighs two real counts rather than whichever
+blob copy survived it. A GOG game's `developers`/`publishers`, stranded in the
+blob before either was an alias, fold onto the `developer` and `publisher`
+columns as names, filling only a column that is empty; without that, the objects
+GOG uses on some products make every later save of the item raise. GOG's old
+per-platform flag dict becomes the list of names every
 other producer writes — or nothing, since the dict was truthy even when it named
 no supported platform — and only a dict whose values are all booleans is read as
 flags, so an imported object such as `{"name": "PC"}` is left alone. Rows already
