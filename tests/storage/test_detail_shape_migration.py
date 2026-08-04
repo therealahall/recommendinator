@@ -34,6 +34,7 @@ from unittest.mock import patch
 
 import pytest
 
+from src.ingestion.sources.markdown.markdown import MarkdownImportPlugin
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.detail_fields import DETAIL_FIELDS, FieldKind
 from src.storage import schema
@@ -269,6 +270,29 @@ def _game_companies_without_opening(db_path: Path, db_id: int) -> tuple[Any, Any
         conn.close()
     blob = row["metadata"]
     return row["developer"], row["publisher"], json.loads(blob) if blob else None
+
+
+def _strand_blob_key(
+    db: SQLiteDB, db_id: int, content_type: str, blob: dict[str, Any]
+) -> None:
+    """Write *blob* into a saved item's detail row, whatever its type.
+
+    The write path drops a known key from the blob on the way in, so a key
+    stranded in front of a column can only be put there in SQL. The table name
+    is read from the declaration, never from input.
+
+    The row count is asserted because an UPDATE matching nothing is silent:
+    every caller here reads the blob back through a codec and would pass on an
+    unstranded row wherever the codec's answer is None.
+    """
+    table = DETAIL_FIELDS[content_type].table
+    with db.connection() as conn:
+        cursor = conn.execute(
+            f"UPDATE {table} SET metadata = ? WHERE content_item_id = ?",
+            (json.dumps(blob), db_id),
+        )
+        assert cursor.rowcount == 1
+        conn.commit()
 
 
 def _seed_movie(db: SQLiteDB, *, blob: dict[str, Any]) -> int:
@@ -1835,6 +1859,29 @@ class TestTheRepairAndTheMergeShareOneTransaction:
 
         assert _game_companies_without_opening(db_path, db_id) == (None, None, blob)
 
+    def test_the_database_still_opens_and_repairs_after_a_failed_open(
+        self, tmp_path: Path
+    ) -> None:
+        """A transient failure costs the repair, not the database.
+
+        Discarding the work is only half of what an operator needs: the open
+        that raised must also leave nothing behind — no half-written row, no
+        connection still holding the file — or the failure turns a stranded
+        row into a library that cannot be started at all.
+        """
+        db_path = tmp_path / "test.db"
+        db_id = _seed_show(SQLiteDB(db_path), seasons=None, blob={"total_seasons": 5})
+
+        with (
+            patch.object(
+                schema, "_deduplicate_inline", side_effect=OSError("disk failure")
+            ),
+            pytest.raises(OSError),
+        ):
+            SQLiteDB(db_path)
+
+        assert _show_detail(SQLiteDB(db_path), db_id) == (5, None)
+
 
 class TestEveryAliasWasCheckedForTheSameStranding:
     """No alias but the two company keys can strand before a text column.
@@ -1844,6 +1891,21 @@ class TestEveryAliasWasCheckedForTheSameStranding:
     raising. That reading is pinned here, so an alias added later to a text
     column fails a test rather than quietly re-opening the defect.
     """
+
+    #: What each column swept here holds once the stranded object has been
+    #: through the codec that answers it: the integer codec reads no number out
+    #: of it, the list codec serialises it whole, and the additive merge behind
+    #: ``genres`` reduces every entry to text on the way past. None of the
+    #: three refuses the write, which is the property being swept for.
+    #: ``seasons`` never sees the object at all — the season pass drops
+    #: ``total_seasons`` on the open, before anything reads it back.
+    _LANDED_BY_COLUMN: dict[str, Any] = {
+        "release_year": None,
+        "runtime": None,
+        "seasons": None,
+        "platforms": '[{"name": "Object"}]',
+        "genres": "[\"{'name': 'Object'}\"]",
+    }
 
     @staticmethod
     def _text_column_aliases() -> set[str]:
@@ -1857,22 +1919,32 @@ class TestEveryAliasWasCheckedForTheSameStranding:
         }
 
     def test_the_fold_covers_every_text_alias_but_the_one_nothing_writes(self) -> None:
-        """``creator`` is the exemption, and it is the only one.
+        """``creator`` is the exemption, and the value is what earns it.
 
-        No producer writes a ``creator`` metadata key, so no blob carries it:
-        the importers that use the word use it as a template column, which
-        crosses on ``ContentItem.author``, and the library's own key for the
-        field is ``creators`` — which TMDB writes as joined text.
+        A blob can carry the key: the markdown source parses any ``Key:
+        Value`` in a list item's tail into a lowercased metadata key, so
+        ``Creator: Vince Gilligan`` on a show writes one. Every value it can
+        write is a string, which ``to_text`` takes unchanged, so the key folds
+        onto ``creators`` on the next save rather than refusing it — a
+        duplicate at worst, never a stranding. What holds is the shape the
+        producers can write, not the absence of a producer;
+        ``TestWhatTheCreatorExemptionCosts`` pins both halves.
         """
         assert (
             schema._STRANDED_COMPANY_COLUMNS.keys()
             == self._text_column_aliases() - {"creator"}
+        ), (
+            "A new alias in front of a text column needs a repair pass of its"
+            " own. _fold_stranded_company_names names developer, publisher and"
+            " video_game_details literally, so adding a key to"
+            " _STRANDED_COMPANY_COLUMNS pops it out of every game blob and"
+            " writes it to nothing."
         )
 
     @pytest.mark.parametrize(
-        ("content_type", "alias"),
+        ("content_type", "alias", "column"),
         [
-            (content_type, alias)
+            (content_type, alias, field.column)
             for content_type, spec in DETAIL_FIELDS.items()
             for field in spec.fields
             if field.kind not in (FieldKind.CREATOR, FieldKind.TEXT)
@@ -1880,28 +1952,173 @@ class TestEveryAliasWasCheckedForTheSameStranding:
         ],
     )
     def test_an_object_under_any_other_alias_cannot_fail_a_write(
-        self, tmp_path: Path, content_type: str, alias: str
+        self, tmp_path: Path, content_type: str, alias: str, column: str
     ) -> None:
         """The alias the reader hands back is written, not refused.
 
-        A stranded key reaches the writer as a metadata key of the item the
-        reader built, which is what saving one carrying the key exercises:
-        the integer codec answers an object with None and the list codec
-        serializes it, so neither strands the row the way a text column does.
-        """
-        db = SQLiteDB(tmp_path / "swept.db")
+        The stranding is the reader handing a legacy blob key back to the
+        writer, so the loop to exercise is seed-in-SQL, reopen, read back,
+        re-save. Saving a fresh item carrying the key proves nothing: the
+        write path pops it before any column sees it.
 
-        db_id = db.save_content_item(
+        What landed is asserted rather than that the item still exists,
+        because a column the codec declined and a column holding the object's
+        repr are both "not None", and only one of those is the sweep's claim.
+        """
+        db_path = tmp_path / "swept.db"
+        seed = SQLiteDB(db_path)
+        db_id = seed.save_content_item(
             ContentItem(
                 id=f"swept:{alias}",
                 title="Swept",
                 content_type=ContentType(content_type),
                 status=ConsumptionStatus.UNREAD,
-                metadata={alias: [{"name": "Object"}]},
+            )
+        )
+        _strand_blob_key(seed, db_id, content_type, {alias: [{"name": "Object"}]})
+
+        db = SQLiteDB(db_path)
+        stored = db.get_content_item(db_id)
+
+        assert stored is not None
+        assert db.save_content_item(stored) == db_id
+        row = _whole_detail_row(db, DETAIL_FIELDS[content_type].table, db_id)
+        assert row[column] == self._LANDED_BY_COLUMN[column]
+
+
+class TestWhatTheCreatorExemptionCosts:
+    """``creator`` has no repair pass, and the value is what earns it.
+
+    A blob can carry the key: the markdown source turns any ``Key: Value`` in
+    a list item's tail into a lowercased metadata key, so a show written
+    ``| Creator: Vince Gilligan`` strands one. Every value that source can
+    write is a string, which ``to_text`` takes unchanged, so the key folds
+    onto the column instead of refusing the save. The exemption rests on that
+    and on nothing else — the price of a producer writing the same key as an
+    object is recorded below, because no shipped code would notice.
+    """
+
+    @staticmethod
+    def _strand_a_show_creator(db_path: Path, creator: Any) -> int:
+        """Save a show, then strand *creator* under the ``creator`` blob key."""
+        db = SQLiteDB(db_path)
+        db_id = db.save_content_item(
+            ContentItem(
+                id="markdown:breaking-bad",
+                title="Breaking Bad",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.COMPLETED,
+                source="markdown_import",
+            )
+        )
+        _strand_blob_key(db, db_id, "tv_show", {"creator": creator})
+        return db_id
+
+    def test_the_markdown_source_writes_the_key_as_a_string(
+        self, tmp_path: Path
+    ) -> None:
+        """The producer that reaches the key, and the shape it can write.
+
+        ``_parse_metadata_tail`` matches ``(\\w+): (.+)`` on each segment, so
+        the key is whatever the file says and the value is always text.
+        """
+        md_file = tmp_path / "shows.md"
+        md_file.write_text(
+            "## Completed\n- **Breaking Bad** | Creator: Vince Gilligan\n"
+        )
+
+        items = list(
+            MarkdownImportPlugin().fetch(
+                {"path": str(md_file), "content_type": "tv_show"}
             )
         )
 
-        assert db.get_content_item(db_id) is not None
+        assert [item.metadata for item in items] == [{"creator": "Vince Gilligan"}]
+
+    @pytest.mark.parametrize(
+        ("tail", "expected"),
+        [
+            ("Creator: Vince Gilligan", {"creator": "Vince Gilligan"}),
+            ("Creator: 5", {"creator": "5"}),
+            (
+                "Creator: [{'name': 'Vince Gilligan'}]",
+                {"creator": "[{'name': 'Vince Gilligan'}]"},
+            ),
+            ("Creator: true", {"creator": "true"}),
+            ("Creator: A | Creator: B", {"creator": "B"}),
+            ("Creator:", {}),
+            ("Creator:   | Rating: 5", {}),
+        ],
+        ids=[
+            "name",
+            "number",
+            "object_literal",
+            "boolean_word",
+            "repeated_key",
+            "no_value",
+            "whitespace_value",
+        ],
+    )
+    def test_no_tail_makes_the_key_anything_but_a_string(
+        self, tmp_path: Path, tail: str, expected: dict[str, str]
+    ) -> None:
+        """The exemption's whole premise, swept rather than sampled.
+
+        ``_parse_metadata_tail`` returns ``match.group(2).strip()``, so no
+        input turns a value into a list, a dict, a number or a bool: a file
+        writing what looks like one gets its text. A tail with nothing after
+        the colon writes no key at all, which is why ``to_text("")`` never
+        answers this producer. The exemption holds only while this does.
+        """
+        md_file = tmp_path / "shows.md"
+        md_file.write_text(f"## Completed\n- **Breaking Bad** | {tail}\n")
+
+        items = list(
+            MarkdownImportPlugin().fetch(
+                {"path": str(md_file), "content_type": "tv_show"}
+            )
+        )
+
+        assert [item.metadata for item in items] == [expected]
+
+    def test_a_stranded_string_folds_itself_onto_the_column(
+        self, tmp_path: Path
+    ) -> None:
+        """No pass runs, and the next save repairs the row anyway.
+
+        The blob keeps its copy, the way it keeps any existing key, but that
+        copy is a duplicate rather than a stranding: it agrees with the column
+        and ``extract_creator`` reads it only when the column says nothing.
+        """
+        db_path = tmp_path / "string-creator.db"
+        db_id = self._strand_a_show_creator(db_path, "Vince Gilligan")
+
+        db = SQLiteDB(db_path)
+        stored = db.get_content_item(db_id)
+
+        assert stored is not None
+        assert db.save_content_item(stored) == db_id
+        row = _whole_detail_row(db, "tv_show_details", db_id)
+        assert row["creators"] == "Vince Gilligan"
+        assert json.loads(row["metadata"]) == {"creator": "Vince Gilligan"}
+
+    def test_a_stranded_object_costs_the_item_every_save(self, tmp_path: Path) -> None:
+        """What the exemption buys, if a producer ever writes an object.
+
+        A plugin writing ``metadata["creator"] = [{"name": ...}]`` for a show
+        re-opens exactly the defect the company fold repairs: the reader hands
+        the key back, the text column refuses it, and the item can never be
+        saved again — with no pass to fold it and no other test to notice.
+        """
+        db_path = tmp_path / "object-creator.db"
+        db_id = self._strand_a_show_creator(db_path, [{"name": "Vince Gilligan"}])
+
+        db = SQLiteDB(db_path)
+        stored = db.get_content_item(db_id)
+
+        assert stored is not None
+        with pytest.raises(TypeError, match="text column cannot hold"):
+            db.save_content_item(stored)
 
 
 class TestEveryShapeInOnePass:

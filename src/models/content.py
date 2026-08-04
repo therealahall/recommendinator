@@ -97,9 +97,10 @@ class ContentItem(BaseModel):
     status: ConsumptionStatus
 
     # Optional fields
-    author: str | None = (
-        None  # Primary creator (author for books, kept for convenience)
-    )
+    # The type's creator, whichever word that type uses for it: a book's
+    # author, a movie's director, a show's creators, a game's developer. It
+    # crosses the storage boundary here rather than in ``metadata``.
+    author: str | None = None
     rating: int | None = Field(None, ge=1, le=5)
     review: str | None = None
     date_completed: date | None = None
