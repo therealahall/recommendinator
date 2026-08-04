@@ -2529,6 +2529,46 @@ class TestDetailTableFillOnly:
         assert retrieved.metadata.get("pages") == 271
         assert retrieved.metadata.get("publisher") == "Ace Books"
 
+    def test_an_empty_text_value_leaves_the_column_open(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """A blank value stores as NULL, so a later sync still fills it.
+
+        The fill-only rule tests ``is not None``, so a column holding ``""``
+        would refuse every value after it, with nothing in the app to clear
+        it. ``to_text`` answering an empty value with None is the whole of
+        what keeps the column open, and this is the pair it is claimed for.
+        """
+        blank = ContentItem(
+            id="detail_blank_isbn",
+            title="Dune",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            metadata={"isbn": ""},
+        )
+        db_id = temp_db.save_content_item(blank)
+
+        with temp_db.connection() as conn:
+            row = conn.execute(
+                "SELECT isbn FROM book_details WHERE content_item_id = ?",
+                (db_id,),
+            ).fetchone()
+        assert row["isbn"] is None
+
+        temp_db.save_content_item(
+            ContentItem(
+                id="detail_blank_isbn",
+                title="Dune",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                metadata={"isbn": "9780441013593"},
+            )
+        )
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.metadata["isbn"] == "9780441013593"
+
     def test_year_published_not_overwritten(self, temp_db: SQLiteDB) -> None:
         """Numeric detail fields should also be fill-only."""
         item_v1 = ContentItem(
