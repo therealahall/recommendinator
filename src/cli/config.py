@@ -319,7 +319,7 @@ def create_llm_components(
     except ImportError:
         logger.warning(
             "AI features enabled in config but ollama is not installed. "
-            "LLM features disabled. Install with: pip install recommendinator[ai]"
+            "LLM features disabled. Install with: uv sync --locked --extra ai"
         )
         return None, None, None
 

@@ -126,7 +126,7 @@ class StorageManager:
             except ImportError:
                 logger.warning(
                     "AI features enabled in config but chromadb is not installed. "
-                    "Vector DB disabled. Install with: pip install recommendinator[ai]"
+                    "Vector DB disabled. Install with: uv sync --locked --extra ai"
                 )
                 self.ai_enabled = False
 

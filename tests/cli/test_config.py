@@ -397,6 +397,6 @@ class TestCreateLlmComponents:
 
         assert any(
             "ollama is not installed" in message
-            and "pip install recommendinator[ai]" in message
+            and "uv sync --locked --extra ai" in message
             for message in caplog.messages
         )
