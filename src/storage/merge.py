@@ -81,9 +81,12 @@ def parse_json_list(raw: str | None) -> list[str]:
 # is the source of ALLOWED_DETAIL_TABLES, which guards every SQL identifier
 # this module and sqlite_db interpolate, so it must not move with the
 # declaration it checks.  TestDetailTableColumnsConsistency proves the two
-# name the same columns; order is not compared, because it only reaches the
-# order of SET clauses in merge_detail_tables.  Used by merge_detail_tables so
-# that column names are never read from the live database schema at runtime.
+# name the same columns; the order of the tuples below is not compared, because
+# it only reaches the order of SET clauses in merge_detail_tables.  The field
+# declaration's own order is not inert — it is the export column order — so a
+# reordering there is a user-visible change these tuples do not police.  Used by
+# merge_detail_tables so that column names are never read from the live database
+# schema at runtime.
 _DETAIL_TABLE_COLUMNS: dict[str, tuple[str, ...]] = {
     "book_details": (
         "author",

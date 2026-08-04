@@ -4766,10 +4766,17 @@ class TestDetailTableColumnsConsistency:
         declaration but not here, the merge logic in merge_detail_tables
         silently skips the new column.
 
-        Membership is compared, not order: the only thing column order reaches
-        is the order of SET clauses in merge_detail_tables, so requiring the
-        two lists to agree on it would force cosmetic edits to this file every
-        time the declaration is reordered for readability.
+        Membership is compared, not order: _DETAIL_TABLE_COLUMNS' order
+        reaches nothing but the order of SET clauses in merge_detail_tables,
+        so pinning it to the declaration would force cosmetic edits to
+        merge.py every time this one is reordered. Declaration order is not
+        inert in the same way — it is the CSV export column order — but that
+        is tests/test_detail_fields.py's business, not this test's.
+
+        Duplicates are rejected on both sides, since a column named twice is
+        invisible to the set comparison: two DetailFields declaring the same
+        column with different select aliases would pass every other check
+        here and read one column's value back under two names.
         """
         for content_type, spec in DETAIL_FIELDS.items():
             assert spec.table in _DETAIL_TABLE_COLUMNS, (
@@ -4784,6 +4791,9 @@ class TestDetailTableColumnsConsistency:
             assert len(set(_DETAIL_TABLE_COLUMNS[spec.table])) == len(
                 _DETAIL_TABLE_COLUMNS[spec.table]
             ), f"Duplicate column in _DETAIL_TABLE_COLUMNS[{spec.table!r}]"
+            assert len(set(spec.columns)) == len(
+                spec.columns
+            ), f"Duplicate column in DETAIL_FIELDS[{content_type!r}]"
 
         declared_tables = {spec.table for spec in DETAIL_FIELDS.values()}
         for table in _DETAIL_TABLE_COLUMNS:
@@ -6665,3 +6675,201 @@ class TestMissingColumnRaisesRegression:
         assert item.metadata == {}
         assert item.enriched is False
         assert item.ignored is False
+
+
+class TestUnreadableMetadataBlobRegression:
+    """A detail row whose metadata blob is not an object still reads back.
+
+    Bug: the read path merged the parsed blob with ``dict.update`` under a
+    ``try`` catching ``JSONDecodeError`` and ``TypeError`` alone. A blob
+    holding a JSON array parses cleanly and makes ``update`` raise
+    ``ValueError``, so every read that touched the row failed — the library
+    list included, since one bad row is enough to break the whole query.
+
+    Root cause: the read path assumed a blob that parses is an object.
+
+    Fix: keys are taken from the blob only when it parses to a dict, the guard
+    ``_fold_row_column_keys`` already applies. The migration deliberately
+    leaves such a row alone, so the rows it spares are exactly the ones that
+    reach here.
+    """
+
+    @staticmethod
+    def _show_with_raw_blob(temp_db: SQLiteDB, blob: str) -> int:
+        """Save a show, then overwrite its detail blob with *blob*.
+
+        Written afterwards because the write path cannot produce it, and the
+        ``seasons`` column is filled so the read is asserted on real data
+        rather than on an empty item.
+        """
+        db_id = temp_db.save_content_item(
+            ContentItem(
+                id="unreadable-blob",
+                title="Breaking Bad",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.CURRENTLY_CONSUMING,
+                metadata={"seasons": 5},
+            )
+        )
+        with temp_db.connection() as conn:
+            conn.execute(
+                "UPDATE tv_show_details SET metadata = ? WHERE content_item_id = ?",
+                (blob, db_id),
+            )
+            conn.commit()
+        return db_id
+
+    def test_a_blob_holding_a_json_array_reads_back_regression(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """The array the migration tolerates and the reader used to choke on."""
+        db_id = self._show_with_raw_blob(temp_db, json.dumps(["total_seasons", 5]))
+
+        item = temp_db.get_content_item(db_id)
+
+        assert item is not None
+        assert item.metadata == {"seasons": 5}
+
+    def test_a_blob_that_is_not_json_reads_back_regression(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """The other unreadable blob: text no parser makes anything of."""
+        db_id = self._show_with_raw_blob(temp_db, "not json at all")
+
+        item = temp_db.get_content_item(db_id)
+
+        assert item is not None
+        assert item.metadata == {"seasons": 5}
+
+    def test_a_blob_holding_a_json_string_reads_back_regression(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """The third shape that parses without being an object.
+
+        ``dict.update`` walks a string character by character looking for
+        pairs, so a bare JSON string raised ``ValueError`` exactly as the
+        array did — the same bug, one the array test alone does not pin.
+        """
+        db_id = self._show_with_raw_blob(temp_db, json.dumps("total_seasons"))
+
+        item = temp_db.get_content_item(db_id)
+
+        assert item is not None
+        assert item.metadata == {"seasons": 5}
+
+    def test_an_unreadable_blob_leaves_the_library_listable_regression(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """One bad row used to take every other row down with it.
+
+        The single-item read is not where this was felt: ``get_content_items``
+        converts every matched row, so one unreadable blob anywhere in the
+        library raised before the caller saw any of it.
+        """
+        unreadable_id = self._show_with_raw_blob(
+            temp_db, json.dumps(["total_seasons", 5])
+        )
+        readable_id = temp_db.save_content_item(
+            ContentItem(
+                id="readable-blob",
+                title="The Wire",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.UNREAD,
+            )
+        )
+
+        items = temp_db.get_content_items()
+
+        assert {item.db_id for item in items} == {unreadable_id, readable_id}
+
+
+class TestUndeclaredContentTypeWriteRegression:
+    """Saving a type with no field declaration fails instead of half writing.
+
+    Bug: ``_save_detail_table`` looked the declaration up with ``.get`` and
+    returned when it missed. The ``content_items`` row was committed with no
+    detail row beside it, so every column the item carried — author, genres,
+    year, description — was dropped with nothing raised and nothing logged.
+
+    Root cause: a defensive early return standing in for an invariant
+    ``src/models/detail_fields.py`` already enforces at import time.
+
+    Fix: the lookup subscripts the mapping, so a miss raises and the
+    transaction is abandoned rather than committed incomplete.
+    """
+
+    def test_an_undeclared_type_raises_and_writes_no_row_regression(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """The declaration is removed to reach a branch the guards forbid.
+
+        ``_assert_every_content_type_is_declared`` makes this unreachable
+        through the public types, which is why the mapping is patched rather
+        than a bogus ``ContentType`` invented.
+        """
+        item = ContentItem(
+            id="undeclared-type",
+            title="The Matrix",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"studio": "Warner Bros."},
+        )
+
+        with patch.dict(DETAIL_FIELDS):
+            del DETAIL_FIELDS["movie"]
+            with pytest.raises(KeyError):
+                temp_db.save_content_item(item)
+
+        with temp_db.connection() as conn:
+            remaining = conn.execute(
+                "SELECT COUNT(*) AS count FROM content_items WHERE external_id = ?",
+                ("undeclared-type",),
+            ).fetchone()["count"]
+        assert remaining == 0
+
+
+class TestUndeclaredContentTypeReadRegression:
+    """Reading a type with no field declaration fails instead of blanking it.
+
+    Bug: ``_row_to_content_item`` looked the declaration up with ``.get`` and
+    skipped the whole detail block when it missed, so a stored item came back
+    with no author, no genres and no metadata — every one of those columns
+    already in the row the query had selected — and nothing said so.
+
+    Root cause: the same defensive lookup ``_save_detail_table`` carried, a
+    total mapping treated as partial.
+
+    Fix: the lookup subscripts the mapping, so a miss raises rather than
+    reporting a full row as an empty one.
+    """
+
+    def test_an_undeclared_type_raises_rather_than_dropping_detail_regression(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """The declaration is removed to reach a branch the guards forbid.
+
+        The joined SELECT is built once at import, so the row still carries
+        every detail column: the read is what fails, not the query. Outside
+        the patch the same item reads back whole, which is what the early
+        return silently withheld.
+        """
+        db_id = temp_db.save_content_item(
+            ContentItem(
+                id="undeclared-read",
+                title="The Matrix",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.UNREAD,
+                author="The Wachowskis",
+                metadata={"genres": ["Science Fiction"]},
+            )
+        )
+
+        with patch.dict(DETAIL_FIELDS):
+            del DETAIL_FIELDS["movie"]
+            with pytest.raises(KeyError):
+                temp_db.get_content_item(db_id)
+
+        item = temp_db.get_content_item(db_id)
+        assert item is not None
+        assert item.author == "The Wachowskis"
+        assert item.metadata["genres"] == ["Science Fiction"]
