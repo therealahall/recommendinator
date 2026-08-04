@@ -1,6 +1,142 @@
 # CHANGELOG
 
 
+## v0.25.1 (2026-08-04)
+
+### Bug Fixes
+
+- **cli**: Head the creator column Creator, not Author
+  ([`4a74c0a`](https://github.com/therealahall/recommendinator/commit/4a74c0a5c6c337a16b029a015a255896e97b8dfe))
+
+- **cli**: Label the creator row by content type in library show
+  ([`f27850f`](https://github.com/therealahall/recommendinator/commit/f27850f39cc92407d7bddd3b10881a311a15056b))
+
+- **models**: Drop blank entries from a joined name
+  ([`969620e`](https://github.com/therealahall/recommendinator/commit/969620e0466b09156404455e898f9e61027d7d05))
+
+- **models**: Fail at import when a content type has no field declaration
+  ([`58f1b75`](https://github.com/therealahall/recommendinator/commit/58f1b75108527d2f6e5ae8d8e074e84077ca3b2e))
+
+- **models**: Keep a null out of a joined creator name
+  ([`f27914b`](https://github.com/therealahall/recommendinator/commit/f27914b630033ce9d30499dc2032125553347d35))
+
+- **models**: Strip a name before joining it, not just before testing it
+  ([`2d12081`](https://github.com/therealahall/recommendinator/commit/2d12081f80e3f93f811c55f8a621b92eab851cb7))
+
+- **models,ingestion**: Keep what a text column cannot hold out of it
+  ([`918ab5d`](https://github.com/therealahall/recommendinator/commit/918ab5dd65053d9c2dbf68897be87f7dc1dc589f))
+
+- **models,ingestion**: Refuse a value a text column cannot hold
+  ([`038f0e0`](https://github.com/therealahall/recommendinator/commit/038f0e0c2d3df0c100863d1f539a2170de29667d))
+
+- **storage**: Fold a stranded company name onto its column
+  ([`85c0b5b`](https://github.com/therealahall/recommendinator/commit/85c0b5b01be37ad2809137c34f54a71365282502))
+
+- **storage**: Fold every stranded blob key onto its column, not just seasons
+  ([`8326b41`](https://github.com/therealahall/recommendinator/commit/8326b41da08c6e0765014cc34959115e7f937415))
+
+- **storage**: Guard the read path against a blob that is not an object
+  ([`89ddbb7`](https://github.com/therealahall/recommendinator/commit/89ddbb7febe24ec5279cd77751ba406e975ca8e2))
+
+- **storage**: Let a wrong column name raise instead of reading as absent
+  ([`4740ab6`](https://github.com/therealahall/recommendinator/commit/4740ab6b3d50e2e4e840808fdca941f89c2fabbb))
+
+- **storage**: Repair detail rows left in shapes no re-sync corrects
+  ([`5c6d0d3`](https://github.com/therealahall/recommendinator/commit/5c6d0d347f27958d30ce6ad1ebcee2227c189bb4))
+
+- **storage**: Repair stranded counts before merging duplicates
+  ([`338096b`](https://github.com/therealahall/recommendinator/commit/338096b1bb811a44cf062cebccf4bdf9f5d215ae))
+
+- **storage**: Repair the two shapes this pass was scoped for
+  ([`4cbaf51`](https://github.com/therealahall/recommendinator/commit/4cbaf5199eedd72857b25ffdae75d5bb1a021a9a))
+
+- **storage**: Weigh every spelling of a field when repairing a row
+  ([`d27a611`](https://github.com/therealahall/recommendinator/commit/d27a6115eb117b85c5a076d961951a38b1466557))
+
+- **storage,cli**: Point the missing extra message at uv, not pip
+  ([`bd5401d`](https://github.com/therealahall/recommendinator/commit/bd5401d98a4964cd7d1fa80a564372559dd4eb5c))
+
+- **storage,models**: Say what actually keeps the creator alias safe
+  ([`e253f38`](https://github.com/therealahall/recommendinator/commit/e253f38002e946160f9240bdd8cd372deb19cb83))
+
+- **storage,web**: Give every content type its creator back
+  ([`a01c8c2`](https://github.com/therealahall/recommendinator/commit/a01c8c26394eb53bd5960228b87d8af853b7e30e))
+
+### Chores
+
+- **agents**: Stop document-review asking for more prose
+  ([`6d8bee2`](https://github.com/therealahall/recommendinator/commit/6d8bee2567df9b8f49d9de2ba47c84325364f05a))
+
+- **storage**: Drop two comments arguing a position that changed
+  ([`86db13b`](https://github.com/therealahall/recommendinator/commit/86db13bd1a701e9f5f7f614d15f190ce53ffb280))
+
+### Documentation
+
+- Cut ARCHITECTURE, CLI and README down
+  ([`f458d74`](https://github.com/therealahall/recommendinator/commit/f458d742e305c4a14a390cdec6a7a5f90f305457))
+
+- Cut the contributor guides down
+  ([`8f8bbec`](https://github.com/therealahall/recommendinator/commit/8f8bbec4c12dcef4c4094318343740f824255642))
+
+- Cut the feature guides down
+  ([`e4dfa29`](https://github.com/therealahall/recommendinator/commit/e4dfa29349fb74fb679dc6653f162272a07eed33))
+
+- Cut the setup and operations guides down
+  ([`e5531b5`](https://github.com/therealahall/recommendinator/commit/e5531b524b58637c2344e49b6ee4fdcd17622d90))
+
+- Describe the field declaration and the detail shape repairs
+  ([`d87f6ca`](https://github.com/therealahall/recommendinator/commit/d87f6ca5bd945b14285452842523e8746550663e))
+
+- Describe the third detail shape the repair pass fixes
+  ([`a729043`](https://github.com/therealahall/recommendinator/commit/a729043a85c1b6985e294dfa33eb479395a1d460))
+
+- Record the repair ordering and qualify the creator export claim
+  ([`4947f1e`](https://github.com/therealahall/recommendinator/commit/4947f1ef478f37efba6461d7e65e84f9d6a8931e))
+
+- Record where a stored item carries its creator
+  ([`db2508e`](https://github.com/therealahall/recommendinator/commit/db2508e4eea3c72a0ba57cfe1872621316785356))
+
+- Tell plugin authors what a text column refuses, and count the list
+  ([`78d344b`](https://github.com/therealahall/recommendinator/commit/78d344bd92b4e440487fa840733690d739465eee))
+
+- **architecture**: Describe the two detail shape repairs
+  ([`aa7e385`](https://github.com/therealahall/recommendinator/commit/aa7e385113b6c5b4569ff1ae6b008e48dacddaf7))
+
+- **data-sources**: Say what the platform repair fixes and what it misses
+  ([`bd640d3`](https://github.com/therealahall/recommendinator/commit/bd640d37c012064909adf940811b07ae266bbb0e))
+
+### Refactoring
+
+- **cli**: Name the recommend loop variable
+  ([`9f840d8`](https://github.com/therealahall/recommendinator/commit/9f840d85cea5b2463262bebfed6b686f99148f6f))
+
+- **storage**: Declare each detail table's fields once
+  ([`c71fb4d`](https://github.com/therealahall/recommendinator/commit/c71fb4da48c76307a30e5247252ef939f0b86b16))
+
+- **web,ingestion**: Index the field declaration instead of defaulting around it
+  ([`cffa28e`](https://github.com/therealahall/recommendinator/commit/cffa28e0e6f5cf79d736eb0f60618fde71fbf527))
+
+### Testing
+
+- Stop the install instruction scan depending on the working tree
+  ([`1f56d8a`](https://github.com/therealahall/recommendinator/commit/1f56d8a20b536c1828be32186707632d38d870a1))
+
+- **export**: Check the JSON columns too, and keep catching duplicates
+  ([`23d3cd0`](https://github.com/therealahall/recommendinator/commit/23d3cd0429ac928d916eb44b7af4d329c6beadb7))
+
+- **export**: Check which columns are written, not what order
+  ([`ff88a33`](https://github.com/therealahall/recommendinator/commit/ff88a337fa575406e820de6351b6e5b40f059997))
+
+- **storage**: Pin what the undeclared type regressions actually raise
+  ([`bcce0fb`](https://github.com/therealahall/recommendinator/commit/bcce0fb3e69a3ff20e8d703113be3a2a8b9fab58))
+
+- **storage**: Prove an empty value leaves its column open
+  ([`e584496`](https://github.com/therealahall/recommendinator/commit/e584496480929a5eb5878e85a6b2b7530da87939))
+
+- **storage**: Show the creator exemption costs every save, not one
+  ([`108c0df`](https://github.com/therealahall/recommendinator/commit/108c0df0815ce827152ec75f20dd83762cdb6aa2))
+
+
 ## v0.25.0 (2026-08-04)
 
 ### Bug Fixes
