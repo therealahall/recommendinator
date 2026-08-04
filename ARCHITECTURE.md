@@ -187,6 +187,16 @@ Merge rules:
 Consolidation deletes a row outright, so the `status` and `ignored` rules are
 what stop it reverting a completion or un-ignoring an item.
 
+#### Detail-shape repairs
+
+`_migrate_stranded_detail_shapes`, in the same `create_schema` pass, rewrites
+detail rows left in shapes storage no longer writes and no re-sync corrects. A
+`total_seasons` duplicated in a TV show's metadata blob moves onto the `seasons`
+column, never lowering it, and GOG's old per-platform flag dict becomes the list
+of names every other producer writes — or nothing, since the dict was truthy
+even when it named no supported platform. Rows already in the current shape are
+untouched, so re-running is a no-op.
+
 #### Thread safety
 
 WAL mode, and `_get_connection` sets `PRAGMA busy_timeout = 5000` so concurrent
@@ -438,8 +448,15 @@ and `test_<name>.py` with mocked APIs. `PluginRegistry` discovers it. See
 `src/enrichment/providers/<name>/`, with rate limiting configured in the provider
 class. `EnrichmentRegistry` discovers it.
 
-**A content type**: extend the `ContentType` enum, add its detail table to the
-schema, add type-specific recommendation logic, update the data models.
+**A content type**: extend the `ContentType` enum, declare its fields in
+`src/models/detail_fields.py`, add its detail table to the schema, register
+that table and its columns in `_DETAIL_TABLE_COLUMNS` (`src/storage/merge.py`),
+add type-specific recommendation logic, update the data models.
+
+Do not skip the `_DETAIL_TABLE_COLUMNS` step. It is the source of
+`ALLOWED_DETAIL_TABLES`, which the joined SELECT is built against at import, so
+an unregistered table fails the import of `src.storage.sqlite_db` rather than
+one save path.
 
 ## Technology Stack
 
