@@ -300,7 +300,7 @@ def recommend(
         else:
             # Table output
             table_data = []
-            for i, rec in enumerate(recommendations, 1):
+            for rank, rec in enumerate(recommendations, 1):
                 item = rec["item"]
                 author = item.author or "N/A"
                 reasoning = rec["reasoning"]
@@ -313,7 +313,7 @@ def recommend(
                     )
                 table_data.append(
                     [
-                        i,
+                        rank,
                         item.title,
                         author,
                         f"{rec['score']:.2f}",
