@@ -19,6 +19,9 @@ self-repairs on a re-sync, so ``create_schema`` rewrites them once on init:
   the platform cell, and re-importing that file stores the repr as a literal
   string.
 
+A blob copy the fold cannot account for — one disagreeing with a column that
+already holds a value of its own — is left where it is rather than deleted.
+
 Every test seeds the pre-fix shape by writing the detail row directly, because
 the corrected write path can no longer produce it.
 """
@@ -27,23 +30,41 @@ import csv
 import io
 import json
 import sqlite3
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
-from src.models.detail_fields import DETAIL_FIELDS, ContentTypeFields, FieldKind
+from src.models.detail_fields import (
+    DETAIL_FIELDS,
+    ContentTypeFields,
+    DetailField,
+    FieldKind,
+)
 from src.storage.sqlite_db import SQLiteDB
 from src.utils.item_serialization import item_to_dict
 from src.utils.series import expand_tv_shows_to_seasons
 from src.web.export import export_items_csv
 
 # The pre-fix GOG value: a flag per platform, wrapped in a single-element list
-# on the way into the column by ``SQLiteDB._to_json_array``.
+# on the way into the column by ``to_json_array``.
 _FLAGS_WINDOWS_AND_LINUX = json.dumps([{"windows": True, "mac": False, "linux": True}])
 _FLAGS_NOTHING_SUPPORTED = json.dumps(
     [{"windows": False, "mac": False, "linux": False}]
+)
+
+# Every ContentTypeFields names exactly one creator, checked when it is built,
+# so a spec assembled here to exercise some other guard carries a well-formed
+# one rather than tripping that check first.
+_A_CREATOR = DetailField(
+    "author",
+    FieldKind.CREATOR,
+    column="author",
+    select_alias="rogue_author",
+    template_column="author",
 )
 
 # One stranded value per kind of column, so a blob can be built from the
@@ -227,6 +248,32 @@ def _seed_stranded_blob(
         )
         conn.commit()
     return db_id
+
+
+def _with_extra_alias(
+    content_type: ContentType, metadata_key: str, alias: str
+) -> dict[str, ContentTypeFields]:
+    """Declare one more spelling of a field than the library has today.
+
+    No field carries two aliases yet, so a blob holding three spellings of one
+    field is only reachable by patching the declaration the pass reads. The
+    fold takes its keys from there, so a rule written as "the canonical one
+    and everything else" fails here and nowhere else.
+    """
+    spec = DETAIL_FIELDS[content_type.value]
+    return {
+        content_type.value: replace(
+            spec,
+            fields=tuple(
+                (
+                    replace(field, aliases=(*field.aliases, alias))
+                    if field.metadata_key == metadata_key
+                    else field
+                )
+                for field in spec.fields
+            ),
+        )
+    }
 
 
 def _detail_row(db: SQLiteDB, spec: ContentTypeFields, db_id: int) -> sqlite3.Row:
@@ -506,7 +553,9 @@ class TestStrandedColumnKeysMigration:
 
         Neither column is monotonic or mergeable, so the write path is
         fill-only for both: a stale blob copy loses to whatever the column
-        already holds.
+        already holds. The ``year`` it lost with stays in the blob — nothing
+        folded it in, so deleting it would drop a value outright — while
+        ``runtime_minutes``, which the empty column took, does not.
         """
         db_path = tmp_path / "test.db"
         db_id = _seed_movie(
@@ -517,7 +566,42 @@ class TestStrandedColumnKeysMigration:
 
         db = SQLiteDB(db_path)
 
-        assert _movie_detail(db, db_id) == (2000, 136, None, None)
+        assert _movie_detail(db, db_id) == (2000, 136, None, {"year": 1999})
+
+    def test_a_copy_matching_its_column_is_dropped(self, tmp_path: Path) -> None:
+        """The duplicate the pass exists for: two records of one value.
+
+        The fold has nothing to do and the blob key goes, which is what takes
+        the stale copy out of the reader's way for good.
+        """
+        db_path = tmp_path / "test.db"
+        db_id = _seed_movie(SQLiteDB(db_path), blob={"year": 1999}, release_year=1999)
+
+        db = SQLiteDB(db_path)
+
+        assert _movie_detail(db, db_id) == (1999, None, None, None)
+        item = db.get_content_item(db_id)
+        assert item is not None
+        assert item.metadata["release_year"] == 1999
+
+    def test_a_copy_that_disagrees_with_its_column_is_kept(
+        self, tmp_path: Path
+    ) -> None:
+        """A divergent pair is two claims, and the pass settles neither.
+
+        An old CSV import's ``year`` beside a ``release_year`` TMDB filled in
+        is not a duplicate of anything. Deleting it would destroy the older
+        value on the first start after an upgrade, with no log, no count and
+        no backup, so it survives for a human to settle — every start, not
+        just the first, since the row stays in a shape the pass keeps seeing.
+        """
+        db_path = tmp_path / "test.db"
+        db_id = _seed_movie(SQLiteDB(db_path), blob={"year": 1999}, release_year=2001)
+        SQLiteDB(db_path)
+
+        db = SQLiteDB(db_path)
+
+        assert _movie_detail(db, db_id) == (2001, None, None, {"year": 1999})
 
     def test_free_form_keys_beside_a_stranded_one_survive(self, tmp_path: Path) -> None:
         """Only the keys a column consumes are taken out of the blob."""
@@ -741,13 +825,14 @@ class TestEveryDeclaredKeyIsFolded:
 
         assert _movie_detail(db, db_id) == (None, None, None, None)
 
-    def test_the_column_wins_where_the_blob_copy_used_to(self, tmp_path: Path) -> None:
-        """The reader's answer changes for a key spelled the column's own way.
+    def test_a_kept_blob_copy_still_answers_the_reader(self, tmp_path: Path) -> None:
+        """Leaving a divergent copy leaves the reader exactly where it was.
 
-        ``_row_to_content_item`` applies the blob over the columns, so a
-        duplicate under the canonical key was what every reader saw. Folding it
-        in fill-only hands that back to the column — the value a re-sync would
-        have kept — and takes the blob copy out of the reader's way for good.
+        ``_row_to_content_item`` applies the blob over the columns, so a copy
+        under the canonical key is what every reader sees, and goes on being
+        so once the pass declines to settle the divergence. That is the whole
+        point of keeping it: the repair changes no answer it cannot justify,
+        and the values are both still there to be looked at.
         """
         db_path = tmp_path / "test.db"
         seed = SQLiteDB(db_path)
@@ -769,8 +854,11 @@ class TestEveryDeclaredKeyIsFolded:
 
         item = db.get_content_item(db_id)
         assert item is not None
-        assert item.metadata["studio"] == "Warner Bros."
-        assert item.metadata["release_year"] == 1999
+        assert item.metadata["studio"] == "WB"
+        assert item.metadata["release_year"] == 1998
+        release_year, _, _, blob = _movie_detail(db, db_id)
+        assert release_year == 1999
+        assert blob == {"studio": "WB", "release_year": 1998}
 
     def test_a_stranded_value_keeps_its_non_ascii_text(self, tmp_path: Path) -> None:
         """A folded value crosses two JSON round trips and must survive both.
@@ -887,6 +975,400 @@ class TestEveryDeclaredKeyIsFolded:
         assert _detail_row(db, spec, db_id)["metadata"] is None
 
 
+class TestBothSpellingsOfOneFieldInTheBlob:
+    """A blob carrying a field's canonical key *and* its alias, disagreeing.
+
+    The fold is decided per key. It used to be decided per field, from the one
+    value ``DetailField.value_from`` picks — the canonical key when the blob
+    holds it — and then every other key the field claims was deleted on the
+    back of that decision, its own value never compared with anything. A
+    disagreeing alias was dropped exactly the way the fold is supposed to have
+    stopped dropping things.
+
+    Every row here is a legacy shape: the write path takes every key a column
+    claims out of the blob, so only a row written before the column claimed
+    them can hold two at once.
+    """
+
+    def test_a_disagreeing_alias_copy_survives_beside_the_canonical_key(
+        self, tmp_path: Path
+    ) -> None:
+        """``year`` differs from the column, so it is not a duplicate of it.
+
+        The column already holds the canonical ``release_year``, so the fold
+        has nothing to do and spends that copy. The ``year`` beside it lost to
+        a differing column, which is the case the pass keeps rather than
+        settles.
+        """
+        db_path = tmp_path / "test.db"
+        db_id = _seed_movie(
+            SQLiteDB(db_path),
+            blob={"release_year": 2001, "year": 1999},
+            release_year=2001,
+        )
+
+        db = SQLiteDB(db_path)
+
+        assert _movie_detail(db, db_id) == (2001, None, None, {"year": 1999})
+
+    def test_the_higher_of_two_spellings_reaches_a_monotonic_column(
+        self, tmp_path: Path
+    ) -> None:
+        """A monotonic column must never end below a count the row held.
+
+        ``seasons`` and ``total_seasons`` are one field, and the column is
+        empty, so both counts are candidates for it. Folding only the
+        canonical one in leaves the column saying 3 for a show the same row
+        recorded 5 seasons of, and deletes the 5.
+        """
+        db_path = tmp_path / "test.db"
+        db_id = _seed_show(
+            SQLiteDB(db_path),
+            seasons=None,
+            blob={"seasons": 3, "total_seasons": 5},
+        )
+
+        db = SQLiteDB(db_path)
+
+        assert _show_detail(db, db_id) == (5, None)
+
+    def test_both_spellings_of_a_mergeable_field_join_the_column(
+        self, tmp_path: Path
+    ) -> None:
+        """A mergeable column takes the union across every spelling.
+
+        Folding only the canonical ``genres`` in and deleting the ``genre``
+        beside it would drop a genre the blob was the only record of.
+        """
+        db_path = tmp_path / "test.db"
+        db_id = _seed_movie(
+            SQLiteDB(db_path),
+            blob={"genres": ["Science Fiction"], "genre": ["Cyberpunk"]},
+            genres=json.dumps(["Action"]),
+        )
+
+        db = SQLiteDB(db_path)
+
+        _, _, genres, blob = _movie_detail(db, db_id)
+        assert json.loads(genres) == ["Action", "Science Fiction", "Cyberpunk"]
+        assert blob is None
+
+    def test_the_canonical_spelling_fills_an_empty_column(self, tmp_path: Path) -> None:
+        """Precedence is unchanged: ``value_from`` still picks what fills it.
+
+        Judging each spelling separately must not promote an alias over the
+        canonical key. The alias disagrees with the value that filled the
+        column, so it is a claim of its own and stays.
+        """
+        db_path = tmp_path / "test.db"
+        db_id = _seed_movie(
+            SQLiteDB(db_path), blob={"release_year": 2001, "year": 1999}
+        )
+
+        db = SQLiteDB(db_path)
+
+        assert _movie_detail(db, db_id) == (2001, None, None, {"year": 1999})
+
+    def test_two_spellings_agreeing_are_both_dropped(self, tmp_path: Path) -> None:
+        """Agreement is the unremarkable case, and it is unchanged.
+
+        Both copies say what the column ends up saying, so both are spent and
+        the blob empties — the behaviour a single-spelling row already had.
+        """
+        db_path = tmp_path / "test.db"
+        db_id = _seed_movie(
+            SQLiteDB(db_path), blob={"release_year": 1999, "year": 1999}
+        )
+
+        db = SQLiteDB(db_path)
+
+        assert _movie_detail(db, db_id) == (1999, None, None, None)
+
+    def test_one_number_written_two_ways_is_one_claim(self, tmp_path: Path) -> None:
+        """A CSV import's ``"2001"`` beside an integer 2001 is not a divergence.
+
+        Each spelling is judged after its codec has stored it, so the text and
+        the number are compared as the column would hold them. Comparing the
+        raw blob values instead would keep the string forever as a claim of
+        its own.
+        """
+        db_path = tmp_path / "test.db"
+        db_id = _seed_movie(
+            SQLiteDB(db_path), blob={"release_year": "2001", "year": 2001}
+        )
+
+        db = SQLiteDB(db_path)
+
+        assert _movie_detail(db, db_id) == (2001, None, None, None)
+
+    def test_a_null_alias_is_left_where_it_is(self, tmp_path: Path) -> None:
+        """A key holding null claims nothing, so nothing folds it in.
+
+        It differs from the value that filled the column, which is the case
+        the pass declines to settle, so it stays — and, because the column is
+        no longer empty, the next open finds nothing to spend either.
+        """
+        db_path = tmp_path / "test.db"
+        db_id = _seed_movie(
+            SQLiteDB(db_path), blob={"release_year": 2001, "year": None}
+        )
+        SQLiteDB(db_path)
+
+        db = SQLiteDB(db_path)
+
+        assert _movie_detail(db, db_id) == (2001, None, None, {"year": None})
+
+    def test_overlapping_lists_from_two_spellings_are_deduplicated(
+        self, tmp_path: Path
+    ) -> None:
+        """The union is a union: a genre named twice is stored once.
+
+        Both spellings and the column overlap, so a fold that concatenated
+        rather than merged would leave the column repeating "Sci-Fi" in two
+        capitalisations.
+        """
+        db_path = tmp_path / "test.db"
+        db_id = _seed_movie(
+            SQLiteDB(db_path),
+            blob={"genres": ["Action", "Sci-Fi"], "genre": ["sci-fi", "Cyberpunk"]},
+            genres=json.dumps(["Action"]),
+        )
+
+        db = SQLiteDB(db_path)
+
+        _, _, genres, blob = _movie_detail(db, db_id)
+        assert json.loads(genres) == ["Action", "Sci-Fi", "Cyberpunk"]
+        assert blob is None
+
+    def test_both_spellings_fill_an_empty_mergeable_column_together(
+        self, tmp_path: Path
+    ) -> None:
+        """An empty mergeable column takes the union too, not the first value.
+
+        Filling it from ``value_from`` alone would store only the canonical
+        spelling's genres and delete the alias's beside it.
+        """
+        db_path = tmp_path / "test.db"
+        db_id = _seed_movie(
+            SQLiteDB(db_path),
+            blob={"genres": ["Action"], "genre": ["action", "Drama"]},
+        )
+
+        db = SQLiteDB(db_path)
+
+        _, _, genres, blob = _movie_detail(db, db_id)
+        assert json.loads(genres) == ["Action", "Drama"]
+        assert blob is None
+
+    def test_a_fill_only_list_column_spends_the_spelling_it_matches(
+        self, tmp_path: Path
+    ) -> None:
+        """``platforms`` is neither mergeable nor monotonic, and has an alias.
+
+        A bare string and a one-name list are the same claim once the codec
+        has stored them, so both copies go; nothing is left repeating the
+        column.
+        """
+        db_path = tmp_path / "test.db"
+        db_id = _seed_stranded_blob(
+            SQLiteDB(db_path),
+            ContentType.VIDEO_GAME,
+            {"platforms": ["Windows"], "platform": "Windows"},
+        )
+
+        db = SQLiteDB(db_path)
+
+        spec = DETAIL_FIELDS[ContentType.VIDEO_GAME.value]
+        assert json.loads(_stored_platforms(db, db_id)) == ["Windows"]
+        assert _detail_row(db, spec, db_id)["metadata"] is None
+
+    def test_a_fill_only_list_column_keeps_the_spelling_it_disagrees_with(
+        self, tmp_path: Path
+    ) -> None:
+        """The same column, and the divergence it must not resolve by deleting.
+
+        ``platform`` names a system the column does not, and the fold has no
+        union rule to reach for here, so the copy survives the pass.
+        """
+        db_path = tmp_path / "test.db"
+        db_id = _seed_stranded_blob(
+            SQLiteDB(db_path),
+            ContentType.VIDEO_GAME,
+            {"platforms": ["Windows"], "platform": "Linux"},
+        )
+
+        db = SQLiteDB(db_path)
+
+        spec = DETAIL_FIELDS[ContentType.VIDEO_GAME.value]
+        blob = _detail_row(db, spec, db_id)["metadata"]
+        assert json.loads(_stored_platforms(db, db_id)) == ["Windows"]
+        assert json.loads(blob) == {"platform": "Linux"}
+
+
+class TestThreeSpellingsOfOneField:
+    """One field spelled three ways in a blob the fold has to take apart.
+
+    The declaration gives every field at most one alias today, so a fold that
+    happened to work only for a canonical key and one other would pass every
+    test above. These patch a second alias in, which is what an added
+    spelling will look like, and each spelling is judged on its own value.
+    """
+
+    def test_only_the_spellings_the_column_took_are_dropped(
+        self, tmp_path: Path
+    ) -> None:
+        """Fill-only, with one spelling repeating the column and one differing.
+
+        ``released`` says what the column ended up saying and goes;
+        ``year`` says something else and stays. Deleting every spelling behind
+        one decision destroys the 1999.
+        """
+        db_path = tmp_path / "test.db"
+        db_id = _seed_movie(
+            SQLiteDB(db_path),
+            blob={"release_year": 2001, "year": 1999, "released": 2001},
+        )
+
+        with patch.dict(
+            DETAIL_FIELDS,
+            _with_extra_alias(ContentType.MOVIE, "release_year", "released"),
+        ):
+            db = SQLiteDB(db_path)
+
+        assert _movie_detail(db, db_id) == (2001, None, None, {"year": 1999})
+
+    def test_the_first_spelling_present_fills_an_empty_column(
+        self, tmp_path: Path
+    ) -> None:
+        """No canonical key at all: two aliases, and the earlier one wins.
+
+        ``value_from`` reads the canonical key then the aliases in order, so a
+        blob holding only aliases still fills the column from the first of
+        them — and the second is a claim of its own, not a duplicate.
+        """
+        db_path = tmp_path / "test.db"
+        db_id = _seed_movie(SQLiteDB(db_path), blob={"year": 1999, "released": 2001})
+
+        with patch.dict(
+            DETAIL_FIELDS,
+            _with_extra_alias(ContentType.MOVIE, "release_year", "released"),
+        ):
+            db = SQLiteDB(db_path)
+
+        assert _movie_detail(db, db_id) == (1999, None, None, {"released": 2001})
+
+    def test_a_monotonic_column_ends_at_the_highest_of_three(
+        self, tmp_path: Path
+    ) -> None:
+        """Every count in the row is weighed, whichever way it is spelled.
+
+        Weighing the canonical ``seasons`` alone settles the column at 3 for a
+        row that recorded 5, and deletes both larger counts on the way out.
+        """
+        db_path = tmp_path / "test.db"
+        db_id = _seed_show(
+            SQLiteDB(db_path),
+            seasons=2,
+            blob={"seasons": 3, "total_seasons": 5, "season_count": 4},
+        )
+
+        with patch.dict(
+            DETAIL_FIELDS,
+            _with_extra_alias(ContentType.TV_SHOW, "seasons", "season_count"),
+        ):
+            db = SQLiteDB(db_path)
+
+        assert _show_detail(db, db_id) == (5, None)
+
+    def test_a_monotonic_column_stays_above_every_spelling(
+        self, tmp_path: Path
+    ) -> None:
+        """A column a later sync raised is still never lowered by a spelling."""
+        db_path = tmp_path / "test.db"
+        db_id = _seed_show(
+            SQLiteDB(db_path),
+            seasons=7,
+            blob={"seasons": 3, "total_seasons": 5, "season_count": 4},
+        )
+
+        with patch.dict(
+            DETAIL_FIELDS,
+            _with_extra_alias(ContentType.TV_SHOW, "seasons", "season_count"),
+        ):
+            db = SQLiteDB(db_path)
+
+        assert _show_detail(db, db_id) == (7, None)
+
+    def test_an_unreadable_spelling_does_not_block_a_readable_one(
+        self, tmp_path: Path
+    ) -> None:
+        """A count no reader can use never hides the count beside it.
+
+        ``seasons`` is read with ``int()`` everywhere, so the text is refused
+        — but refusing it must not cost the row the 5 spelled another way.
+        """
+        db_path = tmp_path / "test.db"
+        db_id = _seed_show(
+            SQLiteDB(db_path),
+            seasons=None,
+            blob={"seasons": "unknown", "total_seasons": 5, "season_count": None},
+        )
+
+        with patch.dict(
+            DETAIL_FIELDS,
+            _with_extra_alias(ContentType.TV_SHOW, "seasons", "season_count"),
+        ):
+            db = SQLiteDB(db_path)
+
+        assert _show_detail(db, db_id) == (5, None)
+
+    def test_a_mergeable_column_unions_all_three_spellings(
+        self, tmp_path: Path
+    ) -> None:
+        """The union runs across every spelling, and the column keeps its own.
+
+        Each spelling names a genre the others do not, so a fold that stopped
+        at the canonical key would drop two of them.
+        """
+        db_path = tmp_path / "test.db"
+        db_id = _seed_movie(
+            SQLiteDB(db_path),
+            blob={
+                "genres": ["Sci-Fi"],
+                "genre": ["Cyberpunk"],
+                "categories": ["action", "Noir"],
+            },
+            genres=json.dumps(["Action"]),
+        )
+
+        with patch.dict(
+            DETAIL_FIELDS,
+            _with_extra_alias(ContentType.MOVIE, "genres", "categories"),
+        ):
+            db = SQLiteDB(db_path)
+
+        _, _, genres, blob = _movie_detail(db, db_id)
+        assert json.loads(genres) == ["Action", "Sci-Fi", "Cyberpunk", "Noir"]
+        assert blob is None
+
+    def test_a_second_open_leaves_the_kept_spelling_alone(self, tmp_path: Path) -> None:
+        """The row the pass half-repaired must not churn on every later open."""
+        db_path = tmp_path / "test.db"
+        db_id = _seed_movie(
+            SQLiteDB(db_path),
+            blob={"release_year": 2001, "year": 1999, "released": 2001},
+        )
+
+        with patch.dict(
+            DETAIL_FIELDS,
+            _with_extra_alias(ContentType.MOVIE, "release_year", "released"),
+        ):
+            SQLiteDB(db_path)
+            db = SQLiteDB(db_path)
+
+        assert _movie_detail(db, db_id) == (2001, None, None, {"year": 1999})
+
+
 class TestStrandedPlatformFlagsMigration:
     """The flag dict becomes the list of names every other producer writes."""
 
@@ -1000,7 +1482,7 @@ class TestStrandedPlatformFlagsMigration:
     def test_a_flag_dict_stored_without_the_list_wrapper_is_rewritten(
         self, tmp_path: Path
     ) -> None:
-        """The dict is read whether or not ``_to_json_array`` wrapped it."""
+        """The dict is read whether or not ``to_json_array`` wrapped it."""
         db_path = tmp_path / "test.db"
         db_id = _seed_game(
             SQLiteDB(db_path),
@@ -1010,6 +1492,44 @@ class TestStrandedPlatformFlagsMigration:
         db = SQLiteDB(db_path)
 
         assert json.loads(_stored_platforms(db, db_id)) == ["Windows"]
+
+    def test_an_imported_object_is_not_read_as_flags(self, tmp_path: Path) -> None:
+        """Only a dict of booleans is a flag dict, and only one is rewritten.
+
+        ``generic_json`` wraps a non-list ``platform`` in a list, so an entry
+        saying ``{"name": "PC"}`` is stored in exactly the shape GOG's old
+        value took. Reading its keys as names rewrote the column to
+        ``["Name"]``, destroying the imported value in place — and, since the
+        pass runs on every open rather than once, doing it again to every such
+        import for the life of the database.
+        """
+        db_path = tmp_path / "test.db"
+        stored = json.dumps([{"name": "PC"}])
+        db_id = _seed_game(SQLiteDB(db_path), platforms=stored)
+        SQLiteDB(db_path)
+
+        db = SQLiteDB(db_path)
+
+        assert _stored_platforms(db, db_id) == stored
+
+    def test_a_dict_mixing_a_flag_with_another_key_is_left_alone(
+        self, tmp_path: Path
+    ) -> None:
+        """The boundary of the guard: one non-boolean value disqualifies it.
+
+        GOG mapped every name to a boolean, so a dict pairing one with
+        anything else is some other producer's object and keeps what it
+        holds. Checking that any value is a boolean rather than all of them
+        would read this one as naming a "Windows" platform and throw the
+        rest away.
+        """
+        db_path = tmp_path / "test.db"
+        stored = json.dumps([{"windows": True, "name": "PC"}])
+        db_id = _seed_game(SQLiteDB(db_path), platforms=stored)
+
+        db = SQLiteDB(db_path)
+
+        assert _stored_platforms(db, db_id) == stored
 
     def test_a_platform_name_containing_a_brace_is_left_alone(
         self, tmp_path: Path
@@ -1067,6 +1587,50 @@ class TestStrandedPlatformFlagsMigration:
             )
         )
         assert rows[0]["platform"] == ""
+
+
+class TestMigrationIdentifiersAreGuarded:
+    """The pass builds SQL from the declaration, and validates it first.
+
+    ``_fold_stranded_column_keys`` and the UPDATE it drives interpolate a
+    table name and column names straight out of ``DETAIL_FIELDS``, the same
+    identifier source the joined SELECT guards. Nothing else holds these
+    checks in place, so without them the guard could be deleted without a
+    test going red. Opening a database is the trigger because the pass runs
+    from ``create_schema``.
+    """
+
+    def test_table_outside_the_allow_list_is_rejected(self, tmp_path: Path) -> None:
+        """A detail table nobody allow-listed never reaches a FROM clause."""
+        rogue = ContentTypeFields(
+            table="rogue_details; DROP TABLE content_items; --",
+            table_alias="rd",
+            metadata_alias="rogue_metadata",
+            fields=(
+                _A_CREATOR,
+                DetailField(
+                    "title", FieldKind.TEXT, column="title", select_alias="rogue_title"
+                ),
+            ),
+        )
+
+        with patch.dict(DETAIL_FIELDS, {"rogue": rogue}):
+            with pytest.raises(ValueError, match="Unknown detail table"):
+                SQLiteDB(tmp_path / "test.db")
+
+    def test_unsafe_column_name_is_rejected(self, tmp_path: Path) -> None:
+        """A column name outside the identifier pattern raises."""
+        rogue = replace(
+            DETAIL_FIELDS["book"],
+            fields=(
+                _A_CREATOR,
+                DetailField("evil", FieldKind.TEXT, column="isbn FROM users; --"),
+            ),
+        )
+
+        with patch.dict(DETAIL_FIELDS, {"book": rogue}):
+            with pytest.raises(ValueError, match="Unsafe SQL identifier"):
+                SQLiteDB(tmp_path / "test.db")
 
 
 class TestMigrationRunsAfterDeduplication:

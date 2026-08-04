@@ -642,12 +642,12 @@ def _fold_stranded_column_keys(cursor: sqlite3.Cursor, spec: ContentTypeFields) 
         raise ValueError(f"Unknown detail table: {spec.table!r}")
 
     column_fields: list[tuple[str, DetailField]] = []
-    for field in spec.fields:
-        column = field.column
+    for detail_field in spec.fields:
+        column = detail_field.column
         if column is None:
             continue
         assert_safe_identifier(column)
-        column_fields.append((column, field))
+        column_fields.append((column, detail_field))
 
     # Cheap prefilter: a row mentioning none of the keys cannot be stranded.
     # A false positive (a key name appearing in a value, or nested inside an
@@ -670,7 +670,13 @@ def _fold_row_column_keys(
     column_fields: list[tuple[str, DetailField]],
     row: sqlite3.Row,
 ) -> None:
-    """Rewrite one detail row without the blob keys its columns consume."""
+    """Rewrite one detail row without the blob keys its columns consume.
+
+    A key leaves the blob only once its own value is safely on the column —
+    folded in, or already there. A key that disagrees with a column holding a
+    value of its own stays, even when the field's other spelling went:
+    see :func:`_folded_column_value`.
+    """
     try:
         blob = json.loads(row["metadata"])
     except (json.JSONDecodeError, TypeError):
@@ -679,19 +685,25 @@ def _fold_row_column_keys(
         return
 
     updates: dict[str, Any] = {}
-    stranded = False
-    for column, field in column_fields:
-        keys = [key for key in field.metadata_keys if key in blob]
-        if not keys:
+    dropped = False
+    for column, detail_field in column_fields:
+        folded, spent_keys = _folded_column_value(detail_field, row[column], blob)
+        if not spent_keys:
             continue
-        stranded = True
-        folded = _folded_column_value(field, row[column], field.value_from(blob))
-        for key in keys:
+        for key in spent_keys:
             del blob[key]
+        dropped = True
         if folded != row[column]:
             updates[column] = folded
-    if not stranded:
+    if not dropped:
         return
+
+    # The guards travel with the statement that interpolates the names, so a
+    # second caller cannot inherit the one above's checks by accident.
+    if table not in ALLOWED_DETAIL_TABLES:
+        raise ValueError(f"Unknown detail table: {table!r}")
+    for column in updates:
+        assert_safe_identifier(column)
 
     assignments = ", ".join(f"{column} = ?" for column in ("metadata", *updates))
     cursor.execute(
@@ -706,39 +718,65 @@ def _fold_row_column_keys(
     )
 
 
-def _folded_column_value(field: DetailField, column_value: Any, blob_value: Any) -> Any:
-    """Fold a stranded blob value into its column the way a sync would.
+def _folded_column_value(
+    detail_field: DetailField, column_value: Any, blob: dict[str, Any]
+) -> tuple[Any, tuple[str, ...]]:
+    """Fold every spelling of one field the blob holds into its column.
 
     Follows ``SQLiteDB._save_detail_table``'s rules, so the repaired row is
     the one a re-sync would have written had the column always claimed the
-    key: a monotonic column keeps the higher value, a mergeable one the
-    union, and every other column keeps whatever it already holds. The blob
+    keys: a monotonic column keeps the highest value, a mergeable one the
+    union, and every other column keeps whatever it already holds. A blob
     copy therefore only fills a column that is empty — which, on a row
     written before the key was claimed, is where the value has been all
     along, so dropping the key without folding it in would lose it.
+
+    A field can be spelled several ways (``seasons`` beside ``total_seasons``),
+    and each spelling is its own claim, so every one the blob holds is folded
+    in and judged on its own value. Only the choice of which one fills an
+    empty column is still
+    :meth:`~src.models.detail_fields.DetailField.value_from`'s, so the
+    repaired row reads back the way the blob did.
+
+    Returns:
+        The value the column takes, and the keys whose copies it spent. A
+        monotonic or mergeable column spends every spelling: the result is
+        the maximum, or the union, across the column and all of them, so none
+        is left saying anything the column does not. A fill-only column
+        spends the spellings repeating the value it ends up with and keeps
+        the ones that disagree — a blob's ``year`` of 1999 beside a
+        ``release_year`` of 2001 is two claims, not a duplicate — so that
+        copy stays for a human to settle rather than being deleted with no
+        log, count or backup behind it.
     """
-    if field.column in MONOTONIC_DETAIL_COLUMNS:
-        return _higher_count(column_value, blob_value)
-    stored = field.codec.store(blob_value)
-    if field.column in MERGEABLE_DETAIL_COLUMNS:
-        merged = merge_string_lists(
-            parse_json_list(column_value), parse_json_list(stored)
-        )
-        return json.dumps(merged) if merged else column_value
-    return column_value if column_value is not None else stored
+    present = tuple(key for key in detail_field.metadata_keys if key in blob)
+    if detail_field.column in MONOTONIC_DETAIL_COLUMNS:
+        return _higher_count(column_value, [blob[key] for key in present]), present
+    stored = {key: detail_field.codec.store(blob[key]) for key in present}
+    if detail_field.column in MERGEABLE_DETAIL_COLUMNS:
+        merged = parse_json_list(column_value)
+        for value in stored.values():
+            merged = merge_string_lists(merged, parse_json_list(value))
+        return (json.dumps(merged) if merged else column_value), present
+    filled = (
+        column_value
+        if column_value is not None
+        else detail_field.codec.store(detail_field.value_from(blob))
+    )
+    return filled, tuple(key for key in present if stored[key] == filled)
 
 
-def _higher_count(column_value: Any, blob_value: Any) -> Any:
-    """Return the higher of a column and blob count.
+def _higher_count(column_value: Any, blob_values: list[Any]) -> Any:
+    """Return the highest of a column and the blob's counts of the same field.
 
     A monotonic column (:data:`~src.storage.merge.MONOTONIC_DETAIL_COLUMNS`)
-    can only rise, so folding the blob copy in must never lower it — and on a
-    row written before the column claimed the key, the blob holds the only
-    count there is. A value that is not a number never reaches the column,
-    which every reader reads with ``int()``.
+    can only rise, so folding the blob copies in must never lower it — and on
+    a row written before the column claimed the keys, the blob holds the only
+    counts there are, under any spelling. A value that is not a number never
+    reaches the column, which every reader reads with ``int()``.
     """
     counts: list[int] = []
-    for value in (column_value, blob_value):
+    for value in (column_value, *blob_values):
         try:
             counts.append(int(value))
         except (TypeError, ValueError):
@@ -774,17 +812,24 @@ def _platform_names_from_flags(raw: Any) -> list[str] | None:
     """Read a stored flag dict as the platform names it says are supported.
 
     Returns ``None`` for anything that is not the old shape — the current
-    list of names included — so that row is left untouched.
+    list of names included — so that row is left untouched. A flag dict maps
+    every name to a boolean, and a dict that does not is some other producer's
+    object: ``generic_json`` wraps a non-list ``platform`` in a list, so an
+    imported ``{"name": "PC"}`` arrives in exactly this shape, and reading its
+    keys as names would rewrite the value to ``["Name"]`` on the next start,
+    and on every start after that.
     """
     try:
         stored = json.loads(raw)
     except (json.JSONDecodeError, TypeError):
         return None
-    # The dict reached the column through _to_json_array, which wrapped it in
+    # The dict reached the column through to_json_array, which wrapped it in
     # a single-element list.
     if isinstance(stored, list) and len(stored) == 1:
         stored = stored[0]
     if not isinstance(stored, dict):
+        return None
+    if not all(isinstance(supported, bool) for supported in stored.values()):
         return None
     # The flags lowercased GOG's platform names; the corrected plugin keeps
     # GOG's own capitalisation ("Windows", "Mac", "Linux").
