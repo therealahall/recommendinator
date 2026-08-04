@@ -1127,20 +1127,15 @@ class SQLiteDB:
             include_ignored=include_ignored,
         )
 
-    @staticmethod
-    def _get_row_value(row: sqlite3.Row, key: str, default: Any = None) -> Any:
-        """Safely get value from sqlite3.Row."""
-        try:
-            value = row[key]
-            return value if value is not None else default
-        except (KeyError, IndexError):
-            return default
-
     def _row_to_content_item(self, row: sqlite3.Row) -> ContentItem:
         """Convert a database row to ContentItem.
 
         Args:
-            row: Database row (may include joined detail table columns)
+            row: A row from _CONTENT_ITEM_SELECT, carrying every detail and
+                enrichment column that query aliases. A column it does not
+                carry raises rather than reading as absent data: the aliases
+                are generated from DETAIL_FIELDS, so a name that misses is a
+                bug in the declaration and not a value the row lacks.
 
         Returns:
             ContentItem object
@@ -1155,7 +1150,7 @@ class SQLiteDB:
                 column = detail_field.column
                 if column is None:
                     continue
-                raw = self._get_row_value(row, detail_field.select_alias or column)
+                raw = row[detail_field.select_alias or column]
                 if detail_field.kind is FieldKind.CREATOR:
                     author = raw
                     continue
@@ -1164,7 +1159,7 @@ class SQLiteDB:
                     metadata[detail_field.metadata_key] = value
 
             # The leftover blob last: a key it carries is one no column claimed.
-            if blob := self._get_row_value(row, spec.metadata_alias):
+            if blob := row[spec.metadata_alias]:
                 try:
                     metadata.update(json.loads(blob))
                 except (json.JSONDecodeError, TypeError):
@@ -1172,7 +1167,7 @@ class SQLiteDB:
 
         # Parse date_completed
         date_completed = None
-        if date_completed_str := self._get_row_value(row, "date_completed"):
+        if date_completed_str := row["date_completed"]:
             try:
                 date_completed = datetime.fromisoformat(date_completed_str).date()
             except (ValueError, AttributeError):
@@ -1189,8 +1184,8 @@ class SQLiteDB:
             review=row["review"],
             status=ConsumptionStatus(row["status"]),
             date_completed=date_completed,
-            source=self._get_row_value(row, "source"),
-            ignored=bool(self._get_row_value(row, "ignored")),
+            source=row["source"],
+            ignored=bool(row["ignored"]),
             enriched=self._row_is_enriched(row),
             metadata=metadata,
         )
@@ -1200,17 +1195,20 @@ class SQLiteDB:
         """Derive the enriched flag from the joined enrichment_status columns.
 
         Mirrors ``_ENRICHED_PREDICATE`` so the per-row flag and the list
-        filter agree: a clean row (real provider, no error, not pending).
+        filter agree: a clean row (real provider, no error, not pending). Like
+        :meth:`_row_to_content_item`, it reads a row from
+        ``_CONTENT_ITEM_SELECT`` and raises on a column that query does not
+        carry, rather than reporting every item as not enriched.
         """
-        if SQLiteDB._get_row_value(row, "enrichment_item_id") is None:
+        if row["enrichment_item_id"] is None:
             return False
-        if SQLiteDB._get_row_value(row, "needs_enrichment"):
+        if row["needs_enrichment"]:
             return False
-        if SQLiteDB._get_row_value(row, "enrichment_error") is not None:
+        if row["enrichment_error"] is not None:
             return False
-        if SQLiteDB._get_row_value(row, "enrichment_quality") == "not_found":
+        if row["enrichment_quality"] == "not_found":
             return False
-        provider = SQLiteDB._get_row_value(row, "enrichment_provider")
+        provider = row["enrichment_provider"]
         return provider is not None and provider != "none"
 
     def update_item_from_ui(

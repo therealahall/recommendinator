@@ -25,7 +25,7 @@ from src.storage.merge import (
     parse_json_list,
     resolve_status_forward,
 )
-from src.storage.schema import create_schema
+from src.storage.schema import create_schema, write_enrichment_complete
 from src.storage.sqlite_db import SQLiteDB
 from src.utils.item_serialization import item_to_dict
 from tests.test_interface_parity import BLANK_REVIEWS
@@ -6557,3 +6557,101 @@ class TestIgnoredSignalFetchRegression:
 
         filtered = temp_db.get_unconsumed_items(include_ignored=False)
         assert {i.title for i in filtered} == {"Kept Game"}
+
+
+class TestMissingColumnRaisesRegression:
+    """A column the row does not carry raises instead of reading as absent.
+
+    Bug: metadata could go missing from items, and every item could read back
+    as not enriched, with nothing in the logs and no failing test unless one
+    happened to assert that exact field.
+
+    Root cause: ``SQLiteDB._get_row_value`` caught KeyError/IndexError and
+    returned its default, so a column name absent from the SELECT was
+    indistinguishable from a column holding NULL.
+
+    Fix: the read path subscripts ``sqlite3.Row`` directly. Every row it is
+    handed comes from ``_CONTENT_ITEM_SELECT``, whose aliases are generated
+    from ``DETAIL_FIELDS``, so a name it does not carry is a bug and says so.
+    """
+
+    @staticmethod
+    def _row_without_joins(temp_db: SQLiteDB, db_id: int) -> sqlite3.Row:
+        """The content_items row alone, carrying no joined column."""
+        with temp_db.connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM content_items WHERE id = ?", (db_id,)
+            ).fetchone()
+        assert row is not None
+        return row
+
+    def test_a_missing_detail_column_raises_regression(self, temp_db: SQLiteDB) -> None:
+        """Without the detail join, the read raises rather than losing metadata.
+
+        sqlite3.Row raises IndexError for a name it does not carry.
+        """
+        db_id = temp_db.save_content_item(
+            ContentItem(
+                id="missing-detail-columns",
+                title="Dune",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+                author="Frank Herbert",
+                metadata={"genres": ["Science Fiction"]},
+            )
+        )
+
+        joined = temp_db.get_content_item(db_id)
+        assert joined is not None
+        assert joined.author == "Frank Herbert"
+        assert joined.metadata["genres"] == ["Science Fiction"]
+
+        with pytest.raises(IndexError):
+            temp_db._row_to_content_item(self._row_without_joins(temp_db, db_id))
+
+    def test_a_missing_enrichment_column_raises_regression(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """Without the enrichment join, the flag raises rather than reading False."""
+        db_id = temp_db.save_content_item(
+            ContentItem(
+                id="missing-enrichment-columns",
+                title="Arrival",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.UNREAD,
+            )
+        )
+        with temp_db.connection() as conn:
+            write_enrichment_complete(conn.cursor(), db_id, "tmdb", "high")
+            conn.commit()
+
+        joined = temp_db.get_content_item(db_id)
+        assert joined is not None
+        assert joined.enriched is True
+
+        with pytest.raises(IndexError):
+            SQLiteDB._row_is_enriched(self._row_without_joins(temp_db, db_id))
+
+    def test_null_joined_columns_still_read_as_absent_data(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """A row the joins match nothing for reads back, it does not raise.
+
+        The other half of the same distinction: the LEFT JOINs hand every
+        detail and enrichment column over as NULL for an item that has neither
+        row, and that is real absent data rather than a broken query. Raising
+        here would break every item whose detail row a merge or an older
+        schema left behind.
+        """
+        db_id = _insert_raw_item(
+            temp_db, "no-joined-rows", "Unjoined Game", "unjoined game"
+        )
+
+        item = temp_db.get_content_item(db_id)
+
+        assert item is not None
+        assert item.title == "Unjoined Game"
+        assert item.author is None
+        assert item.metadata == {}
+        assert item.enriched is False
+        assert item.ignored is False
