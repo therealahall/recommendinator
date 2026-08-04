@@ -190,38 +190,14 @@ what stop it reverting a completion or un-ignoring an item.
 #### Detail-shape repairs
 
 `_migrate_stranded_detail_shapes`, in the same `create_schema` pass, rewrites
-detail rows left in shapes storage no longer writes and no re-sync corrects.
-
-Any metadata blob key that duplicates one of its content type's detail columns
-is folded onto that column. Which keys those are comes from the field
-declaration's `known_keys`, so an alias added later is repaired without touching
-this pass. One field can be spelled several ways in one blob (`seasons` beside
-`total_seasons`), and every spelling present is folded in on its own. Monotonic
-columns such as `seasons` end at the highest count the row holds anywhere, so
-the repair can never lower one; mergeable ones such as `genres` take the union
-of the column and every spelling; and the rest are filled only when empty, from
-the spelling the read path prefers.
-
-This is deliberately stronger than a re-sync, which sees one spelling and never
-compares two. The repair reaches values a sync would leave stranded.
-
-A blob copy is removed only once the fold accounted for *that copy* — a union, a
-maximum, a fill of an empty column, or a value the column already held. A
-fill-only column holding a *different* value keeps that copy, because the two
-are competing claims rather than a duplicate and this pass has no log, count or
-backup behind it. Readers go on preferring the blob for those keys, exactly as
-they did before, and the row waits for a human.
-
-Two things that rule does not cover. A count that is not a number cannot reach
-an integer column, so it is dropped rather than kept. And a copy holding `null`
-against a column that has a value is kept, because `null` differs from what the
-column holds, which leaves a key this pass otherwise clears.
-
-GOG's old per-platform flag dict also becomes the list of names every other
-producer writes, or nothing at all, since the dict was truthy even when it named
-no supported platform.
-
-Rows already in the current shape are untouched, so re-running is a no-op.
+two shapes storage no longer writes and no re-sync corrects. A `total_seasons`
+duplicated in a TV show's metadata blob moves onto the `seasons` column, taking
+the higher of the two so the count is never lowered. GOG's old per-platform flag
+dict becomes the list of names every other producer writes — or nothing, since
+the dict was truthy even when it named no supported platform — and only a dict
+whose values are all booleans is read as flags, so an imported object such as
+`{"name": "PC"}` is left alone. Rows already in the current shape are untouched,
+so re-running is a no-op.
 
 #### Thread safety
 
@@ -259,7 +235,7 @@ enhancement on top of it.
 RecommendationEngine
   |-- ScoringPipeline (always runs)
   |     |-- GenreMatchScorer        genre preference
-  |     |-- CreatorMatchScorer      author/director/developer
+  |     |-- CreatorMatchScorer      author/director/creators/developer
   |     |-- TagOverlapScorer        threshold and cluster tag overlap
   |     |-- SeriesOrderScorer       next in sequence
   |     |-- RatingPatternScorer     rating history in matching genres
