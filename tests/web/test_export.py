@@ -186,7 +186,7 @@ class TestExportSerialization:
             "genre",
             "ignored",
         ]
-        assert list(reader.fieldnames) == expected_columns
+        assert sorted(reader.fieldnames) == sorted(expected_columns)
         rows = list(reader)
         assert len(rows) == 0
 
@@ -998,7 +998,38 @@ class TestExportColumnConsistency:
             | (set(columns) - CREATOR_COLUMNS)
         )
 
-        assert set(_exported_header(content_type)) == expected
+        assert sorted(_exported_header(content_type)) == sorted(expected)
+
+    @pytest.mark.parametrize("content_type", list(ContentType))
+    def test_the_json_export_carries_the_same_columns(
+        self, content_type: ContentType
+    ) -> None:
+        """JSON keys come off the entry dict, the CSV header off its own list.
+
+        Two independent routes, so one can gain or lose a column without the
+        other noticing: ``export_items_csv`` passes ``extrasaction="ignore"``,
+        which swallows a key only JSON would show, and a name left in the CSV
+        order that nothing fills is written as an empty cell instead.
+        """
+        columns = CONTENT_TYPE_COLUMNS[content_type.value]
+        expected = (
+            COMMON_COLUMNS
+            | {CREATOR_FIELD[content_type.value]}
+            | (set(columns) - CREATOR_COLUMNS)
+        )
+        item = ContentItem(
+            id="json-columns",
+            title="Column Fixture",
+            author="Someone",
+            content_type=content_type,
+            status=ConsumptionStatus.COMPLETED,
+            rating=3,
+            metadata={},
+        )
+
+        entries = json.loads(export_items_json([item], content_type))
+
+        assert set(entries[0]) == expected
 
     def test_no_type_declares_a_column_the_common_set_owns(self) -> None:
         """A shadowed column would be written twice and read back wrong.
@@ -1058,7 +1089,7 @@ class TestShippedTemplatesCarryTheExportColumns:
 
         header = list(csv.reader(io.StringIO(shipped)))[0]
 
-        assert set(header) == set(_exported_header(content_type))
+        assert sorted(header) == sorted(_exported_header(content_type))
 
 
 class TestExportRoundtrip:
