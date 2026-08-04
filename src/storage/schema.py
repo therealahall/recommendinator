@@ -365,6 +365,8 @@ def create_schema(conn: sqlite3.Connection) -> None:
     )
     # Merge any duplicates exposed by the corrected normalization
     _deduplicate_inline(cursor)
+    # Repair detail rows still carrying shapes storage no longer writes
+    _migrate_stranded_detail_shapes(cursor)
 
     # Core memories: significant preference signals
     cursor.execute(
@@ -595,6 +597,110 @@ def _merge_duplicate_row(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -
     merge_scalar_columns(cursor, keep_id, delete_id)
     merge_detail_tables(cursor, keep_id, delete_id)
     cursor.execute("DELETE FROM content_items WHERE id = ?", (delete_id,))
+
+
+def _migrate_stranded_detail_shapes(cursor: sqlite3.Cursor) -> None:
+    """Rewrite detail rows left in shapes storage no longer writes.
+
+    Neither shape self-repairs on a re-sync — the metadata blob merge lets
+    existing keys win, and ``platforms`` is fill-only in
+    ``SQLiteDB._save_detail_table`` — so a one-off rewrite is the only fix.
+    Both passes skip rows already in the current shape, so re-running is a
+    no-op.
+    """
+    _move_stranded_total_seasons(cursor)
+    _rewrite_platform_flag_dicts(cursor)
+
+
+def _move_stranded_total_seasons(cursor: sqlite3.Cursor) -> None:
+    """Move a blob ``total_seasons`` onto the ``seasons`` column.
+
+    Shows written before the column accepted ``total_seasons`` as an alias
+    kept the count in the free-form metadata blob. ``src/utils/series.py``
+    prefers that copy, so leaving it there means a later sync raising the
+    column drifts away from the number the recommender reads — a completed
+    show reappears as in-progress, and the variety ladder mis-ranks it.
+    """
+    cursor.execute(
+        "SELECT content_item_id, seasons, metadata FROM tv_show_details"
+        " WHERE metadata LIKE '%total_seasons%'"
+    )
+    for row in cursor.fetchall():
+        try:
+            blob = json.loads(row["metadata"])
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(blob, dict) or "total_seasons" not in blob:
+            continue
+        seasons = _higher_season_count(row["seasons"], blob.pop("total_seasons"))
+        cursor.execute(
+            "UPDATE tv_show_details SET seasons = ?, metadata = ?"
+            " WHERE content_item_id = ?",
+            # An emptied blob is stored as NULL, which is what the write path
+            # leaves when an item has no leftover metadata.
+            (seasons, json.dumps(blob) if blob else None, row["content_item_id"]),
+        )
+
+
+def _higher_season_count(column_value: Any, blob_value: Any) -> Any:
+    """Return the higher of a column and blob season count.
+
+    ``seasons`` is monotonic (:data:`~src.storage.merge.MONOTONIC_DETAIL_COLUMNS`),
+    so folding the blob copy in must never lower it — and on a row written
+    before the alias existed the blob holds the only count there is.
+    """
+    counts: list[int] = []
+    for value in (column_value, blob_value):
+        try:
+            counts.append(int(value))
+        except (TypeError, ValueError):
+            continue
+    return max(counts) if counts else column_value
+
+
+def _rewrite_platform_flag_dicts(cursor: sqlite3.Cursor) -> None:
+    """Rewrite GOG's per-platform flag dict as the list of names.
+
+    GOG used to write ``platforms`` as ``{"windows": true, ...}`` where every
+    other producer writes a list of names, and the column is fill-only, so a
+    re-sync never replaces it: an export writes the dict's Python repr into
+    the platform cell and re-importing stores that repr as a literal string.
+    The dict was truthy even when it named nothing, so a game supported on no
+    platform ends up with no platform value at all.
+    """
+    cursor.execute(
+        "SELECT content_item_id, platforms FROM video_game_details"
+        " WHERE platforms LIKE '%{%'"
+    )
+    for row in cursor.fetchall():
+        names = _platform_names_from_flags(row["platforms"])
+        if names is None:
+            continue
+        cursor.execute(
+            "UPDATE video_game_details SET platforms = ? WHERE content_item_id = ?",
+            (json.dumps(names) if names else None, row["content_item_id"]),
+        )
+
+
+def _platform_names_from_flags(raw: Any) -> list[str] | None:
+    """Read a stored flag dict as the platform names it says are supported.
+
+    Returns ``None`` for anything that is not the old shape — the current
+    list of names included — so that row is left untouched.
+    """
+    try:
+        stored = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    # The dict reached the column through _to_json_array, which wrapped it in
+    # a single-element list.
+    if isinstance(stored, list) and len(stored) == 1:
+        stored = stored[0]
+    if not isinstance(stored, dict):
+        return None
+    # The flags lowercased GOG's platform names; the corrected plugin keeps
+    # GOG's own capitalisation ("Windows", "Mac", "Linux").
+    return [str(name).capitalize() for name, supported in stored.items() if supported]
 
 
 _ALLOWED_ALTER_TABLES = frozenset(
