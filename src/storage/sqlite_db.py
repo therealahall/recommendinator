@@ -944,8 +944,9 @@ class SQLiteDB:
 
         Note:
             Search filtering runs in Python over the full candidate set (rows
-            remaining after the SQL type/status/rating filters) because it
-            inspects per-type creator metadata that is not queryable in SQL.
+            remaining after the SQL type/status/rating filters) because the
+            creator lives in a different column per content type and so is
+            not queryable in one SQL predicate.
             limit/offset are then applied to the filtered list so pagination
             always covers the full matched set with no dropped matches. This
             loads the candidate set into memory, which is acceptable at
@@ -1047,20 +1048,13 @@ class SQLiteDB:
 
             return items
 
-    # Metadata key holding the "creator" for each non-book content type.
-    # Books expose their creator via the ContentItem.author attribute instead.
-    _SEARCH_CREATOR_METADATA_KEYS: dict[str, str] = {
-        "movie": "director",
-        "tv_show": "creators",
-        "video_game": "developer",
-    }
-
-    @classmethod
-    def _matches_item(cls, item: ContentItem, search_term: str) -> bool:
+    @staticmethod
+    def _matches_item(item: ContentItem, search_term: str) -> bool:
         """Return True if *item*'s title or creator matches *search_term*.
 
-        The creator is the author (books) or the type-specific metadata field
-        (director/creators/developer). Matching is delegated to
+        The creator is ``item.author`` whatever the content type: the read
+        path fills it from that type's creator column (author, director,
+        creators, developer). Matching is delegated to
         :func:`matches_search` for exact/substring/fuzzy tiers.
 
         Args:
@@ -1073,14 +1067,10 @@ class SQLiteDB:
         if matches_search(item.title, search_term):
             return True
 
-        content_type = get_enum_value(item.content_type)
-        if content_type == "book":
-            creator = item.author
-        else:
-            creator_key = cls._SEARCH_CREATOR_METADATA_KEYS.get(content_type)
-            creator = item.metadata.get(creator_key) if creator_key else None
-
-        return bool(creator) and matches_search(str(creator), search_term)
+        creator = item.author
+        if not creator:
+            return False
+        return matches_search(creator, search_term)
 
     def get_unconsumed_items(
         self,

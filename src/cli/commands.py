@@ -507,7 +507,7 @@ def update(ctx: click.Context, source: str, workers: int | None) -> None:
     help="Content type",
 )
 @click.option("--title", required=True, help="Title of the content")
-@click.option("--author", help="Author (for books)")
+@click.option("--author", help="Creator: author, director, creator or developer")
 @click.option(
     "--rating",
     type=int,
@@ -550,7 +550,7 @@ def complete(
     item = ContentItem(
         id=None,  # Will be generated
         title=title,
-        author=author if content_type == ContentType.BOOK else None,
+        author=author,
         content_type=content_type,
         status=ConsumptionStatus.COMPLETED,
         rating=rating,

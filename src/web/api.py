@@ -150,7 +150,11 @@ class CompletionRequest(BaseModel):
         ..., description="Content type (book, movie, tv_show, video_game)"
     )
     title: str = Field(..., max_length=500, description="Title of the content")
-    author: str | None = Field(None, max_length=500, description="Author (for books)")
+    author: str | None = Field(
+        None,
+        max_length=500,
+        description="Creator: author, director, creator or developer",
+    )
     rating: int | None = Field(None, ge=1, le=5, description="Rating (1-5)")
     review: CompletionReviewText | None = Field(None, description="Review text")
 
@@ -1306,7 +1310,7 @@ async def mark_complete(request: CompletionRequest) -> dict[str, Any]:
     item = ContentItem(
         id=None,
         title=request.title,
-        author=request.author if content_type == ContentType.BOOK else None,
+        author=request.author,
         content_type=content_type,
         status=ConsumptionStatus.COMPLETED,
         rating=request.rating,

@@ -4325,6 +4325,337 @@ class TestYearAndRuntimeFromImport:
         assert retrieved.metadata["runtime"] == 148
 
 
+class TestCreatorReadsBackAsAuthor:
+    """The creator a provider writes reads back on every content type.
+
+    Bug reported: a movie, TV show or video game always read back with
+    ``author`` as None, so the library export wrote a blank
+    director/creator/developer cell even for a TMDB-enriched item whose
+    column the provider had filled.
+
+    Root cause: only ``book.author`` was declared as the creator, so the read
+    path left the other three types' creator columns in the metadata dict and
+    never set ``ContentItem.author`` from them.
+
+    Fix: every content type declares one ``FieldKind.CREATOR`` column, which
+    the read path lifts onto ``author`` and out of the metadata dict.
+    """
+
+    @pytest.mark.parametrize(
+        ("content_type", "metadata_key", "creator"),
+        [
+            (ContentType.BOOK, "author", "Patrick Rothfuss"),
+            (ContentType.MOVIE, "director", "Denis Villeneuve"),
+            (ContentType.TV_SHOW, "creators", "Vince Gilligan, Peter Gould"),
+            (ContentType.VIDEO_GAME, "developer", "Team Cherry"),
+        ],
+        ids=["book", "movie", "tv_show", "video_game"],
+    )
+    def test_provider_creator_key_becomes_the_author_regression(
+        self,
+        temp_db: SQLiteDB,
+        content_type: ContentType,
+        metadata_key: str,
+        creator: str,
+    ) -> None:
+        """The key an enrichment provider writes reads back as the author."""
+        db_id = temp_db.save_content_item(
+            ContentItem(
+                id=f"creator-{content_type.value}",
+                title="Enriched",
+                content_type=content_type,
+                status=ConsumptionStatus.UNREAD,
+                metadata={metadata_key: creator},
+            )
+        )
+
+        retrieved = temp_db.get_content_item(db_id)
+
+        assert retrieved is not None
+        assert retrieved.author == creator
+        assert metadata_key not in retrieved.metadata
+
+    def test_tv_creator_alias_reaches_the_creators_column_regression(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """The singular ``creator`` a template row carries stores as ``creators``.
+
+        The tv_show template column is ``creator`` and storage stores
+        ``creators``, so the declared key and the stored one used to disagree
+        and the value fell into the free-form blob.
+        """
+        db_id = temp_db.save_content_item(
+            ContentItem(
+                id="tv-creator-alias",
+                title="Breaking Bad",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.UNREAD,
+                metadata={"creator": "Vince Gilligan"},
+            )
+        )
+
+        with temp_db.connection() as conn:
+            row = conn.execute(
+                "SELECT creators, metadata FROM tv_show_details"
+                " WHERE content_item_id = ?",
+                (db_id,),
+            ).fetchone()
+
+        assert row["creators"] == "Vince Gilligan"
+        assert "creator" not in json.loads(row["metadata"] or "{}")
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.author == "Vince Gilligan"
+
+    def test_item_author_fills_the_creator_column_regression(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """An importer's ``author`` reaches the column for every type.
+
+        The import path puts the template's creator cell on
+        ``ContentItem.author`` rather than in metadata, and the write path
+        used to consult it for books alone — so an imported director was
+        written nowhere.
+        """
+        db_id = temp_db.save_content_item(
+            ContentItem(
+                id="movie-author",
+                title="Arrival",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.UNREAD,
+                author="Denis Villeneuve",
+            )
+        )
+
+        with temp_db.connection() as conn:
+            row = conn.execute(
+                "SELECT director FROM movie_details WHERE content_item_id = ?",
+                (db_id,),
+            ).fetchone()
+
+        assert row["director"] == "Denis Villeneuve"
+
+
+class TestCreatorColumnEdges:
+    """The boundaries of the creator column, once every type has one.
+
+    The creator now crosses a codec (a plural key may arrive as a list) and
+    a fill-only write rule, so the shapes below are the ones a plugin, an
+    enrichment provider or a re-sync can actually produce.
+    """
+
+    def test_a_list_creator_joins_into_the_one_column(self, temp_db: SQLiteDB) -> None:
+        """Several developers become one comma-joined name, like TMDB's."""
+        db_id = temp_db.save_content_item(
+            ContentItem(
+                id="game-two-devs",
+                title="Divinity",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.UNREAD,
+                metadata={"developers": ["Larian Studios", "Larian Belgium"]},
+            )
+        )
+
+        retrieved = temp_db.get_content_item(db_id)
+
+        assert retrieved is not None
+        assert retrieved.author == "Larian Studios, Larian Belgium"
+
+    def test_an_empty_list_creator_stores_nothing(self, temp_db: SQLiteDB) -> None:
+        """A plugin's empty list is no creator, not an empty-string one."""
+        db_id = temp_db.save_content_item(
+            ContentItem(
+                id="game-no-devs",
+                title="Unattributed",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.UNREAD,
+                metadata={"developers": []},
+            )
+        )
+
+        with temp_db.connection() as conn:
+            row = conn.execute(
+                "SELECT developer FROM video_game_details WHERE content_item_id = ?",
+                (db_id,),
+            ).fetchone()
+
+        assert row["developer"] is None
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.author is None
+        assert "developers" not in retrieved.metadata
+
+    def test_the_item_author_outranks_a_metadata_creator(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """An importer's author beats a creator key riding in metadata."""
+        db_id = temp_db.save_content_item(
+            ContentItem(
+                id="movie-both",
+                title="Arrival",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.UNREAD,
+                author="Denis Villeneuve",
+                metadata={"director": "Somebody Else"},
+            )
+        )
+
+        retrieved = temp_db.get_content_item(db_id)
+
+        assert retrieved is not None
+        assert retrieved.author == "Denis Villeneuve"
+
+    def test_the_canonical_creators_key_outranks_the_creator_alias(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """A show carrying both spellings keeps the one storage declares."""
+        db_id = temp_db.save_content_item(
+            ContentItem(
+                id="tv-both-spellings",
+                title="Breaking Bad",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.UNREAD,
+                metadata={"creators": "Vince Gilligan", "creator": "Somebody Else"},
+            )
+        )
+
+        retrieved = temp_db.get_content_item(db_id)
+
+        assert retrieved is not None
+        assert retrieved.author == "Vince Gilligan"
+        assert "creator" not in retrieved.metadata
+
+    def test_a_later_sync_does_not_overwrite_a_stored_creator(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """The creator is fill-only, like every other non-list column."""
+        first = temp_db.save_content_item(
+            ContentItem(
+                id="movie-fill-only",
+                title="Arrival",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.UNREAD,
+                author="Denis Villeneuve",
+            )
+        )
+        second = temp_db.save_content_item(
+            ContentItem(
+                id="movie-fill-only",
+                title="Arrival",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.UNREAD,
+                author="Wrong Person",
+            )
+        )
+
+        assert second == first
+        retrieved = temp_db.get_content_item(first)
+        assert retrieved is not None
+        assert retrieved.author == "Denis Villeneuve"
+
+    def test_a_later_sync_fills_a_creator_the_first_left_empty(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """An enrichment pass supplies the creator an import had none of."""
+        db_id = temp_db.save_content_item(
+            ContentItem(
+                id="movie-later-fill",
+                title="Arrival",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.UNREAD,
+            )
+        )
+        temp_db.save_content_item(
+            ContentItem(
+                id="movie-later-fill",
+                title="Arrival",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.UNREAD,
+                metadata={"director": "Denis Villeneuve"},
+            )
+        )
+
+        retrieved = temp_db.get_content_item(db_id)
+
+        assert retrieved is not None
+        assert retrieved.author == "Denis Villeneuve"
+
+    def test_a_non_latin_creator_reads_back_unchanged(self, temp_db: SQLiteDB) -> None:
+        """A creator name outside ASCII survives the column verbatim."""
+        db_id = temp_db.save_content_item(
+            ContentItem(
+                id="movie-unicode",
+                title="Spirited Away",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.UNREAD,
+                metadata={"director": "宮崎駿"},
+            )
+        )
+
+        retrieved = temp_db.get_content_item(db_id)
+
+        assert retrieved is not None
+        assert retrieved.author == "宮崎駿"
+
+    def test_plural_publishers_reach_the_singular_publisher_column(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """GOG's ``publishers`` is the alias of the ``publisher`` column."""
+        db_id = temp_db.save_content_item(
+            ContentItem(
+                id="game-publishers",
+                title="Cyberpunk 2077",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.UNREAD,
+                metadata={"publishers": ["CD Projekt", "Warner Bros."]},
+            )
+        )
+
+        with temp_db.connection() as conn:
+            row = conn.execute(
+                "SELECT publisher FROM video_game_details WHERE content_item_id = ?",
+                (db_id,),
+            ).fetchone()
+
+        assert row["publisher"] == "CD Projekt, Warner Bros."
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.metadata["publisher"] == "CD Projekt, Warner Bros."
+
+    @pytest.mark.parametrize(
+        ("content_type", "search_term"),
+        [
+            (ContentType.MOVIE, "Villeneuve"),
+            (ContentType.TV_SHOW, "Gilligan"),
+            (ContentType.VIDEO_GAME, "Cherry"),
+        ],
+        ids=["movie", "tv_show", "video_game"],
+    )
+    def test_library_search_finds_an_item_by_its_stored_creator(
+        self, temp_db: SQLiteDB, content_type: ContentType, search_term: str
+    ) -> None:
+        """Search reads the creator off ``author`` for every content type."""
+        creators = {
+            ContentType.MOVIE: "Denis Villeneuve",
+            ContentType.TV_SHOW: "Vince Gilligan",
+            ContentType.VIDEO_GAME: "Team Cherry",
+        }
+        temp_db.save_content_item(
+            ContentItem(
+                id=f"search-{content_type.value}",
+                title="Untitled",
+                content_type=content_type,
+                status=ConsumptionStatus.UNREAD,
+                author=creators[content_type],
+            )
+        )
+
+        results = temp_db.get_content_items(search=search_term)
+
+        assert [item.title for item in results] == ["Untitled"]
+
+
 class TestDetailTableWhitelist:
     """Tests for detail table whitelist validation in _save_detail_table."""
 
@@ -4338,7 +4669,6 @@ class TestDetailTableWhitelist:
                 table="malicious_table; DROP TABLE users; --",
                 table_alias="mt",
                 metadata_alias="injected_metadata",
-                creator_column="title",
                 fields=(DetailField("title", FieldKind.TEXT, column="title"),),
             )
         }
@@ -5103,7 +5433,7 @@ class TestCrossSourceDuplicateDetectionRegression:
         retrieved = temp_db.get_content_item(keep_id)
         assert retrieved is not None
         assert retrieved.metadata is not None
-        assert retrieved.metadata.get("developer") == "Team Cherry"
+        assert retrieved.author == "Team Cherry"
         genres = retrieved.metadata.get("genres", [])
         assert "Metroidvania" in genres
 

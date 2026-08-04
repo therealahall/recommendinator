@@ -42,8 +42,8 @@ COMMON_COLUMNS = {
 # import and the export path read this table, so a column can only ever be
 # written and read back under one name.
 #
-# The creator column (author/director/creator/developer) maps to itself and
-# is never read from here: it becomes ContentItem.author, not metadata.
+# The creator column (author/director/creator/developer) is never read from
+# here: it becomes ContentItem.author rather than metadata.
 CONTENT_TYPE_COLUMNS: dict[str, dict[str, str]] = {
     content_type: spec.template_columns for content_type, spec in DETAIL_FIELDS.items()
 }

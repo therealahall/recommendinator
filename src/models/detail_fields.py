@@ -27,6 +27,20 @@ def unchanged(value: Any) -> Any:
     return value
 
 
+def to_text(value: Any) -> str | None:
+    """Flatten a metadata value into the one string its column holds.
+
+    A source hands over a list where the column takes a single name — GOG's
+    ``developers`` against ``developer`` — so a list is joined the way TMDB
+    already joins several directors into one ``director``.
+    """
+    if value is None or isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return ", ".join(str(entry) for entry in value) or None
+    return str(value)
+
+
 def to_int(value: Any) -> int | None:
     """Coerce a metadata value to an int, or None when it is not a number."""
     if value is None or isinstance(value, int):
@@ -69,9 +83,10 @@ def parse_json_array(value: Any) -> list[Any] | None:
 class FieldKind(Enum):
     """What a field holds, and so how it crosses the column boundary.
 
-    ``CREATOR`` is the item's ``ContentItem.author`` rather than a metadata
-    key. ``FREE_FORM`` has no column of its own and lives in the detail row's
-    metadata blob.
+    ``CREATOR`` is the type's creator — author, director, creators,
+    developer — which crosses as ``ContentItem.author`` rather than a
+    metadata key. ``FREE_FORM`` has no column of its own and lives in the
+    detail row's metadata blob.
     """
 
     CREATOR = "creator"
@@ -90,8 +105,8 @@ class FieldCodec:
 
 
 _CODECS: dict[FieldKind, FieldCodec] = {
-    FieldKind.CREATOR: FieldCodec(store=unchanged, load=unchanged),
-    FieldKind.TEXT: FieldCodec(store=unchanged, load=unchanged),
+    FieldKind.CREATOR: FieldCodec(store=to_text, load=unchanged),
+    FieldKind.TEXT: FieldCodec(store=to_text, load=unchanged),
     FieldKind.INTEGER: FieldCodec(store=to_int, load=unchanged),
     FieldKind.STRING_LIST: FieldCodec(store=to_json_array, load=parse_json_array),
 }
@@ -168,16 +183,38 @@ class ContentTypeFields:
         table: Detail table holding the columns.
         table_alias: Alias the table takes in the joined SELECT.
         metadata_alias: Alias that table's free-form blob column takes there.
-        creator_column: Template column carrying the creator, which becomes
-            ``ContentItem.author`` rather than metadata.
         fields: The fields, ordered as the templates and export list them.
     """
 
     table: str
     table_alias: str
     metadata_alias: str
-    creator_column: str
     fields: tuple[DetailField, ...]
+
+    @property
+    def creator_column(self) -> str:
+        """Template column carrying the creator: "director", "creator"...
+
+        Its value is ``ContentItem.author`` rather than a metadata key, so
+        import and export both take it off the item's author attribute.
+
+        Raises:
+            ValueError: When the type does not mark exactly one field
+                ``CREATOR`` with a template column of its own, which
+                :func:`_assert_one_creator_column` turns into an import-time
+                failure for the declaration below.
+        """
+        columns = [
+            field.template_column
+            for field in self.fields
+            if field.kind is FieldKind.CREATOR and field.template_column is not None
+        ]
+        if len(columns) != 1:
+            raise ValueError(
+                f"{self.table} declares {len(columns)} creator template"
+                " columns, and needs exactly one"
+            )
+        return columns[0]
 
     @property
     def columns(self) -> tuple[str, ...]:
@@ -218,7 +255,6 @@ DETAIL_FIELDS: dict[str, ContentTypeFields] = {
         table="book_details",
         table_alias="bd",
         metadata_alias="book_metadata",
-        creator_column="author",
         fields=(
             DetailField(
                 "author",
@@ -263,11 +299,10 @@ DETAIL_FIELDS: dict[str, ContentTypeFields] = {
         table="movie_details",
         table_alias="md",
         metadata_alias="movie_metadata",
-        creator_column="director",
         fields=(
             DetailField(
                 "director",
-                FieldKind.TEXT,
+                FieldKind.CREATOR,
                 column="director",
                 template_column="director",
             ),
@@ -310,11 +345,15 @@ DETAIL_FIELDS: dict[str, ContentTypeFields] = {
         table="tv_show_details",
         table_alias="td",
         metadata_alias="tv_metadata",
-        creator_column="creator",
         fields=(
-            # The template's creator column has no detail column of its own:
-            # only a book's creator reaches one.
-            DetailField("creator", FieldKind.FREE_FORM, template_column="creator"),
+            # The template says "creator" and the library stores "creators".
+            DetailField(
+                "creators",
+                FieldKind.CREATOR,
+                column="creators",
+                aliases=("creator",),
+                template_column="creator",
+            ),
             DetailField(
                 "seasons_watched",
                 FieldKind.FREE_FORM,
@@ -343,7 +382,6 @@ DETAIL_FIELDS: dict[str, ContentTypeFields] = {
                 aliases=("genre",),
                 template_column="genre",
             ),
-            DetailField("creators", FieldKind.TEXT, column="creators"),
             DetailField("episodes", FieldKind.INTEGER, column="episodes"),
             DetailField("network", FieldKind.TEXT, column="network"),
             DetailField(
@@ -361,12 +399,12 @@ DETAIL_FIELDS: dict[str, ContentTypeFields] = {
         table="video_game_details",
         table_alias="vgd",
         metadata_alias="game_metadata",
-        creator_column="developer",
         fields=(
             DetailField(
                 "developer",
-                FieldKind.TEXT,
+                FieldKind.CREATOR,
                 column="developer",
+                aliases=("developers",),
                 template_column="developer",
             ),
             DetailField(
@@ -394,6 +432,7 @@ DETAIL_FIELDS: dict[str, ContentTypeFields] = {
                 FieldKind.TEXT,
                 column="publisher",
                 select_alias="game_publisher",
+                aliases=("publishers",),
             ),
             DetailField(
                 "release_year",
@@ -434,4 +473,17 @@ def _assert_select_aliases_are_unique() -> None:
             seen.add(alias)
 
 
+def _assert_one_creator_column() -> None:
+    """Fail at import when a type does not name its creator exactly once.
+
+    Import and export both take the creator off ``ContentItem.author`` and
+    find its template column here, so a type declaring none would export a
+    column nothing fills, and one declaring two would export whichever field
+    came first.
+    """
+    for spec in DETAIL_FIELDS.values():
+        _ = spec.creator_column
+
+
 _assert_select_aliases_are_unique()
+_assert_one_creator_column()
