@@ -129,6 +129,10 @@ file. Two things still need care:
   export and a re-import holds the dict's Python repr
   (`{'windows': True, ...}`) as a literal string, which the repair does not
   recognise. The column is fill-only, so no later sync replaces it either.
+- **`developer` and `publisher` on a GOG library synced before this release.**
+  GOG named both in the free-form metadata rather than the columns, so they
+  exported blank. Starting the app folds the names onto the columns, keeping
+  anything already there, and the item stops failing enrichment.
 - **`hours_played` on a video game a generic CSV or JSON import brought in
   before that column was renamed** to the library's own `playtime_hours`. Those
   rows still carry the old key and export blank. The number is not lost, and
