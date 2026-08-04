@@ -321,7 +321,10 @@ def recommend(
                     ]
                 )
 
-            headers = ["#", "Title", "Author", "Score", "Reasoning"]
+            # Every row is the one requested type, so the column is labelled
+            # the way that type names its creator: "Director" for a movie.
+            creator = DETAIL_FIELDS[get_enum_value(content_type)].creator_column
+            headers = ["#", "Title", creator.title(), "Score", "Reasoning"]
             click.echo(tabulate(table_data, headers=headers, tablefmt="grid"))
 
     except Exception as error:
@@ -1351,7 +1354,9 @@ def library_list(
                 "Yes" if item.enriched else "No",
             ]
         )
-    headers = ["ID", "Title", "Author", "Type", "Status", "Rating", "Enriched"]
+    # One listing mixes the types, so the column takes the name they share
+    # rather than any one type's ("Author" over a director, and so on).
+    headers = ["ID", "Title", "Creator", "Type", "Status", "Rating", "Enriched"]
     click.echo(tabulate(table_data, headers=headers, tablefmt="grid"))
 
 
