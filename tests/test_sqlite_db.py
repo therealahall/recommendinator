@@ -4669,7 +4669,17 @@ class TestDetailTableWhitelist:
                 table="malicious_table; DROP TABLE users; --",
                 table_alias="mt",
                 metadata_alias="injected_metadata",
-                fields=(DetailField("title", FieldKind.TEXT, column="title"),),
+                # Every ContentTypeFields names one creator, so this spec
+                # carries one to reach the guard it is here to exercise.
+                fields=(
+                    DetailField(
+                        "author",
+                        FieldKind.CREATOR,
+                        column="author",
+                        template_column="author",
+                    ),
+                    DetailField("title", FieldKind.TEXT, column="title"),
+                ),
             )
         }
         item = ContentItem(
