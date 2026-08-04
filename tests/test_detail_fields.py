@@ -8,15 +8,21 @@ field accepts reaches its column instead of the leftover JSON blob, and adding
 a field is an edit to the declaration alone.
 """
 
+import ast
+import importlib.util
 import json
 import sqlite3
+import sys
 from dataclasses import replace
+from enum import Enum
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
 import pytest
 
+from src.ingestion.sources.generic_csv import LIST_VALUED_COLUMNS
+from src.models import detail_fields
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.detail_fields import (
     DETAIL_FIELDS,
@@ -24,7 +30,6 @@ from src.models.detail_fields import (
     DetailField,
     FieldKind,
     _assert_every_content_type_is_declared,
-    _assert_one_creator_column,
     _assert_select_aliases_are_unique,
 )
 from src.storage import sqlite_db
@@ -65,6 +70,38 @@ _READ_BACK: dict[FieldKind, Any] = {
 # the encode/decode round trip would come back as a different key.
 _UNCLAIMED_KEY = "übersetzung"
 _UNCLAIMED_VALUE = "Ursula K. Le Guin ✨"
+
+# Every ContentTypeFields names exactly one creator, so a spec built here to
+# exercise some other guard carries a well-formed one.
+_A_CREATOR = DetailField(
+    "author",
+    FieldKind.CREATOR,
+    column="author",
+    select_alias="rogue_author",
+    template_column="author",
+)
+
+
+def _import_the_declaration_module_afresh() -> None:
+    """Execute ``src/models/detail_fields.py`` again, as a separate module.
+
+    A fresh module rather than ``importlib.reload``, which would rebind the
+    live one — the module storage, ingestion and export all hold references
+    into — to new objects part way through an import that is meant to fail.
+    """
+    spec = importlib.util.spec_from_file_location(
+        "detail_fields_afresh", detail_fields.__file__
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    # Registered while it executes because the dataclasses in it resolve
+    # their annotations through sys.modules, and dropped again after.
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        del sys.modules[spec.name]
 
 
 def _live_columns(tmp_path: Path, table: str) -> dict[str, str]:
@@ -423,37 +460,31 @@ class TestFieldDeclarationGuards:
 
     def test_type_naming_no_creator_column_is_rejected(self) -> None:
         """A type with no creator would export a column nothing fills."""
-        creatorless = replace(
-            DETAIL_FIELDS["movie"],
-            fields=tuple(
-                detail_field
-                for detail_field in DETAIL_FIELDS["movie"].fields
-                if detail_field.kind is not FieldKind.CREATOR
-            ),
-        )
-
-        with patch.dict(DETAIL_FIELDS, {"movie": creatorless}):
-            with pytest.raises(ValueError, match="creator template columns"):
-                _assert_one_creator_column()
+        with pytest.raises(ValueError, match="creator template columns"):
+            replace(
+                DETAIL_FIELDS["movie"],
+                fields=tuple(
+                    detail_field
+                    for detail_field in DETAIL_FIELDS["movie"].fields
+                    if detail_field.kind is not FieldKind.CREATOR
+                ),
+            )
 
     def test_type_naming_two_creator_columns_is_rejected(self) -> None:
         """A second creator would export whichever field came first."""
-        doubled = replace(
-            DETAIL_FIELDS["movie"],
-            fields=(
-                *DETAIL_FIELDS["movie"].fields,
-                DetailField(
-                    "studio",
-                    FieldKind.CREATOR,
-                    column="studio",
-                    template_column="studio",
+        with pytest.raises(ValueError, match="creator template columns"):
+            replace(
+                DETAIL_FIELDS["movie"],
+                fields=(
+                    *DETAIL_FIELDS["movie"].fields,
+                    DetailField(
+                        "studio",
+                        FieldKind.CREATOR,
+                        column="studio",
+                        template_column="studio",
+                    ),
                 ),
-            ),
-        )
-
-        with patch.dict(DETAIL_FIELDS, {"movie": doubled}):
-            with pytest.raises(ValueError, match="creator template columns"):
-                _assert_one_creator_column()
+            )
 
     def test_content_type_without_a_declaration_is_rejected(self) -> None:
         """Callers index this mapping expecting a hit, so a gap must not wait.
@@ -478,6 +509,48 @@ class TestFieldDeclarationGuards:
             with pytest.raises(ValueError, match="unknown content types"):
                 _assert_every_content_type_is_declared()
 
+    def test_the_declaration_guard_runs_when_the_module_is_imported(self) -> None:
+        """The import is what fires it, not a caller remembering to.
+
+        The declaration guard is called by hand above, which stays green
+        with the call at the foot of the module deleted, so this executes
+        the module itself against a content type nothing declares and
+        expects the import to fail. The per-type creator check needs no
+        equivalent: it runs in ``ContentTypeFields.__post_init__``, so the
+        declaration cannot be built without it.
+        """
+
+        class _UndeclaredContentType(Enum):
+            AUDIOBOOK = "audiobook"
+
+        with patch("src.models.content.ContentType", _UndeclaredContentType):
+            with pytest.raises(ValueError, match="no field declaration"):
+                _import_the_declaration_module_afresh()
+
+    def test_every_guard_the_module_defines_is_called_at_import(self) -> None:
+        """A guard the foot of the module never calls guards nothing.
+
+        Executing the module only reaches the guard the undeclared content
+        type above trips; the alias guard has no such seam, and a guard
+        added later would have none either. Reading the module's own top
+        level covers every one of them.
+        """
+        tree = ast.parse(Path(detail_fields.__file__).read_text(encoding="utf-8"))
+        defined = {
+            node.name
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name.startswith("_assert_")
+        }
+        called = {
+            node.value.func.id
+            for node in tree.body
+            if isinstance(node, ast.Expr)
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+        }
+
+        assert not defined - called, f"never called at import: {sorted(defined-called)}"
+
 
 class TestEveryTypeNamesItsCreator:
     """Each content type states which template column carries its creator.
@@ -499,6 +572,84 @@ class TestEveryTypeNamesItsCreator:
             "tv_show": "creator",
             "video_game": "developer",
         }
+
+
+class TestSingleStringColumnsCoerceWhatTheyAreGiven:
+    """A column holding one string takes whatever a plugin hands it.
+
+    ``to_text`` is the codec behind every CREATOR and TEXT column, and a
+    plugin is free to hand over a number where the column holds text.
+    """
+
+    def test_a_number_is_stored_as_its_own_text(self, tmp_path: Path) -> None:
+        """An ISBN arriving as an int reads back as those digits, as a string."""
+        db = SQLiteDB(tmp_path / "isbn.db")
+
+        db_id = db.save_content_item(
+            ContentItem(
+                id="numeric-isbn",
+                title="Dune",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+                metadata={"isbn": 9780441013593},
+            )
+        )
+        stored = db.get_content_item(db_id)
+
+        assert stored is not None
+        assert stored.metadata["isbn"] == "9780441013593"
+
+
+class TestNullInAListOfNamesRegression:
+    """A null among a plugin's list of names was stored as the text "None".
+
+    Bug reported: a movie whose director list carried a null — any plugin
+    list can — stored "Joel Coen, None" and exported that into the director
+    cell, so "None" read as part of the name.
+    Root cause: ``to_text`` joins a list into the one name its column holds,
+    over ``str(entry)`` for every entry, and ``str(None)`` is "None".
+    Fix: the null entries are dropped before the join.
+    """
+
+    def test_a_null_among_the_creators_is_dropped_regression(
+        self, tmp_path: Path
+    ) -> None:
+        """The stored creator is the names, with nothing standing in for the null."""
+        db = SQLiteDB(tmp_path / "null-creator.db")
+
+        db_id = db.save_content_item(
+            ContentItem(
+                id="movie-null-director",
+                title="Fargo",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.UNREAD,
+                metadata={"director": ["Joel Coen", None]},
+            )
+        )
+        stored = db.get_content_item(db_id)
+
+        assert stored is not None
+        assert stored.author == "Joel Coen"
+
+    def test_a_list_holding_only_nulls_stores_nothing_regression(
+        self, tmp_path: Path
+    ) -> None:
+        """Dropping every entry leaves no creator, rather than an empty name."""
+        db = SQLiteDB(tmp_path / "all-null-creator.db")
+
+        db_id = db.save_content_item(
+            ContentItem(
+                id="movie-all-null-directors",
+                title="Anonymous",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.UNREAD,
+                metadata={"director": [None]},
+            )
+        )
+        stored = db.get_content_item(db_id)
+
+        assert stored is not None
+        assert stored.author is None
 
 
 class TestSelectAliasesDoNotShadowContentItems:
@@ -545,6 +696,7 @@ class TestSelectIdentifiersAreGuarded:
             table_alias="rd",
             metadata_alias="rogue_metadata",
             fields=(
+                _A_CREATOR,
                 DetailField(
                     "title",
                     FieldKind.TEXT,
@@ -562,7 +714,10 @@ class TestSelectIdentifiersAreGuarded:
         """A column name outside the identifier pattern raises."""
         rogue = replace(
             DETAIL_FIELDS["book"],
-            fields=(DetailField("evil", FieldKind.TEXT, column="isbn FROM users; --"),),
+            fields=(
+                _A_CREATOR,
+                DetailField("evil", FieldKind.TEXT, column="isbn FROM users; --"),
+            ),
         )
 
         with patch.dict(DETAIL_FIELDS, {"book": rogue}):
@@ -574,6 +729,7 @@ class TestSelectIdentifiersAreGuarded:
         rogue = replace(
             DETAIL_FIELDS["book"],
             fields=(
+                _A_CREATOR,
                 DetailField(
                     "isbn",
                     FieldKind.TEXT,
@@ -616,6 +772,20 @@ class TestKnownKeysAreTheKeysTheColumnsClaim:
     def test_every_declared_type_is_covered(self) -> None:
         """A content type added later does not slip past the check above."""
         assert set(_EXPECTED_KNOWN_KEYS) == set(DETAIL_FIELDS)
+
+
+class TestListValuedColumnsAreTheDeclaredLists:
+    """``LIST_VALUED_COLUMNS`` is computed, and this is what it has to be.
+
+    An import wraps one of these template cells in a list and an export
+    writes the first entry back, so a column joining the set changes the
+    shape a value is stored in, and one leaving it stores a bare string
+    where every other producer writes a list.
+    """
+
+    def test_the_list_valued_columns_are_the_expected_ones(self) -> None:
+        """Only the genre and platform cells stand for a list."""
+        assert LIST_VALUED_COLUMNS == frozenset({"genre", "platform"})
 
 
 class TestEveryDeclaredColumnRoundTrips:

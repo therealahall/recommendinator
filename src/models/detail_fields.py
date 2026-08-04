@@ -34,12 +34,13 @@ def to_text(value: Any) -> str | None:
 
     A source hands over a list where the column takes a single name — GOG's
     ``developers`` against ``developer`` — so a list is joined the way TMDB
-    already joins several directors into one ``director``.
+    already joins several directors into one ``director``. A None among the
+    entries is dropped rather than joined in as the text "None".
     """
     if value is None or isinstance(value, str):
         return value
     if isinstance(value, list):
-        return ", ".join(str(entry) for entry in value) or None
+        return ", ".join(str(entry) for entry in value if entry is not None) or None
     return str(value)
 
 
@@ -186,6 +187,10 @@ class ContentTypeFields:
         table_alias: Alias the table takes in the joined SELECT.
         metadata_alias: Alias that table's free-form blob column takes there.
         fields: The fields, ordered as the templates and export list them.
+            Reordering them reorders the columns of every CSV and JSON file
+            the app exports, including the ones users already hold, so it is
+            never a readability edit. ``TestExportLayoutIsStable`` in
+            ``tests/web/test_export.py`` pins the resulting layout.
     """
 
     table: str
@@ -193,30 +198,37 @@ class ContentTypeFields:
     metadata_alias: str
     fields: tuple[DetailField, ...]
 
+    def __post_init__(self) -> None:
+        """Reject a type not naming its creator exactly once, at import time.
+
+        Import and export both take the creator off ``ContentItem.author``
+        and find its template column here, so a type declaring none would
+        export a column nothing fills, and one declaring two would export
+        whichever field came first.
+        """
+        columns = self._creator_columns()
+        if len(columns) != 1:
+            raise ValueError(
+                f"{self.table} declares {len(columns)} creator template"
+                " columns, and needs exactly one"
+            )
+
+    def _creator_columns(self) -> list[str]:
+        """Every template column this type marks as carrying its creator."""
+        return [
+            field.template_column
+            for field in self.fields
+            if field.kind is FieldKind.CREATOR and field.template_column is not None
+        ]
+
     @property
     def creator_column(self) -> str:
         """Template column carrying the creator: "director", "creator"...
 
         Its value is ``ContentItem.author`` rather than a metadata key, so
         import and export both take it off the item's author attribute.
-
-        Raises:
-            ValueError: When the type does not mark exactly one field
-                ``CREATOR`` with a template column of its own, which
-                :func:`_assert_one_creator_column` turns into an import-time
-                failure for the declaration below.
         """
-        columns = [
-            field.template_column
-            for field in self.fields
-            if field.kind is FieldKind.CREATOR and field.template_column is not None
-        ]
-        if len(columns) != 1:
-            raise ValueError(
-                f"{self.table} declares {len(columns)} creator template"
-                " columns, and needs exactly one"
-            )
-        return columns[0]
+        return self._creator_columns()[0]
 
     @property
     def columns(self) -> tuple[str, ...]:
@@ -475,18 +487,6 @@ def _assert_select_aliases_are_unique() -> None:
             seen.add(alias)
 
 
-def _assert_one_creator_column() -> None:
-    """Fail at import when a type does not name its creator exactly once.
-
-    Import and export both take the creator off ``ContentItem.author`` and
-    find its template column here, so a type declaring none would export a
-    column nothing fills, and one declaring two would export whichever field
-    came first.
-    """
-    for spec in DETAIL_FIELDS.values():
-        _ = spec.creator_column
-
-
 def _assert_every_content_type_is_declared() -> None:
     """Fail at import when a content type has no declaration, or vice versa.
 
@@ -509,5 +509,4 @@ def _assert_every_content_type_is_declared() -> None:
 
 
 _assert_select_aliases_are_unique()
-_assert_one_creator_column()
 _assert_every_content_type_is_declared()
