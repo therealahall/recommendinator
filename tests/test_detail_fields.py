@@ -600,6 +600,184 @@ class TestSingleStringColumnsCoerceWhatTheyAreGiven:
         assert stored.metadata["isbn"] == "9780441013593"
 
 
+class TestATextColumnRefusesAnObject:
+    """A value with no text form fails the write instead of taking a repr.
+
+    ``to_text`` used to have a string for every input, ``str()`` of a dict
+    included, and it sits behind every CREATOR and TEXT column. Those columns
+    are neither mergeable nor monotonic, so ``_save_detail_table`` is
+    fill-only for them and nothing in the app ever replaces what lands there:
+    a Python repr written once is the permanent corruption
+    ``_rewrite_platform_flag_dicts`` exists to undo one table over.
+    """
+
+    @pytest.mark.parametrize(
+        "value",
+        [{"name": "CD Projekt Red"}, [{"name": "CD Projekt Red"}], [["Joel Coen"]]],
+        ids=["mapping", "list_of_mapping", "list_of_list"],
+    )
+    def test_a_value_a_text_column_cannot_hold_raises(self, value: Any) -> None:
+        """A mapping, or a list holding a mapping or a list, is refused."""
+        with pytest.raises(TypeError, match="text column cannot hold"):
+            detail_fields.to_text(value)
+
+    def test_an_imported_object_never_reaches_the_column(self, tmp_path: Path) -> None:
+        """``generic_json`` forwards a raw value, so a user can send one.
+
+        It used to be stored: ``str()`` of a dict is a perfectly storable
+        string, so the repr landed in the column and stayed there. Refusing it
+        makes the import fail where it can be seen and fixed.
+        """
+        db = SQLiteDB(tmp_path / "object-isbn.db")
+
+        with pytest.raises(TypeError, match="text column cannot hold"):
+            db.save_content_item(
+                ContentItem(
+                    id="object-isbn",
+                    title="Dune",
+                    content_type=ContentType.BOOK,
+                    status=ConsumptionStatus.UNREAD,
+                    metadata={"isbn": {"value": "9780441013593"}},
+                )
+            )
+
+
+class TestWhatATextColumnStillAccepts:
+    """The refusal is narrow: only a value with no name inside it.
+
+    ``to_text`` is the codec behind eight columns and every shipped plugin
+    writes at least one of them, so a guard that reached one shape too far
+    would fail a sync rather than a repr.
+    """
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            ([], None),
+            ([None], None),
+            (["Joel Coen", None, "Ethan Coen"], "Joel Coen, Ethan Coen"),
+            ([0], "0"),
+            ([""], None),
+            (7, "7"),
+            (True, "True"),
+        ],
+        ids=[
+            "empty_list",
+            "list_of_null",
+            "names_around_a_null",
+            "zero",
+            "empty_string",
+            "number",
+            "boolean",
+        ],
+    )
+    def test_a_value_with_a_text_form_is_still_flattened(
+        self, value: Any, expected: str | None
+    ) -> None:
+        """Every non-container a plugin can emit keeps the behaviour it had."""
+        assert detail_fields.to_text(value) == expected
+
+    def test_an_empty_object_is_refused_like_any_other(self) -> None:
+        """A mapping is refused for having no text form, not for its contents."""
+        with pytest.raises(TypeError, match="text column cannot hold"):
+            detail_fields.to_text({})
+
+    def test_a_list_nested_two_deep_is_refused(self) -> None:
+        """The guard reads one level, and one level is where a container shows."""
+        with pytest.raises(TypeError, match="text column cannot hold"):
+            detail_fields.to_text([[["Joel Coen"]]])
+
+
+class TestARefusedWriteLeavesNothingBehind:
+    """A codec that raises mid-write must not half-save the item.
+
+    ``_save_detail_table`` runs after the ``content_items`` row is written
+    and inside the same connection, so the raise crosses a transaction that
+    has already inserted. A commit that never happens is the only thing
+    keeping the library from growing an item with no detail row — which no
+    later sync would repair, because the upsert would find the row by its
+    external id and take the detail path fill-only from there.
+    """
+
+    def test_a_new_item_is_not_left_without_its_detail_row(
+        self, tmp_path: Path
+    ) -> None:
+        """Nothing at all is stored for the item whose write raised."""
+        db = SQLiteDB(tmp_path / "refused.db")
+
+        with pytest.raises(TypeError, match="text column cannot hold"):
+            db.save_content_item(
+                ContentItem(
+                    id="object-isbn",
+                    title="Dune",
+                    content_type=ContentType.BOOK,
+                    status=ConsumptionStatus.UNREAD,
+                    metadata={"isbn": {"value": "9780441013593"}},
+                )
+            )
+
+        with db.connection() as conn:
+            items = conn.execute("SELECT COUNT(*) AS n FROM content_items").fetchone()
+            details = conn.execute("SELECT COUNT(*) AS n FROM book_details").fetchone()
+        assert (items["n"], details["n"]) == (0, 0)
+
+    def test_a_stored_item_is_untouched_by_a_refused_re_sync(
+        self, tmp_path: Path
+    ) -> None:
+        """The row a good sync wrote survives a later bad one unchanged."""
+        db = SQLiteDB(tmp_path / "refused-resync.db")
+        db_id = db.save_content_item(
+            ContentItem(
+                id="dune",
+                title="Dune",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+                metadata={"isbn": "9780441013593"},
+            )
+        )
+
+        with pytest.raises(TypeError, match="text column cannot hold"):
+            db.save_content_item(
+                ContentItem(
+                    id="dune",
+                    title="Dune Reprint",
+                    content_type=ContentType.BOOK,
+                    status=ConsumptionStatus.COMPLETED,
+                    metadata={"isbn": {"value": "9780441013593"}},
+                )
+            )
+
+        stored = db.get_content_item(db_id)
+        assert stored is not None
+        assert stored.title == "Dune"
+        assert stored.status == ConsumptionStatus.UNREAD
+        assert stored.metadata["isbn"] == "9780441013593"
+
+    def test_the_creator_column_refuses_the_same_shapes(self, tmp_path: Path) -> None:
+        """A CREATOR column shares the codec, so it shares the refusal.
+
+        The creator is taken from the item's metadata whenever ``author`` is
+        empty, which is how GOG's ``developers`` reaches ``developer`` — the
+        one alias in the declaration that a remote API returns as objects.
+        """
+        db = SQLiteDB(tmp_path / "object-developer.db")
+
+        with pytest.raises(TypeError, match="text column cannot hold"):
+            db.save_content_item(
+                ContentItem(
+                    id="1207658924",
+                    title="Cyberpunk 2077",
+                    content_type=ContentType.VIDEO_GAME,
+                    status=ConsumptionStatus.UNREAD,
+                    metadata={"developers": [{"name": "CD Projekt Red"}]},
+                )
+            )
+
+        with db.connection() as conn:
+            items = conn.execute("SELECT COUNT(*) AS n FROM content_items").fetchone()
+        assert items["n"] == 0
+
+
 class TestNullInAListOfNamesRegression:
     """A null among a plugin's list of names was stored as the text "None".
 

@@ -744,6 +744,47 @@ class TestGogPluginFetch:
 
         assert "platforms" not in items[0].metadata
 
+    @patch("src.ingestion.sources.gog.gog.get_multiple_product_details")
+    @patch("src.ingestion.sources.gog.gog.get_wishlist_product_ids")
+    @patch("src.ingestion.sources.gog.gog.get_owned_games")
+    @patch("src.ingestion.sources.gog.gog.refresh_access_token")
+    def test_company_shapes_all_reduce_to_names(
+        self,
+        mock_refresh: Mock,
+        mock_owned: Mock,
+        mock_wishlist: Mock,
+        mock_details: Mock,
+    ) -> None:
+        """Every shape GOG names a company in leaves the plugin as text.
+
+        ``developer`` and ``publisher`` are text columns, which refuse a
+        mapping outright, so a product describing its companies as objects
+        rather than bare names has to be reduced here or its whole row fails
+        the sync. A bare name, an object, a nameless object and a lone
+        object standing in for the list are all covered because the field is
+        the same one ``genres`` is, and ``genres`` arrives in all of them.
+        """
+        mock_refresh.return_value = {
+            "access_token": "access",
+            "refresh_token": "refresh",
+        }
+        mock_owned.return_value = []
+        mock_wishlist.return_value = [200]
+        mock_details.return_value = {
+            200: {
+                "id": 200,
+                "title": "Wishlisted Game",
+                "developers": ["Bare Name", {"name": "Object Name"}, {"slug": "no"}],
+                "publishers": {"name": "Lone Object"},
+            }
+        }
+
+        plugin = GogPlugin()
+        items = list(plugin.fetch({"refresh_token": "token"}))
+
+        assert items[0].metadata["developers"] == ["Bare Name", "Object Name"]
+        assert items[0].metadata["publishers"] == ["Lone Object"]
+
     @patch("src.ingestion.sources.gog.gog.get_owned_games")
     @patch("src.ingestion.sources.gog.gog.refresh_access_token")
     def test_progress_callback(
