@@ -629,10 +629,13 @@ class SQLiteDB:
             db_id: Content item database ID
             item: ContentItem to save
             content_type: Content type as string
+
+        Raises:
+            KeyError: For a content type with no field declaration, like
+                :meth:`_write_manual_metadata` — every type has one, and a
+                skipped write would lose the item's detail row in silence.
         """
-        spec = DETAIL_FIELDS.get(content_type)
-        if spec is None:
-            return
+        spec = DETAIL_FIELDS[content_type]
 
         metadata = item.metadata or {}
         table = spec.table
@@ -1139,31 +1142,40 @@ class SQLiteDB:
 
         Returns:
             ContentItem object
+
+        Raises:
+            KeyError: For a content type with no field declaration, like
+                :meth:`_save_detail_table` — every type has one, and reading
+                the row without it would report a stored item as carrying no
+                detail at all.
         """
         content_type = ContentType(row["content_type"])
         metadata: dict[str, Any] = {}
         author: str | None = None
 
-        spec = DETAIL_FIELDS.get(content_type.value)
-        if spec:
-            for detail_field in spec.fields:
-                column = detail_field.column
-                if column is None:
-                    continue
-                raw = row[detail_field.select_alias or column]
-                if detail_field.kind is FieldKind.CREATOR:
-                    author = raw
-                    continue
-                value = detail_field.codec.load(raw)
-                if value:
-                    metadata[detail_field.metadata_key] = value
+        spec = DETAIL_FIELDS[content_type.value]
+        for detail_field in spec.fields:
+            column = detail_field.column
+            if column is None:
+                continue
+            raw = row[detail_field.select_alias or column]
+            if detail_field.kind is FieldKind.CREATOR:
+                author = raw
+                continue
+            value = detail_field.codec.load(raw)
+            if value:
+                metadata[detail_field.metadata_key] = value
 
-            # The leftover blob last: a key it carries is one no column claimed.
-            if blob := row[spec.metadata_alias]:
-                try:
-                    metadata.update(json.loads(blob))
-                except (json.JSONDecodeError, TypeError):
-                    pass
+        # The leftover blob last: a key it carries is one no column claimed.
+        # A blob that is not an object carries no keys, and reaches the
+        # reader because the migration leaves such a row alone as well.
+        if blob := row[spec.metadata_alias]:
+            try:
+                leftover = json.loads(blob)
+            except (json.JSONDecodeError, TypeError):
+                leftover = None
+            if isinstance(leftover, dict):
+                metadata.update(leftover)
 
         # Parse date_completed
         date_completed = None
