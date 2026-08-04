@@ -25,6 +25,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 # the project pins one.
 _FORBIDDEN_FRAGMENTS = (
     "pip install " + "recommendinator",
+    'pip install "' + "recommendinator",
     "pip install " + ".",
     "pip install " + "-e",
 )
@@ -36,28 +37,33 @@ _EXEMPTIONS = frozenset({"CHANGELOG.md", "pnpm-lock.yaml", "uv.lock"})
 _CORRECT_COMMAND = "uv sync --locked --extra ai"
 
 
-def _shipped_files() -> list[tuple[str, Path]]:
-    """Return the files git would commit: tracked, plus untracked and unignored."""
+def _shipped_files(root: Path = _REPO_ROOT) -> list[tuple[str, Path]]:
+    """Return the tracked files, which are the ones a clone receives.
+
+    Tracked only: an untracked scratch file is one developer's, and scanning
+    it would fail the suite on their machine alone.
+    """
     listing = subprocess.run(
-        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
-        cwd=_REPO_ROOT,
+        ["git", "ls-files", "--cached", "-z"],
+        cwd=root,
         capture_output=True,
         check=True,
         text=True,
     ).stdout
     return [
-        (name, _REPO_ROOT / name)
+        (name, root / name)
         for name in listing.split("\0")
         if name and name not in _EXEMPTIONS
     ]
 
 
 def _offences(name: str, path: Path) -> list[str]:
-    """Return ``file:line`` for every line instructing a pip install."""
-    try:
-        text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return []
+    """Return ``file:line`` for every line instructing a pip install.
+
+    A file that cannot be read raises rather than reporting nothing, because
+    an unreadable file and a clean one would otherwise look the same.
+    """
+    text = path.read_text(encoding="utf-8", errors="replace")
     return [
         f"{name}:{number}"
         for number, line in enumerate(text.splitlines(), start=1)
@@ -104,3 +110,28 @@ class TestInstallInstructions:
         offender.write_text(f"Install with: {fragment}\n", encoding="utf-8")
 
         assert _offences("README.md", offender) == ["README.md:1"]
+
+    def test_a_file_the_scan_cannot_read_is_not_reported_as_clean(
+        self, tmp_path: Path
+    ) -> None:
+        """An unreadable file raises, rather than scoring the same as a clean one."""
+        with pytest.raises(OSError):
+            _offences("gone.md", tmp_path / "gone.md")
+
+    def test_an_untracked_file_is_left_out_of_the_scan(self, tmp_path: Path) -> None:
+        """A scratch file lying in a checkout is that developer's, not the repo's.
+
+        Scanning untracked files made the guard's verdict depend on what
+        happened to be in one working tree, so it could fail on one machine
+        and pass on another.
+        """
+        subprocess.run(
+            ["git", "init", "-q"], cwd=tmp_path, capture_output=True, check=True
+        )
+        (tmp_path / "tracked.md").write_text("nothing to see\n", encoding="utf-8")
+        (tmp_path / "scratch.md").write_text("nothing to see\n", encoding="utf-8")
+        subprocess.run(
+            ["git", "add", "tracked.md"], cwd=tmp_path, capture_output=True, check=True
+        )
+
+        assert [name for name, _ in _shipped_files(tmp_path)] == ["tracked.md"]
