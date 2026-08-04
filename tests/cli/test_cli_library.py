@@ -599,6 +599,81 @@ class TestLibraryShow:
         assert parsed["seasons_watched"] is None
 
 
+def _labelled_rows(output: str, label: str) -> list[str]:
+    """The rendered table rows whose first cell is ``label``."""
+    return [line for line in output.splitlines() if line.startswith(f"| {label} ")]
+
+
+class TestLibraryShowCreatorLabelRegression:
+    """`library show` labelled every type's creator "Author".
+
+    Symptom: a movie rendered "Author | Denis Villeneuve" and a game
+    "Author | Larian Studios". Root cause: the detail row was hardcoded to
+    "Author", which only looked right because non-book items used to read back
+    with no author at all, so the row said "N/A". Fix: take the label from the
+    type's declared creator column in ``DETAIL_FIELDS``.
+    """
+
+    # The label each type's creator row carries, which is that type's
+    # ``creator_column`` in title case. Parametrizing over ``ContentType``
+    # rather than these keys means a type added without an entry fails here
+    # instead of raising KeyError out of ``library show``.
+    labels = {
+        ContentType.BOOK: "Author",
+        ContentType.MOVIE: "Director",
+        ContentType.TV_SHOW: "Creator",
+        ContentType.VIDEO_GAME: "Developer",
+    }
+
+    @pytest.mark.parametrize("content_type", list(ContentType))
+    def test_creator_row_is_labelled_for_the_content_type(
+        self,
+        cli_runner: CliRunner,
+        content_type: ContentType,
+    ) -> None:
+        """Each type names its creator the way a reader of that type would."""
+        label = self.labels[content_type]
+        item = _make_item(
+            db_id=7, title="Fixture", author="Ada Lovelace", content_type=content_type
+        )
+        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage.get_content_item.return_value = item
+
+        result = _invoke_with_mocks(
+            cli_runner, ["library", "show", "--id", "7"], mock_storage
+        )
+
+        assert result.exit_code == 0
+        creator_rows = _labelled_rows(result.output, label)
+        assert len(creator_rows) == 1
+        assert "Ada Lovelace" in creator_rows[0]
+        for other in set(self.labels.values()) - {label}:
+            assert _labelled_rows(result.output, other) == []
+
+    def test_creator_row_keeps_its_label_with_no_creator_stored(
+        self, cli_runner: CliRunner
+    ) -> None:
+        """An unknown director is still a director, not an author.
+
+        The label comes from the content type, so it does not fall back to
+        "Author" for the empty row that hid this bug in the first place.
+        """
+        item = _make_item(
+            db_id=7, title="Fixture", author=None, content_type=ContentType.MOVIE
+        )
+        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage.get_content_item.return_value = item
+
+        result = _invoke_with_mocks(
+            cli_runner, ["library", "show", "--id", "7"], mock_storage
+        )
+
+        assert result.exit_code == 0
+        assert len(_labelled_rows(result.output, "Director")) == 1
+        assert "N/A" in _labelled_rows(result.output, "Director")[0]
+        assert _labelled_rows(result.output, "Author") == []
+
+
 class TestLibraryEdit:
     """Tests for library edit command."""
 
