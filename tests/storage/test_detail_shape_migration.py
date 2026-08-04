@@ -1,6 +1,6 @@
 """Tests for the one-time migration of stranded detail-row shapes.
 
-Two shapes were written by code that has since been corrected, and neither
+Three shapes were written by code that has since been corrected, and none
 self-repairs on a re-sync, so ``create_schema`` rewrites them once on init:
 
 - A show written before the ``seasons`` column accepted ``total_seasons`` kept
@@ -9,6 +9,10 @@ self-repairs on a re-sync, so ``create_schema`` rewrites them once on init:
   ``src/utils/series.py`` prefers the blob's copy over the column: once a sync
   raises the column the recommender keeps reading the stale lower number,
   which shows up as a completed show reappearing as in-progress.
+- GOG wrote ``developers`` and ``publishers`` before either was an alias of a
+  column, so both landed in the blob in whatever shape the API used, objects
+  included. The read path merges the blob into the item it returns and a text
+  column refuses an object, so re-saving such an item raises for good.
 - GOG wrote ``platforms`` as a dict of per-platform booleans where every other
   producer writes a list of names. ``platforms`` is neither mergeable nor
   monotonic, so ``_save_detail_table`` is fill-only for it and a column already
@@ -28,7 +32,10 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+import pytest
+
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.models.detail_fields import DETAIL_FIELDS, FieldKind
 from src.storage import schema
 from src.storage.sqlite_db import SQLiteDB
 from src.utils.item_serialization import item_to_dict
@@ -164,6 +171,106 @@ def _seed_game(
     return db_id
 
 
+def _seed_stranded_companies(
+    db: SQLiteDB,
+    *,
+    metadata: str,
+    developer: str | None = None,
+    publisher: str | None = None,
+    item_id: str = "1207658924",
+    title: str = "The Witcher",
+) -> int:
+    """Save a GOG game, then strand *metadata* beside its company columns."""
+    db_id = db.save_content_item(
+        ContentItem(
+            id=item_id,
+            title=title,
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+            source="gog",
+        )
+    )
+    with db.connection() as conn:
+        conn.execute(
+            "UPDATE video_game_details SET developer = ?, publisher = ?, metadata = ?"
+            " WHERE content_item_id = ?",
+            (developer, publisher, metadata, db_id),
+        )
+        conn.commit()
+    return db_id
+
+
+def _game_companies(db: SQLiteDB, db_id: int) -> tuple[Any, Any, Any]:
+    """Return the stored (developer, publisher, metadata blob) for a game."""
+    with db.connection() as conn:
+        row = conn.execute(
+            "SELECT developer, publisher, metadata FROM video_game_details"
+            " WHERE content_item_id = ?",
+            (db_id,),
+        ).fetchone()
+    blob = row["metadata"]
+    return row["developer"], row["publisher"], json.loads(blob) if blob else None
+
+
+def _insert_legacy_game_row(
+    db_path: Path,
+    *,
+    external_id: str,
+    title: str,
+    metadata: str,
+    developer: str | None = None,
+    publisher: str | None = None,
+    platforms: str | None = None,
+) -> int:
+    """Insert a game and its pre-alias detail row over a raw connection.
+
+    The rows the company fold exists for were written by a build with no
+    ``developers`` alias, so the whole row is written in SQL rather than
+    through a write path that can no longer produce it.
+    """
+    conn = sqlite3.connect(db_path)
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO content_items"
+            " (user_id, external_id, title, content_type, status, source)"
+            " VALUES (1, ?, ?, 'video_game', 'unread', 'gog')",
+            (external_id, title),
+        )
+        db_id = cursor.lastrowid
+        assert db_id is not None
+        cursor.execute(
+            "INSERT INTO video_game_details"
+            " (content_item_id, developer, publisher, platforms, metadata)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (db_id, developer, publisher, platforms, metadata),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return db_id
+
+
+def _game_companies_without_opening(db_path: Path, db_id: int) -> tuple[Any, Any, Any]:
+    """Read a game's companies over a raw connection, running no migration.
+
+    The companion of :func:`_show_detail_without_opening`, for asserting a
+    seeded row really is unrepaired before the open that repairs it.
+    """
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT developer, publisher, metadata FROM video_game_details"
+            " WHERE content_item_id = ?",
+            (db_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    blob = row["metadata"]
+    return row["developer"], row["publisher"], json.loads(blob) if blob else None
+
+
 def _seed_movie(db: SQLiteDB, *, blob: dict[str, Any]) -> int:
     """Save a movie, then strand *blob* beside its empty detail columns."""
     db_id = db.save_content_item(
@@ -217,6 +324,25 @@ def _show_detail(db: SQLiteDB, db_id: int) -> tuple[Any, dict[str, Any] | None]:
             "SELECT seasons, metadata FROM tv_show_details WHERE content_item_id = ?",
             (db_id,),
         ).fetchone()
+    blob = row["metadata"]
+    return row["seasons"], json.loads(blob) if blob else None
+
+
+def _show_detail_without_opening(db_path: Path, db_id: int) -> tuple[Any, Any]:
+    """Read a show's row over a raw connection, running no migration.
+
+    ``SQLiteDB`` migrates on construction, so the helpers above would repair
+    the very row a caller is asking to see unrepaired.
+    """
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT seasons, metadata FROM tv_show_details WHERE content_item_id = ?",
+            (db_id,),
+        ).fetchone()
+    finally:
+        conn.close()
     blob = row["metadata"]
     return row["seasons"], json.loads(blob) if blob else None
 
@@ -503,6 +629,432 @@ class TestStrandedTotalSeasonsMigration:
         assert _show_detail(db, stranded_id) == (4, None)
 
 
+class TestStrandedCompanyNamesMigration:
+    """A blob naming the companies folds onto the columns that now claim it."""
+
+    def test_object_shaped_names_land_on_their_columns(self, tmp_path: Path) -> None:
+        """The names reach the columns and the stranded keys are gone.
+
+        The blob held the only copy of either name, so this recovers a
+        developer the library had and could not read, rather than only
+        clearing a duplicate.
+        """
+        db_path = tmp_path / "test.db"
+        db_id = _seed_stranded_companies(
+            SQLiteDB(db_path),
+            metadata=json.dumps(
+                {
+                    "developers": [{"name": "CD Projekt Red"}],
+                    "publishers": [{"name": "CD Projekt"}],
+                    "gog_product_id": "1207658924",
+                }
+            ),
+        )
+
+        db = SQLiteDB(db_path)
+
+        assert _game_companies(db, db_id) == (
+            "CD Projekt Red",
+            "CD Projekt",
+            {"gog_product_id": "1207658924"},
+        )
+
+    def test_a_stored_game_can_be_saved_again_regression(self, tmp_path: Path) -> None:
+        """The item read back from storage re-saves without raising.
+
+        Bug reported: a GOG game synced before ``developers`` was an alias of
+        the ``developer`` column stayed queued for enrichment for good, every
+        run recording the same failure against whichever provider ran.
+
+        Root cause: the blob held GOG's object shape, the read path merges the
+        blob into the item it returns, and a text column refuses an object —
+        so every write of that item raised before it reached the fill-only
+        check that would have left the populated column alone.
+
+        Fix: the names fold onto the columns and the keys are dropped on open,
+        so the shape no producer writes any more stops being read either.
+        """
+        db_path = tmp_path / "test.db"
+        db_id = _seed_stranded_companies(
+            SQLiteDB(db_path),
+            metadata=json.dumps({"publishers": [{"name": "CD Projekt"}]}),
+        )
+
+        db = SQLiteDB(db_path)
+
+        stored = db.get_content_item(db_id)
+        assert stored is not None
+        assert db.save_content_item(stored) == db_id
+        assert _game_companies(db, db_id)[1] == "CD Projekt"
+
+    def test_a_name_enrichment_already_wrote_is_never_replaced(
+        self, tmp_path: Path
+    ) -> None:
+        """The fold is fill-only, and the stranded key goes either way.
+
+        RAWG writes the singular keys, so a column can already hold a name
+        chosen over GOG's — and the blob copy must not overwrite it while
+        still ceasing to exist.
+        """
+        db_path = tmp_path / "test.db"
+        db_id = _seed_stranded_companies(
+            SQLiteDB(db_path),
+            developer="CD Projekt Red",
+            publisher="CD Projekt",
+            metadata=json.dumps(
+                {"developers": [{"name": "Stale Studio"}], "publishers": ["Stale Co"]}
+            ),
+        )
+
+        db = SQLiteDB(db_path)
+
+        assert _game_companies(db, db_id) == ("CD Projekt Red", "CD Projekt", None)
+
+    def test_bare_names_fold_the_same_way(self, tmp_path: Path) -> None:
+        """GOG named companies in strings too, and several of them at once.
+
+        Two developers join into the one name the column holds, the way the
+        write path joins them.
+        """
+        db_path = tmp_path / "test.db"
+        db_id = _seed_stranded_companies(
+            SQLiteDB(db_path),
+            metadata=json.dumps({"developers": ["CD Projekt Red", "Saber"]}),
+        )
+
+        db = SQLiteDB(db_path)
+
+        assert _game_companies(db, db_id) == ("CD Projekt Red, Saber", None, None)
+
+    def test_an_object_naming_nothing_leaves_the_column_fillable(
+        self, tmp_path: Path
+    ) -> None:
+        """A key with no name in it is dropped without writing anything.
+
+        ``developer`` is fill-only, so writing an empty string rather than
+        leaving it NULL would lock the game out of ever recording one.
+        """
+        db_path = tmp_path / "test.db"
+        db_id = _seed_stranded_companies(
+            SQLiteDB(db_path), metadata=json.dumps({"developers": [{"slug": "cdpr"}]})
+        )
+
+        db = SQLiteDB(db_path)
+        resynced_id = db.save_content_item(
+            ContentItem(
+                id="1207658924",
+                title="The Witcher",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.UNREAD,
+                source="gog",
+                metadata={"developers": ["CD Projekt Red"]},
+            )
+        )
+
+        assert resynced_id == db_id
+        assert _game_companies(db, db_id) == ("CD Projekt Red", None, None)
+
+    def test_a_later_sync_of_the_alias_does_not_restrand_the_names(
+        self, tmp_path: Path
+    ) -> None:
+        """GOG still writes the plural keys, and they now land on the columns."""
+        db_path = tmp_path / "test.db"
+        db_id = _seed_stranded_companies(
+            SQLiteDB(db_path), metadata=json.dumps({"developers": ["CD Projekt Red"]})
+        )
+
+        db = SQLiteDB(db_path)
+        db.save_content_item(
+            ContentItem(
+                id="1207658924",
+                title="The Witcher",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.UNREAD,
+                source="gog",
+                metadata={"publishers": ["CD Projekt"]},
+            )
+        )
+
+        assert _game_companies(db, db_id) == ("CD Projekt Red", "CD Projekt", None)
+
+    def test_second_init_leaves_the_migrated_row_alone(self, tmp_path: Path) -> None:
+        """Running the migration twice changes nothing the first pass did."""
+        db_path = tmp_path / "test.db"
+        db_id = _seed_stranded_companies(
+            SQLiteDB(db_path),
+            metadata=json.dumps({"developers": [{"name": "CD Projekt Red"}]}),
+        )
+        repaired = _whole_detail_row(SQLiteDB(db_path), "video_game_details", db_id)
+
+        db = SQLiteDB(db_path)
+
+        assert repaired["developer"] == "CD Projekt Red"
+        assert _whole_detail_row(db, "video_game_details", db_id) == repaired
+
+    def test_the_key_name_inside_a_value_does_not_strand_the_row(
+        self, tmp_path: Path
+    ) -> None:
+        """The ``LIKE`` prefilter matches text anywhere, and only prefilters."""
+        db_path = tmp_path / "test.db"
+        blob = {"notes": "the publishers of this game are disputed"}
+        db_id = _seed_stranded_companies(SQLiteDB(db_path), metadata=json.dumps(blob))
+
+        db = SQLiteDB(db_path)
+
+        assert _game_companies(db, db_id) == (None, None, blob)
+
+    def test_metadata_that_is_not_json_cannot_block_startup(
+        self, tmp_path: Path
+    ) -> None:
+        """A blob the migration cannot read is skipped, not raised on.
+
+        ``create_schema`` runs on every open, so a row it chokes on would
+        make the database unopenable rather than merely unrepaired.
+        """
+        db_path = tmp_path / "test.db"
+        seed = SQLiteDB(db_path)
+        broken_id = _seed_stranded_companies(
+            seed, metadata="not json, but developers is in it"
+        )
+        stranded_id = _seed_stranded_companies(
+            seed,
+            metadata=json.dumps({"publishers": ["CD Projekt"]}),
+            item_id="1207658925",
+            title="Stardew Valley",
+        )
+
+        db = SQLiteDB(db_path)
+
+        with db.connection() as conn:
+            row = conn.execute(
+                "SELECT metadata FROM video_game_details WHERE content_item_id = ?",
+                (broken_id,),
+            ).fetchone()
+        assert row["metadata"] == "not json, but developers is in it"
+        assert _game_companies(db, stranded_id) == (None, "CD Projekt", None)
+
+
+class TestALegacyGogRowSurvivesTheUpgrade:
+    """The upgrade path: a row a previous release wrote, opened by this one.
+
+    Nothing here goes through the corrected write path on the way in. The
+    database is created by an earlier open and the detail row is then written
+    in SQL exactly as a build with no ``developers`` alias left it, which is
+    the only state the fold has to answer for.
+    """
+
+    def test_a_row_written_before_the_aliases_reads_and_saves_regression(
+        self, tmp_path: Path
+    ) -> None:
+        """The item read back out of storage saves, twice, without raising.
+
+        Bug reported: a GOG library synced by an earlier release could not be
+        saved again. Enrichment recorded a provider failure for every such
+        game on every run, and the game stayed queued for good.
+
+        Root cause: the plural spellings were free-form keys then, so the blob
+        holds GOG's object shape. The read path merges the blob into the item
+        it returns, and ``to_text`` refuses an object, so the write raised
+        before it could ever store anything that would end the cycle.
+
+        Fix: ``_fold_stranded_company_names`` folds the names onto the columns
+        and drops the keys when the database is opened, so the item the reader
+        hands back no longer carries a shape the writer refuses.
+        """
+        db_path = tmp_path / "legacy.db"
+        SQLiteDB(db_path)
+        legacy_blob = {
+            "gog_product_id": "1207658924",
+            "developers": [{"name": "CD Projekt Red"}],
+            "publishers": [{"name": "CD Projekt"}],
+        }
+        db_id = _insert_legacy_game_row(
+            db_path,
+            external_id="1207658924",
+            title="The Witcher",
+            metadata=json.dumps(legacy_blob),
+        )
+        assert _game_companies_without_opening(db_path, db_id) == (
+            None,
+            None,
+            legacy_blob,
+        )
+
+        db = SQLiteDB(db_path)
+
+        stored = db.get_content_item(db_id)
+        assert stored is not None
+        assert stored.author == "CD Projekt Red"
+        assert db.save_content_item(stored) == db_id
+        assert db.save_content_item(db.get_content_item(db_id)) == db_id
+        assert _game_companies(db, db_id) == (
+            "CD Projekt Red",
+            "CD Projekt",
+            {"gog_product_id": "1207658924"},
+        )
+
+    def test_the_same_row_still_cannot_be_saved_with_the_fold_stubbed_out(
+        self, tmp_path: Path
+    ) -> None:
+        """The fold is what ends the failure, not anything else on the path.
+
+        The test above passes because the fold ran. Held out of one open, the
+        row reaches the writer in the shape it was reported in and raises, so
+        the repair is doing the work the regression above credits it with.
+        """
+        db_path = tmp_path / "unfolded.db"
+        SQLiteDB(db_path)
+        db_id = _insert_legacy_game_row(
+            db_path,
+            external_id="1207658924",
+            title="The Witcher",
+            metadata=json.dumps({"developers": [{"name": "CD Projekt Red"}]}),
+        )
+
+        with patch.object(schema, "_fold_stranded_company_names"):
+            db = SQLiteDB(db_path)
+            stored = db.get_content_item(db_id)
+
+        assert stored is not None
+        with pytest.raises(TypeError, match="text column cannot hold"):
+            db.save_content_item(stored)
+
+    def test_each_company_column_is_filled_on_its_own(self, tmp_path: Path) -> None:
+        """A name enrichment wrote stands while the other column still fills.
+
+        The two columns share one statement, so a fold that weighed them
+        together would either overwrite the developer or decline the
+        publisher.
+        """
+        db_path = tmp_path / "legacy-mixed.db"
+        SQLiteDB(db_path)
+        db_id = _insert_legacy_game_row(
+            db_path,
+            external_id="1207658924",
+            title="The Witcher",
+            developer="CD Projekt Red",
+            metadata=json.dumps(
+                {
+                    "developers": [{"name": "Stale Studio"}],
+                    "publishers": [{"name": "CD Projekt"}],
+                }
+            ),
+        )
+
+        db = SQLiteDB(db_path)
+
+        assert _game_companies(db, db_id) == ("CD Projekt Red", "CD Projekt", None)
+
+    def test_a_row_stranded_in_both_gog_shapes_is_repaired_at_once(
+        self, tmp_path: Path
+    ) -> None:
+        """One legacy GOG row carries both shapes, and one open ends both.
+
+        The same sync wrote the flag dict and the free-form companies, so the
+        two passes meet on the row a real upgrade finds rather than on one
+        seeded per shape.
+        """
+        db_path = tmp_path / "legacy-both.db"
+        SQLiteDB(db_path)
+        db_id = _insert_legacy_game_row(
+            db_path,
+            external_id="1207658924",
+            title="The Witcher",
+            platforms=_FLAGS_WINDOWS_AND_LINUX,
+            metadata=json.dumps({"developers": ["CD Projekt Red"]}),
+        )
+
+        db = SQLiteDB(db_path)
+
+        assert _game_companies(db, db_id) == ("CD Projekt Red", None, None)
+        assert json.loads(_stored_platforms(db, db_id)) == ["Windows", "Linux"]
+
+
+class TestWhatTheCompanyFoldDeclinesToFold:
+    """A key it cannot read a name out of still stops being a stranded key.
+
+    The blob is whatever an API said years ago, so the fold meets keys with
+    nothing under them and blobs that are not objects at all. Neither may
+    write a column and neither may raise, because this runs on every open.
+    """
+
+    @pytest.mark.parametrize(
+        "blob",
+        [{"developers": None}, {"publishers": []}, {"developers": [{}]}],
+        ids=["null", "empty_list", "object_naming_nothing"],
+    )
+    def test_a_key_with_no_name_under_it_leaves_the_columns_fillable(
+        self, tmp_path: Path, blob: dict[str, Any]
+    ) -> None:
+        """The key goes and both columns stay NULL, not empty strings.
+
+        Both columns are fill-only on the write path, so an empty string
+        written here would lock the game out of ever recording a company.
+        """
+        db_path = tmp_path / "empty-keys.db"
+        SQLiteDB(db_path)
+        db_id = _insert_legacy_game_row(
+            db_path,
+            external_id="1207658924",
+            title="The Witcher",
+            metadata=json.dumps(blob),
+        )
+
+        db = SQLiteDB(db_path)
+
+        assert _game_companies(db, db_id) == (None, None, None)
+
+    def test_a_blob_that_is_not_an_object_is_left_exactly_as_it_was(
+        self, tmp_path: Path
+    ) -> None:
+        """A JSON array naming the key has no keys, so there is nothing to fold."""
+        db_path = tmp_path / "array-blob.db"
+        SQLiteDB(db_path)
+        db_id = _insert_legacy_game_row(
+            db_path,
+            external_id="1207658924",
+            title="The Witcher",
+            metadata=json.dumps(["developers"]),
+        )
+
+        db = SQLiteDB(db_path)
+
+        assert _game_companies(db, db_id) == (None, None, ["developers"])
+
+    def test_two_stranded_duplicates_merge_into_a_row_that_saves(
+        self, tmp_path: Path
+    ) -> None:
+        """Each row folds its own names before the merge weighs them.
+
+        The blob merge lets an existing key win, so a merge running first
+        would carry a stranded company key into the surviving row and leave
+        the merged game raising on every save — the same ordering the season
+        count needs, on the pass that drops a key rather than copying one.
+        """
+        db_path = tmp_path / "stranded-duplicates.db"
+        SQLiteDB(db_path)
+        _insert_legacy_game_row(
+            db_path,
+            external_id="1207658924",
+            title="The Witcher",
+            metadata=json.dumps({"developers": [{"name": "CD Projekt Red"}]}),
+        )
+        _insert_legacy_game_row(
+            db_path,
+            external_id="gog:1207658924",
+            title="The Witcher",
+            metadata=json.dumps({"publishers": [{"name": "CD Projekt"}]}),
+        )
+
+        db = SQLiteDB(db_path)
+
+        games = db.get_content_items(content_type=ContentType.VIDEO_GAME)
+        assert len(games) == 1
+        assert games[0].author == "CD Projekt Red"
+        assert "developers" not in games[0].metadata
+        assert db.save_content_item(games[0]) is not None
+
+
 class TestStrandedPlatformFlagsMigration:
     """The flag dict becomes the list of names every other producer writes."""
 
@@ -757,14 +1309,15 @@ class TestStrandedPlatformFlagsMigration:
         assert rows[0]["platform"] == ""
 
 
-class TestOnlyTheTwoShapesAreRepaired:
+class TestOnlyTheDeclaredShapesAreRepaired:
     """No other blob key moves, and no other detail table is rewritten.
 
-    The pass reaches ``total_seasons`` on ``tv_show_details`` and ``platforms``
-    on ``video_game_details``, and nothing else. A blob key duplicating any
-    other column is left where it is, so a row this pass has no rule for comes
-    back exactly as it was written — including on every later open, since a
-    row it declines to repair stays in the shape it keeps seeing.
+    The pass reaches ``total_seasons`` on ``tv_show_details``, and
+    ``developers``, ``publishers`` and ``platforms`` on
+    ``video_game_details``. A blob key duplicating any other column is left
+    where it is, so a row this pass has no rule for comes back exactly as it
+    was written — including on every later open, since a row it declines to
+    repair stays in the shape it keeps seeing.
     """
 
     def test_a_movie_duplicating_its_columns_in_the_blob_is_left_alone(
@@ -818,6 +1371,33 @@ class TestOnlyTheTwoShapesAreRepaired:
             ).fetchone()
         assert (row["seasons"], row["release_year"], row["episodes"]) == (5, None, None)
         assert json.loads(row["metadata"]) == {"year": 2008, "episodes": 62}
+
+    def test_a_game_blob_key_other_than_the_companies_is_left_alone(
+        self, tmp_path: Path
+    ) -> None:
+        """Even on the table the company fold reads, only two keys move.
+
+        ``release_year`` duplicates a column of its own, and the row is
+        selected by the scan because the blob names a company beside it.
+        """
+        db_path = tmp_path / "test.db"
+        db_id = _seed_stranded_companies(
+            SQLiteDB(db_path),
+            metadata=json.dumps(
+                {"developers": ["CD Projekt Red"], "release_year": 2007}
+            ),
+        )
+
+        db = SQLiteDB(db_path)
+
+        with db.connection() as conn:
+            row = conn.execute(
+                "SELECT developer, release_year, metadata FROM video_game_details"
+                " WHERE content_item_id = ?",
+                (db_id,),
+            ).fetchone()
+        assert (row["developer"], row["release_year"]) == ("CD Projekt Red", None)
+        assert json.loads(row["metadata"]) == {"release_year": 2007}
 
     def test_a_book_blob_duplicating_its_columns_is_left_alone(
         self, tmp_path: Path
@@ -1196,11 +1776,139 @@ class TestRepairRunsBeforeDeduplication:
         assert calls == ["normalize", "repair", "dedup"]
 
 
-class TestBothShapesInOnePass:
+class TestTheRepairAndTheMergeShareOneTransaction:
+    """A failure in the merge discards the repair rather than committing it.
+
+    Repairing before the merge is only correct while the two are one unit of
+    work: ``create_schema`` opens an implicit transaction on its first write
+    and commits once at the end, and any exception closes the connection with
+    nothing committed. A commit added between the passes — or a connection
+    running without implicit transactions — would leave a database repaired
+    but unmerged, and nothing would say so.
+    """
+
+    def test_a_failure_in_the_merge_leaves_the_repair_unapplied(
+        self, tmp_path: Path
+    ) -> None:
+        """The stranded row is exactly as it was before the open that raised."""
+        db_path = tmp_path / "test.db"
+        db_id = _seed_show(SQLiteDB(db_path), seasons=None, blob={"total_seasons": 5})
+
+        with (
+            patch.object(
+                schema, "_deduplicate_inline", side_effect=OSError("disk failure")
+            ),
+            pytest.raises(OSError),
+        ):
+            SQLiteDB(db_path)
+
+        assert _show_detail_without_opening(db_path, db_id) == (
+            None,
+            {"total_seasons": 5},
+        )
+
+    def test_a_failure_in_the_merge_leaves_the_company_fold_unapplied(
+        self, tmp_path: Path
+    ) -> None:
+        """The fold writes columns and rewrites a blob, and neither survives.
+
+        It is the one pass that drops a key, so a half-applied run would lose
+        the only copy of a name rather than merely leave a duplicate.
+        """
+        db_path = tmp_path / "test.db"
+        blob = {"developers": [{"name": "CD Projekt Red"}]}
+        SQLiteDB(db_path)
+        db_id = _insert_legacy_game_row(
+            db_path,
+            external_id="1207658924",
+            title="The Witcher",
+            metadata=json.dumps(blob),
+        )
+
+        with (
+            patch.object(
+                schema, "_deduplicate_inline", side_effect=OSError("disk failure")
+            ),
+            pytest.raises(OSError),
+        ):
+            SQLiteDB(db_path)
+
+        assert _game_companies_without_opening(db_path, db_id) == (None, None, blob)
+
+
+class TestEveryAliasWasCheckedForTheSameStranding:
+    """No alias but the two company keys can strand before a text column.
+
+    The fold is scoped by a reading of the declaration: every other alias this
+    branch adds is read by a codec that answers a stranded object without
+    raising. That reading is pinned here, so an alias added later to a text
+    column fails a test rather than quietly re-opening the defect.
+    """
+
+    @staticmethod
+    def _text_column_aliases() -> set[str]:
+        """Every alias whose field is stored by ``to_text``."""
+        return {
+            alias
+            for spec in DETAIL_FIELDS.values()
+            for field in spec.fields
+            if field.kind in (FieldKind.CREATOR, FieldKind.TEXT)
+            for alias in field.aliases
+        }
+
+    def test_the_fold_covers_every_text_alias_but_the_one_nothing_writes(self) -> None:
+        """``creator`` is the exemption, and it is the only one.
+
+        No producer writes a ``creator`` metadata key, so no blob carries it:
+        the importers that use the word use it as a template column, which
+        crosses on ``ContentItem.author``, and the library's own key for the
+        field is ``creators`` — which TMDB writes as joined text.
+        """
+        assert (
+            schema._STRANDED_COMPANY_COLUMNS.keys()
+            == self._text_column_aliases() - {"creator"}
+        )
+
+    @pytest.mark.parametrize(
+        ("content_type", "alias"),
+        [
+            (content_type, alias)
+            for content_type, spec in DETAIL_FIELDS.items()
+            for field in spec.fields
+            if field.kind not in (FieldKind.CREATOR, FieldKind.TEXT)
+            for alias in field.aliases
+        ],
+    )
+    def test_an_object_under_any_other_alias_cannot_fail_a_write(
+        self, tmp_path: Path, content_type: str, alias: str
+    ) -> None:
+        """The alias the reader hands back is written, not refused.
+
+        A stranded key reaches the writer as a metadata key of the item the
+        reader built, which is what saving one carrying the key exercises:
+        the integer codec answers an object with None and the list codec
+        serializes it, so neither strands the row the way a text column does.
+        """
+        db = SQLiteDB(tmp_path / "swept.db")
+
+        db_id = db.save_content_item(
+            ContentItem(
+                id=f"swept:{alias}",
+                title="Swept",
+                content_type=ContentType(content_type),
+                status=ConsumptionStatus.UNREAD,
+                metadata={alias: [{"name": "Object"}]},
+            )
+        )
+
+        assert db.get_content_item(db_id) is not None
+
+
+class TestEveryShapeInOnePass:
     """One pass over an existing library repairs every stranded row."""
 
     def test_every_stranded_row_is_repaired_on_one_open(self, tmp_path: Path) -> None:
-        """Two shows and a game, all stranded, all corrected by one init."""
+        """Two shows and two games, all stranded, all corrected by one init."""
         db_path = tmp_path / "test.db"
         seed = SQLiteDB(db_path)
         first_show = _seed_show(seed, seasons=None, blob={"total_seasons": 5})
@@ -1212,9 +1920,16 @@ class TestBothShapesInOnePass:
             title="The Wire",
         )
         game = _seed_game(seed, platforms=_FLAGS_WINDOWS_AND_LINUX)
+        stranded_companies = _seed_stranded_companies(
+            seed,
+            metadata=json.dumps({"developers": [{"name": "ConcernedApe"}]}),
+            item_id="1453375253",
+            title="Stardew Valley",
+        )
 
         db = SQLiteDB(db_path)
 
         assert _show_detail(db, first_show) == (5, None)
         assert _show_detail(db, second_show) == (5, {"trakt_id": 222})
         assert json.loads(_stored_platforms(db, game)) == ["Windows", "Linux"]
+        assert _game_companies(db, stranded_companies) == ("ConcernedApe", None, None)

@@ -4,6 +4,7 @@ import json
 import sqlite3
 from typing import Any, TypedDict
 
+from src.models.detail_fields import text_names, to_text
 from src.storage.merge import (
     merge_detail_tables,
     merge_scalar_columns,
@@ -367,6 +368,12 @@ def create_schema(conn: sqlite3.Connection) -> None:
     # before the merge below so each row folds its own stranded season count
     # onto its own column: the merge then takes the higher of two real counts,
     # rather than of whichever blob copy survived it.
+    #
+    # That order is only safe while the two share one transaction — the
+    # implicit one this function's first write opened and the commit at the
+    # end closes. Nothing may commit between them, and this connection must
+    # keep implicit transactions, or a merge that fails leaves the repair
+    # committed over a library the merge never finished.
     _migrate_stranded_detail_shapes(cursor)
     # Merge any duplicates exposed by the corrected normalization
     _deduplicate_inline(cursor)
@@ -605,13 +612,14 @@ def _merge_duplicate_row(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -
 def _migrate_stranded_detail_shapes(cursor: sqlite3.Cursor) -> None:
     """Rewrite detail rows left in shapes storage no longer writes.
 
-    Neither shape self-repairs on a re-sync — the metadata blob merge lets
-    existing keys win, and ``platforms`` is fill-only in
-    ``SQLiteDB._save_detail_table`` — so a one-off rewrite is the only fix.
-    Both passes skip rows already in the current shape, so re-running is a
-    no-op.
+    No shape self-repairs on a re-sync — the metadata blob merge lets
+    existing keys win, and ``platforms``, ``developer`` and ``publisher`` are
+    fill-only in ``SQLiteDB._save_detail_table`` — so a one-off rewrite is the
+    only fix. Every pass skips rows already in the current shape, so
+    re-running is a no-op.
     """
     _move_stranded_total_seasons(cursor)
+    _fold_stranded_company_names(cursor)
     _rewrite_platform_flag_dicts(cursor)
 
 
@@ -659,6 +667,63 @@ def _higher_season_count(column_value: Any, blob_value: Any) -> Any:
         except (TypeError, ValueError):
             continue
     return max(counts) if counts else column_value
+
+
+# The plural spellings GOG writes, now aliases of the singular video-game
+# columns that claim them, mapped to the column each one folds onto. They are
+# the only new aliases a legacy blob can strand in front of a text column: the
+# rest are read by ``to_int`` or ``to_json_array``, neither of which raises,
+# bar tv_show's ``creator`` — which no producer writes into metadata, so no
+# blob carries it.
+_STRANDED_COMPANY_COLUMNS: dict[str, str] = {
+    "developers": "developer",
+    "publishers": "publisher",
+}
+
+
+def _fold_stranded_company_names(cursor: sqlite3.Cursor) -> None:
+    """Fold a blob ``developers``/``publishers`` onto its own column.
+
+    GOG wrote both plural spellings straight from its API, and neither was a
+    known key then, so a legacy blob holds whatever the API said — including
+    the object shape ``[{"name": "CD Projekt Red"}]``. The read path merges
+    the blob into the item it returns and a text column refuses an object, so
+    every re-save of such an item raises: enrichment records a provider
+    failure, leaves the item queued, and fails the same way on every later
+    run. Folding the names onto the column and dropping the key ends the
+    shape, and recovers a name that until now existed only in the blob.
+    """
+    cursor.execute(
+        "SELECT content_item_id, developer, publisher, metadata"
+        " FROM video_game_details"
+        " WHERE metadata LIKE '%developers%' OR metadata LIKE '%publishers%'"
+    )
+    for row in cursor.fetchall():
+        try:
+            blob = json.loads(row["metadata"])
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(blob, dict) or not _STRANDED_COMPANY_COLUMNS.keys() & blob:
+            continue
+        # Popped whatever the columns hold: the stranded key ceases to exist
+        # either way, and only then is the fold fill-only, like the write path
+        # — a name enrichment has already written stands. Driven by the mapping
+        # above rather than by literals, so a key added there cannot select a
+        # row and then fold nothing out of it.
+        folded = {
+            column: to_text(text_names(blob.pop(key, None)))
+            for key, column in _STRANDED_COMPANY_COLUMNS.items()
+        }
+        cursor.execute(
+            "UPDATE video_game_details SET developer = ?, publisher = ?, metadata = ?"
+            " WHERE content_item_id = ?",
+            (
+                row["developer"] or folded["developer"],
+                row["publisher"] or folded["publisher"],
+                json.dumps(blob) if blob else None,
+                row["content_item_id"],
+            ),
+        )
 
 
 def _rewrite_platform_flag_dicts(cursor: sqlite3.Cursor) -> None:
