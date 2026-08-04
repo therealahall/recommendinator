@@ -618,6 +618,35 @@ class TestSingleStringColumnsCoerceWhatTheyAreGiven:
         assert stored is not None
         assert stored.metadata["isbn"] == "9780441013593"
 
+    def test_an_empty_entry_never_reaches_the_column(self, tmp_path: Path) -> None:
+        """A blank name beside a real one is dropped, not joined in.
+
+        ``generic_json`` forwards a list value entry by entry, so a user's
+        file can hand over ``["", "CD Projekt Red"]``. The join used to keep
+        the blank as a separator and store ``", CD Projekt Red"``, and the
+        column is fill-only, so the punctuation would stand for the life of
+        the row. Checked on the stored row rather than on the codec, because
+        that is where the value could never be corrected.
+        """
+        db = SQLiteDB(tmp_path / "empty-entry.db")
+
+        db_id = db.save_content_item(
+            ContentItem(
+                id="1207658924",
+                title="Cyberpunk 2077",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.UNREAD,
+                metadata={"developers": ["", "CD Projekt Red"]},
+            )
+        )
+
+        with db.connection() as conn:
+            row = conn.execute(
+                "SELECT developer FROM video_game_details WHERE content_item_id = ?",
+                (db_id,),
+            ).fetchone()
+        assert row["developer"] == "CD Projekt Red"
+
 
 class TestATextColumnRefusesAValueItCannotHold:
     """A value with no text form fails the write instead of taking a repr.
@@ -697,8 +726,14 @@ class TestWhatATextColumnStillAccepts:
             ([], None),
             ([None], None),
             (["Joel Coen", None, "Ethan Coen"], "Joel Coen, Ethan Coen"),
+            (["", "Ethan Coen"], "Ethan Coen"),
+            (["Joel Coen", ""], "Joel Coen"),
+            (["", ""], None),
+            (["", 0], "0"),
             ([0], "0"),
             ([""], None),
+            ([" ", "Ethan Coen"], "Ethan Coen"),
+            (["   "], None),
             ("", None),
             (7, "7"),
             (True, "True"),
@@ -707,8 +742,14 @@ class TestWhatATextColumnStillAccepts:
             "empty_list",
             "list_of_null",
             "names_around_a_null",
+            "empty_string_among_names",
+            "empty_string_after_a_name",
+            "every_entry_empty",
+            "zero_beside_an_empty_string",
             "zero",
             "list_of_empty_string",
+            "blank_string_among_names",
+            "every_entry_blank",
             "bare_empty_string",
             "number",
             "boolean",
@@ -719,10 +760,12 @@ class TestWhatATextColumnStillAccepts:
     ) -> None:
         """Every non-container a plugin can emit keeps the behaviour it had.
 
-        Naming nothing is None whichever shape it arrives in. A bare ``""``
-        used to be returned unchanged, and a text column is fill-only, so the
-        one storing it locked itself against every later sync — the same
-        failure the migration's empty-name cases exist to prevent.
+        Naming nothing is None whichever shape it arrives in, and an entry
+        naming nothing is dropped from the join rather than left as a comma in
+        front of the next name. A bare ``""`` used to be returned unchanged,
+        and a text column is fill-only, so the one storing it locked itself
+        against every later sync — the same failure the migration's empty-name
+        cases exist to prevent.
         """
         assert detail_fields.to_text(value) == expected
 

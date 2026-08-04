@@ -42,8 +42,9 @@ def to_text(value: Any) -> str | None:
 
     A source hands over a list where the column takes a single name — GOG's
     ``developers`` against ``developer`` — so a list is joined the way TMDB
-    already joins several directors into one ``director``. A None among the
-    entries is dropped rather than joined in as the text "None".
+    already joins several directors into one ``director``. An entry naming
+    nothing is dropped before the join: a None would read as the text "None",
+    and an empty string as a comma in front of the name beside it.
 
     A value naming nothing — an empty string as much as an empty list — is
     None rather than "". Every text column is fill-only in
@@ -64,7 +65,8 @@ def to_text(value: Any) -> str | None:
     for entry in entries:
         if entry is not None and not isinstance(entry, _TEXT_SCALARS):
             raise TypeError(f"a text column cannot hold a {type(entry).__name__}")
-    return ", ".join(str(entry) for entry in entries if entry is not None) or None
+    names = (str(entry) for entry in entries if entry is not None)
+    return ", ".join(name for name in names if name.strip()) or None
 
 
 def text_names(value: Any) -> list[str]:
@@ -241,10 +243,9 @@ class ContentTypeFields:
         table_alias: Alias the table takes in the joined SELECT.
         metadata_alias: Alias that table's free-form blob column takes there.
         fields: The fields, ordered as the templates and export list them.
-            Reordering them reorders the columns of every CSV and JSON file
-            the app exports, including the ones users already hold, so it is
-            never a readability edit. ``TestExportLayoutIsStable`` in
-            ``tests/web/test_export.py`` pins the resulting layout.
+            The order is presentational: the importer and the exporter both
+            key by column name, so reordering changes how an exported file
+            reads and nothing about what it means.
     """
 
     table: str
