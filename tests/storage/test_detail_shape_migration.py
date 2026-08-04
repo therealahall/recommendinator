@@ -1899,6 +1899,8 @@ class TestEveryAliasWasCheckedForTheSameStranding:
     #: three refuses the write, which is the property being swept for.
     #: ``seasons`` never sees the object at all — the season pass drops
     #: ``total_seasons`` on the open, before anything reads it back.
+    #: Keyed by column rather than by alias, because what lands is the codec's
+    #: doing and the codec is the column's, whichever alias arrived.
     _LANDED_BY_COLUMN: dict[str, Any] = {
         "release_year": None,
         "runtime": None,
@@ -1998,6 +2000,11 @@ class TestWhatTheCreatorExemptionCosts:
     object is recorded below, because no shipped code would notice.
     """
 
+    #: The refusal in full. It names the canonical key rather than the
+    #: ``creator`` alias the blob carried, which is what
+    #: ``docs/PLUGIN_DEVELOPMENT.md`` tells a plugin author to look for.
+    _REFUSAL = "'creators': a text column cannot hold a dict"
+
     @staticmethod
     def _strand_a_show_creator(db_path: Path, creator: Any) -> int:
         """Save a show, then strand *creator* under the ``creator`` blob key."""
@@ -2013,27 +2020,6 @@ class TestWhatTheCreatorExemptionCosts:
         )
         _strand_blob_key(db, db_id, "tv_show", {"creator": creator})
         return db_id
-
-    def test_the_markdown_source_writes_the_key_as_a_string(
-        self, tmp_path: Path
-    ) -> None:
-        """The producer that reaches the key, and the shape it can write.
-
-        ``_parse_metadata_tail`` matches ``(\\w+): (.+)`` on each segment, so
-        the key is whatever the file says and the value is always text.
-        """
-        md_file = tmp_path / "shows.md"
-        md_file.write_text(
-            "## Completed\n- **Breaking Bad** | Creator: Vince Gilligan\n"
-        )
-
-        items = list(
-            MarkdownImportPlugin().fetch(
-                {"path": str(md_file), "content_type": "tv_show"}
-            )
-        )
-
-        assert [item.metadata for item in items] == [{"creator": "Vince Gilligan"}]
 
     @pytest.mark.parametrize(
         ("tail", "expected"),
@@ -2064,11 +2050,13 @@ class TestWhatTheCreatorExemptionCosts:
     ) -> None:
         """The exemption's whole premise, swept rather than sampled.
 
-        ``_parse_metadata_tail`` returns ``match.group(2).strip()``, so no
-        input turns a value into a list, a dict, a number or a bool: a file
-        writing what looks like one gets its text. A tail with nothing after
-        the colon writes no key at all, which is why ``to_text("")`` never
-        answers this producer. The exemption holds only while this does.
+        ``_parse_metadata_tail`` matches ``(\\w+)\\s*:\\s*(.+)`` on each
+        segment and returns ``match.group(2).strip()``, so the key is whatever
+        the file says and no input turns a value into a list, a dict, a number
+        or a bool: a file writing what looks like one gets its text. A tail
+        with nothing after the colon writes no key at all, which is why
+        ``to_text("")`` never answers this producer. The exemption holds only
+        while this does.
         """
         md_file = tmp_path / "shows.md"
         md_file.write_text(f"## Completed\n- **Breaking Bad** | {tail}\n")
@@ -2109,6 +2097,11 @@ class TestWhatTheCreatorExemptionCosts:
         re-opens exactly the defect the company fold repairs: the reader hands
         the key back, the text column refuses it, and the item can never be
         saved again — with no pass to fold it and no other test to notice.
+
+        The refusal is the permanent half of the contrast with the stranded
+        string above, which repairs itself on the save it survives. So the
+        blob is read after the first refusal and the save is made again: a
+        second raise off an unchanged blob is what "every save" means.
         """
         db_path = tmp_path / "object-creator.db"
         db_id = self._strand_a_show_creator(db_path, [{"name": "Vince Gilligan"}])
@@ -2117,8 +2110,17 @@ class TestWhatTheCreatorExemptionCosts:
         stored = db.get_content_item(db_id)
 
         assert stored is not None
-        with pytest.raises(TypeError, match="text column cannot hold"):
+        with pytest.raises(TypeError) as refusal:
             db.save_content_item(stored)
+        assert str(refusal.value) == self._REFUSAL
+
+        row = _whole_detail_row(db, "tv_show_details", db_id)
+        assert row["creators"] is None
+        assert json.loads(row["metadata"]) == {"creator": [{"name": "Vince Gilligan"}]}
+
+        with pytest.raises(TypeError) as second_refusal:
+            db.save_content_item(stored)
+        assert str(second_refusal.value) == self._REFUSAL
 
 
 class TestEveryShapeInOnePass:
