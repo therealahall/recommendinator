@@ -1,56 +1,46 @@
 # Plugin Development Guide
 
-This guide explains how to create new data source plugins for Recommendinator.
+How to add a data source plugin.
 
-## Overview
+## The interface
 
-Plugins are Python classes that fetch content items from external sources (APIs, files, databases). The system uses a plugin architecture to support multiple data sources without modifying core code.
-
-## Plugin Interface
-
-All plugins inherit from `SourcePlugin` in `src/ingestion/plugin_base.py`:
+Plugins subclass `SourcePlugin` in `src/ingestion/plugin_base.py`.
 
 ```python
-from typing import Any, Iterator
+from typing import TYPE_CHECKING, Any, Iterator
 
 from src.ingestion.plugin_base import ConfigField, ProgressCallback, SourcePlugin
 from src.models.content import ContentItem, ContentType, ConsumptionStatus
+
+if TYPE_CHECKING:
+    from src.storage.manager import StorageManager
+
 
 class MyPlugin(SourcePlugin):
     @property
     def name(self) -> str:
         return "my_plugin"
-    
+
     @property
     def display_name(self) -> str:
         return "My Data Source"
-    
+
     @property
     def content_types(self) -> list[ContentType]:
-        return [ContentType.BOOK]  # Types this plugin provides
-    
+        return [ContentType.BOOK]
+
     @property
     def requires_api_key(self) -> bool:
-        return True  # Set based on your source
-    
-    @property
-    def requires_network(self) -> bool:
-        return True  # Set based on your source
-    
+        return True
+
     def get_config_schema(self) -> list[ConfigField]:
         return [
-            # Mark API keys / OAuth tokens with sensitive=True so they get
-            # stored encrypted and stripped from web/CLI responses. The web
-            # UI's data accordion and the `python3.11 -m src.cli source`
-            # CLI commands auto-generate forms from this schema, so accurate
-            # `field_type`, `required`, `description`, and `sensitive` flags
-            # directly drive the user-facing UI.
             ConfigField(
                 name="api_key",
                 field_type=str,
                 required=True,
                 sensitive=True,
-                description="API key (kept in the encrypted credentials table)",
+                description="API key (encrypted, never shown back)",
             ),
             ConfigField(
                 name="user_id",
@@ -60,25 +50,22 @@ class MyPlugin(SourcePlugin):
             ),
         ]
 
-    def validate_config(self, config: dict[str, Any]) -> list[str]:
-        """Return list of validation error messages."""
+    def validate_config(
+        self,
+        config: dict[str, Any],
+        storage: StorageManager | None = None,
+        user_id: int = 1,
+    ) -> list[str]:
         errors = []
         if not config.get("api_key"):
             errors.append("API key is required")
         return errors
-    
+
     def fetch(
         self,
         config: dict[str, Any],
         progress_callback: ProgressCallback | None = None,
     ) -> Iterator[ContentItem]:
-        """Yield ContentItem objects from the source.
-
-        Call progress_callback(items_processed, total_items, current_item)
-        during long-running operations so callers can report progress.
-        Use total_items=None when the total is unknown.
-        """
-        # Your implementation here
         yield ContentItem(
             id="external-id-123",
             title="Example Book",
@@ -90,30 +77,35 @@ class MyPlugin(SourcePlugin):
         )
 ```
 
-## Key Concepts
+`sensitive=True` stores the field encrypted and strips it from web and CLI
+responses. The Add-source modal and the `source` CLI generate their forms from
+this schema, so `field_type`, `required`, `description` and `sensitive` are the
+user-facing UI.
 
-### Content Items
+`requires_network` defaults to `requires_api_key`. Override it for a file-based
+source that needs neither.
 
-Each item you yield must be a `ContentItem`:
+Call `progress_callback(items_processed, total_items, current_item)` during long
+operations, with `total_items=None` when the total is unknown.
+
+## ContentItem
 
 ```python
 ContentItem(
-    id="unique-external-id",      # Required: unique ID from source
-    title="Item Title",            # Required
-    content_type=ContentType.BOOK, # Required: BOOK, MOVIE, TV_SHOW, VIDEO_GAME
-    status=ConsumptionStatus.COMPLETED,  # Required: COMPLETED, CURRENTLY_CONSUMING, UNREAD
-    rating=4,                      # Optional: 1-5 scale
-    review="My review text",       # Optional
-    author="Author/Director",      # Optional
-    ignored=None,                  # Optional: True/False states the flag, None says nothing
-    metadata={},                   # Optional: source-specific data
-    source="my_plugin",            # Set automatically to the user-defined config key name
+    id="unique-external-id",             # required, unique within content type
+    title="Item Title",                  # required
+    content_type=ContentType.BOOK,       # BOOK, MOVIE, TV_SHOW, VIDEO_GAME
+    status=ConsumptionStatus.COMPLETED,  # COMPLETED, CURRENTLY_CONSUMING, UNREAD
+    rating=4,                            # 1-5
+    review="My review text",
+    author="Author/Director",
+    ignored=None,                        # True/False states it, None says nothing
+    metadata={},
+    source="my_plugin",                  # set for you, to the user-defined source id
 )
 ```
 
-### Status Mapping
-
-Map source statuses to our standard values:
+Map source statuses onto the enum, and normalize ratings to 1-5:
 
 ```python
 STATUS_MAP = {
@@ -121,62 +113,22 @@ STATUS_MAP = {
     "reading": ConsumptionStatus.CURRENTLY_CONSUMING,
     "to-read": ConsumptionStatus.UNREAD,
 }
-```
 
-### Rating Normalization
 
-If your source uses a different scale, normalize to 1-5:
-
-```python
 def normalize_rating(source_rating: int, max_rating: int = 10) -> int | None:
     if source_rating <= 0:
         return None
     return max(1, min(5, round(source_rating * 5 / max_rating)))
 ```
 
-### Metadata Keys
+## Metadata keys
 
 `metadata` is free-form, but storage recognises a fixed set of keys per content
 type and lifts those into the type's detail table (`book_details`,
-`movie_details`, `tv_show_details`, `video_game_details`). A key it does not
-recognise is kept verbatim in the detail row's free-form metadata blob — so spell
-a recognised key correctly, because a misspelling is not an error anywhere: the
-value lands in the blob and never reaches the column the rest of the app queries.
-
-The blob is not a private scratch space. It is a shared namespace: first-party
-code reads a good many keys out of it, and none of them is a recognised key, so
-every one lives in the blob alongside whatever you put there.
-
-| Read by | Keys |
-|---|---|
-| [Length scorer](SCORING.md#content-length-preferences) — `src/recommendations/content_length.py` | `num_pages`, `number_of_pages` (book); `number_of_seasons` (TV show); `playtime_hours`, `main_story_hours`, `average_playtime_hours` (video game) |
-| Series ordering — `src/utils/series.py` | Series name: `series_name`, `series`, `series_title`, `franchise`. Position: `series_position`, `series_number`, `series_num`, `book_number`, `book_num`, `season`, `season_number`, `season_num`, `part`, `part_number`, `episode`, `episode_number`, `movie_number`. Expanding a show into seasons: `number_of_seasons` |
-| Season checklist and the [variety ladder](SCORING.md#variety-after-completion) — `src/utils/series.py` | `seasons_watched`, `seasons_watched_dates` |
-| Library export — `src/web/export.py` | `notes`; `seasons_watched` (TV show); `playtime_hours` (video game) |
-
-Treat that as the state of the code rather than a closed list — it grows
-whenever a reader gains another fallback spelling, and the files named above are
-where to check it.
-
-Two consequences are worth stating outright:
-
-- **Choosing one of these keys for your own bookkeeping changes behaviour, and
-  nothing tells you.** A plugin that stores its own `number_of_seasons`
-  re-classifies the show's length; one that stores its own `franchise` re-orders
-  a series. There is no warning and no error at any layer. `playtime_hours` is
-  the same story read forwards: it is why a games file carrying `hours_played`
-  changes which games get recommended, since the import stores that column under
-  this key and the length scorer reads it.
-- **`franchise` is not only a plugin's to collide with.** The RAWG enrichment
-  provider writes `franchise` and `series_position` into `extra_metadata`; TMDB
-  writes `series_name`, `series_position` and `tmdb_collection_id`.
-  `merge_enrichment` in `src/enrichment/manager.py` *fills* each of those into
-  item metadata — only where the key is missing or holds an empty value, so it
-  never overwrites what is already there — and every one of them, being
-  unrecognised, lands in the blob. See [ARCHITECTURE.md](../ARCHITECTURE.md).
-
-Only the keys in the table and the recognised keys above are spoken for. Beyond
-those, the blob is yours.
+`movie_details`, `tv_show_details`, `video_game_details`). Anything else is kept
+verbatim in the detail row's free-form blob. **A misspelled key is not an error
+anywhere**, so spell a recognised one correctly: the value lands in the blob and
+never reaches the column the rest of the app queries.
 
 | Content type | Recognised keys |
 |---|---|
@@ -185,8 +137,7 @@ those, the blob is yours.
 | `tv_show` | `creators`, `seasons`, `episodes`, `network`, `release_year`, `genres`, `tags`, `description` |
 | `video_game` | `developer`, `publisher`, `platforms`, `genres`, `release_year`, `tags`, `description` |
 
-Because the plugins did not all agree on a name, five of those columns accept a
-second spelling and it is written to the same column either way:
+Five columns accept a second spelling, and reach the same column either way:
 
 | Column | Also accepted as | Where |
 |---|---|---|
@@ -196,249 +147,160 @@ second spelling and it is written to the same column either way:
 | `runtime` | `runtime_minutes` | `movie` |
 | `release_year` | `year` | `movie`, `tv_show` (**not** `video_game`, which takes `release_year` only) |
 
-Two shape rules matter:
+The blob is a shared namespace rather than scratch space. First-party code reads
+these keys out of it, and none of them is a recognised key:
 
-- **`genres`, `tags` and `platforms` are lists of names.** A list is stored as
-  given; anything that is not a list — a bare string included — is wrapped into a
-  one-element list. That wrapping is why a wrong shape survives instead of
-  failing: the GOG plugin wrote `platforms` as
-  `{"windows": true, "mac": false, ...}`, which became a one-element list holding
-  the dict, reached the library export as a Python repr and re-imported as that
-  literal string. Write `["Windows", "Linux"]`.
+| Read by | Keys |
+|---|---|
+| [Length scorer](SCORING.md#content-length-preferences), `src/recommendations/content_length.py` | **book** `num_pages`, `number_of_pages`. **TV show** `number_of_seasons`. **video game** `playtime_hours`, `main_story_hours`, `average_playtime_hours` |
+| Series ordering, `src/utils/series.py` | Series name: `series_name`, `series`, `series_title`, `franchise`. Position: `series_position`, `series_number`, `series_num`, `book_number`, `book_num`, `season`, `season_number`, `season_num`, `part`, `part_number`, `episode`, `episode_number`, `movie_number`. Expanding a show into seasons: `number_of_seasons` |
+| Season checklist and the [variety ladder](SCORING.md#variety-after-completion), `src/utils/series.py` | `seasons_watched`, `seasons_watched_dates` |
+| Library export, `src/web/export.py` | `notes` on every type. **TV show** `seasons_watched`. **video game** `playtime_hours` |
 
-  **Get the shape right the first time, because fixing the plugin does not
-  repair what it already stored.** `platforms` is a plain detail column — not
-  additive like `genres`, not monotonic like `seasons` — so it is fill-only: once
-  a value is stored, every later sync keeps it and writes nothing. A library
-  synced with the wrong shape therefore holds that shape permanently, and the
-  user has no way to undo it: removing the source deletes that source's config
-  and the secrets its plugin currently declares sensitive — a secret survives
-  when the plugin is no longer installed, or when the field holding it is no
-  longer marked sensitive — but none of the items it stored, so re-adding it
-  syncs into the same rows and the stored value still wins. No surface deletes a
-  library item either: `delete_content_item` exists on `StorageManager` and
-  `SQLiteDB`, and nothing in the web API or the CLI calls it. Your fix applies
-  to items nobody has synced yet. The same applies to every other fill-only
-  column.
-- **`genres` and `tags` merge additively; `seasons` and `episodes` only ever
-  increase.** Every other detail column is fill-only, written while the stored
-  value is empty and left alone afterwards, because enrichment and the user's own
-  edits outrank a re-sync.
+That list grows whenever a reader gains another fallback spelling, so check those
+files. Beyond it and the recognised keys, the blob is yours.
 
-## Example: File-Based Plugin
+**Taking one of those keys for your own bookkeeping changes behaviour, with no
+warning and no error at any layer.** Your own `number_of_seasons` re-classifies
+the show's length. Your own `franchise` re-orders a series. Read forwards, that
+is why a games file carrying `hours_played` changes which games get recommended:
+the import stores it as `playtime_hours` and the length scorer reads it.
 
-```python
-import csv
-from pathlib import Path
-from typing import Any, Iterator
+Enrichment writes into the blob too. RAWG writes `franchise` and
+`series_position`, TMDB writes `series_name`, `series_position` and
+`tmdb_collection_id`. `merge_enrichment` (`src/enrichment/manager.py`) fills each
+only where the key is missing or empty, so it never overwrites you. See
+[ARCHITECTURE.md](../ARCHITECTURE.md).
 
-from src.ingestion.plugin_base import ConfigField, ProgressCallback, SourcePlugin
-from src.models.content import ContentItem, ContentType, ConsumptionStatus
+### Shape rules
 
-class CsvBookPlugin(SourcePlugin):
-    @property
-    def name(self) -> str:
-        return "csv_books"
-    
-    @property
-    def display_name(self) -> str:
-        return "CSV Book Import"
-    
-    @property
-    def content_types(self) -> list[ContentType]:
-        return [ContentType.BOOK]
-    
-    @property
-    def requires_api_key(self) -> bool:
-        return False
-    
-    @property
-    def requires_network(self) -> bool:
-        return False
-    
-    def get_config_schema(self) -> list[ConfigField]:
-        return [
-            ConfigField(name="path", field_type=str, required=True),
-        ]
+**`genres`, `tags` and `platforms` are lists of names.** A list is stored as
+given. Anything else, a bare string or a dict included, is wrapped into a
+one-element list rather than rejected, so a wrong shape survives all the way out
+to the library export and back in as a literal string. Write
+`["Windows", "Linux"]`.
 
-    def validate_config(self, config: dict[str, Any]) -> list[str]:
-        errors = []
-        file_path = config.get("path", "")
-        if not file_path:
-            errors.append("File path is required")
-        elif not Path(file_path).exists():
-            errors.append(f"File not found: {file_path}")
-        return errors
+**Get the shape right the first time, because fixing the plugin does not repair
+what it already stored.** `platforms` is fill-only, so a stored value wins on
+every later sync, and the user has no way to undo it. Removing the source drops
+its config and secrets but keeps its items, so re-adding syncs into the same rows
+and the stored value still wins. Nothing in the web API or the CLI deletes a
+library item, either. Your fix reaches only items nobody has synced yet, and that
+holds for every fill-only column.
 
-    def fetch(self, config: dict[str, Any], progress_callback: ProgressCallback | None = None) -> Iterator[ContentItem]:
-        csv_path = Path(config["path"])
-        
-        with open(csv_path, newline="", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                if not row.get("title"):
-                    continue
-                
-                yield ContentItem(
-                    id=row.get("isbn") or row["title"],
-                    title=row["title"],
-                    content_type=ContentType.BOOK,
-                    status=self._map_status(row.get("status", "")),
-                    rating=self._parse_rating(row.get("rating")),
-                    author=row.get("author"),
-                    metadata={
-                        "pages": int(row["pages"]) if row.get("pages") else None,
-                        "genre": row.get("genre"),
-                    },
-                )
-    
-    def _map_status(self, status: str) -> ConsumptionStatus:
-        status_map = {
-            "read": ConsumptionStatus.COMPLETED,
-            "reading": ConsumptionStatus.CURRENTLY_CONSUMING,
-            "to-read": ConsumptionStatus.UNREAD,
-        }
-        return status_map.get(status.lower(), ConsumptionStatus.UNREAD)
-    
-    def _parse_rating(self, rating: str | None) -> int | None:
-        if not rating:
-            return None
-        try:
-            return max(1, min(5, int(rating)))
-        except ValueError:
-            return None
-```
+**`genres` and `tags` merge additively, and `seasons` and `episodes` only ever
+increase.** Every other detail column is fill-only, written while the stored
+value is empty and left alone afterwards, because enrichment and the user's own
+edits outrank a re-sync.
 
-## Example: API-Based Plugin
+## Example: file-based plugin
+
+The properties follow the interface above, with `requires_api_key` and
+`requires_network` returning `False`, and `validate_config` checking that the
+configured `path` exists.
 
 ```python
-import requests
-from typing import Any, Iterator
-
-from src.ingestion.plugin_base import ConfigField, ProgressCallback, SourceError, SourcePlugin
-from src.models.content import ContentItem, ContentType, ConsumptionStatus
-from src.utils.request_errors import scrub_request_error
-
-class MovieApiPlugin(SourcePlugin):
-    API_BASE = "https://api.example.com/v1"
-    
-    @property
-    def name(self) -> str:
-        return "movie_api"
-    
-    @property
-    def display_name(self) -> str:
-        return "Movie API"
-    
-    @property
-    def content_types(self) -> list[ContentType]:
-        return [ContentType.MOVIE]
-    
-    @property
-    def requires_api_key(self) -> bool:
-        return True
-    
-    @property
-    def requires_network(self) -> bool:
-        return True
-    
-    def get_config_schema(self) -> list[ConfigField]:
-        return [
-            ConfigField(name="api_key", field_type=str, required=True),
-            ConfigField(name="username", field_type=str, required=True),
-        ]
-
-    def validate_config(self, config: dict[str, Any]) -> list[str]:
-        errors = []
-        if not config.get("api_key"):
-            errors.append("API key is required")
-        if not config.get("username"):
-            errors.append("Username is required")
-        return errors
-
-    def fetch(self, config: dict[str, Any], progress_callback: ProgressCallback | None = None) -> Iterator[ContentItem]:
-        api_key = config["api_key"]
-        username = config["username"]
-        
-        try:
-            response = requests.get(
-                f"{self.API_BASE}/users/{username}/movies",
-                headers={"Authorization": f"Bearer {api_key}"},
-                timeout=30,
-            )
-            response.raise_for_status()
-            data = response.json()
-        except requests.RequestException as e:
-            raise SourceError("movie_api", f"API request failed: {scrub_request_error(e)}") from e
-        
-        for movie in data.get("movies", []):
+def fetch(
+    self,
+    config: dict[str, Any],
+    progress_callback: ProgressCallback | None = None,
+) -> Iterator[ContentItem]:
+    with open(Path(config["path"]), newline="", encoding="utf-8") as handle:
+        for row in csv.DictReader(handle):
+            if not row.get("title"):
+                continue
             yield ContentItem(
-                id=str(movie["id"]),
-                title=movie["title"],
-                content_type=ContentType.MOVIE,
-                status=self._map_status(movie.get("watch_status")),
-                rating=self._normalize_rating(movie.get("user_rating")),
+                id=row.get("isbn") or row["title"],
+                title=row["title"],
+                content_type=ContentType.BOOK,
+                status=self._map_status(row.get("status", "")),
+                rating=self._parse_rating(row.get("rating")),
+                author=row.get("author"),
                 metadata={
-                    "runtime": movie.get("runtime"),
-                    "director": movie.get("director"),
-                    "genres": movie.get("genres", []),
-                    "year": movie.get("release_year"),
+                    "pages": int(row["pages"]) if row.get("pages") else None,
+                    "genre": row.get("genre"),
                 },
             )
-    
-    def _map_status(self, status: str | None) -> ConsumptionStatus:
-        if status == "watched":
-            return ConsumptionStatus.COMPLETED
-        elif status == "watching":
-            return ConsumptionStatus.CURRENTLY_CONSUMING
-        return ConsumptionStatus.UNREAD
-    
-    def _normalize_rating(self, rating: float | None) -> int | None:
-        if rating is None or rating <= 0:
-            return None
-        # Convert 10-point scale to 5-point
-        return max(1, min(5, round(rating / 2)))
 ```
 
-## Plugin Registration
+## Example: API-based plugin
 
-Plugins are **auto-discovered** by `PluginRegistry` from `src/ingestion/sources/`. Each plugin lives in its own folder, which the registry treats as a Python subpackage:
+```python
+def fetch(
+    self,
+    config: dict[str, Any],
+    progress_callback: ProgressCallback | None = None,
+) -> Iterator[ContentItem]:
+    try:
+        response = requests.get(
+            f"{self.API_BASE}/users/{config['username']}/movies",
+            headers={"Authorization": f"Bearer {config['api_key']}"},
+            timeout=30,
+        )
+        response.raise_for_status()
+        data = response.json()
+    except requests.RequestException as error:
+        raise SourceError(
+            "movie_api", f"API request failed: {scrub_request_error(error)}"
+        ) from error
+
+    for movie in data.get("movies", []):
+        yield ContentItem(
+            id=str(movie["id"]),
+            title=movie["title"],
+            content_type=ContentType.MOVIE,
+            status=self._map_status(movie.get("watch_status")),
+            rating=self._normalize_rating(movie.get("user_rating")),
+            metadata={
+                "runtime": movie.get("runtime"),
+                "director": movie.get("director"),
+                "genres": movie.get("genres", []),
+                "year": movie.get("release_year"),
+            },
+        )
+```
+
+`SourceError` and `scrub_request_error` come from `src.ingestion.plugin_base` and
+`src.utils.request_errors`.
+
+## Registration
+
+`PluginRegistry` auto-discovers plugins from `src/ingestion/sources/`. Each lives
+in its own folder, which the registry treats as a Python subpackage:
 
 ```
 src/ingestion/sources/<plugin>/
-├── __init__.py        # re-exports everything from <plugin>.py for discovery
-├── <plugin>.py        # SourcePlugin subclass implementation
-├── README.md          # plugin-specific usage and configuration
+├── __init__.py        # re-exports <plugin>.py for discovery
+├── <plugin>.py        # the SourcePlugin subclass
+├── README.md          # usage and configuration
 └── test_<plugin>.py   # tests live next to the plugin
 ```
 
-The minimal `__init__.py` is one line:
+The `__init__.py` is one line:
 
 ```python
 """<plugin> plugin package."""
 from src.ingestion.sources.<plugin>.<plugin> import *  # noqa: F401, F403
 ```
 
-To verify your plugin is discovered:
+Confirm discovery with `python3.11 -m src.cli update --help`, which lists your
+source.
 
-```bash
-python3.11 -m src.cli update --help  # Should show your source in the list
-```
+## Configuration
 
-## Configuration Format
-
-Sources use a **named instance** model: each source has a user-defined id plus a plugin name, so the same plugin can back several sources. Sources live in the `source_configs` table and are created from the Data tab or the `source` CLI; the YAML below is the legacy bootstrap form of the same shape, shown here because it is the most compact way to see the model:
+Sources are **named instances**: a user-defined id plus a plugin name, so one
+plugin can back several sources. They live in the `source_configs` table and are
+created from the Data tab or the `source` CLI. The legacy YAML bootstrap shows
+the same shape most compactly:
 
 ```yaml
 inputs:
-  # User-defined name "my_books" using the csv_import plugin
   my_books:
     plugin: csv_import
     path: "inputs/books.csv"
     content_type: "book"
     enabled: true
 
-  # A second instance of csv_import with a different name
   classic_movies:
     plugin: csv_import
     path: "inputs/classic_movies.csv"
@@ -446,188 +308,158 @@ inputs:
     enabled: true
 ```
 
-File-based plugins use a standardized `path` field (not `csv_path`, `json_path`, or `markdown_path`).
+File-based plugins use `path`, never `csv_path`, `json_path` or `markdown_path`.
 
-When your plugin's `fetch()` method is called, the config dict includes a `_source_id` key containing the user-defined name. The base class method `get_source_identifier(config)` returns this value, which is stored in `ContentItem.source`. This means items are tracked by user-defined name, not plugin name.
+`fetch()` receives a `_source_id` key holding the user-defined name.
+`get_source_identifier(config)` returns it, and it is what lands in
+`ContentItem.source`, so items are tracked by source id rather than plugin name.
 
-## Testing Your Plugin
+## Testing
 
-Tests live next to the plugin, in `src/ingestion/sources/<plugin>/test_<plugin>.py`. `pytest` collects them in the same session as `tests/`, and the repository-root `conftest.py` gives them the same autouse isolation every other test gets: the credential encryption key is redirected into the test's `tmp_path`, production logging is neutralised, and the process timezone is pinned to UTC. So a plugin test that builds a real `StorageManager` cannot touch the developer's `data/.credential_key` or `logs/recommendations.log`, and one that asserts on a date narrowed from a UTC instant does not depend on where the suite runs — request the `host_timezone` fixture and call it to exercise a different zone. Private plugins run under the same conftest. `src/ingestion/sources/_isolation/` holds the test that proves it — it is not a plugin, and the leading underscore keeps the registry from importing it.
+Tests live at `src/ingestion/sources/<plugin>/test_<plugin>.py`. `pytest` collects
+them alongside `tests/`, and the root `conftest.py` gives them the same autouse
+isolation every other test gets: the credential key is redirected into `tmp_path`,
+production logging is neutralised, and the process timezone is pinned to UTC.
+Request the `host_timezone` fixture and call it to exercise another zone. Private
+plugins run under the same conftest. `src/ingestion/sources/_isolation/` holds the
+test proving it, and its leading underscore keeps the registry from importing it.
 
 ```python
 # src/ingestion/sources/my_plugin/test_my_plugin.py
-import pytest
-from unittest.mock import Mock, patch
-
-from src.ingestion.sources.my_plugin import MyPlugin
-from src.models.content import ContentType, ConsumptionStatus
-
 class TestMyPlugin:
     @pytest.fixture
     def plugin(self):
         return MyPlugin()
-    
-    def test_name(self, plugin):
-        assert plugin.name == "my_plugin"
-    
-    def test_validate_config_valid(self, plugin):
-        config = {"api_key": "key123", "user_id": "user1"}
-        errors = plugin.validate_config(config)
-        assert errors == []
-    
+
     def test_validate_config_missing_key(self, plugin):
-        config = {"user_id": "user1"}
-        errors = plugin.validate_config(config)
-        assert "API key is required" in errors
-    
+        assert "API key is required" in plugin.validate_config({"user_id": "user1"})
+
     @patch("requests.get")
     def test_fetch_returns_items(self, mock_get, plugin):
         mock_get.return_value.json.return_value = {
             "items": [{"id": "1", "title": "Test", "status": "completed"}]
         }
         mock_get.return_value.raise_for_status = Mock()
-        
-        config = {"api_key": "key", "user_id": "user"}
-        items = list(plugin.fetch(config))
-        
+
+        items = list(plugin.fetch({"api_key": "key", "user_id": "user"}))
+
         assert len(items) == 1
         assert items[0].title == "Test"
 ```
 
-## Best Practices
+Mock every network call. Never make a real one.
 
-1. **Always mock network calls in tests** - Never make real API calls
-2. **Handle errors gracefully** - Raise `SourceError` for recoverable errors
-3. **Validate config thoroughly** - Check all required fields
-4. **Normalize data** - Convert ratings to 1-5, statuses to standard values
-5. **Include metadata** - Store source-specific data for reference
-6. **Use unique IDs** - Ensure `id` is unique within content type
-7. **Skip invalid items** - Don't yield items with missing required fields
-8. **Log useful info** - Help users debug issues
-9. **Support progress reporting** - Accept `progress_callback` in `fetch()` and
-   call it during long operations: `progress_callback(items_processed,
-   total_items, current_item)`. Use `total_items=None` when unknown.
-10. **Say nothing about `ignored` unless your source really says something** - `ignored` is user-owned, and storage writes it whenever your plugin states a value: `True` ignores the item, `False` *un-ignores* one the user ignored in the app. `None` (the default) means "this source has no opinion", and the stored flag is left alone. Storage receives a boolean or nothing, so it cannot tell a file's explicit `false` from a `False` you defaulted to — a defaulted `False` silently clears the user's ignore list on every sync. If your source carries the flag, read it with `parse_ignored_field()` from `generic_csv`, which returns `None` for an absent key, a blank CSV cell or a JSON `null` and only returns a boolean when a value was actually stated. `parse_boolean_field()` is the lower-level helper it calls, and it returns `False` for a missing value, so do not reach for it directly here.
+## Best practices
 
-    The library exporter (`src/web/export.py`) is the one deliberate exception in this tree, and it is not a precedent for a plugin. It states `ignored` for every row it writes, because re-importing an edited export is the supported way to un-ignore items in bulk — which is exactly why a re-imported export replaces the user's whole ignore list with the state it had at export time, and why [DATA_SOURCES.md](DATA_SOURCES.md#library-export) warns against leaving one configured as a standing source. A third-party plugin syncing a live source has no such mandate: state the flag only when your source really states it.
-11. **Use list format for `seasons_watched`** - For TV shows, store `seasons_watched` as a list of specific season numbers (e.g., `[1, 2, 5, 6]`) in metadata. Use `parse_seasons_watched()` from `generic_csv` if converting from string input. A single integer is treated as a count for backward compatibility (e.g., `5` → `[1, 2, 3, 4, 5]`).
-12. **Populate `seasons_watched_dates` when you have per-season timestamps** - For TV shows, the optional `seasons_watched_dates` metadata field maps `{season_number_str: iso_timestamp}` (e.g., `{"1": "2026-05-01T00:00:00+00:00"}`), keyed by the same season numbers as `seasons_watched`. This is how a finished season of an in-progress show gets correct recency on the recommendation engine's variety ladder (see [SCORING.md](SCORING.md#variety-after-completion)); a source that omits it still gets the season admitted to the ladder, but it sorts to the weakest/undated rung instead of by actual watch date.
-13. **Scrub `requests` errors that may carry secrets** - If your plugin passes a secret in the URL or query params (an `?api_key=` / `?key=` style API), the default `str()` of a `requests` exception embeds the full request URL and leaks that credential into raised errors and logs. Pass the exception through `scrub_request_error()` from `src.utils.request_errors` before interpolating it — it returns only `HTTP <status>` (or the bare exception class name), never the URL. The TMDB and RAWG enrichment providers and the Steam source all do this.
+The traps that bite hardest come first.
 
-## Thread Safety
+**Say nothing about `ignored` unless your source really says something.**
+`ignored` is user-owned, and storage writes it whenever your plugin states a
+value: `True` ignores the item, `False` *un-ignores* one the user ignored in the
+app. `None`, the default, means this source has no opinion, and the stored flag
+is left alone. Storage receives a boolean or nothing, so it cannot tell a file's
+explicit `false` from a `False` you defaulted to, and **a defaulted `False`
+silently clears the user's ignore list on every sync**. If your source carries
+the flag, read it with `parse_ignored_field()` from `generic_csv`: it returns
+`None` for an absent key, a blank CSV cell or a JSON `null`, and a boolean only
+when a value was stated. Do not reach for the lower-level
+`parse_boolean_field()`, which returns `False` for a missing value.
 
-When the user enables parallel sync (`config.sync.max_workers > 1`), each
-enabled source runs on its own worker thread inside
-`execute_multi_source_sync`. To stay safe under that model:
+The library exporter (`src/web/export.py`) is the one deliberate exception, not a
+precedent. It states `ignored` on every row, because re-importing an edited
+export is the supported bulk un-ignore. That is why a re-imported export replaces
+the whole ignore list with its state at export time, and why
+[DATA_SOURCES.md](DATA_SOURCES.md#library-export) warns against leaving one
+configured as a standing source.
 
-- **Plugin instances are independent.** The registry instantiates a
-  separate plugin object per source entry, so per-instance state is fine.
+**`seasons_watched` is a list of season numbers**, `[1, 2, 5, 6]`, not a count.
+Use `parse_seasons_watched()` from `generic_csv` to convert string input. A bare
+integer is read as a count for backward compatibility, so `5` becomes
+`[1, 2, 3, 4, 5]`.
+
+**Populate `seasons_watched_dates` when you have per-season timestamps.** It maps
+`{season_number_str: iso_timestamp}`, keyed by the same numbers as
+`seasons_watched`, and it is how a finished season of an in-progress show gets
+correct recency on the [variety ladder](SCORING.md#variety-after-completion).
+Omit it and the season still reaches the ladder, on the undated bottom rung.
+
+**Scrub `requests` errors that may carry secrets.** If your plugin passes a
+secret in the URL or query string, the default `str()` of a `requests` exception
+embeds the full request URL and leaks that credential into raised errors and
+logs. Pass it through `scrub_request_error()` from `src.utils.request_errors`,
+which returns only `HTTP <status>` or the bare exception class name. The TMDB and
+RAWG enrichment providers and the Steam source all do this.
+
+Beyond those: raise `SourceError` for recoverable failures, validate every
+required config field, skip items missing required fields rather than yielding
+them, and keep ids unique within a content type.
+
+## Thread safety
+
+With `sync.max_workers > 1`, each enabled source runs on its own worker thread
+inside `execute_multi_source_sync`.
+
+- **Plugin instances are independent.** The registry instantiates one plugin
+  object per source entry, so per-instance state is fine.
 - **Avoid mutable class-level state.** Class attributes are shared across
-  instances and across threads — keep state on `self`, not on the class.
-- **Per-source rate limiting is your responsibility.** Sleep / token-bucket
-  inside `fetch()` for the source you're talking to. Cross-source
-  parallelism is what the framework adds; intra-source pacing must remain.
-- **Storage writes are already serialised.** `StorageManager` takes a
-  lock around `save_content_item`, `complete_content_item` and
-  `save_credential`, so there is nothing for plugins to coordinate on the
-  persistence side.
-- **`progress_callback` is called from the worker thread.** The framework
-  guarantees the callback itself is thread-safe; plugins just call it as
-  documented.
+  instances and threads. Keep state on `self`.
+- **Per-source rate limiting is yours.** Sleep or token-bucket inside `fetch()`.
+  The framework adds cross-source parallelism, not intra-source pacing.
+- **Storage writes are already serialised.** `StorageManager` locks around
+  `save_content_item`, `complete_content_item` and `save_credential`.
+- **`progress_callback` is called from the worker thread**, and is thread-safe.
 
-Stateless plugins (the existing CSV / Goodreads / Steam / Sonarr / Radarr
-implementations) need no changes for parallel sync.
+Stateless plugins need no changes for parallel sync.
 
-## Handling Token Rotation (OAuth Plugins)
+## OAuth token rotation
 
-If your plugin uses OAuth refresh tokens, the token may be rotated by the
-server during a sync operation. To persist the new token so the user doesn't
-need to re-authenticate, use the `_on_credential_rotated` callback that
-`execute_sync` injects into the plugin config:
+A server may rotate a refresh token mid-sync. Persist it through the
+`_on_credential_rotated` callback `execute_sync` injects into the config, or the
+user has to re-authenticate:
 
 ```python
 from src.ingestion.plugin_base import CredentialUpdateCallback
 
-# Inside your internal fetch function:
 on_credential_rotated: CredentialUpdateCallback | None = (
     config.get("_on_credential_rotated")
     if callable(config.get("_on_credential_rotated"))
     else None
 )
 
-# After obtaining new tokens:
 new_refresh_token = token_response.get("refresh_token")
 if new_refresh_token and new_refresh_token != original_refresh_token:
     if on_credential_rotated:
         on_credential_rotated("refresh_token", new_refresh_token)
 ```
 
-See `src/ingestion/sources/gog/gog.py` and `src/ingestion/sources/epic_games/epic_games.py`
-for complete examples.
+Worked examples: `src/ingestion/sources/gog/gog.py` and
+`src/ingestion/sources/epic_games/epic_games.py`.
 
-## Enrichment Providers
+## Enrichment providers
 
-In addition to data source plugins, you can create custom **enrichment providers** that fetch metadata from external APIs. Built-in enrichment providers use the folder-based auto-discovery pattern: place your provider at `src/enrichment/providers/<name>/<name>.py` with a one-line `__init__.py` that re-exports it (same `from src.enrichment.providers.<name>.<name> import *` shim used by source plugins), plus a `README.md` and a `test_<name>.py` alongside it.
+Providers fill metadata gaps from external APIs. They use the same folder layout
+as source plugins, under `src/enrichment/providers/<name>/`, and subclass
+`EnrichmentProvider` from `src/enrichment/provider_base.py`.
 
-Private enrichment providers (under `plugins/private/enrichment/`) and private source plugins (under `private/plugins/`) currently remain **flat single-file modules** — the private discovery code globs `*.py` rather than walking subpackages, so a private provider folder would be silently skipped. If you need a private provider, drop a single `<name>.py` into the private directory.
+Private providers (`plugins/private/enrichment/`) and private source plugins
+(`private/plugins/`) stay **flat single-file modules**. The private discovery
+code globs `*.py` rather than walking subpackages, so a private provider folder
+is silently skipped.
 
-All enrichment providers inherit from `EnrichmentProvider` in `src/enrichment/provider_base.py`:
+`name`, `display_name`, `content_types`, `requires_api_key`,
+`get_config_schema` and `validate_config` work as they do on a source plugin. The
+rest is what differs:
 
 ```python
-from typing import Any
-
-from src.enrichment.provider_base import (
-    ConfigField,
-    EnrichmentProvider,
-    EnrichmentResult,
-    ProviderError,
-)
-from src.models.content import ContentItem, ContentType
-
-
 class MyEnrichmentProvider(EnrichmentProvider):
     @property
-    def name(self) -> str:
-        return "my_api"
-
-    @property
-    def display_name(self) -> str:
-        return "My Metadata API"
-
-    @property
-    def content_types(self) -> list[ContentType]:
-        return [ContentType.MOVIE]  # Types this provider enriches
-
-    @property
-    def requires_api_key(self) -> bool:
-        return True
-
-    @property
     def rate_limit_requests_per_second(self) -> float:
-        return 5.0  # Default is 1.0 (conservative)
-
-    def get_config_schema(self) -> list[ConfigField]:
-        return [
-            ConfigField(
-                name="api_key",
-                field_type=str,
-                required=True,
-                description="API key for My API",
-                sensitive=True,
-            ),
-        ]
-
-    def validate_config(self, config: dict[str, Any]) -> list[str]:
-        errors = []
-        if not config.get("api_key"):
-            errors.append("'api_key' is required")
-        return errors
+        return 5.0  # default is 1.0
 
     def enrich(
         self, item: ContentItem, config: dict[str, Any]
     ) -> EnrichmentResult | None:
-        # Search for the item in your API, fetch metadata
-        # Return None if the item can't be found
+        # Return None when the item cannot be found.
         return EnrichmentResult(
             external_id="myapi:12345",
             genres=["Action", "Adventure"],
@@ -639,16 +471,9 @@ class MyEnrichmentProvider(EnrichmentProvider):
         )
 ```
 
-### Key Differences from Source Plugins
-
-- **Return `EnrichmentResult`** instead of yielding `ContentItem` objects
-- **Gap-filling only** — the enrichment manager only fills in missing metadata, never overwrites existing data
-- **Rate limiting is built-in** — set `rate_limit_requests_per_second` and the manager handles throttling
-- **Configuration** lives under `enrichment.providers.<name>` in config (not under `inputs`)
-
-### Configuration
-
-Add your provider to `config.yaml`:
+You return one `EnrichmentResult` instead of yielding `ContentItem`s, the manager
+throttles you from `rate_limit_requests_per_second`, the merge is gap-filling
+only, and config lives under `enrichment.providers.<name>` rather than `inputs`.
 
 ```yaml
 enrichment:
@@ -659,22 +484,19 @@ enrichment:
       enabled: true
 ```
 
-### Existing Enrichment Providers to Reference
+## Plugins to read
 
-- `src/enrichment/providers/tmdb/tmdb.py` — Movies and TV shows (API key required)
-- `src/enrichment/providers/openlibrary/openlibrary.py` — Books (no API key)
-- `src/enrichment/providers/rawg/rawg.py` — Video games (API key required)
+| Plugin | Pattern |
+|---|---|
+| `goodreads_csv` | File-based CSV parser |
+| `goodreads_rss` | Simple GET plus pagination, no auth |
+| `steam` | API-based with rate limiting |
+| `gog` | OAuth API with token refresh |
+| `epic_games` | OAuth API via Legendary |
+| `radarr`, `sonarr` | API-based movie and TV libraries |
+| `generic_csv`, `generic_json`, `markdown` | Flexible file importers |
+| `roms` | Directory scanner, with a No-Intro/Redump/TOSEC title cleaner in `_rom_title.py` |
 
-## Existing Plugins to Reference
-
-- `src/ingestion/sources/goodreads_csv/goodreads_csv.py` - File-based CSV parser
-- `src/ingestion/sources/goodreads_rss/goodreads_rss.py` - Simple GET + pagination, no auth
-- `src/ingestion/sources/steam/steam.py` - API-based with rate limiting
-- `src/ingestion/sources/gog/gog.py` - OAuth-based API with token refresh
-- `src/ingestion/sources/epic_games/epic_games.py` - OAuth-based API via Legendary
-- `src/ingestion/sources/radarr/radarr.py` - API-based movie library
-- `src/ingestion/sources/sonarr/sonarr.py` - API-based TV library
-- `src/ingestion/sources/generic_csv/generic_csv.py` - Flexible CSV importer
-- `src/ingestion/sources/generic_json/generic_json.py` - Flexible JSON importer
-- `src/ingestion/sources/markdown/markdown.py` - Flexible Markdown importer
-- `src/ingestion/sources/roms/roms.py` - ROM Library scanner with curated extension defaults and built-in No-Intro/Redump/TOSEC title cleaner (`src/ingestion/sources/roms/_rom_title.py`)
+Each lives at `src/ingestion/sources/<name>/<name>.py`. Enrichment providers:
+`tmdb` (movies and TV), `openlibrary` (books, no API key), `rawg` (video games),
+under `src/enrichment/providers/<name>/<name>.py`.
