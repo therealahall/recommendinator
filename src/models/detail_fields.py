@@ -65,8 +65,8 @@ def to_text(value: Any) -> str | None:
     for entry in entries:
         if entry is not None and not isinstance(entry, _TEXT_SCALARS):
             raise TypeError(f"a text column cannot hold a {type(entry).__name__}")
-    names = (str(entry) for entry in entries if entry is not None)
-    return ", ".join(name for name in names if name.strip()) or None
+    names = (str(entry).strip() for entry in entries if entry is not None)
+    return ", ".join(name for name in names if name) or None
 
 
 def text_names(value: Any) -> list[str]:
