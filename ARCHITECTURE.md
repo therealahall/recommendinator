@@ -159,19 +159,25 @@ the in-memory config into `credentials`, under a reserved `settings:`
 `source_id`, and strips it from the running config. Enrichment reads them back at
 runtime. The Settings page and `settings` CLI expose them write-only.
 
-**Settings-table migrations.** `_migrate_settings_table`
-(`src/storage/schema.py`), called from `create_schema`, is guarded by
-`PRAGMA user_version`. Version 1 clears every pre-existing row and version 2
-prunes `_ORPHANED_SETTING_KEYS`. The guard advances the version, so anything a
-user sets afterwards survives.
+**One-time migrations.** `create_schema` (`src/storage/schema.py`) runs on every
+database open, so the steps that cannot be repeated cheaply are guarded by
+`PRAGMA user_version`: it reads the stored version once, runs each step whose
+version the database is below, and writes `_SCHEMA_VERSION` back at the end,
+inside the same transaction. Version 1 clears every pre-existing `settings` row
+and version 2 prunes `_ORPHANED_SETTING_KEYS`, so anything a user sets
+afterwards survives. Version 3 is `_repair_legacy_content_rows` — title
+re-normalization, the stranded detail-shape repair and the duplicate merge —
+three scans of the whole library that no current write path gives anything to
+find. A database with no tables yet reports as already current, because
+`CREATE TABLE` leaves nothing for any of them to repair.
 
 #### Cross-source deduplication
 
 Items are deduplicated by normalized title. A save looks up
 `(user_id, external_id, content_type)`, then merges any *different* row sharing
 `(user_id, content_type, normalized_title)`. With no external_id match it falls
-back to a direct normalized-title lookup. Schema migrations re-normalize every
-title and merge whatever that exposes.
+back to a direct normalized-title lookup. The version-3 migration re-normalizes
+every title once and merges whatever that exposes.
 
 Merge rules:
 
