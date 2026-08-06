@@ -21,7 +21,10 @@ self-repairs on a re-sync, so ``create_schema`` rewrites them once on init:
   string.
 
 Every test seeds the pre-fix shape by writing the detail row directly, because
-the corrected write path can no longer produce it.
+the corrected write path can no longer produce it — and rewinds the stored
+schema version with it, because ``create_schema`` runs the repair only while
+the database is below the version that introduced it, and a row in a shape no
+current build writes came out of a build that predates the guard too.
 """
 
 import csv
@@ -49,6 +52,31 @@ _FLAGS_WINDOWS_AND_LINUX = json.dumps([{"windows": True, "mac": False, "linux": 
 _FLAGS_NOTHING_SUPPORTED = json.dumps(
     [{"windows": False, "mac": False, "linux": False}]
 )
+
+
+def _mark_written_before_the_repair(
+    handle: sqlite3.Connection | sqlite3.Cursor,
+) -> None:
+    """Rewind the stored schema version to a build that predates the repair.
+
+    Takes the handle the caller already holds rather than opening its own:
+    several seeders write inside a transaction, and a second connection to the
+    same file would block on its write lock.
+    """
+    handle.execute("PRAGMA user_version = 0")
+
+
+def _make_the_next_open_repair(db_path: Path) -> None:
+    """Rewind the database, building the schema first if there is none yet.
+
+    Covers the two cases the seed helpers above do not: a test that seeds no
+    row at all, and one that wants the repair run a second time over rows it
+    has already corrected — which is what the retry after a failed open does.
+    """
+    db = SQLiteDB(db_path)
+    with db.connection() as conn:
+        _mark_written_before_the_repair(conn)
+        conn.commit()
 
 
 def _seed_show(
@@ -87,6 +115,7 @@ def _write_show_metadata(
             " WHERE content_item_id = ?",
             (seasons, metadata, db_id),
         )
+        _mark_written_before_the_repair(conn)
         conn.commit()
 
 
@@ -116,6 +145,7 @@ def _insert_show_row(
         " VALUES (?, ?, ?)",
         (db_id, seasons, metadata),
     )
+    _mark_written_before_the_repair(cursor)
     return db_id
 
 
@@ -143,6 +173,7 @@ def _insert_game_row(
         "INSERT INTO video_game_details (content_item_id, platforms) VALUES (?, ?)",
         (db_id, platforms),
     )
+    _mark_written_before_the_repair(cursor)
     return db_id
 
 
@@ -168,6 +199,7 @@ def _seed_game(
             "UPDATE video_game_details SET platforms = ? WHERE content_item_id = ?",
             (platforms, db_id),
         )
+        _mark_written_before_the_repair(conn)
         conn.commit()
     return db_id
 
@@ -197,6 +229,7 @@ def _seed_stranded_companies(
             " WHERE content_item_id = ?",
             (developer, publisher, metadata, db_id),
         )
+        _mark_written_before_the_repair(conn)
         conn.commit()
     return db_id
 
@@ -246,6 +279,7 @@ def _insert_legacy_game_row(
             " VALUES (?, ?, ?, ?, ?)",
             (db_id, developer, publisher, platforms, metadata),
         )
+        _mark_written_before_the_repair(conn)
         conn.commit()
     finally:
         conn.close()
@@ -292,6 +326,7 @@ def _strand_blob_key(
             (json.dumps(blob), db_id),
         )
         assert cursor.rowcount == 1
+        _mark_written_before_the_repair(conn)
         conn.commit()
 
 
@@ -311,6 +346,7 @@ def _seed_movie(db: SQLiteDB, *, blob: dict[str, Any]) -> int:
             "UPDATE movie_details SET metadata = ? WHERE content_item_id = ?",
             (json.dumps(blob), db_id),
         )
+        _mark_written_before_the_repair(conn)
         conn.commit()
     return db_id
 
@@ -381,6 +417,23 @@ def _stored_platforms(db: SQLiteDB, db_id: int) -> Any:
     return row["platforms"]
 
 
+def _open_counting_the_repair(db_path: Path) -> int:
+    """Open the database, returning how many times the repair pass ran.
+
+    The pass still does its work, because "did it run" and "what did it leave
+    behind" are both being asked. Every pass skips a row already in the current
+    shape, so an unguarded rescan and a skipped one leave the same library —
+    only the count tells them apart.
+    """
+    with patch.object(
+        schema,
+        "_migrate_stranded_detail_shapes",
+        wraps=schema._migrate_stranded_detail_shapes,
+    ) as repair:
+        SQLiteDB(db_path)
+    return int(repair.call_count)
+
+
 class TestStrandedTotalSeasonsMigration:
     """The season count ends up on the column, and only on the column."""
 
@@ -420,7 +473,7 @@ class TestStrandedTotalSeasonsMigration:
         """Running the migration twice changes nothing the first pass did."""
         db_path = tmp_path / "test.db"
         db_id = _seed_show(SQLiteDB(db_path), seasons=None, blob={"total_seasons": 5})
-        SQLiteDB(db_path)
+        _make_the_next_open_repair(db_path)
 
         db = SQLiteDB(db_path)
 
@@ -625,8 +678,8 @@ class TestStrandedTotalSeasonsMigration:
     ) -> None:
         """A blob the migration cannot read is skipped, not raised on.
 
-        ``create_schema`` runs on every open, so a row it chokes on would
-        make the database unopenable rather than merely unrepaired.
+        The pass runs inside the open, so a row it chokes on would make the
+        database unopenable rather than merely unrepaired.
         """
         db_path = tmp_path / "test.db"
         seed = SQLiteDB(db_path)
@@ -810,6 +863,7 @@ class TestStrandedCompanyNamesMigration:
         )
         repaired = _whole_detail_row(SQLiteDB(db_path), "video_game_details", db_id)
 
+        _make_the_next_open_repair(db_path)
         db = SQLiteDB(db_path)
 
         assert repaired["developer"] == "CD Projekt Red"
@@ -832,8 +886,8 @@ class TestStrandedCompanyNamesMigration:
     ) -> None:
         """A blob the migration cannot read is skipped, not raised on.
 
-        ``create_schema`` runs on every open, so a row it chokes on would
-        make the database unopenable rather than merely unrepaired.
+        The pass runs inside the open, so a row it chokes on would make the
+        database unopenable rather than merely unrepaired.
         """
         db_path = tmp_path / "test.db"
         seed = SQLiteDB(db_path)
@@ -999,7 +1053,7 @@ class TestWhatTheCompanyFoldDeclinesToFold:
 
     The blob is whatever an API said years ago, so the fold meets keys with
     nothing under them and blobs that are not objects at all. Neither may
-    write a column and neither may raise, because this runs on every open.
+    write a column and neither may raise, because this runs inside the open.
     """
 
     @pytest.mark.parametrize(
@@ -1125,7 +1179,7 @@ class TestStrandedPlatformFlagsMigration:
         """The row the migration emptied stays empty on the next open."""
         db_path = tmp_path / "test.db"
         db_id = _seed_game(SQLiteDB(db_path), platforms=_FLAGS_NOTHING_SUPPORTED)
-        SQLiteDB(db_path)
+        _make_the_next_open_repair(db_path)
 
         db = SQLiteDB(db_path)
 
@@ -1172,7 +1226,7 @@ class TestStrandedPlatformFlagsMigration:
         """Running the migration twice changes nothing the first pass did."""
         db_path = tmp_path / "test.db"
         db_id = _seed_game(SQLiteDB(db_path), platforms=_FLAGS_WINDOWS_AND_LINUX)
-        SQLiteDB(db_path)
+        _make_the_next_open_repair(db_path)
 
         db = SQLiteDB(db_path)
 
@@ -1209,14 +1263,14 @@ class TestStrandedPlatformFlagsMigration:
         ``generic_json`` wraps a non-list ``platform`` in a list, so an entry
         saying ``{"name": "PC"}`` is stored in exactly the shape GOG's old
         value took. Reading its keys as names rewrote the column to
-        ``["Name"]``, destroying the imported value in place — and, since the
-        pass runs on every open rather than once, doing it again to every such
-        import for the life of the database.
+        ``["Name"]``, destroying the imported value in place.
+        ``TestTheRowsTheRepairDeclinesToSettle`` takes the same row from the
+        other side: declining it is what leaves it matching the scan's filter.
         """
         db_path = tmp_path / "test.db"
         stored = json.dumps([{"name": "PC"}])
         db_id = _seed_game(SQLiteDB(db_path), platforms=stored)
-        SQLiteDB(db_path)
+        _make_the_next_open_repair(db_path)
 
         db = SQLiteDB(db_path)
 
@@ -1340,8 +1394,8 @@ class TestOnlyTheDeclaredShapesAreRepaired:
     ``developers``, ``publishers`` and ``platforms`` on
     ``video_game_details``. A blob key duplicating any other column is left
     where it is, so a row this pass has no rule for comes back exactly as it
-    was written — including on every later open, since a row it declines to
-    repair stays in the shape it keeps seeing.
+    was written — including on a later open, which is the one an upgrade that
+    started rewriting such a row would ruin.
     """
 
     def test_a_movie_duplicating_its_columns_in_the_blob_is_left_alone(
@@ -1363,7 +1417,7 @@ class TestOnlyTheDeclaredShapesAreRepaired:
         db_path = tmp_path / "test.db"
         blob = {"year": 1999, "runtime_minutes": 136}
         db_id = _seed_movie(SQLiteDB(db_path), blob=blob)
-        SQLiteDB(db_path)
+        _make_the_next_open_repair(db_path)
 
         db = SQLiteDB(db_path)
 
@@ -1444,6 +1498,7 @@ class TestOnlyTheDeclaredShapesAreRepaired:
                 "UPDATE book_details SET metadata = ? WHERE content_item_id = ?",
                 (json.dumps(blob), db_id),
             )
+            _mark_written_before_the_repair(conn)
             conn.commit()
 
         reopened = SQLiteDB(db_path)
@@ -1455,12 +1510,15 @@ class TestOnlyTheDeclaredShapesAreRepaired:
 
 
 class TestASecondOpenRewritesNothing:
-    """Every column of a repaired row is the same after the next open.
+    """Every column of a repaired row is the same after the passes run again.
 
-    ``create_schema`` runs on every open, so a pass still finding something to
-    write would churn the row for the life of the database. The whole row is
-    compared rather than the repaired column, because a second pass could
-    disturb a column the first one left alone.
+    The version guard means the next open runs none of them, which the last
+    test pins on its own. These two rewind the version between the opens, so
+    the passes really do read the repaired row a second time: that is the
+    retry after a failed open, and a pass still finding something to write
+    would churn the row on every one of them. The whole row is compared rather
+    than the repaired column, because a second pass could disturb a column the
+    first one left alone.
     """
 
     def test_a_repaired_show_row_is_unchanged_by_the_next_open(
@@ -1475,6 +1533,7 @@ class TestASecondOpenRewritesNothing:
         )
         repaired = _whole_detail_row(SQLiteDB(db_path), "tv_show_details", db_id)
 
+        _make_the_next_open_repair(db_path)
         db = SQLiteDB(db_path)
 
         assert repaired["seasons"] == 5
@@ -1488,10 +1547,49 @@ class TestASecondOpenRewritesNothing:
         db_id = _seed_game(SQLiteDB(db_path), platforms=_FLAGS_WINDOWS_AND_LINUX)
         repaired = _whole_detail_row(SQLiteDB(db_path), "video_game_details", db_id)
 
+        _make_the_next_open_repair(db_path)
         db = SQLiteDB(db_path)
 
         assert json.loads(repaired["platforms"]) == ["Windows", "Linux"]
         assert _whole_detail_row(db, "video_game_details", db_id) == repaired
+
+    def test_the_second_open_does_not_run_the_pass_at_all(self, tmp_path: Path) -> None:
+        """Not rewriting is idempotence; not reading is what the guard adds.
+
+        The two tests above rewind the version to make the passes run again,
+        so on their own they say nothing about whether an ordinary second open
+        reads the library — and re-reading it is the cost being removed.
+        """
+        db_path = tmp_path / "test.db"
+        _seed_show(SQLiteDB(db_path), seasons=3, blob={"total_seasons": 5})
+
+        assert _open_counting_the_repair(db_path) == 1
+        assert _open_counting_the_repair(db_path) == 0
+
+
+class TestTheRowsTheRepairDeclinesToSettle:
+    """A row the pass keeps rather than rewrites is read once, not forever.
+
+    ``generic_json`` wraps a non-list ``platform`` in a list, so an imported
+    ``{"name": "PC"}`` is stored in exactly the shape GOG's flag dict took. The
+    pass declines it rather than reading its keys as names, which would destroy
+    the imported value — and that leaves the row in a shape
+    ``platforms LIKE '%{%'`` matches, so an unguarded scan finds and re-parses
+    it on every open for the life of the database. Keeping the value is the
+    behaviour that must not change; the endless re-reading is what the version
+    guard ends.
+    """
+
+    def test_a_declined_row_is_read_once_and_kept(self, tmp_path: Path) -> None:
+        """One open reads it, the next does not, and the value is untouched."""
+        db_path = tmp_path / "test.db"
+        stored = json.dumps([{"name": "PC"}])
+        db_id = _seed_game(SQLiteDB(db_path), platforms=stored)
+
+        reads = (_open_counting_the_repair(db_path), _open_counting_the_repair(db_path))
+
+        assert reads == (1, 0)
+        assert _stored_platforms(SQLiteDB(db_path), db_id) == stored
 
 
 class TestRepairRunsBeforeDeduplication:
@@ -1547,6 +1645,8 @@ class TestRepairRunsBeforeDeduplication:
         library that happens to end up correct proves nothing about which ran
         first. Patching both records the call order directly.
         """
+        db_path = tmp_path / "test.db"
+        _make_the_next_open_repair(db_path)
         calls: list[str] = []
 
         with (
@@ -1561,7 +1661,7 @@ class TestRepairRunsBeforeDeduplication:
                 lambda cursor: calls.append("dedup"),
             ),
         ):
-            SQLiteDB(tmp_path / "test.db")
+            SQLiteDB(db_path)
 
         assert calls == ["repair", "dedup"]
 
@@ -1740,8 +1840,8 @@ class TestRepairRunsBeforeDeduplication:
         """The merged survivor is in the current shape, so nothing repeats.
 
         The repair now runs over rows the merge is about to delete, so the
-        row it leaves behind has to be one the next open's pass declines —
-        otherwise the count would be rewritten on every start for good.
+        row it leaves behind has to be one a re-run of the pass declines —
+        otherwise the retry after a failed open would lower the count.
         """
         db_path = tmp_path / "test.db"
         db = SQLiteDB(db_path)
@@ -1764,6 +1864,7 @@ class TestRepairRunsBeforeDeduplication:
             conn.commit()
 
         merged = _whole_detail_row(SQLiteDB(db_path), "tv_show_details", keep_id)
+        _make_the_next_open_repair(db_path)
         db = SQLiteDB(db_path)
 
         assert merged["seasons"] == 5
@@ -1776,6 +1877,8 @@ class TestRepairRunsBeforeDeduplication:
         in front of both, because the pair dedup merges is only a pair once
         every title has been through it.
         """
+        db_path = tmp_path / "test.db"
+        _make_the_next_open_repair(db_path)
         calls: list[str] = []
 
         with (
@@ -1795,7 +1898,7 @@ class TestRepairRunsBeforeDeduplication:
                 lambda cursor: calls.append("dedup"),
             ),
         ):
-            SQLiteDB(tmp_path / "test.db")
+            SQLiteDB(db_path)
 
         assert calls == ["normalize", "repair", "dedup"]
 
