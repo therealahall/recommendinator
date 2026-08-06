@@ -417,13 +417,13 @@ SSE streams chat responses and recommendation blurbs. Internal network only.
   without regenerating the list.
 - **Library search is bounded at 200 characters in four places**
   (`MAX_SEARCH_LENGTH` in `src/utils/sorting.py`, mirrored in
-  `resources/js/constants/library.ts`), because every search slides a
-  fuzzy-match window over every candidate. `GET /api/items` answers 422,
-  `library list --search` errors, the input caps typing and announces the cap to
-  screen readers, and the library store truncates in `setFilter`. Within the
-  bound, titles normalize on Python's `\w`, which spans every script. An
-  ASCII-only class normalizes a Cyrillic or Japanese title to the empty string
-  and makes it unreachable.
+  `resources/js/constants/library.ts`), because a candidate matching neither the
+  exact nor the substring tier costs a fuzzy-match window slid across it.
+  `GET /api/items` answers 422, `library list --search` errors, the input caps
+  typing and announces the cap to screen readers, and the library store
+  truncates in `setFilter`. Within the bound, titles normalize on Python's `\w`,
+  which spans every script. An ASCII-only class normalizes a Cyrillic or
+  Japanese title to the empty string and makes it unreachable.
 - Themes are folder-per-theme in `src/web/static/themes/`, each a `theme.json`
   and a `colors.css`. Tailwind `@theme` maps the vars to utilities, and
   `color-mix()` means a theme defines only core colors. Selection persists per

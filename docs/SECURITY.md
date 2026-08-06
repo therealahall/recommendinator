@@ -153,7 +153,10 @@ check exactly like the real one. Reviewing the `.claude/agents/` diff by hand is
 the only control on that, so treat a change to those files like a change to CI
 configuration: they direct the agents reviewing this repository, they run with
 the reviewer's tool permissions, and an edit changes what the review does,
-including the review of the branch making the edit.
+including the review of the branch making the edit. The
+`<!-- shared-review-guidance:start -->` / `:end -->` markers every agent carries
+delimit the region the out-of-repo vendoring keeps in step across repositories,
+including the read-only rule the next section rests on. Nothing here reads them.
 
 `SessionStart` hooks are deliberately kept out of the tracked
 `.claude/settings.json`, because tracked settings ship to every clone and hooks
@@ -209,9 +212,15 @@ flags and a flag may sit anywhere in the arguments. A deny on
 `git diff --no-index` misses `git diff --stat --no-index a b`, and a rule that
 can be stepped around is worse than none, because it reads as closed. The grant
 stays because dropping it means dozens of prompts in a single review round, and
-someone clearing forty prompts is not reading the forty-first. **What actually
-holds the line is the agents' own read-only rule**, which is prose, a standard
-they are held to rather than a control that stops them.
+someone clearing forty prompts is not reading the forty-first. **So the grant is
+unguarded here.** What asks an agent not to use it that way is the agents' own
+prose, and the two primitives are covered by different sentences: the read-only
+rule answers the write, while the read is answered only by a clause in the
+search section telling an agent not to route around the file tool with
+`--no-index`. Both are maintained upstream, in the repository the six shared
+agents are vendored from. Nothing in this checkout asserts a committed agent
+still carries either, so a copy arriving without them reads as ordinary drift
+and the whole suite stays green.
 
 `enabledPlugins` is code by definition and is pinned for the same reason.
 `tests/test_review_agents.py` pins both keys exactly, so widening either costs a
