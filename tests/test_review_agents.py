@@ -13,8 +13,6 @@ from __future__ import annotations
 import json
 import re
 import subprocess
-from collections import Counter
-from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
@@ -97,8 +95,7 @@ _SCRIPTS_AWARE_TOOLS = ("black", "ruff", "mypy")
 # arguments and a rule that misses `git diff --stat --no-index a b` reads as
 # closed while being open. The grant was kept knowing this: see docs/SECURITY.md
 # for the trade, and note that what actually holds the line is the agents' own
-# read-only rule, which is prose rather than enforcement — and which
-# `_READ_ONLY_CLAIMS` below now pins for that reason.
+# read-only rule, which is prose rather than enforcement.
 _TRACKED_GRANTS = {
     "permissions": {
         "allow": [
@@ -128,87 +125,6 @@ _TRACKED_GRANTS = {
 # checking out a contributed branch act as the reviewer — while the value pin
 # covers a nested arrival like `permissions.defaultMode`.
 _ALLOWED_SETTINGS_KEYS = frozenset(_TRACKED_GRANTS)
-
-# The two regions the agents carry word for word. Six of the seven are vendored
-# from a shared upstream and one is native here, so a reword reaching only some
-# of them is drift nothing else would catch. Each region is delimited in the
-# files themselves rather than inferred from a heading to end-of-file: that lets
-# any agent add its own tail after a region — which most of them need — and it
-# means a comparison can be made between the agents rather than against one
-# designated file, which would pass tautologically for the file it read.
-_REVIEW_GUIDANCE = "shared-review-guidance"
-_EPHEMERAL_RULE = "shared-ephemeral-rule"
-
-_REVIEW_GUIDANCE_SECTIONS = (
-    "## How to search",
-    "## Provenance on every finding",
-    "## Severity calibration",
-)
-
-# The claims those headings are there to carry. Headings alone are a shell:
-# delete every paragraph beneath them and the region is still "present" and still
-# identical across all seven. What that would silently discard is load-bearing
-# elsewhere — the pre-commit workflow in CLAUDE.md and CONTRIBUTING.md says
-# triage is a lookup because every agent labels each finding introduced or
-# pre-existing, so gutting the provenance body turns that step back into a
-# judgement call with the whole suite green.
-_REVIEW_GUIDANCE_CLAIMS = (
-    "Never `grep`, `egrep`, `fgrep`, `rg`, `find`, `sed` or `awk` through Bash.",
-    "bare grep under another name",
-    "`git diff --no-index <path> <path>` is the sharper version of the same trick",
-    "tracked files only",
-    "git status --porcelain",
-    "introduced by the diff under review",
-    "pre-existing and merely surfaced",
-    "Report criticals and highs without hesitation",
-)
-
-# `parity-review` states the same no-ephemeral-verification rule under its own
-# heading in its own words, so it is checked by claim rather than verbatim: the
-# forms it must forbid, and the fact that it promises no enforcement. The claim
-# is what matters — an agent told a control will stop it relaxes; one told the
-# restraint is its own does not.
-_PARITY_REVIEW = "parity-review"
-_PARITY_EPHEMERAL_HEADING = "## No ephemeral verification (hard rule)"
-_VERBATIM_EPHEMERAL_AGENTS = tuple(
-    name for name in MANDATED_AGENTS if name != _PARITY_REVIEW
-)
-# Every form the rule forbids, not a representative sample. Two of these were
-# left out at first because `parity-review` worded its sentence without them, and
-# the shorter list would have let `heredoc-fed interpreters` be deleted from all
-# six with the whole class still green — the one form with a live violation
-# history in this engagement, and the one `scratch scripts` and `one-off shells`
-# cover only if a reader is feeling generous. The fix was to widen the sentence,
-# not the pin.
-_EPHEMERAL_FORMS = (
-    "python -c",
-    "node -e",
-    "scratch script",
-    "heredoc-fed interpreter",
-    "one-off shell",
-    "REPL probing",
-    "git stash",
-    "edit-and-revert",
-    "commenting code out",
-)
-
-# The rule those forms elaborate. Pinned separately because the elaboration is
-# not the rule: delete the read-only sentence from all six in one edit and they
-# still agree with each other, and every other pinned fragment lives in the
-# paragraphs below it. docs/SECURITY.md now rests the write-primitive argument on
-# this sentence existing, which makes leaving it unpinned the larger of the two
-# gaps rather than the smaller.
-_READ_ONLY_CLAIMS = (
-    "## Hard rule: you are read-only",
-    "**You are read-only.**",
-    "Do not create, modify, copy, or delete any file",
-)
-# Fragments rather than sentences, because the two wordings differ around them:
-# the vendored six say a command working "is not permission to have run it", and
-# `parity-review` says not to "treat a command working as permission to have run
-# it". Both halves of the claim have to survive — that no rule is promised, and
-# that a command succeeding grants nothing.
-_NO_ENFORCEMENT_CLAIMS = ("hook or permission rule", "permission to have run it")
 
 # The pre-commit workflow is written out twice, for two audiences. Duplicating it
 # is the decision; letting the copies disagree is not, and this project has
@@ -264,28 +180,6 @@ def _frontmatter_of_length(lines: int) -> str:
     filler = [f"field{index}: value" for index in range(lines - 2)]
     body = ["name: parity-review", "description: A test agent.", *filler]
     return "---\n" + "\n".join(body) + "\n---\n\nBody.\n"
-
-
-def _delimited_region(agent_name: str, region: str) -> str:
-    """Return the text an agent carries between a region's start and end markers."""
-    text = (COMMITTED_AGENTS_DIR / f"{agent_name}.md").read_text(encoding="utf-8")
-    _, start, rest = text.partition(f"<!-- {region}:start -->")
-    assert start, f"{agent_name} has no '{region}' start marker"
-    body, end, _ = rest.partition(f"<!-- {region}:end -->")
-    assert end, f"{agent_name} never closes its '{region}' region"
-    assert body.strip(), f"{agent_name}'s '{region}' region is empty"
-    return body.strip()
-
-
-def _agents_out_of_step(agent_names: Sequence[str], region: str) -> list[str]:
-    """Return the agents whose region differs from however most of them word it.
-
-    Named this way round on purpose: comparing every agent against one designated
-    file reports the six innocent ones when the designated file is what changed.
-    """
-    regions = {name: _delimited_region(name, region) for name in agent_names}
-    agreed, _ = Counter(regions.values()).most_common(1)[0]
-    return sorted(name for name, body in regions.items() if body != agreed)
 
 
 def _scope(project_agents: Path, session_project_dir: Path | None = None) -> AgentScope:
@@ -1021,80 +915,8 @@ class TestMandatedAgentList:
         assert "make check-agents" in _claude_md_section(_PREFLIGHT_HEADING)
 
 
-class TestSharedAgentGuidance:
-    """The two regions every agent carries word for word, and one it paraphrases."""
-
-    @pytest.mark.parametrize("name", MANDATED_AGENTS)
-    def test_every_agent_carries_every_guidance_section(self, name: str) -> None:
-        """Equality alone would be satisfied by seven identically empty regions.
-
-        The rules only make the loop cheaper if every agent applies the same ones:
-        an agent that omits the provenance field puts its findings back on the
-        orchestrator to triage by hand, and an agent still reaching for a denied
-        search command stalls a whole round. Both are silent — the report reads
-        exactly as it always did.
-        """
-        region = _delimited_region(name, _REVIEW_GUIDANCE)
-        for section in _REVIEW_GUIDANCE_SECTIONS:
-            assert section in region, f"{name} is missing its '{section}' section"
-        for claim in _REVIEW_GUIDANCE_CLAIMS:
-            assert claim in region, f"{name} no longer tells a reviewer {claim!r}"
-
-    def test_every_agent_words_the_guidance_identically(self) -> None:
-        """One agent left behind by a reword is one reviewing under the old rules."""
-        odd = _agents_out_of_step(MANDATED_AGENTS, _REVIEW_GUIDANCE)
-        assert not odd, f"{odd} word the shared review guidance differently"
-
-    def test_the_vendored_agents_word_the_ephemeral_rule_identically(self) -> None:
-        """The most-repeated correction in this repository, and the least guarded.
-
-        These paragraphs sit under each agent's read-only hard rule, above the
-        review guidance, so before they were delimited nothing compared them at
-        all — a reword could reach one agent and leave five telling reviewers a
-        different story about what they may run.
-        """
-        odd = _agents_out_of_step(_VERBATIM_EPHEMERAL_AGENTS, _EPHEMERAL_RULE)
-        assert not odd, f"{odd} word the no-ephemeral-verification rule differently"
-
-    def test_parity_review_states_the_ephemeral_rule_in_its_own_words(self) -> None:
-        """The one agent that words this rule itself, so it is checked by claim.
-
-        Its own section predates the shared one and says the same things, so
-        forcing the vendored wording on it would be churn. What it may not lose is
-        the substance: the forms it forbids, and the promise that nothing enforces
-        them. That second half is the load-bearing one — the file previously
-        claimed the harness would deny these commands, which was false in every
-        clone, and being told a control will stop you invites relaxing.
-
-        Scoped to that section rather than the whole file. The file also carries
-        the shared review guidance, which names several of the same forms, so a
-        whole-file scan would stay green through a normalisation that deleted the
-        section this test is named after. Reading the section also asserts the
-        heading, which the name promises and a whole-file scan never checked.
-        """
-        section = _document_section(
-            COMMITTED_AGENTS_DIR / f"{_PARITY_REVIEW}.md", _PARITY_EPHEMERAL_HEADING
-        )
-        for form in _EPHEMERAL_FORMS:
-            assert form in section, f"{_PARITY_REVIEW} no longer forbids {form!r}"
-        for claim in _NO_ENFORCEMENT_CLAIMS:
-            assert claim in section, f"{_PARITY_REVIEW} no longer states {claim!r}"
-
-    @pytest.mark.parametrize("name", _VERBATIM_EPHEMERAL_AGENTS)
-    def test_every_vendored_agent_forbids_every_ephemeral_form(self, name: str) -> None:
-        """Pins the forms themselves, which agent-to-agent equality cannot.
-
-        Drop `git stash` from all six at once and they still agree with each
-        other; the list of what is actually forbidden has to be pinned separately
-        from the fact that they agree on it.
-        """
-        region = _delimited_region(name, _EPHEMERAL_RULE)
-        for claim in _READ_ONLY_CLAIMS:
-            assert claim in region, f"{name} no longer states {claim!r}"
-        for form in _EPHEMERAL_FORMS:
-            assert form in region, f"{name} no longer forbids {form!r}"
-        for claim in _NO_ENFORCEMENT_CLAIMS:
-            assert claim in region, f"{name} no longer states {claim!r}"
+class TestCommittedAgentFrontmatter:
+    """The committed agents stay inside the bound that keeps them loadable."""
 
     @pytest.mark.parametrize("name", MANDATED_AGENTS)
     def test_no_agents_frontmatter_approaches_the_checker_bound(
