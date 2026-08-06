@@ -12,10 +12,11 @@ from difflib import SequenceMatcher
 # separates real typos from unrelated terms.
 FUZZY_MATCH_THRESHOLD = 0.8
 
-# Longest search term either interface accepts. Every search slides a
-# SequenceMatcher window over every candidate, so the term's length multiplies
-# that pass's cost. 200 characters is far longer than any title worth searching
-# for and short enough that the pass stays cheap.
+# Longest search term either interface accepts. A candidate matching neither
+# the exact nor the substring tier costs a SequenceMatcher window slid across
+# it, so the term's length multiplies that scan's cost. 200 characters is far
+# longer than any title worth searching for and short enough that the scan
+# stays cheap.
 MAX_SEARCH_LENGTH = 200
 
 # Articles to strip when sorting titles. Intentionally English-only: a
