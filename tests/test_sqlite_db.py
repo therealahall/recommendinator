@@ -97,6 +97,17 @@ def _insert_raw_item(
         return db_id
 
 
+def _mark_written_before_the_repair(conn: sqlite3.Connection) -> None:
+    """Rewind the stored schema version to a build that predates the repair.
+
+    ``create_schema`` re-normalizes titles and merges the duplicates that
+    exposes only while the stored ``user_version`` is below the version that
+    introduced those passes, so a test seeding the rows they exist for has to
+    seed the version they run from too.
+    """
+    conn.execute("PRAGMA user_version = 0")
+
+
 def test_save_and_get_content_item(temp_db: SQLiteDB) -> None:
     """Test saving and retrieving a content item."""
     item = ContentItem(
@@ -5568,6 +5579,7 @@ class TestCrossSourceDuplicateDetectionRegression:
                        'fable: anniversary', 'video_game', 'completed',
                        'Great game', 'personal_site')"""
         )
+        _mark_written_before_the_repair(conn)
         conn.commit()
 
         # Verify two rows exist
@@ -5626,6 +5638,7 @@ class TestCrossSourceDuplicateDetectionRegression:
                VALUES (1, 'b', 'Test Game', 'test game', 'video_game',
                        'completed', 'blog')"""
         )
+        _mark_written_before_the_repair(conn)
         conn.commit()
 
         # Verify two rows exist before the dedup migration
@@ -6229,6 +6242,7 @@ class TestCrossSourceDuplicateDetectionRegression:
                        '["steampunk", "immersive-sim"]', ?)""",
             (dup_id, json.dumps({"award": "GOTY", "playtime_hours": 30})),
         )
+        _mark_written_before_the_repair(conn)
         conn.commit()
 
         # Verify two rows exist

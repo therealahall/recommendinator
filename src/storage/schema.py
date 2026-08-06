@@ -130,10 +130,18 @@ _ALLOWED_ENRICHMENT_JOINS: frozenset[str] = frozenset(
 _ALLOWED_ENRICHMENT_FILTERS: frozenset[str] = frozenset({"", " AND ci.user_id = ?"})
 
 # Schema version tracked in SQLite's ``PRAGMA user_version``. Bumped when a
-# non-idempotent, one-time upgrade must run exactly once per database. The plain
-# ``CREATE TABLE IF NOT EXISTS`` / ``ALTER`` migrations in create_schema stay
-# idempotent and run unconditionally; only version-guarded steps consult this.
-_SCHEMA_VERSION = 2
+# one-time upgrade must run exactly once per database. ``create_schema`` reads
+# the stored version once per open, hands it to every guarded step, and writes
+# this value back after the last of them, so a step runs only while the stored
+# version is below the one that introduced it:
+#
+#   1: clear the ``settings`` rows an earlier seed-on-boot design wrote
+#   2: prune the ``settings`` leaves that are no longer registry entries
+#   3: repair the legacy content rows ``_repair_legacy_content_rows`` describes
+#
+# The plain ``CREATE TABLE IF NOT EXISTS`` / ``ALTER`` migrations stay idempotent
+# and run unconditionally; only version-guarded steps consult this.
+_SCHEMA_VERSION = 3
 
 # Leaves that were settings-registry entries on an earlier iteration of the
 # database-backed config and no longer are. ``web.host``/``port``/``debug`` moved
@@ -166,6 +174,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
     # Required by merge_scalar_columns which uses named column access
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
+    stored_version = _stored_schema_version(cursor)
 
     # Users table
     cursor.execute(
@@ -350,33 +359,13 @@ def create_schema(conn: sqlite3.Connection) -> None:
 
     # Add normalized_title column for O(1) title-matching lookups
     _add_column_if_not_exists(cursor, "content_items", "normalized_title", "TEXT")
-    # Backfill: approximate normalization (full normalization happens on next save)
-    cursor.execute(
-        "UPDATE content_items SET normalized_title = lower(title) "
-        "WHERE normalized_title IS NULL"
-    )
-    # Re-normalize all titles with the full Python normalization function.
-    # The initial backfill uses SQL lower(title) which doesn't strip punctuation,
-    # articles, edition suffixes, etc.  This pass corrects all rows.
-    _renormalize_titles(cursor)
+    if stored_version < 3:
+        _repair_legacy_content_rows(cursor)
     # Index must be created *after* the migration adds the column
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_ci_normalized_title "
         "ON content_items(user_id, content_type, normalized_title)"
     )
-    # Repair detail rows still carrying shapes storage no longer writes. Runs
-    # before the merge below so each row folds its own stranded season count
-    # onto its own column: the merge then takes the higher of two real counts,
-    # rather than of whichever blob copy survived it.
-    #
-    # That order is only safe while the two share one transaction — the
-    # implicit one this function's first write opened and the commit at the
-    # end closes. Nothing may commit between them, and this connection must
-    # keep implicit transactions, or a merge that fails leaves the repair
-    # committed over a library the merge never finished.
-    _migrate_stranded_detail_shapes(cursor)
-    # Merge any duplicates exposed by the corrected normalization
-    _deduplicate_inline(cursor)
 
     # Core memories: significant preference signals
     cursor.execute(
@@ -473,7 +462,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
     )
 
     # Version-guarded one-time settings migrations (see _migrate_settings_table).
-    _migrate_settings_table(cursor)
+    _migrate_settings_table(cursor, stored_version)
 
     # Indexes for conversation tables
     cursor.execute(
@@ -492,10 +481,73 @@ def create_schema(conn: sqlite3.Connection) -> None:
         "ON conversation_messages(user_id, created_at DESC)"
     )
 
+    # Records that every guarded step above has run, so the next open skips
+    # them. Written inside the same transaction as the steps themselves: an
+    # open that raises advances nothing and the next one retries the lot.
+    # Only ever moves forward. Skipped when the version already says this,
+    # because the pragma rewrites the database header and an open with nothing
+    # to upgrade should leave the file alone, and skipped when the version is
+    # higher because a database written by a later build must not be rewound
+    # into re-running one of its one-time steps.
+    #
+    # PRAGMA statements cannot be parameterised; the value is a validated
+    # module-level integer constant, not caller input.
+    cursor.execute("PRAGMA user_version")
+    if cursor.fetchone()[0] < _SCHEMA_VERSION:
+        cursor.execute(f"PRAGMA user_version = {int(_SCHEMA_VERSION)}")
+
     conn.commit()
 
 
-def _migrate_settings_table(cursor: sqlite3.Cursor) -> None:
+def _stored_schema_version(cursor: sqlite3.Cursor) -> int:
+    """Read the version the one-time upgrade steps must start from.
+
+    A database with no tables at all is being created by this open, so
+    ``CREATE TABLE`` is about to write every row in the current shape and no
+    guarded step has anything to find. It reports as already current rather
+    than as version 0 — which is the version an upgrading database that
+    predates ``user_version`` really carries.
+    """
+    cursor.execute("SELECT COUNT(*) FROM sqlite_master")
+    if cursor.fetchone()[0] == 0:
+        return _SCHEMA_VERSION
+    cursor.execute("PRAGMA user_version")
+    return int(cursor.fetchone()[0])
+
+
+def _repair_legacy_content_rows(cursor: sqlite3.Cursor) -> None:
+    """Rewrite the content rows left in shapes storage no longer writes.
+
+    Each pass reads the whole library, so all three are guarded to run once per
+    database: no current write path produces what any of them looks for, and a
+    row a pass deliberately declines to settle — a fill-only column holding
+    another producer's object, say — would otherwise be re-read on every open
+    for the life of the database.
+
+    The passes are ordered, and the order is only safe while they share one
+    transaction: the implicit one ``create_schema``'s first write opened and
+    the commit at the end closes. Nothing may commit between them, and that
+    connection must keep implicit transactions, or a merge that fails leaves
+    the repair committed over a library the merge never finished.
+    """
+    # Approximate normalization for a column the caller's ALTER may have just
+    # added; the pass below corrects it with the full Python function, which
+    # SQL's lower() cannot match — it strips no punctuation, article or
+    # edition suffix.
+    cursor.execute(
+        "UPDATE content_items SET normalized_title = lower(title) "
+        "WHERE normalized_title IS NULL"
+    )
+    _renormalize_titles(cursor)
+    # Repairing before the merge lets each row fold its own stranded season
+    # count onto its own column: the merge then takes the higher of two real
+    # counts, rather than of whichever blob copy survived it.
+    _migrate_stranded_detail_shapes(cursor)
+    # Merge any duplicates exposed by the corrected normalization
+    _deduplicate_inline(cursor)
+
+
+def _migrate_settings_table(cursor: sqlite3.Cursor, stored_version: int) -> None:
     """Run the version-guarded one-time migrations of the ``settings`` table.
 
     **Version 1 — drop every pre-existing row.**
@@ -507,11 +559,10 @@ def _migrate_settings_table(cursor: sqlite3.Cursor) -> None:
     pre-existing row is genuine user input — every one is a seed artifact — so
     the whole table is cleared once on the first upgrade.
 
-    Guarded by ``PRAGMA user_version``: each step runs only while the database
-    is below the version that introduced it, then the version is advanced so it
-    never fires again. A leaf a user sets after the upgrade therefore survives
-    every later init. On a fresh database both ``DELETE``\\ s are harmless no-ops
-    that still advance the version.
+    Guarded by ``PRAGMA user_version``: each step runs only while *stored_version*
+    is below the version that introduced it, and ``create_schema`` advances the
+    stored version once every guarded step has run, so neither fires again. A
+    leaf a user sets after the upgrade therefore survives every later init.
 
     **Version 2 — prune only the keys in :data:`_ORPHANED_SETTING_KEYS`.**
     Unlike version 1 this must SPARE every other row: by now a developer on this
@@ -523,23 +574,14 @@ def _migrate_settings_table(cursor: sqlite3.Cursor) -> None:
     section left ``IN_SCOPE_SECTIONS`` too, and are deleted simply as garbage.
     Also unreleased, so no row here is genuine user intent either.
     """
-    cursor.execute("PRAGMA user_version")
-    version = cursor.fetchone()[0]
-    if version >= _SCHEMA_VERSION:
-        return
-
-    if version < 1:
+    if stored_version < 1:
         cursor.execute("DELETE FROM settings")
 
-    if version < 2:
+    if stored_version < 2:
         cursor.executemany(
             "DELETE FROM settings WHERE key = ?",
             [(key,) for key in _ORPHANED_SETTING_KEYS],
         )
-
-    # PRAGMA statements cannot be parameterised; the value is a validated
-    # module-level integer constant, not caller input.
-    cursor.execute(f"PRAGMA user_version = {int(_SCHEMA_VERSION)}")
 
 
 def _renormalize_titles(cursor: sqlite3.Cursor) -> None:
