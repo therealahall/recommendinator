@@ -59,8 +59,9 @@ python3.11 -m src.cli library list --needs-rating --type movie
 
 - `--enrichment` takes `enriched` or `not_enriched`, matching the table's
   **Enriched** column.
-- `--search` matches title or creator, fuzzy and typo-tolerant, and combines with
-  the other filters. It is capped at 200 characters, the same bound
+- `--search` matches title or creator and combines with the other filters. A
+  term matches exactly, as a substring, or through typo tolerance, and all
+  three are always in play. It is capped at 200 characters, the same bound
   `GET /api/items` and the web search box enforce.
 - `--needs-rating` forces completed status, overriding `--status`, and composes
   with `--type`.

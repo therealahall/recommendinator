@@ -32,7 +32,8 @@ from src.models.detail_fields import (
     _assert_every_content_type_is_declared,
     _assert_select_aliases_are_unique,
 )
-from src.storage import sqlite_db
+from src.storage import derived, sqlite_db
+from src.storage.merge import detail_join
 from src.storage.schema import create_schema
 from src.storage.sqlite_db import SQLiteDB
 
@@ -1097,12 +1098,13 @@ class TestSelectAliasesDoNotShadowContentItems:
 
 
 class TestSelectIdentifiersAreGuarded:
-    """Names from the declaration are validated before they reach the SELECT.
+    """Names from the declaration are validated before they reach a query.
 
-    The joined query is now built from the declaration rather than written
-    out, so the declaration is an identifier source feeding string-built SQL.
-    Every table goes through ALLOWED_DETAIL_TABLES and every alias and column
-    through the identifier pattern, and these hold that guard in place.
+    Three queries are built from the declaration rather than written out: the
+    joined read, the detail joins it shares with the derived-column source,
+    and that source's creator CASE. Every table goes through
+    ALLOWED_DETAIL_TABLES and every alias, column and content-type key through
+    the identifier pattern, and these hold that guard in place.
     """
 
     def test_table_outside_the_allow_list_is_rejected(self) -> None:
@@ -1166,6 +1168,53 @@ class TestSelectIdentifiersAreGuarded:
         with patch.dict(DETAIL_FIELDS, {"book": rogue}):
             with pytest.raises(ValueError, match="Unsafe SQL identifier"):
                 sqlite_db._build_content_item_select()
+
+    def test_detail_join_on_a_table_outside_the_allow_list_is_rejected(self) -> None:
+        """The shared join builder refuses a table nobody allow-listed.
+
+        Asserted against the builder itself because the joined read takes its
+        joins from an import-time constant, which the test above no longer
+        rebuilds.
+        """
+        rogue = replace(
+            DETAIL_FIELDS["book"], table="rogue_details; DROP TABLE content_items; --"
+        )
+
+        with pytest.raises(ValueError, match="Unknown detail table"):
+            detail_join(rogue)
+
+    def test_unsafe_content_type_key_is_rejected(self) -> None:
+        """A content-type key outside the identifier pattern never reaches the CASE.
+
+        The key is the one name the declaration hands to SQL as a string
+        literal rather than as an identifier, so a quote in it would close the
+        literal the creator CASE compares against and leave the rest as SQL.
+        The source is built at import, so the builder is called directly:
+        patching the declaration cannot reach a constant already assembled.
+        """
+        rogue_key = "book' THEN (SELECT credential_value FROM credentials) --"
+
+        with patch.dict(DETAIL_FIELDS, {rogue_key: DETAIL_FIELDS["book"]}):
+            with pytest.raises(ValueError, match="Unsafe SQL identifier"):
+                derived._build_creator_source()
+
+    def test_unsafe_creator_column_is_rejected(self) -> None:
+        """A creator column outside the identifier pattern raises."""
+        rogue = replace(
+            DETAIL_FIELDS["book"],
+            fields=(
+                DetailField(
+                    "author",
+                    FieldKind.CREATOR,
+                    column="author FROM credentials; --",
+                    template_column="author",
+                ),
+            ),
+        )
+
+        with patch.dict(DETAIL_FIELDS, {"book": rogue}):
+            with pytest.raises(ValueError, match="Unsafe SQL identifier"):
+                derived._build_creator_source()
 
 
 class TestKnownKeysAreTheKeysTheColumnsClaim:

@@ -12,11 +12,10 @@ from difflib import SequenceMatcher
 # separates real typos from unrelated terms.
 FUZZY_MATCH_THRESHOLD = 0.8
 
-# Longest search term either interface accepts. Fuzzy matching slides a
-# SequenceMatcher window over every candidate title, and no SQL LIMIT bounds
-# the scan, so the term's length is a per-request cost multiplier over the
-# whole library. 200 characters is far longer than any title worth searching
-# for and short enough that the scan stays cheap.
+# Longest search term either interface accepts. Every search slides a
+# SequenceMatcher window over every candidate, so the term's length multiplies
+# that pass's cost. 200 characters is far longer than any title worth searching
+# for and short enough that the pass stays cheap.
 MAX_SEARCH_LENGTH = 200
 
 # Articles to strip when sorting titles. Intentionally English-only: a
@@ -190,30 +189,58 @@ def _best_window_ratio(needle: str, haystack: str) -> float:
     return best
 
 
-def matches_search(haystack: str, needle: str) -> bool:
-    """Check whether *haystack* matches the search term *needle*.
+def _matches_normalized(haystack_norm: str, needle_norm: str) -> bool:
+    """Run the three matching tiers over two already-normalized strings.
 
-    Matching is case-insensitive and article/punctuation-normalized across
-    three tiers: exact equality, substring containment, and fuzzy
-    (typo-tolerant) matching via FUZZY_MATCH_THRESHOLD.
-
-    Args:
-        haystack: The candidate string (e.g. a title or creator name).
-        needle: The search term.
-
-    Returns:
-        True if the haystack matches the search term at any tier.
+    Matching is case-insensitive and article/punctuation-normalized, because
+    both sides came through :func:`normalize_for_search`. Tiers one and two
+    are exact equality and substring containment; tier three is the fuzzy,
+    typo-tolerant window scan at :data:`FUZZY_MATCH_THRESHOLD`.
     """
-    if not haystack or not needle:
+    if not haystack_norm:
         return False
-
-    haystack_norm = normalize_for_search(haystack)
-    needle_norm = normalize_for_search(needle)
-    if not haystack_norm or not needle_norm:
-        return False
-
     if haystack_norm == needle_norm:
         return True
     if needle_norm in haystack_norm:
         return True
     return _best_window_ratio(needle_norm, haystack_norm) >= FUZZY_MATCH_THRESHOLD
+
+
+# Separates the title from the creator in a stored search text. Search
+# normalization collapses every non-word character to a space, so neither half
+# nor a normalized term can contain a newline: a substring found in the joined
+# string therefore always lies inside one half, never across the two.
+_SEARCH_TEXT_SEPARATOR = "\n"
+
+
+def build_search_text(title: str | None, creator: str | None) -> str:
+    """Build the stored haystack a library search matches an item against.
+
+    Holding the normalized title and creator in one column lets a search run
+    every tier over both halves without loading the item.
+    """
+    return _SEARCH_TEXT_SEPARATOR.join(
+        (normalize_for_search(title or ""), normalize_for_search(creator or ""))
+    )
+
+
+def search_text_matches(search_text: str | None, needle_norm: str) -> bool:
+    """Check a stored search text against an already-normalized search term.
+
+    Runs all three tiers against each half the text holds, so an item matches
+    on its title or on its creator and never on the two read as one string.
+
+    Args:
+        search_text: A stored :func:`build_search_text` value.
+        needle_norm: The search term, already through
+            :func:`normalize_for_search`.
+
+    Returns:
+        True if the title or the creator matches at any tier.
+    """
+    if not search_text or not needle_norm:
+        return False
+    return any(
+        _matches_normalized(half, needle_norm)
+        for half in search_text.split(_SEARCH_TEXT_SEPARATOR)
+    )

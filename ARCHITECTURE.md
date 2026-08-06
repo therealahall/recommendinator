@@ -171,6 +171,35 @@ three scans of the whole library that no current write path gives anything to
 find. A database with no tables yet reports as already current, because
 `CREATE TABLE` leaves nothing for any of them to repair.
 
+Version 4 records the derived columns below and guards nothing. Their fill
+selects the rows missing them and runs after the duplicate merge, which can
+move a creator onto the row that survives, so it repairs a row a downgraded
+build inserted into a database already stamped 4 rather than being spent on the
+first open that sees one.
+
+#### Derived sort and search columns
+
+`content_items.sort_title` and `content_items.search_text`
+(`src/storage/derived.py`) hold `get_sort_title(title)` and the item's
+normalized title and creator, so `get_content_items` orders in SQL under a real
+`LIMIT`/`OFFSET` and builds a `ContentItem` only for the rows it returns. Both
+are recomputed from what is stored after every save and every dedup merge — the
+creator column is fill-only, so they are read back from the row rather than
+taken from the item being saved, and the creator is picked by content type the
+way the read picks it. Every `ORDER BY` ends in `ci.id`, because SQL ordering is
+not stable and a page boundary inside a tie repeats one row and drops another.
+
+A search is one matched set. SQL orders the filtered candidates and projects
+each as an `id` and its `search_text`; `search_text_matches` runs all three
+tiers — exact, substring and the fuzzy window scan SQL cannot express — and the
+page is sliced out of what matched, so no candidate that misses and no match
+outside the page costs a `ContentItem`. The scan stops as soon as the page is
+full, so a search carrying a limit never reads past it. Typo tolerance is never
+conditional, and the pages of a search concatenate into the answer that search
+gives unpaged. `search_text` joins its two halves with a character search
+normalization can never produce, so a term never matches across the
+title/creator boundary.
+
 #### Cross-source deduplication
 
 Items are deduplicated by normalized title. A save looks up
@@ -388,8 +417,8 @@ SSE streams chat responses and recommendation blurbs. Internal network only.
   without regenerating the list.
 - **Library search is bounded at 200 characters in four places**
   (`MAX_SEARCH_LENGTH` in `src/utils/sorting.py`, mirrored in
-  `resources/js/constants/library.ts`), because the term is fuzzy-matched per
-  candidate over the whole library. `GET /api/items` answers 422,
+  `resources/js/constants/library.ts`), because every search slides a
+  fuzzy-match window over every candidate. `GET /api/items` answers 422,
   `library list --search` errors, the input caps typing and announces the cap to
   screen readers, and the library store truncates in `setFilter`. Within the
   bound, titles normalize on Python's `\w`, which spans every script. An

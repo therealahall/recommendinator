@@ -5,6 +5,7 @@ import sqlite3
 from typing import Any, TypedDict
 
 from src.models.detail_fields import text_names, to_text
+from src.storage.derived import backfill_derived_columns
 from src.storage.merge import (
     merge_detail_tables,
     merge_scalar_columns,
@@ -139,9 +140,20 @@ _ALLOWED_ENRICHMENT_FILTERS: frozenset[str] = frozenset({"", " AND ci.user_id = 
 #   2: prune the ``settings`` leaves that are no longer registry entries
 #   3: repair the legacy content rows ``_repair_legacy_content_rows`` describes
 #
+# Version 4 records the derived columns ``src/storage/derived.py`` describes and
+# guards nothing: their backfill selects the rows missing them, so it repairs a
+# row a downgraded build inserted into a database already stamped 4.
+#
+# A guarded step runs once per database, so the values it wrote never follow a
+# change to the function that produced them: changing
+# ``normalize_title_for_matching``, ``get_sort_title`` or ``build_search_text``
+# needs a version bump and a new guarded step to rewrite the stored columns.
+# Without one, stored values keep the old form while new saves compute the new
+# one, and the dedup lookups stop matching — duplicates accumulate in silence.
+#
 # The plain ``CREATE TABLE IF NOT EXISTS`` / ``ALTER`` migrations stay idempotent
 # and run unconditionally; only version-guarded steps consult this.
-_SCHEMA_VERSION = 3
+_SCHEMA_VERSION = 4
 
 # Leaves that were settings-registry entries on an earlier iteration of the
 # database-backed config and no longer are. ``web.host``/``port``/``debug`` moved
@@ -206,6 +218,8 @@ def create_schema(conn: sqlite3.Connection) -> None:
             external_id TEXT,
             title TEXT NOT NULL,
             normalized_title TEXT,
+            sort_title TEXT,
+            search_text TEXT,
             content_type TEXT NOT NULL,
             status TEXT NOT NULL,
             rating INTEGER CHECK (rating >= 1 AND rating <= 5),
@@ -365,6 +379,21 @@ def create_schema(conn: sqlite3.Connection) -> None:
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_ci_normalized_title "
         "ON content_items(user_id, content_type, normalized_title)"
+    )
+
+    # Columns derived from the title and the creator, so the library list is
+    # ordered and searched in SQL (see src/storage/derived.py). Filled after
+    # the repair above, which writes a creator two ways this fill has to see:
+    # the merge moves one onto the row that survives, and the company fold
+    # recovers one that existed only in a blob. Unguarded because the fill
+    # selects the rows that need it rather than the databases that have never
+    # had one.
+    _add_column_if_not_exists(cursor, "content_items", "sort_title", "TEXT")
+    _add_column_if_not_exists(cursor, "content_items", "search_text", "TEXT")
+    backfill_derived_columns(cursor)
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_ci_sort_title "
+        "ON content_items(user_id, sort_title, id)"
     )
 
     # Core memories: significant preference signals
@@ -838,7 +867,7 @@ _ALLOWED_ALTER_TABLES = frozenset(
     }
 )
 _ALLOWED_ALTER_COLUMNS = frozenset(
-    {"tags", "description", "ignored", "normalized_title"}
+    {"tags", "description", "ignored", "normalized_title", "sort_title", "search_text"}
 )
 _ALLOWED_ALTER_TYPES = frozenset({"TEXT", "BOOLEAN DEFAULT 0"})
 

@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from src.storage import schema
+from src.storage import derived, schema
 from src.storage.merge import normalize_title_for_matching
 from src.storage.schema import (
     _enrichment_count_query,
@@ -23,6 +23,7 @@ from src.storage.schema import (
     save_cached_preference_interpretation,
     update_user_settings,
 )
+from src.utils.sorting import build_search_text, get_sort_title
 
 
 @pytest.fixture
@@ -312,6 +313,237 @@ class TestTheOneTimeContentRepair:
         )
         assert normalize_title_for_matching("The Witcher III: Wild Hunt") == (
             "witcher 3 wild hunt"
+        )
+
+
+def _rows_backfilled(conn: sqlite3.Connection) -> int:
+    """Run ``create_schema``, counting the rows the derived-column fill wrote.
+
+    The fill runs on every open, so counting the calls to it would say
+    nothing; what matters is that it writes only rows that are missing a
+    column, and a library where none is costs no write at all. Nothing else
+    reaches ``_write_row`` during an open — the duplicate merge deliberately
+    leaves the columns to the fill that follows it.
+    """
+    with patch.object(derived, "_write_row", wraps=derived._write_row) as write_row:
+        create_schema(conn)
+    return int(write_row.call_count)
+
+
+def _seed_a_row_missing_the_derived_columns(conn: sqlite3.Connection) -> None:
+    """Write a row carrying a title, a creator and neither derived column.
+
+    What every row looked like until the columns were added, and what a build
+    that predates them still writes into a database that already has them.
+    """
+    cursor = conn.cursor()
+    cursor.execute(
+        """INSERT INTO content_items
+           (user_id, external_id, title, normalized_title, content_type, status)
+           VALUES (1, 'steam-witcher', 'The Witcher 3', 'witcher 3',
+                   'video_game', 'completed')"""
+    )
+    cursor.execute(
+        "INSERT INTO video_game_details (content_item_id, developer)"
+        " VALUES (?, 'CD Projekt Red')",
+        (cursor.lastrowid,),
+    )
+    conn.commit()
+
+
+def _derived_columns(conn: sqlite3.Connection) -> tuple[str, str]:
+    """Return the one content row's stored sort title and search text."""
+    cursor = conn.cursor()
+    cursor.execute("SELECT sort_title, search_text FROM content_items")
+    row = cursor.fetchone()
+    return row[0], row[1]
+
+
+class TestTheDerivedColumnBackfill:
+    """``sort_title`` and ``search_text`` are filled for whatever row lacks them.
+
+    They are what the library list orders and searches by, so a row carrying
+    neither is invisible to search and sorts ahead of the whole library. The
+    fill is therefore selected on the columns rather than on the schema
+    version — but it must still write nothing when every row already has them,
+    since it runs on every open.
+    """
+
+    def test_a_fresh_database_has_no_row_to_fill(
+        self, temp_db: sqlite3.Connection
+    ) -> None:
+        """``CREATE TABLE`` writes no row missing either column."""
+        assert _rows_backfilled(temp_db) == 0
+
+    def test_a_row_written_before_the_columns_is_filled(
+        self, temp_db: sqlite3.Connection
+    ) -> None:
+        """The upgrade itself: the one row that needs it, written once."""
+        create_schema(temp_db)
+        _seed_a_row_missing_the_derived_columns(temp_db)
+
+        assert _rows_backfilled(temp_db) == 1
+
+    def test_the_open_after_the_fill_writes_nothing(
+        self, temp_db: sqlite3.Connection
+    ) -> None:
+        """A library that already has the columns costs no write."""
+        create_schema(temp_db)
+        _seed_a_row_missing_the_derived_columns(temp_db)
+        create_schema(temp_db)
+
+        assert _rows_backfilled(temp_db) == 0
+
+    def test_a_row_at_the_current_version_is_filled_all_the_same_regression(
+        self, temp_db: sqlite3.Connection
+    ) -> None:
+        """Defect: a row missing the columns was repaired only once per database.
+
+        Reported: the derived columns can be permanently NULL on a row in a
+        database this build has already stamped, leaving that item unfindable
+        by search and sorted ahead of every other title. Reachable by
+        downgrade-then-upgrade — this build stamps the version, a build that
+        predates the columns inserts rows without them, and re-upgrading reads
+        the stamp.
+
+        Root cause: the fill was guarded on ``stored_version < 4`` and its
+        source select read every row, so the one open that could have repaired
+        such a row was the open that had already happened.
+
+        Fix: the guard is gone and the select carries the condition instead,
+        so the fill is spent on rows rather than on databases. Nothing here
+        rewinds ``user_version``.
+        """
+        create_schema(temp_db)
+        _seed_a_row_missing_the_derived_columns(temp_db)
+
+        assert _rows_backfilled(temp_db) == 1
+        assert _derived_columns(temp_db) == (
+            get_sort_title("The Witcher 3"),
+            build_search_text("The Witcher 3", "CD Projekt Red"),
+        )
+
+    def test_the_fill_derives_both_columns_from_the_title_and_the_creator(
+        self, temp_db: sqlite3.Connection
+    ) -> None:
+        """The values, not just the fact that a row was written.
+
+        The creator comes from the detail table, so a fill reading the content
+        row alone would leave the developer's name unsearchable.
+        """
+        create_schema(temp_db)
+        _seed_a_row_missing_the_derived_columns(temp_db)
+
+        create_schema(temp_db)
+
+        assert _derived_columns(temp_db) == (
+            get_sort_title("The Witcher 3"),
+            build_search_text("The Witcher 3", "CD Projekt Red"),
+        )
+
+    # external_id -> (title, content_type, detail table, creator column, creator).
+    # One row per content type, because each keeps its creator in a column of
+    # its own and the fill selects between them on the content type. The titles
+    # carry a leading article and non-Latin letters, which SQL's own lower()
+    # could not normalize the way the key function does.
+    _LIBRARY_OF_EVERY_TYPE = (
+        (
+            "gr-1",
+            "The Left Hand of Darkness",
+            "book",
+            "book_details",
+            "author",
+            "Le Guin",
+        ),
+        ("tmdb-1", "Ångström", "movie", "movie_details", "director", "Roy Andersson"),
+        ("tvdb-1", "進撃の巨人", "tv_show", "tv_show_details", "creators", "諫山創"),
+        (
+            "steam-1",
+            "The Witcher 3",
+            "video_game",
+            "video_game_details",
+            "developer",
+            "CD Projekt Red",
+        ),
+    )
+
+    @classmethod
+    def _seed_every_content_type(cls, conn: sqlite3.Connection) -> None:
+        """Write one row per content type, each missing the derived columns."""
+        cursor = conn.cursor()
+        for (
+            external_id,
+            title,
+            content_type,
+            table,
+            column,
+            creator,
+        ) in cls._LIBRARY_OF_EVERY_TYPE:
+            cursor.execute(
+                """INSERT INTO content_items
+                   (user_id, external_id, title, normalized_title, content_type,
+                    status)
+                   VALUES (1, ?, ?, ?, ?, 'completed')""",
+                (external_id, title, title.lower(), content_type),
+            )
+            cursor.execute(
+                f"INSERT INTO {table} (content_item_id, {column}) VALUES (?, ?)",
+                (cursor.lastrowid, creator),
+            )
+        conn.commit()
+
+    def test_the_fill_reaches_the_creator_of_every_content_type(
+        self, temp_db: sqlite3.Connection
+    ) -> None:
+        """A book's author, a film's director, a show's creators, a game's developer.
+
+        One type missing from the creator expression would leave its rows
+        searchable by title only, and nothing about the upgrade would say so —
+        the columns are filled, just not with the name.
+        """
+        create_schema(temp_db)
+        self._seed_every_content_type(temp_db)
+
+        create_schema(temp_db)
+
+        cursor = temp_db.cursor()
+        cursor.execute("SELECT external_id, sort_title, search_text FROM content_items")
+        stored = {
+            row["external_id"]: (row["sort_title"], row["search_text"])
+            for row in cursor.fetchall()
+        }
+        assert stored == {
+            external_id: (
+                get_sort_title(title),
+                build_search_text(title, creator),
+            )
+            for external_id, title, _, _, _, creator in self._LIBRARY_OF_EVERY_TYPE
+        }
+
+    def test_a_row_with_no_detail_row_fills_its_title_alone(
+        self, temp_db: sqlite3.Connection
+    ) -> None:
+        """A creator nobody recorded is an empty half, not a skipped row.
+
+        The creator expression selects a column of a table the row may have no
+        entry in, so it yields NULL — which has to reach the search text as an
+        empty creator rather than making the whole value NULL and taking the
+        title down with it.
+        """
+        create_schema(temp_db)
+        temp_db.execute(
+            """INSERT INTO content_items
+               (user_id, external_id, title, normalized_title, content_type, status)
+               VALUES (1, 'orphan', 'A Lonely Row', 'lonely row', 'book',
+                       'completed')"""
+        )
+        temp_db.commit()
+
+        create_schema(temp_db)
+
+        assert _derived_columns(temp_db) == (
+            get_sort_title("A Lonely Row"),
+            build_search_text("A Lonely Row", None),
         )
 
 

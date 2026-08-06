@@ -18,6 +18,7 @@ from src.models.detail_fields import (
     FieldKind,
     to_json_array,
 )
+from src.storage import sqlite_db
 from src.storage.merge import (
     _DETAIL_TABLE_COLUMNS,
     assert_safe_identifier,
@@ -28,6 +29,8 @@ from src.storage.merge import (
 from src.storage.schema import create_schema, write_enrichment_complete
 from src.storage.sqlite_db import SQLiteDB
 from src.utils.item_serialization import item_to_dict
+from src.utils.sorting import build_search_text, get_sort_title, search_text_matches
+from tests.storage.test_detail_shape_migration import _insert_legacy_game_row
 from tests.test_interface_parity import BLANK_REVIEWS
 
 # The instant the completion-stamping tests freeze the clock at, so each names
@@ -103,9 +106,34 @@ def _mark_written_before_the_repair(conn: sqlite3.Connection) -> None:
     ``create_schema`` re-normalizes titles and merges the duplicates that
     exposes only while the stored ``user_version`` is below the version that
     introduced those passes, so a test seeding the rows they exist for has to
-    seed the version they run from too.
+    seed the version they run from too. Version 2 is the one directly below
+    that repair: rewinding further would re-run the settings migrations as
+    well, which have nothing to do with the rows being seeded.
     """
-    conn.execute("PRAGMA user_version = 0")
+    conn.execute("PRAGMA user_version = 2")
+
+
+def _insert_raw_book(temp_db: SQLiteDB, external_id: str, author: str | None) -> None:
+    """Insert one row of a duplicate pair a save would have merged on the way in.
+
+    The pair ``deduplicate_items`` exists to reconcile can only be built behind
+    ``save_content_item``'s back. The row deliberately carries neither derived
+    column, which is what a row written before those columns existed looks like.
+    """
+    with temp_db.connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """INSERT INTO content_items
+               (user_id, external_id, title, normalized_title, content_type,
+                status)
+               VALUES (1, ?, 'The Hobbit', 'hobbit', 'book', 'completed')""",
+            (external_id,),
+        )
+        cursor.execute(
+            "INSERT INTO book_details (content_item_id, author) VALUES (?, ?)",
+            (cursor.lastrowid, author),
+        )
+        conn.commit()
 
 
 def test_save_and_get_content_item(temp_db: SQLiteDB) -> None:
@@ -781,6 +809,54 @@ class TestGetContentItemsByDbIds:
         results = temp_db.get_content_items_by_db_ids(db_ids)
         assert len(results) == 502
 
+    def test_the_items_come_back_in_the_order_asked_for(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """The caller's order survives, including across the chunk boundary.
+
+        A library search orders its matches in SQL, keeps the ids and loads
+        them through here, so this ordering is what a searched page is sorted
+        by. The chunk boundary is where it would be lost: each chunk is its
+        own query and returns in whatever order that query chose, so more than
+        500 matches is the case that has to be built rather than assumed.
+        """
+        db_ids: list[int] = []
+        with temp_db.connection() as conn:
+            cursor = conn.cursor()
+            for index in range(502):
+                cursor.execute(
+                    """INSERT INTO content_items
+                       (user_id, external_id, title, normalized_title,
+                        content_type, status, source)
+                       VALUES (1, ?, ?, ?, 'video_game', 'completed', 'test')""",
+                    (f"ordered-{index}", f"Game {index}", f"game {index}"),
+                )
+                assert cursor.lastrowid is not None
+                db_ids.append(cursor.lastrowid)
+            conn.commit()
+        asked = list(reversed(db_ids))
+
+        results = temp_db.get_content_items_by_db_ids(asked)
+
+        assert [item.db_id for item in results] == asked
+
+    def test_a_repeated_id_is_returned_once_per_occurrence(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """The result tracks the argument, not the set of distinct ids in it."""
+        db_id = temp_db.save_content_item(
+            ContentItem(
+                id="game-1",
+                title="Portal",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.COMPLETED,
+            )
+        )
+
+        results = temp_db.get_content_items_by_db_ids([db_id, db_id])
+
+        assert [item.db_id for item in results] == [db_id, db_id]
+
 
 # ---------------------------------------------------------------------------
 # Title Normalization Tests
@@ -1341,8 +1417,8 @@ class TestGetContentItemsSearch:
     ) -> None:
         """A book with author=None must not raise or spuriously creator-match.
 
-        The creator lookup falls back to ``item.author`` for books; when that
-        is None the bool(creator) guard must short-circuit so a creator-style
+        ``build_search_text`` stores an empty creator half for such a book, and
+        ``_matches_normalized`` bails on an empty haystack, so a creator-style
         search neither errors nor returns the authorless book.
         """
         temp_db.save_content_item(
@@ -1363,9 +1439,9 @@ class TestGetContentItemsSearch:
     def test_search_item_missing_creator_metadata_key(self, temp_db: SQLiteDB) -> None:
         """Items whose metadata lacks the creator key match on title only.
 
-        A movie with no "director" key must not raise (the metadata.get returns
-        None) and must not match a creator-style search, while still matching
-        its own title.
+        A movie with no "director" key leaves the column the derived CASE
+        reads NULL, so it must not match a creator-style search while still
+        matching its own title.
         """
         temp_db.save_content_item(
             ContentItem(
@@ -1385,10 +1461,11 @@ class TestGetContentItemsSearch:
     ) -> None:
         """Search combined with a non-title sort preserves SQL ordering.
 
-        With sort_by="rating", the SQL ORDER BY (rating DESC, title ASC) drives
-        ordering; Python search filtering must keep that order, and limit/offset
-        must page over the matched set. Three "Quest" movies with distinct
-        ratings (plus non-matching noise) verify both ordering and pagination.
+        With sort_by="rating", the SQL ORDER BY (rating DESC NULLS LAST,
+        ci.title ASC, ci.id ASC) drives ordering; Python search filtering must
+        keep that order, and limit/offset must page over the matched set. Three
+        "Quest" movies with distinct ratings (plus non-matching noise) verify
+        both ordering and pagination.
         """
         temp_db.save_content_item(
             ContentItem(
@@ -1477,15 +1554,24 @@ class TestGetContentItemsSearch:
         assert len(set(combined)) == 10
 
     def test_search_offset_beyond_matched_set(self, temp_db: SQLiteDB) -> None:
-        """An offset past the end of the matched set returns an empty list."""
-        temp_db.save_content_item(
-            ContentItem(
-                id="solo_match",
-                title="Solitary",
-                content_type=ContentType.MOVIE,
-                status=ConsumptionStatus.COMPLETED,
+        """An offset past the end of the matched set returns an empty list.
+
+        The library holds a title containing the term and one only a typo
+        away, so the offset has to be past *both* — an offset landing between
+        two ways of matching is where a page of one set was once answered out
+        of another.
+        """
+        for external_id, title in (("solo_match", "Solitary"), ("typo", "Solitery")):
+            temp_db.save_content_item(
+                ContentItem(
+                    id=external_id,
+                    title=title,
+                    content_type=ContentType.MOVIE,
+                    status=ConsumptionStatus.COMPLETED,
+                )
             )
-        )
+        assert len(temp_db.get_content_items(search="Solitary")) == 2
+
         assert temp_db.get_content_items(search="Solitary", offset=10) == []
 
     def test_search_case_and_punctuation_insensitive(self, temp_db: SQLiteDB) -> None:
@@ -1526,6 +1612,113 @@ class TestGetContentItemsSearch:
         results = temp_db.get_content_items(search="Peter Gould")
         assert [item.title for item in results] == ["Better Call Saul"]
 
+    def test_search_ands_with_the_enrichment_filter(self, temp_db: SQLiteDB) -> None:
+        """Search combines with the enrichment filter (AND).
+
+        The filter is a predicate over the enrichment join, and the search
+        reads its candidates through a projection of its own; that projection
+        carries the join precisely so the predicate stays valid against it.
+        """
+        db_ids = {
+            external_id: temp_db.save_content_item(
+                ContentItem(
+                    id=external_id,
+                    title=title,
+                    content_type=ContentType.MOVIE,
+                    status=ConsumptionStatus.COMPLETED,
+                )
+            )
+            for external_id, title in (
+                ("quest_known", "Quest Alpha"),
+                ("quest_unknown", "Quest Bravo"),
+            )
+        }
+        with temp_db.connection() as conn:
+            write_enrichment_complete(
+                conn.cursor(), db_ids["quest_known"], "tmdb", "high"
+            )
+            conn.commit()
+
+        enriched = temp_db.get_content_items(search="Quest", enrichment="enriched")
+        not_enriched = temp_db.get_content_items(
+            search="Quest", enrichment="not_enriched"
+        )
+
+        assert [item.id for item in enriched] == ["quest_known"]
+        assert [item.id for item in not_enriched] == ["quest_unknown"]
+
+    def test_a_term_cannot_match_across_the_title_and_the_creator(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """The stored title and creator are matched separately, never as one string.
+
+        They share a column, joined by a character search normalization can
+        never produce. Asserted through the read rather than over the stored
+        text alone, because it is the read that decides which halves a term is
+        offered and would otherwise be free to run the match over the join.
+        """
+        temp_db.save_content_item(
+            ContentItem(
+                id="alpha_omega",
+                title="Alpha",
+                author="Omega",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+            )
+        )
+
+        assert temp_db.get_content_items(search="alpha omega") == []
+        assert len(temp_db.get_content_items(search="alpha")) == 1
+        assert len(temp_db.get_content_items(search="omega")) == 1
+
+    def test_typo_only_matches_are_ordered_and_paged_like_any_other(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """Matches reached only by the fuzzy tier still honour sort and page.
+
+        No title here contains the term, so every match comes from the window
+        scan — the tier a caller's ``sort_by`` and ``limit``/``offset`` would
+        be easiest to lose, since the matching runs in Python rather than in
+        the ORDER BY.
+        """
+        for external_id, title, rating in (
+            ("alienz", "Alienz", 5),
+            ("alians", "Alians", 3),
+            ("aliems", "Aliems", 1),
+        ):
+            temp_db.save_content_item(
+                ContentItem(
+                    id=external_id,
+                    title=title,
+                    content_type=ContentType.MOVIE,
+                    status=ConsumptionStatus.COMPLETED,
+                    rating=rating,
+                )
+            )
+
+        ordered = temp_db.get_content_items(search="Aliens", sort_by="rating")
+        page1 = temp_db.get_content_items(
+            search="Aliens", sort_by="rating", limit=2, offset=0
+        )
+        page2 = temp_db.get_content_items(
+            search="Aliens", sort_by="rating", limit=2, offset=2
+        )
+
+        assert [item.id for item in ordered] == ["alienz", "alians", "aliems"]
+        assert [item.id for item in page1] == ["alienz", "alians"]
+        assert [item.id for item in page2] == ["aliems"]
+
+
+def test_get_content_items_refuses_an_unknown_sort(temp_db: SQLiteDB) -> None:
+    """A sort nobody declared is refused rather than silently ignored.
+
+    The surfaces validate their own input, so this is the backstop for a
+    caller that reaches storage directly — a plugin, or a surface that gains a
+    sort option without a matching ORDER BY.
+    """
+    with pytest.raises(ValueError, match="Invalid sort_by"):
+        temp_db.get_content_items(sort_by="bogus")
+
 
 class TestPaginationWithoutLimit:
     """Regression tests for an offset requested without a limit.
@@ -1541,7 +1734,11 @@ class TestPaginationWithoutLimit:
 
     Fix: OFFSET is emitted only alongside LIMIT, using SQLite's unbounded
     ``LIMIT -1`` when an offset is requested with no limit. A falsy limit
-    still means "no limit" on both the SQL and the Python slicing paths.
+    still means "no limit".
+
+    Every sort now slices in SQL, so the parameter the crash depended on no
+    longer selects between two implementations — which is why these cases,
+    written to cover both, are what proves the one path handles them all.
     """
 
     # external_id -> (title, updated_at, created_at, rating). Every column is
@@ -1562,6 +1759,10 @@ class TestPaginationWithoutLimit:
         "created_at": ["pager_2", "pager_4", "pager_3", "pager_5", "pager_1"],
         "rating": ["pager_2", "pager_4", "pager_1", "pager_5", "pager_3"],
     }
+
+    # What the term "a" matches, in updated_at order: every seeded title but
+    # Echo, so a search here has a matched set larger than any offset below.
+    _SEARCH_MATCHES = ["pager_2", "pager_3", "pager_4", "pager_5"]
 
     @classmethod
     def _seed(cls, temp_db: SQLiteDB) -> None:
@@ -1618,20 +1819,20 @@ class TestPaginationWithoutLimit:
             (100, 2),
         ],
     )
-    def test_sql_and_python_slicing_agree_regression(
+    def test_every_sort_slices_the_same_window_regression(
         self,
         temp_db: SQLiteDB,
         sort_by: str,
         limit: int | None,
         offset: int,
     ) -> None:
-        """SQL slicing (non-title sorts) and Python slicing agree on every pair.
+        """Every sort selects the same window of its own full ordering.
 
-        The title sort slices in Python and the other three slice in SQL, so
-        the same (limit, offset) must select the same window of each sort's
-        full ordering. The pairs cover an absent limit, a zero limit, an
-        offset landing exactly on the end of the set, an offset past the end,
-        and a limit wider than the set, on both slicing paths.
+        The pairs cover an absent limit, a zero limit, an offset landing
+        exactly on the end of the set, an offset past the end, and a limit
+        wider than the set. They were written when the title sort sliced in
+        Python and the other three in SQL, and each one had to agree with the
+        others; they now hold one implementation to the same answers.
         """
         self._seed(temp_db)
         expected = self._EXPECTED_ID_ORDER[sort_by][offset:]
@@ -1669,14 +1870,14 @@ class TestPaginationWithoutLimit:
 
     @pytest.mark.parametrize("sort_by", ["title", "updated_at"])
     @pytest.mark.parametrize("limit", [None, 2])
-    def test_negative_offset_is_ignored_on_both_paths_regression(
+    def test_negative_offset_is_ignored_regression(
         self, temp_db: SQLiteDB, sort_by: str, limit: int | None
     ) -> None:
         """A negative offset skips nothing rather than slicing from the end.
 
-        Both paths gate on ``offset > 0``, so a negative offset must be inert;
-        the Python path would otherwise slice a tail off the list and the two
-        paths would disagree on a caller's typo.
+        The page clause gates on ``offset > 0``, so a negative offset is
+        inert; a Python slice would instead take a tail off the list, which is
+        a caller's typo answered with a plausible wrong page.
         """
         self._seed(temp_db)
         expected = self._EXPECTED_ID_ORDER[sort_by]
@@ -1690,30 +1891,1007 @@ class TestPaginationWithoutLimit:
     def test_search_with_offset_and_no_limit_returns_the_tail_regression(
         self, temp_db: SQLiteDB
     ) -> None:
-        """A search term forces the Python path, which must page the same way.
+        """A search term pages the same way, on its own branch of the read.
 
-        Search moves slicing into Python whatever the sort, so the
-        offset-without-limit combination has to hold there too; it is the
-        branch a caller lands on the moment they pass a search term. The term
-        "a" matches every seeded title but Echo, so the offset has a matched
-        set larger than itself to skip into.
+        A search never reaches the page clause: it slices its matched ids in
+        Python and emits no LIMIT or OFFSET at all. So the branch a caller
+        lands on the moment they pass a search term has its own copy of the
+        offset-without-limit rule, and proves it here rather than inheriting
+        it from the sorts above.
         """
         self._seed(temp_db)
 
         matched = temp_db.get_content_items(
             sort_by="updated_at", search="a", limit=None
         )
-        assert [item.id for item in matched] == [
-            "pager_2",
-            "pager_3",
-            "pager_4",
-            "pager_5",
-        ]
+        assert [item.id for item in matched] == self._SEARCH_MATCHES
 
         tail = temp_db.get_content_items(
             sort_by="updated_at", search="a", limit=None, offset=2
         )
-        assert [item.id for item in tail] == ["pager_4", "pager_5"]
+        assert [item.id for item in tail] == self._SEARCH_MATCHES[2:]
+
+    @pytest.mark.parametrize("limit", [None, 2])
+    def test_search_ignores_a_negative_offset_regression(
+        self, temp_db: SQLiteDB, limit: int | None
+    ) -> None:
+        """A search skips nothing for a negative offset, as the plain read does.
+
+        The search slices its matched ids in Python, so it carries its own
+        copy of the ``offset > 0`` gate the page clause owns; a bare slice
+        would take a tail off the matched list instead.
+        """
+        self._seed(temp_db)
+        expected = self._SEARCH_MATCHES
+        if limit:
+            expected = expected[:limit]
+
+        results = temp_db.get_content_items(
+            sort_by="updated_at", search="a", limit=limit, offset=-1
+        )
+
+        assert [item.id for item in results] == expected
+
+    @pytest.mark.parametrize("offset", [0, 2])
+    def test_search_reads_a_zero_limit_as_no_limit_regression(
+        self, temp_db: SQLiteDB, offset: int
+    ) -> None:
+        """A falsy limit asks for the rest of the matched set, not for nothing.
+
+        The search's own copy of that rule, which the sorts above cover only
+        on the path through the page clause. It is also what stops the scan
+        ending at the offset it was told to start from.
+        """
+        self._seed(temp_db)
+
+        results = temp_db.get_content_items(
+            sort_by="updated_at", search="a", limit=0, offset=offset
+        )
+
+        assert [item.id for item in results] == self._SEARCH_MATCHES[offset:]
+
+    @pytest.mark.parametrize("offset", [0, 3])
+    def test_search_reads_a_negative_limit_as_no_limit_regression(
+        self, temp_db: SQLiteDB, offset: int
+    ) -> None:
+        """A negative limit asks for the rest, the way SQLite's LIMIT -1 does.
+
+        The page clause hands a negative limit straight to SQLite, which reads
+        it as unbounded and returns the tail. A search bounding its scan at
+        ``offset + limit`` instead stops short of the offset it was told to
+        start from and returns nothing at all — the two branches answering the
+        same nonsense argument differently.
+        """
+        self._seed(temp_db)
+
+        results = temp_db.get_content_items(
+            sort_by="updated_at", search="a", limit=-1, offset=offset
+        )
+
+        assert [item.id for item in results] == self._SEARCH_MATCHES[offset:]
+
+
+class TestAPageCostsOnlyThePage:
+    """A request builds a ContentItem per row it returns, and none per row it skips.
+
+    Bug reported: the default title sort and every search skipped SQL's
+    LIMIT/OFFSET entirely, built a ContentItem for every row the filters left
+    — JSON-parsing each detail-table blob on the way — and sliced the list in
+    Python afterwards. A 500-item library therefore paid 500 constructions to
+    show a 10-item page, on the first load and on every scroll after it.
+
+    Root cause: the title sort key came from ``get_sort_title`` and the search
+    haystack from the loaded item's title and creator, so both needed every
+    candidate in memory before either could order or filter.
+
+    Fix: both are stored columns. Every sort orders and pages in SQL, and a
+    search reads its candidates as an id and a stored search text apiece — no
+    detail blob to parse — so neither a candidate that misses nor a match
+    outside the page costs a ContentItem. The scan that finds those rows is
+    bounded the same way, stopping at the end of the page it was asked for.
+    """
+
+    _LIBRARY_SIZE = 500
+
+    @classmethod
+    def _seed(cls, temp_db: SQLiteDB) -> None:
+        """Seed a library far larger than any page asked of it below."""
+        for index in range(cls._LIBRARY_SIZE):
+            temp_db.save_content_item(
+                ContentItem(
+                    id=f"bulk_{index:03d}",
+                    title=f"Title {index:03d}",
+                    content_type=ContentType.MOVIE,
+                    status=ConsumptionStatus.COMPLETED,
+                )
+            )
+
+    @staticmethod
+    def _items_built(temp_db: SQLiteDB, **query: object) -> tuple[list[str], int]:
+        """Run a query, returning its titles and how many items it built.
+
+        Counting the constructions is the measurement: the returned page says
+        what the caller sees, and says nothing about what was loaded to
+        produce it — which is the whole of the defect.
+        """
+        with patch.object(
+            SQLiteDB,
+            "_row_to_content_item",
+            autospec=True,
+            side_effect=SQLiteDB._row_to_content_item,
+        ) as build:
+            results = temp_db.get_content_items(**query)  # type: ignore[arg-type]
+        return [item.title for item in results], build.call_count
+
+    def test_the_first_page_of_the_title_sort_builds_only_that_page(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """The default sort of the default view, which pays this on every load."""
+        self._seed(temp_db)
+
+        titles, built = self._items_built(temp_db, limit=10)
+
+        assert titles == [f"Title {index:03d}" for index in range(10)]
+        assert built == 10
+
+    def test_a_late_page_of_the_title_sort_builds_only_that_page(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """The offset is SQL's, so the rows before the page are never loaded."""
+        self._seed(temp_db)
+
+        titles, built = self._items_built(temp_db, limit=10, offset=400)
+
+        assert titles == [f"Title {index:03d}" for index in range(400, 410)]
+        assert built == 10
+
+    @pytest.mark.parametrize("sort_by", ["title", "updated_at", "created_at", "rating"])
+    def test_no_sort_pays_for_the_rows_it_pages_past(
+        self, temp_db: SQLiteDB, sort_by: str
+    ) -> None:
+        """The offset is SQL's on all four sorts, not only on the default one.
+
+        The tests above take the title sort, which is the one the defect was
+        reported against and the only one that had no ORDER BY at all. The
+        other three had one and still sliced in SQL, so what this pins is that
+        the rewrite kept that — an ORDER BY whose LIMIT moved back into Python
+        would return the same page and read the same 500 rows to do it.
+        """
+        self._seed(temp_db)
+
+        _, built = self._items_built(temp_db, sort_by=sort_by, limit=10, offset=400)
+
+        assert built == 10
+
+    def test_a_term_of_pure_punctuation_matches_nothing(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """A term that normalizes away is no term, not a term matching everything.
+
+        An empty needle is a substring of every stored search text, so it has
+        to be caught before the match rather than after it — the failure would
+        be a search box that returns the whole library the moment someone
+        types a stray bracket.
+        """
+        self._seed(temp_db)
+
+        titles, built = self._items_built(temp_db, search="(((")
+
+        assert titles == []
+        assert built == 0
+
+    def test_a_search_builds_only_the_page_it_returns(self, temp_db: SQLiteDB) -> None:
+        """Every title contains the term, and ten of the five hundred are built."""
+        self._seed(temp_db)
+
+        titles, built = self._items_built(temp_db, search="Title", limit=10)
+
+        assert titles == [f"Title {index:03d}" for index in range(10)]
+        assert built == 10
+
+    @pytest.mark.parametrize("offset", [0, 400])
+    def test_a_search_stops_scanning_at_the_end_of_its_page(
+        self, temp_db: SQLiteDB, offset: int
+    ) -> None:
+        """Every title matches the term, and the scan reads as far as the page.
+
+        Nothing downstream needs a total — ``GET /api/items`` returns a bare
+        list — and both interfaces bound the limit, so a candidate past the
+        page is never matched against. The offset counts towards where the
+        scan stops, since those matches have to be found to be skipped.
+        Counting the match attempts is the measurement: the page returned says
+        nothing about how much was read to produce it.
+        """
+        self._seed(temp_db)
+
+        with patch.object(
+            sqlite_db, "search_text_matches", side_effect=search_text_matches
+        ) as matched:
+            results = temp_db.get_content_items(search="Title", limit=10, offset=offset)
+
+        assert [item.title for item in results] == [
+            f"Title {index:03d}" for index in range(offset, offset + 10)
+        ]
+        assert matched.call_count == offset + 10
+
+    def test_a_candidate_that_does_not_match_costs_no_content_item(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """The match runs over 501 candidates and builds one item.
+
+        Nothing but the one film comes near "intersteller", and the match
+        reads each candidate as an id and a stored search text, so the 500
+        that miss cost no ContentItem between them.
+        """
+        self._seed(temp_db)
+        temp_db.save_content_item(
+            ContentItem(
+                id="interstellar",
+                title="Interstellar",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.COMPLETED,
+            )
+        )
+
+        titles, built = self._items_built(temp_db, search="Intersteller")
+
+        assert titles == ["Interstellar"]
+        assert built == 1
+
+    def test_a_term_that_matches_exactly_still_reaches_the_near_miss(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """Typo tolerance is not conditional on the term matching nothing.
+
+        A search is one matched set rather than a cheap tier and a fallback,
+        so "Die Hard" returns the title containing the term *and* the near
+        miss — the answer it gave before any of this moved into SQL. The count
+        says the extra tier costs the two matches and not the library.
+        """
+        self._seed(temp_db)
+        for title in ("Die Hard (1988)", "Die Heard"):
+            temp_db.save_content_item(
+                ContentItem(
+                    id=title,
+                    title=title,
+                    content_type=ContentType.MOVIE,
+                    status=ConsumptionStatus.COMPLETED,
+                )
+            )
+
+        titles, built = self._items_built(temp_db, search="Die Hard")
+
+        assert titles == ["Die Hard (1988)", "Die Heard"]
+        assert built == 2
+
+    def test_pages_partition_a_sort_whose_titles_tie(self, temp_db: SQLiteDB) -> None:
+        """Rows sorting alike keep one order across every page of a sort.
+
+        SQL's ORDER BY is not stable the way the Python sort it replaced was,
+        so the clause ends in ``ci.id`` to make the ordering total. Without a
+        tiebreak two adjacent pages may repeat one tied row and drop another,
+        which is a page boundary falling inside a tie.
+        """
+        for content_type in ContentType:
+            temp_db.save_content_item(
+                ContentItem(
+                    id=f"dune_{content_type.value}",
+                    title="Dune",
+                    content_type=content_type,
+                    status=ConsumptionStatus.COMPLETED,
+                )
+            )
+
+        whole = temp_db.get_content_items()
+        paged = [
+            item
+            for offset in range(0, len(ContentType), 2)
+            for item in temp_db.get_content_items(limit=2, offset=offset)
+        ]
+
+        assert [item.id for item in whole] == [
+            f"dune_{content_type.value}" for content_type in ContentType
+        ]
+        assert [item.id for item in paged] == [item.id for item in whole]
+
+
+class TestTheDerivedSearchColumns:
+    """The stored sort key and search haystack follow their sources.
+
+    Both are derived from the title and the creator, and both are read instead
+    of those sources, so a column left behind by an edit is a library that
+    sorts and searches on values the user replaced.
+    """
+
+    def test_a_retitled_item_sorts_under_its_new_title(self, temp_db: SQLiteDB) -> None:
+        """Re-syncing a title moves the item, rather than leaving it in place.
+
+        "The Matrix" sorts between the two neighbours and "Zeppelin" after
+        both, so a stale sort key puts the item in the wrong one of two
+        positions rather than merely spelling it oddly.
+        """
+        for external_id, title in (
+            ("neighbour_low", "Aardvark"),
+            ("neighbour_high", "Zebra"),
+            ("renamed", "The Matrix"),
+        ):
+            temp_db.save_content_item(
+                ContentItem(
+                    id=external_id,
+                    title=title,
+                    content_type=ContentType.MOVIE,
+                    status=ConsumptionStatus.COMPLETED,
+                )
+            )
+
+        temp_db.save_content_item(
+            ContentItem(
+                id="renamed",
+                title="Zeppelin",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.COMPLETED,
+            )
+        )
+
+        results = temp_db.get_content_items()
+        assert [item.title for item in results] == ["Aardvark", "Zebra", "Zeppelin"]
+
+    def test_a_retitled_item_is_searchable_by_its_new_title_only(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """The search haystack follows the title the same way the sort key does."""
+        temp_db.save_content_item(
+            ContentItem(
+                id="renamed",
+                title="The Matrix",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.COMPLETED,
+            )
+        )
+
+        temp_db.save_content_item(
+            ContentItem(
+                id="renamed",
+                title="Blade Runner",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.COMPLETED,
+            )
+        )
+
+        found = temp_db.get_content_items(search="Blade Runner")
+        assert [item.title for item in found] == ["Blade Runner"]
+        assert temp_db.get_content_items(search="Matrix") == []
+
+    def test_a_creator_a_later_sync_fills_becomes_searchable(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """The creator column is fill-only, so it can arrive after the title.
+
+        The derived columns are read back from the row rather than taken from
+        the item being saved, which is what makes this case work: enrichment
+        supplies the author on a second pass and the search text has to gain
+        it then.
+        """
+        temp_db.save_content_item(
+            ContentItem(
+                id="hobbit",
+                title="The Hobbit",
+                author=None,
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+            )
+        )
+        assert temp_db.get_content_items(search="Tolkien") == []
+
+        temp_db.save_content_item(
+            ContentItem(
+                id="hobbit",
+                title="The Hobbit",
+                author="J.R.R. Tolkien",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+            )
+        )
+
+        found = temp_db.get_content_items(search="Tolkien")
+        assert [item.title for item in found] == ["The Hobbit"]
+
+    def test_a_creator_gained_in_a_dedup_merge_becomes_searchable(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """deduplicate_items has no save behind it to refresh the columns.
+
+        The merge fills the kept row's empty creator from the duplicate, so
+        the merge itself has to rewrite the derived columns or the name it
+        just recovered stays unsearchable.
+        """
+        _insert_raw_book(temp_db, "hobbit_a", None)
+        _insert_raw_book(temp_db, "hobbit_b", "J.R.R. Tolkien")
+
+        assert temp_db.deduplicate_items() == 1
+
+        found = temp_db.get_content_items(search="Tolkien")
+        assert [item.title for item in found] == ["The Hobbit"]
+
+    def test_a_stranded_detail_row_does_not_lend_its_creator(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """The creator is chosen by content type, not by whichever table has a row.
+
+        A COALESCE over the four detail tables would read the director off a
+        movie_details row left behind on a book, and the book would then sort
+        and search under a name it has nothing to do with. The re-save is what
+        recomputes the columns once the stray row exists.
+        """
+        book = ContentItem(
+            id="stranded",
+            title="Neuromancer",
+            author=None,
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+        )
+        db_id = temp_db.save_content_item(book)
+        with temp_db.connection() as conn:
+            conn.execute(
+                "INSERT INTO movie_details (content_item_id, director) VALUES (?, ?)",
+                (db_id, "Ridley Scott"),
+            )
+            conn.commit()
+
+        temp_db.save_content_item(book)
+
+        with temp_db.connection() as conn:
+            stored = conn.execute(
+                "SELECT search_text FROM content_items WHERE id = ?", (db_id,)
+            ).fetchone()["search_text"]
+        assert stored == build_search_text("Neuromancer", None)
+        assert temp_db.get_content_items(search="Ridley Scott") == []
+
+
+# Pages a walk over a paginated read may take before the walk is the bug. Every
+# library any test here seeds is a dozen rows at most, so a walk still going
+# after this many pages is not paging, whatever it is returning.
+_MAX_PAGES_WALKED = 20
+
+
+def _walk_pages(temp_db: SQLiteDB, page_size: int, **query: object) -> list[str]:
+    """Collect the ids a caller sees walking every page of one query.
+
+    Pages the way the library view does: ask for the next page at the offset
+    the rows already seen put it at, and stop on the first short page. That
+    loop is what makes a page boundary a user-visible thing rather than an
+    argument, so a test about boundaries has to take it rather than assert
+    about one offset it picked.
+    """
+    seen: list[str] = []
+    offset = 0
+    for _ in range(_MAX_PAGES_WALKED):
+        page = temp_db.get_content_items(
+            limit=page_size, offset=offset, **query  # type: ignore[arg-type]
+        )
+        seen.extend(item.id or "" for item in page)
+        if len(page) < page_size:
+            return seen
+        offset += len(page)
+    raise AssertionError("the walk never reached a short page")
+
+
+class TestSearchPagesPartitionTheMatchedSet:
+    """Walking the pages of one search shows every match once and no match twice.
+
+    The property every other read in this file already holds:
+    ``TestPaginationWithoutLimit`` states it as each (limit, offset) selecting
+    the same window of that query's own full ordering. A search is a query
+    like any other, so the pages of one have to concatenate back into the
+    unpaged answer — that is the whole meaning of an offset.
+    """
+
+    # Two books whose author's name is spelled correctly and one imported with
+    # the surname's middle letters transposed, which is the ordinary way a
+    # library ends up holding both spellings. Searching the correct spelling
+    # reaches the first two by substring and the third only by the fuzzy tier.
+    _LIBRARY = (
+        ("caves", "The Caves of Steel", "Isaac Asmiov"),
+        ("foundation", "Foundation", "Isaac Asimov"),
+        ("i_robot", "I, Robot", "Isaac Asimov"),
+    )
+
+    @staticmethod
+    def _seed(temp_db: SQLiteDB, rows: tuple[tuple[str, str, str], ...]) -> None:
+        """Save the named books through the ordinary sync door."""
+        for external_id, title, author in rows:
+            temp_db.save_content_item(
+                ContentItem(
+                    id=external_id,
+                    title=title,
+                    author=author,
+                    content_type=ContentType.BOOK,
+                    status=ConsumptionStatus.COMPLETED,
+                )
+            )
+
+    def test_the_two_spellings_are_one_matched_set(self, temp_db: SQLiteDB) -> None:
+        """The premise: one spelling holds the term and the other only matches it.
+
+        Stated first because every assertion below is about a page boundary
+        between matches of different tiers, and a library whose rows all
+        matched the same way would prove nothing about that boundary. It also
+        states what the merged design gives back: the typo'd copy is returned
+        beside the two that spell the name, rather than only when they are
+        missing.
+        """
+        self._seed(temp_db, self._LIBRARY)
+        assert "asimov" not in build_search_text("The Caves of Steel", "Isaac Asmiov")
+
+        assert [item.id for item in temp_db.get_content_items(search="Asimov")] == [
+            "caves",
+            "foundation",
+            "i_robot",
+        ]
+
+    @pytest.mark.parametrize("page_size", [1, 2])
+    def test_a_fuzzy_only_library_pages_into_its_matches_once(
+        self, temp_db: SQLiteDB, page_size: int
+    ) -> None:
+        """The walk holds when every match is a typo match.
+
+        The control for the case below: nothing here contains the term, so a
+        design serving typo matches from a set of their own would still page
+        correctly through this one.
+        """
+        self._seed(
+            temp_db,
+            (
+                ("caves", "The Caves of Steel", "Isaac Asmiov"),
+                ("end_of_eternity", "The End of Eternity", "Isaac Asmiov"),
+                ("nightfall", "Nightfall", "Isaac Asmiov"),
+            ),
+        )
+        whole = temp_db.get_content_items(search="Asimov")
+        assert len(whole) == 3
+
+        assert _walk_pages(temp_db, page_size, search="Asimov") == [
+            item.id for item in whole
+        ]
+
+    @pytest.mark.parametrize("page_size", [1, 2])
+    def test_a_search_pages_one_set_when_the_tiers_disagree(
+        self, temp_db: SQLiteDB, page_size: int
+    ) -> None:
+        """A page boundary between tiers still partitions the matched set.
+
+        The case the test above controls for: two of these books hold the term
+        and the third only matches it, so a design serving typo matches out of
+        a set of their own would apply the offset to a superset of the one the
+        earlier pages came from — repeating a row already shown and never
+        reaching The Caves of Steel. One matched set is what makes an offset
+        past the substring matches mean anything.
+        """
+        self._seed(temp_db, self._LIBRARY)
+        whole = temp_db.get_content_items(search="Asimov")
+
+        assert _walk_pages(temp_db, page_size, search="Asimov") == [
+            item.id for item in whole
+        ]
+
+
+class TestPagesPartitionALibraryOfTies:
+    """Every sort keeps one order across its pages when its column ties.
+
+    A bulk import is the case: it arrives in one second, so ``created_at`` and
+    ``updated_at`` tie across the whole library, and a library holding the
+    same title in several content types ties the title sort and the ``ci.title``
+    tiebreak of the rating sort as well. SQL's ORDER BY is free to return tied
+    rows in any order it likes, and free to choose differently per statement,
+    so a page boundary falling inside a tie is where a row gets shown twice
+    while another is never shown at all.
+    """
+
+    _TITLES = ("Dune", "Solaris", "Contact")
+
+    # Every row shares this rating, so the rating sort falls through to its
+    # own tiebreaks rather than ordering on a column that separates the rows.
+    _SHARED_RATING = 4
+
+    @classmethod
+    def _seed(cls, temp_db: SQLiteDB) -> None:
+        """Import the same three titles in all four content types.
+
+        The timestamps are then flattened by hand: CURRENT_TIMESTAMP has
+        second granularity and *usually* ties across twelve quick saves, and a
+        test about ties cannot be left to usually.
+        """
+        for title in cls._TITLES:
+            for content_type in ContentType:
+                temp_db.save_content_item(
+                    ContentItem(
+                        id=f"{title.lower()}_{content_type.value}",
+                        title=title,
+                        content_type=content_type,
+                        status=ConsumptionStatus.COMPLETED,
+                        rating=cls._SHARED_RATING,
+                    )
+                )
+        with temp_db.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE content_items SET updated_at = '2026-01-01 00:00:00',"
+                " created_at = '2026-01-01 00:00:00'"
+            )
+            conn.commit()
+
+    @pytest.mark.parametrize("sort_by", ["title", "updated_at", "created_at", "rating"])
+    @pytest.mark.parametrize("page_size", [1, 5])
+    def test_a_walk_of_the_pages_returns_the_whole_library_once(
+        self, temp_db: SQLiteDB, sort_by: str, page_size: int
+    ) -> None:
+        """Each sort's pages concatenate back into its own unpaged ordering."""
+        self._seed(temp_db)
+        whole = temp_db.get_content_items(sort_by=sort_by)
+        assert len(whole) == len(self._TITLES) * len(ContentType)
+
+        walked = _walk_pages(temp_db, page_size, sort_by=sort_by)
+
+        assert walked == [item.id for item in whole]
+
+    @pytest.mark.parametrize("sort_by", ["title", "updated_at", "created_at", "rating"])
+    def test_repeating_a_sort_returns_the_tied_rows_in_the_same_order(
+        self, temp_db: SQLiteDB, sort_by: str
+    ) -> None:
+        """The ordering is a property of the query, not of one execution.
+
+        Paging asks for the ordering once per page, so an ORDER BY that only
+        happens to be stable within a single statement partitions nothing.
+        """
+        self._seed(temp_db)
+
+        first = [item.id for item in temp_db.get_content_items(sort_by=sort_by)]
+        second = [item.id for item in temp_db.get_content_items(sort_by=sort_by)]
+
+        assert first == second
+
+
+class TestTheTitleSortAgreesWithThePythonKey:
+    """SQLite's ordering of the stored sort key matches Python's own.
+
+    The title sort moved from ``sorted(key=get_sort_title)`` to an ORDER BY
+    over a column holding that function's output. Python compares strings by
+    code point and SQLite's default collation compares the UTF-8 bytes, so the
+    two agree — but nothing in the code says so, and the whole library's order
+    rests on it. These are the inputs where a collation difference would show:
+    non-ASCII letters, an empty key, a key that is only an article, and keys
+    differing only in case.
+    """
+
+    # Titles chosen so that no two share a sort key, since equal keys would
+    # leave the expected order to the id tiebreak and prove nothing about the
+    # comparison itself. The articles, the case and the scripts are the point.
+    _TITLES = (
+        "The Zebra",
+        "an Almond",
+        "APRICOT",
+        "apple",
+        "1984",
+        "",
+        "The",
+        "Ångström",
+        "Éclair",
+        "Über Alles",
+        "Ωμέγα",
+        "日本語",
+    )
+
+    def test_the_stored_order_is_the_order_the_python_key_gives(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """The read returns exactly what sorting the titles in Python returns."""
+        for index, title in enumerate(self._TITLES):
+            temp_db.save_content_item(
+                ContentItem(
+                    id=f"sortable_{index}",
+                    title=title,
+                    content_type=ContentType.BOOK,
+                    status=ConsumptionStatus.COMPLETED,
+                )
+            )
+
+        results = temp_db.get_content_items()
+
+        assert [item.title for item in results] == sorted(
+            self._TITLES, key=get_sort_title
+        )
+
+    def test_a_title_that_is_only_an_article_keeps_the_article(self) -> None:
+        """Article stripping needs whitespace after the article, so "The" stays.
+
+        Called out on its own because it is the one input above where
+        stripping and not stripping give different sort keys for the same
+        title, and the stored column has to hold the same one the key function
+        returns.
+        """
+        assert get_sort_title("The") == "the"
+        assert get_sort_title("The Zebra") == "zebra"
+
+    def test_an_empty_title_sorts_first_rather_than_vanishing(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """A blank title is a row like any other, ahead of everything else.
+
+        Nothing forbids a source handing over an empty title, and the empty
+        sort key is the smallest one there is — but it is also what a NULL
+        column would look like from a distance, so the read has to show it.
+        """
+        for external_id, title in (("blank", ""), ("apple", "apple")):
+            temp_db.save_content_item(
+                ContentItem(
+                    id=external_id,
+                    title=title,
+                    content_type=ContentType.BOOK,
+                    status=ConsumptionStatus.COMPLETED,
+                )
+            )
+
+        results = temp_db.get_content_items()
+
+        assert [item.id for item in results] == ["blank", "apple"]
+
+
+class TestEveryWriteDoorLeavesTheDerivedColumnsCurrent:
+    """No door into ``content_items`` leaves the derived columns behind it.
+
+    ``sort_title`` and ``search_text`` are read *instead of* the title and the
+    creator, so a door that writes the row without recomputing them makes the
+    library order and search on values that are no longer there. Two of those
+    doors — the sync upsert and the dedup merge — are covered a case at a time
+    above; this walks every one of them and states the invariant itself, so a
+    door added later is measured against the rule rather than against whichever
+    examples happened to be written down.
+
+    A row that never had the columns written carries NULL, which sorts ahead of
+    every real title and matches no search. Asserting the recomputed value
+    catches that as well as a stale one.
+    """
+
+    # One creator per content type, each stored in that type's own column.
+    _CREATOR_OF_TYPE = (
+        (ContentType.BOOK, "Ursula K. Le Guin"),
+        (ContentType.MOVIE, "Denis Villeneuve"),
+        (ContentType.TV_SHOW, "Vince Gilligan"),
+        (ContentType.VIDEO_GAME, "CD Projekt Red"),
+    )
+
+    @staticmethod
+    def _assert_columns_describe_the_library(temp_db: SQLiteDB) -> None:
+        """Every row's stored columns are what its title and creator derive to.
+
+        Read back through the ordinary read rather than recomputed from what a
+        test handed in: the creator column is fill-only and the title is
+        rewritten by merges, so what a caller offered is not always what the
+        row ends up holding.
+        """
+        items = {
+            item.db_id: item for item in temp_db.get_content_items(include_ignored=True)
+        }
+        assert items, "the library is empty, so the sweep asserts nothing"
+        with temp_db.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, sort_title, search_text FROM content_items")
+            stored = {
+                row["id"]: (row["sort_title"], row["search_text"])
+                for row in cursor.fetchall()
+            }
+        assert stored.keys() == items.keys()
+        for db_id, item in items.items():
+            assert stored[db_id] == (
+                get_sort_title(item.title),
+                build_search_text(item.title, item.author),
+            )
+
+    @staticmethod
+    def _book(external_id: str, title: str, author: str | None = None) -> ContentItem:
+        """Build a book the doors below can be pointed at."""
+        return ContentItem(
+            id=external_id,
+            title=title,
+            author=author,
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        )
+
+    def test_the_sync_door_creating_and_then_rewriting_a_row(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """The insert, the retitle, and the creator a later sync fills."""
+        temp_db.save_content_item(self._book("dune", "Dune"))
+        self._assert_columns_describe_the_library(temp_db)
+
+        temp_db.save_content_item(self._book("dune", "Dune", "Frank Herbert"))
+        self._assert_columns_describe_the_library(temp_db)
+
+        temp_db.save_content_item(self._book("dune", "Dune Messiah", "Frank Herbert"))
+        self._assert_columns_describe_the_library(temp_db)
+
+    def test_the_completion_door(self, temp_db: SQLiteDB) -> None:
+        """Completing adds the item when the library has none, and writes one when it does."""
+        temp_db.complete_content_item(self._book("new_book", "Neuromancer"))
+        self._assert_columns_describe_the_library(temp_db)
+
+        temp_db.complete_content_item(
+            self._book("new_book", "Neuromancer", "William Gibson")
+        )
+        self._assert_columns_describe_the_library(temp_db)
+
+    def test_the_edit_door_and_the_ignore_door(self, temp_db: SQLiteDB) -> None:
+        """Neither door can change a title or a creator, so neither may disturb the columns."""
+        db_id = temp_db.save_content_item(self._book("hobbit", "The Hobbit", "Tolkien"))
+
+        assert temp_db.update_item_from_ui(
+            db_id,
+            status="completed",
+            rating=5,
+            genres=["fantasy"],
+            description="A hobbit goes there and back again.",
+        )
+        self._assert_columns_describe_the_library(temp_db)
+
+        assert temp_db.set_item_ignored(db_id, True)
+        self._assert_columns_describe_the_library(temp_db)
+
+    def test_the_dedup_door(self, temp_db: SQLiteDB) -> None:
+        """A merge can move a creator onto the kept row, and it writes the columns.
+
+        The rows going in carry NULL in both, which is what a row written
+        before the columns existed looks like, so this also states that the
+        merge is a door that fills them rather than one that only refreshes.
+        """
+        _insert_raw_book(temp_db, "hobbit_a", None)
+        _insert_raw_book(temp_db, "hobbit_b", "J.R.R. Tolkien")
+
+        assert temp_db.deduplicate_items() == 1
+
+        self._assert_columns_describe_the_library(temp_db)
+
+    def test_every_content_type_derives_from_its_own_creator_column(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """The creator lives in a different column per type, and all four count.
+
+        The derived columns pick the creator by content type, the way the read
+        does, so a type left out of that expression would store a search text
+        with an empty creator half and hide the name. Searching each name back
+        is what catches a type missing from *both* expressions: the sweep
+        compares the stored text against the creator the read reports, and the
+        read picks it with a CASE of its own, so a type neither one names
+        agrees with itself on None.
+
+        Each search returns that type's item and only that one, so a match on
+        the wrong item — or on every item — fails here too.
+        """
+        for content_type, creator in self._CREATOR_OF_TYPE:
+            temp_db.save_content_item(
+                ContentItem(
+                    id=f"creator_{content_type.value}",
+                    title=f"Something {content_type.value}",
+                    author=creator,
+                    content_type=content_type,
+                    status=ConsumptionStatus.COMPLETED,
+                )
+            )
+
+        self._assert_columns_describe_the_library(temp_db)
+        for content_type, creator in self._CREATOR_OF_TYPE:
+            found = temp_db.get_content_items(search=creator)
+            assert [item.content_type for item in found] == [content_type], creator
+
+
+class TestTheUpgradeThatFillsTheDerivedColumns:
+    """A row reaching an open without the derived columns leaves it with them.
+
+    The columns are the only inputs the library orders and searches by, so a
+    row that misses them is invisible to search and sorts ahead of everything
+    else. Both cases here are about *when* the fill runs, which no assertion
+    over a single save can reach: they open a database twice.
+    """
+
+    @staticmethod
+    def _derived_columns(db: SQLiteDB, external_id: str) -> tuple[str | None, ...]:
+        """The stored sort key and search text of one row."""
+        with db.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT sort_title, search_text FROM content_items"
+                " WHERE external_id = ?",
+                (external_id,),
+            )
+            row = cursor.fetchone()
+        return (row["sort_title"], row["search_text"])
+
+    def test_a_creator_recovered_by_the_upgrade_merge_is_searchable(
+        self, tmp_path: Path
+    ) -> None:
+        """The backfill runs after the duplicate merge, inside the same open.
+
+        ``_deduplicate_inline`` deliberately writes no derived column, which is
+        only correct because the backfill follows it: the merge fills the kept
+        row's empty creator from the row it deletes, and a backfill that had
+        already run would have written that row's search text without the name
+        and would never look at it again.
+        """
+        db_path = tmp_path / "merged_on_upgrade.db"
+        db = SQLiteDB(db_path)
+        _insert_raw_book(db, "hobbit_a", None)
+        _insert_raw_book(db, "hobbit_b", "J.R.R. Tolkien")
+        with db.connection() as conn:
+            _mark_written_before_the_repair(conn)
+            conn.commit()
+
+        reopened = SQLiteDB(db_path)
+
+        found = reopened.get_content_items(search="Tolkien")
+        assert [item.title for item in found] == ["The Hobbit"]
+
+    def test_a_creator_recovered_by_the_upgrade_fold_is_searchable(
+        self, tmp_path: Path
+    ) -> None:
+        """The backfill runs after the company fold, inside the same open.
+
+        The fold writes ``developer`` from a name that until then existed only
+        in the blob, so it fills a creator the same way the merge above does:
+        a backfill that had already run would have written this row's search
+        text with an empty creator half and would never look at it again.
+        """
+        db_path = tmp_path / "folded_on_upgrade.db"
+        SQLiteDB(db_path)
+        _insert_legacy_game_row(
+            db_path,
+            external_id="1207658924",
+            title="The Witcher",
+            metadata=json.dumps({"developers": [{"name": "CD Projekt Red"}]}),
+        )
+
+        reopened = SQLiteDB(db_path)
+
+        found = reopened.get_content_items(search="CD Projekt Red")
+        assert [item.title for item in found] == ["The Witcher"]
+
+    def test_a_row_written_without_the_columns_is_repaired_on_the_next_open(
+        self, tmp_path: Path
+    ) -> None:
+        """The fill is not spent by a version stamp this database already carries.
+
+        Reachable by downgrade-then-upgrade: this build stamps the current
+        version, an older one writes rows without the columns it does not know
+        about, and re-opening on this build reads the stamp. Nothing here
+        rewinds the version, so a fill guarded on it would never run and the
+        row would stay unsearchable for the life of the database.
+        """
+        db_path = tmp_path / "downgraded.db"
+        db = SQLiteDB(db_path)
+        with db.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """INSERT INTO content_items
+                   (user_id, external_id, title, normalized_title, content_type,
+                    status)
+                   VALUES (1, 'neuromancer', 'Neuromancer', 'neuromancer',
+                           'book', 'completed')"""
+            )
+            cursor.execute(
+                "INSERT INTO book_details (content_item_id, author)"
+                " VALUES (?, 'William Gibson')",
+                (cursor.lastrowid,),
+            )
+            conn.commit()
+        assert self._derived_columns(db, "neuromancer") == (None, None)
+
+        reopened = SQLiteDB(db_path)
+
+        assert self._derived_columns(reopened, "neuromancer") == (
+            get_sort_title("Neuromancer"),
+            build_search_text("Neuromancer", "William Gibson"),
+        )
+        found = reopened.get_content_items(search="Gibson")
+        assert [item.title for item in found] == ["Neuromancer"]
 
 
 class TestToJsonArrayRegression:
