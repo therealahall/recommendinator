@@ -6,9 +6,9 @@ Extracting them into a neutral module breaks the circular import between
 ``sqlite_db`` and ``schema``.
 
 ``__all__`` is this module's contract: those names are imported by
-``sqlite_db`` and ``schema`` and cannot be renamed or reshaped without
-updating both. Nothing else here is imported by another ``src`` module, so
-the underscore-prefixed names really are internal.
+``sqlite_db``, ``schema`` and ``derived`` and cannot be renamed or reshaped
+without updating all three. Nothing else here is imported by another ``src``
+module, so the underscore-prefixed names really are internal.
 """
 
 import json
@@ -16,6 +16,7 @@ import re
 import sqlite3
 from typing import Any
 
+from src.models.detail_fields import ContentTypeFields
 from src.utils.dates import merge_seasons_watched_dates
 from src.utils.list_merge import merge_string_lists
 
@@ -23,7 +24,9 @@ __all__ = [
     "ALLOWED_DETAIL_TABLES",
     "MERGEABLE_DETAIL_COLUMNS",
     "MONOTONIC_DETAIL_COLUMNS",
+    "assert_known_detail_table",
     "assert_safe_identifier",
+    "detail_join",
     "merge_detail_tables",
     "merge_scalar_columns",
     "normalize_title_for_matching",
@@ -132,6 +135,37 @@ _DETAIL_TABLE_COLUMNS: dict[str, tuple[str, ...]] = {
 # builder to validate table names from the field declaration in
 # src/models/detail_fields.py before SQL identifier interpolation.
 ALLOWED_DETAIL_TABLES: frozenset[str] = frozenset(_DETAIL_TABLE_COLUMNS.keys())
+
+
+def assert_known_detail_table(spec: ContentTypeFields) -> None:
+    """Validate the table and alias one content type's declaration names.
+
+    Every query built from ``src/models/detail_fields`` interpolates both, so
+    the check belongs beside the allow-list it reads rather than at each of
+    the three query builders.
+
+    Raises:
+        ValueError: If the table is not allow-listed, or the alias is not a
+            safe identifier.
+    """
+    if spec.table not in ALLOWED_DETAIL_TABLES:
+        raise ValueError(f"Unknown detail table: {spec.table!r}")
+    assert_safe_identifier(spec.table_alias)
+
+
+def detail_join(spec: ContentTypeFields) -> str:
+    """The LEFT JOIN one detail table contributes to a content-item query.
+
+    Shared by the joined read in ``sqlite_db`` and the derived-column source
+    select in ``derived``, which both join every detail table onto the same
+    ``ci`` alias and must agree on what that join is.
+    """
+    assert_known_detail_table(spec)
+    return (
+        f"LEFT JOIN {spec.table} {spec.table_alias}"
+        f" ON ci.id = {spec.table_alias}.content_item_id"
+    )
+
 
 # Columns merged additively (union of both rows' lists) during dedup.
 MERGEABLE_DETAIL_COLUMNS: frozenset[str] = frozenset({"genres", "tags"})

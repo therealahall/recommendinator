@@ -83,7 +83,8 @@ export, see **[docs/DATA_SOURCES.md](docs/DATA_SOURCES.md)**.
 - Natural-language [custom rules](docs/CUSTOM_RULES.md) like "avoid horror"
 - [Metadata enrichment](docs/ENRICHMENT_SETUP.md) from TMDB, OpenLibrary and
   RAWG, automatic or edited by hand
-- Content-length filtering, multi-user support, fuzzy library search, themes
+- Content-length filtering, multi-user support, typo-tolerant library search,
+  themes
 
 **Optional AI, opt-in and local**
 

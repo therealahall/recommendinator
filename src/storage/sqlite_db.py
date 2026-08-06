@@ -80,11 +80,14 @@ from src.models.detail_fields import (
     FieldKind,
     to_int,
 )
+from src.storage.derived import write_derived_columns
 from src.storage.merge import (
     ALLOWED_DETAIL_TABLES,
     MERGEABLE_DETAIL_COLUMNS,
     MONOTONIC_DETAIL_COLUMNS,
+    assert_known_detail_table,
     assert_safe_identifier,
+    detail_join,
     merge_detail_tables,
     merge_scalar_columns,
     normalize_title_for_matching,
@@ -98,7 +101,7 @@ from src.storage.schema import (
 )
 from src.utils.dates import local_today, merge_seasons_watched_dates, utc_now
 from src.utils.list_merge import merge_string_lists
-from src.utils.sorting import get_sort_title, matches_search
+from src.utils.sorting import normalize_for_search, search_text_matches
 
 
 class Unset(Enum):
@@ -140,10 +143,18 @@ def unset_if_none(value: _T | None) -> _T | Unset:
 # SQLITE_LIMIT_VARIABLE_NUMBER default of 999.
 _IN_CLAUSE_CHUNK_SIZE = 500
 
+# ORDER BY clause for each sort_by option get_content_items() accepts. Every
+# one ends in ci.id so the ordering is total: a page boundary falling inside a
+# tie would let two adjacent pages repeat one row and drop another.
+_SORT_ORDER_BY: dict[str, str] = {
+    "title": "ci.sort_title ASC, ci.id ASC",
+    "updated_at": "ci.updated_at DESC, ci.id ASC",
+    "rating": "ci.rating DESC NULLS LAST, ci.title ASC, ci.id ASC",
+    "created_at": "ci.created_at DESC, ci.id ASC",
+}
+
 # Whitelist of valid sort_by options for get_content_items().
-VALID_SORT_OPTIONS: frozenset[str] = frozenset(
-    {"title", "updated_at", "rating", "created_at"}
-)
+VALID_SORT_OPTIONS: frozenset[str] = frozenset(_SORT_ORDER_BY)
 
 # Columns the enrichment join contributes, read back by _row_is_enriched.
 _ENRICHMENT_SELECT_TERMS = (
@@ -170,9 +181,7 @@ def _detail_select_terms(spec: ContentTypeFields) -> list[str]:
     The table name is checked against the fixed allow-list, and every column
     and alias against the identifier pattern, before any of them reaches SQL.
     """
-    if spec.table not in ALLOWED_DETAIL_TABLES:
-        raise ValueError(f"Unknown detail table: {spec.table!r}")
-    assert_safe_identifier(spec.table_alias)
+    assert_known_detail_table(spec)
 
     terms = []
     for detail_field in spec.fields:
@@ -186,32 +195,42 @@ def _detail_select_terms(spec: ContentTypeFields) -> list[str]:
     return terms
 
 
+def _build_content_item_from() -> str:
+    """Build the FROM clause of the content-item read.
+
+    One five-way join covering every detail table plus the enrichment status.
+    Shared by the full read and by the search-candidate projection so a WHERE
+    clause built once stays valid against both.
+    """
+    joins = [detail_join(spec) for spec in DETAIL_FIELDS.values()]
+    joins.append("LEFT JOIN enrichment_status es ON ci.id = es.content_item_id")
+    join_list = "\n    ".join(joins)
+    return f"\n    FROM content_items ci\n    {join_list}\n"
+
+
+_CONTENT_ITEM_FROM = _build_content_item_from()
+
+
 def _build_content_item_select() -> str:
     """Build the content-item read query from the field declaration.
 
-    One five-way join covering every detail table plus the enrichment status,
-    used by get_content_item_by_id and get_content_items. Callers append their
-    own WHERE clause.
+    Used by get_content_item, _items_by_db_ids and _fetch_page. Callers append
+    their own WHERE clause.
     """
     terms = ["ci.*"]
-    joins = []
     for spec in DETAIL_FIELDS.values():
-        # Validates spec.table against ALLOWED_DETAIL_TABLES before the join
-        # below interpolates it.
         terms.extend(_detail_select_terms(spec))
-        joins.append(
-            f"LEFT JOIN {spec.table} {spec.table_alias}"
-            f" ON ci.id = {spec.table_alias}.content_item_id"
-        )
     terms.extend(_ENRICHMENT_SELECT_TERMS)
-    joins.append("LEFT JOIN enrichment_status es ON ci.id = es.content_item_id")
-
     select_list = ",\n           ".join(terms)
-    join_list = "\n    ".join(joins)
-    return f"\n    SELECT {select_list}\n    FROM content_items ci\n    {join_list}\n"
+    return f"\n    SELECT {select_list}{_CONTENT_ITEM_FROM}"
 
 
 _CONTENT_ITEM_SELECT = _build_content_item_select()
+
+# The projection a library search reads: an id and the stored haystack, and no
+# detail blob to parse, so a candidate that does not match never costs a
+# ContentItem.
+_SEARCH_CANDIDATE_SELECT = f"\n    SELECT ci.id, ci.search_text{_CONTENT_ITEM_FROM}"
 
 # An item is enriched when it has a clean enrichment_status row: a real
 # provider found a match, no error, and re-enrichment is not pending. Anything
@@ -602,6 +621,10 @@ class SQLiteDB:
         # Save to type-specific detail table
         self._save_detail_table(cursor, db_id, item, content_type_value)
 
+        # After the detail write, so the derived columns read the creator that
+        # was actually stored rather than the one this sync offered.
+        write_derived_columns(cursor, db_id)
+
         # For TV shows, check if new seasons should regress status
         if content_type_value == "tv_show":
             self._handle_tv_season_change(cursor, db_id)
@@ -780,6 +803,9 @@ class SQLiteDB:
         """
         merge_scalar_columns(cursor, keep_id, delete_id)
         merge_detail_tables(cursor, keep_id, delete_id)
+        # The merge can fill the kept row's creator from the duplicate, and
+        # deduplicate_items runs it with no save behind it to refresh them.
+        write_derived_columns(cursor, keep_id)
 
         # Delete the duplicate row (cascades to detail tables)
         cursor.execute("DELETE FROM content_items WHERE id = ?", (delete_id,))
@@ -884,23 +910,36 @@ class SQLiteDB:
             db_ids: List of database IDs to fetch
 
         Returns:
-            List of ContentItem objects found (may be shorter than db_ids)
+            One ContentItem per id that names a row, in the order asked for.
+            An id naming no row is skipped and a repeated id is returned once
+            per occurrence, so the result tracks the argument rather than the
+            set of distinct ids in it.
         """
         if not db_ids:
             return []
 
-        results: list[ContentItem] = []
         with self.connection() as conn:
-            cursor = conn.cursor()
-            for i in range(0, len(db_ids), _IN_CLAUSE_CHUNK_SIZE):
-                chunk = db_ids[i : i + _IN_CLAUSE_CHUNK_SIZE]
-                placeholders = ", ".join("?" for _ in chunk)
-                query = f"{_CONTENT_ITEM_SELECT} WHERE ci.id IN ({placeholders})"
-                cursor.execute(query, chunk)
-                results.extend(
-                    self._row_to_content_item(row) for row in cursor.fetchall()
-                )
-        return results
+            return self._items_by_db_ids(conn.cursor(), db_ids)
+
+    def _items_by_db_ids(
+        self, cursor: sqlite3.Cursor, db_ids: list[int]
+    ) -> list[ContentItem]:
+        """Load the named items, in the order named, over an open cursor.
+
+        Chunked so the IN clause stays within SQLite's variable limit, and
+        re-ordered afterwards because the chunks come back in whatever order
+        each query chose.
+        """
+        rows: dict[int, sqlite3.Row] = {}
+        for i in range(0, len(db_ids), _IN_CLAUSE_CHUNK_SIZE):
+            chunk = db_ids[i : i + _IN_CLAUSE_CHUNK_SIZE]
+            placeholders = ", ".join("?" for _ in chunk)
+            query = f"{_CONTENT_ITEM_SELECT} WHERE ci.id IN ({placeholders})"
+            cursor.execute(query, chunk)
+            rows.update({row["id"]: row for row in cursor.fetchall()})
+        return [
+            self._row_to_content_item(rows[db_id]) for db_id in db_ids if db_id in rows
+        ]
 
     def get_content_items(
         self,
@@ -946,134 +985,167 @@ class SQLiteDB:
             List of ContentItem objects
 
         Note:
-            Search filtering runs in Python over the full candidate set (rows
-            remaining after the SQL type/status/rating filters) because the
-            creator lives in a different column per content type and so is
-            not queryable in one SQL predicate.
-            limit/offset are then applied to the filtered list so pagination
-            always covers the full matched set with no dropped matches. This
-            loads the candidate set into memory, which is acceptable at
-            personal-library scale; it would need an index-backed approach if
-            libraries grew into the hundreds of thousands of items.
+            A request builds a ContentItem for the rows it returns and no
+            others. A sort with no search term orders and pages entirely in
+            SQL; a search matches the stored ``search_text`` of each ordered
+            candidate in Python, because the fuzzy tier is not expressible in
+            SQL, and loads only the page that survives limit/offset.
         """
         # An empty status list matches nothing by definition.
         if isinstance(status, list) and not status:
             return []
 
+        if sort_by not in _SORT_ORDER_BY:
+            raise ValueError(f"Invalid sort_by: {sort_by!r}")
+
         # Normalize the search term; an empty/whitespace term is a no-op.
         search_term = search.strip() if search else ""
 
-        # Default to default user if not specified
-        effective_user_id = user_id if user_id is not None else get_default_user_id()
+        where, params = self._build_item_filters(
+            user_id=user_id if user_id is not None else get_default_user_id(),
+            content_type=content_type,
+            status=status,
+            min_rating=min_rating,
+            unrated_only=unrated_only,
+            include_ignored=include_ignored,
+            enrichment=enrichment,
+        )
+        order_by = _SORT_ORDER_BY[sort_by]
 
         with self.connection() as conn:
             cursor = conn.cursor()
-            query = _CONTENT_ITEM_SELECT + " WHERE ci.user_id = ?"
-            params: list[Any] = [effective_user_id]
-
-            if content_type is not None:
-                query += " AND ci.content_type = ?"
-                content_type_value = get_enum_value(content_type)
-                params.append(content_type_value)
-
-            if enrichment == "enriched":
-                query += f" AND ({_ENRICHED_PREDICATE})"
-            elif enrichment == "not_enriched":
-                query += f" AND NOT ({_ENRICHED_PREDICATE})"
-
-            if status is not None:
-                if isinstance(status, list):
-                    placeholders = ", ".join("?" for _ in status)
-                    query += f" AND ci.status IN ({placeholders})"
-                    params.extend(get_enum_value(s) for s in status)
-                else:
-                    query += " AND ci.status = ?"
-                    status_value = get_enum_value(status)
-                    params.append(status_value)
-
-            if min_rating is not None:
-                query += " AND ci.rating >= ?"
-                params.append(min_rating)
-
-            if unrated_only:
-                query += " AND ci.rating IS NULL"
-
-            if not include_ignored:
-                query += " AND (ci.ignored = 0 OR ci.ignored IS NULL)"
-
-            # Apply SQL-level sorting for non-title sorts
-            # Title sorting is done in Python to handle article stripping
-            if sort_by not in VALID_SORT_OPTIONS:
-                raise ValueError(f"Invalid sort_by: {sort_by!r}")
-            if sort_by == "updated_at":
-                query += " ORDER BY ci.updated_at DESC"
-            elif sort_by == "created_at":
-                query += " ORDER BY ci.created_at DESC"
-            elif sort_by == "rating":
-                query += " ORDER BY ci.rating DESC NULLS LAST, ci.title ASC"
-            # For "title" sort, we do it in Python after fetching
-
-            # Search filtering happens in Python (it inspects creator metadata),
-            # so when searching we must fetch the full result set and defer
-            # limit/offset slicing until after filtering. Title sorting is also
-            # always done in Python (article stripping).
-            slice_in_python = sort_by == "title" or bool(search_term)
-            if not slice_in_python and (limit or offset > 0):
-                # Apply SQL LIMIT/OFFSET for non-title, non-search queries.
-                # SQLite accepts OFFSET only as a suffix of LIMIT, so an offset
-                # with no limit uses -1, SQLite's "unbounded" limit.
-                query += " LIMIT ?"
-                params.append(limit or -1)
-                if offset > 0:
-                    query += " OFFSET ?"
-                    params.append(offset)
-
-            cursor.execute(query, params)
-            rows = cursor.fetchall()
-            items = [self._row_to_content_item(row) for row in rows]
-
             if search_term:
-                items = [
-                    item for item in items if self._matches_item(item, search_term)
-                ]
-
-            # Apply title sorting in Python (ignoring articles). The SQL ORDER BY
-            # already ordered non-title sorts, but search filtering preserves
-            # that order, so no re-sort is needed for those.
-            if sort_by == "title":
-                items.sort(key=lambda item: get_sort_title(item.title))
-
-            if slice_in_python:
-                if offset > 0:
-                    items = items[offset:]
-                if limit:
-                    items = items[:limit]
-
-            return items
+                return self._search_page(
+                    cursor, where, params, order_by, limit, offset, search_term
+                )
+            return self._fetch_page(cursor, where, params, order_by, limit, offset)
 
     @staticmethod
-    def _matches_item(item: ContentItem, search_term: str) -> bool:
-        """Return True if *item*'s title or creator matches *search_term*.
+    def _build_item_filters(
+        user_id: int,
+        content_type: ContentType | None,
+        status: ConsumptionStatus | list[ConsumptionStatus] | None,
+        min_rating: int | None,
+        unrated_only: bool,
+        include_ignored: bool,
+        enrichment: EnrichmentFilter | None,
+    ) -> tuple[str, list[Any]]:
+        """Build the WHERE clause the list filters come to, and its parameters.
 
-        The creator is ``item.author`` whatever the content type: the read
-        path fills it from that type's creator column (author, director,
-        creators, developer). Matching is delegated to
-        :func:`matches_search` for exact/substring/fuzzy tiers.
-
-        Args:
-            item: The content item to test.
-            search_term: The (already stripped) non-empty search term.
-
-        Returns:
-            True if the title or creator matches.
+        Returned apart from the SELECT so the full read and the
+        search-candidate projection page over the same filtered set.
         """
-        if matches_search(item.title, search_term):
-            return True
+        where = " WHERE ci.user_id = ?"
+        params: list[Any] = [user_id]
 
-        creator = item.author
-        if not creator:
-            return False
-        return matches_search(creator, search_term)
+        if content_type is not None:
+            where += " AND ci.content_type = ?"
+            params.append(get_enum_value(content_type))
+
+        if enrichment == "enriched":
+            where += f" AND ({_ENRICHED_PREDICATE})"
+        elif enrichment == "not_enriched":
+            where += f" AND NOT ({_ENRICHED_PREDICATE})"
+
+        if status is not None:
+            if isinstance(status, list):
+                placeholders = ", ".join("?" for _ in status)
+                where += f" AND ci.status IN ({placeholders})"
+                params.extend(get_enum_value(s) for s in status)
+            else:
+                where += " AND ci.status = ?"
+                params.append(get_enum_value(status))
+
+        if min_rating is not None:
+            where += " AND ci.rating >= ?"
+            params.append(min_rating)
+
+        if unrated_only:
+            where += " AND ci.rating IS NULL"
+
+        if not include_ignored:
+            where += " AND (ci.ignored = 0 OR ci.ignored IS NULL)"
+
+        return where, params
+
+    @staticmethod
+    def _page_clause(limit: int | None, offset: int) -> tuple[str, list[Any]]:
+        """Build the LIMIT/OFFSET clause for a page, and its parameters.
+
+        SQLite accepts OFFSET only as a suffix of LIMIT, so an offset with no
+        limit uses -1, SQLite's "unbounded" limit. A falsy limit means no
+        limit, and a non-positive offset skips nothing.
+        """
+        if not limit and offset <= 0:
+            return "", []
+        clause = " LIMIT ?"
+        params: list[Any] = [limit or -1]
+        if offset > 0:
+            clause += " OFFSET ?"
+            params.append(offset)
+        return clause, params
+
+    def _fetch_page(
+        self,
+        cursor: sqlite3.Cursor,
+        where: str,
+        params: list[Any],
+        order_by: str,
+        limit: int | None,
+        offset: int,
+    ) -> list[ContentItem]:
+        """Load one ordered page of the filtered set."""
+        page_clause, page_params = self._page_clause(limit, offset)
+        cursor.execute(
+            f"{_CONTENT_ITEM_SELECT}{where} ORDER BY {order_by}{page_clause}",
+            [*params, *page_params],
+        )
+        return [self._row_to_content_item(row) for row in cursor.fetchall()]
+
+    def _search_page(
+        self,
+        cursor: sqlite3.Cursor,
+        where: str,
+        params: list[Any],
+        order_by: str,
+        limit: int | None,
+        offset: int,
+        search_term: str,
+    ) -> list[ContentItem]:
+        """Load one page of the items matching *search_term*.
+
+        A search has one matched set, whichever tier of
+        :func:`~src.utils.sorting.search_text_matches` an item answers on, so
+        the offset means one thing throughout and the pages of a search
+        concatenate into the unpaged answer. SQL orders the candidates and
+        hands each over as an id and a stored search text — no detail blob to
+        parse — so a candidate that misses, and a match outside the page,
+        never costs a ContentItem. The scan stops as soon as the page is
+        filled, because no caller asks how many matches lie beyond it; a falsy
+        limit asks for the rest of the set, so it scans every candidate.
+        """
+        needle = normalize_for_search(search_term)
+        # A term of pure punctuation normalizes away, and an empty needle
+        # would otherwise be a substring of every stored search text.
+        if not needle:
+            return []
+
+        # Read the way _page_clause reads them: only a positive limit bounds
+        # the page — it hands a negative one to SQLite, where it means
+        # unbounded — and a non-positive offset skips nothing.
+        start = max(offset, 0)
+        page_end = start + limit if limit and limit > 0 else None
+
+        cursor.execute(f"{_SEARCH_CANDIDATE_SELECT}{where} ORDER BY {order_by}", params)
+        matched: list[int] = []
+        for row in cursor:
+            if search_text_matches(row["search_text"], needle):
+                matched.append(row["id"])
+                if page_end is not None and len(matched) == page_end:
+                    break
+
+        page = matched[start:]
+        return self._items_by_db_ids(cursor, page) if page else []
 
     def get_unconsumed_items(
         self,

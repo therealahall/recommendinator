@@ -59,11 +59,15 @@ def _mark_written_before_the_repair(
 ) -> None:
     """Rewind the stored schema version to a build that predates the repair.
 
+    Version 2 is the one directly below it: rewinding further would re-run the
+    settings migrations too, which have nothing to do with the detail rows
+    being seeded.
+
     Takes the handle the caller already holds rather than opening its own:
     several seeders write inside a transaction, and a second connection to the
     same file would block on its write lock.
     """
-    handle.execute("PRAGMA user_version = 0")
+    handle.execute("PRAGMA user_version = 2")
 
 
 def _make_the_next_open_repair(db_path: Path) -> None:

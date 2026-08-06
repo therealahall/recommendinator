@@ -5,13 +5,28 @@ from pathlib import Path
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.sqlite_db import SQLiteDB
 from src.utils.sorting import (
+    _SEARCH_TEXT_SEPARATOR,
     FUZZY_MATCH_THRESHOLD,
     _best_window_ratio,
+    build_search_text,
     get_sort_title,
-    matches_search,
     normalize_for_search,
+    search_text_matches,
     titles_similar,
 )
+
+
+def title_matches(title: str, term: str) -> bool:
+    """Match a term against a title the way a library search does.
+
+    Runs ``search_text_matches`` over a stored ``build_search_text`` whose
+    creator half is empty, which is the whole of the production match for an
+    item with no creator: storage keeps that column pre-normalized and
+    normalizes the term once per request, then offers each half to every tier.
+    """
+    return search_text_matches(
+        build_search_text(title, None), normalize_for_search(term)
+    )
 
 
 class TestGetSortTitle:
@@ -307,23 +322,27 @@ class TestNormalizeForSearch:
         assert normalize_for_search("!!!") == ""
 
 
-class TestMatchesSearch:
-    """Tests for the three matching tiers of matches_search."""
+class TestTheMatchingTiers:
+    """The three tiers a library search runs, over a stored title.
+
+    Every search runs all three: ``search_text_matches`` is the match, and
+    ``title_matches`` above hands it the same stored text the read hands it.
+    """
 
     def test_exact_match(self) -> None:
-        assert matches_search("Die Hard", "die hard") is True
+        assert title_matches("Die Hard", "die hard") is True
 
     def test_exact_match_ignores_articles(self) -> None:
-        assert matches_search("The Matrix", "matrix") is True
+        assert title_matches("The Matrix", "matrix") is True
 
     def test_partial_substring_match(self) -> None:
-        assert matches_search("Die Hard (1988)", "Die Hard") is True
+        assert title_matches("Die Hard (1988)", "Die Hard") is True
 
     def test_fuzzy_typo_match(self) -> None:
         # Hard PM requirement: "Die Heard" must match "Die Hard (1988)".
         # After normalization this is "die heard" vs the "die hard " window of
         # "die hard 1988", which scores ~0.89, above FUZZY_MATCH_THRESHOLD.
-        assert matches_search("Die Hard (1988)", "Die Heard") is True
+        assert title_matches("Die Hard (1988)", "Die Heard") is True
 
     def test_fuzzy_match_on_non_article_first_token(self) -> None:
         """Fuzzy matching works on a longer multi-token title.
@@ -331,7 +350,7 @@ class TestMatchesSearch:
         "Apocalypse Now" keeps both tokens, and the single-character typo
         "Apocalipse Now" scores ~0.93, comfortably above threshold.
         """
-        assert matches_search("Apocalypse Now", "Apocalipse Now") is True
+        assert title_matches("Apocalypse Now", "Apocalipse Now") is True
 
     def test_fuzzy_below_threshold_does_not_match(self) -> None:
         """A typo whose ratio falls below threshold is rejected.
@@ -341,7 +360,7 @@ class TestMatchesSearch:
         rejects near-misses rather than waving everything through.
         """
         assert _best_window_ratio("insepton", "inception") < FUZZY_MATCH_THRESHOLD
-        assert matches_search("Inception", "Insepton") is False
+        assert title_matches("Inception", "Insepton") is False
 
     def test_short_query_fuzzy_false_positive(self) -> None:
         """QA probe: a 3-letter query fuzzy-matches a 1-letter-different word.
@@ -355,18 +374,18 @@ class TestMatchesSearch:
         pins that the threshold does not silently surface near-miss noise for
         short terms.
         """
-        assert matches_search("Bat", "cat") is False
-        assert matches_search("Cot", "cat") is False
-        assert matches_search("Card", "cart") is False
+        assert title_matches("Bat", "cat") is False
+        assert title_matches("Cot", "cat") is False
+        assert title_matches("Card", "cart") is False
 
     def test_unrelated_does_not_match(self) -> None:
-        assert matches_search("The Matrix", "Die Heard") is False
+        assert title_matches("The Matrix", "Die Heard") is False
 
     def test_empty_needle_does_not_match(self) -> None:
-        assert matches_search("Die Hard", "") is False
+        assert title_matches("Die Hard", "") is False
 
     def test_empty_haystack_does_not_match(self) -> None:
-        assert matches_search("", "Die Hard") is False
+        assert title_matches("", "Die Hard") is False
 
 
 class TestUnicodeSearch:
@@ -379,8 +398,8 @@ class TestUnicodeSearch:
 
     Root cause: normalize_for_search collapsed every character outside the
     ASCII class ``[0-9a-z]`` to a space, so a title (or a search term) with no
-    ASCII alphanumerics normalized to the empty string, and matches_search
-    returns False as soon as either side normalizes to empty.
+    ASCII alphanumerics normalized to the empty string, and matching returns
+    False as soon as either side normalizes to empty.
 
     Fix: the normalization pattern now collapses only non-word characters,
     which Python's ``\\w`` scopes to every script, so letters outside ASCII
@@ -389,9 +408,9 @@ class TestUnicodeSearch:
 
     def test_non_latin_title_matches_itself_regression(self) -> None:
         """Titles with no ASCII letters match their own text, exact or partial."""
-        assert matches_search("進撃の巨人", "進撃の巨人") is True
-        assert matches_search("Метро 2033", "Метро") is True
-        assert matches_search("ألف ليلة وليلة", "ألف ليلة") is True
+        assert title_matches("進撃の巨人", "進撃の巨人") is True
+        assert title_matches("Метро 2033", "Метро") is True
+        assert title_matches("ألف ليلة وليلة", "ألف ليلة") is True
 
     def test_non_latin_title_is_findable_via_storage_regression(
         self, tmp_path: Path
@@ -424,14 +443,14 @@ class TestUnicodeSearch:
         """Non-ASCII input is matched, not waved through.
 
         A negative control rather than a regression test — it passed before the
-        fix too, when both sides normalized to the empty string and
-        matches_search bailed out. What it pins is the fix's boundary: now that
-        non-Latin text survives normalization, unrelated strings in the same
-        script must still fail all three tiers rather than colliding.
+        fix too, when both sides normalized to the empty string and matching
+        bailed out. What it pins is the fix's boundary: now that non-Latin text
+        survives normalization, unrelated strings in the same script must still
+        fail all three tiers rather than colliding.
         """
-        assert matches_search("進撃の巨人", "千と千尋の神隠し") is False
-        assert matches_search("Метро 2033", "Война и мир") is False
-        assert matches_search("ألف ليلة وليلة", "رحلة إلى الشمس") is False
+        assert title_matches("進撃の巨人", "千と千尋の神隠し") is False
+        assert title_matches("Метро 2033", "Война и мир") is False
+        assert title_matches("ألف ليلة وليلة", "رحلة إلى الشمس") is False
 
     def test_every_reported_script_is_searchable_regression(self) -> None:
         """All the scripts the report named survive normalization, not just three.
@@ -454,7 +473,7 @@ class TestUnicodeSearch:
         ]
         for title in titles:
             assert normalize_for_search(title) != ""
-            assert matches_search(title, title) is True
+            assert title_matches(title, title) is True
 
     def test_non_latin_partial_and_case_differing_terms_match_regression(self) -> None:
         """A substring term and a case-differing term reach the item too.
@@ -464,10 +483,10 @@ class TestUnicodeSearch:
         rather than an extra. Cyrillic and Greek also have case, which the
         lowercasing in get_sort_title has to fold for non-ASCII letters.
         """
-        assert matches_search("進撃の巨人", "巨人") is True
-        assert matches_search("백년의 고독", "고독") is True
-        assert matches_search("Метро 2033", "МЕТРО") is True
-        assert matches_search("Οδύσσεια", "ΟΔΥΣΣΕΙΑ") is True
+        assert title_matches("進撃の巨人", "巨人") is True
+        assert title_matches("백년의 고독", "고독") is True
+        assert title_matches("Метро 2033", "МЕТРО") is True
+        assert title_matches("Οδύσσεια", "ΟΔΥΣΣΕΙΑ") is True
 
     def test_punctuation_around_non_latin_still_collapses_regression(self) -> None:
         """Non-Latin letters survive while punctuation and symbols still fold.
@@ -477,8 +496,8 @@ class TestUnicodeSearch:
         CJK punctuation that shows up in the titles this bug was about.
         """
         assert normalize_for_search("進撃の巨人！ 【完全版】") == "進撃の巨人 完全版"
-        assert matches_search("進撃の巨人 (Attack on Titan)", "進撃の巨人") is True
-        assert matches_search("進撃の巨人 (Attack on Titan)", "Attack on Titan") is True
+        assert title_matches("進撃の巨人 (Attack on Titan)", "進撃の巨人") is True
+        assert title_matches("進撃の巨人 (Attack on Titan)", "Attack on Titan") is True
 
     def test_terms_in_a_different_script_fail_every_tier(self) -> None:
         """A term in one script never matches a title in another.
@@ -488,9 +507,9 @@ class TestUnicodeSearch:
         that the wider character class made unrelated scripts collide through
         the fuzzy tier.
         """
-        assert matches_search("Die Hard", "進撃の巨人") is False
-        assert matches_search("進撃の巨人", "Die Hard") is False
-        assert matches_search("Метро 2033", "進撃の巨人") is False
+        assert title_matches("Die Hard", "進撃の巨人") is False
+        assert title_matches("進撃の巨人", "Die Hard") is False
+        assert title_matches("Метро 2033", "進撃の巨人") is False
 
     def test_normalization_keeps_letters_and_digits_only_regression(self) -> None:
         """States the boundary of the widened class, so it is not read as "keep all".
@@ -518,9 +537,9 @@ class TestUnicodeSearch:
     ) -> None:
         """The creator half of the search matches non-Latin text too.
 
-        _matches_item runs the same normalization over the author/director/
-        creators/developer field, so the defect hid every non-Latin creator
-        name as well as every non-Latin title.
+        The stored search text normalizes the author/director/creators/
+        developer field the same way it normalizes the title, so the defect
+        hid every non-Latin creator name as well as every non-Latin title.
         """
         db = SQLiteDB(tmp_path / "unicode_creator.db")
         db.save_content_item(
@@ -544,6 +563,80 @@ class TestUnicodeSearch:
 
         results = db.get_content_items(search="村上春樹")
         assert [item.title for item in results] == ["Kafka on the Shore"]
+
+
+class TestTheStoredSearchText:
+    """The haystack a stored library search matches an item against.
+
+    ``build_search_text`` holds the item's normalized title and creator in one
+    column, and ``search_text_matches`` runs all three tiers back over each
+    half. The two are one contract: what a search finds has to be what the
+    same rules found when they ran over the loaded item.
+    """
+
+    def test_a_row_with_no_stored_text_matches_nothing(self) -> None:
+        """A NULL column is not a haystack, and matching it is not an error.
+
+        The candidate projection selects the column straight from the row, so
+        a row written by something that does not fill it arrives here as None
+        — the fill repairs such a row on the next open, and until then it must
+        read as matching nothing rather than raising.
+        """
+        assert search_text_matches(None, normalize_for_search("die hard")) is False
+
+    def test_a_normalized_term_can_never_contain_the_separator(self) -> None:
+        """What makes the two halves separable at all.
+
+        Normalization collapses every non-word character, the separator
+        included, so neither stored half nor a search term can carry one.
+        ``test_a_term_cannot_match_across_the_title_and_the_creator`` rests on
+        it: without it a term could span the join.
+        """
+        for raw in ("Alpha\nOmega", _SEARCH_TEXT_SEPARATOR, "a\n\nb"):
+            assert _SEARCH_TEXT_SEPARATOR not in normalize_for_search(raw)
+
+    def test_a_term_matches_the_title_half(self) -> None:
+        """A title match reads the same through the stored text."""
+        text = build_search_text("Die Hard (1988)", "John McTiernan")
+
+        assert search_text_matches(text, normalize_for_search("die hard")) is True
+
+    def test_a_term_matches_the_creator_half(self) -> None:
+        """So does a creator match, which is why the creator is stored at all."""
+        text = build_search_text("Die Hard (1988)", "John McTiernan")
+
+        assert search_text_matches(text, normalize_for_search("McTiernan")) is True
+
+    def test_a_typo_still_matches_through_the_stored_text(self) -> None:
+        """The fuzzy tier survives the move into a column.
+
+        SQL can express the first two tiers and not this one, so the stored
+        text has to stay usable by the Python pass that runs it.
+        """
+        text = build_search_text("Die Hard (1988)", None)
+
+        assert search_text_matches(text, normalize_for_search("Die Heard")) is True
+
+    def test_a_term_cannot_match_across_the_title_and_the_creator(self) -> None:
+        """The two halves are matched separately, never as one string.
+
+        Their separator is a character search normalization can never produce,
+        so a substring found in the joined text always lies inside one half.
+        Without that, "alpha omega" would match an item whose title merely ends
+        where its creator's name begins.
+        """
+        text = build_search_text("Alpha", "Omega")
+
+        assert search_text_matches(text, normalize_for_search("alpha")) is True
+        assert search_text_matches(text, normalize_for_search("omega")) is True
+        assert search_text_matches(text, normalize_for_search("alpha omega")) is False
+
+    def test_an_item_with_no_creator_matches_on_its_title_alone(self) -> None:
+        """A missing creator is an empty half, not a half that matches anything."""
+        text = build_search_text("Untitled Manuscript", None)
+
+        assert search_text_matches(text, normalize_for_search("manuscript")) is True
+        assert search_text_matches(text, normalize_for_search("Tolkien")) is False
 
 
 class TestBestWindowRatio:
@@ -584,4 +677,4 @@ class TestBestWindowRatio:
             normalize_for_search("Akira Kurosawa"), normalize_for_search("Akira")
         )
         assert ratio < FUZZY_MATCH_THRESHOLD
-        assert matches_search("Akira", "Akira Kurosawa") is False
+        assert title_matches("Akira", "Akira Kurosawa") is False
