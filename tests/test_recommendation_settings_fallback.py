@@ -24,6 +24,7 @@ carry no ``restart_required``, so a change made after boot must reach the
 already-running engine.
 """
 
+import copy
 import threading
 from collections.abc import Callable, Iterator
 from dataclasses import fields
@@ -56,6 +57,7 @@ from src.web.state import app_state, get_config, get_engine, get_storage
 _GENRE_WEIGHT_KEY = "recommendations.scorer_weights.genre_match"
 _CREATOR_WEIGHT_KEY = "recommendations.scorer_weights.creator_match"
 _ADAPTATION_WEIGHT_KEY = "recommendations.scorer_weights.adaptation"
+_MIN_RATING_KEY = "recommendations.min_rating_for_preference"
 
 
 def _const_default(key: str) -> Any:
@@ -580,6 +582,31 @@ class _WeightsWatchedMidIteration(dict[str, float]):
             yield entry
 
 
+class _StorageThatReadsMidSave(StorageManager):
+    """Real storage that runs :attr:`interrupt` just before persisting *key*.
+
+    ``apply_settings`` walks the keys of one save, so the moment before the
+    last of them is written is the window in which a reader could see the
+    earlier keys applied and that one not. Hooking it puts a request in that
+    window on every run rather than once in however many thousand land there
+    by luck. The reader runs on this thread because what it observes is the
+    state of the config dict at that instant, which does not depend on who is
+    looking.
+    """
+
+    def __init__(self, sqlite_path: Path, key: str) -> None:
+        """Build storage at *sqlite_path* hooked on writes of *key*."""
+        super().__init__(sqlite_path=sqlite_path)
+        self._hooked_key = key
+        self.interrupt: Callable[[], None] = lambda: None
+
+    def set_setting(self, key: str, value: Any) -> None:
+        """Persist *key*, running the interrupt first when it is the hooked one."""
+        if key == self._hooked_key:
+            self.interrupt()
+        super().set_setting(key, value)
+
+
 def _apply_on_another_thread(
     config: dict[str, Any], storage: StorageManager, updates: dict[str, Any]
 ) -> None:
@@ -615,10 +642,13 @@ class TestSettingsWriteDuringScoringRegression:
     returned a list ranked by a configuration nobody ever saved.
     Root cause: ``_apply_live`` wrote through ``set_leaf``, which mutates the
     nested mapping in place, and the engine held the config dict by reference.
-    Fix: ``_apply_live`` writes through ``set_leaf_atomically``, which swaps
-    each mapping on the path for an updated copy, and the engine asks a
-    provider for the running config rather than holding it. A reader therefore
-    always finishes on the configuration it started with.
+    Two narrower windows survived that first fix: the engine still read the
+    config two or three times per request, and ``apply_settings`` still
+    published one key at a time, so a save of several keys was several swaps.
+    Fix: ``_apply_live`` publishes a whole save through
+    ``set_leaves_atomically``, one store per section, and the engine resolves
+    every configured knob from a single read taken at the start of the request.
+    A reader therefore always finishes on the configuration it started with.
     """
 
     @staticmethod
@@ -696,6 +726,91 @@ class TestSettingsWriteDuringScoringRegression:
 
         assert during_the_write == ["Neon Divide", "Quiet Harvest"]
         assert after_the_write == ["Quiet Harvest", "Neon Divide"]
+
+    def test_one_run_reads_the_running_config_once_regression(
+        self, storage: StorageManager
+    ) -> None:
+        """A run resolves every configured knob from a single read.
+
+        Bug: ``generate_recommendations`` asked the provider once for
+        ``min_rating_for_preference``, again for the pipeline weights and
+        again for the custom-rule weight. A save landing between two of those
+        reads gave the request one leaf from before it and another from
+        after, which is a configuration nobody ever saved.
+        Fix: the request resolves all three from one read and uses that
+        snapshot throughout, so the count below *is* the guarantee.
+        """
+        _seed_split_taste_library(storage)
+        config: dict[str, Any] = {}
+        reads: list[dict[str, Any]] = []
+
+        def running_config() -> dict[str, Any]:
+            reads.append(config)
+            return config
+
+        engine = create_recommendation_engine(
+            storage_manager=storage,
+            embedding_generator=None,
+            recommendation_generator=None,
+            config=config,
+            config_provider=running_config,
+        )
+        reads.clear()
+
+        recommendations = engine.generate_recommendations(
+            content_type=ContentType.BOOK,
+            count=5,
+            # Custom rules put the third read, the custom-rule weight, on the
+            # path as well.
+            user_preference_config=UserPreferenceConfig(custom_rules=["avoid poetry"]),
+        )
+
+        assert [rec.item.title for rec in recommendations] == [
+            "Neon Divide",
+            "Quiet Harvest",
+        ]
+        assert len(reads) == 1
+
+    def test_a_two_key_save_reaches_a_run_whole_or_not_at_all_regression(
+        self, tmp_path: Path
+    ) -> None:
+        """A run never ranks on half of one Settings-page save.
+
+        Bug: ``apply_settings`` published each key on its own, so a run
+        landing between two of the swaps of a single save read the new
+        ``genre_match`` weight and the old ``min_rating_for_preference``.
+        Fix: a save publishes all of its live-applied leaves in one swap per
+        section, so a reader sees all of the save or none of it.
+        """
+        storage = _StorageThatReadsMidSave(tmp_path / "test.db", _MIN_RATING_KEY)
+        _seed_split_taste_library(storage)
+        config: dict[str, Any] = {}
+        engine = create_recommendation_engine(
+            storage_manager=storage,
+            embedding_generator=None,
+            recommendation_generator=None,
+            config=config,
+        )
+        mid_save: list[list[str]] = []
+        storage.interrupt = lambda: mid_save.append(self._ranked_titles(engine))
+
+        apply_settings(config, storage, {_GENRE_WEIGHT_KEY: 0.0, _MIN_RATING_KEY: 1})
+
+        # The run landing inside the save ranks on the whole pre-save config,
+        # not on the weight alone, which on this library flips the order.
+        assert mid_save == [["Neon Divide", "Quiet Harvest"]]
+        assert config["recommendations"]["scorer_weights"]["genre_match"] == 0.0
+        assert config["recommendations"]["min_rating_for_preference"] == 1
+
+        # And the next run ranks exactly as an engine booted on the saved
+        # config does, so both keys reached it rather than only the first.
+        saved_from_the_start = create_recommendation_engine(
+            storage_manager=storage,
+            embedding_generator=None,
+            recommendation_generator=None,
+            config=copy.deepcopy(config),
+        )
+        assert self._ranked_titles(engine) == self._ranked_titles(saved_from_the_start)
 
     def test_apply_settings_leaves_the_mapping_a_reader_holds_alone(
         self, storage: StorageManager

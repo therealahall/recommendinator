@@ -1,6 +1,16 @@
 """Tests for the nested-dict leaf helpers used by the dotted-key config layer."""
 
-from src.utils.dotted_path import get_leaf, pop_leaf, set_leaf, set_leaf_atomically
+import copy
+
+import pytest
+
+from src.utils.dotted_path import (
+    get_leaf,
+    pop_leaf,
+    set_leaf,
+    set_leaf_atomically,
+    set_leaves_atomically,
+)
 
 
 class TestGetLeaf:
@@ -58,11 +68,24 @@ class TestSetLeaf:
 class TestSetLeafAtomically:
     """Tests for set_leaf_atomically."""
 
-    def test_writes_the_same_result_as_set_leaf(self) -> None:
-        """The mapping ends up exactly where the in-place write puts it."""
-        config = {"web": {"port": 1, "host": "x"}}
-        set_leaf_atomically(config, ("web", "port"), 2)
-        assert config == {"web": {"port": 2, "host": "x"}}
+    @pytest.mark.parametrize(
+        "path",
+        [("web", "port"), ("port",), ("web", "tls", "cert"), ("logging", "file")],
+    )
+    def test_writes_the_same_result_as_set_leaf(self, path: tuple[str, ...]) -> None:
+        """Both helpers land the same value in the same place, path for path.
+
+        Run side by side rather than compared against a hardcoded outcome,
+        which is the only way this notices the two drifting apart.
+        """
+        base: dict = {"web": {"port": 1, "host": "x"}, "logging": 5}
+        in_place = copy.deepcopy(base)
+        swapped = copy.deepcopy(base)
+
+        set_leaf(in_place, path, 2)
+        set_leaf_atomically(swapped, path, 2)
+
+        assert swapped == in_place
 
     def test_leaves_the_replaced_intermediate_untouched(self) -> None:
         """A reader holding the old nested dict keeps it exactly as it was.
@@ -102,6 +125,56 @@ class TestSetLeafAtomically:
         config: dict = {}
         set_leaf_atomically(config, ("port",), 1)
         assert config == {"port": 1}
+
+
+class TestSetLeavesAtomically:
+    """Tests for set_leaves_atomically."""
+
+    def test_a_reader_sees_every_update_or_none_of_them(self) -> None:
+        """The whole batch replaces the section a reader holds, in one store.
+
+        This is the whole point of the helper: the Settings page saves several
+        keys at once, and a request resolving its configuration between two
+        separate writes would rank on a mixture nobody ever saved.
+        """
+        held = {"genre_match": 3.0, "adaptation": 1.0}
+        config: dict = {"recommendations": {"scorer_weights": held}}
+
+        set_leaves_atomically(
+            config,
+            [
+                (("recommendations", "scorer_weights", "genre_match"), 0.0),
+                (("recommendations", "min_rating_for_preference"), 1),
+            ],
+        )
+
+        assert held == {"genre_match": 3.0, "adaptation": 1.0}
+        assert config["recommendations"] == {
+            "scorer_weights": {"genre_match": 0.0, "adaptation": 1.0},
+            "min_rating_for_preference": 1,
+        }
+
+    def test_writes_across_sections(self) -> None:
+        """Updates addressing different top-level keys all land."""
+        config: dict = {"web": {"port": 1}}
+
+        set_leaves_atomically(
+            config, [(("web", "port"), 2), (("logging", "level"), "DEBUG")]
+        )
+
+        assert config == {"web": {"port": 2}, "logging": {"level": "DEBUG"}}
+
+    def test_single_segment_path(self) -> None:
+        """A single-segment path writes a top-level key."""
+        config: dict = {}
+        set_leaves_atomically(config, [(("port",), 1)])
+        assert config == {"port": 1}
+
+    def test_no_updates_leaves_the_config_alone(self) -> None:
+        """A save whose leaves are all restart-gated publishes nothing."""
+        config: dict = {"web": {"port": 1}}
+        set_leaves_atomically(config, [])
+        assert config == {"web": {"port": 1}}
 
 
 class TestPopLeaf:
