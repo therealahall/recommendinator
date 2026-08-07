@@ -3,9 +3,9 @@
 When the user's ``variety_penalty`` preference is non-zero, recently finished
 genres are penalised on a stepped ladder so the recommender hops between genres
 instead of marching through the next entry in the genre/series just finished.
-The engine derives the ladder's ``top_penalty`` fraction from that preference by
-dividing it by the preference scale's maximum, so the slider's full value yields
-the strongest rung.
+:func:`top_penalty_for_preference` derives the ladder's ``top_penalty`` fraction
+from that preference by dividing it by the preference scale's maximum, so the
+slider's full value yields the strongest rung.
 
 The ladder is built from the user's completion events ordered by completion
 date (newest first). A completion event is a fully COMPLETED item, or an
@@ -29,18 +29,27 @@ is no score floor.
 from __future__ import annotations
 
 from datetime import date
+from typing import NewType
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.genre_clusters import get_clusters_for_terms
 from src.recommendations.genre_normalizer import extract_and_normalize_genres
 from src.utils.series import latest_season_watched_date
 
+#: A penalty as a *fraction* of a candidate's score, in ``[0.0, 1.0]``. Distinct
+#: from the user's ``variety_penalty`` preference, which is a 0.0-5.0 strength:
+#: a strength used unscaled as a fraction would push scores below zero. The type
+#: keeps the two apart, and :func:`top_penalty_for_preference` is the only way to
+#: cross from one to the other.
+PenaltyFraction = NewType("PenaltyFraction", float)
+
 # Full-strength penalty fraction, applied to the most recently finished genre
 # cluster when the user sets ``variety_penalty`` to its maximum. ``1.0`` zeroes
-# that cluster's same-type candidates entirely (no score floor). The engine
-# scales it down for lower preference values; it is the default top rung for
-# callers that build a ladder directly.
-VARIETY_TOP_PENALTY = 1.0
+# that cluster's same-type candidates entirely (no score floor).
+# ``top_penalty_for_preference`` scales it down for lower preference values; it
+# is the default top rung for callers that build a ladder directly.
+VARIETY_TOP_PENALTY = PenaltyFraction(1.0)
 
 # Number of distinct recently finished clusters the penalty ladder spans.
 # Penalty decays linearly: rung 0 = TOP, rung STEPS-1 = TOP/STEPS, rung STEPS+ = 0.
@@ -55,6 +64,21 @@ VARIETY_LADDER_STEPS = 5
 # enough that a mid-slider setting reorders the pair rather than only narrowing
 # the gap (the crossover pinned in ``TestVarietyCrossoverCharacterisation``).
 VARIETY_SERIES_CONTINUATION_FACTOR = 0.6
+
+
+def top_penalty_for_preference(variety_penalty: float) -> PenaltyFraction:
+    """Map the user's variety strength onto the ladder's top rung.
+
+    Args:
+        variety_penalty: The user's ``variety_penalty`` preference, on the
+            0.0-5.0 strength scale.
+
+    Returns:
+        The top rung, clamped into ``[0.0, 1.0]`` so a strength that arrives
+        unscaled cannot penalise a candidate past zero.
+    """
+    fraction = variety_penalty / UserPreferenceConfig.MAX_VARIETY_PENALTY
+    return PenaltyFraction(min(max(fraction, 0.0), 1.0))
 
 
 def _is_completion_event(item: ContentItem) -> bool:
@@ -113,7 +137,7 @@ def build_variety_ladder(
     completed_items: list[ContentItem],
     *,
     steps: int = VARIETY_LADDER_STEPS,
-    top_penalty: float = VARIETY_TOP_PENALTY,
+    top_penalty: PenaltyFraction = VARIETY_TOP_PENALTY,
 ) -> dict[str, float]:
     """Build a cluster -> penalty ladder from recently completed items.
 
@@ -133,7 +157,8 @@ def build_variety_ladder(
             ongoing TV show with at least one finished season. Everything
             else is ignored.
         steps: Number of distinct clusters the ladder spans.
-        top_penalty: Penalty for the most recently finished cluster.
+        top_penalty: Penalty fraction for the most recently finished cluster,
+            from :func:`top_penalty_for_preference`.
 
     Returns:
         Mapping of cluster name to penalty in ``(0, top_penalty]``. Empty when

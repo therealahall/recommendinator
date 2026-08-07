@@ -316,9 +316,12 @@ Invariants:
   scored on its own merits, once per series.
 - The variety penalty multiplies a candidate's final score by `1 - penalty`,
   taking the strongest penalty among its recently finished genre clusters. The
-  ladder is built from completions **of the recommended content type**, its top
-  rung the user's `variety_penalty` over the `5.0` maximum. A finished season of
-  an ongoing show counts as a completion, dated by that season's watch timestamp.
+  ladder is built from the taste-signal items **of the recommended content
+  type**, so an unrated or ignored completion claims no rung. Its top rung is
+  the user's `variety_penalty` over the `5.0` maximum, clamped into `[0, 1]` by
+  `top_penalty_for_preference` so no candidate is penalised past zero. A
+  finished season of an ongoing show counts as a completion, dated by that
+  season's watch timestamp.
   An active series continuation takes 60% of the penalty
   (`is_active_series_continuation`). See
   [SCORING.md](docs/SCORING.md#variety-after-completion).
