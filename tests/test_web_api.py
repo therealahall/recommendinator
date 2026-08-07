@@ -4,7 +4,7 @@ import json
 import logging
 import threading
 from collections.abc import Callable
-from dataclasses import fields
+from dataclasses import fields, replace
 from datetime import UTC, date, datetime
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -3399,9 +3399,19 @@ class TestSSEStreamingEndpoint:
     def test_phase1_recommendations_event(
         self, client: TestClient, mock_components: dict
     ) -> None:
-        """SSE stream emits a phase 1 'recommendations' event with items."""
+        """SSE stream emits a phase 1 'recommendations' event with items.
+
+        Phase 1 carries no blurb because the endpoint asks for none, not
+        because it blanks the field afterwards, so the engine here answers
+        ``use_llm=True`` with a blurb the way the real one does. An empty slot
+        is then evidence about the request the endpoint made.
+        """
         rec = self._make_recommendation()
-        mock_components["engine"].generate_recommendations.return_value = [rec]
+        mock_components["engine"].generate_recommendations.side_effect = (
+            lambda use_llm, **kwargs: [
+                replace(rec, llm_reasoning="blurb from the engine") if use_llm else rec
+            ]
+        )
         mock_components["engine"].generate_blurb_for_item.return_value = None
         mock_components["storage"].get_user_preference_config.return_value = None
         mock_components["storage"].get_completed_items.return_value = []
@@ -3421,6 +3431,12 @@ class TestSSEStreamingEndpoint:
         assert items[0]["llm_reasoning"] is None
         assert items[0]["score"] == 0.85
         assert items[0]["score_breakdown"] == {"genre_match": 0.9}
+        assert (
+            mock_components["engine"].generate_recommendations.call_args.kwargs[
+                "use_llm"
+            ]
+            is False
+        )
 
     def test_phase1_tv_season_includes_db_id(
         self, client: TestClient, mock_components: dict

@@ -24,10 +24,12 @@ carry no ``restart_required``, so a change made after boot must reach the
 already-running engine.
 """
 
-from collections.abc import Iterator
+import threading
+from collections.abc import Callable, Iterator
 from dataclasses import fields
 from pathlib import Path
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 import yaml
@@ -36,6 +38,7 @@ from fastapi.testclient import TestClient
 from src.cli.config import create_recommendation_engine
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.user_preferences import UserPreferenceConfig
+from src.recommendations.engine import RecommendationEngine
 from src.recommendations.scorers import (
     CreatorMatchScorer,
     GenreMatchScorer,
@@ -49,6 +52,10 @@ from src.storage.settings_migration import migrate_config_settings
 from src.web.api import _get_recommendations_config
 from src.web.app import create_app
 from src.web.state import app_state, get_config, get_engine, get_storage
+
+_GENRE_WEIGHT_KEY = "recommendations.scorer_weights.genre_match"
+_CREATOR_WEIGHT_KEY = "recommendations.scorer_weights.creator_match"
+_ADAPTATION_WEIGHT_KEY = "recommendations.scorer_weights.adaptation"
 
 
 def _const_default(key: str) -> Any:
@@ -127,6 +134,35 @@ def _apply_running(updates: dict[str, Any]) -> None:
     storage = get_storage()
     assert config is not None and storage is not None, "app_state is not booted"
     apply_settings(config, storage, updates)
+
+
+def _seed_split_taste_library(storage: StorageManager) -> None:
+    """Two rated books and two candidates that swap genre for creator.
+
+    The liked genre and the liked author are deliberately split across the two
+    candidates, so ``genre_match`` alone decides the order: at its default
+    weight the sci-fi book by the disliked author leads ("Neon Divide"), and at
+    weight 0 the poetry book by the liked author takes over ("Quiet Harvest").
+    """
+    completed = ConsumptionStatus.COMPLETED
+    unread = ConsumptionStatus.UNREAD
+    for item_id, title, author, genre, status, rating in (
+        ("liked", "Ash Harbour", "Vera Lang", "Science Fiction", completed, 5),
+        ("disliked", "Grey Ledger", "Miles Crane", "Poetry", completed, 1),
+        ("genre-led", "Neon Divide", "Miles Crane", "Science Fiction", unread, None),
+        ("creator-led", "Quiet Harvest", "Vera Lang", "Poetry", unread, None),
+    ):
+        storage.save_content_item(
+            ContentItem(
+                id=item_id,
+                title=title,
+                author=author,
+                content_type=ContentType.BOOK,
+                status=status,
+                rating=rating,
+                metadata={"genre": genre},
+            )
+        )
 
 
 class TestScorerWeightFallback:
@@ -384,47 +420,9 @@ class TestLiveSettingsApply:
     ``min_rating_for_preference`` once at boot and froze them into the scorer
     instances and the ``PreferenceAnalyzer``, while ``apply_settings`` wrote the
     DB row and live-applied only into the running config dict.
-    Fix: the engine holds that same dict by reference and re-resolves both knobs
-    on every read, so the next ``generate_recommendations`` call sees the change.
+    Fix: the engine resolves the running config on every read, so the next
+    ``generate_recommendations`` call sees the change.
     """
-
-    _GENRE_WEIGHT_KEY = "recommendations.scorer_weights.genre_match"
-
-    @staticmethod
-    def _seed_library(storage: StorageManager) -> None:
-        """Two rated books and two candidates that swap genre for creator.
-
-        The liked genre and the liked author are deliberately split across the
-        two candidates, so ``genre_match`` alone decides the order: at its
-        default weight the sci-fi book by the disliked author leads, and at
-        weight 0 the poetry book by the liked author takes over.
-        """
-        completed = ConsumptionStatus.COMPLETED
-        unread = ConsumptionStatus.UNREAD
-        for item_id, title, author, genre, status, rating in (
-            ("liked", "Ash Harbour", "Vera Lang", "Science Fiction", completed, 5),
-            ("disliked", "Grey Ledger", "Miles Crane", "Poetry", completed, 1),
-            (
-                "genre-led",
-                "Neon Divide",
-                "Miles Crane",
-                "Science Fiction",
-                unread,
-                None,
-            ),
-            ("creator-led", "Quiet Harvest", "Vera Lang", "Poetry", unread, None),
-        ):
-            storage.save_content_item(
-                ContentItem(
-                    id=item_id,
-                    title=title,
-                    author=author,
-                    content_type=ContentType.BOOK,
-                    status=status,
-                    rating=rating,
-                    metadata={"genre": genre},
-                )
-            )
 
     @staticmethod
     def _recommendations(client: TestClient) -> list[dict[str, Any]]:
@@ -441,9 +439,9 @@ class TestLiveSettingsApply:
     ) -> None:
         """Zeroing the genre weight after boot reaches the running pipeline."""
         before = _weight_of(_running_engine().pipeline.scorers, GenreMatchScorer)
-        assert before == _const_default(self._GENRE_WEIGHT_KEY)
+        assert before == _const_default(_GENRE_WEIGHT_KEY)
 
-        _apply_running({self._GENRE_WEIGHT_KEY: 0.0})
+        _apply_running({_GENRE_WEIGHT_KEY: 0.0})
 
         assert _weight_of(_running_engine().pipeline.scorers, GenreMatchScorer) == 0.0
 
@@ -468,11 +466,11 @@ class TestLiveSettingsApply:
         """
         storage = get_storage()
         assert storage is not None, "app_state is not booted"
-        self._seed_library(storage)
+        _seed_split_taste_library(storage)
 
         before = self._recommendations(booted_app)
         response = booted_app.put(
-            "/api/settings", json={"updates": {self._GENRE_WEIGHT_KEY: 0.0}}
+            "/api/settings", json={"updates": {_GENRE_WEIGHT_KEY: 0.0}}
         )
         assert response.status_code == 200, response.text
         after = self._recommendations(booted_app)
@@ -505,3 +503,211 @@ class TestLiveSettingsApply:
         ]
 
         assert restart_gated == []
+
+
+class TestUnusableRunningConfig:
+    """What the engine does with a ``recommendations`` section it cannot use.
+
+    Each of these is a hand-edited ``config.yaml`` away, and each is guarded in
+    the engine because ``dict.get``'s default does not catch it: the key is
+    present, its value is simply not what the resolver can read.
+    """
+
+    @staticmethod
+    def _engine_reading(config: dict[str, Any]) -> Any:
+        """An engine whose running config is *config* and nothing else."""
+        return RecommendationEngine(
+            storage_manager=Mock(spec=StorageManager),
+            embedding_generator=None,
+            recommendation_generator=None,
+            min_rating=4,
+            config_provider=lambda: config,
+        )
+
+    def test_a_childless_header_falls_back_to_the_baseline(self) -> None:
+        """``recommendations:`` with nothing under it parses to ``None``."""
+        engine = self._engine_reading({"recommendations": None})
+
+        assert engine.preference_analyzer.min_rating == 4
+
+    def test_non_mapping_weights_fall_back_to_the_baseline(self) -> None:
+        """``scorer_weights`` written as a list weights nothing."""
+        engine = self._engine_reading(
+            {"recommendations": {"scorer_weights": ["genre_match"]}}
+        )
+
+        assert (
+            _weight_of(engine.pipeline.scorers, GenreMatchScorer)
+            == GenreMatchScorer().weight
+        )
+
+    def test_a_weight_named_after_no_scorer_is_dropped(self) -> None:
+        """A typo weights nothing and leaves the scorers it sits beside alone."""
+        engine = self._engine_reading(
+            {
+                "recommendations": {
+                    "scorer_weights": {"genre_match": 7.0, "genre_matsh": 9.0}
+                }
+            }
+        )
+
+        assert _weight_of(engine.pipeline.scorers, GenreMatchScorer) == 7.0
+        assert 9.0 not in [scorer.weight for scorer in engine.pipeline.scorers]
+
+
+class _WeightsWatchedMidIteration(dict[str, float]):
+    """A ``scorer_weights`` mapping that runs *interrupt* mid-iteration.
+
+    ``RecommendationEngine._configured_weights`` iterates this mapping to
+    resolve the running weights. Handing control to *interrupt* after the first
+    entry puts a settings write inside that iteration every run, rather than
+    once in however many thousand requests land there by luck.
+    """
+
+    def __init__(
+        self, weights: dict[str, float], interrupt: Callable[[], None]
+    ) -> None:
+        super().__init__(weights)
+        self._interrupt = interrupt
+        self._interrupted = False
+
+    def items(self) -> Iterator[tuple[str, float]]:
+        """Yield the entries, interrupting once after the first."""
+        for index, entry in enumerate(super().items()):
+            if index == 0 and not self._interrupted:
+                self._interrupted = True
+                self._interrupt()
+            yield entry
+
+
+def _apply_on_another_thread(
+    config: dict[str, Any], storage: StorageManager, updates: dict[str, Any]
+) -> None:
+    """Run one settings write to completion on a worker thread."""
+    raised: list[Exception] = []
+
+    def write() -> None:
+        try:
+            apply_settings(config, storage, updates)
+        except Exception as error:
+            # A thread's exception dies with it, so it is carried out by hand.
+            raised.append(error)
+
+    worker = threading.Thread(target=write)
+    worker.start()
+    worker.join(timeout=10)
+
+    assert not worker.is_alive(), "the settings write never finished"
+    assert not raised, f"the settings write raised {raised[0]!r}"
+
+
+class TestSettingsWriteDuringScoringRegression:
+    """Bug: a request scoring while a setting was saved used a broken config.
+
+    Bug: the Settings page wrote into the same ``recommendations`` mapping the
+    engine was reading. Scoring does not run on the event loop — the streaming
+    endpoint hands Starlette a synchronous generator, which it runs in a
+    threadpool worker — so the write and the read genuinely overlap. Moving the
+    adaptation slider on a config predating it inserts a key, and inserting
+    into a dict another thread is iterating raises ``RuntimeError: dictionary
+    changed size during iteration``, surfacing as a 500. Moving any other
+    slider replaced a value mid-iteration instead, and the request quietly
+    returned a list ranked by a configuration nobody ever saved.
+    Root cause: ``_apply_live`` wrote through ``set_leaf``, which mutates the
+    nested mapping in place, and the engine held the config dict by reference.
+    Fix: ``_apply_live`` writes through ``set_leaf_atomically``, which swaps
+    each mapping on the path for an updated copy, and the engine asks a
+    provider for the running config rather than holding it. A reader therefore
+    always finishes on the configuration it started with.
+    """
+
+    @staticmethod
+    def _ranked_titles(engine: Any) -> list[str]:
+        """The book titles the engine ranks right now, best first."""
+        return [
+            rec.item.title
+            for rec in engine.generate_recommendations(
+                content_type=ContentType.BOOK, count=5
+            )
+        ]
+
+    @staticmethod
+    def _config_written_mid_read(
+        interrupt: Callable[[], None],
+    ) -> dict[str, Any]:
+        """A running config whose weights run *interrupt* while being read.
+
+        ``creator_match`` is declared first so that ``genre_match`` — the
+        weight the writes below move — is still unread when the write lands.
+        """
+        return {
+            "recommendations": {
+                "scorer_weights": _WeightsWatchedMidIteration(
+                    {
+                        "creator_match": _const_default(_CREATOR_WEIGHT_KEY),
+                        "genre_match": _const_default(_GENRE_WEIGHT_KEY),
+                    },
+                    interrupt,
+                )
+            }
+        }
+
+    def test_a_weight_inserted_mid_read_does_not_break_the_run_regression(
+        self, storage: StorageManager
+    ) -> None:
+        """A weight the config has never carried can be added under a reader."""
+        _seed_split_taste_library(storage)
+        config: dict[str, Any] = {}
+
+        def interrupt() -> None:
+            _apply_on_another_thread(config, storage, {_ADAPTATION_WEIGHT_KEY: 0.5})
+
+        config.update(self._config_written_mid_read(interrupt))
+        engine = create_recommendation_engine(
+            storage_manager=storage,
+            embedding_generator=None,
+            recommendation_generator=None,
+            config=config,
+        )
+
+        assert self._ranked_titles(engine) == ["Neon Divide", "Quiet Harvest"]
+        assert config["recommendations"]["scorer_weights"]["adaptation"] == 0.5
+
+    def test_a_weight_changed_mid_read_does_not_score_a_mixture_regression(
+        self, storage: StorageManager
+    ) -> None:
+        """The run finishes on its own weights, and the next one sees the new."""
+        _seed_split_taste_library(storage)
+        config: dict[str, Any] = {}
+
+        def interrupt() -> None:
+            _apply_on_another_thread(config, storage, {_GENRE_WEIGHT_KEY: 0.0})
+
+        config.update(self._config_written_mid_read(interrupt))
+        engine = create_recommendation_engine(
+            storage_manager=storage,
+            embedding_generator=None,
+            recommendation_generator=None,
+            config=config,
+        )
+
+        during_the_write = self._ranked_titles(engine)
+        after_the_write = self._ranked_titles(engine)
+
+        assert during_the_write == ["Neon Divide", "Quiet Harvest"]
+        assert after_the_write == ["Quiet Harvest", "Neon Divide"]
+
+    def test_apply_settings_leaves_the_mapping_a_reader_holds_alone(
+        self, storage: StorageManager
+    ) -> None:
+        """The mechanism behind both: the old mapping is replaced, not edited."""
+        held = {"genre_match": 3.0}
+        config: dict[str, Any] = {"recommendations": {"scorer_weights": held}}
+
+        apply_settings(config, storage, {_ADAPTATION_WEIGHT_KEY: 0.5})
+
+        assert held == {"genre_match": 3.0}
+        assert config["recommendations"]["scorer_weights"] == {
+            "genre_match": 3.0,
+            "adaptation": 0.5,
+        }

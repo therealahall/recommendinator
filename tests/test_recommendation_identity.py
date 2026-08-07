@@ -61,6 +61,26 @@ class TestCandidateKey:
         assert candidate_key(first) == "db_7#s1"
         assert candidate_key(second) == "db_7#s2"
 
+    def test_a_season_stored_as_text_keys_as_that_season(self) -> None:
+        """``"1"`` from a metadata blob is season 1, not a whole show.
+
+        Metadata round-trips through JSON, and a season that comes back as a
+        string used to fall through to the bare show key — putting the
+        candidate back in the collision class the season suffix exists to
+        break, alongside every sibling season of the same show.
+        """
+        show_row = _book(db_id=7)
+        show_row.metadata["season"] = "1"
+
+        assert candidate_key(show_row) == "db_7#s1"
+
+    def test_a_season_that_is_not_a_number_keys_as_the_show(self) -> None:
+        """Anything that names no season leaves the key alone."""
+        show_row = _book(db_id=7)
+        show_row.metadata["season"] = "special"
+
+        assert candidate_key(show_row) == "db_7"
+
     def test_items_with_no_database_row_do_not_collide(self) -> None:
         """Unsaved items are each their own identity, never a shared one.
 
