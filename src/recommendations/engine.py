@@ -23,6 +23,7 @@ from src.recommendations.preferences import PreferenceAnalyzer, UserPreferences
 from src.recommendations.reference_index import SignalIndex
 from src.recommendations.scorers import (
     DEFAULT_SCORERS,
+    SCORER_NAME_MAP,
     AdaptationScorer,
     ContinuationScorer,
     CustomPreferenceScorer,
@@ -129,6 +130,15 @@ class RecommendationEngine:
     vector-similarity scores and adds a ``SemanticSimilarityScorer`` to the
     pipeline so that AI scores participate in weighted aggregation alongside
     all other scorers.
+
+    When a running *config* is supplied, the ``recommendations`` knobs
+    (:attr:`pipeline` weights, :attr:`preference_analyzer` and
+    :attr:`custom_preference_weight`) resolve from it on every read rather than
+    freezing at construction, so a Settings-page change live-applied into that
+    dict reaches the next ``generate_recommendations`` call without a restart.
+    The constructor arguments stay the baseline the config overlays, keeping the
+    resolution order class default < ``config.yaml`` < global settings <
+    per-user override.
     """
 
     def __init__(
@@ -141,6 +151,7 @@ class RecommendationEngine:
         semantic_similarity_weight: float = 1.5,
         custom_preference_weight: float = 1.0,
         rng: random.Random | None = None,
+        config: dict[str, Any] | None = None,
     ) -> None:
         """Initialize recommendation engine.
 
@@ -158,19 +169,23 @@ class RecommendationEngine:
                 which is built per call from the user's custom rules.
             rng: Randomness used to shuffle equally relevant reference items.
                 Pass a seeded instance to make that ordering reproducible.
+            config: The **running** config dict, held by reference so that
+                settings live-applied into it take effect on the next call.
+                Its ``recommendations`` section overlays ``min_rating`` and
+                every scorer weight above. ``None`` freezes them as given.
         """
         self.storage = storage_manager
         self.rng = rng if rng is not None else _DEFAULT_RNG
         self.embedding_gen = embedding_generator
         self.llm_generator = recommendation_generator
-        self.preference_analyzer = PreferenceAnalyzer(min_rating=min_rating)
-        self.custom_preference_weight = custom_preference_weight
-        scorers_list = list(scorers if scorers is not None else DEFAULT_SCORERS)
+        self._config = config
+        self._base_min_rating = min_rating
+        self._base_custom_preference_weight = custom_preference_weight
+        self._base_scorers = list(scorers if scorers is not None else DEFAULT_SCORERS)
         if embedding_generator is not None:
-            scorers_list.append(
+            self._base_scorers.append(
                 SemanticSimilarityScorer(weight=semantic_similarity_weight)
             )
-        self.pipeline = ScoringPipeline(scorers_list)
 
         # Only create SimilarityMatcher when embeddings are available
         self.similarity_matcher: SimilarityMatcher | None = None
@@ -178,6 +193,57 @@ class RecommendationEngine:
             self.similarity_matcher = SimilarityMatcher(
                 storage_manager, embedding_generator
             )
+
+    @property
+    def pipeline(self) -> ScoringPipeline:
+        """The pipeline at the currently configured global scorer weights."""
+        return ScoringPipeline(
+            build_scorers_with_overrides(self._base_scorers, self._configured_weights())
+        )
+
+    @property
+    def preference_analyzer(self) -> PreferenceAnalyzer:
+        """The analyser at the currently configured ``min_rating_for_preference``."""
+        return PreferenceAnalyzer(
+            min_rating=self._recommendations_config().get(
+                "min_rating_for_preference", self._base_min_rating
+            )
+        )
+
+    @property
+    def custom_preference_weight(self) -> float:
+        """The currently configured weight for the custom-rule scorer."""
+        return self._configured_weights().get(
+            "custom_preference", self._base_custom_preference_weight
+        )
+
+    def _recommendations_config(self) -> dict[str, Any]:
+        """Return the running ``recommendations`` section, or an empty mapping.
+
+        Type-guarded rather than defaulted: a ``recommendations:`` header with
+        no children parses to ``None``, which ``dict.get``'s default never
+        catches because the key is present.
+        """
+        if self._config is None:
+            return {}
+        section = self._config.get("recommendations")
+        return section if isinstance(section, dict) else {}
+
+    def _configured_weights(self) -> dict[str, float]:
+        """Return the running ``scorer_weights``, keyed by known scorer name.
+
+        Names outside :data:`SCORER_NAME_MAP` are dropped: they weight no
+        scorer, so a typo in a hand-edited ``config.yaml`` stays as inert here
+        as it was when this resolution happened at boot.
+        """
+        weights = self._recommendations_config().get("scorer_weights")
+        if not isinstance(weights, dict):
+            return {}
+        return {
+            name: float(weight)
+            for name, weight in weights.items()
+            if name in SCORER_NAME_MAP
+        }
 
     def generate_recommendations(
         self,

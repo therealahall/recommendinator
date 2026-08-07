@@ -153,6 +153,28 @@ class TestReloadConfig:
         providers = app_state.config["enrichment"]["providers"]
         assert providers.get("tmdb", {}).get("api_key") is None
 
+    def test_reload_refreshes_the_running_config_in_place(self, tmp_path: Path) -> None:
+        """Hot-reload keeps the config dict identity the engine holds.
+
+        Regression: the recommendation engine resolves its scorer weights and
+        ``min_rating_for_preference`` from the running config dict on every
+        call, holding it by reference. Rebinding ``app_state.config`` to a fresh
+        dict would strand the engine on the pre-reload values, the same freeze
+        that made Settings-page changes need a restart.
+        """
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("recommendations:\n  min_rating_for_preference: 2\n")
+
+        running: dict[str, Any] = {"old": "config"}
+        app_state.config_path = str(config_file)
+        app_state.config = running
+
+        result = reload_config()
+
+        assert result is True
+        assert app_state.config is running
+        assert running["recommendations"]["min_rating_for_preference"] == 2
+
     def test_reload_config_load_raises_returns_false(self) -> None:
         """reload_config returns False when load_config raises an exception.
 

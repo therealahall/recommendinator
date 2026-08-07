@@ -302,7 +302,9 @@ See [docs/SCORING.md](docs/SCORING.md).
 The first three assemble into the effective global. A per-user override
 (`users.settings` JSON, `"preference_config"`) then wins per key, and an unset key
 keeps the global. `min_rating_for_preference` and the counts have no per-user
-field.
+field. The engine holds the running config by reference and re-resolves the
+weights and `min_rating_for_preference` on every request, so a Settings-page
+edit reaches the next set of recommendations without a restart.
 
 Invariants:
 

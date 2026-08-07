@@ -381,11 +381,15 @@ def create_recommendation_engine(
 ) -> RecommendationEngine:
     """Create recommendation engine from components and config.
 
+    The values read here seed the engine's baseline; *config* is also handed to
+    the engine by reference so a settings change live-applied into it reaches
+    the next ``generate_recommendations`` call without a restart.
+
     Args:
         storage_manager: Storage manager instance
         embedding_generator: Embedding generator instance
         recommendation_generator: Recommendation generator instance
-        config: Configuration dictionary
+        config: The running configuration dictionary
 
     Returns:
         RecommendationEngine instance
@@ -419,4 +423,5 @@ def create_recommendation_engine(
         scorers=scorers,
         semantic_similarity_weight=semantic_similarity_weight,
         custom_preference_weight=custom_preference_weight,
+        config=config,
     )
