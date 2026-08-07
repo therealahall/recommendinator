@@ -6,8 +6,8 @@ The engine scores every candidate through weighted factors. Setting a weight to
 
 | Weight key | What the scorer does | Default |
 |------------|----------------------|---------|
-| `genre_match` | Boosts genres you rate highly | 2.0 |
-| `creator_match` | Prefers authors, directors and developers you have enjoyed | 1.5 |
+| `genre_match` | Boosts genres you rate highly, and sinks ones you rate badly | 2.0 |
+| `creator_match` | Prefers authors, directors and developers you have enjoyed, and demotes ones you have not | 1.5 |
 | `tag_overlap` | Threshold tag matching, bridged by semantic genre clusters | 1.0 |
 | `series_order` | Prioritises the next entry in a series you are partway through | 1.5 |
 | `rating_pattern` | Learns from your rating history within a genre | 1.0 |
@@ -15,7 +15,25 @@ The engine scores every candidate through weighted factors. Setting a weight to
 | `content_length` | Soft penalty for a length mismatch | 1.0 |
 | `continuation` | Boosts items you are actively consuming. Dropped from the pipeline when you have none | 2.0 |
 | `series_affinity` | Boosts franchises you have rated well | 1.0 |
-| `custom_preference` | Applies your natural language rules, "avoid X" and "prefer Y" | 1.0 |
+| `adaptation` | Boosts a film, show or game adapting something you rated well, and the source behind an adaptation you loved. Dropped from the pipeline when nothing adapts anything | 1.5 |
+| `custom_preference` | Applies your natural language rules, "avoid X" and "prefer Y". Only in the pipeline when you have rules | 1.0 |
+
+## One score, fully explained
+
+The score a recommendation shows **is** the weighted mean of the table above.
+Every contribution is a scorer with a weight you can set and a row in the web
+**Score Details** panel, so the rows and their weights reproduce the number
+beside them. Nothing is added outside that budget, and there is no second
+combination stage.
+
+A candidate the engine knows nothing about scores near `0.5`, because most
+scorers return a neutral `0.5` with no evidence either way. Genre and creator
+dislike are ordinary contributions rather than a veto: a book by an author you
+rated one star sinks to the bottom on those two rows and keeps whatever the
+rest of the rows earn it. It is never removed from the ranking.
+
+The one thing applied after the weighted mean is the variety penalty below,
+which has its own row in the same panel.
 
 ## Setting the global weights
 
@@ -86,16 +104,17 @@ recommendations and leaves fantasy *movies* and *games* alone. Every
 recommendation reports the penalty it took, in the CLI table and JSON and in the
 web **Score Details** panel.
 
-The next entry in a series you are actively reading takes **half** the penalty,
-because finishing book #1 does not mean you are done with the genre. Starting a
-brand-new series in that genre takes the full penalty.
+The next entry in a series you are actively reading takes **60%** of the
+penalty, because finishing book #1 does not mean you are done with the genre.
+Starting a brand-new series in that genre takes the full penalty.
 
 A finished **TV season** counts as a completion even while the show is still in
 progress, dated by that season's watched date. That date comes from Trakt's
 per-season last-watched time or a manual season check-off, and it also dates a
 completed show carrying no completion date of its own. An undated finished
 season still claims a rung, the weakest one, so it is never silently dropped.
-The show's next season is a series continuation, so it takes the halved penalty.
+The show's next season is a series continuation, so it takes the softened
+penalty.
 
 Completions are ordered by completion date, so something you finish today
 outranks an import dated years ago. Chat is the only surface that can name a
@@ -106,13 +125,6 @@ The date is the calendar day in the host's timezone, not UTC. See
 [DOCKER.md](DOCKER.md#environment-variables) for setting `TZ` on a container.
 Setting it does not correct stored dates, because the sync rule keeps the later
 of two dates and a corrected local date is the earlier one.
-
-## Diversity bonus (advanced)
-
-Independently of variety, a per-user `diversity_weight` (0.0 to 1.0, default
-0.0) adds a mild genre-hopping bonus in the ranker, boosting candidates whose
-genres differ from your recently completed content by Jaccard distance. Leave it
-at 0.0 unless you want a nudge on top of the variety penalty.
 
 ## Ignored items
 

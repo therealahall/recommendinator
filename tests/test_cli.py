@@ -142,8 +142,6 @@ def test_recommend_command_basic(mock_components):
         {
             "item": mock_item,
             "score": 0.85,
-            "similarity_score": 0.8,
-            "preference_score": 0.7,
             "reasoning": "Recommended highly similar to items you've enjoyed",
         }
     ]
@@ -188,8 +186,6 @@ def test_recommend_command_json(mock_components):
         {
             "item": mock_item,
             "score": 0.85,
-            "similarity_score": 0.8,
-            "preference_score": 0.7,
             "reasoning": "Recommended highly similar",
         }
     ]
@@ -236,8 +232,6 @@ def test_recommend_command_surfaces_variety_penalty(mock_components):
         {
             "item": mock_item,
             "score": 0.2,
-            "similarity_score": 0.5,
-            "preference_score": 0.5,
             "reasoning": "Recommended",
             "variety_penalty": 0.64,
         }
@@ -282,8 +276,6 @@ def test_recommend_command_omits_zero_variety_penalty_note(mock_components):
         {
             "item": mock_item,
             "score": 0.85,
-            "similarity_score": 0.5,
-            "preference_score": 0.5,
             "reasoning": "Recommended",
             "variety_penalty": 0.0,
         }
@@ -1087,8 +1079,6 @@ def test_recommend_command_with_user(mock_components):
         {
             "item": mock_item,
             "score": 0.85,
-            "similarity_score": 0.8,
-            "preference_score": 0.7,
             "reasoning": "Recommended highly similar",
         }
     ]

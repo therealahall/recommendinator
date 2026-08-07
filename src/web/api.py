@@ -223,8 +223,6 @@ class RecommendationResponse(BaseModel):
     title: str
     author: str | None
     score: float
-    similarity_score: float
-    preference_score: float
     reasoning: str
     llm_reasoning: str | None = None
     score_breakdown: dict[str, float] = Field(default_factory=dict)
@@ -253,8 +251,6 @@ def _recommendation_payload(rec: dict[str, Any]) -> dict[str, Any]:
         "title": item.title,
         "author": item.author,
         "score": rec["score"],
-        "similarity_score": rec["similarity_score"],
-        "preference_score": rec["preference_score"],
         "reasoning": rec["reasoning"],
         "score_breakdown": rec.get("score_breakdown", {}),
         "variety_penalty": rec.get("variety_penalty", 0.0),

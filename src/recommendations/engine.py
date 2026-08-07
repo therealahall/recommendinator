@@ -24,9 +24,9 @@ from src.recommendations.preference_interpreter import (
     PatternBasedInterpreter,
 )
 from src.recommendations.preferences import PreferenceAnalyzer, UserPreferences
-from src.recommendations.ranking import RecommendationRanker
 from src.recommendations.scorers import (
     DEFAULT_SCORERS,
+    AdaptationScorer,
     ContinuationScorer,
     CustomPreferenceScorer,
     Scorer,
@@ -57,6 +57,10 @@ from src.utils.sorting import get_sort_title, titles_similar
 logger = logging.getLogger(__name__)
 
 _T = TypeVar("_T")
+
+#: A candidate after ranking: the item, its score, and the variety penalty
+#: fraction applied to it (0.0 when the penalty is off or did not bite).
+_RankedCandidate = tuple[ContentItem, float, float]
 
 
 def _collapse_duplicate_db_ids(
@@ -144,10 +148,12 @@ def _shuffle_close_scores(
 class RecommendationEngine:
     """Main recommendation engine.
 
-    The scoring pipeline **always** runs.  When an ``embedding_generator``
-    is provided the engine pre-computes vector-similarity scores and adds
-    a ``SemanticSimilarityScorer`` to the pipeline so that AI scores
-    participate in weighted aggregation alongside all other scorers.
+    The scoring pipeline **always** runs and its weight-normalised aggregate
+    *is* the score clients display: there is no second combination stage.  When
+    an ``embedding_generator`` is provided the engine pre-computes
+    vector-similarity scores and adds a ``SemanticSimilarityScorer`` to the
+    pipeline so that AI scores participate in weighted aggregation alongside
+    all other scorers.
     """
 
     def __init__(
@@ -158,6 +164,7 @@ class RecommendationEngine:
         min_rating: int = 4,
         scorers: list[Scorer] | None = None,
         semantic_similarity_weight: float = 1.5,
+        custom_preference_weight: float = 1.0,
     ) -> None:
         """Initialize recommendation engine.
 
@@ -171,12 +178,14 @@ class RecommendationEngine:
                 :data:`DEFAULT_SCORERS`.
             semantic_similarity_weight: Weight for the SemanticSimilarityScorer
                 when AI is enabled.
+            custom_preference_weight: Weight for the CustomPreferenceScorer,
+                which is built per call from the user's custom rules.
         """
         self.storage = storage_manager
         self.embedding_gen = embedding_generator
         self.llm_generator = recommendation_generator
         self.preference_analyzer = PreferenceAnalyzer(min_rating=min_rating)
-        self.ranker = RecommendationRanker()
+        self.custom_preference_weight = custom_preference_weight
         scorers_list = list(scorers if scorers is not None else DEFAULT_SCORERS)
         if embedding_generator is not None:
             scorers_list.append(
@@ -318,6 +327,10 @@ class RecommendationEngine:
             all_consumed_items, content_type, len(unconsumed_items)
         )
 
+        # Detect cross-media adaptations before scoring: AdaptationScorer reads
+        # them from the context, and the formatted output cites them as reasons.
+        adaptations = self._build_adaptations(unconsumed_items, all_consumed_items)
+
         # Score all unconsumed candidates via the pipeline (always runs)
         content_length_preferences = (
             user_preference_config.content_length_preferences
@@ -333,41 +346,15 @@ class RecommendationEngine:
             all_unconsumed_items=unconsumed_items,
             similarity_scores=similarity_scores,
             content_length_preferences=content_length_preferences,
+            adaptations=adaptations,
         )
 
-        # Use a temporary pipeline with overridden weights if user prefs given
-        if user_preference_config is not None and user_preference_config.scorer_weights:
-            overridden_scorers = build_scorers_with_overrides(
-                self.pipeline.scorers, user_preference_config.scorer_weights
-            )
-            active_pipeline = ScoringPipeline(overridden_scorers)
-        else:
-            active_pipeline = self.pipeline
-
-        # Exclude ContinuationScorer when no candidates are actively being
-        # consumed — it would produce all-zero scores that clutter the
-        # breakdown display without affecting ranking.
-        has_active = any(
-            item.status == ConsumptionStatus.CURRENTLY_CONSUMING
-            for item in unconsumed_items
+        active_pipeline = self._build_active_pipeline(
+            user_preference_config,
+            interpreted_prefs,
+            unconsumed_items,
+            has_adaptations=bool(adaptations),
         )
-        if not has_active:
-            active_pipeline = ScoringPipeline(
-                [
-                    s
-                    for s in active_pipeline.scorers
-                    if not isinstance(s, ContinuationScorer)
-                ]
-            )
-
-        # Add CustomPreferenceScorer if we have interpreted custom rules
-        if interpreted_prefs is not None and not interpreted_prefs.is_empty():
-            custom_scorer = CustomPreferenceScorer(
-                genre_boosts=interpreted_prefs.genre_boosts,
-                genre_penalties=interpreted_prefs.genre_penalties,
-            )
-            # Create new pipeline with the custom scorer appended
-            active_pipeline = ScoringPipeline(active_pipeline.scorers + [custom_scorer])
 
         pipeline_scored = active_pipeline.score_candidates_with_breakdown(
             unconsumed_items, scoring_context
@@ -386,26 +373,20 @@ class RecommendationEngine:
             logger.info("Series ordering disabled by user preference")
             filtered_candidates = pipeline_scored
 
-        # Detect adaptations & find contributing reference items
-        candidate_metadata, adaptations_map = self._build_candidate_metadata(
-            filtered_candidates, all_consumed_items
+        # Find the consumed items that explain each surviving candidate
+        candidate_metadata = self._build_candidate_metadata(
+            filtered_candidates, all_consumed_items, adaptations
         )
 
-        # Rank (adaptation bonus, preference adjustments)
         breakdown_by_id: dict[str | None, dict[str, float]] = {
             meta["item"].id: meta["score_breakdown"] for meta in candidate_metadata
         }
 
-        ranker = self._configure_ranker(user_preference_config)
-        ranked_items = ranker.rank(
-            candidates=[
-                (meta["item"], meta["similarity_score"]) for meta in candidate_metadata
-            ],
-            preferences=preferences,
-            content_type=content_type,
-            adaptations_map=adaptations_map,
-            recently_completed=signal_items_of_type,
-        )
+        # The pipeline aggregate is the score, and the pipeline already sorted
+        # on it, so ranking is the filtered order with no penalty applied yet.
+        ranked_items: list[_RankedCandidate] = [
+            (scored.item, scored.aggregate_score, 0.0) for scored in filtered_candidates
+        ]
 
         # Apply the stepped genre-fatigue variety penalty (issue #74) when the
         # user has set a non-zero variety_penalty.  This multiplicatively
@@ -606,83 +587,121 @@ class RecommendationEngine:
 
         return filtered_candidates
 
+    def _build_adaptations(
+        self,
+        unconsumed_items: list[ContentItem],
+        all_consumed_items: list[ContentItem],
+    ) -> dict[str | None, list[ContentItem]]:
+        """Map each candidate id to the consumed items it adapts.
+
+        Args:
+            unconsumed_items: Every candidate the pipeline will score.
+            all_consumed_items: The taste-signal set to match against.
+
+        Returns:
+            Candidate id -> adaptations, omitting candidates that adapt nothing.
+        """
+        adaptations: dict[str | None, list[ContentItem]] = {}
+        for item in unconsumed_items:
+            found = self._find_direct_adaptations(item, all_consumed_items)
+            if found:
+                adaptations[item.id] = found
+        return adaptations
+
+    def _build_active_pipeline(
+        self,
+        user_preference_config: UserPreferenceConfig | None,
+        interpreted_prefs: InterpretedPreference | None,
+        unconsumed_items: list[ContentItem],
+        *,
+        has_adaptations: bool,
+    ) -> ScoringPipeline:
+        """Assemble the pipeline for one call.
+
+        The custom-rule scorer joins the list *before* the per-user override
+        pass, so every scorer's weight resolves through the same chain.  A
+        scorer that would score every candidate 0.0 is then dropped: it cannot
+        change the ranking and would only clutter the breakdown display.
+
+        Args:
+            user_preference_config: Optional per-user preference config.
+            interpreted_prefs: Interpreted custom rules, when the user has any.
+            unconsumed_items: The candidates about to be scored.
+            has_adaptations: Whether any candidate adapts consumed content.
+
+        Returns:
+            The pipeline to score this call's candidates with.
+        """
+        scorers = list(self.pipeline.scorers)
+
+        if interpreted_prefs is not None and not interpreted_prefs.is_empty():
+            scorers.append(
+                CustomPreferenceScorer(
+                    genre_boosts=interpreted_prefs.genre_boosts,
+                    genre_penalties=interpreted_prefs.genre_penalties,
+                    weight=self.custom_preference_weight,
+                )
+            )
+
+        if user_preference_config is not None and user_preference_config.scorer_weights:
+            scorers = build_scorers_with_overrides(
+                scorers, user_preference_config.scorer_weights
+            )
+
+        has_active = any(
+            item.status == ConsumptionStatus.CURRENTLY_CONSUMING
+            for item in unconsumed_items
+        )
+        inert: tuple[type[Scorer], ...] = tuple(
+            scorer_class
+            for scorer_class, has_signal in (
+                (ContinuationScorer, has_active),
+                (AdaptationScorer, has_adaptations),
+            )
+            if not has_signal
+        )
+
+        return ScoringPipeline(
+            [scorer for scorer in scorers if not isinstance(scorer, inert)]
+        )
+
     def _build_candidate_metadata(
         self,
         filtered_candidates: list[ScoredCandidate],
         all_consumed_items: list[ContentItem],
-    ) -> tuple[list[dict[str, Any]], dict[str, list[ContentItem]]]:
-        """Build metadata for each candidate including adaptations and references.
+        adaptations: dict[str | None, list[ContentItem]],
+    ) -> list[dict[str, Any]]:
+        """Build the display metadata for each surviving candidate.
 
         Args:
             filtered_candidates: Scored candidates after series filtering.
-            all_consumed_items: All consumed items for adaptation detection.
+            all_consumed_items: All consumed items for reference detection.
+            adaptations: Pre-computed candidate id -> adaptations map.
 
         Returns:
-            Tuple of (candidate_metadata list, adaptations_map by item ID).
+            One metadata dict per candidate, in the order given.
         """
-        candidate_metadata: list[dict[str, Any]] = []
-        adaptations_map: dict[str, list[ContentItem]] = {}
-
-        for scored_candidate in filtered_candidates:
-            item = scored_candidate.item
-            adaptations = self._find_direct_adaptations(item, all_consumed_items)
-            contributing_items = self._find_contributing_reference_items(
-                item, all_consumed_items
-            )
-
-            candidate_metadata.append(
-                {
-                    "item": item,
-                    "similarity_score": scored_candidate.aggregate_score,
-                    "adaptations": adaptations,
-                    "contributing_items": contributing_items,
-                    "score_breakdown": scored_candidate.score_breakdown,
-                }
-            )
-
-            if item.id and adaptations:
-                adaptations_map[item.id] = adaptations
-
-        return candidate_metadata, adaptations_map
-
-    def _configure_ranker(
-        self,
-        user_preference_config: UserPreferenceConfig | None,
-    ) -> RecommendationRanker:
-        """Configure a ranker with the user's explicit diversity weight.
-
-        The ranker's additive genre-diversity bonus is only applied when the
-        user has explicitly set ``diversity_weight`` above zero.  The
-        ``variety_penalty`` preference drives the stepped genre-fatigue
-        penalty (see :meth:`_apply_variety_penalty`) rather than this bonus.
-
-        Args:
-            user_preference_config: Optional per-user preference config.
-
-        Returns:
-            A RecommendationRanker instance (possibly with custom weights).
-        """
-        if user_preference_config is None:
-            return self.ranker
-
-        if user_preference_config.diversity_weight > 0:
-            return RecommendationRanker(
-                similarity_weight=self.ranker.similarity_weight,
-                preference_weight=self.ranker.preference_weight,
-                diversity_weight=user_preference_config.diversity_weight,
-            )
-
-        return self.ranker
+        return [
+            {
+                "item": scored_candidate.item,
+                "adaptations": adaptations.get(scored_candidate.item.id, []),
+                "contributing_items": self._find_contributing_reference_items(
+                    scored_candidate.item, all_consumed_items
+                ),
+                "score_breakdown": scored_candidate.score_breakdown,
+            }
+            for scored_candidate in filtered_candidates
+        ]
 
     @staticmethod
     def _apply_variety_penalty(
-        ranked_items: list[tuple[ContentItem, float, dict[str, Any]]],
+        ranked_items: list[_RankedCandidate],
         completed_items_of_type: list[ContentItem],
         series_tracking: dict[str, set[float]],
         unconsumed_items: list[ContentItem],
         *,
         top_penalty: float,
-    ) -> list[tuple[ContentItem, float, dict[str, Any]]]:
+    ) -> list[_RankedCandidate]:
         """Apply the stepped genre-fatigue penalty and re-sort (issue #74).
 
         Builds a cluster -> penalty ladder from the user's recently completed
@@ -691,8 +710,8 @@ class RecommendationEngine:
         among the candidate's recently finished genre clusters.  Scoping the
         ladder to a single content type keeps genres varying independently per
         type — finishing a fantasy book does not penalise fantasy movies or
-        games.  The applied penalty is recorded under ``"variety_penalty"`` in
-        each item's rank metadata for display.
+        games.  The applied penalty is carried on each ranked candidate for
+        display.
 
         The penalty is softened for an item that continues a series the user is
         actively progressing through (see
@@ -701,7 +720,7 @@ class RecommendationEngine:
         buried beneath unrelated content.
 
         Args:
-            ranked_items: ``(item, score, metadata)`` tuples from the ranker.
+            ranked_items: Ranked candidates, best first.
             completed_items_of_type: Completed items of the recommended content
                 type, used to build the ladder.
             series_tracking: Series name -> consumed item numbers, used to
@@ -712,38 +731,37 @@ class RecommendationEngine:
                 dividing by ``MAX_VARIETY_PENALTY``. Used as the ladder's top rung.
 
         Returns:
-            Re-sorted ``(item, score, metadata)`` tuples with the penalty
-            applied.  Returns the input unchanged when the ladder is empty.
+            Re-sorted candidates carrying the penalty they took.  Returns the
+            input unchanged when the ladder is empty.
         """
         ladder = build_variety_ladder(completed_items_of_type, top_penalty=top_penalty)
         if not ladder:
             return ranked_items
 
-        penalised: list[tuple[ContentItem, float, dict[str, Any]]] = []
-        for item, score, metadata in ranked_items:
+        penalised: list[_RankedCandidate] = []
+        for item, score, _ in ranked_items:
             is_continuation = is_active_series_continuation(
                 item, series_tracking, unconsumed_items
             )
             penalty = variety_penalty_for(
                 item, ladder, is_series_continuation=is_continuation
             )
-            updated_metadata = {**metadata, "variety_penalty": penalty}
-            penalised.append((item, score * (1.0 - penalty), updated_metadata))
+            penalised.append((item, score * (1.0 - penalty), penalty))
 
         penalised.sort(key=lambda entry: entry[1], reverse=True)
         return penalised
 
     def _format_recommendations(
         self,
-        ranked_items: list[tuple[ContentItem, float, dict[str, Any]]],
+        ranked_items: list[_RankedCandidate],
         candidate_metadata: list[dict[str, Any]],
         breakdown_by_id: dict[str | None, dict[str, float]],
         preferences: UserPreferences,
     ) -> list[dict[str, Any]]:
-        """Format ranked items into recommendation dictionaries.
+        """Format ranked candidates into recommendation dictionaries.
 
         Args:
-            ranked_items: Ranked (item, score, rank_metadata) tuples.
+            ranked_items: Ranked candidates, best first.
             candidate_metadata: Per-candidate metadata from build step.
             breakdown_by_id: Score breakdown keyed by item ID.
             preferences: User preferences for reasoning generation.
@@ -756,7 +774,7 @@ class RecommendationEngine:
         }
 
         recommendations: list[dict[str, Any]] = []
-        for item, score, rank_metadata in ranked_items:
+        for item, score, variety_penalty in ranked_items:
             item_meta = candidate_metadata_by_id.get(item.id)
 
             adaptations_list: list[ContentItem] = []
@@ -768,17 +786,14 @@ class RecommendationEngine:
             rec: dict[str, Any] = {
                 "item": item,
                 "score": score,
-                "similarity_score": rank_metadata["similarity_score"],
-                "preference_score": rank_metadata["preference_score"],
                 "reasoning": self._generate_reasoning(
                     item,
                     preferences,
-                    rank_metadata,
                     adaptations_list,
                     contributing_list,
                 ),
                 "score_breakdown": breakdown_by_id.get(item.id, {}),
-                "variety_penalty": rank_metadata.get("variety_penalty", 0.0),
+                "variety_penalty": variety_penalty,
                 "contributing_items": contributing_list,
                 "adaptations": adaptations_list,
             }
@@ -878,8 +893,6 @@ class RecommendationEngine:
                             {
                                 "item": matching_item,
                                 "score": 0.8,
-                                "similarity_score": 0.0,
-                                "preference_score": 0.5,
                                 "reasoning": llm_rec.get("reasoning", ""),
                                 "llm_reasoning": llm_rec.get("reasoning", ""),
                                 "score_breakdown": {},
@@ -961,8 +974,6 @@ class RecommendationEngine:
                     {
                         "item": item,
                         "score": 0.5,
-                        "similarity_score": 0.0,
-                        "preference_score": 0.0,
                         "reasoning": "Available in your library",
                         "score_breakdown": {},
                         "variety_penalty": 0.0,
@@ -1183,7 +1194,6 @@ class RecommendationEngine:
         self,
         item: ContentItem,
         preferences: UserPreferences,
-        metadata: dict[str, Any],
         adaptations: list[ContentItem],
         contributing_items: list[ContentItem],
     ) -> str:
@@ -1195,7 +1205,6 @@ class RecommendationEngine:
         Args:
             item: Recommended item.
             preferences: User preferences (from all content types).
-            metadata: Recommendation metadata.
             adaptations: List of direct adaptations found in consumed content.
             contributing_items: List of reference items that contributed.
 

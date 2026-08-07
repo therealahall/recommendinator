@@ -295,8 +295,6 @@ class ContextAssembler:
                     score_breakdown=rec.get("score_breakdown", {}),
                     contributing_items=rec.get("contributing_items", []),
                     adaptations=rec.get("adaptations", []),
-                    similarity_score=rec.get("similarity_score", 0.0),
-                    preference_score=rec.get("preference_score", 0.0),
                 )
                 for rec in recommendations
             ]
@@ -538,15 +536,21 @@ def _score_to_qualitative(score: float) -> str:
     Keeps the LLM informed about match quality without leaking raw
     percentages that get parroted to the user.
 
+    The bands are calibrated against the scoring pipeline's aggregate, where a
+    candidate the engine knows nothing about lands near 0.5 because most
+    scorers return a neutral 0.5. That neutral point sits inside "Decent fit",
+    so an unknown item is never called a good one, and a candidate whose genre
+    or creator the user dislikes falls below it.
+
     Args:
         score: Match score between 0 and 1
 
     Returns:
         Qualitative label string
     """
-    if score >= 0.85:
+    if score >= 0.80:
         return "Excellent fit"
-    if score >= 0.70:
+    if score >= 0.65:
         return "Strong fit"
     if score >= 0.55:
         return "Good fit"

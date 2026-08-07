@@ -66,8 +66,8 @@ describe('useRecommendationsStore', () => {
 
   it('fetch loads recommendations without LLM', async () => {
     const recs = [
-      { db_id: 1, title: 'Rec 1', score: 0.9, similarity_score: 0.8, preference_score: 0.7, reasoning: 'test', score_breakdown: {} },
-      { db_id: 2, title: 'Rec 2', score: 0.8, similarity_score: 0.7, preference_score: 0.6, reasoning: 'test2', score_breakdown: {} },
+      { db_id: 1, title: 'Rec 1', score: 0.9, reasoning: 'test', score_breakdown: {} },
+      { db_id: 2, title: 'Rec 2', score: 0.8, reasoning: 'test2', score_breakdown: {} },
     ]
     mockGet.mockResolvedValue(recs)
 
@@ -95,8 +95,8 @@ describe('useRecommendationsStore', () => {
 
   it('ignoreItem removes from list', async () => {
     mockGet.mockResolvedValue([
-      { db_id: 1, title: 'A', score: 0.9, similarity_score: 0, preference_score: 0, reasoning: '', score_breakdown: {} },
-      { db_id: 2, title: 'B', score: 0.8, similarity_score: 0, preference_score: 0, reasoning: '', score_breakdown: {} },
+      { db_id: 1, title: 'A', score: 0.9, reasoning: '', score_breakdown: {} },
+      { db_id: 2, title: 'B', score: 0.8, reasoning: '', score_breakdown: {} },
     ])
     mockPatch.mockResolvedValue({})
 
@@ -133,8 +133,8 @@ describe('useRecommendationsStore', () => {
 
   it('markComplete PATCHes /items/{dbId} and removes the card on success', async () => {
     mockGet.mockResolvedValue([
-      { db_id: 1, title: 'A', score: 0.9, similarity_score: 0, preference_score: 0, reasoning: '', score_breakdown: {} },
-      { db_id: 2, title: 'B', score: 0.8, similarity_score: 0, preference_score: 0, reasoning: '', score_breakdown: {} },
+      { db_id: 1, title: 'A', score: 0.9, reasoning: '', score_breakdown: {} },
+      { db_id: 2, title: 'B', score: 0.8, reasoning: '', score_breakdown: {} },
     ])
     const store = useRecommendationsStore()
     await store.fetch(false)
@@ -175,7 +175,7 @@ describe('useRecommendationsStore', () => {
 
   it('markComplete surfaces the error, resets editSaving, and re-throws on API error', async () => {
     mockGet.mockResolvedValue([
-      { db_id: 1, title: 'A', score: 0.9, similarity_score: 0, preference_score: 0, reasoning: '', score_breakdown: {} },
+      { db_id: 1, title: 'A', score: 0.9, reasoning: '', score_breakdown: {} },
     ])
     const store = useRecommendationsStore()
     await store.fetch(false)
@@ -192,8 +192,8 @@ describe('useRecommendationsStore', () => {
     // When the saved item happens not to be in items (cannot occur via the UI),
     // the filter is a no-op and the list is untouched, but the PATCH still fires.
     mockGet.mockResolvedValue([
-      { db_id: 1, title: 'A', score: 0.9, similarity_score: 0, preference_score: 0, reasoning: '', score_breakdown: {} },
-      { db_id: 2, title: 'B', score: 0.8, similarity_score: 0, preference_score: 0, reasoning: '', score_breakdown: {} },
+      { db_id: 1, title: 'A', score: 0.9, reasoning: '', score_breakdown: {} },
+      { db_id: 2, title: 'B', score: 0.8, reasoning: '', score_breakdown: {} },
     ])
     const store = useRecommendationsStore()
     await store.fetch(false)
@@ -207,8 +207,8 @@ describe('useRecommendationsStore', () => {
 
   it('markComplete leaves the list unchanged on API error', async () => {
     mockGet.mockResolvedValue([
-      { db_id: 1, title: 'A', score: 0.9, similarity_score: 0, preference_score: 0, reasoning: '', score_breakdown: {} },
-      { db_id: 2, title: 'B', score: 0.8, similarity_score: 0, preference_score: 0, reasoning: '', score_breakdown: {} },
+      { db_id: 1, title: 'A', score: 0.9, reasoning: '', score_breakdown: {} },
+      { db_id: 2, title: 'B', score: 0.8, reasoning: '', score_breakdown: {} },
     ])
     const store = useRecommendationsStore()
     await store.fetch(false)

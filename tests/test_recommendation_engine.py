@@ -1,6 +1,7 @@
 """Tests for recommendation engine cross-content-type recommendations."""
 
 from datetime import date
+from typing import NamedTuple
 from unittest.mock import Mock
 
 import pytest
@@ -20,6 +21,7 @@ from src.recommendations.engine import (
     _shuffle_close_scores,
 )
 from src.recommendations.preferences import PreferenceAnalyzer, UserPreferences
+from src.recommendations.scorers import SCORER_NAME_MAP
 from src.recommendations.variety import (
     VARIETY_LADDER_STEPS,
     VARIETY_SERIES_CONTINUATION_FACTOR,
@@ -127,6 +129,123 @@ def _save_book(
 
 
 # ---------------------------------------------------------------------------
+class TestSingleWeightingStageRegression:
+    """Bug reported: a slider did not control the whole of its own signal.
+
+    Bug reported: turning genre or creator matching down left the signal
+    partly on, and a preferred director never lifted a film the way a
+    preferred author lifted a book.
+    Root cause: RecommendationRanker re-derived genre and author preference
+    from the same ``UserPreferences`` methods the scorers use and added it at
+    a hardcoded weight the user could not reach, and that copy of creator
+    matching was gated on ``content_type == BOOK``.
+    Fix: the ranker's combination stage is deleted. The pipeline aggregate is
+    the emitted score, so each scorer owns the whole of its contribution, and
+    ``CreatorMatchScorer`` is the single generic creator path for all four
+    content types.
+    """
+
+    @staticmethod
+    def _scores(engine, config):
+        """Title -> emitted score for a movie run under *config*."""
+        return {
+            rec["item"].title: rec["score"]
+            for rec in engine.generate_recommendations(
+                content_type=ContentType.MOVIE, count=5, user_preference_config=config
+            )
+        }
+
+    @staticmethod
+    def _only(scorer_name):
+        """A per-user override zeroing every scorer except *scorer_name*."""
+        return UserPreferenceConfig(
+            scorer_weights={key: 0.0 for key in SCORER_NAME_MAP if key != scorer_name}
+        )
+
+    def test_one_enabled_scorer_is_the_whole_score_regression(
+        self, non_ai_engine, mock_storage
+    ):
+        """With only genre_match enabled, the score IS the genre_match row.
+
+        Any residual term from a second weighting stage would show up as a
+        difference between the two, whatever its sign.
+        """
+        loved = ContentItem(
+            id="loved",
+            title="Arrival",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            metadata={"genre": "Science Fiction"},
+        )
+        candidate = ContentItem(
+            id="candidate",
+            title="Solaris",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genre": "Science Fiction"},
+        )
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: [loved]
+        )
+        mock_storage.get_unconsumed_items = Mock(return_value=[candidate])
+
+        recs = non_ai_engine.generate_recommendations(
+            content_type=ContentType.MOVIE,
+            count=5,
+            user_preference_config=self._only("genre_match"),
+        )
+
+        assert recs[0]["score_breakdown"]["genre_match"] == pytest.approx(1.0)
+        assert recs[0]["score"] == pytest.approx(
+            recs[0]["score_breakdown"]["genre_match"]
+        )
+
+    def test_a_preferred_director_scores_on_a_movie_regression(
+        self, non_ai_engine, mock_storage
+    ):
+        """A director the user rated well lifts a film, as an author does a book.
+
+        The two candidates share their genre and differ only in their creator,
+        and creator matching is the only scorer left enabled.
+        """
+        loved = ContentItem(
+            id="loved",
+            title="Arrival",
+            author="Denis Villeneuve",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            metadata={"genre": "Science Fiction"},
+        )
+        same_director = ContentItem(
+            id="same",
+            title="Dune",
+            author="Denis Villeneuve",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genre": "Science Fiction"},
+        )
+        other_director = ContentItem(
+            id="other",
+            title="Solaris",
+            author="Steven Soderbergh",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genre": "Science Fiction"},
+        )
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: [loved]
+        )
+        mock_storage.get_unconsumed_items = Mock(
+            return_value=[same_director, other_director]
+        )
+
+        scores = self._scores(non_ai_engine, self._only("creator_match"))
+
+        assert scores["Dune"] > scores["Solaris"]
+
+
 # ---------------------------------------------------------------------------
 # AI engine tests (engine with embedding_generator)
 # ---------------------------------------------------------------------------
@@ -1685,7 +1804,6 @@ class TestReasoningFormatting:
         reasoning = engine._generate_reasoning(
             item=item,
             preferences=preferences,
-            metadata={},
             adaptations=[],
             contributing_items=[reference],
         )
@@ -1714,7 +1832,6 @@ class TestReasoningFormatting:
         reasoning = engine._generate_reasoning(
             item=item,
             preferences=preferences,
-            metadata={},
             adaptations=[],
             contributing_items=[reference],
         )
@@ -1743,7 +1860,6 @@ class TestReasoningFormatting:
         reasoning = engine._generate_reasoning(
             item=item,
             preferences=preferences,
-            metadata={},
             adaptations=[],
             contributing_items=[reference],
         )
@@ -1772,7 +1888,6 @@ class TestReasoningFormatting:
         reasoning = engine._generate_reasoning(
             item=item,
             preferences=preferences,
-            metadata={},
             adaptations=[],
             contributing_items=[reference],
         )
@@ -1808,7 +1923,6 @@ class TestReasoningFormatting:
         reasoning = engine._generate_reasoning(
             item=item,
             preferences=preferences,
-            metadata={},
             adaptations=[],
             contributing_items=[ref_a, ref_b],
         )
@@ -2449,11 +2563,62 @@ class TestVarietyAfterCompletion:
         assert _variety_score_for(recs, "same_genre") == pytest.approx(0.0)
 
 
+@pytest.fixture
+def variety_crossover_library(mock_storage):
+    """Wire *mock_storage* for the issue #74 series continuation scenario.
+
+    Three items: a 5 star fantasy series opener the user just finished, its
+    unread next entry, and an unread mystery the library carries no signal
+    about. The regression test and the crossover characterisation below share
+    it, so the pinned numbers describe the scenario the regression asserts on
+    rather than a lookalike of it.
+    """
+    consumed = ContentItem(
+        id="dragonlance_1",
+        title="Dragonlance: Dragons of Autumn Twilight",
+        content_type=ContentType.BOOK,
+        status=ConsumptionStatus.COMPLETED,
+        rating=5,
+        date_completed=date(2026, 1, 1),
+        metadata={
+            "franchise": "Dragonlance",
+            "series_position": 1,
+            "genres": ["Fantasy"],
+        },
+    )
+    next_in_series = ContentItem(
+        id="dragonlance_2",
+        title="Dragonlance: Dragons of Winter Night",
+        content_type=ContentType.BOOK,
+        status=ConsumptionStatus.UNREAD,
+        metadata={
+            "franchise": "Dragonlance",
+            "series_position": 2,
+            "genres": ["Fantasy"],
+        },
+    )
+    different_genre = ContentItem(
+        id="mystery_book",
+        title="The Hound of the Baskervilles",
+        content_type=ContentType.BOOK,
+        status=ConsumptionStatus.UNREAD,
+        metadata={"genres": ["Mystery"]},
+    )
+
+    mock_storage.get_completed_items = Mock(
+        side_effect=lambda content_type=None, **kwargs: [consumed]
+    )
+    mock_storage.get_unconsumed_items = Mock(
+        return_value=[next_in_series, different_genre]
+    )
+    return mock_storage
+
+
 class TestVarietyAfterCompletionRegression:
     """Regression tests for the variety_penalty feature (issue #74)."""
 
     def test_next_in_series_demoted_when_variety_enabled_regression(
-        self, non_ai_engine, mock_storage
+        self, non_ai_engine, variety_crossover_library
     ) -> None:
         """The next book in a just-finished series must not be #1 with variety on.
 
@@ -2467,46 +2632,12 @@ class TestVarietyAfterCompletionRegression:
         Fix: variety now multiplicatively penalises recently finished genre
         clusters, demoting the next-in-series fantasy book below a
         different-genre candidate.
+
+        Asserted at ``LEGACY_VARIETY_ON``, the strength the reported boolean
+        setting maps to, so the case under test is the case reported. The step
+        by step scores across the whole slider are pinned in
+        :class:`TestVarietyCrossoverCharacterisation`, over this same fixture.
         """
-        consumed = ContentItem(
-            id="dragonlance_1",
-            title="Dragonlance: Dragons of Autumn Twilight",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-            date_completed=date(2026, 1, 1),
-            metadata={
-                "franchise": "Dragonlance",
-                "series_position": 1,
-                "genres": ["Fantasy"],
-            },
-        )
-        next_in_series = ContentItem(
-            id="dragonlance_2",
-            title="Dragonlance: Dragons of Winter Night",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-            metadata={
-                "franchise": "Dragonlance",
-                "series_position": 2,
-                "genres": ["Fantasy"],
-            },
-        )
-        different_genre = ContentItem(
-            id="mystery_book",
-            title="The Hound of the Baskervilles",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"genres": ["Mystery"]},
-        )
-
-        mock_storage.get_completed_items = Mock(
-            side_effect=lambda content_type=None, **kwargs: [consumed]
-        )
-        mock_storage.get_unconsumed_items = Mock(
-            return_value=[next_in_series, different_genre]
-        )
-
         # Without variety: the next-in-series fantasy book tops the list (bug).
         recs_off = non_ai_engine.generate_recommendations(
             content_type=ContentType.BOOK,
@@ -2527,6 +2658,15 @@ class TestVarietyAfterCompletionRegression:
         assert _variety_rank_of(recs_on, "mystery_book") < _variety_rank_of(
             recs_on, "dragonlance_2"
         )
+
+        # It is demoted on a softened penalty — the legacy strength's 0.8
+        # fraction times the continuation factor — not the full fraction.
+        penalty = next(
+            rec["variety_penalty"]
+            for rec in recs_on
+            if rec["item"].id == "dragonlance_2"
+        )
+        assert penalty == pytest.approx(0.48)
 
     def test_decimal_novella_below_next_book_with_variety_regression(
         self, non_ai_engine, mock_storage
@@ -2602,7 +2742,7 @@ class TestVarietyAfterCompletionRegression:
 
         # The variety layer fired too: Caliban's War shares the just-finished
         # sci-fi cluster, but as an active series continuation its penalty is
-        # softened (halved), not applied at full strength. The legacy-on
+        # softened, not applied at full strength. The legacy-on
         # strength gives a 0.8 top fraction, so the softened penalty is
         # 0.8 * the factor.
         top_fraction = (
@@ -2614,6 +2754,238 @@ class TestVarietyAfterCompletionRegression:
             top_fraction * VARIETY_SERIES_CONTINUATION_FACTOR
         )
         assert book_two_rec["variety_penalty"] < top_fraction
+
+
+class VarietyStep(NamedTuple):
+    """One whole step of the variety slider, and what the engine emits there.
+
+    Attributes:
+        setting: The ``variety_penalty`` preference, 0.0 to 5.0.
+        continuation_penalty: Penalty fraction applied to the next book in the
+            just finished series, softened by
+            :data:`VARIETY_SERIES_CONTINUATION_FACTOR` because it continues an
+            active series.
+        continuation_score: The continuation's emitted score at that setting.
+        lead_over_competitor: Continuation score minus competitor score.
+            Positive while the continuation leads, negative once it trails.
+        leader_id: Item id the engine ranks first at that setting.
+    """
+
+    setting: float
+    continuation_penalty: float
+    continuation_score: float
+    lead_over_competitor: float
+    leader_id: str
+
+
+# --------------------------------------------------------------------------
+# Variety crossover baselines (issue #74), over ``variety_crossover_library``.
+# Observations of current behaviour, not a specification. Collapsing the
+# ranker's second weighting stage widened the gap between the two candidates
+# and pushed the flip past 4.0; raising
+# :data:`VARIETY_SERIES_CONTINUATION_FACTOR` to 0.6 pulls it back, so on whole
+# steps the flip shows at 4.0 again and the boundary itself sits at 3.7.
+# Re-baseline these when scoring changes, and review the delta.
+# --------------------------------------------------------------------------
+
+VARIETY_CONTINUATION_ID = "dragonlance_2"
+VARIETY_COMPETITOR_ID = "mystery_book"
+
+# The continuation's score with the slider at 0.0. Every other row is this
+# number multiplied by ``1 - continuation_penalty``.
+VARIETY_CONTINUATION_SCORE_WITH_SLIDER_OFF = 0.7833333333333333
+
+# The competitor shares no genre cluster with the ladder, so it is never
+# penalised and holds this score at every setting.
+VARIETY_COMPETITOR_SCORE_AT_EVERY_SETTING = 0.4444444444444444
+
+# The first whole setting at which the continuation stops leading.
+VARIETY_CROSSOVER_SETTING = 4.0
+
+# The first tenth step setting at which it stops leading. The slider is
+# continuous, so the whole step table above understates how early the order
+# turns over.
+VARIETY_CROSSOVER_TENTH_STEP = 3.7
+
+VARIETY_CROSSOVER_STEPS: tuple[VarietyStep, ...] = (
+    VarietyStep(
+        setting=0.0,
+        continuation_penalty=0.0,
+        continuation_score=0.7833333333333333,
+        lead_over_competitor=0.3388888888888889,
+        leader_id=VARIETY_CONTINUATION_ID,
+    ),
+    VarietyStep(
+        setting=1.0,
+        continuation_penalty=0.12,
+        continuation_score=0.6893333333333334,
+        lead_over_competitor=0.24488888888888893,
+        leader_id=VARIETY_CONTINUATION_ID,
+    ),
+    VarietyStep(
+        setting=2.0,
+        continuation_penalty=0.24,
+        continuation_score=0.5953333333333334,
+        lead_over_competitor=0.15088888888888893,
+        leader_id=VARIETY_CONTINUATION_ID,
+    ),
+    VarietyStep(
+        setting=3.0,
+        continuation_penalty=0.36,
+        continuation_score=0.5013333333333333,
+        lead_over_competitor=0.05688888888888888,
+        leader_id=VARIETY_CONTINUATION_ID,
+    ),
+    VarietyStep(
+        setting=4.0,
+        continuation_penalty=0.48,
+        continuation_score=0.4073333333333333,
+        lead_over_competitor=-0.03711111111111112,
+        leader_id=VARIETY_COMPETITOR_ID,
+    ),
+    VarietyStep(
+        setting=5.0,
+        continuation_penalty=0.6,
+        continuation_score=0.31333333333333335,
+        lead_over_competitor=-0.13111111111111107,
+        leader_id=VARIETY_COMPETITOR_ID,
+    ),
+)
+
+# Tolerance for the pinned floats: tight enough that any real change in the
+# arithmetic breaks the assertion.
+VARIETY_SCORE_TOLERANCE = 1e-9
+
+
+class TestVarietyCrossoverCharacterisation:
+    """Where the variety slider flips the issue #74 pair, and by how much.
+
+    Drives the same two candidates the variety regression asserts on through
+    every whole setting of the 0.0 to 5.0 slider and pins both emitted scores,
+    the gap between them, and which one leads. The continuation's score drops by
+    the softened penalty at every step, so the lead narrows from 0.339 at 0.0 to
+    0.057 at 3.0 and the pair reorders at 4.0 — 3.7 on tenth steps.
+    """
+
+    @staticmethod
+    def _recommend(engine, setting: float) -> list[dict]:
+        """Both candidates, best first, with the slider at *setting*."""
+        return engine.generate_recommendations(
+            content_type=ContentType.BOOK,
+            count=2,
+            user_preference_config=UserPreferenceConfig(variety_penalty=setting),
+        )
+
+    @pytest.mark.parametrize(
+        "step",
+        VARIETY_CROSSOVER_STEPS,
+        ids=[f"variety-{step.setting}" for step in VARIETY_CROSSOVER_STEPS],
+    )
+    def test_scores_and_order_at_each_whole_setting(
+        self, non_ai_engine, variety_crossover_library, step
+    ) -> None:
+        """Both emitted scores, the gap, and the leader at one slider step."""
+        recommendations = self._recommend(non_ai_engine, step.setting)
+
+        continuation = next(
+            rec for rec in recommendations if rec["item"].id == VARIETY_CONTINUATION_ID
+        )
+        competitor = next(
+            rec for rec in recommendations if rec["item"].id == VARIETY_COMPETITOR_ID
+        )
+
+        # The penalty is the slider fraction, softened for a series continuation.
+        assert continuation["variety_penalty"] == pytest.approx(
+            step.setting
+            / UserPreferenceConfig.MAX_VARIETY_PENALTY
+            * VARIETY_SERIES_CONTINUATION_FACTOR,
+            abs=VARIETY_SCORE_TOLERANCE,
+        )
+        assert continuation["variety_penalty"] == pytest.approx(
+            step.continuation_penalty, abs=VARIETY_SCORE_TOLERANCE
+        )
+        assert competitor["variety_penalty"] == 0.0
+
+        assert continuation["score"] == pytest.approx(
+            step.continuation_score, abs=VARIETY_SCORE_TOLERANCE
+        )
+        assert competitor["score"] == pytest.approx(
+            VARIETY_COMPETITOR_SCORE_AT_EVERY_SETTING, abs=VARIETY_SCORE_TOLERANCE
+        )
+        assert continuation["score"] - competitor["score"] == pytest.approx(
+            step.lead_over_competitor, abs=VARIETY_SCORE_TOLERANCE
+        )
+
+        # The penalty is multiplicative on the unpenalised score, so every rung
+        # moves the continuation even where it does not move the order.
+        assert continuation["score"] == pytest.approx(
+            VARIETY_CONTINUATION_SCORE_WITH_SLIDER_OFF
+            * (1.0 - step.continuation_penalty),
+            abs=VARIETY_SCORE_TOLERANCE,
+        )
+
+        assert recommendations[0]["item"].id == step.leader_id
+        assert _variety_rank_of(recommendations, step.leader_id) == 0
+
+    def test_lead_changes_sign_once_at_the_crossover_setting(self) -> None:
+        """The pinned table crosses over exactly once, and its leaders agree.
+
+        Guards a re-baseline that transcribes a score without carrying the
+        leader column with it, which would leave the table readable and wrong.
+        """
+        for step in VARIETY_CROSSOVER_STEPS:
+            leads = step.lead_over_competitor > 0.0
+            assert leads == (step.leader_id == VARIETY_CONTINUATION_ID)
+
+        flips = [
+            step.setting
+            for previous, step in zip(
+                VARIETY_CROSSOVER_STEPS[:-1], VARIETY_CROSSOVER_STEPS[1:], strict=True
+            )
+            if previous.leader_id != step.leader_id
+        ]
+        assert flips == [VARIETY_CROSSOVER_SETTING]
+
+    def test_flip_lands_before_the_top_of_the_slider(
+        self, non_ai_engine, variety_crossover_library
+    ) -> None:
+        """On tenth steps the order turns over below 5.0, and stays turned over.
+
+        The whole step table can only place the flip on a whole setting, which
+        overstates how much variety it takes to demote a continuation. Walking
+        the slider in tenths shows the real boundary, and that no setting above
+        it hands the lead back.
+        """
+        settings = [round(tenth / 10, 1) for tenth in range(51)]
+
+        flipped = [
+            setting
+            for setting in settings
+            if self._recommend(non_ai_engine, setting)[0]["item"].id
+            == VARIETY_COMPETITOR_ID
+        ]
+
+        assert flipped
+        assert flipped[0] == VARIETY_CROSSOVER_TENTH_STEP
+        # Every setting from the boundary up keeps the competitor in front.
+        assert flipped == [
+            setting for setting in settings if setting >= VARIETY_CROSSOVER_TENTH_STEP
+        ]
+
+    def test_settings_cover_the_whole_slider_in_whole_steps(self) -> None:
+        """Every whole setting from 0.0 to 5.0 is characterised, in order."""
+        assert [step.setting for step in VARIETY_CROSSOVER_STEPS] == [
+            0.0,
+            1.0,
+            2.0,
+            3.0,
+            4.0,
+            5.0,
+        ]
+        assert (
+            VARIETY_CROSSOVER_STEPS[-1].setting
+            == UserPreferenceConfig.MAX_VARIETY_PENALTY
+        )
 
 
 class TestEngineSeriesSubstitutionRegression:
@@ -3782,20 +4154,20 @@ class TestSimilaritySeedIgnoredRegression:
         )
 
 
-class TestConsumedItemsOfTypeRankingLeakRegression:
+class TestIgnoredAndUnratedItemsDoNotShapeRankingRegression:
     """Bug reported: ignored/unrated same-type completed items reordered recs.
 
-    Bug reported: ``consumed_items_of_type`` (passed to
-    ``ranker.rank(recently_completed=...)`` and the variety penalty) was
-    fetched unfiltered, so an ignored or completed-but-unrated book's genre
-    entered the ranker's always-on diversity bonus (``diversity_weight=0.1``)
-    and demoted an otherwise-top candidate sharing that genre.
-    Root cause: the full same-type completed set was reused for taste-shaped
-    ranking, not just for series ordering.
-    Fix: ranking draws from a signal subset (``get_signal_items(content_type)``)
-    while series ordering keeps the full completed set. Adapted from QA's
-    reproduction probe and run against real storage so the ranker path is
-    genuinely exercised.
+    Bug reported: the same-type completed set was fetched unfiltered and fed
+    to taste-shaped ranking, so an ignored or completed-but-unrated book's
+    genre demoted an otherwise-top candidate sharing that genre.
+    Root cause: the full completed set was reused for ranking, not just for
+    series ordering.
+    Fix: everything that shapes taste draws from the signal set (rated, not
+    ignored), while series ordering keeps the full completed set. The bonus
+    that carried the leak when this was reported has since been deleted with
+    the ranker, but the same leak reaches the ranking through the scoring
+    context and the preference analysis, both of which read the signal set —
+    so this still guards a live path. Run against real storage.
     """
 
     @staticmethod
@@ -3848,7 +4220,7 @@ class TestConsumedItemsOfTypeRankingLeakRegression:
 
         assert after == baseline, (
             "An ignored completed item changed recommendation order via the "
-            "ranker diversity bonus — issue #99 leak in ranking"
+            "taste signal — issue #99 leak in ranking"
         )
 
     def test_unrated_completed_item_does_not_reorder_regression(
@@ -3870,7 +4242,7 @@ class TestConsumedItemsOfTypeRankingLeakRegression:
 
         assert after == baseline, (
             "A completed-but-unrated item changed recommendation order via the "
-            "ranker diversity bonus — issue #99 leak in ranking"
+            "taste signal — issue #99 leak in ranking"
         )
 
     def test_rated_completion_reorders_positive_control(
@@ -3920,7 +4292,7 @@ class TestVarietyPenaltySignalRegression:
     Fix: the engine passes the signal subset (``get_signal_items(content_type)``)
     to the variety penalty, so only rated, non-ignored completions build the
     ladder. Exercised end-to-end against real storage with a ``variety_penalty``
-    config (the path the ranker-diversity regression above does not cover). A
+    config, the path the signal-set regression above does not cover. A
     positive control confirms the ladder is genuinely live for these genres so
     the "penalty stays zero" assertions are meaningful, not vacuous.
     """

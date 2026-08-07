@@ -119,13 +119,11 @@ class RecommendationBrief:
     """
 
     item: ContentItem
-    score: float  # [0, 1] final ranked score
+    score: float  # [0, 1] pipeline aggregate, after any variety penalty
     reasoning: str  # "Recommended because you liked..."
     score_breakdown: dict[str, float]  # {genre_match: 0.85, ...}
     contributing_items: list[ContentItem]  # consumed items that influenced this
     adaptations: list[ContentItem]  # cross-media connections
-    similarity_score: float = 0.0
-    preference_score: float = 0.0
 
 
 @dataclass

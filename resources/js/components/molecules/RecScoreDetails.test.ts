@@ -9,8 +9,6 @@ function makeRec(overrides: Partial<RecommendationResponse> = {}): Recommendatio
     title: 'Test',
     author: 'Author',
     score: 0.5,
-    similarity_score: 0,
-    preference_score: 0,
     reasoning: 'Because',
     llm_reasoning: null,
     score_breakdown: { genre_match: 0.8 },

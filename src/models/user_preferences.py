@@ -28,10 +28,6 @@ class UserPreferenceConfig:
             Maps content type string to length preference string
             (e.g. ``{"book": "short", "movie": "any"}``).
             Valid values: ``"any"``, ``"short"``, ``"medium"``, ``"long"``.
-        diversity_weight: Weight for genre-diversity bonus (0.0-1.0).
-            When > 0, candidates whose genres differ from recently completed
-            items receive a score boost, encouraging genre-hopping.
-            Default 0.0 (disabled).
         theme: User's preferred UI theme ID. Persisted to the backend so
             it syncs across browsers/devices. Empty string means "use
             system default (nord)".
@@ -42,7 +38,6 @@ class UserPreferenceConfig:
     variety_penalty: float = 0.0
     custom_rules: list[str] = field(default_factory=list)
     content_length_preferences: dict[str, str] = field(default_factory=dict)
-    diversity_weight: float = 0.0
     theme: str = ""
 
     #: Highest variety strength a user may set, on the same 0.0-5.0 scale as the
@@ -75,6 +70,10 @@ class UserPreferenceConfig:
         ``variety_penalty`` always wins and is clamped into
         ``[0.0, MAX_VARIETY_PENALTY]``.
 
+        Keys the model no longer carries, such as the retired
+        ``diversity_weight``, are read past rather than rejected, so stored JSON
+        written by an older release still loads.
+
         Args:
             data: Dictionary representation (e.g. from JSON).
 
@@ -87,7 +86,6 @@ class UserPreferenceConfig:
             variety_penalty=cls._resolve_variety_penalty(data),
             custom_rules=data.get("custom_rules", []),
             content_length_preferences=data.get("content_length_preferences", {}),
-            diversity_weight=data.get("diversity_weight", 0.0),
             theme=data.get("theme", ""),
         )
 

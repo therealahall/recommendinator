@@ -49,9 +49,12 @@ VARIETY_LADDER_STEPS = 5
 # Multiplier applied to the variety penalty of an item that continues a series
 # the user is actively progressing through. Finishing book #1 of a series does
 # not mean the user is done with that genre — an unfinished series is the
-# opposite of a completed one — so the next book is softened (halved), not
-# exempted: genre fatigue still nudges it down but no longer buries it.
-VARIETY_SERIES_CONTINUATION_FACTOR = 0.5
+# opposite of a completed one — so the next book is softened, not exempted:
+# genre fatigue still nudges it down but no longer buries it. Below 1.0 so a
+# continuation is always penalised less than an unrelated repeat, and high
+# enough that a mid-slider setting reorders the pair rather than only narrowing
+# the gap (the crossover pinned in ``TestVarietyCrossoverCharacterisation``).
+VARIETY_SERIES_CONTINUATION_FACTOR = 0.6
 
 
 def _is_completion_event(item: ContentItem) -> bool:

@@ -3,6 +3,7 @@
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.recommendations.preferences import PreferenceAnalyzer
 from src.recommendations.scorers import (
+    AdaptationScorer,
     ContentLengthScorer,
     ContinuationScorer,
     CreatorMatchScorer,
@@ -1084,9 +1085,9 @@ class TestCustomPreferenceScorer:
         assert score == 1.0
 
     def test_default_weight(self) -> None:
-        """CustomPreferenceScorer default weight is 2.0."""
+        """CustomPreferenceScorer default weight is 1.0, the registry default."""
         scorer = CustomPreferenceScorer()
-        assert scorer.weight == 2.0
+        assert scorer.weight == 1.0
 
     def test_empty_rules_returns_neutral(self) -> None:
         """Empty boost and penalty dicts should return 0.5."""
@@ -1472,4 +1473,102 @@ class TestSeriesAffinityScorer:
         """Weight is set to 0.0 via build_scorers_with_overrides."""
         base = [SeriesAffinityScorer(weight=1.0)]
         result = build_scorers_with_overrides(base, {"series_affinity": 0.0})
+        assert result[0].weight == 0.0
+
+
+# ---------------------------------------------------------------------------
+# AdaptationScorer tests
+# ---------------------------------------------------------------------------
+
+
+class TestAdaptationScorer:
+    """Tests for the AdaptationScorer.
+
+    The engine pre-computes each candidate's adaptations into the context.
+    The best rating among them maps onto the 1-5 scale, and a candidate that
+    adapts nothing scores 0.0.  Default weight: 1.5.
+    """
+
+    @staticmethod
+    def _context_with(
+        adaptations: dict[str | None, list[ContentItem]]
+    ) -> ScoringContext:
+        """A context carrying *adaptations* and nothing else of note."""
+        context = _build_context(consumed=[])
+        context.adaptations = adaptations
+        return context
+
+    def test_five_star_adaptation_scores_1(self) -> None:
+        """A source the user rated 5 gives the candidate the full score."""
+        source = make_item(item_id="book", title="Dune", rating=5)
+        candidate = make_item(
+            item_id="film", title="Dune", content_type=ContentType.MOVIE
+        )
+
+        scorer = AdaptationScorer()
+
+        assert scorer.score(candidate, self._context_with({"film": [source]})) == 1.0
+
+    def test_four_star_adaptation_scores_below_a_five_star_one(self) -> None:
+        """The rating carries through rather than flattening to one bonus."""
+        source = make_item(item_id="book", title="Dune", rating=4)
+        candidate = make_item(
+            item_id="film", title="Dune", content_type=ContentType.MOVIE
+        )
+
+        scorer = AdaptationScorer()
+
+        assert scorer.score(candidate, self._context_with({"film": [source]})) == 0.75
+
+    def test_best_rated_source_wins(self) -> None:
+        """With several sources, the best-rated one sets the score."""
+        sources = [
+            make_item(item_id="book", title="Dune", rating=4),
+            make_item(item_id="game", title="Dune", rating=5),
+        ]
+        candidate = make_item(
+            item_id="film", title="Dune", content_type=ContentType.MOVIE
+        )
+
+        scorer = AdaptationScorer()
+
+        assert scorer.score(candidate, self._context_with({"film": sources})) == 1.0
+
+    def test_candidate_adapting_nothing_scores_0(self) -> None:
+        """No entry in the map means no boost."""
+        candidate = make_item(
+            item_id="film", title="Solaris", content_type=ContentType.MOVIE
+        )
+
+        scorer = AdaptationScorer()
+
+        assert scorer.score(candidate, self._context_with({})) == 0.0
+
+    def test_unrated_source_scores_0(self) -> None:
+        """An adaptation of something unrated says nothing about taste."""
+        source = make_item(item_id="book", title="Dune", rating=None)
+        candidate = make_item(
+            item_id="film", title="Dune", content_type=ContentType.MOVIE
+        )
+
+        scorer = AdaptationScorer()
+
+        assert scorer.score(candidate, self._context_with({"film": [source]})) == 0.0
+
+    def test_default_weight(self) -> None:
+        """AdaptationScorer default weight is 1.5."""
+        scorer = AdaptationScorer()
+        assert scorer.weight == 1.5
+
+    def test_clone(self) -> None:
+        """Cloning preserves type and applies new weight."""
+        scorer = AdaptationScorer(weight=1.5)
+        cloned = scorer.clone(weight=3.0)
+        assert isinstance(cloned, AdaptationScorer)
+        assert cloned.weight == 3.0
+
+    def test_weight_override_to_zero(self) -> None:
+        """Weight is set to 0.0 via build_scorers_with_overrides."""
+        base = [AdaptationScorer()]
+        result = build_scorers_with_overrides(base, {"adaptation": 0.0})
         assert result[0].weight == 0.0

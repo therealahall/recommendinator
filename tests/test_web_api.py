@@ -1014,8 +1014,6 @@ def test_recommendations_endpoint(client, mock_components):
         {
             "item": mock_item,
             "score": 0.85,
-            "similarity_score": 0.8,
-            "preference_score": 0.7,
             "reasoning": "Recommended highly similar",
         }
     ]
@@ -1624,8 +1622,6 @@ def test_recommendations_include_breakdown(client, mock_components):
         {
             "item": mock_item,
             "score": 0.85,
-            "similarity_score": 0.8,
-            "preference_score": 0.7,
             "reasoning": "Recommended highly similar",
             "score_breakdown": {"genre_match": 0.9, "creator_match": 0.5},
         }
@@ -1657,8 +1653,6 @@ def test_recommendations_include_variety_penalty(client, mock_components):
         {
             "item": mock_item,
             "score": 0.2,
-            "similarity_score": 0.5,
-            "preference_score": 0.5,
             "reasoning": "Recommended",
             "score_breakdown": {"genre_match": 0.9},
             "variety_penalty": 0.8,
@@ -1687,8 +1681,6 @@ def test_recommendations_variety_penalty_defaults_to_zero(client, mock_component
         {
             "item": mock_item,
             "score": 0.85,
-            "similarity_score": 0.8,
-            "preference_score": 0.7,
             "reasoning": "Recommended",
             "score_breakdown": {"genre_match": 0.9},
         }
@@ -1717,8 +1709,6 @@ def test_recommendations_with_user_id(client, mock_components):
         {
             "item": mock_item,
             "score": 0.85,
-            "similarity_score": 0.8,
-            "preference_score": 0.7,
             "reasoning": "Recommended highly similar",
         }
     ]
@@ -1976,8 +1966,6 @@ def test_recommendations_include_db_id(client, mock_components):
         {
             "item": mock_item,
             "score": 0.85,
-            "similarity_score": 0.8,
-            "preference_score": 0.7,
             "reasoning": "Recommended highly similar",
         }
     ]
@@ -2965,8 +2953,6 @@ def _rec_dict(item: ContentItem) -> dict:
     return {
         "item": item,
         "score": 0.85,
-        "similarity_score": 0.8,
-        "preference_score": 0.7,
         "reasoning": "Rule-based reasoning",
         "score_breakdown": {"genre_match": 0.9},
         "contributing_items": [],
@@ -3417,8 +3403,6 @@ class TestSSEStreamingEndpoint:
         return {
             "item": item,
             "score": 0.85,
-            "similarity_score": 0.8,
-            "preference_score": 0.7,
             "reasoning": "Rule-based reasoning",
             "score_breakdown": {"genre_match": 0.9},
             "contributing_items": [],
@@ -3471,8 +3455,6 @@ class TestSSEStreamingEndpoint:
         rec = {
             "item": season_item,
             "score": 0.85,
-            "similarity_score": 0.8,
-            "preference_score": 0.7,
             "reasoning": "Rule-based reasoning",
             "score_breakdown": {"genre_match": 0.9},
             "contributing_items": [],
@@ -4377,8 +4359,6 @@ class TestStreamRecommendationsSignalRegression:
             {
                 "item": candidate,
                 "score": 0.9,
-                "similarity_score": 0.0,
-                "preference_score": 0.0,
                 "reasoning": "because sci-fi",
                 "score_breakdown": {},
                 "variety_penalty": 0.0,

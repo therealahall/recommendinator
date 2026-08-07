@@ -288,8 +288,6 @@ def recommend(
                         "title": item.title,
                         "author": item.author,
                         "score": rec["score"],
-                        "similarity_score": rec["similarity_score"],
-                        "preference_score": rec["preference_score"],
                         "reasoning": rec["reasoning"],
                         "llm_reasoning": rec.get("llm_reasoning"),
                         "score_breakdown": rec.get("score_breakdown", {}),

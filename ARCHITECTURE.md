@@ -275,8 +275,8 @@ enhancement on top of it.
 
 ```
 RecommendationEngine
-  |-- ScoringPipeline (always runs)
-  |     |-- GenreMatchScorer        genre preference
+  |-- ScoringPipeline (always runs; its aggregate IS the emitted score)
+  |     |-- GenreMatchScorer        genre preference, dislike included
   |     |-- CreatorMatchScorer      author/director/creators/developer
   |     |-- TagOverlapScorer        threshold and cluster tag overlap
   |     |-- SeriesOrderScorer       next in sequence
@@ -284,14 +284,19 @@ RecommendationEngine
   |     |-- ContentLengthScorer     soft penalty for length mismatch
   |     |-- ContinuationScorer      actively consumed items (dropped when none exist)
   |     |-- SeriesAffinityScorer    well-rated franchises (avg >= 4)
-  |     |-- CustomPreferenceScorer  natural language rules
+  |     |-- AdaptationScorer        cross-media adaptations (dropped when none exist)
+  |     |-- [CustomPreferenceScorer]    when the user has natural language rules
   |     |-- [SemanticSimilarityScorer]  when AI enabled
   |
-  |-- UserPreferenceConfig (per-user weight overrides, diversity_weight)
-  |-- Ranker (adaptation, series, diversity, preference adjustments)
+  |-- UserPreferenceConfig (per-user weight overrides)
   |-- Variety penalty (variety.py) when variety_penalty > 0
   |-- [LLM reasoning] when AI enabled
 ```
+
+Every contribution to the score is one of those scorers, so the Score Details
+panel's rows and their weights reproduce the number displayed beside them. The
+variety penalty is the only factor applied afterwards, and it has its own row.
+See [docs/SCORING.md](docs/SCORING.md).
 
 **Weights resolve const default < `config.yaml` < `settings` table < per-user.**
 The first three assemble into the effective global. A per-user override
@@ -314,7 +319,7 @@ Invariants:
   ladder is built from completions **of the recommended content type**, its top
   rung the user's `variety_penalty` over the `5.0` maximum. A finished season of
   an ongoing show counts as a completion, dated by that season's watch timestamp.
-  The penalty halves for an active series continuation
+  An active series continuation takes 60% of the penalty
   (`is_active_series_continuation`). See
   [SCORING.md](docs/SCORING.md#variety-after-completion).
 
@@ -450,7 +455,7 @@ Storage Layer (SQLite, cross-source dedup, ChromaDB when AI is enabled)
 Enrichment (background)           Recommendation Engine
   TMDB, OpenLibrary, RAWG           ├── Scoring Pipeline (always runs)
   fills metadata gaps                ├── [AI: vector similarity]  ← optional
-                                     ├── Ranker (bonuses, preferences)
+                                     ├── Variety penalty          ← when enabled
                                      └── [AI: LLM reasoning]     ← optional
                                                 ↓
                                     Interface Layer (CLI/Web) → User

@@ -24,12 +24,15 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from src.llm.embeddings import EmbeddingGenerator
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations import engine as engine_module
 from src.recommendations.engine import RecommendationEngine
 from src.recommendations.scorers import (
     DEFAULT_SCORERS,
     SCORER_NAME_MAP,
+    SemanticSimilarityScorer,
     build_scorers_with_overrides,
 )
 from src.settings.metadata import get_entry
@@ -488,11 +491,11 @@ MOVIE_ORDER: tuple[str, ...] = (
     "Blood Chapel",
 )
 MOVIE_SCORES: tuple[float, ...] = (
-    0.9793650793650794,
-    0.7793650793650795,
-    0.7643939393939394,
-    0.5710317460317461,
-    0.0,
+    0.7006802721088435,
+    0.5578231292517007,
+    0.5562770562770563,
+    0.4591836734693877,
+    0.28253968253968254,
 )
 
 # Ordering and scores for ``generate_recommendations(ContentType.BOOK)``.
@@ -500,28 +503,28 @@ BOOK_ORDER: tuple[str, ...] = (
     "Caliban's War (The Expanse, #2)",
     "Words of Radiance (The Stormlight Archive, #2)",
     "A Memory Called Empire",
-    "The Silent Patient",
     "Piranesi",
+    "The Silent Patient",
     "The Second Grimoire",
 )
 BOOK_SCORES: tuple[float, ...] = (
-    0.8279761904761906,
-    0.7563492063492064,
-    0.6821428571428572,
-    0.5920238095238096,
-    0.5785714285714287,
-    0.11070153061224491,
+    0.8313492063492064,
+    0.7566137566137566,
+    0.6507936507936508,
+    0.5446428571428572,
+    0.5432539682539682,
+    0.3547619047619048,
 )
 
 # Ordering and scores for ``generate_recommendations(ContentType.TV_SHOW)``,
 # after season expansion and the collapse to one entry per show.
 TV_ORDER: tuple[str, ...] = (
-    "Severance (Season 1)",
     "Andor (Season 1)",
+    "Severance (Season 1)",
 )
 TV_SCORES: tuple[float, ...] = (
-    0.8033333333333336,
-    0.7816666666666668,
+    0.7027777777777778,
+    0.7000000000000001,
 )
 
 # Ordering and scores for ``generate_recommendations(ContentType.VIDEO_GAME)``.
@@ -530,22 +533,26 @@ GAME_ORDER: tuple[str, ...] = (
     "Outer Wilds",
 )
 GAME_SCORES: tuple[float, ...] = (
-    0.7851282051282051,
-    0.7641666666666668,
+    0.6974358974358974,
+    0.6277777777777778,
 )
 
 # Score of the only candidate in ``NO_GENRE_LIBRARY``, which carries no genres
-# at all and so reaches the ranker with nothing but its title.
-NO_GENRE_CANDIDATE_SCORE = 0.46666666666666673
+# at all and so is scored on nothing but its title.
+NO_GENRE_CANDIDATE_SCORE = 0.4444444444444444
 
-# The adaptation bonus a 5-star consumed adaptation adds to a candidate's score.
-ADAPTATION_BONUS_FIVE_STAR = 0.2
+# What a 5-star adaptation adds to a movie's score: the AdaptationScorer's full
+# 1.0 at weight 1.5, over the 10.5 of weight the movie pipeline carries.
+ADAPTATION_CONTRIBUTION = 1.5 / 10.5
 
-# Score, preference score and rank of a candidate whose author the user rated
-# 1 star on every consumed work.
-DISLIKED_AUTHOR_SCORE = 0.11070153061224491
-DISLIKED_AUTHOR_PREFERENCE_SCORE = -0.6785714285714286
+# Score and rank of a candidate whose author the user rated 1 star on every
+# consumed work. Dislike is an ordinary weighted contribution, so it sinks the
+# candidate without zeroing it.
+DISLIKED_AUTHOR_SCORE = 0.3547619047619048
 DISLIKED_AUTHOR_POSITION = 5
+
+# Score of the movie whose only genre is the user's only 1-star genre.
+DISLIKED_GENRE_SCORE = 0.28253968253968254
 
 # Tolerance for every float comparison: tight enough that any real change in
 # the arithmetic breaks the assertion.
@@ -649,6 +656,23 @@ def _by_title(recommendations: list[dict[str, Any]], title: str) -> dict[str, An
     return matches[0]
 
 
+def _weight_by_key(engine: RecommendationEngine) -> dict[str, float]:
+    """The weight the user's sliders give each of the engine's scorers."""
+    config_key_of = {
+        scorer_class: name for name, scorer_class in SCORER_NAME_MAP.items()
+    }
+    return {
+        config_key_of[type(scorer)]: scorer.weight for scorer in engine.pipeline.scorers
+    }
+
+
+def _weighted_mean(breakdown: dict[str, float], weights: dict[str, float]) -> float:
+    """Reproduce a score from the rows of its breakdown and their weights."""
+    assert breakdown, "an empty breakdown explains nothing"
+    total_weight = sum(weights[key] for key in breakdown)
+    return sum(breakdown[key] * weights[key] for key in breakdown) / total_weight
+
+
 class TestMovieBaseline:
     """Current end-to-end output when recommending movies."""
 
@@ -666,9 +690,10 @@ class TestMovieBaseline:
     def test_adaptation_outranks_equivalent_non_adaptation(self, engine):
         """An adaptation of a 5-star consumed book outranks its identical twin.
 
-        Both candidates carry the same genres, no creator and no series, so the
-        pipeline scores them identically. The whole difference in the emitted
-        score is the adaptation bonus.
+        Both candidates carry the same genres, no creator and no series, so
+        every other scorer rates them identically. The whole difference in the
+        emitted score is the adaptation row, and it is visible in the
+        breakdown rather than added outside it.
         """
         recommendations = engine.generate_recommendations(
             content_type=ContentType.MOVIE, count=20
@@ -678,28 +703,36 @@ class TestMovieBaseline:
 
         titles = _titles(recommendations)
         assert titles.index("Dune") < titles.index("Arrakis Dreaming")
-        assert adaptation["similarity_score"] == pytest.approx(
-            twin["similarity_score"], abs=SCORE_TOLERANCE
+        assert adaptation["score_breakdown"]["adaptation"] == pytest.approx(
+            1.0, abs=SCORE_TOLERANCE
+        )
+        assert twin["score_breakdown"]["adaptation"] == pytest.approx(
+            0.0, abs=SCORE_TOLERANCE
         )
         assert adaptation["score"] - twin["score"] == pytest.approx(
-            ADAPTATION_BONUS_FIVE_STAR, abs=SCORE_TOLERANCE
+            ADAPTATION_CONTRIBUTION, abs=SCORE_TOLERANCE
         )
         assert [item.id for item in adaptation["adaptations"]] == ["b-dune"]
 
-    def test_item_with_every_genre_disliked_scores_zero(self, engine):
+    def test_item_with_every_genre_disliked_scores_low_but_not_zero(self, engine):
         """Horror is the user's only 1-star genre, and it is this item's only one.
 
-        A preference score of exactly -1.0 makes the ranker's multiplicative
-        penalty zero the score outright, which is the only way today's ranking
-        reaches zero.
+        Dislike is a weighted contribution, not a veto: the genre row bottoms
+        out at 0.0 and the candidate sinks to last, but it keeps the score its
+        other rows earn and stays in the ranking.
         """
         recommendations = engine.generate_recommendations(
             content_type=ContentType.MOVIE, count=20
         )
-        zeroed = _by_title(recommendations, "Blood Chapel")
+        disliked = _by_title(recommendations, "Blood Chapel")
 
-        assert zeroed["preference_score"] == pytest.approx(-1.0, abs=SCORE_TOLERANCE)
-        assert zeroed["score"] == pytest.approx(0.0, abs=SCORE_TOLERANCE)
+        assert disliked["score_breakdown"]["genre_match"] == pytest.approx(
+            0.0, abs=SCORE_TOLERANCE
+        )
+        assert disliked["score"] == pytest.approx(
+            DISLIKED_GENRE_SCORE, abs=SCORE_TOLERANCE
+        )
+        assert disliked["score"] > 0.0
         assert _titles(recommendations)[-1] == "Blood Chapel"
 
 
@@ -722,7 +755,11 @@ class TestBookBaseline:
         )
 
     def test_disliked_author_position_and_score(self, engine):
-        """A book by an author the user rated 1 star lands near the bottom."""
+        """A book by an author the user rated 1 star lands last, not at zero.
+
+        The creator row carries the dislike, so the reason for the demotion is
+        visible in the breakdown the user reads.
+        """
         recommendations = engine.generate_recommendations(
             content_type=ContentType.BOOK, count=20
         )
@@ -731,8 +768,8 @@ class TestBookBaseline:
         assert _titles(recommendations).index("The Second Grimoire") == (
             DISLIKED_AUTHOR_POSITION
         )
-        assert disliked["preference_score"] == pytest.approx(
-            DISLIKED_AUTHOR_PREFERENCE_SCORE, abs=SCORE_TOLERANCE
+        assert disliked["score_breakdown"]["creator_match"] == pytest.approx(
+            0.0, abs=SCORE_TOLERANCE
         )
         assert disliked["score"] == pytest.approx(
             DISLIKED_AUTHOR_SCORE, abs=SCORE_TOLERANCE
@@ -766,6 +803,88 @@ class TestGameBaseline:
         assert tuple(_titles(recommendations)) == GAME_ORDER
         assert _scores(recommendations) == pytest.approx(
             list(GAME_SCORES), abs=SCORE_TOLERANCE
+        )
+
+
+class TestScoreMatchesItsBreakdown:
+    """The number beside the Score Details panel is the rows inside it.
+
+    Every contribution to the score is a scorer with a weight the user can
+    reach, so the weighted mean of the visible rows reproduces the emitted
+    score exactly. Nothing is added outside that budget.
+    """
+
+    @pytest.mark.parametrize("content_type", list(ContentType))
+    def test_weighted_rows_reproduce_the_score(self, engine, content_type):
+        """For every recommendation of every type, the breakdown adds up."""
+        weights = _weight_by_key(engine)
+
+        recommendations = engine.generate_recommendations(
+            content_type=content_type, count=20
+        )
+
+        assert recommendations
+        for recommendation in recommendations:
+            assert recommendation["score"] == pytest.approx(
+                _weighted_mean(recommendation["score_breakdown"], weights),
+                abs=SCORE_TOLERANCE,
+            )
+
+    def test_variety_penalty_is_the_only_thing_applied_after_the_rows(self, engine):
+        """With variety on, the score is the rows scaled by the penalty row.
+
+        The penalty is the one factor outside the weighted budget, and it has
+        its own row in the panel, so the arithmetic stays visible.
+        """
+        weights = _weight_by_key(engine)
+
+        recommendations = engine.generate_recommendations(
+            content_type=ContentType.BOOK,
+            count=20,
+            user_preference_config=UserPreferenceConfig(
+                variety_penalty=UserPreferenceConfig.MAX_VARIETY_PENALTY
+            ),
+        )
+
+        assert any(rec["variety_penalty"] > 0.0 for rec in recommendations)
+        for recommendation in recommendations:
+            expected = _weighted_mean(recommendation["score_breakdown"], weights) * (
+                1.0 - recommendation["variety_penalty"]
+            )
+            assert recommendation["score"] == pytest.approx(
+                expected, abs=SCORE_TOLERANCE
+            )
+
+
+class TestSemanticSimilarityStaysOptional:
+    """Embedding similarity is one scorer, and only when AI is enabled."""
+
+    def test_absent_from_the_equation_when_ai_is_disabled(self, engine):
+        """No semantic scorer in the pipeline, and no row in any breakdown."""
+        recommendations = engine.generate_recommendations(
+            content_type=ContentType.MOVIE, count=20
+        )
+
+        assert not any(
+            isinstance(scorer, SemanticSimilarityScorer)
+            for scorer in engine.pipeline.scorers
+        )
+        assert recommendations
+        for recommendation in recommendations:
+            assert "semantic_similarity" not in recommendation["score_breakdown"]
+
+    def test_present_when_an_embedding_generator_is_supplied(self):
+        """Positive control: the scorer is conditional, not simply gone."""
+        ai_engine = RecommendationEngine(
+            storage_manager=_library_storage(LIBRARY),
+            embedding_generator=Mock(spec=EmbeddingGenerator),
+            recommendation_generator=None,
+            min_rating=4,
+        )
+
+        assert any(
+            isinstance(scorer, SemanticSimilarityScorer)
+            for scorer in ai_engine.pipeline.scorers
         )
 
 
@@ -809,7 +928,7 @@ class TestCountBoundary:
         )
 
     def test_zero_count_returns_empty(self, engine):
-        """``count=0`` yields nothing, and does not fall through to the fallback."""
+        """``count=0`` yields nothing at all."""
         assert (
             engine.generate_recommendations(content_type=ContentType.MOVIE, count=0)
             == []

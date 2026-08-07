@@ -15,6 +15,8 @@ export const SCORER_KEYS = [
   'content_length',
   'continuation',
   'series_affinity',
+  'adaptation',
+  'custom_preference',
 ] as const
 
 export const DEFAULT_WEIGHTS: Record<string, number> = {
@@ -27,6 +29,8 @@ export const DEFAULT_WEIGHTS: Record<string, number> = {
   content_length: 1.0,
   continuation: 2.0,
   series_affinity: 1.0,
+  adaptation: 1.5,
+  custom_preference: 1.0,
 }
 
 export const SCORER_TOOLTIPS: Record<string, string> = {
@@ -39,6 +43,8 @@ export const SCORER_TOOLTIPS: Record<string, string> = {
   content_length: 'Soft-penalizes items that don\'t match your preferred content length (short/medium/long) per content type. Default: 1.0',
   continuation: "Strongly boosts items you're currently consuming (e.g. a TV show you're mid-way through). Default: 2.0",
   series_affinity: "Boosts items from franchises you've rated highly (avg 4+ stars). Keeps recommending series you love. Default: 1.0",
+  adaptation: 'Boosts a film, show or game that adapts something you rated well, and the book behind an adaptation you loved. Default: 1.5',
+  custom_preference: 'Applies your natural language rules, the "avoid X" and "prefer Y" ones, from the Rules section below. Default: 1.0',
 }
 
 // The "5.0 at full strength" mirrors the backend UserPreferenceConfig.MAX_VARIETY_PENALTY.
