@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from src.models.content import (
     ConsumptionStatus,
@@ -261,8 +261,8 @@ class ContextAssembler:
         """Get pre-scored recommendation briefs from the pipeline.
 
         When the recommendation engine is available and a content_type is
-        specified, runs the full scoring pipeline and converts each output
-        dict into a RecommendationBrief carrying scores, reasoning,
+        specified, runs the full scoring pipeline and narrows each
+        recommendation to a RecommendationBrief carrying scores, reasoning,
         contributing items, and cross-media adaptations.
 
         Args:
@@ -279,23 +279,21 @@ class ContextAssembler:
 
         try:
             user_preference_config = self.storage.get_user_preference_config(user_id)
-            recommendations: list[dict[str, Any]] = (
-                self.recommendation_engine.generate_recommendations(
-                    content_type=content_type,
-                    count=limit,
-                    use_llm=False,
-                    user_preference_config=user_preference_config,
-                )
+            recommendations = self.recommendation_engine.generate_recommendations(
+                content_type=content_type,
+                count=limit,
+                use_llm=False,
+                user_preference_config=user_preference_config,
             )
 
             briefs = [
                 RecommendationBrief(
-                    item=rec["item"],
-                    score=rec.get("score", 0.0),
-                    reasoning=rec.get("reasoning", ""),
-                    score_breakdown=rec.get("score_breakdown", {}),
-                    contributing_items=rec.get("contributing_items", []),
-                    adaptations=rec.get("adaptations", []),
+                    item=rec.item,
+                    score=rec.score,
+                    reasoning=rec.reasoning,
+                    score_breakdown=rec.score_breakdown,
+                    contributing_items=rec.contributing_items,
+                    adaptations=rec.adaptations,
                 )
                 for rec in recommendations
             ]

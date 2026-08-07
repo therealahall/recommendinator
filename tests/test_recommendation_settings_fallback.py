@@ -291,7 +291,7 @@ class TestCustomPreferenceWeightRegression:
     def _scores(engine: Any, config: UserPreferenceConfig) -> dict[str, float]:
         """Title -> emitted score for a book run under *config*."""
         return {
-            rec["item"].title: rec["score"]
+            rec.item.title: rec.score
             for rec in engine.generate_recommendations(
                 content_type=ContentType.BOOK,
                 count=5,

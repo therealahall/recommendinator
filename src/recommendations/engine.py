@@ -3,6 +3,7 @@
 import logging
 import random
 from collections.abc import Callable
+from dataclasses import dataclass, replace
 from typing import Any, TypeVar
 
 from src.llm.embeddings import EmbeddingGenerator
@@ -20,6 +21,7 @@ from src.recommendations.preference_interpreter import (
     PatternBasedInterpreter,
 )
 from src.recommendations.preferences import PreferenceAnalyzer, UserPreferences
+from src.recommendations.record import Recommendation
 from src.recommendations.reference_index import SignalIndex
 from src.recommendations.scorers import (
     DEFAULT_SCORERS,
@@ -62,6 +64,23 @@ _RankedCandidate = tuple[ContentItem, float, float]
 
 #: Upper bound on the hits one vector-similarity search may return.
 _MAX_SIMILARITY_RESULTS = 500
+
+
+@dataclass(frozen=True)
+class _CandidateMetadata:
+    """What the engine knows about a candidate that survived filtering.
+
+    Attributes:
+        item: The candidate itself.
+        adaptations: Consumed items this candidate adapts across media.
+        contributing_items: Consumed items that explain this candidate.
+        score_breakdown: Scorer config key -> raw score.
+    """
+
+    item: ContentItem
+    adaptations: list[ContentItem]
+    contributing_items: list[ContentItem]
+    score_breakdown: dict[str, float]
 
 
 def _collapse_duplicate_db_ids(
@@ -251,7 +270,7 @@ class RecommendationEngine:
         count: int = 5,
         use_llm: bool = False,
         user_preference_config: UserPreferenceConfig | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> list[Recommendation]:
         """Generate recommendations for a content type.
 
         Uses preferences from ALL consumed content types to provide
@@ -269,7 +288,7 @@ class RecommendationEngine:
                 When provided, scorer weights are overridden for this call.
 
         Returns:
-            List of recommendation dictionaries.
+            The recommendations, best first.
         """
         # Taste-signal items (completed, rated, not ignored) shape every
         # recommendation: preference analysis, scoring, similarity seeds, and
@@ -428,11 +447,6 @@ class RecommendationEngine:
             filtered_candidates, signal_index, adaptations
         )
 
-        breakdown_by_key: dict[str, dict[str, float]] = {
-            candidate_key(meta["item"]): meta["score_breakdown"]
-            for meta in candidate_metadata
-        }
-
         # The pipeline aggregate is the score, and the pipeline already sorted
         # on it, so ranking is the filtered order with no penalty applied yet.
         ranked_items: list[_RankedCandidate] = [
@@ -473,12 +487,12 @@ class RecommendationEngine:
 
         # Format recommendations
         recommendations = self._format_recommendations(
-            top_recommendations, candidate_metadata, breakdown_by_key, preferences
+            top_recommendations, candidate_metadata, preferences
         )
 
         # Optionally enhance with LLM reasoning
         if use_llm:
-            self._enhance_with_llm(
+            recommendations = self._enhance_with_llm(
                 recommendations,
                 content_type,
                 all_consumed_items,
@@ -728,7 +742,7 @@ class RecommendationEngine:
         filtered_candidates: list[ScoredCandidate],
         signal_index: SignalIndex,
         adaptations: dict[str, list[ContentItem]],
-    ) -> list[dict[str, Any]]:
+    ) -> list[_CandidateMetadata]:
         """Build the display metadata for each surviving candidate.
 
         Args:
@@ -737,19 +751,17 @@ class RecommendationEngine:
             adaptations: Pre-computed candidate key -> adaptations map.
 
         Returns:
-            One metadata dict per candidate, in the order given.
+            One metadata entry per candidate, in the order given.
         """
         return [
-            {
-                "item": scored_candidate.item,
-                "adaptations": adaptations.get(
-                    candidate_key(scored_candidate.item), []
-                ),
-                "contributing_items": signal_index.references_for(
+            _CandidateMetadata(
+                item=scored_candidate.item,
+                adaptations=adaptations.get(candidate_key(scored_candidate.item), []),
+                contributing_items=signal_index.references_for(
                     scored_candidate.item, self.rng
                 ),
-                "score_breakdown": scored_candidate.score_breakdown,
-            }
+                score_breakdown=scored_candidate.score_breakdown,
+            )
             for scored_candidate in filtered_candidates
         ]
 
@@ -814,70 +826,63 @@ class RecommendationEngine:
     def _format_recommendations(
         self,
         ranked_items: list[_RankedCandidate],
-        candidate_metadata: list[dict[str, Any]],
-        breakdown_by_key: dict[str, dict[str, float]],
+        candidate_metadata: list[_CandidateMetadata],
         preferences: UserPreferences,
-    ) -> list[dict[str, Any]]:
-        """Format ranked candidates into recommendation dictionaries.
+    ) -> list[Recommendation]:
+        """Format ranked candidates into recommendation records.
 
         Args:
             ranked_items: Ranked candidates, best first.
             candidate_metadata: Per-candidate metadata from build step.
-            breakdown_by_key: Score breakdown keyed by candidate key.
             preferences: User preferences for reasoning generation.
 
         Returns:
-            List of recommendation dictionaries.
+            The recommendations, in the order given.
         """
-        candidate_metadata_by_key = {
-            candidate_key(meta["item"]): meta for meta in candidate_metadata
+        metadata_by_key = {
+            candidate_key(meta.item): meta for meta in candidate_metadata
         }
 
-        recommendations: list[dict[str, Any]] = []
+        recommendations: list[Recommendation] = []
         for item, score, variety_penalty in ranked_items:
-            key = candidate_key(item)
-            item_meta = candidate_metadata_by_key.get(key)
+            meta = metadata_by_key.get(candidate_key(item))
 
-            adaptations_list: list[ContentItem] = []
-            contributing_list: list[ContentItem] = []
-            if item_meta:
-                adaptations_list = item_meta.get("adaptations", [])
-                contributing_list = item_meta.get("contributing_items", [])
+            adaptations_list = meta.adaptations if meta else []
+            contributing_list = meta.contributing_items if meta else []
 
-            rec: dict[str, Any] = {
-                "item": item,
-                "score": score,
-                "reasoning": self._generate_reasoning(
-                    item,
-                    preferences,
-                    adaptations_list,
-                    contributing_list,
-                ),
-                "score_breakdown": breakdown_by_key.get(key, {}),
-                "variety_penalty": variety_penalty,
-                "contributing_items": contributing_list,
-                "adaptations": adaptations_list,
-            }
-            recommendations.append(rec)
+            recommendations.append(
+                Recommendation(
+                    item=item,
+                    score=score,
+                    reasoning=self._generate_reasoning(
+                        item,
+                        preferences,
+                        adaptations_list,
+                        contributing_list,
+                    ),
+                    score_breakdown=meta.score_breakdown if meta else {},
+                    variety_penalty=variety_penalty,
+                    contributing_items=contributing_list,
+                    adaptations=adaptations_list,
+                )
+            )
 
         return recommendations
 
     def _enhance_with_llm(
         self,
-        recommendations: list[dict[str, Any]],
+        recommendations: list[Recommendation],
         content_type: ContentType,
         all_consumed_items: list[ContentItem],
         unconsumed_items: list[ContentItem],
         count: int,
         series_tracking: dict[str, set[float]],
-    ) -> None:
+    ) -> list[Recommendation]:
         """Enhance recommendations with LLM-generated reasoning.
 
         When the pipeline has produced recommendations, the LLM adds natural
         language reasoning to each.  When the pipeline is empty, the LLM
         generates its own recommendations with series order enforcement.
-
-        Modifies ``recommendations`` in place.
 
         Args:
             recommendations: Current recommendations to enhance (may be empty).
@@ -886,9 +891,13 @@ class RecommendationEngine:
             unconsumed_items: Unconsumed items for LLM-only fallback.
             count: Requested recommendation count.
             series_tracking: Series name to consumed item numbers.
+
+        Returns:
+            The enhanced recommendations, or whatever was enhanced before the
+            LLM failed — a failure mid-way keeps the blurbs already collected.
         """
         if not self.llm_generator:
-            return
+            return recommendations
 
         # LLM blurbs and fallback recs cite consumed items as taste context;
         # in-progress items must not appear there for the same reason they
@@ -899,15 +908,16 @@ class RecommendationEngine:
             if item.status != ConsumptionStatus.CURRENTLY_CONSUMING
         ]
 
+        enhanced = list(recommendations)
         try:
-            if recommendations:
+            if enhanced:
                 blurb_requests = [
                     BlurbRequest(
-                        key=candidate_key(rec["item"]),
-                        item=rec["item"],
-                        references=list(rec.get("contributing_items") or []),
+                        key=candidate_key(rec.item),
+                        item=rec.item,
+                        references=list(rec.contributing_items),
                     )
-                    for rec in recommendations
+                    for rec in enhanced
                 ]
                 # One LLM call per item, concurrent — returns {key: blurb}
                 blurbs = self.llm_generator.generate_blurbs_per_item(
@@ -917,15 +927,15 @@ class RecommendationEngine:
                 )
                 # Direct assignment by candidate key — no title matching needed
                 enhanced_count = 0
-                for rec in recommendations:
-                    blurb = blurbs.get(candidate_key(rec["item"]), "")
+                for index, rec in enumerate(enhanced):
+                    blurb = blurbs.get(candidate_key(rec.item), "")
                     if blurb:
-                        rec["llm_reasoning"] = blurb
+                        enhanced[index] = replace(rec, llm_reasoning=blurb)
                         enhanced_count += 1
                 logger.info(
                     "LLM blurbs: %d/%d recommendations enhanced",
                     enhanced_count,
-                    len(recommendations),
+                    len(enhanced),
                 )
             else:
                 logger.info("Using LLM-only recommendations")
@@ -950,18 +960,18 @@ class RecommendationEngine:
                         series_tracking,
                         unconsumed_items=unconsumed_items,
                     ):
-                        recommendations.append(
-                            {
-                                "item": matching_item,
-                                "score": 0.8,
-                                "reasoning": llm_rec.get("reasoning", ""),
-                                "llm_reasoning": llm_rec.get("reasoning", ""),
-                                "score_breakdown": {},
-                                "variety_penalty": 0.0,
-                            }
+                        enhanced.append(
+                            Recommendation(
+                                item=matching_item,
+                                score=0.8,
+                                reasoning=llm_rec.get("reasoning", ""),
+                                llm_reasoning=llm_rec.get("reasoning", ""),
+                            )
                         )
         except Exception as error:
             logger.warning("LLM recommendation generation failed: %s", error)
+
+        return enhanced
 
     def generate_blurb_for_item(
         self,
@@ -1002,7 +1012,7 @@ class RecommendationEngine:
         unconsumed_items: list[ContentItem],
         series_tracking: dict[str, set[float]],
         count: int,
-    ) -> list[dict[str, Any]]:
+    ) -> list[Recommendation]:
         """Build fallback recommendations when no scored recommendations exist.
 
         Returns unconsumed items that pass series ordering checks, collapsed to
@@ -1017,7 +1027,7 @@ class RecommendationEngine:
             count: Maximum number to return.
 
         Returns:
-            List of fallback recommendation dictionaries.
+            The fallback recommendations, at most ``count`` of them.
         """
         # Collect ALL qualifying candidates before collapsing — do not early-exit
         # at ``count``.  The season entries of one show share a db_id and collapse
@@ -1026,24 +1036,22 @@ class RecommendationEngine:
         # yielding fewer than ``count`` distinct shows after collapse.  Gathering
         # every candidate first guarantees the freed slots are backfilled.  This
         # is a correctness constraint, not an oversight: do not re-add a break.
-        recommendations: list[dict[str, Any]] = []
+        recommendations: list[Recommendation] = []
         for item in unconsumed_items:
             if should_recommend_item(
                 item, series_tracking, unconsumed_items=unconsumed_items
             ):
                 recommendations.append(
-                    {
-                        "item": item,
-                        "score": 0.5,
-                        "reasoning": "Available in your library",
-                        "score_breakdown": {},
-                        "variety_penalty": 0.0,
-                    }
+                    Recommendation(
+                        item=item,
+                        score=0.5,
+                        reasoning="Available in your library",
+                    )
                 )
         # Collapse expanded TV seasons sharing a show's db_id before slicing, so
         # each show contributes at most one card and the freed slots backfill.
         recommendations = _collapse_duplicate_db_ids(
-            recommendations, lambda rec: rec["item"].db_id
+            recommendations, lambda rec: rec.item.db_id
         )
         return recommendations[:count]
 

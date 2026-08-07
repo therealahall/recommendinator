@@ -29,6 +29,7 @@ from src.models.conversation import (
     RecommendationBrief,
 )
 from src.recommendations.engine import RecommendationEngine
+from src.recommendations.record import Recommendation
 from src.storage.manager import StorageManager
 from src.storage.vector_db import VectorDB
 
@@ -947,14 +948,13 @@ class TestPipelineBacklogIntegration:
 
         mock_engine = MagicMock(spec=RecommendationEngine)
         mock_engine.generate_recommendations.return_value = [
-            {
-                "item": pipeline_item,
-                "score": 0.9,
-                "reasoning": "great match",
-                "score_breakdown": {"genre_match": 0.85},
-                "contributing_items": [contributing_item],
-                "adaptations": [],
-            },
+            Recommendation(
+                item=pipeline_item,
+                score=0.9,
+                reasoning="great match",
+                score_breakdown={"genre_match": 0.85},
+                contributing_items=[contributing_item],
+            ),
         ]
 
         assembler = ContextAssembler(
@@ -1002,14 +1002,7 @@ class TestPipelineBacklogIntegration:
 
         mock_engine = MagicMock(spec=RecommendationEngine)
         mock_engine.generate_recommendations.return_value = [
-            {
-                "item": top_pick,
-                "score": 0.9,
-                "reasoning": "best match",
-                "score_breakdown": {},
-                "contributing_items": [],
-                "adaptations": [],
-            },
+            Recommendation(item=top_pick, score=0.9, reasoning="best match"),
         ]
 
         assembler = ContextAssembler(
@@ -1586,14 +1579,9 @@ class TestRAGBypassWithPipeline:
 
         mock_engine = MagicMock(spec=RecommendationEngine)
         mock_engine.generate_recommendations.return_value = [
-            {
-                "item": pipeline_item,
-                "score": 0.85,
-                "reasoning": "matches your taste",
-                "score_breakdown": {},
-                "contributing_items": [],
-                "adaptations": [],
-            },
+            Recommendation(
+                item=pipeline_item, score=0.85, reasoning="matches your taste"
+            ),
         ]
 
         mock_ollama = MagicMock(spec=OllamaClient)

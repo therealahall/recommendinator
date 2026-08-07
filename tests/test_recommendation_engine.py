@@ -21,10 +21,12 @@ from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations import engine as engine_module
 from src.recommendations.engine import (
     RecommendationEngine,
+    _CandidateMetadata,
     _collapse_duplicate_db_ids,
 )
 from src.recommendations.identity import candidate_key
 from src.recommendations.preferences import PreferenceAnalyzer, UserPreferences
+from src.recommendations.record import Recommendation
 from src.recommendations.reference_index import SignalIndex, _shuffle_close_scores
 from src.recommendations.scorers import SCORER_NAME_MAP
 from src.recommendations.scoring_pipeline import ScoredCandidate
@@ -127,6 +129,15 @@ def _engine_for_helpers(rng: random.Random | None = None) -> RecommendationEngin
     return engine
 
 
+def _recommendation_of(item: ContentItem) -> Recommendation:
+    """A pipeline recommendation of *item*, for the blurb helpers.
+
+    Those helpers read the item and its references only, so the score and the
+    reasoning are placeholders and the references stay empty.
+    """
+    return Recommendation(item=item, score=0.9, reasoning="Pipeline")
+
+
 def _ai_engine_over_real_storage(tmp_path, mock_embedding_gen, db_name):
     """Build an AI-mode engine over real storage with a stubbed vector DB.
 
@@ -198,7 +209,7 @@ class TestSingleWeightingStageRegression:
     def _scores(engine, config):
         """Title -> emitted score for a movie run under *config*."""
         return {
-            rec["item"].title: rec["score"]
+            rec.item.title: rec.score
             for rec in engine.generate_recommendations(
                 content_type=ContentType.MOVIE, count=5, user_preference_config=config
             )
@@ -245,10 +256,8 @@ class TestSingleWeightingStageRegression:
             user_preference_config=self._only("genre_match"),
         )
 
-        assert recs[0]["score_breakdown"]["genre_match"] == pytest.approx(1.0)
-        assert recs[0]["score"] == pytest.approx(
-            recs[0]["score_breakdown"]["genre_match"]
-        )
+        assert recs[0].score_breakdown["genre_match"] == pytest.approx(1.0)
+        assert recs[0].score == pytest.approx(recs[0].score_breakdown["genre_match"])
 
     def test_a_preferred_director_scores_on_a_movie_regression(
         self, non_ai_engine, mock_storage
@@ -495,7 +504,7 @@ class TestAIEngine:
         )
 
         assert len(recommendations) == 1
-        reasoning = recommendations[0].get("reasoning", "")
+        reasoning = recommendations[0].reasoning
         # Reasoning should mention the specific cross-type item that contributed
         assert "dune" in reasoning.lower()
 
@@ -541,7 +550,7 @@ class TestNonAIEngine:
         )
 
         assert len(recommendations) >= 1
-        assert recommendations[0]["item"].title == "Hyperion"
+        assert recommendations[0].item.title == "Hyperion"
 
     def test_genre_preferences_boost_matching_candidates(
         self, non_ai_engine, mock_storage
@@ -584,7 +593,7 @@ class TestNonAIEngine:
         )
 
         assert len(recommendations) >= 2
-        titles = [rec["item"].title for rec in recommendations]
+        titles = [rec.item.title for rec in recommendations]
         # Sci-fi match should be ranked first
         assert titles[0] == "Hyperion"
 
@@ -633,7 +642,7 @@ class TestNonAIEngine:
 
         assert len(recommendations) >= 2
         # Stephen King book should be ranked higher
-        assert recommendations[0]["item"].title == "It"
+        assert recommendations[0].item.title == "It"
 
     def test_cold_start_returns_empty(self, non_ai_engine, mock_storage):
         """Non-AI engine should handle cold start gracefully."""
@@ -728,11 +737,11 @@ class TestNonAIEngine:
 
         assert len(recommendations) == 3
         # Sci-fi should be first since all consumed items are sci-fi
-        assert recommendations[0]["item"].title == "Left Hand of Darkness"
+        assert recommendations[0].item.title == "Left Hand of Darkness"
         # All recs should have scores
         for rec in recommendations:
-            assert "score" in rec
-            assert "reasoning" in rec
+            assert rec.score > 0.0
+            assert rec.reasoning
 
 
 # ---------------------------------------------------------------------------
@@ -863,7 +872,7 @@ class TestCustomRulesIntegration:
         )
         # The sci-fi item should be ranked higher due to the custom rule
         assert len(recommendations) == 2
-        titles = [rec["item"].title for rec in recommendations]
+        titles = [rec.item.title for rec in recommendations]
         assert "Space Adventure" in titles
 
     def test_custom_rules_penalize_genre(self, non_ai_engine, mock_storage):
@@ -906,7 +915,7 @@ class TestCustomRulesIntegration:
         )
         # With horror penalized, comedy should rank first
         assert len(recommendations) == 2
-        assert recommendations[0]["item"].title == "Funny Book"
+        assert recommendations[0].item.title == "Funny Book"
 
     def test_multiple_custom_rules(self, non_ai_engine, mock_storage):
         """Multiple custom rules are all applied."""
@@ -955,7 +964,7 @@ class TestCustomRulesIntegration:
             count=3,
             user_preference_config=user_config,
         )
-        titles = [rec["item"].title for rec in recommendations]
+        titles = [rec.item.title for rec in recommendations]
         # Sci-fi should be boosted (first), horror should be penalized (last)
         assert titles[0] == "Sci-Fi Book"
         assert titles[-1] == "Horror Book"
@@ -1056,7 +1065,7 @@ class TestSeriesOrderingRegression:
             count=5,
         )
 
-        recommended_titles = [rec["item"].title for rec in recommendations]
+        recommended_titles = [rec.item.title for rec in recommendations]
 
         # Book #1 SHOULD be recommended (first in series, unstarted)
         assert any(
@@ -1116,7 +1125,7 @@ class TestSeriesOrderingRegression:
             count=5,
         )
 
-        recommended_titles = [rec["item"].title for rec in recommendations]
+        recommended_titles = [rec.item.title for rec in recommendations]
 
         # Only book #1 should be recommended, not book #2
         assert any(
@@ -1165,7 +1174,7 @@ class TestIgnoredItems:
             count=5,
         )
 
-        recommended_titles = [rec["item"].title for rec in recommendations]
+        recommended_titles = [rec.item.title for rec in recommendations]
 
         # Normal item should be recommended
         assert "Normal Book" in recommended_titles
@@ -1266,7 +1275,7 @@ class TestTvRecommendationCarriesDbIdRegression:
         # The series rules surface only the next-unwatched season, so the show
         # yields exactly one actionable card carrying the show's db_id.
         assert len(recommendations) == 1
-        assert recommendations[0]["item"].db_id == 42
+        assert recommendations[0].item.db_id == 42
 
     def test_next_unwatched_season_carries_parent_db_id_regression(
         self, non_ai_engine, mock_storage, breaking_bad_consumed
@@ -1303,7 +1312,7 @@ class TestTvRecommendationCarriesDbIdRegression:
 
         # Season 1 is watched, so the next surfaced season is season 2.
         assert len(recommendations) == 1
-        rec_item = recommendations[0]["item"]
+        rec_item = recommendations[0].item
         assert rec_item.title == "The Expanse (Season 2)"
         assert rec_item.db_id == 42
 
@@ -1339,7 +1348,7 @@ class TestTvRecommendationCarriesDbIdRegression:
 
         # Despite 5 expanded seasons, only the next-unwatched one survives, so
         # the single show contributes exactly one db_id to the output.
-        db_ids = [rec["item"].db_id for rec in recommendations]
+        db_ids = [rec.item.db_id for rec in recommendations]
         assert db_ids == [42]
 
     def test_series_in_order_false_collapses_seasons_to_one_card_regression(
@@ -1369,7 +1378,7 @@ class TestTvRecommendationCarriesDbIdRegression:
         # The three expanded seasons collapse to a single actionable card that
         # carries the parent show's db_id.
         assert len(recommendations) == 1
-        rec_item = recommendations[0]["item"]
+        rec_item = recommendations[0].item
         assert rec_item.db_id == 42
         # The survivor's id is asserted with ``in {season ids}`` rather than a
         # specific season because the three seasons score identically and pass
@@ -1412,7 +1421,7 @@ class TestTvRecommendationCarriesDbIdRegression:
 
         # Both distinct shows survive, each exactly once, despite five expanded
         # seasons between them.
-        db_ids = sorted(rec["item"].db_id for rec in recommendations)
+        db_ids = sorted(rec.item.db_id for rec in recommendations)
         assert db_ids == [42, 99]
 
     def test_none_db_id_show_seasons_not_collapsed_regression(
@@ -1450,7 +1459,7 @@ class TestTvRecommendationCarriesDbIdRegression:
         # All three seasons survive — None is never a shared collapse identity —
         # and every surviving card carries the None db_id.
         assert len(recommendations) == 3
-        assert all(rec["item"].db_id is None for rec in recommendations)
+        assert all(rec.item.db_id is None for rec in recommendations)
 
     def test_collapse_is_noop_for_books_with_distinct_db_ids_regression(
         self, non_ai_engine, mock_storage
@@ -1502,7 +1511,7 @@ class TestTvRecommendationCarriesDbIdRegression:
             user_preference_config=UserPreferenceConfig(series_in_order=False),
         )
 
-        db_ids = sorted(rec["item"].db_id for rec in recommendations)
+        db_ids = sorted(rec.item.db_id for rec in recommendations)
         assert db_ids == [10, 11]
 
     def test_collapse_is_noop_with_series_in_order_regression(
@@ -1527,7 +1536,7 @@ class TestTvRecommendationCarriesDbIdRegression:
         )
 
         assert len(recommendations) == 1
-        assert recommendations[0]["item"].db_id == 42
+        assert recommendations[0].item.db_id == 42
 
     def test_fallback_collapses_entries_sharing_db_id_regression(
         self, non_ai_engine
@@ -1571,9 +1580,41 @@ class TestTvRecommendationCarriesDbIdRegression:
 
         # The two seasons of one show collapse to its first occurrence; the
         # distinct show is preserved.
-        db_ids = [rec["item"].db_id for rec in recommendations]
+        db_ids = [rec.item.db_id for rec in recommendations]
         assert db_ids == [42, 99]
-        assert recommendations[0]["item"].id == "tvdb:280619:s1"
+        assert recommendations[0].item.id == "tvdb:280619:s1"
+
+    def test_a_fallback_pick_becomes_one_recommendation_record(
+        self, non_ai_engine
+    ) -> None:
+        """The whole record this construction site emits, field for field.
+
+        The fallback ran no pipeline and cited no references, and it says so
+        with the record's empty defaults rather than by leaving fields out —
+        which is what lets every consumer read one shape.
+        """
+        candidate = ContentItem(
+            id="ol-1",
+            db_id=7,
+            title="Hyperion",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        )
+
+        recommendations = non_ai_engine._build_fallback_recommendations(
+            [candidate], series_tracking={}, count=5
+        )
+
+        assert recommendations == [
+            Recommendation(
+                item=candidate, score=0.5, reasoning="Available in your library"
+            )
+        ]
+        assert recommendations[0].score_breakdown == {}
+        assert recommendations[0].variety_penalty == 0.0
+        assert recommendations[0].contributing_items == []
+        assert recommendations[0].adaptations == []
+        assert recommendations[0].llm_reasoning is None
 
 
 class TestCollapseDuplicateDbIds:
@@ -2322,29 +2363,29 @@ class TestSeededReferenceOrderRegression:
             for _ in range(2)
         ]
 
-        assert [item.id for item in runs[0]["contributing_items"]] == [
-            item.id for item in runs[1]["contributing_items"]
+        assert [item.id for item in runs[0].contributing_items] == [
+            item.id for item in runs[1].contributing_items
         ]
-        assert {item.id for item in runs[0]["contributing_items"]} == {
+        assert {item.id for item in runs[0].contributing_items} == {
             "book_a",
             "book_b",
             "book_c",
         }
-        assert runs[0]["reasoning"] == runs[1]["reasoning"]
+        assert runs[0].reasoning == runs[1].reasoning
 
 
 def _variety_score_for(recs: list[dict], item_id: str) -> float:
     """Return the score of the recommendation with *item_id* (0.0 if absent)."""
     for rec in recs:
-        if rec["item"].id == item_id:
-            return rec["score"]
+        if rec.item.id == item_id:
+            return rec.score
     return 0.0
 
 
 def _variety_rank_of(recs: list[dict], item_id: str) -> int:
     """Return the index of *item_id* in *recs* (len(recs) if absent)."""
     for index, rec in enumerate(recs):
-        if rec["item"].id == item_id:
+        if rec.item.id == item_id:
             return index
     return len(recs)
 
@@ -2402,8 +2443,8 @@ class TestVarietyAfterCompletion:
         # 4.0 / 5.0 == 0.8 top fraction => (1 - top_fraction) of the score retained.
         top_fraction = 4.0 / UserPreferenceConfig.MAX_VARIETY_PENALTY
         assert score_on == pytest.approx(score_off * (1 - top_fraction), rel=1e-6)
-        assert recs_on[0]["variety_penalty"] == pytest.approx(top_fraction)
-        assert recs_off[0]["variety_penalty"] == 0.0
+        assert recs_on[0].variety_penalty == pytest.approx(top_fraction)
+        assert recs_off[0].variety_penalty == 0.0
 
     def test_variety_penalty_steps_by_recency(
         self, non_ai_engine, mock_storage
@@ -2469,14 +2510,10 @@ class TestVarietyAfterCompletion:
             recs, "scifi_candidate"
         )
         fantasy_penalty = next(
-            rec["variety_penalty"]
-            for rec in recs
-            if rec["item"].id == "fantasy_candidate"
+            rec.variety_penalty for rec in recs if rec.item.id == "fantasy_candidate"
         )
         scifi_penalty = next(
-            rec["variety_penalty"]
-            for rec in recs
-            if rec["item"].id == "scifi_candidate"
+            rec.variety_penalty for rec in recs if rec.item.id == "scifi_candidate"
         )
         top_fraction = (
             UserPreferenceConfig.LEGACY_VARIETY_ON
@@ -2535,7 +2572,7 @@ class TestVarietyAfterCompletion:
         # 2.0 / 5.0 == 0.4 top fraction => (1 - top_fraction) of the score retained.
         top_fraction = 2.0 / UserPreferenceConfig.MAX_VARIETY_PENALTY
         assert score_mid == pytest.approx(score_off * (1 - top_fraction), rel=1e-6)
-        assert recs_mid[0]["variety_penalty"] == pytest.approx(top_fraction)
+        assert recs_mid[0].variety_penalty == pytest.approx(top_fraction)
 
     def test_variety_penalty_is_per_content_type(
         self, non_ai_engine, mock_storage
@@ -2579,8 +2616,8 @@ class TestVarietyAfterCompletion:
         )
 
         # No completed games => empty ladder => the fantasy game is untouched.
-        assert recs[0]["item"].id == "fantasy_game"
-        assert recs[0]["variety_penalty"] == 0.0
+        assert recs[0].item.id == "fantasy_game"
+        assert recs[0].variety_penalty == 0.0
 
     def test_no_variety_no_penalty(self, non_ai_engine, mock_storage) -> None:
         """With variety_penalty at 0.0, no penalty is recorded."""
@@ -2611,7 +2648,7 @@ class TestVarietyAfterCompletion:
             count=1,
             user_preference_config=UserPreferenceConfig(variety_penalty=0.0),
         )
-        assert recs[0]["variety_penalty"] == 0.0
+        assert recs[0].variety_penalty == 0.0
 
     def test_tiny_positive_variety_activates_penalty(
         self, non_ai_engine, mock_storage
@@ -2650,7 +2687,7 @@ class TestVarietyAfterCompletion:
             user_preference_config=UserPreferenceConfig(variety_penalty=0.25),
         )
         # 0.25 / 5.0 == 0.05 top fraction.
-        assert recs[0]["variety_penalty"] == pytest.approx(0.05)
+        assert recs[0].variety_penalty == pytest.approx(0.05)
 
     def test_four_matches_legacy_constant_behaviour(
         self, non_ai_engine, mock_storage
@@ -2701,7 +2738,7 @@ class TestVarietyAfterCompletion:
             UserPreferenceConfig.LEGACY_VARIETY_ON
             / UserPreferenceConfig.MAX_VARIETY_PENALTY
         )
-        assert recs[0]["variety_penalty"] == pytest.approx(top_fraction)
+        assert recs[0].variety_penalty == pytest.approx(top_fraction)
         # The migrated strength must preserve the legacy score impact, not just
         # the reported penalty: the same-genre candidate retains (1 - top_fraction)
         # of the score it has with variety disabled.
@@ -2746,7 +2783,7 @@ class TestVarietyAfterCompletion:
                 variety_penalty=UserPreferenceConfig.MAX_VARIETY_PENALTY
             ),
         )
-        assert recs[0]["variety_penalty"] == pytest.approx(1.0)
+        assert recs[0].variety_penalty == pytest.approx(1.0)
         assert _variety_score_for(recs, "same_genre") == pytest.approx(0.0)
 
     def test_strength_above_the_slider_zeroes_rather_than_negates(
@@ -2791,7 +2828,7 @@ class TestVarietyAfterCompletion:
             ),
         )
 
-        assert recs[0]["variety_penalty"] == pytest.approx(1.0)
+        assert recs[0].variety_penalty == pytest.approx(1.0)
         assert _variety_score_for(recs, "same_genre") == pytest.approx(0.0)
 
 
@@ -2876,7 +2913,7 @@ class TestVarietyAfterCompletionRegression:
             count=2,
             user_preference_config=UserPreferenceConfig(variety_penalty=0.0),
         )
-        assert recs_off[0]["item"].id == "dragonlance_2"
+        assert recs_off[0].item.id == "dragonlance_2"
 
         # With variety: the fantasy continuation is demoted below the mystery.
         recs_on = non_ai_engine.generate_recommendations(
@@ -2886,7 +2923,7 @@ class TestVarietyAfterCompletionRegression:
                 variety_penalty=UserPreferenceConfig.LEGACY_VARIETY_ON
             ),
         )
-        assert recs_on[0]["item"].id == "mystery_book"
+        assert recs_on[0].item.id == "mystery_book"
         assert _variety_rank_of(recs_on, "mystery_book") < _variety_rank_of(
             recs_on, "dragonlance_2"
         )
@@ -2894,9 +2931,7 @@ class TestVarietyAfterCompletionRegression:
         # It is demoted on a softened penalty — the legacy strength's 0.8
         # fraction times the continuation factor — not the full fraction.
         penalty = next(
-            rec["variety_penalty"]
-            for rec in recs_on
-            if rec["item"].id == "dragonlance_2"
+            rec.variety_penalty for rec in recs_on if rec.item.id == "dragonlance_2"
         )
         assert penalty == pytest.approx(0.48)
 
@@ -2965,7 +3000,7 @@ class TestVarietyAfterCompletionRegression:
             ),
         )
 
-        rec_ids = [rec["item"].id for rec in recs]
+        rec_ids = [rec.item.id for rec in recs]
         # The legit next book is recommended; the out-of-order novellas are
         # substituted away by series filtering and never appear.
         assert "exp2" in rec_ids
@@ -2981,11 +3016,11 @@ class TestVarietyAfterCompletionRegression:
             UserPreferenceConfig.LEGACY_VARIETY_ON
             / UserPreferenceConfig.MAX_VARIETY_PENALTY
         )
-        book_two_rec = next(rec for rec in recs if rec["item"].id == "exp2")
-        assert book_two_rec["variety_penalty"] == pytest.approx(
+        book_two_rec = next(rec for rec in recs if rec.item.id == "exp2")
+        assert book_two_rec.variety_penalty == pytest.approx(
             top_fraction * VARIETY_SERIES_CONTINUATION_FACTOR
         )
-        assert book_two_rec["variety_penalty"] < top_fraction
+        assert book_two_rec.variety_penalty < top_fraction
 
 
 class VarietyStep(NamedTuple):
@@ -3120,43 +3155,43 @@ class TestVarietyCrossoverCharacterisation:
         recommendations = self._recommend(non_ai_engine, step.setting)
 
         continuation = next(
-            rec for rec in recommendations if rec["item"].id == VARIETY_CONTINUATION_ID
+            rec for rec in recommendations if rec.item.id == VARIETY_CONTINUATION_ID
         )
         competitor = next(
-            rec for rec in recommendations if rec["item"].id == VARIETY_COMPETITOR_ID
+            rec for rec in recommendations if rec.item.id == VARIETY_COMPETITOR_ID
         )
 
         # The penalty is the slider fraction, softened for a series continuation.
-        assert continuation["variety_penalty"] == pytest.approx(
+        assert continuation.variety_penalty == pytest.approx(
             step.setting
             / UserPreferenceConfig.MAX_VARIETY_PENALTY
             * VARIETY_SERIES_CONTINUATION_FACTOR,
             abs=VARIETY_SCORE_TOLERANCE,
         )
-        assert continuation["variety_penalty"] == pytest.approx(
+        assert continuation.variety_penalty == pytest.approx(
             step.continuation_penalty, abs=VARIETY_SCORE_TOLERANCE
         )
-        assert competitor["variety_penalty"] == 0.0
+        assert competitor.variety_penalty == 0.0
 
-        assert continuation["score"] == pytest.approx(
+        assert continuation.score == pytest.approx(
             step.continuation_score, abs=VARIETY_SCORE_TOLERANCE
         )
-        assert competitor["score"] == pytest.approx(
+        assert competitor.score == pytest.approx(
             VARIETY_COMPETITOR_SCORE_AT_EVERY_SETTING, abs=VARIETY_SCORE_TOLERANCE
         )
-        assert continuation["score"] - competitor["score"] == pytest.approx(
+        assert continuation.score - competitor.score == pytest.approx(
             step.lead_over_competitor, abs=VARIETY_SCORE_TOLERANCE
         )
 
         # The penalty is multiplicative on the unpenalised score, so every rung
         # moves the continuation even where it does not move the order.
-        assert continuation["score"] == pytest.approx(
+        assert continuation.score == pytest.approx(
             VARIETY_CONTINUATION_SCORE_WITH_SLIDER_OFF
             * (1.0 - step.continuation_penalty),
             abs=VARIETY_SCORE_TOLERANCE,
         )
 
-        assert recommendations[0]["item"].id == step.leader_id
+        assert recommendations[0].item.id == step.leader_id
         assert _variety_rank_of(recommendations, step.leader_id) == 0
 
     def test_lead_changes_sign_once_at_the_crossover_setting(self) -> None:
@@ -3193,7 +3228,7 @@ class TestVarietyCrossoverCharacterisation:
         flipped = [
             setting
             for setting in settings
-            if self._recommend(non_ai_engine, setting)[0]["item"].id
+            if self._recommend(non_ai_engine, setting)[0].item.id
             == VARIETY_COMPETITOR_ID
         ]
 
@@ -3292,7 +3327,7 @@ class TestEngineSeriesSubstitutionRegression:
             count=5,
         )
 
-        recommended_ids = [rec["item"].id for rec in recommendations]
+        recommended_ids = [rec.item.id for rec in recommendations]
         # FF X should appear (earliest recommendable FF entry)
         assert (
             "ff10" in recommended_ids
@@ -3339,7 +3374,7 @@ class TestEngineSeriesSubstitutionRegression:
             user_preference_config=user_config,
         )
 
-        recommended_ids = [rec["item"].id for rec in recommendations]
+        recommended_ids = [rec.item.id for rec in recommendations]
         # FF XII should appear (no filtering)
         assert "ff12" in recommended_ids
 
@@ -3405,7 +3440,7 @@ class TestEngineSeriesSubstitutionRegression:
             count=5,
         )
 
-        recommended_ids = [rec["item"].id for rec in recommendations]
+        recommended_ids = [rec.item.id for rec in recommendations]
         # FF X should appear exactly once
         assert (
             recommended_ids.count("ff10") == 1
@@ -3413,12 +3448,12 @@ class TestEngineSeriesSubstitutionRegression:
 
 
 class TestPipelineOutputKeys:
-    """Tests for pipeline output dict containing all expected keys."""
+    """Tests for the pipeline's output carrying every field consumers read."""
 
     def test_output_includes_contributing_items_and_adaptations(
         self, non_ai_engine, mock_storage
     ):
-        """Pipeline output dicts include contributing_items and adaptations keys."""
+        """The scored path fills contributing_items and adaptations."""
         consumed = ContentItem(
             id="c1",
             title="Dune",
@@ -3447,10 +3482,8 @@ class TestPipelineOutputKeys:
 
         assert len(recommendations) >= 1
         for recommendation in recommendations:
-            assert "contributing_items" in recommendation
-            assert "adaptations" in recommendation
-            assert isinstance(recommendation["contributing_items"], list)
-            assert isinstance(recommendation["adaptations"], list)
+            assert isinstance(recommendation.contributing_items, list)
+            assert isinstance(recommendation.adaptations, list)
 
 
 # ---------------------------------------------------------------------------
@@ -3492,7 +3525,7 @@ class TestContinuationScorerExclusion:
         )
 
         assert len(recommendations) == 1
-        assert "continuation" not in recommendations[0]["score_breakdown"]
+        assert "continuation" not in recommendations[0].score_breakdown
 
     def test_active_item_retains_continuation_in_breakdown(
         self, non_ai_engine, mock_storage
@@ -3532,9 +3565,7 @@ class TestContinuationScorerExclusion:
         )
 
         assert len(recommendations) >= 1
-        breakdowns = {
-            rec["item"].title: rec["score_breakdown"] for rec in recommendations
-        }
+        breakdowns = {rec.item.title: rec.score_breakdown for rec in recommendations}
         assert "continuation" in breakdowns["Hyperion"]
         assert breakdowns["Hyperion"]["continuation"] == 1.0
         assert breakdowns["Foundation"]["continuation"] == 0.0
@@ -3573,7 +3604,7 @@ class TestContinuationScorerExclusion:
         )
 
         assert len(recommendations) >= 1
-        assert "continuation" not in recommendations[0]["score_breakdown"]
+        assert "continuation" not in recommendations[0].score_breakdown
 
 
 # ---------------------------------------------------------------------------
@@ -4133,7 +4164,7 @@ class TestInProgressItemsExcludedFromBasisRegression:
         )
 
         engine._enhance_with_llm(
-            recommendations=[{"item": candidate, "contributing_items": []}],
+            recommendations=[_recommendation_of(candidate)],
             content_type=ContentType.TV_SHOW,
             all_consumed_items=[completed, in_progress],
             unconsumed_items=[],
@@ -4248,14 +4279,14 @@ class TestIgnoredAndUnratedSignalRegression:
             content_type=ContentType.BOOK, count=5
         )
 
-        titles = {rec["item"].title for rec in recs}
+        titles = {rec.item.title for rec in recs}
         # Candidate pool: the unrated candidate is still recommended (backlog
         # is unrated by nature); the ignored candidate is not.
         assert "Hyperion" in titles
         assert "Ignored Saga" not in titles
 
-        hyperion = next(rec for rec in recs if rec["item"].title == "Hyperion")
-        contributing = {item.title for item in hyperion["contributing_items"]}
+        hyperion = next(rec for rec in recs if rec.item.title == "Hyperion")
+        contributing = {item.title for item in hyperion.contributing_items}
         # The rated, non-ignored signal item is cited; the ignored and the
         # completed-but-unrated items never appear as "you liked" references.
         assert "Dune" in contributing
@@ -4405,7 +4436,7 @@ class TestIgnoredAndUnratedItemsDoNotShapeRankingRegression:
     @staticmethod
     def _order(engine):
         recs = engine.generate_recommendations(content_type=ContentType.BOOK, count=5)
-        return [rec["item"].title for rec in recs]
+        return [rec.item.title for rec in recs]
 
     @staticmethod
     def _seed_baseline(storage):
@@ -4569,8 +4600,8 @@ class TestVarietyPenaltySignalRegression:
             count=5,
             user_preference_config=self._CONFIG,
         )
-        fantasy = next(rec for rec in recs if rec["item"].title == "Fantasy Candidate")
-        return fantasy["variety_penalty"]
+        fantasy = next(rec for rec in recs if rec.item.title == "Fantasy Candidate")
+        return fantasy.variety_penalty
 
     def test_baseline_fantasy_candidate_unpenalised(self, real_engine, real_storage):
         """With only a Mystery signal item, the Fantasy candidate has no penalty."""
@@ -4652,7 +4683,7 @@ class TestSeriesTrackingFullSetRegression:
     @staticmethod
     def _titles(engine):
         recs = engine.generate_recommendations(content_type=ContentType.BOOK, count=5)
-        return [rec["item"].title for rec in recs]
+        return [rec.item.title for rec in recs]
 
     def test_completed_rated_first_entry_unlocks_second(
         self, real_engine, real_storage
@@ -4831,13 +4862,11 @@ class TestHalfNumberedEntryScoringRegression:
         recs = real_engine.generate_recommendations(
             content_type=ContentType.BOOK, count=5
         )
-        by_title = {rec["item"].title: rec for rec in recs}
+        by_title = {rec.item.title: rec for rec in recs}
 
         assert "Gods of Risk (The Expanse, #2.5)" in by_title
         assert (
-            by_title["Gods of Risk (The Expanse, #2.5)"]["score_breakdown"][
-                "series_order"
-            ]
+            by_title["Gods of Risk (The Expanse, #2.5)"].score_breakdown["series_order"]
             == 1.0
         )
         assert "Abaddon's Gate (The Expanse, #3)" not in by_title
@@ -4897,19 +4926,19 @@ class TestIdlessCandidateIdentityRegression:
         recs = real_engine.generate_recommendations(
             content_type=ContentType.BOOK, count=5
         )
-        by_title = {rec["item"].title: rec for rec in recs}
+        by_title = {rec.item.title: rec for rec in recs}
 
         assert set(by_title) == {"Hyperion", "The Silent Patient"}
-        assert {item.title for item in by_title["Hyperion"]["contributing_items"]} == {
+        assert {item.title for item in by_title["Hyperion"].contributing_items} == {
             "Blade Runner"
         }
         assert {
-            item.title for item in by_title["The Silent Patient"]["contributing_items"]
+            item.title for item in by_title["The Silent Patient"].contributing_items
         } == {"Knives Out"}
         # Only the in-progress book is a continuation, so the two breakdowns
         # differ and each card must carry its own.
-        assert by_title["Hyperion"]["score_breakdown"]["continuation"] == 0.0
-        assert by_title["The Silent Patient"]["score_breakdown"]["continuation"] == 1.0
+        assert by_title["Hyperion"].score_breakdown["continuation"] == 0.0
+        assert by_title["The Silent Patient"].score_breakdown["continuation"] == 1.0
 
 
 class TestSeasonCandidateIdentityRegression:
@@ -4955,8 +4984,8 @@ class TestSeasonCandidateIdentityRegression:
             user_preference_config=UserPreferenceConfig(series_in_order=False),
         )
 
-        assert [rec["item"].title for rec in recs] == ["Uncharted Depths (Season 1)"]
-        assert recs[0]["score_breakdown"]["series_order"] == 0.8
+        assert [rec.item.title for rec in recs] == ["Uncharted Depths (Season 1)"]
+        assert recs[0].score_breakdown["series_order"] == 0.8
 
 
 class TestSimilarityForItemsWithoutExternalId:
@@ -5003,10 +5032,10 @@ class TestSimilarityForItemsWithoutExternalId:
         ]
 
         recs = engine.generate_recommendations(content_type=ContentType.BOOK, count=5)
-        by_title = {rec["item"].title: rec for rec in recs}
+        by_title = {rec.item.title: rec for rec in recs}
 
-        assert by_title["Hyperion"]["score_breakdown"]["semantic_similarity"] == 0.9
-        assert by_title["CSV Import"]["score_breakdown"]["semantic_similarity"] == 0.8
+        assert by_title["Hyperion"].score_breakdown["semantic_similarity"] == 0.9
+        assert by_title["CSV Import"].score_breakdown["semantic_similarity"] == 0.8
 
     def test_two_id_less_candidates_keep_separate_scores_regression(
         self, tmp_path, mock_embedding_gen
@@ -5040,12 +5069,10 @@ class TestSimilarityForItemsWithoutExternalId:
         ]
 
         recs = engine.generate_recommendations(content_type=ContentType.BOOK, count=5)
-        by_title = {rec["item"].title: rec for rec in recs}
+        by_title = {rec.item.title: rec for rec in recs}
 
-        assert by_title["First Import"]["score_breakdown"]["semantic_similarity"] == 0.9
-        assert (
-            by_title["Second Import"]["score_breakdown"]["semantic_similarity"] == 0.3
-        )
+        assert by_title["First Import"].score_breakdown["semantic_similarity"] == 0.9
+        assert by_title["Second Import"].score_breakdown["semantic_similarity"] == 0.3
 
     def test_season_candidate_inherits_show_similarity_regression(
         self, tmp_path, mock_embedding_gen
@@ -5078,8 +5105,8 @@ class TestSimilarityForItemsWithoutExternalId:
             content_type=ContentType.TV_SHOW, count=5
         )
 
-        assert recs[0]["item"].title == "Uncharted Depths (Season 1)"
-        assert recs[0]["score_breakdown"]["semantic_similarity"] == 0.7
+        assert recs[0].item.title == "Uncharted Depths (Season 1)"
+        assert recs[0].score_breakdown["semantic_similarity"] == 0.7
 
 
 class TestConsumedExclusionKeysRegression:
@@ -5134,16 +5161,15 @@ class TestIdlessBlurbIdentityRegression:
 
     @staticmethod
     def _recommendation(db_id, title):
-        return {
-            "item": ContentItem(
+        return _recommendation_of(
+            ContentItem(
                 id=None,
                 db_id=db_id,
                 title=title,
                 content_type=ContentType.BOOK,
                 status=ConsumptionStatus.UNREAD,
-            ),
-            "contributing_items": [],
-        }
+            )
+        )
 
     def test_each_id_less_recommendation_gets_its_own_blurb_regression(self):
         """Two id-less recommendations each receive their own blurb."""
@@ -5155,13 +5181,11 @@ class TestIdlessBlurbIdentityRegression:
         )
         engine = _engine_for_helpers()
         engine.llm_generator = RecommendationGenerator(client)
-        recommendations = [
-            self._recommendation(11, "Hyperion"),
-            self._recommendation(12, "The Silent Patient"),
-        ]
-
-        engine._enhance_with_llm(
-            recommendations=recommendations,
+        enhanced = engine._enhance_with_llm(
+            recommendations=[
+                self._recommendation(11, "Hyperion"),
+                self._recommendation(12, "The Silent Patient"),
+            ],
             content_type=ContentType.BOOK,
             all_consumed_items=[],
             unconsumed_items=[],
@@ -5169,7 +5193,7 @@ class TestIdlessBlurbIdentityRegression:
             series_tracking={},
         )
 
-        assert [rec.get("llm_reasoning") for rec in recommendations] == [
+        assert [rec.llm_reasoning for rec in enhanced] == [
             "Hyperion blurb",
             "Silent Patient blurb",
         ]
@@ -5185,10 +5209,8 @@ class TestIdlessBlurbIdentityRegression:
         client.generate_text.return_value = "Hyperion blurb"
         engine = _engine_for_helpers()
         engine.llm_generator = RecommendationGenerator(client)
-        recommendations = [self._recommendation(11, "Hyperion")]
-
-        engine._enhance_with_llm(
-            recommendations=recommendations,
+        enhanced = engine._enhance_with_llm(
+            recommendations=[self._recommendation(11, "Hyperion")],
             content_type=ContentType.BOOK,
             all_consumed_items=[],
             unconsumed_items=[],
@@ -5196,7 +5218,7 @@ class TestIdlessBlurbIdentityRegression:
             series_tracking={},
         )
 
-        assert recommendations[0].get("llm_reasoning") == "Hyperion blurb"
+        assert enhanced[0].llm_reasoning == "Hyperion blurb"
 
 
 class TestSeasonSiblingsStayDistinctInEveryMap:
@@ -5237,38 +5259,32 @@ class TestSeasonSiblingsStayDistinctInEveryMap:
             item_id="m2", title="Knives Out", content_type=ContentType.MOVIE, rating=5
         )
         candidate_metadata = [
-            {
-                "item": first,
-                "adaptations": [],
-                "contributing_items": [blade_runner],
-                "score_breakdown": {"series_order": 0.8},
-            },
-            {
-                "item": second,
-                "adaptations": [],
-                "contributing_items": [knives_out],
-                "score_breakdown": {"series_order": 0.2},
-            },
+            _CandidateMetadata(
+                item=first,
+                adaptations=[],
+                contributing_items=[blade_runner],
+                score_breakdown={"series_order": 0.8},
+            ),
+            _CandidateMetadata(
+                item=second,
+                adaptations=[],
+                contributing_items=[knives_out],
+                score_breakdown={"series_order": 0.2},
+            ),
         ]
-        breakdown_by_key = {
-            candidate_key(meta["item"]): meta["score_breakdown"]
-            for meta in candidate_metadata
-        }
 
         recommendations = engine._format_recommendations(
             [(first, 1.0, 0.0), (second, 0.5, 0.0)],
             candidate_metadata,
-            breakdown_by_key,
             PreferenceAnalyzer(min_rating=4).analyze([]),
         )
 
-        assert [rec["score_breakdown"] for rec in recommendations] == [
+        assert [rec.score_breakdown for rec in recommendations] == [
             {"series_order": 0.8},
             {"series_order": 0.2},
         ]
         assert [
-            [item.title for item in rec["contributing_items"]]
-            for rec in recommendations
+            [item.title for item in rec.contributing_items] for rec in recommendations
         ] == [["Blade Runner"], ["Knives Out"]]
 
     def test_each_season_keeps_its_own_adaptations(self):
@@ -5297,13 +5313,8 @@ class TestSeasonSiblingsStayDistinctInEveryMap:
         first, second = self._seasons()
         engine = _engine_for_helpers()
         engine.llm_generator = RecommendationGenerator(client)
-        recommendations = [
-            {"item": first, "contributing_items": []},
-            {"item": second, "contributing_items": []},
-        ]
-
-        engine._enhance_with_llm(
-            recommendations=recommendations,
+        enhanced = engine._enhance_with_llm(
+            recommendations=[_recommendation_of(first), _recommendation_of(second)],
             content_type=ContentType.TV_SHOW,
             all_consumed_items=[],
             unconsumed_items=[],
@@ -5311,7 +5322,7 @@ class TestSeasonSiblingsStayDistinctInEveryMap:
             series_tracking={},
         )
 
-        assert [rec.get("llm_reasoning") for rec in recommendations] == [
+        assert [rec.llm_reasoning for rec in enhanced] == [
             "Season 1 blurb",
             "Season 2 blurb",
         ]
@@ -5398,19 +5409,17 @@ class TestLlmOnlyRecommendations:
         else:
             engine.llm_generator.generate_recommendations.return_value = llm_recs
 
-        recommendations = []
-        engine._enhance_with_llm(
-            recommendations=recommendations,
+        return engine._enhance_with_llm(
+            recommendations=[],
             content_type=ContentType.BOOK,
             all_consumed_items=[],
             unconsumed_items=unconsumed_items,
             count=5,
             series_tracking=series_tracking or {},
         )
-        return recommendations
 
     def test_a_matched_pick_becomes_one_recommendation_record(self):
-        """The whole record this construction site emits, key for key."""
+        """The whole record this construction site emits, field for field."""
         candidate = self._book("Outer Wilds")
 
         recommendations = self._llm_only(
@@ -5419,14 +5428,12 @@ class TestLlmOnlyRecommendations:
         )
 
         assert recommendations == [
-            {
-                "item": candidate,
-                "score": 0.8,
-                "reasoning": self.REASONING,
-                "llm_reasoning": self.REASONING,
-                "score_breakdown": {},
-                "variety_penalty": 0.0,
-            }
+            Recommendation(
+                item=candidate,
+                score=0.8,
+                reasoning=self.REASONING,
+                llm_reasoning=self.REASONING,
+            )
         ]
 
     def test_a_pick_matching_no_candidate_recommends_nothing(self):
@@ -5468,7 +5475,7 @@ class TestLlmOnlyRecommendations:
             [candidate],
         )
 
-        assert [rec["item"] for rec in recommendations] == [candidate]
+        assert [rec.item for rec in recommendations] == [candidate]
 
     def test_an_omitted_author_matches_on_title_alone(self):
         """A pick with no author still matches a candidate that has one."""
@@ -5479,7 +5486,7 @@ class TestLlmOnlyRecommendations:
             [candidate],
         )
 
-        assert [rec["item"] for rec in recommendations] == [candidate]
+        assert [rec.item for rec in recommendations] == [candidate]
 
     def test_a_title_differing_only_in_case_does_not_match(self):
         """Matching is exact string equality, so case is part of the contract."""
@@ -5503,7 +5510,7 @@ class TestLlmOnlyRecommendations:
             [first, second],
         )
 
-        assert [rec["item"] for rec in recommendations] == [first]
+        assert [rec.item for rec in recommendations] == [first]
 
     def test_a_failing_llm_call_is_swallowed_and_logged(self, caplog):
         """The user gets an empty list and the reason reaches the log."""
@@ -5581,7 +5588,7 @@ class TestContentTypeExclusions:
             non_ai_engine, mock_storage, [self._book(), self._movie()], ["avoid movies"]
         )
 
-        assert [rec["item"].id for rec in recommendations] == ["b1"]
+        assert [rec.item.id for rec in recommendations] == ["b1"]
 
     def test_a_candidate_carrying_a_raw_string_type_is_dropped_too(
         self, non_ai_engine, mock_storage
@@ -5599,7 +5606,7 @@ class TestContentTypeExclusions:
             non_ai_engine, mock_storage, [self._book(), movie], ["avoid movies"]
         )
 
-        assert [rec["item"].id for rec in recommendations] == ["b1"]
+        assert [rec.item.id for rec in recommendations] == ["b1"]
 
     def test_excluding_every_candidate_recommends_nothing_and_warns(
         self, non_ai_engine, mock_storage, caplog
@@ -5630,7 +5637,7 @@ class TestContentTypeExclusions:
             non_ai_engine, mock_storage, [self._book(), self._movie()], ["avoid horror"]
         )
 
-        assert {rec["item"].id for rec in recommendations} == {"b1", "m1"}
+        assert {rec.item.id for rec in recommendations} == {"b1", "m1"}
 
     def test_empty_custom_rules_never_build_an_interpreter(
         self, non_ai_engine, mock_storage, monkeypatch
@@ -5650,5 +5657,5 @@ class TestContentTypeExclusions:
             non_ai_engine, mock_storage, [self._book()], []
         )
 
-        assert [rec["item"].id for rec in recommendations] == ["b1"]
+        assert [rec.item.id for rec in recommendations] == ["b1"]
         engine_module.PatternBasedInterpreter.assert_not_called()

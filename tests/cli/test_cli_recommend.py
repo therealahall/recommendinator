@@ -1,17 +1,14 @@
 """Tests for CLI recommend command."""
 
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from click.testing import CliRunner
 
-from src.cli.main import cli
-from src.llm.embeddings import EmbeddingGenerator
-from src.llm.recommendations import RecommendationGenerator
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.recommendations.engine import RecommendationEngine
+from src.recommendations.record import Recommendation
 from src.storage.manager import StorageManager
-from tests.factories import back_mock_settings_store
 
 from .conftest import _invoke_with_mocks
 
@@ -98,32 +95,12 @@ def _invoke_recommend_with_engine(
     mock_engine: MagicMock,
     config: dict | None = None,
 ) -> object:
-    """Invoke the recommend CLI with a pre-configured engine mock.
-
-    Can't use _invoke_with_mocks because we need to control the engine's
-    return value, not just its existence.
-    """
-    with (
-        patch("src.cli.main.load_config") as mock_load,
-        patch("src.cli.main.create_storage_manager") as mock_storage_fn,
-        patch("src.cli.main.create_llm_components") as mock_llm,
-        patch("src.cli.main.create_recommendation_engine", return_value=mock_engine),
-        patch("src.cli.main.migrate_source_labels"),
-        patch("src.cli.main.migrate_source_config_plugins"),
-    ):
-        mock_load.return_value = config or {}
-        mock_storage = MagicMock(spec=StorageManager)
-        mock_storage.get_user_preference_config.return_value = MagicMock()
-        # Real migrate_config_settings boot hook runs against an empty settings
-        # store (no stub) — DB overlay is a no-op, no cross-test leak.
-        back_mock_settings_store(mock_storage)
-        mock_storage_fn.return_value = mock_storage
-        mock_llm.return_value = (
-            None,
-            MagicMock(spec=EmbeddingGenerator),
-            MagicMock(spec=RecommendationGenerator),
-        )
-        return cli_runner.invoke(cli, args)
+    """Invoke the recommend CLI with a pre-configured engine mock."""
+    mock_storage = MagicMock(spec=StorageManager)
+    mock_storage.get_user_preference_config.return_value = MagicMock()
+    return _invoke_with_mocks(
+        cli_runner, args, mock_storage, config=config, engine=mock_engine
+    )
 
 
 class TestRecommendJsonOutput:
@@ -141,13 +118,13 @@ class TestRecommendJsonOutput:
         item.db_id = 42
         mock_engine = MagicMock(spec=RecommendationEngine)
         mock_engine.generate_recommendations.return_value = [
-            {
-                "item": item,
-                "score": 0.9,
-                "reasoning": "Great match",
-                "llm_reasoning": "LLM says so",
-                "score_breakdown": {"genre": 0.5, "theme": 0.4},
-            }
+            Recommendation(
+                item=item,
+                score=0.9,
+                reasoning="Great match",
+                llm_reasoning="LLM says so",
+                score_breakdown={"genre": 0.5, "theme": 0.4},
+            )
         ]
 
         result = _invoke_recommend_with_engine(
@@ -201,11 +178,7 @@ class TestRecommendCreatorColumnRegression:
         item.db_id = 7
         mock_engine = MagicMock(spec=RecommendationEngine)
         mock_engine.generate_recommendations.return_value = [
-            {
-                "item": item,
-                "score": 0.9,
-                "reasoning": "Great match",
-            }
+            Recommendation(item=item, score=0.9, reasoning="Great match")
         ]
 
         result = _invoke_recommend_with_engine(

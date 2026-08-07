@@ -156,7 +156,7 @@ class TestDerivedValuesComputedOncePerItemRegression:
         )
 
         assert len(recommendations) == len(candidates)
-        assert all(rec["contributing_items"] for rec in recommendations)
+        assert all(rec.contributing_items for rec in recommendations)
         for item in signal_items:
             assert counted_derivers["extract_genres", item.id] == 1
             assert counted_derivers["extract_creator", item.id] == 1
@@ -192,7 +192,7 @@ class TestDerivedValuesComputedOncePerItemRegression:
             content_type=ContentType.BOOK, count=5
         )
 
-        assert [item.id for item in recommendations[0]["contributing_items"]] == [
+        assert [item.id for item in recommendations[0].contributing_items] == [
             completed.id
         ]
         for name in ("extract_genres", "extract_creator", "get_series_name"):
