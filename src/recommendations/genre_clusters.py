@@ -660,6 +660,29 @@ def get_clusters_for_terms(terms: list[str]) -> set[str]:
     return clusters
 
 
+def cluster_similarity(
+    clusters_a: frozenset[str] | set[str], clusters_b: frozenset[str] | set[str]
+) -> float:
+    """Jaccard similarity of two cluster memberships.
+
+    Takes memberships rather than terms so a caller comparing one item against
+    many derives each item's clusters once instead of once per comparison.
+
+    Args:
+        clusters_a: First cluster membership, from
+            :func:`get_clusters_for_terms`.
+        clusters_b: Second cluster membership.
+
+    Returns:
+        Jaccard similarity in ``[0.0, 1.0]``, and ``0.0`` when either
+        membership is empty.
+    """
+    if not clusters_a or not clusters_b:
+        return 0.0
+
+    return len(clusters_a & clusters_b) / len(clusters_a | clusters_b)
+
+
 def cluster_overlap(terms_a: list[str], terms_b: list[str]) -> float:
     """Jaccard similarity of the cluster memberships of two term lists.
 
@@ -670,12 +693,6 @@ def cluster_overlap(terms_a: list[str], terms_b: list[str]) -> float:
     Returns:
         Jaccard similarity in ``[0.0, 1.0]``.
     """
-    clusters_a = get_clusters_for_terms(terms_a)
-    clusters_b = get_clusters_for_terms(terms_b)
-
-    if not clusters_a or not clusters_b:
-        return 0.0
-
-    intersection = clusters_a & clusters_b
-    union = clusters_a | clusters_b
-    return len(intersection) / len(union)
+    return cluster_similarity(
+        get_clusters_for_terms(terms_a), get_clusters_for_terms(terms_b)
+    )

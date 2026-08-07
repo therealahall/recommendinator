@@ -333,6 +333,18 @@ Compound terms like "Sci-Fi & Fantasy" split first (`genre_normalizer.py`).
 Cross-type reference items use cluster overlap rather than raw Jaccard, so
 broadly-matching items cannot dominate.
 
+**Adaptations and reference items are matched through an index**
+(`reference_index.py`), built once per request over the taste signal and queried
+once per candidate. Each signal item's normalized title, genres, thematic
+clusters, creator and series name are derived when the index is built, and a
+candidate reaches its matches by lookup: an adaptation by normalized title or
+author, a reference by shared genre within its own content type or by shared
+cluster across types. That matters because TV candidates are season-expanded, so
+a few hundred shows become a few thousand candidates. The one thing no lookup
+reaches is a same-type item the user rated 4+ with nothing else in common, which
+qualifies as a reference on its rating alone, so each type also keeps its highly
+rated items in signal order to fill the slots the lookup leaves empty.
+
 ### 5. Enrichment (`src/enrichment/`)
 
 Background metadata gap-filling from external APIs. Providers subclass
