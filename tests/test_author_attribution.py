@@ -23,6 +23,7 @@ def _make_rec(
     title: str,
     author: str | None,
     reasoning: str,
+    content_type: ContentType = ContentType.BOOK,
 ) -> dict[str, Any]:
     """Build a recommendation dict with a ContentItem."""
     return {
@@ -30,7 +31,7 @@ def _make_rec(
             id=title.lower().replace(" ", "_"),
             title=title,
             author=author,
-            content_type=ContentType.BOOK,
+            content_type=content_type,
             status=ConsumptionStatus.UNREAD,
         ),
         "reasoning": reasoning,
@@ -181,3 +182,146 @@ class TestSingleWrongAuthorSubstitution:
 
         # No change needed — correct author already present
         assert recs[0]["reasoning"] == "Frank Herbert created a vast world"
+
+
+class TestCreatorNameEndingInPunctuationRegression:
+    r"""Bug reported: a game blurb crediting the right studio was rewritten anyway.
+
+    Bug reported: reasoning that named "FromSoftware, Inc." and compared it to
+    another studio in the same batch came back with the other studio's name
+    overwritten, so a legitimate cross-reference turned into a sentence
+    crediting one studio twice.
+    Root cause: both mention checks wrapped the creator name in ``\b``. A
+    trailing ``\b`` needs a word character immediately after the match, so a
+    name ending in punctuation never matched, and the legal suffix studios are
+    routinely stored with is exactly that. The item's own creator therefore
+    read as absent, the one other studio read as the single wrong attribution,
+    and the substitution the docstring promises to skip ran.
+    Fix: both checks assert a non-word neighbour instead of a word boundary,
+    which holds whether the name ends in a letter or in punctuation.
+    """
+
+    def test_own_studio_with_a_legal_suffix_leaves_the_reasoning_alone_regression(
+        self,
+    ) -> None:
+        """Both studios are named, so this is the ambiguous case, not a fix."""
+        recs = [
+            _make_rec(
+                "Elden Ring",
+                "FromSoftware, Inc.",
+                "FromSoftware, Inc. sharpens the exploration Nintendo popularised",
+                ContentType.VIDEO_GAME,
+            ),
+            _make_rec(
+                "Breath of the Wild",
+                "Nintendo",
+                "Nintendo at its most open ended",
+                ContentType.VIDEO_GAME,
+            ),
+        ]
+
+        _fix_author_attributions(recs)
+
+        assert (
+            recs[0]["reasoning"]
+            == "FromSoftware, Inc. sharpens the exploration Nintendo popularised"
+        )
+
+    def test_a_wrong_studio_with_a_legal_suffix_is_still_corrected_regression(
+        self,
+    ) -> None:
+        """The wrong-creator scan carries the same boundary, so it needs the same fix."""
+        recs = [
+            _make_rec(
+                "Elden Ring",
+                "FromSoftware",
+                "Nintendo Co., Ltd. built this punishing world",
+                ContentType.VIDEO_GAME,
+            ),
+            _make_rec(
+                "Breath of the Wild",
+                "Nintendo Co., Ltd.",
+                "An open world with room to breathe",
+                ContentType.VIDEO_GAME,
+            ),
+        ]
+
+        _fix_author_attributions(recs)
+
+        assert recs[0]["reasoning"] == "FromSoftware built this punishing world"
+
+    def test_a_creator_named_at_the_very_end_is_recognised_as_present(self) -> None:
+        """A trailing ``\\b`` also failed at the end of the string."""
+        recs = [
+            _make_rec("Dune", "Frank Herbert", "A desert epic by Frank Herbert"),
+            _make_rec("Foundation", "Isaac Asimov", "Asimov delivers a masterpiece"),
+        ]
+
+        _fix_author_attributions(recs)
+
+        assert recs[0]["reasoning"] == "A desert epic by Frank Herbert"
+
+    def test_a_creator_name_still_may_not_match_mid_word(self) -> None:
+        """Neighbour assertions must stay as strict as the boundaries they replace."""
+        recs = [
+            _make_rec("Dune", "Frank Herbert", "Frank Herbertson wrote something else"),
+            _make_rec("Foundation", "Isaac Asimov", "Asimov delivers a masterpiece"),
+        ]
+
+        _fix_author_attributions(recs)
+
+        # "Frank Herbert" is not present as a name, and neither is a wrong one,
+        # so there is nothing to substitute.
+        assert recs[0]["reasoning"] == "Frank Herbertson wrote something else"
+
+
+class TestCorrectionAppliesToEveryContentType:
+    """Storage populates a creator for every type, so the pass runs on all of them.
+
+    Until creators were stored for movies, TV and games, a non-book
+    recommendation carried no ``author`` and the substitution could never
+    reach it. Both halves are live now: a non-book item joins the batch
+    creator pool, and its own reasoning is corrected.
+    """
+
+    def test_a_movie_reasoning_naming_another_batch_director_is_corrected(self) -> None:
+        """A film credited to another film's director is re-credited."""
+        recs = [
+            _make_rec(
+                "Dune",
+                "Denis Villeneuve",
+                "Christopher Nolan builds the tension patiently",
+                ContentType.MOVIE,
+            ),
+            _make_rec(
+                "Tenet",
+                "Christopher Nolan",
+                "A puzzle box of a thriller",
+                ContentType.MOVIE,
+            ),
+        ]
+
+        _fix_author_attributions(recs)
+
+        assert recs[0]["reasoning"] == "Denis Villeneuve builds the tension patiently"
+
+    def test_a_game_reasoning_naming_another_batch_studio_is_corrected(self) -> None:
+        """A game credited to another game's studio is re-credited."""
+        recs = [
+            _make_rec(
+                "Elden Ring",
+                "FromSoftware",
+                "Nintendo rewards patient exploration",
+                ContentType.VIDEO_GAME,
+            ),
+            _make_rec(
+                "Breath of the Wild",
+                "Nintendo",
+                "An open world with room to breathe",
+                ContentType.VIDEO_GAME,
+            ),
+        ]
+
+        _fix_author_attributions(recs)
+
+        assert recs[0]["reasoning"] == "FromSoftware rewards patient exploration"
