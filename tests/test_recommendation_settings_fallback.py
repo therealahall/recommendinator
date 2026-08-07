@@ -18,12 +18,20 @@ counts. A per-user ``UserPreferenceConfig.scorer_weights`` override wins per-key
 (applied by ``build_scorers_with_overrides``); an unset key keeps the global
 default. There is no per-user field for ``min_rating`` or the counts — those
 resolve purely from the assembled global.
+
+``TestLiveSettingsApply`` locks the other half of the promise: those same leaves
+carry no ``restart_required``, so a change made after boot must reach the
+already-running engine.
 """
 
+from collections.abc import Iterator
+from dataclasses import fields
 from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
+from fastapi.testclient import TestClient
 
 from src.cli.config import create_recommendation_engine
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
@@ -34,10 +42,13 @@ from src.recommendations.scorers import (
     Scorer,
     build_scorers_with_overrides,
 )
-from src.settings.metadata import get_entry
+from src.settings.metadata import entries_by_section, get_entry
+from src.settings.service import apply_settings
 from src.storage.manager import StorageManager
 from src.storage.settings_migration import migrate_config_settings
 from src.web.api import _get_recommendations_config
+from src.web.app import create_app
+from src.web.state import app_state, get_config, get_engine, get_storage
 
 
 def _const_default(key: str) -> Any:
@@ -73,6 +84,49 @@ def _build_engine(config: dict[str, Any], storage: StorageManager) -> Any:
         recommendation_generator=None,
         config=config,
     )
+
+
+@pytest.fixture()
+def booted_app(tmp_path: Path) -> Iterator[TestClient]:
+    """Boot a real app on a tmp_path database and yield its test client.
+
+    Goes through ``create_app`` rather than ``_build_engine`` so the engine
+    under test is the one ``get_engine()`` hands the API, wired to the running
+    config dict the settings service mutates. The module-level ``app_state``
+    is restored afterwards so nothing leaks into other tests.
+    """
+    saved = {field.name: getattr(app_state, field.name) for field in fields(app_state)}
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "storage": {
+                    "database_path": str(tmp_path / "recommendations.db"),
+                    "vector_db_path": str(tmp_path / "chroma_db"),
+                }
+            }
+        )
+    )
+    try:
+        yield TestClient(create_app(config_path))
+    finally:
+        for name, value in saved.items():
+            setattr(app_state, name, value)
+
+
+def _running_engine() -> Any:
+    """Return the engine the API would use for the next request."""
+    engine = get_engine()
+    assert engine is not None, "no engine in app_state"
+    return engine
+
+
+def _apply_running(updates: dict[str, Any]) -> None:
+    """Apply *updates* through the settings service against the running app."""
+    config = get_config()
+    storage = get_storage()
+    assert config is not None and storage is not None, "app_state is not booted"
+    apply_settings(config, storage, updates)
 
 
 class TestScorerWeightFallback:
@@ -317,3 +371,137 @@ class TestConstDefaultFallback:
         assert rec_config.max_count == _const_default("recommendations.max_count")
         # No writes on boot — the fallback comes from consts, not a seeded row.
         assert storage.list_settings() == {}
+
+
+class TestLiveSettingsApply:
+    """Bug reported: Settings-page recommendation changes needed a restart.
+
+    Bug reported: a scorer weight (or the minimum liked rating) saved on the
+    Settings page persisted, echoed the new value back and badged no restart,
+    but regenerating returned identical recommendations until the process was
+    restarted.
+    Root cause: ``create_recommendation_engine`` read ``scorer_weights`` and
+    ``min_rating_for_preference`` once at boot and froze them into the scorer
+    instances and the ``PreferenceAnalyzer``, while ``apply_settings`` wrote the
+    DB row and live-applied only into the running config dict.
+    Fix: the engine holds that same dict by reference and re-resolves both knobs
+    on every read, so the next ``generate_recommendations`` call sees the change.
+    """
+
+    _GENRE_WEIGHT_KEY = "recommendations.scorer_weights.genre_match"
+
+    @staticmethod
+    def _seed_library(storage: StorageManager) -> None:
+        """Two rated books and two candidates that swap genre for creator.
+
+        The liked genre and the liked author are deliberately split across the
+        two candidates, so ``genre_match`` alone decides the order: at its
+        default weight the sci-fi book by the disliked author leads, and at
+        weight 0 the poetry book by the liked author takes over.
+        """
+        completed = ConsumptionStatus.COMPLETED
+        unread = ConsumptionStatus.UNREAD
+        for item_id, title, author, genre, status, rating in (
+            ("liked", "Ash Harbour", "Vera Lang", "Science Fiction", completed, 5),
+            ("disliked", "Grey Ledger", "Miles Crane", "Poetry", completed, 1),
+            (
+                "genre-led",
+                "Neon Divide",
+                "Miles Crane",
+                "Science Fiction",
+                unread,
+                None,
+            ),
+            ("creator-led", "Quiet Harvest", "Vera Lang", "Poetry", unread, None),
+        ):
+            storage.save_content_item(
+                ContentItem(
+                    id=item_id,
+                    title=title,
+                    author=author,
+                    content_type=ContentType.BOOK,
+                    status=status,
+                    rating=rating,
+                    metadata={"genre": genre},
+                )
+            )
+
+    @staticmethod
+    def _recommendations(client: TestClient) -> list[dict[str, Any]]:
+        """Return the book recommendations the API serves right now."""
+        response = client.get(
+            "/api/recommendations",
+            params={"type": "book", "count": 5, "use_llm": False},
+        )
+        assert response.status_code == 200, response.text
+        return list(response.json())
+
+    def test_scorer_weight_change_reaches_running_engine_regression(
+        self, booted_app: TestClient
+    ) -> None:
+        """Zeroing the genre weight after boot reaches the running pipeline."""
+        before = _weight_of(_running_engine().pipeline.scorers, GenreMatchScorer)
+        assert before == _const_default(self._GENRE_WEIGHT_KEY)
+
+        _apply_running({self._GENRE_WEIGHT_KEY: 0.0})
+
+        assert _weight_of(_running_engine().pipeline.scorers, GenreMatchScorer) == 0.0
+
+    def test_min_rating_change_reaches_running_analyzer_regression(
+        self, booted_app: TestClient
+    ) -> None:
+        """Lowering the minimum liked rating reaches the running analyzer."""
+        key = "recommendations.min_rating_for_preference"
+        assert _running_engine().preference_analyzer.min_rating == _const_default(key)
+
+        _apply_running({key: 2})
+
+        assert _running_engine().preference_analyzer.min_rating == 2
+
+    def test_settings_write_changes_the_next_api_response_regression(
+        self, booted_app: TestClient
+    ) -> None:
+        """Two GETs straddling a weight-zeroing PUT return different scoring.
+
+        The end-to-end shape of the report: the user moves a slider, saves, and
+        regenerates. Before the fix both GETs returned the boot-time scoring.
+        """
+        storage = get_storage()
+        assert storage is not None, "app_state is not booted"
+        self._seed_library(storage)
+
+        before = self._recommendations(booted_app)
+        response = booted_app.put(
+            "/api/settings", json={"updates": {self._GENRE_WEIGHT_KEY: 0.0}}
+        )
+        assert response.status_code == 200, response.text
+        after = self._recommendations(booted_app)
+
+        # Positive control on the seeded flip: without it the inequalities
+        # below could pass on noise instead of on the weight actually applying.
+        assert before[0]["title"] == "Neon Divide"
+        assert after[0]["title"] == "Quiet Harvest"
+
+        # Zeroing a weight re-normalises every aggregate and re-orders the list,
+        # so both the per-title scores and the breakdown sequence must move.
+        assert {rec["title"]: rec["score"] for rec in before} != {
+            rec["title"]: rec["score"] for rec in after
+        }
+        assert [rec["score_breakdown"] for rec in before] != [
+            rec["score_breakdown"] for rec in after
+        ]
+
+    def test_no_recommendations_setting_requires_a_restart(self) -> None:
+        """The registry must keep every ``recommendations.*`` leaf live-applied.
+
+        Marking one ``restart_required`` would stop ``apply_settings`` writing
+        it into the running config, silently re-freezing the engine.
+        """
+        restart_gated = [
+            entry.key
+            for entries in entries_by_section().values()
+            for entry in entries
+            if entry.key.startswith("recommendations.") and entry.restart_required
+        ]
+
+        assert restart_gated == []

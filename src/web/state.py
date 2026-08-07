@@ -144,6 +144,11 @@ def reload_config() -> bool:
     Re-reads the config file and updates app_state.
     Useful for picking up config changes without restarting.
 
+    Refreshes the existing dict in place rather than replacing it. The
+    recommendation engine holds that dict by reference to resolve its weights
+    per call, so rebinding ``app_state.config`` would strand it on the
+    pre-reload values, the same freeze the Settings page used to hit.
+
     Returns:
         True if config was reloaded successfully, False otherwise.
     """
@@ -165,7 +170,11 @@ def reload_config() -> bool:
             migrate_source_labels(app_state.storage)
             migrate_source_config_plugins(app_state.storage)
             migrate_config_secrets(config, app_state.storage)
-        app_state.config = config
+        if app_state.config is None:
+            app_state.config = config
+        else:
+            app_state.config.clear()
+            app_state.config.update(config)
         logger.info("Reloaded config from %s", config_path)
         return True
     except Exception:
