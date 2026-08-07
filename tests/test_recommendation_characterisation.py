@@ -18,7 +18,8 @@ from __future__ import annotations
 import copy
 import inspect
 import random
-from collections.abc import Sequence
+from collections import Counter
+from collections.abc import MutableSequence, Sequence
 from typing import Any
 from unittest.mock import Mock, patch
 
@@ -27,7 +28,6 @@ import pytest
 from src.llm.embeddings import EmbeddingGenerator
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.user_preferences import UserPreferenceConfig
-from src.recommendations import engine as engine_module
 from src.recommendations.engine import RecommendationEngine
 from src.recommendations.record import Recommendation
 from src.recommendations.scorers import (
@@ -36,6 +36,7 @@ from src.recommendations.scorers import (
     SemanticSimilarityScorer,
     build_scorers_with_overrides,
 )
+from src.recommendations.similarity import SimilarityMatcher
 from src.settings.metadata import get_entry
 from src.storage.manager import StorageManager
 
@@ -624,11 +625,24 @@ def _library_storage(items: Sequence[ContentItem]) -> Mock:
     return storage
 
 
-def _engine_over(items: Sequence[ContentItem]) -> RecommendationEngine:
+def _engine_over(
+    items: Sequence[ContentItem], rng: random.Random | None = None
+) -> RecommendationEngine:
     """Build a non-AI engine over *items* (no LLM, no vector DB, no network)."""
     return RecommendationEngine(
         storage_manager=_library_storage(items),
         embedding_generator=None,
+        recommendation_generator=None,
+        min_rating=4,
+        rng=rng,
+    )
+
+
+def _ai_engine() -> RecommendationEngine:
+    """Build an AI engine over the full library, its search left to the caller."""
+    return RecommendationEngine(
+        storage_manager=_library_storage(LIBRARY),
+        embedding_generator=Mock(spec=EmbeddingGenerator),
         recommendation_generator=None,
         min_rating=4,
     )
@@ -640,9 +654,34 @@ def engine() -> RecommendationEngine:
     return _engine_over(LIBRARY)
 
 
+class _ReversingRandom(random.Random):
+    """A shuffle source that reverses each group instead of shuffling it."""
+
+    def shuffle(self, x: MutableSequence[Any]) -> None:
+        """Reverse *x* in place."""
+        x.reverse()
+
+
+class _KeepingRandom(random.Random):
+    """A shuffle source that leaves each group in the order it was scored."""
+
+    def shuffle(self, x: MutableSequence[Any]) -> None:
+        """Leave *x* exactly as it is."""
+
+
 def _titles(recommendations: list[Recommendation]) -> list[str]:
     """Recommended titles, best first."""
     return [rec.item.title for rec in recommendations]
+
+
+def _references_by_title(engine: RecommendationEngine) -> dict[str, list[str]]:
+    """The reference ids cited for each recommended movie, in cited order."""
+    return {
+        rec.item.title: [reference.id for reference in rec.contributing_items]
+        for rec in engine.generate_recommendations(
+            content_type=ContentType.MOVIE, count=20
+        )
+    }
 
 
 def _scores(recommendations: list[Recommendation]) -> list[float]:
@@ -874,17 +913,54 @@ class TestSemanticSimilarityStaysOptional:
 
     def test_present_when_an_embedding_generator_is_supplied(self):
         """Positive control: the scorer is conditional, not simply gone."""
-        ai_engine = RecommendationEngine(
-            storage_manager=_library_storage(LIBRARY),
-            embedding_generator=Mock(spec=EmbeddingGenerator),
-            recommendation_generator=None,
-            min_rating=4,
-        )
-
         assert any(
             isinstance(scorer, SemanticSimilarityScorer)
-            for scorer in ai_engine.pipeline.scorers
+            for scorer in _ai_engine().pipeline.scorers
         )
+
+    def test_absent_from_the_equation_when_the_search_finds_nothing(self):
+        """An AI engine whose search returns nothing scores like a non-AI one.
+
+        A fresh AI install, a reset vector store and a reference item whose
+        embedding fails all leave the similarity scores empty, and the scorer
+        then rates every candidate 0.0 — deflating every aggregate by its share
+        of the weight and showing a 0.0 row on every card. It is inert in
+        exactly the sense the other dropped scorers are.
+        """
+        ai_engine = _ai_engine()
+
+        with patch.object(SimilarityMatcher, "find_similar", return_value=[]):
+            recommendations = ai_engine.generate_recommendations(
+                content_type=ContentType.MOVIE, count=20
+            )
+
+        assert tuple(_titles(recommendations)) == MOVIE_ORDER
+        assert _scores(recommendations) == pytest.approx(
+            list(MOVIE_SCORES), abs=SCORE_TOLERANCE
+        )
+        for recommendation in recommendations:
+            assert "semantic_similarity" not in recommendation.score_breakdown
+
+    def test_present_in_the_equation_when_the_search_finds_something(self):
+        """Positive control: one hit puts the row back on every candidate.
+
+        Without this, dropping the scorer unconditionally would satisfy the
+        assertions above.
+        """
+        ai_engine = _ai_engine()
+        hit = next(item for item in LIBRARY if item.id == "m-nice-guys")
+
+        with patch.object(SimilarityMatcher, "find_similar", return_value=[(hit, 0.9)]):
+            recommendations = ai_engine.generate_recommendations(
+                content_type=ContentType.MOVIE, count=20
+            )
+
+        assert recommendations
+        for recommendation in recommendations:
+            assert "semantic_similarity" in recommendation.score_breakdown
+        assert _by_title(recommendations, "The Nice Guys").score_breakdown[
+            "semantic_similarity"
+        ] == pytest.approx(0.9, abs=SCORE_TOLERANCE)
 
 
 class TestIgnoredItems:
@@ -1022,13 +1098,17 @@ class TestBaselineStability:
                 list(scores), abs=SCORE_TOLERANCE
             )
 
-    def test_ordering_is_independent_of_the_shuffle(self, engine, monkeypatch):
-        """The engine shuffles reference items; ranking must not move with it."""
-        monkeypatch.setattr(
-            engine_module.random, "shuffle", lambda sequence: sequence.reverse()
-        )
+    def test_ordering_is_independent_of_the_shuffle(self):
+        """The engine shuffles reference items; ranking must not move with it.
 
-        recommendations = engine.generate_recommendations(
+        The shuffle source is the engine's injected ``random.Random``, so the
+        adversary has to be that instance. Patching the ``random`` *module*
+        leaves the bound method alone and tests nothing, which is how this test
+        went quiet once the shuffle moved behind the injected seam.
+        """
+        adversarial = _engine_over(LIBRARY, rng=_ReversingRandom())
+
+        recommendations = adversarial.generate_recommendations(
             content_type=ContentType.MOVIE, count=20
         )
 
@@ -1036,6 +1116,23 @@ class TestBaselineStability:
         assert _scores(recommendations) == pytest.approx(
             list(MOVIE_SCORES), abs=SCORE_TOLERANCE
         )
+
+    def test_the_adversarial_shuffle_does_reach_the_references(self):
+        """Negative control: that rng really is the one the engine shuffles with.
+
+        Reversing every group of equally related references has to change the
+        order the references are cited in, or the test above would hold just as
+        well against a shuffle nothing can reach.
+        """
+        unshuffled = _references_by_title(_engine_over(LIBRARY, rng=_KeepingRandom()))
+        reversed_groups = _references_by_title(
+            _engine_over(LIBRARY, rng=_ReversingRandom())
+        )
+
+        assert {title: set(refs) for title, refs in unshuffled.items()} == {
+            title: set(refs) for title, refs in reversed_groups.items()
+        }
+        assert unshuffled != reversed_groups
 
     def test_generating_does_not_mutate_the_library(self, engine):
         """Every test shares one module-level library, so a write would leak.
@@ -1060,12 +1157,15 @@ class TestBaselineStability:
         """
         engine.generate_recommendations(content_type=ContentType.MOVIE, count=20)
 
-        assert [call[0] for call in engine.storage.method_calls] == [
-            "get_signal_items",
-            "get_completed_items",
-            "get_signal_items",
-            "get_unconsumed_items",
-        ]
+        # Counted rather than sequenced: which reads happen is the claim, and
+        # swapping two independent ones is not a regression.
+        assert Counter(call[0] for call in engine.storage.method_calls) == Counter(
+            {
+                "get_signal_items": 2,
+                "get_completed_items": 1,
+                "get_unconsumed_items": 1,
+            }
+        )
 
 
 class TestBaselineSensitivity:

@@ -24,13 +24,14 @@ from src.models.content import (
 )
 from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.engine import RecommendationEngine
-from src.recommendations.record import Recommendation
+from src.recommendations.record import Recommendation, RecommendationPayload
 from src.recommendations.scorers import SCORER_NAME_MAP
 from src.storage.manager import StorageManager
 from src.utils.sorting import MAX_SEARCH_LENGTH
 from src.web.api import (
     CompletionRequest,
     ItemEditRequest,
+    RecommendationResponse,
     UserPreferenceResponse,
 )
 from src.web.app import app as web_app
@@ -41,10 +42,17 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 PYTHON_SEARCH_BOUND = "src/utils/sorting.py"
 FRONTEND_CONSTANTS = "resources/js/constants/library.ts"
 FRONTEND_PREFERENCES = "resources/js/stores/preferences.ts"
+FRONTEND_TYPES = "resources/js/types/api.ts"
 
 # `export const MAX_SEARCH_LENGTH = 200` — the only form that file uses.
 _TS_SEARCH_LENGTH = re.compile(
     r"^export const MAX_SEARCH_LENGTH = (?P<value>\d+)\s*$", re.MULTILINE
+)
+
+# The body of `export interface RecommendationResponse { ... }`. No field of it
+# is an object literal, so the first closing brace is the interface's own.
+_TS_RECOMMENDATION_FIELDS = re.compile(
+    r"^export interface RecommendationResponse \{(?P<body>[^}]*)\}", re.MULTILINE
 )
 
 # The quoted entries of `export const SCORER_KEYS = [ ... ] as const`.
@@ -328,14 +336,52 @@ class TestScorerKeysMatchTheFrontendList:
         )
 
 
-class TestRecommendationJsonIsByteIdenticalOnBothSurfaces:
+class TestRecommendationPayloadKeysAgree:
+    """One recommendation shape, declared three times.
+
+    ``RecommendationPayload`` is what both interfaces serialise,
+    ``RecommendationResponse`` is what the web endpoint validates it into, and
+    the TypeScript ``RecommendationResponse`` is what the UI reads off the
+    wire. Pydantic drops a key its model does not declare and TypeScript never
+    sees the Python at all, so a field added on one side and forgotten on
+    another is a divergence no single surface's suite can see.
+    """
+
+    def test_the_payload_and_the_response_model_declare_the_same_fields(
+        self,
+    ) -> None:
+        """Nothing the payload sends is dropped, and nothing else is declared."""
+        assert set(RecommendationPayload.__annotations__) == set(
+            RecommendationResponse.model_fields
+        )
+
+    def test_the_typescript_interface_declares_the_same_fields(self) -> None:
+        """The UI's interface is the payload's field set, exactly."""
+        source = (_REPO_ROOT / FRONTEND_TYPES).read_text()
+        match = _TS_RECOMMENDATION_FIELDS.search(source)
+
+        assert match is not None, (
+            f"{FRONTEND_TYPES} no longer declares RecommendationResponse as a"
+            f" plain interface body, so it can no longer be checked against"
+            f" RecommendationPayload."
+        )
+        assert set(re.findall(r"^\s*(\w+):", match.group("body"), re.MULTILINE)) == set(
+            RecommendationPayload.__annotations__
+        ), (
+            f"{FRONTEND_TYPES} and RecommendationPayload disagree about which"
+            f" fields a recommendation carries, so the UI reads a field the API"
+            f" never sends or ignores one it does."
+        )
+
+
+class TestRecommendationJsonIsTheSameOnBothSurfaces:
     """``recommend --format json`` and ``GET /api/recommendations`` agree.
 
     Both serialise one :class:`Recommendation` through ``to_payload``, so the
     field set, the values and the key order are one decision made in one place.
-    The expected text below is what both surfaces emitted while each built its
-    own dict by hand, which is what makes this a pin rather than a snapshot:
-    a change to the payload shows up here as changed bytes on both sides.
+    The two surfaces are driven over one engine here and their documents
+    compared, so the claim is about what they emit rather than about two
+    literals somebody kept in step by hand.
     """
 
     # One recommendation carrying a distinguishable value in every field the
@@ -383,22 +429,15 @@ class TestRecommendationJsonIsByteIdenticalOnBothSurfaces:
   }
 ]"""
 
-    WEB_JSON = (
-        '[{"db_id":42,"title":"Hyperion","author":"Dan Simmons","score":0.875,'
-        '"reasoning":"Recommended because you liked the book Dune",'
-        '"llm_reasoning":"Big ideas, bigger prose.",'
-        '"score_breakdown":{"genre_match":0.9,"creator_match":0.5},'
-        '"variety_penalty":0.25}]'
-    )
-
     def _engine(self) -> MagicMock:
         """An engine that recommends exactly the record above."""
         engine = MagicMock(spec=RecommendationEngine)
         engine.generate_recommendations.return_value = [self.RECOMMENDATION]
         return engine
 
-    def test_the_cli_emits_the_pinned_json(self) -> None:
-        """``recommend --type book --format json`` prints it, byte for byte."""
+    @staticmethod
+    def _cli_document(engine: MagicMock) -> str:
+        """The document ``recommend --type book --format json`` prints."""
         storage = MagicMock(spec=StorageManager)
         storage.get_user_preference_config.return_value = None
 
@@ -406,32 +445,53 @@ class TestRecommendationJsonIsByteIdenticalOnBothSurfaces:
             CliRunner(),
             ["recommend", "--type", "book", "--format", "json"],
             storage,
-            engine=self._engine(),
+            engine=engine,
         )
 
         assert result.exit_code == 0
         # The command prints a progress line before the document.
-        assert result.output.endswith(self.CLI_JSON + "\n")
+        return result.output[result.output.index("[") :]
 
-    def test_the_web_endpoint_emits_the_pinned_json(self) -> None:
-        """``GET /api/recommendations`` returns the same document, compacted."""
+    @staticmethod
+    def _web_document(engine: MagicMock) -> str:
+        """The document ``GET /api/recommendations`` returns."""
         storage = MagicMock(spec=StorageManager)
         storage.get_user_preference_config.return_value = None
 
         with (
-            patch("src.web.api.get_engine", return_value=self._engine()),
+            patch("src.web.api.get_engine", return_value=engine),
             patch("src.web.api.get_storage", return_value=storage),
             patch("src.web.api.get_config", return_value={}),
         ):
             response = TestClient(web_app).get("/api/recommendations?type=book&count=1")
 
         assert response.status_code == 200
-        assert response.text == self.WEB_JSON
+        return response.text
 
-    def test_the_two_documents_carry_the_same_data(self) -> None:
-        """Neither surface adds, drops or renames a field the other does not.
+    def test_the_cli_emits_the_pinned_json(self) -> None:
+        """``recommend --type book --format json`` prints it, byte for byte.
 
-        The pins above are per-surface; this is the parity claim itself, and it
-        survives a reformat of either document.
+        The one byte-level pin left, because the CLI's document is the one a
+        user reads: it fixes the indentation and the key order as well as the
+        values.
         """
-        assert json.loads(self.CLI_JSON) == json.loads(self.WEB_JSON)
+        assert self._cli_document(self._engine()) == self.CLI_JSON + "\n"
+
+    def test_both_surfaces_produce_the_same_document(self) -> None:
+        """Neither surface adds, drops, renames or reorders a field.
+
+        Both documents are produced here rather than quoted, so this fails on
+        a change to either surface — including one that breaks both of them the
+        same way.
+        """
+        engine = self._engine()
+
+        cli_document = json.loads(self._cli_document(engine))
+        web_document = json.loads(self._web_document(engine))
+
+        assert cli_document == web_document
+        # Parsed dicts compare equal whatever order they were written in, so
+        # the key order is compared on its own.
+        assert [list(rec) for rec in cli_document] == [
+            list(rec) for rec in web_document
+        ]

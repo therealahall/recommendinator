@@ -21,7 +21,6 @@ from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations import engine as engine_module
 from src.recommendations.engine import (
     RecommendationEngine,
-    _CandidateMetadata,
     _collapse_duplicate_db_ids,
 )
 from src.recommendations.identity import candidate_key
@@ -2374,7 +2373,7 @@ class TestSeededReferenceOrderRegression:
         assert runs[0].reasoning == runs[1].reasoning
 
 
-def _variety_score_for(recs: list[dict], item_id: str) -> float:
+def _variety_score_for(recs: list[Recommendation], item_id: str) -> float:
     """Return the score of the recommendation with *item_id* (0.0 if absent)."""
     for rec in recs:
         if rec.item.id == item_id:
@@ -2382,7 +2381,7 @@ def _variety_score_for(recs: list[dict], item_id: str) -> float:
     return 0.0
 
 
-def _variety_rank_of(recs: list[dict], item_id: str) -> int:
+def _variety_rank_of(recs: list[Recommendation], item_id: str) -> int:
     """Return the index of *item_id* in *recs* (len(recs) if absent)."""
     for index, rec in enumerate(recs):
         if rec.item.id == item_id:
@@ -3135,7 +3134,7 @@ class TestVarietyCrossoverCharacterisation:
     """
 
     @staticmethod
-    def _recommend(engine, setting: float) -> list[dict]:
+    def _recommend(engine, setting: float) -> list[Recommendation]:
         """Both candidates, best first, with the slider at *setting*."""
         return engine.generate_recommendations(
             content_type=ContentType.BOOK,
@@ -5245,37 +5244,22 @@ class TestSeasonSiblingsStayDistinctInEveryMap:
             ]
         )
 
-    def test_each_season_keeps_its_own_breakdown_and_references(self):
-        """The breakdown and metadata maps hold both siblings, not one."""
+    def test_each_season_keeps_its_own_breakdown_and_adaptations(self):
+        """Both per-candidate maps hold both siblings, not one."""
         first, second = self._seasons()
         engine = _engine_for_helpers()
-        blade_runner = make_item(
-            item_id="m1",
-            title="Blade Runner",
-            content_type=ContentType.MOVIE,
-            rating=5,
-        )
         knives_out = make_item(
             item_id="m2", title="Knives Out", content_type=ContentType.MOVIE, rating=5
         )
-        candidate_metadata = [
-            _CandidateMetadata(
-                item=first,
-                adaptations=[],
-                contributing_items=[blade_runner],
-                score_breakdown={"series_order": 0.8},
-            ),
-            _CandidateMetadata(
-                item=second,
-                adaptations=[],
-                contributing_items=[knives_out],
-                score_breakdown={"series_order": 0.2},
-            ),
-        ]
 
         recommendations = engine._format_recommendations(
             [(first, 1.0, 0.0), (second, 0.5, 0.0)],
-            candidate_metadata,
+            {
+                candidate_key(first): {"series_order": 0.8},
+                candidate_key(second): {"series_order": 0.2},
+            },
+            {candidate_key(second): [knives_out]},
+            SignalIndex([]),
             PreferenceAnalyzer(min_rating=4).analyze([]),
         )
 
@@ -5284,8 +5268,8 @@ class TestSeasonSiblingsStayDistinctInEveryMap:
             {"series_order": 0.2},
         ]
         assert [
-            [item.title for item in rec.contributing_items] for rec in recommendations
-        ] == [["Blade Runner"], ["Knives Out"]]
+            [item.title for item in rec.adaptations] for rec in recommendations
+        ] == [[], ["Knives Out"]]
 
     def test_each_season_keeps_its_own_adaptations(self):
         """One season adapting a film does not lend that reason to the other."""
