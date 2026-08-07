@@ -102,10 +102,13 @@ class SimilarityMatcher:
             )
 
             if exclude_ids:
+                # A set once, not a scan per hit: the engine builds this list
+                # from every item the user has consumed.
+                excluded = set(exclude_ids)
                 similar_results = [
                     result
                     for result in similar_results
-                    if result.get("content_id") not in exclude_ids
+                    if result.get("content_id") not in excluded
                 ]
 
             hits = [

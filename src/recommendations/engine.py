@@ -3,7 +3,7 @@
 import logging
 import random
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from typing import Any, TypeVar
 
 from src.llm.embeddings import EmbeddingGenerator
@@ -64,23 +64,6 @@ _RankedCandidate = tuple[ContentItem, float, float]
 
 #: Upper bound on the hits one vector-similarity search may return.
 _MAX_SIMILARITY_RESULTS = 500
-
-
-@dataclass(frozen=True)
-class _CandidateMetadata:
-    """What the engine knows about a candidate that survived filtering.
-
-    Attributes:
-        item: The candidate itself.
-        adaptations: Consumed items this candidate adapts across media.
-        contributing_items: Consumed items that explain this candidate.
-        score_breakdown: Scorer config key -> raw score.
-    """
-
-    item: ContentItem
-    adaptations: list[ContentItem]
-    contributing_items: list[ContentItem]
-    score_breakdown: dict[str, float]
 
 
 def _collapse_duplicate_db_ids(
@@ -150,14 +133,20 @@ class RecommendationEngine:
     pipeline so that AI scores participate in weighted aggregation alongside
     all other scorers.
 
-    When a running *config* is supplied, the ``recommendations`` knobs
+    When a *config_provider* is supplied, the ``recommendations`` knobs
     (:attr:`pipeline` weights, :attr:`preference_analyzer` and
-    :attr:`custom_preference_weight`) resolve from it on every read rather than
-    freezing at construction, so a Settings-page change live-applied into that
-    dict reaches the next ``generate_recommendations`` call without a restart.
-    The constructor arguments stay the baseline the config overlays, keeping the
+    :attr:`custom_preference_weight`) resolve from the config it returns on
+    every read rather than freezing at construction, so a Settings-page change
+    reaches the next ``generate_recommendations`` call without a restart.  The
+    constructor arguments stay the baseline the config overlays, keeping the
     resolution order class default < ``config.yaml`` < global settings <
     per-user override.
+
+    A provider rather than the dict itself, because scoring runs off the event
+    loop (Starlette streams the synchronous SSE generator in a threadpool
+    worker) while config writes run on it.  Holding the dict would mean reading
+    one a writer is part-way through rewriting; asking for it each time means
+    the writer can only ever swap in a finished one.
     """
 
     def __init__(
@@ -170,7 +159,7 @@ class RecommendationEngine:
         semantic_similarity_weight: float = 1.5,
         custom_preference_weight: float = 1.0,
         rng: random.Random | None = None,
-        config: dict[str, Any] | None = None,
+        config_provider: Callable[[], dict[str, Any] | None] | None = None,
     ) -> None:
         """Initialize recommendation engine.
 
@@ -188,8 +177,8 @@ class RecommendationEngine:
                 which is built per call from the user's custom rules.
             rng: Randomness used to shuffle equally relevant reference items.
                 Pass a seeded instance to make that ordering reproducible.
-            config: The **running** config dict, held by reference so that
-                settings live-applied into it take effect on the next call.
+            config_provider: Returns the **running** config, consulted on every
+                read so that a settings change takes effect on the next call.
                 Its ``recommendations`` section overlays ``min_rating`` and
                 every scorer weight above. ``None`` freezes them as given.
         """
@@ -197,7 +186,7 @@ class RecommendationEngine:
         self.rng = rng if rng is not None else _DEFAULT_RNG
         self.embedding_gen = embedding_generator
         self.llm_generator = recommendation_generator
-        self._config = config
+        self._config_provider = config_provider
         self._base_min_rating = min_rating
         self._base_custom_preference_weight = custom_preference_weight
         self._base_scorers = list(scorers if scorers is not None else DEFAULT_SCORERS)
@@ -243,9 +232,10 @@ class RecommendationEngine:
         no children parses to ``None``, which ``dict.get``'s default never
         catches because the key is present.
         """
-        if self._config is None:
+        config = self._config_provider() if self._config_provider is not None else None
+        if config is None:
             return {}
-        section = self._config.get("recommendations")
+        section = config.get("recommendations")
         return section if isinstance(section, dict) else {}
 
     def _configured_weights(self) -> dict[str, float]:
@@ -423,6 +413,7 @@ class RecommendationEngine:
             interpreted_prefs,
             unconsumed_items,
             has_adaptations=bool(adaptations),
+            has_similarity_scores=bool(similarity_scores),
         )
 
         pipeline_scored = active_pipeline.score_candidates_with_breakdown(
@@ -442,10 +433,12 @@ class RecommendationEngine:
             logger.info("Series ordering disabled by user preference")
             filtered_candidates = pipeline_scored
 
-        # Find the consumed items that explain each surviving candidate
-        candidate_metadata = self._build_candidate_metadata(
-            filtered_candidates, signal_index, adaptations
-        )
+        # Ranking drops down to (item, score, penalty), so the rows behind each
+        # score are kept here for the formatting step to look up.
+        breakdown_by_key = {
+            candidate_key(scored.item): scored.score_breakdown
+            for scored in filtered_candidates
+        }
 
         # The pipeline aggregate is the score, and the pipeline already sorted
         # on it, so ranking is the filtered order with no penalty applied yet.
@@ -487,7 +480,11 @@ class RecommendationEngine:
 
         # Format recommendations
         recommendations = self._format_recommendations(
-            top_recommendations, candidate_metadata, preferences
+            top_recommendations,
+            breakdown_by_key,
+            adaptations,
+            signal_index,
+            preferences,
         )
 
         # Optionally enhance with LLM reasoning
@@ -687,6 +684,7 @@ class RecommendationEngine:
         unconsumed_items: list[ContentItem],
         *,
         has_adaptations: bool,
+        has_similarity_scores: bool,
     ) -> ScoringPipeline:
         """Assemble the pipeline for one call.
 
@@ -700,6 +698,9 @@ class RecommendationEngine:
             interpreted_prefs: Interpreted custom rules, when the user has any.
             unconsumed_items: The candidates about to be scored.
             has_adaptations: Whether any candidate adapts consumed content.
+            has_similarity_scores: Whether the vector search scored anything.
+                It finds nothing on a fresh AI install, on a reset vector store
+                and when every reference embedding fails.
 
         Returns:
             The pipeline to score this call's candidates with.
@@ -729,6 +730,7 @@ class RecommendationEngine:
             for scorer_class, has_signal in (
                 (ContinuationScorer, has_active),
                 (AdaptationScorer, has_adaptations),
+                (SemanticSimilarityScorer, has_similarity_scores),
             )
             if not has_signal
         )
@@ -736,34 +738,6 @@ class RecommendationEngine:
         return ScoringPipeline(
             [scorer for scorer in scorers if not isinstance(scorer, inert)]
         )
-
-    def _build_candidate_metadata(
-        self,
-        filtered_candidates: list[ScoredCandidate],
-        signal_index: SignalIndex,
-        adaptations: dict[str, list[ContentItem]],
-    ) -> list[_CandidateMetadata]:
-        """Build the display metadata for each surviving candidate.
-
-        Args:
-            filtered_candidates: Scored candidates after series filtering.
-            signal_index: The indexed taste-signal set to cite references from.
-            adaptations: Pre-computed candidate key -> adaptations map.
-
-        Returns:
-            One metadata entry per candidate, in the order given.
-        """
-        return [
-            _CandidateMetadata(
-                item=scored_candidate.item,
-                adaptations=adaptations.get(candidate_key(scored_candidate.item), []),
-                contributing_items=signal_index.references_for(
-                    scored_candidate.item, self.rng
-                ),
-                score_breakdown=scored_candidate.score_breakdown,
-            )
-            for scored_candidate in filtered_candidates
-        ]
 
     @staticmethod
     def _apply_variety_penalty(
@@ -826,29 +800,34 @@ class RecommendationEngine:
     def _format_recommendations(
         self,
         ranked_items: list[_RankedCandidate],
-        candidate_metadata: list[_CandidateMetadata],
+        breakdown_by_key: dict[str, dict[str, float]],
+        adaptations: dict[str, list[ContentItem]],
+        signal_index: SignalIndex,
         preferences: UserPreferences,
     ) -> list[Recommendation]:
         """Format ranked candidates into recommendation records.
 
+        References are looked up here, on the sliced list, rather than for
+        every candidate that survived filtering: nothing but these records
+        reads them, and the lookup builds a candidate profile and walks the
+        index's posting lists, which on a season-expanded TV library is the
+        dominant cost of the request.
+
         Args:
-            ranked_items: Ranked candidates, best first.
-            candidate_metadata: Per-candidate metadata from build step.
+            ranked_items: The ranked candidates being emitted, best first.
+            breakdown_by_key: Candidate key -> scorer config key -> raw score.
+            adaptations: Pre-computed candidate key -> adaptations map.
+            signal_index: The indexed taste-signal set to cite references from.
             preferences: User preferences for reasoning generation.
 
         Returns:
             The recommendations, in the order given.
         """
-        metadata_by_key = {
-            candidate_key(meta.item): meta for meta in candidate_metadata
-        }
-
         recommendations: list[Recommendation] = []
         for item, score, variety_penalty in ranked_items:
-            meta = metadata_by_key.get(candidate_key(item))
-
-            adaptations_list = meta.adaptations if meta else []
-            contributing_list = meta.contributing_items if meta else []
+            key = candidate_key(item)
+            item_adaptations = adaptations.get(key, [])
+            contributing_items = signal_index.references_for(item, self.rng)
 
             recommendations.append(
                 Recommendation(
@@ -857,13 +836,13 @@ class RecommendationEngine:
                     reasoning=self._generate_reasoning(
                         item,
                         preferences,
-                        adaptations_list,
-                        contributing_list,
+                        item_adaptations,
+                        contributing_items,
                     ),
-                    score_breakdown=meta.score_breakdown if meta else {},
+                    score_breakdown=breakdown_by_key[key],
                     variety_penalty=variety_penalty,
-                    contributing_items=contributing_list,
-                    adaptations=adaptations_list,
+                    contributing_items=contributing_items,
+                    adaptations=item_adaptations,
                 )
             )
 

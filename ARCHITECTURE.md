@@ -286,7 +286,8 @@ RecommendationEngine
   |     |-- SeriesAffinityScorer    well-rated franchises (avg >= 4)
   |     |-- AdaptationScorer        cross-media adaptations (dropped when none exist)
   |     |-- [CustomPreferenceScorer]    when the user has natural language rules
-  |     |-- [SemanticSimilarityScorer]  when AI enabled
+  |     |-- [SemanticSimilarityScorer]  when AI enabled and the search found
+  |     |                                something (dropped otherwise)
   |
   |-- UserPreferenceConfig (per-user weight overrides)
   |-- Variety penalty (variety.py) when variety_penalty > 0
@@ -302,9 +303,14 @@ See [docs/SCORING.md](docs/SCORING.md).
 The first three assemble into the effective global. A per-user override
 (`users.settings` JSON, `"preference_config"`) then wins per key, and an unset key
 keeps the global. `min_rating_for_preference` and the counts have no per-user
-field. The engine holds the running config by reference and re-resolves the
-weights and `min_rating_for_preference` on every request, so a Settings-page
-edit reaches the next set of recommendations without a restart.
+field. The engine asks for the running config and re-resolves the weights and
+`min_rating_for_preference` on every request, so a Settings-page edit reaches
+the next set of recommendations without a restart. It asks rather than holds
+because scoring runs off the event loop (Starlette streams the synchronous SSE
+generator in a threadpool worker) while config writes run on it: a hot-reload
+binds a whole new config in one statement, and a live-applied setting swaps the
+mappings on its path for updated copies, so a request in flight always finishes
+on the configuration it started with.
 
 Invariants:
 
