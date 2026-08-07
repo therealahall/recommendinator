@@ -81,6 +81,35 @@ class TestCandidateKey:
 
         assert candidate_key(show_row) == "db_7"
 
+    def test_a_digit_that_int_refuses_keys_as_the_show_regression(self) -> None:
+        """Bug: one poisoned season value failed every request for its type.
+
+        Symptom: a metadata blob carrying ``"²"`` as its season made every
+        recommendation request for that content type return a 500, until the
+        row was edited by hand.
+        Root cause: the key gated on ``str.isdigit()``, which is true for a
+        strictly larger set than ``int()`` accepts, superscripts included, and
+        ``candidate_key`` runs on every candidate.
+        Fix: convert and fall through to the show key when the conversion
+        fails, the way ``extract_series_info`` already treats season metadata.
+        """
+        show_row = _book(db_id=7)
+        show_row.metadata["season"] = "²"
+
+        assert candidate_key(show_row) == "db_7"
+
+    def test_a_season_past_the_digit_limit_keys_as_the_show_regression(self) -> None:
+        """The same crash, from an all-ASCII value ``isdecimal`` accepts.
+
+        CPython caps ``int()`` on a string at 4300 digits, so tightening the
+        gate to ``str.isdecimal()`` leaves this one raising: only attempting
+        the conversion closes it.
+        """
+        show_row = _book(db_id=7)
+        show_row.metadata["season"] = "1" * 5000
+
+        assert candidate_key(show_row) == "db_7"
+
     def test_items_with_no_database_row_do_not_collide(self) -> None:
         """Unsaved items are each their own identity, never a shared one.
 

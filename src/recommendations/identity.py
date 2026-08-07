@@ -47,8 +47,16 @@ def candidate_key(item: ContentItem) -> str:
         The library key, suffixed ``#s<n>`` for a season-level candidate.
     """
     season = item.metadata.get("season")
-    if isinstance(season, str) and season.isdigit():
-        season = int(season)
+    if isinstance(season, str):
+        try:
+            season = int(season)
+        except ValueError:
+            # Season metadata is user-supplied, and this runs on every
+            # candidate, so a value int() refuses names no season rather than
+            # failing the request.  Attempted rather than pre-checked: "²"
+            # passes str.isdigit(), and int() refuses any string past 4300
+            # digits however ordinary its characters.
+            return library_key(item)
     if isinstance(season, int):
         return f"{library_key(item)}#s{season}"
     return library_key(item)
