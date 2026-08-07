@@ -16,6 +16,7 @@ from src.models.conversation import (
     PreferenceProfile,
     RecommendationBrief,
 )
+from src.recommendations.identity import library_key
 from src.utils.series import build_series_tracking, should_recommend_item
 from src.utils.text import (
     format_genre_tag,
@@ -461,7 +462,7 @@ def _extract_contributing_items(
     """Deduplicate contributing items from across all briefs.
 
     Collects the consumed items that influenced each recommendation,
-    deduplicates by item ID, and returns up to ``limit`` items. This
+    deduplicates by library row, and returns up to ``limit`` items. This
     replaces the RAG embedding lookup when pipeline briefs are available.
 
     Args:
@@ -471,15 +472,16 @@ def _extract_contributing_items(
     Returns:
         Deduplicated list of ContentItem objects
     """
-    seen_ids: set[str | int | None] = set()
+    seen_keys: set[str] = set()
     contributing: list[ContentItem] = []
 
     for brief in briefs:
         for item in brief.contributing_items:
             # Only include items the user actually completed — never
             # backlog/unread items that could be misrepresented as played
-            if item.id not in seen_ids and item.status == ConsumptionStatus.COMPLETED:
-                seen_ids.add(item.id)
+            key = library_key(item)
+            if key not in seen_keys and item.status == ConsumptionStatus.COMPLETED:
+                seen_keys.add(key)
                 contributing.append(item)
 
     return contributing[:limit]

@@ -42,6 +42,7 @@ def make_item(
     content_type: ContentType = ContentType.BOOK,
     status: ConsumptionStatus = ConsumptionStatus.COMPLETED,
     item_id: str | None = None,
+    db_id: int | None = None,
     rating: int | None = None,
     author: str | None = None,
     review: str | None = None,
@@ -62,6 +63,7 @@ def make_item(
 
     return ContentItem(
         id=item_id,
+        db_id=db_id,
         title=title,
         content_type=content_type,
         status=status,

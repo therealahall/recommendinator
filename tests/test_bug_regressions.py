@@ -16,7 +16,7 @@ from src.llm.prompts import (
     build_recommendation_system_prompt,
     build_single_blurb_prompt,
 )
-from src.llm.recommendations import RecommendationGenerator
+from src.llm.recommendations import BlurbRequest, RecommendationGenerator
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.recommendations.engine import RecommendationEngine
 from src.recommendations.preference_interpreter import PatternBasedInterpreter
@@ -497,11 +497,13 @@ class TestLlmReasoningMismatchRegression:
             },
         ]
 
-        # Per-item blurbs return {item_id: blurb_text}
-        engine.llm_generator.generate_blurbs_per_item.return_value = {
-            "1": "LLM reasoning for Way of Kings",
-            "2": "LLM reasoning for Fire & Blood",
-        }
+        # Per-item blurbs come back keyed by the request key the engine sent
+        engine.llm_generator.generate_blurbs_per_item.side_effect = (
+            lambda content_type, blurb_requests, consumed_items: {
+                request.key: f"LLM reasoning for {request.item.title}"
+                for request in blurb_requests
+            }
+        )
 
         # Call the actual production code
         engine._enhance_with_llm(
@@ -513,8 +515,10 @@ class TestLlmReasoningMismatchRegression:
             series_tracking={},
         )
 
-        # Each recommendation must have its OWN reasoning matched by item ID
-        assert recommendations[0]["llm_reasoning"] == "LLM reasoning for Way of Kings"
+        # Each recommendation must have its OWN reasoning matched by its key
+        assert (
+            recommendations[0]["llm_reasoning"] == "LLM reasoning for The Way of Kings"
+        )
         assert recommendations[1]["llm_reasoning"] == "LLM reasoning for Fire & Blood"
 
     def test_enhance_uses_per_item_blurbs_for_pipeline_recommendations_regression(
@@ -532,8 +536,8 @@ class TestLlmReasoningMismatchRegression:
         recommendations never got reasoning attached.
 
         Fix: Use generate_blurbs_per_item (one LLM call per item, concurrent)
-        instead of batch generation. Direct assignment by item ID eliminates
-        title-matching failures.
+        instead of batch generation. Direct assignment by candidate key
+        eliminates title-matching failures.
         """
 
         engine = RecommendationEngine.__new__(RecommendationEngine)
@@ -556,10 +560,13 @@ class TestLlmReasoningMismatchRegression:
             for index, item in enumerate(items)
         ]
 
-        # generate_blurbs_per_item returns {item_id: blurb} for ALL 5 items
-        engine.llm_generator.generate_blurbs_per_item.return_value = {
-            item.id: f"LLM blurb for {item.title}" for item in items
-        }
+        # generate_blurbs_per_item returns a blurb for ALL 5 requests
+        engine.llm_generator.generate_blurbs_per_item.side_effect = (
+            lambda content_type, blurb_requests, consumed_items: {
+                request.key: f"LLM blurb for {request.item.title}"
+                for request in blurb_requests
+            }
+        )
 
         engine._enhance_with_llm(
             recommendations=recommendations,
@@ -580,14 +587,12 @@ class TestLlmReasoningMismatchRegression:
         # Must call generate_blurbs_per_item (not generate_recommendations)
         engine.llm_generator.generate_blurbs_per_item.assert_called_once()
 
-        # Verify contributing_items were passed through as references
-        call_kwargs = engine.llm_generator.generate_blurbs_per_item.call_args
-        items_with_refs = call_kwargs.kwargs.get(
-            "items_with_refs", call_kwargs.args[1] if len(call_kwargs.args) > 1 else []
-        )
-        assert len(items_with_refs) == 5
-        for item_ref_pair in items_with_refs:
-            assert len(item_ref_pair) == 2  # (item, references) tuple
+        # Every recommendation is requested once, under its own key
+        blurb_requests = engine.llm_generator.generate_blurbs_per_item.call_args.kwargs[
+            "blurb_requests"
+        ]
+        assert [request.item for request in blurb_requests] == items
+        assert len({request.key for request in blurb_requests}) == 5
 
     def test_bold_markers_stripped_from_parsed_titles_regression(self) -> None:
         """Regression test: bold markdown in LLM titles must not prevent matching.
@@ -746,7 +751,8 @@ class TestPerItemBlurbGenerationRegression:
 
     The old batch system parsed numbered lists and matched titles back to
     items, which failed for movies/TV shows. The per-item system makes one
-    LLM call per item and assigns by ID — no parsing or matching needed.
+    LLM call per item and assigns by the caller's key — no parsing or matching
+    needed.
     """
 
     def test_per_item_blurbs_for_many_items_regression(self) -> None:
@@ -771,7 +777,7 @@ class TestPerItemBlurbGenerationRegression:
         generator = RecommendationGenerator(mock_client)
         results = generator.generate_blurbs_per_item(
             ContentType.BOOK,
-            items_with_refs=[(item, []) for item in items],
+            blurb_requests=[BlurbRequest(item.id or "", item, []) for item in items],
             consumed_items=[],
         )
 
@@ -805,7 +811,9 @@ class TestPerItemBlurbGenerationRegression:
         generator = RecommendationGenerator(mock_client)
         results = generator.generate_blurbs_per_item(
             ContentType.BOOK,
-            items_with_refs=[(item, []) for item in items[:5]],
+            blurb_requests=[
+                BlurbRequest(item.id or "", item, []) for item in items[:5]
+            ],
             consumed_items=[],
         )
 

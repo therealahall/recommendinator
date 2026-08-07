@@ -26,7 +26,7 @@ from src.storage.merge import (
     parse_json_list,
     resolve_status_forward,
 )
-from src.storage.schema import create_schema, write_enrichment_complete
+from src.storage.schema import create_schema, create_user, write_enrichment_complete
 from src.storage.sqlite_db import SQLiteDB
 from src.utils.item_serialization import item_to_dict
 from src.utils.sorting import build_search_text, get_sort_title, search_text_matches
@@ -856,6 +856,103 @@ class TestGetContentItemsByDbIds:
         results = temp_db.get_content_items_by_db_ids([db_id, db_id])
 
         assert [item.db_id for item in results] == [db_id, db_id]
+
+
+class TestGetContentItemsByExternalIds:
+    """Tests for SQLiteDB.get_content_items_by_external_ids batch lookup."""
+
+    @staticmethod
+    def _save_game(db: SQLiteDB, external_id: str, title: str, user_id: int = 1) -> int:
+        return db.save_content_item(
+            ContentItem(
+                user_id=user_id,
+                id=external_id,
+                title=title,
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.COMPLETED,
+            ),
+            user_id=user_id,
+        )
+
+    def test_returns_empty_for_empty_input(self, temp_db: SQLiteDB) -> None:
+        """Empty id list returns empty result without hitting the DB."""
+        assert temp_db.get_content_items_by_external_ids([]) == []
+
+    def test_returns_items_for_valid_ids(self, temp_db: SQLiteDB) -> None:
+        """Returns one ContentItem per id that names a row."""
+        self._save_game(temp_db, "game-1", "Portal")
+        self._save_game(temp_db, "game-2", "Portal 2")
+
+        results = temp_db.get_content_items_by_external_ids(["game-1", "game-2"])
+
+        assert {item.title for item in results} == {"Portal", "Portal 2"}
+
+    def test_silently_skips_missing_ids(self, temp_db: SQLiteDB) -> None:
+        """An id naming no row is skipped rather than raising."""
+        self._save_game(temp_db, "game-1", "Portal")
+
+        results = temp_db.get_content_items_by_external_ids(["game-1", "nope"])
+
+        assert [item.title for item in results] == ["Portal"]
+
+    def test_populates_db_id_on_returned_items(self, temp_db: SQLiteDB) -> None:
+        """Each returned ContentItem carries its database ID."""
+        db_id = self._save_game(temp_db, "game-1", "Portal")
+
+        results = temp_db.get_content_items_by_external_ids(["game-1"])
+
+        assert [item.db_id for item in results] == [db_id]
+
+    def test_scopes_to_the_requested_user(self, temp_db: SQLiteDB) -> None:
+        """Another user's row is never returned for the same external id."""
+        with temp_db.connection() as conn:
+            second_user_id = create_user(conn, "second")
+        self._save_game(temp_db, "shared", "Portal", user_id=second_user_id)
+
+        assert temp_db.get_content_items_by_external_ids(["shared"], user_id=1) == []
+        assert [
+            item.title
+            for item in temp_db.get_content_items_by_external_ids(
+                ["shared"], user_id=second_user_id
+            )
+        ] == ["Portal"]
+
+    def test_filters_by_content_type(self, temp_db: SQLiteDB) -> None:
+        """One external id naming two types returns only the type asked for."""
+        self._save_game(temp_db, "shared", "Portal")
+        temp_db.save_content_item(
+            ContentItem(
+                id="shared",
+                title="Portal",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.COMPLETED,
+            )
+        )
+
+        results = temp_db.get_content_items_by_external_ids(
+            ["shared"], content_type=ContentType.MOVIE
+        )
+
+        assert [item.content_type for item in results] == [ContentType.MOVIE]
+
+    def test_handles_chunk_boundary(self, temp_db: SQLiteDB) -> None:
+        """Ids spanning multiple IN-clause chunks are all returned."""
+        external_ids = [f"chunk-{index}" for index in range(502)]
+        with temp_db.connection() as conn:
+            cursor = conn.cursor()
+            for index, external_id in enumerate(external_ids):
+                cursor.execute(
+                    """INSERT INTO content_items
+                       (user_id, external_id, title, normalized_title,
+                        content_type, status, source)
+                       VALUES (1, ?, ?, ?, 'video_game', 'completed', 'test')""",
+                    (external_id, f"Game {index}", f"game {index}"),
+                )
+            conn.commit()
+
+        results = temp_db.get_content_items_by_external_ids(external_ids)
+
+        assert len(results) == 502
 
 
 # ---------------------------------------------------------------------------

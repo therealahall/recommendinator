@@ -7,6 +7,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from src.llm.client import OllamaClient
 from src.llm.embeddings import EmbeddingGenerator
 from src.llm.recommendations import RecommendationGenerator
 from src.models.content import (
@@ -21,14 +22,18 @@ from src.recommendations.engine import (
     _collapse_duplicate_db_ids,
     _shuffle_close_scores,
 )
+from src.recommendations.identity import candidate_key
 from src.recommendations.preferences import PreferenceAnalyzer, UserPreferences
 from src.recommendations.scorers import SCORER_NAME_MAP
+from src.recommendations.scoring_pipeline import ScoredCandidate
 from src.recommendations.variety import (
     VARIETY_LADDER_STEPS,
     VARIETY_SERIES_CONTINUATION_FACTOR,
 )
 from src.storage.manager import StorageManager
 from src.storage.vector_db import VectorDB
+from src.utils.series import expand_tv_shows_to_seasons
+from tests.factories import make_item
 
 
 @pytest.fixture
@@ -118,6 +123,30 @@ def _engine_for_helpers(rng: random.Random | None = None) -> RecommendationEngin
     engine = RecommendationEngine.__new__(RecommendationEngine)
     engine.rng = rng if rng is not None else random.Random()
     return engine
+
+
+def _ai_engine_over_real_storage(tmp_path, mock_embedding_gen, db_name):
+    """Build an AI-mode engine over real storage with a stubbed vector DB.
+
+    Args:
+        tmp_path: Directory for the SQLite file.
+        mock_embedding_gen: Stand-in embedding generator.
+        db_name: File name for the SQLite database.
+
+    Returns:
+        The engine and the storage manager behind it.
+    """
+    storage = StorageManager(tmp_path / db_name, ai_enabled=False)
+    storage.vector_db = Mock(spec=VectorDB)
+    storage.vector_db.has_embedding = Mock(return_value=False)
+    storage.vector_db.get_embedding = Mock(return_value=None)
+    engine = RecommendationEngine(
+        storage_manager=storage,
+        embedding_generator=mock_embedding_gen,
+        recommendation_generator=None,
+        min_rating=4,
+    )
+    return engine, storage
 
 
 def _save_book(
@@ -4291,7 +4320,7 @@ class TestSimilaritySeedIgnoredRegression:
     set, so an ignored completed item could steer the vector search toward
     content the user explicitly rejected.
     Root cause: ``_compute_similarity_scores`` seeded from the consumed set
-    without excluding ignored items, and the lookup fetch defaulted to
+    without excluding ignored items, and the hit lookup defaulted to
     ``include_ignored=True``.
     Fix: seeds are drawn from ``get_signal_items`` (completed, rated, not
     ignored) and ``find_similar`` is called with ``include_ignored=False``.
@@ -4334,7 +4363,9 @@ class TestSimilaritySeedIgnoredRegression:
         mock_storage.search_similar = Mock(
             return_value=[{"content_id": "cand", "score": 0.9}]
         )
-        mock_storage.get_content_items = Mock(return_value=[candidate])
+        mock_storage.get_items_by_embedding_keys = Mock(
+            return_value={"cand": candidate}
+        )
 
         engine.generate_recommendations(content_type=ContentType.BOOK, count=1)
 
@@ -4348,10 +4379,10 @@ class TestSimilaritySeedIgnoredRegression:
         assert "Dune" in seeded_titles
         assert "Ignored Favorite" not in seeded_titles
 
-        # The similarity lookup itself is fetched without ignored items.
+        # The similarity hits themselves are resolved without ignored items.
         assert any(
             call.kwargs.get("include_ignored") is False
-            for call in mock_storage.get_content_items.call_args_list
+            for call in mock_storage.get_items_by_embedding_keys.call_args_list
         )
 
 
@@ -4810,3 +4841,513 @@ class TestHalfNumberedEntryScoringRegression:
             == 1.0
         )
         assert "Abaddon's Gate (The Expanse, #3)" not in by_title
+
+
+def _save_movie(storage, *, title, genre, rating):
+    """Persist a completed, rated movie; return its db_id."""
+    return storage.save_content_item(
+        ContentItem(
+            id=None,
+            title=title,
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.COMPLETED,
+            rating=rating,
+            metadata={"genre": genre},
+        )
+    )
+
+
+class TestIdlessCandidateIdentityRegression:
+    """Bug reported: items added without an external id showed each other's reasons.
+
+    Bug reported: recommendations for CSV-imported and manually added items
+    carried another item's score breakdown and another item's "recommended
+    because you liked" references, and some of them disappeared from the list
+    entirely.
+    Root cause: the engine keyed its breakdown, metadata and series-dedup maps
+    on ``ContentItem.id``, the nullable external id, so every id-less candidate
+    collapsed onto a single ``None`` key.
+    Fix: those maps key on the candidate's database identity, which every
+    stored item has.
+    """
+
+    def test_each_id_less_candidate_keeps_its_own_reasoning_regression(
+        self, real_engine, real_storage
+    ):
+        """Two id-less candidates keep separate breakdowns and references."""
+        _save_movie(
+            real_storage, title="Blade Runner", genre="Science Fiction", rating=5
+        )
+        _save_movie(real_storage, title="Knives Out", genre="Mystery", rating=5)
+        _save_book(
+            real_storage,
+            item_id=None,
+            title="Hyperion",
+            status=ConsumptionStatus.UNREAD,
+            genre="Science Fiction",
+        )
+        _save_book(
+            real_storage,
+            item_id=None,
+            title="The Silent Patient",
+            status=ConsumptionStatus.CURRENTLY_CONSUMING,
+            genre="Mystery",
+        )
+
+        recs = real_engine.generate_recommendations(
+            content_type=ContentType.BOOK, count=5
+        )
+        by_title = {rec["item"].title: rec for rec in recs}
+
+        assert set(by_title) == {"Hyperion", "The Silent Patient"}
+        assert {item.title for item in by_title["Hyperion"]["contributing_items"]} == {
+            "Blade Runner"
+        }
+        assert {
+            item.title for item in by_title["The Silent Patient"]["contributing_items"]
+        } == {"Knives Out"}
+        # Only the in-progress book is a continuation, so the two breakdowns
+        # differ and each card must carry its own.
+        assert by_title["Hyperion"]["score_breakdown"]["continuation"] == 0.0
+        assert by_title["The Silent Patient"]["score_breakdown"]["continuation"] == 1.0
+
+
+class TestSeasonCandidateIdentityRegression:
+    """Bug reported: a season card showed a sibling season's score breakdown.
+
+    Bug reported: for a show added without an external id, the recommended
+    season's Score Details belonged to a different season of the same show.
+    Root cause: seasons expanded from one library row share that row's
+    ``db_id`` and, for an id-less show, share a ``None`` external id too, so
+    the engine's per-candidate maps collapsed the siblings together and the
+    last one written won.
+    Fix: a season-level candidate's key carries its season number, so siblings
+    stay distinct in every map.
+    """
+
+    def test_season_card_keeps_its_own_breakdown_regression(
+        self, real_engine, real_storage
+    ):
+        """The recommended season shows its own series_order, not a sibling's."""
+        real_storage.save_content_item(
+            ContentItem(
+                id=None,
+                title="Watched Show",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+                metadata={"genre": "Drama"},
+            )
+        )
+        real_storage.save_content_item(
+            ContentItem(
+                id=None,
+                title="Uncharted Depths",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.UNREAD,
+                metadata={"genre": "Drama", "total_seasons": 2},
+            )
+        )
+
+        recs = real_engine.generate_recommendations(
+            content_type=ContentType.TV_SHOW,
+            count=5,
+            user_preference_config=UserPreferenceConfig(series_in_order=False),
+        )
+
+        assert [rec["item"].title for rec in recs] == ["Uncharted Depths (Season 1)"]
+        assert recs[0]["score_breakdown"]["series_order"] == 0.8
+
+
+class TestSimilarityForItemsWithoutExternalId:
+    """Bug reported: CSV-imported candidates were ranked as if nothing matched them.
+
+    Bug reported: with AI enabled, the half of a library imported without
+    external ids was systematically demoted — every one of those candidates
+    scored 0.0 for semantic similarity.
+    Root cause: the engine keyed its pre-computed similarity scores on
+    ``ContentItem.id``, so all id-less candidates shared one ``None`` entry,
+    and the lookup resolving vector hits back to items dropped them anyway.
+    Fix: similarity is keyed on the library row the embedding belongs to,
+    which id-less items have and season-expanded candidates share.
+    """
+
+    @staticmethod
+    def _ai_engine(tmp_path, mock_embedding_gen):
+        """Build an AI-mode engine over real storage with a stubbed vector DB."""
+        return _ai_engine_over_real_storage(
+            tmp_path, mock_embedding_gen, "similarity_engine.db"
+        )
+
+    def test_csv_imported_candidate_is_not_zero_scored_regression(
+        self, tmp_path, mock_embedding_gen
+    ):
+        """An id-less candidate scores on semantic similarity like any other."""
+        engine, storage = self._ai_engine(tmp_path, mock_embedding_gen)
+        _save_book(
+            storage,
+            item_id="seed",
+            title="Dune",
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+        )
+        _save_book(
+            storage, item_id="cand", title="Hyperion", status=ConsumptionStatus.UNREAD
+        )
+        without_id = _save_book(
+            storage, item_id=None, title="CSV Import", status=ConsumptionStatus.UNREAD
+        )
+        storage.vector_db.search_similar.return_value = [
+            {"content_id": "cand", "score": 0.9},
+            {"content_id": f"db_{without_id}", "score": 0.8},
+        ]
+
+        recs = engine.generate_recommendations(content_type=ContentType.BOOK, count=5)
+        by_title = {rec["item"].title: rec for rec in recs}
+
+        assert by_title["Hyperion"]["score_breakdown"]["semantic_similarity"] == 0.9
+        assert by_title["CSV Import"]["score_breakdown"]["semantic_similarity"] == 0.8
+
+    def test_two_id_less_candidates_keep_separate_scores_regression(
+        self, tmp_path, mock_embedding_gen
+    ):
+        """Two id-less candidates do not share one similarity entry.
+
+        A library imported entirely from CSV has no external ids at all, so
+        the pair that proves the score map is not collapsing is two id-less
+        candidates given different scores in the same run.
+        """
+        engine, storage = self._ai_engine(tmp_path, mock_embedding_gen)
+        _save_book(
+            storage,
+            item_id="seed",
+            title="Dune",
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+        )
+        first = _save_book(
+            storage, item_id=None, title="First Import", status=ConsumptionStatus.UNREAD
+        )
+        second = _save_book(
+            storage,
+            item_id=None,
+            title="Second Import",
+            status=ConsumptionStatus.UNREAD,
+        )
+        storage.vector_db.search_similar.return_value = [
+            {"content_id": f"db_{first}", "score": 0.9},
+            {"content_id": f"db_{second}", "score": 0.3},
+        ]
+
+        recs = engine.generate_recommendations(content_type=ContentType.BOOK, count=5)
+        by_title = {rec["item"].title: rec for rec in recs}
+
+        assert by_title["First Import"]["score_breakdown"]["semantic_similarity"] == 0.9
+        assert (
+            by_title["Second Import"]["score_breakdown"]["semantic_similarity"] == 0.3
+        )
+
+    def test_season_candidate_inherits_show_similarity_regression(
+        self, tmp_path, mock_embedding_gen
+    ):
+        """A season candidate scores on the similarity of the show's row."""
+        engine, storage = self._ai_engine(tmp_path, mock_embedding_gen)
+        storage.save_content_item(
+            ContentItem(
+                id="seed",
+                title="Watched Show",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+            )
+        )
+        show_db_id = storage.save_content_item(
+            ContentItem(
+                id=None,
+                title="Uncharted Depths",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.UNREAD,
+                metadata={"total_seasons": 2},
+            )
+        )
+        storage.vector_db.search_similar.return_value = [
+            {"content_id": f"db_{show_db_id}", "score": 0.7}
+        ]
+
+        recs = engine.generate_recommendations(
+            content_type=ContentType.TV_SHOW, count=5
+        )
+
+        assert recs[0]["item"].title == "Uncharted Depths (Season 1)"
+        assert recs[0]["score_breakdown"]["semantic_similarity"] == 0.7
+
+
+class TestConsumedExclusionKeysRegression:
+    """Bug reported: finished CSV imports ate the similarity search's slots.
+
+    Bug reported: on a library imported without external ids, unread books
+    stopped scoring on semantic similarity as the read pile grew.
+    Root cause: the engine excluded the consumed items from the search by
+    ``ContentItem.id``, which is ``None`` for every one of them, so none were
+    excluded and finished items filled the capped result set.
+    Fix: the exclusions are the keys the embeddings were stored under, so an
+    id-less consumed item is excluded by its library row.
+    """
+
+    def test_id_less_consumed_item_is_excluded_by_its_row_regression(
+        self, tmp_path, mock_embedding_gen
+    ):
+        """The search is told to exclude ``db_<row>`` for an id-less item."""
+        engine, storage = _ai_engine_over_real_storage(
+            tmp_path, mock_embedding_gen, "exclusions.db"
+        )
+        consumed_db_id = _save_book(
+            storage,
+            item_id=None,
+            title="Already Read",
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+        )
+        _save_book(
+            storage, item_id="cand", title="Hyperion", status=ConsumptionStatus.UNREAD
+        )
+        engine.similarity_matcher.find_similar = Mock(return_value=[])
+
+        engine.generate_recommendations(content_type=ContentType.BOOK, count=5)
+
+        call_kwargs = engine.similarity_matcher.find_similar.call_args.kwargs
+        assert call_kwargs["exclude_ids"] == [f"db_{consumed_db_id}"]
+
+
+class TestIdlessBlurbIdentityRegression:
+    """Bug reported: AI reasoning never appeared on a CSV-imported library.
+
+    Bug reported: with AI reasoning enabled every card showed the rule-based
+    reasoning and never an LLM blurb, silently.
+    Root cause: the blurb map was written keyed ``item.id or ""`` and read
+    keyed ``item.id``, so an id-less item was stored under ``""`` and looked
+    up under ``None`` — and two id-less items overwrote each other on the way
+    in.
+    Fix: the engine passes a per-candidate key with each blurb request and
+    reads the result back under that same key.
+    """
+
+    @staticmethod
+    def _recommendation(db_id, title):
+        return {
+            "item": ContentItem(
+                id=None,
+                db_id=db_id,
+                title=title,
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            ),
+            "contributing_items": [],
+        }
+
+    def test_each_id_less_recommendation_gets_its_own_blurb_regression(self):
+        """Two id-less recommendations each receive their own blurb."""
+        client = Mock(spec=OllamaClient)
+        client.generate_text.side_effect = lambda **kwargs: (
+            "Hyperion blurb"
+            if "Hyperion" in kwargs["prompt"]
+            else "Silent Patient blurb"
+        )
+        engine = _engine_for_helpers()
+        engine.llm_generator = RecommendationGenerator(client)
+        recommendations = [
+            self._recommendation(11, "Hyperion"),
+            self._recommendation(12, "The Silent Patient"),
+        ]
+
+        engine._enhance_with_llm(
+            recommendations=recommendations,
+            content_type=ContentType.BOOK,
+            all_consumed_items=[],
+            unconsumed_items=[],
+            count=2,
+            series_tracking={},
+        )
+
+        assert [rec.get("llm_reasoning") for rec in recommendations] == [
+            "Hyperion blurb",
+            "Silent Patient blurb",
+        ]
+
+    def test_a_lone_id_less_recommendation_gets_a_blurb_regression(self):
+        """The single-request fast path keys its one result the same way.
+
+        The threaded path and the fast path write the result map separately,
+        so a library whose only recommendation has no external id has to be
+        covered on its own.
+        """
+        client = Mock(spec=OllamaClient)
+        client.generate_text.return_value = "Hyperion blurb"
+        engine = _engine_for_helpers()
+        engine.llm_generator = RecommendationGenerator(client)
+        recommendations = [self._recommendation(11, "Hyperion")]
+
+        engine._enhance_with_llm(
+            recommendations=recommendations,
+            content_type=ContentType.BOOK,
+            all_consumed_items=[],
+            unconsumed_items=[],
+            count=1,
+            series_tracking={},
+        )
+
+        assert recommendations[0].get("llm_reasoning") == "Hyperion blurb"
+
+
+class TestSeasonSiblingsStayDistinctInEveryMap:
+    """Season candidates of one show must not overwrite each other.
+
+    They share the parent show's ``db_id``, and for a show added without an
+    external id they share a ``None`` id too, so they are the pair most likely
+    to collapse in any per-candidate map.
+    """
+
+    @staticmethod
+    def _seasons():
+        """Two season candidates expanded from one id-less show row."""
+        return expand_tv_shows_to_seasons(
+            [
+                ContentItem(
+                    id=None,
+                    db_id=5,
+                    title="Uncharted Depths",
+                    content_type=ContentType.TV_SHOW,
+                    status=ConsumptionStatus.UNREAD,
+                    metadata={"total_seasons": 2},
+                )
+            ]
+        )
+
+    def test_each_season_keeps_its_own_breakdown_and_references(self):
+        """The breakdown and metadata maps hold both siblings, not one."""
+        first, second = self._seasons()
+        engine = _engine_for_helpers()
+        blade_runner = make_item(
+            item_id="m1",
+            title="Blade Runner",
+            content_type=ContentType.MOVIE,
+            rating=5,
+        )
+        knives_out = make_item(
+            item_id="m2", title="Knives Out", content_type=ContentType.MOVIE, rating=5
+        )
+        candidate_metadata = [
+            {
+                "item": first,
+                "adaptations": [],
+                "contributing_items": [blade_runner],
+                "score_breakdown": {"series_order": 0.8},
+            },
+            {
+                "item": second,
+                "adaptations": [],
+                "contributing_items": [knives_out],
+                "score_breakdown": {"series_order": 0.2},
+            },
+        ]
+        breakdown_by_key = {
+            candidate_key(meta["item"]): meta["score_breakdown"]
+            for meta in candidate_metadata
+        }
+
+        recommendations = engine._format_recommendations(
+            [(first, 1.0, 0.0), (second, 0.5, 0.0)],
+            candidate_metadata,
+            breakdown_by_key,
+            PreferenceAnalyzer(min_rating=4).analyze([]),
+        )
+
+        assert [rec["score_breakdown"] for rec in recommendations] == [
+            {"series_order": 0.8},
+            {"series_order": 0.2},
+        ]
+        assert [
+            [item.title for item in rec["contributing_items"]]
+            for rec in recommendations
+        ] == [["Blade Runner"], ["Knives Out"]]
+
+    def test_each_season_keeps_its_own_adaptations(self):
+        """One season adapting a film does not lend that reason to the other."""
+        first, second = self._seasons()
+        engine = _engine_for_helpers()
+        adapted_film = make_item(
+            item_id="m1",
+            title="Uncharted Depths (Season 1)",
+            content_type=ContentType.MOVIE,
+            rating=5,
+        )
+
+        adaptations = engine._build_adaptations([first, second], [adapted_film])
+
+        assert adaptations == {candidate_key(first): [adapted_film]}
+
+    def test_each_season_gets_its_own_blurb(self):
+        """Two season siblings do not overwrite each other's blurb."""
+        client = Mock(spec=OllamaClient)
+        client.generate_text.side_effect = lambda **kwargs: (
+            "Season 1 blurb" if "Season 1" in kwargs["prompt"] else "Season 2 blurb"
+        )
+        first, second = self._seasons()
+        engine = _engine_for_helpers()
+        engine.llm_generator = RecommendationGenerator(client)
+        recommendations = [
+            {"item": first, "contributing_items": []},
+            {"item": second, "contributing_items": []},
+        ]
+
+        engine._enhance_with_llm(
+            recommendations=recommendations,
+            content_type=ContentType.TV_SHOW,
+            all_consumed_items=[],
+            unconsumed_items=[],
+            count=2,
+            series_tracking={},
+        )
+
+        assert [rec.get("llm_reasoning") for rec in recommendations] == [
+            "Season 1 blurb",
+            "Season 2 blurb",
+        ]
+
+    def test_series_filtering_keeps_a_season_from_each_id_less_show(self):
+        """Two id-less shows' first seasons are not deduplicated into one.
+
+        Season 2 of a show is legitimately filtered out behind season 1, so
+        the pair that proves the dedup set is not collapsing on a shared
+        ``None`` id is one season from each of two different shows.
+        """
+
+        def season_one_of(db_id, title):
+            (season,) = expand_tv_shows_to_seasons(
+                [
+                    ContentItem(
+                        id=None,
+                        db_id=db_id,
+                        title=title,
+                        content_type=ContentType.TV_SHOW,
+                        status=ConsumptionStatus.UNREAD,
+                        metadata={"total_seasons": 1},
+                    )
+                ]
+            )
+            return season
+
+        first = season_one_of(5, "Uncharted Depths")
+        second = season_one_of(6, "Northern Lights")
+        engine = _engine_for_helpers()
+        pipeline_scored = [
+            ScoredCandidate(item=first, aggregate_score=1.0, score_breakdown={}),
+            ScoredCandidate(item=second, aggregate_score=0.5, score_breakdown={}),
+        ]
+
+        filtered = engine._apply_series_filtering(pipeline_scored, {}, [first, second])
+
+        assert [scored.item.title for scored in filtered] == [
+            "Uncharted Depths (Season 1)",
+            "Northern Lights (Season 1)",
+        ]

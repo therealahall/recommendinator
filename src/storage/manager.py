@@ -41,6 +41,7 @@ from src.storage.schema import (
     get_core_memories,
     get_credential,
     get_credentials_for_source,
+    get_default_user_id,
     get_enrichment_stats,
     get_enrichment_status,
     get_preference_profile,
@@ -79,6 +80,62 @@ if TYPE_CHECKING:
     from src.storage.vector_db import VectorDB
 
 logger = logging.getLogger(__name__)
+
+#: Prefix of the synthetic vector-DB key used for an item with no external id.
+_DB_EMBEDDING_PREFIX = "db_"
+
+
+def _embedding_key(item: ContentItem, db_id: int) -> str:
+    """Return the vector-DB key for *item* as stored under *db_id*.
+
+    Items imported without an external id — CSV, chat, manual completion —
+    all have ``id is None``, so they key on their database row instead.  Every
+    read and delete must derive the key the same way or it misses the row that
+    was written.
+
+    Args:
+        item: The item as written to SQLite.
+        db_id: Database ID it was written under.
+
+    Returns:
+        The item's external id, or ``db_<db_id>`` when it has none.
+    """
+    return item.id if item.id else f"{_DB_EMBEDDING_PREFIX}{db_id}"
+
+
+def stored_embedding_key(item: ContentItem) -> str | None:
+    """Return the vector-DB key *item*'s own embedding is stored under.
+
+    Callers that search or exclude by key must derive it the same way the
+    write did, so an item with no external id is named by its row rather than
+    dropped.
+
+    Args:
+        item: An item read back from the library.
+
+    Returns:
+        The key, or ``None`` for an item with neither an external id nor a
+        row, which therefore has no embedding of its own.
+    """
+    if item.db_id is None:
+        return item.id
+    return _embedding_key(item, item.db_id)
+
+
+def _db_id_from_embedding_key(key: str) -> int | None:
+    """Return the database ID *key* names, or ``None`` if it names none.
+
+    Args:
+        key: A vector-DB content id.
+
+    Returns:
+        The database ID for a synthetic ``db_`` key, otherwise ``None``.
+    """
+    suffix = key.removeprefix(_DB_EMBEDDING_PREFIX)
+    # isdecimal, not isdigit: "²" is a digit that int() refuses.
+    if suffix == key or not suffix.isdecimal():
+        return None
+    return int(suffix)
 
 
 class StorageManager:
@@ -249,8 +306,7 @@ class StorageManager:
         if embedding is None or not self.vector_db:
             return
 
-        # Use external_id if available, otherwise use db_id as string
-        content_id = item.id if item.id else f"db_{db_id}"
+        content_id = _embedding_key(item, db_id)
         metadata = {
             "content_type": get_enum_value(item.content_type),
             "title": item.title,
@@ -284,6 +340,63 @@ class StorageManager:
             List of ContentItem objects found
         """
         return self.sqlite_db.get_content_items_by_db_ids(db_ids)
+
+    def get_items_by_embedding_keys(
+        self,
+        keys: list[str],
+        user_id: int | None = None,
+        content_type: ContentType | None = None,
+        include_ignored: bool = True,
+    ) -> dict[str, ContentItem]:
+        """Resolve vector-DB keys back to the items they were stored for.
+
+        An embedding is keyed by its item's external id, or by ``db_<db_id>``
+        when the item has none, so a caller holding search hits gets both
+        forms back.  Fetching exactly the keys asked for keeps a similarity
+        search independent of how large the library is.
+
+        Args:
+            keys: Vector-DB content ids, typically from a similarity search.
+            user_id: User whose library to resolve against (defaults to the
+                default user).
+            content_type: Type the caller searched, if any. One external id
+                may name a row of each type, so a search must say which one
+                it means or it can resolve a hit to the wrong item.
+            include_ignored: Whether ignored items may be returned.
+
+        Returns:
+            The item found for each key. A key naming no item is absent.
+        """
+        if not keys:
+            return {}
+
+        effective_user_id = user_id if user_id is not None else get_default_user_id()
+
+        # External ids first: a stored external id is a real identity, so it
+        # wins over the synthetic form should an id ever look like one.
+        by_key: dict[str, ContentItem] = {
+            item.id: item
+            for item in self.sqlite_db.get_content_items_by_external_ids(
+                keys, user_id=effective_user_id, content_type=content_type
+            )
+            if item.id
+        }
+        db_ids = [
+            db_id
+            for key in keys
+            if key not in by_key
+            and (db_id := _db_id_from_embedding_key(key)) is not None
+        ]
+        for item in self.sqlite_db.get_content_items_by_db_ids(db_ids):
+            if item.user_id != effective_user_id:
+                continue
+            if content_type is not None and item.content_type != content_type:
+                continue
+            by_key[f"{_DB_EMBEDDING_PREFIX}{item.db_id}"] = item
+
+        if include_ignored:
+            return by_key
+        return {key: item for key, item in by_key.items() if not item.ignored}
 
     def get_content_items(
         self,
@@ -460,13 +573,17 @@ class StorageManager:
                 "Vector search requires ai_enabled=True in StorageManager"
             )
 
-        # Get consumed item IDs to exclude
+        # Exclude the consumed items by the keys their embeddings are stored
+        # under, not by their external ids: an id-less item has an embedding
+        # in the store and would otherwise take a result slot.
         exclude_ids: list[str] | None = None
         if exclude_consumed:
             consumed = self.get_completed_items(
                 user_id=user_id, content_type=content_type
             )
-            exclude_ids = [item.id for item in consumed if item.id]
+            exclude_ids = [
+                key for item in consumed if (key := stored_embedding_key(item))
+            ]
 
         content_type_str = get_enum_value(content_type) if content_type else None
 
@@ -489,17 +606,15 @@ class StorageManager:
         Returns:
             True if item was deleted, False if not found
         """
-        # Get item first to find its external_id
+        # Read the item first: its embedding key is derived from it.
         item = self.sqlite_db.get_content_item(db_id, user_id=user_id)
         if not item:
             return False
 
-        # Delete from SQLite
         deleted = self.sqlite_db.delete_content_item(db_id, user_id=user_id)
 
-        # Delete embedding if it exists and vector DB is enabled
-        if deleted and item.id and self.vector_db:
-            self.vector_db.delete_embedding(item.id)
+        if deleted and self.vector_db:
+            self.vector_db.delete_embedding(_embedding_key(item, db_id))
 
         return deleted
 

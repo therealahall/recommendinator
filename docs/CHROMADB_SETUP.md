@@ -41,6 +41,18 @@ storage = StorageManager(
 storage.save_content_item(item, embedding)
 ```
 
+## Embedding keys
+
+An embedding is stored under its item's external id, or under `db_<db_id>` when
+the item has none, which is the case for CSV imports, chat additions and manual
+completions. Both forms are live in any database that has been synced, so reads
+and deletes resolve both rather than re-keying: re-keying orphans every stored
+row and re-embeds the whole library on the next sync.
+
+A similarity search excludes the items you have finished by those same keys, and
+resolves each hit within the content type it searched, because one external id
+may name a row of each type.
+
 ## `No module named 'chromadb'`
 
 You installed without the `ai` extra, or on a Python with no wheel. Check the

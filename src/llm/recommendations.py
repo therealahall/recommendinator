@@ -3,7 +3,7 @@
 import logging
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any
+from typing import Any, NamedTuple
 
 from src.llm.client import OllamaClient
 from src.llm.prompts import (
@@ -17,6 +17,22 @@ from src.models.content import ContentItem, ContentType
 logger = logging.getLogger(__name__)
 
 _TRADEMARK_RE = re.compile(r"[™®©]")
+
+
+class BlurbRequest(NamedTuple):
+    """One item to write a blurb for.
+
+    Attributes:
+        key: The caller's identity for the item, which keys the result.  It
+            comes from the caller because ``ContentItem.id`` is nullable and
+            would collide across every item that has none.
+        item: The item being recommended.
+        references: Items whose overlap with *item* explains the pick.
+    """
+
+    key: str
+    item: ContentItem
+    references: list[ContentItem]
 
 
 def _fix_author_attributions(recommendations: list[dict[str, Any]]) -> None:
@@ -186,68 +202,66 @@ class RecommendationGenerator:
     def generate_blurbs_per_item(
         self,
         content_type: ContentType,
-        items_with_refs: list[tuple[ContentItem, list[ContentItem]]],
+        blurb_requests: list[BlurbRequest],
         consumed_items: list[ContentItem],
         model: str | None = None,
     ) -> dict[str, str]:
         """Generate blurbs for multiple items, one LLM call per item.
 
         Uses ``ThreadPoolExecutor`` to run calls concurrently (I/O-bound
-        Ollama HTTP calls).  Returns a mapping of ``item.id`` to blurb
-        text with consumed-title highlighting applied.
+        Ollama HTTP calls).
 
         Args:
             content_type: Type of content being recommended
-            items_with_refs: List of ``(item, references)`` pairs
+            blurb_requests: The items to write blurbs for, each carrying the
+                caller's key for it
             consumed_items: User's consumed items for taste reference
             model: Optional model override
 
         Returns:
-            Dict mapping item ID to highlighted blurb text
+            Dict mapping each request's key to its blurb text.  A request
+            whose LLM call failed is absent.
         """
-        if not items_with_refs:
+        if not blurb_requests:
             return {}
 
-        def _generate_one(
-            item: ContentItem, refs: list[ContentItem]
-        ) -> tuple[str, str]:
-            """Generate a blurb for one item (runs in thread)."""
-            blurb = self.generate_single_blurb(
+        def _generate_one(request: BlurbRequest) -> str:
+            """Generate a blurb for one request (runs in thread)."""
+            return self.generate_single_blurb(
                 content_type=content_type,
-                item=item,
+                item=request.item,
                 consumed_items=consumed_items,
-                references=refs or None,
+                references=request.references or None,
                 model=model,
             )
-            return (item.id or "", blurb)
 
         results: dict[str, str] = {}
 
         # Single item — skip threading overhead
-        if len(items_with_refs) == 1:
-            item, refs = items_with_refs[0]
+        if len(blurb_requests) == 1:
+            request = blurb_requests[0]
             try:
-                item_id, blurb = _generate_one(item, refs)
-                results[item_id] = blurb
+                results[request.key] = _generate_one(request)
             except Exception as error:
-                logger.warning("Blurb generation failed for %r: %s", item.title, error)
+                logger.warning(
+                    "Blurb generation failed for %r: %s", request.item.title, error
+                )
         else:
             with ThreadPoolExecutor(
-                max_workers=min(len(items_with_refs), 4)
+                max_workers=min(len(blurb_requests), 4)
             ) as executor:
-                future_to_item = {
-                    executor.submit(_generate_one, item, refs): item
-                    for item, refs in items_with_refs
+                future_to_request = {
+                    executor.submit(_generate_one, request): request
+                    for request in blurb_requests
                 }
-                for future in as_completed(future_to_item):
-                    item = future_to_item[future]
+                for future in as_completed(future_to_request):
+                    request = future_to_request[future]
                     try:
-                        item_id, blurb = future.result()
-                        results[item_id] = blurb
+                        results[request.key] = future.result()
                     except Exception as error:
                         logger.warning(
                             "Blurb generation failed for %r: %s",
-                            item.title,
+                            request.item.title,
                             error,
                         )
 
