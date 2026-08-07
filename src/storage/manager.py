@@ -132,14 +132,17 @@ def _db_id_from_embedding_key(key: str) -> int | None:
         The database ID for a synthetic ``db_`` key, otherwise ``None``.
     """
     suffix = key.removeprefix(_DB_EMBEDDING_PREFIX)
-    if suffix == key:
+    if suffix == key or not suffix.isdecimal():
         return None
     try:
         return int(suffix)
     except ValueError:
-        # Attempted rather than pre-checked: "²" passes str.isdigit(), and
-        # int() refuses any string past 4300 digits however ordinary its
-        # characters. Either way the key names no row.
+        # Both guards earn their place. isdecimal rejects spellings int()
+        # would happily take (padding whitespace, a sign, PEP 515
+        # underscores), none of which this writer ever produces, so a key
+        # spelled that way names no row. The try catches what no character
+        # check can see: int() refuses any string past 4300 digits, however
+        # plain its characters.
         return None
 
 

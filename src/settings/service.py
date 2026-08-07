@@ -130,9 +130,10 @@ def apply_settings(
     All-or-nothing: if any key is unknown, sensitive, or fails validation, a
     :class:`SettingsValidationError` is raised before anything is written, so a
     bad key cannot leave a partial write. Non-``restart_required`` leaves are
-    then published into *config*, all of them at once so that a reader cannot
-    rank a request on half of one save, and take effect immediately;
-    ``restart_required`` leaves are persisted only (they apply on next boot).
+    then published into *config* and take effect immediately, each top-level
+    section in one store, so a reader cannot rank a request on half of a
+    section. ``restart_required`` leaves are persisted only, applying on next
+    boot.
     """
     validated: list[tuple[SettingMetadata, Any]] = []
     for key, value in updates.items():
