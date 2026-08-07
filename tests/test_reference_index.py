@@ -703,6 +703,43 @@ class TestAdaptationLookupEdges:
 
         assert adaptations == []
 
+    def test_a_shared_creator_and_a_similar_title_is_an_adaptation(self) -> None:
+        """The author index is the only way in when the titles are not identical.
+
+        Both sides need a creator for this branch to fire, which for items read
+        from storage only became possible once every content type carried one.
+        """
+        book = self._book("book", "The Silent Tide", rating=5, author="Mira Vale")
+
+        adaptations = SignalIndex([book]).adaptations_of(
+            self._film("The Silent Tide: Part One", author="Mira Vale")
+        )
+
+        assert [item.id for item in adaptations] == ["book"]
+
+    def test_a_shared_creator_within_one_type_is_not_an_adaptation(self) -> None:
+        """The author index still has to clear the different-medium check."""
+        book = self._book("book", "The Silent Tide", rating=5, author="Mira Vale")
+        candidate = make_item(
+            item_id="sequel",
+            title="The Silent Tide: Part One",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            author="Mira Vale",
+        )
+
+        assert SignalIndex([book]).adaptations_of(candidate) == []
+
+    def test_a_candidate_without_a_creator_never_reaches_the_author_index(self) -> None:
+        """A candidate with no creator can only match on its title."""
+        book = self._book("book", "The Silent Tide", rating=5, author="Mira Vale")
+
+        adaptations = SignalIndex([book]).adaptations_of(
+            self._film("The Silent Tide: Part One")
+        )
+
+        assert adaptations == []
+
     def test_a_shared_author_with_an_unrelated_title_is_not_an_adaptation(self) -> None:
         """The author index still has to clear the title similarity check."""
         book = self._book("book", "Dust Roads", rating=5, author="Mira Vale")

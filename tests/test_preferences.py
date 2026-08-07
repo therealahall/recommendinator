@@ -478,3 +478,113 @@ class TestPreferredWeightAccumulation:
         assert preferences.preferred_authors == {}
         assert preferences.preferred_genres == {"science fiction": 1.0}
         assert preferences.get_author_score("") == 0.0
+
+
+class TestCreatorNamespaceIsFlatAcrossTypes:
+    """One creator namespace serves all four types, keyed by name alone.
+
+    Storage populates ``ContentItem.author`` for every content type: a book's
+    author, a film's director, a show's creator, a game's developer. ``analyze``
+    accumulates them with no type filter, so a director earns a preference the
+    way an author does, a badly rated film puts its director in
+    ``disliked_authors``, and one name appearing on two types is one entry.
+    """
+
+    @staticmethod
+    def _rated(item_id, *, creator, rating, content_type):
+        """A completed item of *content_type* credited to *creator*."""
+        return ContentItem(
+            id=item_id,
+            title=f"Title {item_id}",
+            author=creator,
+            content_type=content_type,
+            status=ConsumptionStatus.COMPLETED,
+            rating=rating,
+            metadata={"genre": "Science Fiction"},
+        )
+
+    def test_every_types_creator_enters_the_preferred_namespace(self):
+        """A director, a showrunner and a developer sit beside a book author."""
+        analyzer = PreferenceAnalyzer(min_rating=4)
+
+        preferences = analyzer.analyze(
+            [
+                self._rated(
+                    "1",
+                    creator="Frank Herbert",
+                    rating=5,
+                    content_type=ContentType.BOOK,
+                ),
+                self._rated(
+                    "2",
+                    creator="Denis Villeneuve",
+                    rating=5,
+                    content_type=ContentType.MOVIE,
+                ),
+                self._rated(
+                    "3",
+                    creator="Vince Gilligan",
+                    rating=5,
+                    content_type=ContentType.TV_SHOW,
+                ),
+                self._rated(
+                    "4",
+                    creator="Mobius Digital",
+                    rating=5,
+                    content_type=ContentType.VIDEO_GAME,
+                ),
+            ]
+        )
+
+        assert preferences.preferred_authors == {
+            "frank herbert": 1.0,
+            "denis villeneuve": 1.0,
+            "vince gilligan": 1.0,
+            "mobius digital": 1.0,
+        }
+
+    def test_a_badly_rated_film_puts_its_director_in_the_disliked_namespace(self):
+        """The negative half of the namespace is just as type-blind."""
+        analyzer = PreferenceAnalyzer(min_rating=4)
+
+        preferences = analyzer.analyze(
+            [
+                self._rated(
+                    "1",
+                    creator="Denis Villeneuve",
+                    rating=1,
+                    content_type=ContentType.MOVIE,
+                ),
+                self._rated(
+                    "2",
+                    creator="Frank Herbert",
+                    rating=5,
+                    content_type=ContentType.BOOK,
+                ),
+            ]
+        )
+
+        assert preferences.disliked_authors == {"denis villeneuve": 1.0}
+        assert preferences.get_author_score("Denis Villeneuve") == -1.0
+
+    def test_one_name_on_two_types_is_one_entry_that_nets_out(self):
+        """Nothing separates the film credit from the book credit."""
+        analyzer = PreferenceAnalyzer(min_rating=4)
+
+        preferences = analyzer.analyze(
+            [
+                self._rated(
+                    "1", creator="Alex Garland", rating=5, content_type=ContentType.BOOK
+                ),
+                self._rated(
+                    "2",
+                    creator="Alex Garland",
+                    rating=1,
+                    content_type=ContentType.MOVIE,
+                ),
+            ]
+        )
+
+        assert preferences.preferred_authors == {"alex garland": 1.0}
+        assert preferences.disliked_authors == {"alex garland": 1.0}
+        assert preferences.get_author_score("Alex Garland") == 0.0

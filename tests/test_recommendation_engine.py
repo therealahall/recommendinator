@@ -1,5 +1,6 @@
 """Tests for recommendation engine cross-content-type recommendations."""
 
+import logging
 import random
 from datetime import date
 from typing import NamedTuple
@@ -17,6 +18,7 @@ from src.models.content import (
     get_enum_value,
 )
 from src.models.user_preferences import UserPreferenceConfig
+from src.recommendations import engine as engine_module
 from src.recommendations.engine import (
     RecommendationEngine,
     _collapse_duplicate_db_ids,
@@ -5351,3 +5353,302 @@ class TestSeasonSiblingsStayDistinctInEveryMap:
             "Uncharted Depths (Season 1)",
             "Northern Lights (Season 1)",
         ]
+
+
+class TestLlmOnlyRecommendations:
+    """The branch that lets the LLM pick when the pipeline produced nothing.
+
+    ``_enhance_with_llm`` takes it only when handed an empty recommendation
+    list, so these call it directly: the pipeline scores every candidate it is
+    given, so a request that has candidates always arrives with
+    recommendations to blurb instead.
+
+    What the branch does is match each ``{title, author}`` the LLM returned
+    back to a candidate by exact string equality, drop the matches series
+    ordering rejects, and build a recommendation dict for the rest.
+    """
+
+    REASONING = "A quiet loop of discovery"
+
+    @staticmethod
+    def _book(title, *, author=None, item_id="cand"):
+        """One unconsumed book to match an LLM pick against."""
+        return make_item(
+            item_id=item_id,
+            title=title,
+            author=author,
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        )
+
+    @staticmethod
+    def _llm_only(llm_recs, unconsumed_items, series_tracking=None, *, error=None):
+        """Run the LLM-only branch and return the recommendations it built.
+
+        Args:
+            llm_recs: What the LLM generator returns.
+            unconsumed_items: The candidates the picks are matched against.
+            series_tracking: Series name to consumed item numbers.
+            error: Raised by the LLM generator instead of returning, when set.
+        """
+        engine = _engine_for_helpers()
+        engine.llm_generator = Mock(spec=RecommendationGenerator)
+        if error is not None:
+            engine.llm_generator.generate_recommendations.side_effect = error
+        else:
+            engine.llm_generator.generate_recommendations.return_value = llm_recs
+
+        recommendations = []
+        engine._enhance_with_llm(
+            recommendations=recommendations,
+            content_type=ContentType.BOOK,
+            all_consumed_items=[],
+            unconsumed_items=unconsumed_items,
+            count=5,
+            series_tracking=series_tracking or {},
+        )
+        return recommendations
+
+    def test_a_matched_pick_becomes_one_recommendation_record(self):
+        """The whole record this construction site emits, key for key."""
+        candidate = self._book("Outer Wilds")
+
+        recommendations = self._llm_only(
+            [{"title": "Outer Wilds", "author": None, "reasoning": self.REASONING}],
+            [candidate],
+        )
+
+        assert recommendations == [
+            {
+                "item": candidate,
+                "score": 0.8,
+                "reasoning": self.REASONING,
+                "llm_reasoning": self.REASONING,
+                "score_breakdown": {},
+                "variety_penalty": 0.0,
+            }
+        ]
+
+    def test_a_pick_matching_no_candidate_recommends_nothing(self):
+        """An invented title yields an empty list rather than an error."""
+        recommendations = self._llm_only(
+            [{"title": "Subnautica", "author": None, "reasoning": self.REASONING}],
+            [self._book("Outer Wilds")],
+        )
+
+        assert recommendations == []
+
+    def test_a_supplied_author_must_equal_the_candidates_own(self):
+        """A title match with a mismatched author is rejected."""
+        recommendations = self._llm_only(
+            [
+                {
+                    "title": "Outer Wilds",
+                    "author": "Annapurna",
+                    "reasoning": self.REASONING,
+                }
+            ],
+            [self._book("Outer Wilds", author="Mobius Digital")],
+        )
+
+        assert recommendations == []
+
+    def test_a_matching_supplied_author_is_accepted(self):
+        """The same pick with the candidate's own author matches."""
+        candidate = self._book("Outer Wilds", author="Mobius Digital")
+
+        recommendations = self._llm_only(
+            [
+                {
+                    "title": "Outer Wilds",
+                    "author": "Mobius Digital",
+                    "reasoning": self.REASONING,
+                }
+            ],
+            [candidate],
+        )
+
+        assert [rec["item"] for rec in recommendations] == [candidate]
+
+    def test_an_omitted_author_matches_on_title_alone(self):
+        """A pick with no author still matches a candidate that has one."""
+        candidate = self._book("Outer Wilds", author="Mobius Digital")
+
+        recommendations = self._llm_only(
+            [{"title": "Outer Wilds", "reasoning": self.REASONING}],
+            [candidate],
+        )
+
+        assert [rec["item"] for rec in recommendations] == [candidate]
+
+    def test_a_title_differing_only_in_case_does_not_match(self):
+        """Matching is exact string equality, so case is part of the contract."""
+        recommendations = self._llm_only(
+            [{"title": "outer wilds", "author": None, "reasoning": self.REASONING}],
+            [self._book("Outer Wilds")],
+        )
+
+        assert recommendations == []
+
+    def test_a_pick_series_ordering_rejects_is_excluded(self):
+        """Book #2 is dropped while #1, picked in the same batch, survives."""
+        first = self._book("Empire Ascendant (Worldbreaker Saga, #1)", item_id="one")
+        second = self._book("Empire Ascendant (Worldbreaker Saga, #2)", item_id="two")
+
+        recommendations = self._llm_only(
+            [
+                {"title": second.title, "author": None, "reasoning": self.REASONING},
+                {"title": first.title, "author": None, "reasoning": self.REASONING},
+            ],
+            [first, second],
+        )
+
+        assert [rec["item"] for rec in recommendations] == [first]
+
+    def test_a_failing_llm_call_is_swallowed_and_logged(self, caplog):
+        """The user gets an empty list and the reason reaches the log."""
+        with caplog.at_level(logging.WARNING, logger="src.recommendations.engine"):
+            recommendations = self._llm_only(
+                [], [self._book("Outer Wilds")], error=RuntimeError("LLM down")
+            )
+
+        assert recommendations == []
+        assert [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == "src.recommendations.engine"
+            and record.levelno == logging.WARNING
+        ] == ["LLM recommendation generation failed: LLM down"]
+
+
+class TestContentTypeExclusions:
+    """Custom rules that resolve to a content-type exclusion filter candidates.
+
+    ``tests/test_preference_interpreter.py`` covers the interpreter producing
+    ``content_type_exclusions``. These cover the engine consuming them, which
+    is the wiring between the two halves.
+    """
+
+    @staticmethod
+    def _consumed():
+        return ContentItem(
+            id="c1",
+            title="Dune",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            metadata={"genre": "Science Fiction"},
+        )
+
+    @staticmethod
+    def _book():
+        return ContentItem(
+            id="b1",
+            title="Hyperion",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genre": "Science Fiction"},
+        )
+
+    @staticmethod
+    def _movie(content_type=ContentType.MOVIE):
+        return ContentItem(
+            id="m1",
+            title="Blade Runner",
+            content_type=content_type,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genre": "Science Fiction"},
+        )
+
+    def _recommend(self, non_ai_engine, mock_storage, candidates, rules):
+        """Recommend books over *candidates* with *rules* in force."""
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: [self._consumed()]
+        )
+        mock_storage.get_unconsumed_items = Mock(return_value=candidates)
+
+        return non_ai_engine.generate_recommendations(
+            content_type=ContentType.BOOK,
+            count=5,
+            user_preference_config=UserPreferenceConfig(custom_rules=rules),
+        )
+
+    def test_an_excluded_type_is_dropped_and_the_rest_survive(
+        self, non_ai_engine, mock_storage
+    ):
+        """A rule reading "avoid movies" removes the film and keeps the book."""
+        recommendations = self._recommend(
+            non_ai_engine, mock_storage, [self._book(), self._movie()], ["avoid movies"]
+        )
+
+        assert [rec["item"].id for rec in recommendations] == ["b1"]
+
+    def test_a_candidate_carrying_a_raw_string_type_is_dropped_too(
+        self, non_ai_engine, mock_storage
+    ):
+        """The comparison runs through ``get_enum_value``, not the raw attribute.
+
+        The exclusion set holds strings, and a stored ``content_type`` is one:
+        ``ContentItem`` is configured with ``use_enum_values``, so the value on
+        the item is the string either spelling was built from.
+        """
+        movie = self._movie(content_type="movie")
+        assert type(movie.content_type) is str
+
+        recommendations = self._recommend(
+            non_ai_engine, mock_storage, [self._book(), movie], ["avoid movies"]
+        )
+
+        assert [rec["item"].id for rec in recommendations] == ["b1"]
+
+    def test_excluding_every_candidate_recommends_nothing_and_warns(
+        self, non_ai_engine, mock_storage, caplog
+    ):
+        """A rule against the requested type leaves the user an empty list."""
+        with caplog.at_level(logging.WARNING, logger="src.recommendations.engine"):
+            recommendations = self._recommend(
+                non_ai_engine, mock_storage, [self._book()], ["avoid books"]
+            )
+
+        assert recommendations == []
+        assert [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == "src.recommendations.engine"
+            and record.levelno == logging.WARNING
+            and "content type" in record.getMessage().lower()
+        ] == [
+            "Content type exclusion removed all candidates, "
+            "this shouldn't happen for same-type recommendations"
+        ]
+
+    def test_a_rule_with_no_exclusion_leaves_every_candidate(
+        self, non_ai_engine, mock_storage
+    ):
+        """A genre rule interprets to no exclusions, so nothing is filtered."""
+        recommendations = self._recommend(
+            non_ai_engine, mock_storage, [self._book(), self._movie()], ["avoid horror"]
+        )
+
+        assert {rec["item"].id for rec in recommendations} == {"b1", "m1"}
+
+    def test_empty_custom_rules_never_build_an_interpreter(
+        self, non_ai_engine, mock_storage, monkeypatch
+    ):
+        """The guard ahead of the interpreter keeps a rule-less request off it.
+
+        The spy wraps the real class, so a broken guard fails on the call
+        count rather than on whatever a stand-in interpreter returned.
+        """
+        monkeypatch.setattr(
+            engine_module,
+            "PatternBasedInterpreter",
+            Mock(wraps=engine_module.PatternBasedInterpreter),
+        )
+
+        recommendations = self._recommend(
+            non_ai_engine, mock_storage, [self._book()], []
+        )
+
+        assert [rec["item"].id for rec in recommendations] == ["b1"]
+        engine_module.PatternBasedInterpreter.assert_not_called()
