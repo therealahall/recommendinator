@@ -35,6 +35,28 @@ class BlurbRequest(NamedTuple):
     references: list[ContentItem]
 
 
+def _mentions_creator(reasoning_lower: str, creator_lower: str) -> bool:
+    """Whether *reasoning_lower* names *creator_lower* as a name of its own.
+
+    The name must sit between non-word neighbours so it cannot match inside a
+    longer word.  ``\\b`` cannot express that here: it is a boundary between a
+    word and a non-word character, so a trailing one demands a word character
+    right after the match and a name ending in punctuation ("FromSoftware,
+    Inc.") never matches.  Asserting the neighbour directly holds however the
+    name begins and ends.
+
+    Args:
+        reasoning_lower: The lowercased reasoning text.
+        creator_lower: The lowercased creator name to look for.
+
+    Returns:
+        True if the name appears in the text.
+    """
+    return bool(
+        re.search(r"(?<!\w)" + re.escape(creator_lower) + r"(?!\w)", reasoning_lower)
+    )
+
+
 def _fix_author_attributions(recommendations: list[dict[str, Any]]) -> None:
     """Fix cross-contaminated author names in reasoning text.
 
@@ -64,16 +86,14 @@ def _fix_author_attributions(recommendations: list[dict[str, Any]]) -> None:
         correct_author = item.author
         reasoning_lower = reasoning.lower()
 
-        if re.search(
-            r"\b" + re.escape(correct_author.lower()) + r"\b", reasoning_lower
-        ):
+        if _mentions_creator(reasoning_lower, correct_author.lower()):
             continue
 
         wrong_authors = [
             original
             for lower, original in batch_authors.items()
             if lower != correct_author.lower()
-            and re.search(r"\b" + re.escape(lower) + r"\b", reasoning_lower)
+            and _mentions_creator(reasoning_lower, lower)
         ]
 
         if len(wrong_authors) == 1:
