@@ -30,6 +30,7 @@ from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.engine import RecommendationEngine
 from src.recommendations.record import Recommendation
+from src.recommendations.reference_index import SignalIndex
 from src.recommendations.scorers import (
     DEFAULT_SCORERS,
     SCORER_NAME_MAP,
@@ -961,6 +962,64 @@ class TestSemanticSimilarityStaysOptional:
         assert _by_title(recommendations, "The Nice Guys").score_breakdown[
             "semantic_similarity"
         ] == pytest.approx(0.9, abs=SCORE_TOLERANCE)
+
+    def test_absent_even_when_the_user_weighted_it(self):
+        """A user's own weight does not put the inert scorer back.
+
+        The drop runs after the per-user override pass. Somebody who moved the
+        slider and has a vector store with nothing in it is the realistic
+        combination, and the one that would show a 0.0 row on every card if
+        the order of those two steps were ever swapped.
+        """
+        ai_engine = _ai_engine()
+
+        with patch.object(SimilarityMatcher, "find_similar", return_value=[]):
+            recommendations = ai_engine.generate_recommendations(
+                content_type=ContentType.MOVIE,
+                count=20,
+                user_preference_config=UserPreferenceConfig(
+                    scorer_weights={"semantic_similarity": 3.0}
+                ),
+            )
+
+        assert tuple(_titles(recommendations)) == MOVIE_ORDER
+        assert _scores(recommendations) == pytest.approx(
+            list(MOVIE_SCORES), abs=SCORE_TOLERANCE
+        )
+        for recommendation in recommendations:
+            assert "semantic_similarity" not in recommendation.score_breakdown
+
+
+class TestReferencesResolveAfterTheSlice:
+    """The reference lookup runs for what is emitted, not for every candidate.
+
+    It builds a candidate profile and walks the index's posting lists, and
+    nothing but the emitted records ever reads the result. Moving it back
+    inside the candidate loop would leave every other assertion in this file
+    green, so the call count is pinned here.
+    """
+
+    def test_the_lookup_runs_once_per_emitted_recommendation(self, engine):
+        """One call per returned record, on a library with far more candidates."""
+        candidates = engine.storage.get_unconsumed_items(
+            content_type=ContentType.MOVIE, limit=None, include_ignored=False
+        )
+
+        with patch.object(
+            SignalIndex,
+            "references_for",
+            autospec=True,
+            side_effect=SignalIndex.references_for,
+        ) as lookup:
+            recommendations = engine.generate_recommendations(
+                content_type=ContentType.MOVIE, count=3
+            )
+
+        assert len(recommendations) == 3
+        assert lookup.call_count == 3
+        # The per-candidate implementation this replaced would have called it
+        # once for each of these instead.
+        assert len(candidates) > 3
 
 
 class TestIgnoredItems:
