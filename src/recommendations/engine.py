@@ -38,7 +38,12 @@ from src.recommendations.scorers import (
 )
 from src.recommendations.scoring_pipeline import ScoredCandidate, ScoringPipeline
 from src.recommendations.similarity import _MAX_SIMILARITY_CANDIDATES, SimilarityMatcher
-from src.recommendations.variety import build_variety_ladder, variety_penalty_for
+from src.recommendations.variety import (
+    PenaltyFraction,
+    build_variety_ladder,
+    top_penalty_for_preference,
+    variety_penalty_for,
+)
 from src.storage.manager import StorageManager
 from src.utils.series import (
     build_series_tracking,
@@ -115,15 +120,22 @@ _CONTENT_TYPE_NATURAL_LABEL: dict[str, str] = {
 }
 
 
+# Shuffle source for engines built without one.  Shared rather than per-engine
+# so seeding it seeds every engine that did not bring its own.
+_DEFAULT_RNG = random.Random()
+
+
 def _shuffle_close_scores(
     items_with_scores: list[tuple[ContentItem, float]],
+    rng: random.Random,
 ) -> list[ContentItem]:
     """Shuffle items that have similar overlap scores.
 
     Items are already sorted by descending score.  Adjacent items whose
     scores differ by at most ``SCORE_PROXIMITY_THRESHOLD`` are grouped
-    together and shuffled, so the ordering feels dynamic across runs
-    while still respecting meaningful relevance differences.
+    together and shuffled with *rng*, so the ordering feels dynamic across
+    runs while still respecting meaningful relevance differences.  A seeded
+    *rng* makes the ordering reproducible.
     """
     if not items_with_scores:
         return []
@@ -140,7 +152,7 @@ def _shuffle_close_scores(
 
     result: list[ContentItem] = []
     for group in groups:
-        random.shuffle(group)
+        rng.shuffle(group)
         result.extend(group)
     return result
 
@@ -165,6 +177,7 @@ class RecommendationEngine:
         scorers: list[Scorer] | None = None,
         semantic_similarity_weight: float = 1.5,
         custom_preference_weight: float = 1.0,
+        rng: random.Random | None = None,
     ) -> None:
         """Initialize recommendation engine.
 
@@ -180,8 +193,11 @@ class RecommendationEngine:
                 when AI is enabled.
             custom_preference_weight: Weight for the CustomPreferenceScorer,
                 which is built per call from the user's custom rules.
+            rng: Randomness used to shuffle equally relevant reference items.
+                Pass a seeded instance to make that ordering reproducible.
         """
         self.storage = storage_manager
+        self.rng = rng if rng is not None else _DEFAULT_RNG
         self.embedding_gen = embedding_generator
         self.llm_generator = recommendation_generator
         self.preference_analyzer = PreferenceAnalyzer(min_rating=min_rating)
@@ -392,12 +408,9 @@ class RecommendationEngine:
         # user has set a non-zero variety_penalty.  This multiplicatively
         # demotes candidates whose genre cluster the user recently finished,
         # so the next entry in a just-completed genre/series no longer
-        # automatically tops the list.  The ladder is built from completed
-        # items of the *same* content type, so finishing a fantasy book does
-        # not suppress fantasy movies or games — each type varies independently.
-        # The user's variety_penalty (0.0-5.0) is mapped onto a 0.0-1.0 penalty
-        # fraction by dividing by MAX_VARIETY_PENALTY, so the slider's full value
-        # zeroes a just-finished genre while 4.0 reproduces the legacy 0.8 top.
+        # automatically tops the list.  The ladder is built from signal items
+        # of the *same* content type, so finishing a fantasy book does not
+        # suppress fantasy movies or games — each type varies independently.
         if (
             user_preference_config is not None
             and user_preference_config.variety_penalty > 0.0
@@ -407,8 +420,9 @@ class RecommendationEngine:
                 signal_items_of_type,
                 series_tracking,
                 unconsumed_items,
-                top_penalty=user_preference_config.variety_penalty
-                / UserPreferenceConfig.MAX_VARIETY_PENALTY,
+                top_penalty=top_penalty_for_preference(
+                    user_preference_config.variety_penalty
+                ),
             )
 
         # Collapse season-level candidates that share a parent show's db_id
@@ -696,16 +710,16 @@ class RecommendationEngine:
     @staticmethod
     def _apply_variety_penalty(
         ranked_items: list[_RankedCandidate],
-        completed_items_of_type: list[ContentItem],
+        signal_items_of_type: list[ContentItem],
         series_tracking: dict[str, set[float]],
         unconsumed_items: list[ContentItem],
         *,
-        top_penalty: float,
+        top_penalty: PenaltyFraction,
     ) -> list[_RankedCandidate]:
         """Apply the stepped genre-fatigue penalty and re-sort (issue #74).
 
-        Builds a cluster -> penalty ladder from the user's recently completed
-        items *of the content type being recommended*, then multiplies each
+        Builds a cluster -> penalty ladder from the user's taste-signal items
+        *of the content type being recommended*, then multiplies each
         candidate's score by ``1 - penalty`` where the penalty is the strongest
         among the candidate's recently finished genre clusters.  Scoping the
         ladder to a single content type keeps genres varying independently per
@@ -721,20 +735,20 @@ class RecommendationEngine:
 
         Args:
             ranked_items: Ranked candidates, best first.
-            completed_items_of_type: Completed items of the recommended content
-                type, used to build the ladder.
+            signal_items_of_type: Taste-signal items (completed, rated, not
+                ignored) of the recommended content type, used to build the
+                ladder.  Only completion events among them claim a rung.
             series_tracking: Series name -> consumed item numbers, used to
                 detect active series continuations.
             unconsumed_items: Candidate items, used for series ordering checks.
-            top_penalty: The penalty *fraction* (0.0-1.0) for the most recently
-                finished genre, derived from the user's variety_penalty by
-                dividing by ``MAX_VARIETY_PENALTY``. Used as the ladder's top rung.
+            top_penalty: The ladder's top rung, from
+                :func:`top_penalty_for_preference`.
 
         Returns:
             Re-sorted candidates carrying the penalty they took.  Returns the
             input unchanged when the ladder is empty.
         """
-        ladder = build_variety_ladder(completed_items_of_type, top_penalty=top_penalty)
+        ladder = build_variety_ladder(signal_items_of_type, top_penalty=top_penalty)
         if not ladder:
             return ranked_items
 
@@ -1184,10 +1198,10 @@ class RecommendationEngine:
         # Within each group, shuffle items that have similar overlap scores
         # so the order feels dynamic across runs.
         result: list[ContentItem] = _shuffle_close_scores(
-            by_type.pop(candidate_type, [])
+            by_type.pop(candidate_type, []), self.rng
         )
         for content_type_items in by_type.values():
-            result.extend(_shuffle_close_scores(content_type_items))
+            result.extend(_shuffle_close_scores(content_type_items, self.rng))
         return result
 
     def _generate_reasoning(

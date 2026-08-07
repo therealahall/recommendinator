@@ -1,5 +1,6 @@
 """Tests for recommendation engine cross-content-type recommendations."""
 
+import random
 from datetime import date
 from typing import NamedTuple
 from unittest.mock import Mock
@@ -100,6 +101,23 @@ def real_engine(real_storage):
         recommendation_generator=None,
         min_rating=4,
     )
+
+
+def _engine_for_helpers(rng: random.Random | None = None) -> RecommendationEngine:
+    """Build an engine for exercising its pure helper methods.
+
+    ``__init__`` wants a storage manager these helpers never touch, so it is
+    skipped and only the attributes they read are set.
+
+    Args:
+        rng: Shuffle source for reference ordering. Defaults to an unseeded one.
+
+    Returns:
+        An engine carrying nothing but what the helpers use.
+    """
+    engine = RecommendationEngine.__new__(RecommendationEngine)
+    engine.rng = rng if rng is not None else random.Random()
+    return engine
 
 
 def _save_book(
@@ -1606,7 +1624,7 @@ class TestContributingReferenceItemsRegression:
         type.  Reasoning groups items by type with the candidate's type
         listed first.
         """
-        engine = RecommendationEngine.__new__(RecommendationEngine)
+        engine = _engine_for_helpers()
 
         candidate = ContentItem(
             id="breaking_bad",
@@ -1677,7 +1695,7 @@ class TestCrossTypeClusterOverlapRegression:
 
         Bug: "1923" (genre: ["Drama"]) was cited for every recommendation.
         """
-        engine = RecommendationEngine.__new__(RecommendationEngine)
+        engine = _engine_for_helpers()
 
         # "1923" has only Drama — should not match sci-fi thematically
         show_1923 = ContentItem(
@@ -1725,7 +1743,7 @@ class TestCrossTypeClusterOverlapRegression:
         Bug: Cross-type matching used raw Jaccard, making any "Drama"
         show a valid reference for any candidate with "Drama" in its genres.
         """
-        engine = RecommendationEngine.__new__(RecommendationEngine)
+        engine = _engine_for_helpers()
 
         # War-themed candidate book
         candidate = ContentItem(
@@ -1776,7 +1794,7 @@ class TestReasoningFormatting:
 
     def _make_engine(self) -> RecommendationEngine:
         """Create an engine instance for testing reasoning generation."""
-        return RecommendationEngine.__new__(RecommendationEngine)
+        return _engine_for_helpers()
 
     def _make_empty_preferences(self) -> UserPreferences:
         """Create empty user preferences for testing."""
@@ -1951,7 +1969,7 @@ class TestContributingReferenceRatingFloorRegression:
 
         Bug reported: 'The Crown' rated 1 appeared in 'you liked' references.
         """
-        engine = RecommendationEngine.__new__(RecommendationEngine)
+        engine = _engine_for_helpers()
 
         candidate = ContentItem(
             id="peaky",
@@ -1991,7 +2009,7 @@ class TestContributingReferenceRatingFloorRegression:
 
     def test_unrated_items_included_in_contributing_references(self) -> None:
         """Unrated items (rating=None) should still be included as references."""
-        engine = RecommendationEngine.__new__(RecommendationEngine)
+        engine = _engine_for_helpers()
 
         candidate = ContentItem(
             id="breaking_bad",
@@ -2028,7 +2046,7 @@ class TestSameTypeLimitRegression:
 
     def test_same_type_limit_capped_at_3(self) -> None:
         """6 same-type consumed items should produce max 3 references."""
-        engine = RecommendationEngine.__new__(RecommendationEngine)
+        engine = _engine_for_helpers()
 
         candidate = ContentItem(
             id="candidate",
@@ -2064,7 +2082,7 @@ class TestShuffleCloseScores:
     """Tests for _shuffle_close_scores reference ordering."""
 
     def test_empty_input(self) -> None:
-        assert _shuffle_close_scores([]) == []
+        assert _shuffle_close_scores([], random.Random()) == []
 
     def test_single_item(self) -> None:
         item = ContentItem(
@@ -2073,7 +2091,7 @@ class TestShuffleCloseScores:
             content_type=ContentType.VIDEO_GAME,
             status=ConsumptionStatus.COMPLETED,
         )
-        result = _shuffle_close_scores([(item, 0.8)])
+        result = _shuffle_close_scores([(item, 0.8)], random.Random())
         assert result == [item]
 
     def test_distant_scores_preserve_order(self) -> None:
@@ -2090,8 +2108,9 @@ class TestShuffleCloseScores:
         scored = list(zip(items, [0.9, 0.5, 0.1], strict=True))
 
         # Run many times — order should never change
+        rng = random.Random()
         for _ in range(20):
-            result = _shuffle_close_scores(scored)
+            result = _shuffle_close_scores(scored, rng)
             assert result == items
 
     def test_close_scores_all_items_present(self) -> None:
@@ -2108,8 +2127,9 @@ class TestShuffleCloseScores:
         # All within 0.05 threshold
         scored = list(zip(items, [0.80, 0.78, 0.76], strict=True))
 
+        rng = random.Random()
         for _ in range(20):
-            result = _shuffle_close_scores(scored)
+            result = _shuffle_close_scores(scored, rng)
             assert {item.id for item in result} == {"item_0", "item_1", "item_2"}
 
     def test_mixed_groups_high_items_always_first(self) -> None:
@@ -2136,14 +2156,150 @@ class TestShuffleCloseScores:
             (close_items[2], 0.47),
         ]
 
+        rng = random.Random()
         for _ in range(20):
-            result = _shuffle_close_scores(scored)
+            result = _shuffle_close_scores(scored, rng)
             assert result[0] == top
             assert {item.id for item in result[1:]} == {
                 "close_0",
                 "close_1",
                 "close_2",
             }
+
+
+class TestSeededReferenceOrderRegression:
+    """Identical requests explained a recommendation in different orders.
+
+    Symptom: two identical recommendation runs listed the contributing
+    reference items in different orders, so a user asking "why does it say
+    this" got an answer nobody could reproduce.
+    Root cause: ``_shuffle_close_scores`` shuffled equally relevant references
+    through the module-global ``random``, which a caller could only steer by
+    seeding global state shared with every other test and component.
+    Fix: the engine takes an injectable ``random.Random`` and shuffles through
+    it, so a seeded engine repeats its reference order exactly.
+    """
+
+    @staticmethod
+    def _reference_ids(storage, seed: int | None = None) -> list[str]:
+        """Return the reference ids an engine seeded with *seed* produces.
+
+        The three consumed books share the candidate's only genre and their
+        rating, so they score identically and land in one shuffle group.
+
+        Args:
+            storage: Storage manager the engine is built over.
+            seed: Seed for the engine's shuffle source. ``None`` builds the
+                engine without one, exercising the module default.
+
+        Returns:
+            The reference item ids, in the order the engine emits them.
+        """
+        engine = RecommendationEngine(
+            storage_manager=storage,
+            embedding_generator=None,
+            recommendation_generator=None,
+            min_rating=4,
+            rng=random.Random(seed) if seed is not None else None,
+        )
+        candidate = ContentItem(
+            id="candidate",
+            title="Candidate",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genres": ["Science Fiction"]},
+        )
+        consumed = [
+            ContentItem(
+                id=f"book_{letter}",
+                title=f"Book {letter.upper()}",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+                metadata={"genres": ["Science Fiction"]},
+            )
+            for letter in ("a", "b", "c")
+        ]
+        references = engine._find_contributing_reference_items(candidate, consumed)
+        return [item.id for item in references]
+
+    def test_seeded_engine_repeats_a_pinned_reference_order(self, mock_storage) -> None:
+        """Two engines on the same seed produce the same pinned order."""
+        expected = ["book_c", "book_a", "book_b"]
+
+        assert self._reference_ids(mock_storage, seed=7) == expected
+        assert self._reference_ids(mock_storage, seed=7) == expected
+
+    def test_reference_order_follows_the_seed(self, mock_storage) -> None:
+        """The seed decides the order, so the rng is really being consulted.
+
+        A fix that dropped the shuffle instead of injecting the rng would
+        satisfy the pinned order above, because one fixed order repeats too.
+        Twenty seeds over the same three references must produce more than
+        one order.
+        """
+        orders = {
+            tuple(self._reference_ids(mock_storage, seed=seed)) for seed in range(20)
+        }
+
+        assert len(orders) > 1
+
+    def test_engine_without_a_seed_still_returns_every_reference(
+        self, mock_storage
+    ) -> None:
+        """Omitting the rng keeps the default shuffle and the whole set."""
+        assert set(self._reference_ids(mock_storage)) == {"book_a", "book_b", "book_c"}
+
+    def test_seeded_engines_repeat_the_whole_explanation(self, mock_storage) -> None:
+        """A full run repeats its references and its reasoning sentence.
+
+        The shuffle is only reproducible if it is reproducible where users
+        read it, so this drives ``generate_recommendations`` end to end rather
+        than the reference helper alone.
+        """
+        candidate = ContentItem(
+            id="candidate",
+            title="Foundation",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genres": ["Science Fiction"]},
+        )
+        consumed = [
+            ContentItem(
+                id=f"book_{letter}",
+                title=f"Book {letter.upper()}",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+                metadata={"genres": ["Science Fiction"]},
+            )
+            for letter in ("a", "b", "c")
+        ]
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: consumed
+        )
+        mock_storage.get_unconsumed_items = Mock(return_value=[candidate])
+
+        runs = [
+            RecommendationEngine(
+                storage_manager=mock_storage,
+                embedding_generator=None,
+                recommendation_generator=None,
+                min_rating=4,
+                rng=random.Random(11),
+            ).generate_recommendations(content_type=ContentType.BOOK, count=1)[0]
+            for _ in range(2)
+        ]
+
+        assert [item.id for item in runs[0]["contributing_items"]] == [
+            item.id for item in runs[1]["contributing_items"]
+        ]
+        assert {item.id for item in runs[0]["contributing_items"]} == {
+            "book_a",
+            "book_b",
+            "book_c",
+        }
+        assert runs[0]["reasoning"] == runs[1]["reasoning"]
 
 
 def _variety_score_for(recs: list[dict], item_id: str) -> float:
@@ -2559,6 +2715,51 @@ class TestVarietyAfterCompletion:
                 variety_penalty=UserPreferenceConfig.MAX_VARIETY_PENALTY
             ),
         )
+        assert recs[0]["variety_penalty"] == pytest.approx(1.0)
+        assert _variety_score_for(recs, "same_genre") == pytest.approx(0.0)
+
+    def test_strength_above_the_slider_zeroes_rather_than_negates(
+        self, non_ai_engine, mock_storage
+    ) -> None:
+        """A strength past the maximum still bottoms out at a zero score.
+
+        Both interfaces bound what a user may set and ``from_dict`` clamps
+        what it loads, so this exercises the engine's own boundary: it
+        converts the strength through ``top_penalty_for_preference``, whose
+        fraction cannot exceed 1.0. Dividing the raw strength instead gave a
+        fraction of 10.0 here, and ``score * (1 - penalty)`` emitted a
+        negative score.
+        """
+        consumed = ContentItem(
+            id="consumed_1",
+            title="Dune",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            date_completed=date(2026, 1, 1),
+            metadata={"genres": ["Science Fiction"]},
+        )
+        same_genre = ContentItem(
+            id="same_genre",
+            title="Foundation",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genres": ["Science Fiction"]},
+        )
+
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: [consumed]
+        )
+        mock_storage.get_unconsumed_items = Mock(return_value=[same_genre])
+
+        recs = non_ai_engine.generate_recommendations(
+            content_type=ContentType.BOOK,
+            count=1,
+            user_preference_config=UserPreferenceConfig(
+                variety_penalty=UserPreferenceConfig.MAX_VARIETY_PENALTY * 10
+            ),
+        )
+
         assert recs[0]["variety_penalty"] == pytest.approx(1.0)
         assert _variety_score_for(recs, "same_genre") == pytest.approx(0.0)
 
@@ -3510,7 +3711,7 @@ class TestSameSeriesReferenceExclusionRegression:
 
     def test_same_series_consumed_item_excluded_regression(self) -> None:
         """Regression: Series S1 must NOT appear as a reference for S2."""
-        engine = RecommendationEngine.__new__(RecommendationEngine)
+        engine = _engine_for_helpers()
 
         candidate = ContentItem(
             id="expanse_s2",
@@ -3550,7 +3751,7 @@ class TestSameSeriesReferenceExclusionRegression:
 
     def test_non_series_candidate_unaffected(self) -> None:
         """Candidate with no series membership must not filter any consumed item."""
-        engine = RecommendationEngine.__new__(RecommendationEngine)
+        engine = _engine_for_helpers()
 
         candidate = ContentItem(
             id="interstellar",
@@ -3579,7 +3780,7 @@ class TestSameSeriesReferenceExclusionRegression:
 
     def test_case_insensitive_series_name_matching(self) -> None:
         """Series name comparison must be case-insensitive."""
-        engine = RecommendationEngine.__new__(RecommendationEngine)
+        engine = _engine_for_helpers()
 
         candidate = ContentItem(
             id="expanse_s2",
@@ -3630,7 +3831,7 @@ class TestSameSeriesReferenceExclusionRegression:
         Fix: after the get_series_name comparison, fall back to comparing the
         consumed item's title against the candidate's series name.
         """
-        engine = RecommendationEngine.__new__(RecommendationEngine)
+        engine = _engine_for_helpers()
 
         # Candidate: expanded season with series metadata
         candidate = ContentItem(
@@ -3690,7 +3891,7 @@ class TestSameSeriesReferenceExclusionRegression:
         get_series_name_from_metadata() to check metadata series_name/series/
         series_title/franchise fields.
         """
-        engine = RecommendationEngine.__new__(RecommendationEngine)
+        engine = _engine_for_helpers()
 
         candidate = ContentItem(
             id="expanse_s3",
@@ -3745,7 +3946,7 @@ class TestSameSeriesReferenceExclusionRegression:
         self, metadata_key: str
     ) -> None:
         """All supported metadata keys must trigger same-series exclusion."""
-        engine = RecommendationEngine.__new__(RecommendationEngine)
+        engine = _engine_for_helpers()
 
         candidate = ContentItem(
             id="expanse_s3",
@@ -3799,7 +4000,7 @@ class TestInProgressItemsExcludedFromBasisRegression:
 
     def test_contributing_excludes_currently_consuming(self) -> None:
         """In-progress items must not appear as contributing references."""
-        engine = RecommendationEngine.__new__(RecommendationEngine)
+        engine = _engine_for_helpers()
 
         candidate = ContentItem(
             id="breaking_bad",
@@ -3838,7 +4039,7 @@ class TestInProgressItemsExcludedFromBasisRegression:
 
     def test_adaptations_exclude_currently_consuming(self) -> None:
         """In-progress items must not appear as cross-type adaptations."""
-        engine = RecommendationEngine.__new__(RecommendationEngine)
+        engine = _engine_for_helpers()
 
         candidate = ContentItem(
             id="lotr_movie",
@@ -3877,7 +4078,7 @@ class TestInProgressItemsExcludedFromBasisRegression:
 
     def test_llm_blurb_call_excludes_currently_consuming(self) -> None:
         """LLM blurb context must not include CURRENTLY_CONSUMING items."""
-        engine = RecommendationEngine.__new__(RecommendationEngine)
+        engine = _engine_for_helpers()
         engine.llm_generator = Mock(spec=RecommendationGenerator)
         engine.llm_generator.generate_blurbs_per_item.return_value = {}
 
@@ -3921,7 +4122,7 @@ class TestInProgressItemsExcludedFromBasisRegression:
 
     def test_llm_only_fallback_excludes_currently_consuming(self) -> None:
         """LLM-only fallback recs must not see CURRENTLY_CONSUMING items."""
-        engine = RecommendationEngine.__new__(RecommendationEngine)
+        engine = _engine_for_helpers()
         engine.llm_generator = Mock(spec=RecommendationGenerator)
         engine.llm_generator.generate_recommendations.return_value = []
 

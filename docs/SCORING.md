@@ -94,8 +94,10 @@ the genre you just finished. `0.0` turns it off. The value is divided by its
 genre's same-type candidates outright. There is **no score floor**.
 
 Your five most recently finished genre clusters sit on a ladder that decays by
-recency. At `5.0` the rungs are 100%, 80%, 60%, 40%, 20%, then nothing, and a
-lower setting scales the whole ladder down: `2.0` gives 40%, 32%, 24%, 16%, 8%.
+recency. Only rated, non-ignored completions count, the same taste signal the
+scorers read. At `5.0` the rungs are 100%, 80%, 60%, 40%, 20%, then nothing,
+and a lower setting scales the whole ladder down: `2.0` gives 40%, 32%, 24%,
+16%, 8%.
 A candidate takes the penalty of its freshest matching cluster, multiplied into
 its final score.
 

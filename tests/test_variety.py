@@ -15,12 +15,14 @@ from pathlib import Path
 import pytest
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.variety import (
     VARIETY_LADDER_STEPS,
     VARIETY_SERIES_CONTINUATION_FACTOR,
     VARIETY_TOP_PENALTY,
     _completion_recency,
     build_variety_ladder,
+    top_penalty_for_preference,
     variety_penalty_for,
 )
 from src.storage.sqlite_db import SQLiteDB
@@ -72,6 +74,31 @@ def _ongoing_show(
             "seasons_watched_dates": season_dates,
         },
     )
+
+
+class TestTopPenaltyForPreference:
+    """Tests for :func:`top_penalty_for_preference`."""
+
+    def test_full_strength_is_the_top_fraction(self) -> None:
+        assert top_penalty_for_preference(
+            UserPreferenceConfig.MAX_VARIETY_PENALTY
+        ) == pytest.approx(VARIETY_TOP_PENALTY)
+
+    def test_strength_scales_linearly(self) -> None:
+        assert top_penalty_for_preference(2.0) == pytest.approx(0.4)
+
+    def test_disabled_strength_is_the_bottom_of_the_domain(self) -> None:
+        """The slider's off position maps onto no penalty at all."""
+        assert top_penalty_for_preference(0.0) == pytest.approx(0.0)
+
+    def test_out_of_range_strength_clamps_to_the_fraction_domain(self) -> None:
+        """A strength outside the slider's range cannot leave the domain.
+
+        The engine multiplies a candidate's score by ``1 - penalty``, so a
+        fraction above ``1.0`` would emit negative scores.
+        """
+        assert top_penalty_for_preference(50.0) == pytest.approx(VARIETY_TOP_PENALTY)
+        assert top_penalty_for_preference(-5.0) == pytest.approx(0.0)
 
 
 class TestBuildVarietyLadder:
@@ -210,6 +237,25 @@ class TestBuildVarietyLadder:
     def test_zero_steps_disables_ladder(self) -> None:
         items = [_completed("A", ["Fantasy"], completed_on=date(2026, 1, 1))]
         assert build_variety_ladder(items, steps=0) == {}
+
+    def test_clamped_top_rung_keeps_every_rung_inside_the_domain(self) -> None:
+        """A strength past the slider's maximum cannot lift a rung above 1.0.
+
+        Candidates are scored ``score * (1 - penalty)``, so a rung above 1.0
+        would emit a negative score. Routing the strength through
+        :func:`top_penalty_for_preference` caps the whole ladder.
+        """
+        items = [
+            _completed("Dragons", ["Fantasy"], completed_on=date(2026, 1, 2)),
+            _completed("Space", ["Science Fiction"], completed_on=date(2026, 1, 1)),
+        ]
+        ladder = build_variety_ladder(
+            items, steps=2, top_penalty=top_penalty_for_preference(50.0)
+        )
+        assert ladder == {
+            "fantasy": pytest.approx(1.0),
+            "science_fiction": pytest.approx(0.5),
+        }
 
 
 class TestVarietyPenaltyFor:
