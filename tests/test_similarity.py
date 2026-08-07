@@ -715,6 +715,35 @@ class TestMalformedEmbeddingKeys:
 
         assert [(item.title, score) for item, score in results] == [("Real Book", 0.8)]
 
+    def test_key_past_the_digit_limit_does_not_abort_the_search(
+        self, real_storage: StorageManager, mock_embedding_gen: Mock
+    ) -> None:
+        """A ``db_`` key of 5000 decimal digits is skipped too.
+
+        CPython refuses ``int()`` on a string past 4300 digits, so checking
+        the characters is not enough. An all-decimal suffix raises just the
+        same, and an external id is user-supplied text that can hold one.
+        """
+        _save_book(real_storage, "Real Book", item_id="book-1")
+        reference = ContentItem(
+            id="reference",
+            title="Reference Book",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+        )
+        real_storage.vector_db.search_similar.return_value = [
+            {"content_id": f"db_{'1' * 5000}", "score": 0.95},
+            {"content_id": "book-1", "score": 0.8},
+        ]
+
+        matcher = SimilarityMatcher(real_storage, mock_embedding_gen)
+        results = matcher.find_similar(
+            [reference], content_type=ContentType.BOOK, limit=10
+        )
+
+        assert [(item.title, score) for item, score in results] == [("Real Book", 0.8)]
+
 
 class TestBothKeyFormsAgainstARealVectorStore:
     """Both live embedding-key forms resolve through a real ChromaDB.

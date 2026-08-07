@@ -132,10 +132,15 @@ def _db_id_from_embedding_key(key: str) -> int | None:
         The database ID for a synthetic ``db_`` key, otherwise ``None``.
     """
     suffix = key.removeprefix(_DB_EMBEDDING_PREFIX)
-    # isdecimal, not isdigit: "²" is a digit that int() refuses.
-    if suffix == key or not suffix.isdecimal():
+    if suffix == key:
         return None
-    return int(suffix)
+    try:
+        return int(suffix)
+    except ValueError:
+        # Attempted rather than pre-checked: "²" passes str.isdigit(), and
+        # int() refuses any string past 4300 digits however ordinary its
+        # characters. Either way the key names no row.
+        return None
 
 
 class StorageManager:
