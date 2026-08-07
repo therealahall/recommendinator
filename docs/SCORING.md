@@ -60,10 +60,12 @@ filter.
 An item with no length metadata, common before enrichment, gets a
 benefit-of-the-doubt score rather than a penalty.
 
-Video game hours are whatever playtime the library has recorded: Steam's hours
-on record, RAWG's playtime figure from enrichment, or the `hours_played` column
-of an imported CSV or JSON file. A games file carrying `hours_played` therefore
-changes which games get recommended.
+Video game hours are the average playtime RAWG reports for the game, filled in
+by enrichment as `average_playtime_hours`. Your own hours on record, from Steam
+or an imported `hours_played` column, describe you rather than the game, so they
+count for nothing here. A game RAWG has not enriched has no length and takes the
+benefit-of-the-doubt score above. So does one enriched before this release, whose
+average sits under the old key until enrichment runs again.
 
 ## Variety after completion
 

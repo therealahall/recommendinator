@@ -59,9 +59,10 @@ the edit modal or `library edit --seasons-watched` to change a season checklist.
 `notes` is the one that surprises people: a stored note always wins, and no
 surface in the app edits one, so the first import of a note is the last word.
 
-`hours_played` is stored as the playtime the length scorer reads, so importing a
-games CSV carrying it changes which games get recommended. See
-[SCORING.md](../../../../docs/SCORING.md#content-length-preferences).
+`hours_played` is stored and exported as your own playtime. It is not a game
+length, so it does not affect recommendations. The
+[length scorer](../../../../docs/SCORING.md#content-length-preferences) reads
+RAWG's average playtime instead.
 
 ### `ignored`
 

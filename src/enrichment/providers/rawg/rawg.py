@@ -406,7 +406,7 @@ class RAWGProvider(EnrichmentProvider):
                 extra_metadata["metacritic"] = game["metacritic"]
 
             if game.get("playtime"):
-                extra_metadata["playtime_hours"] = game["playtime"]
+                extra_metadata["average_playtime_hours"] = game["playtime"]
 
             # ESRB rating
             if game.get("esrb_rating"):

@@ -168,7 +168,7 @@ these keys out of it, and none of them is a recognised key:
 
 | Read by | Keys |
 |---|---|
-| [Length scorer](SCORING.md#content-length-preferences), `src/recommendations/content_length.py` | **book** `num_pages`, `number_of_pages`. **TV show** `number_of_seasons`. **video game** `playtime_hours`, `main_story_hours`, `average_playtime_hours` |
+| [Length scorer](SCORING.md#content-length-preferences), `src/recommendations/content_length.py` | **book** `num_pages`, `number_of_pages`. **TV show** `number_of_seasons`. **video game** `average_playtime_hours` |
 | Series ordering, `src/utils/series.py` | Series name: `series_name`, `series`, `series_title`, `franchise`. Position: `series_position`, `series_number`, `series_num`, `book_number`, `book_num`, `season`, `season_number`, `season_num`, `part`, `part_number`, `episode`, `episode_number`, `movie_number`. Expanding a show into seasons: `number_of_seasons` |
 | Season checklist and the [variety ladder](SCORING.md#variety-after-completion), `src/utils/series.py` | `seasons_watched`, `seasons_watched_dates` |
 | Library export, `src/web/export.py` | `notes` on every type. **TV show** `seasons_watched`. **video game** `playtime_hours` |
@@ -178,14 +178,14 @@ files. Beyond it and the recognised keys, the blob is yours.
 
 **Taking one of those keys for your own bookkeeping changes behaviour, with no
 warning and no error at any layer.** Your own `number_of_seasons` re-classifies
-the show's length. Your own `franchise` re-orders a series. Read forwards, that
-is why a games file carrying `hours_played` changes which games get recommended:
-the import stores it as `playtime_hours` and the length scorer reads it.
+the show's length. Your own `franchise` re-orders a series. Your own
+`average_playtime_hours` re-classifies a game's length, where `playtime_hours`
+does not: that key holds the user's own hours, and nothing scores it.
 
-Enrichment writes into the blob too. RAWG writes `franchise` and
-`series_position`, TMDB writes `series_name`, `series_position` and
-`tmdb_collection_id`. `merge_enrichment` (`src/enrichment/manager.py`) fills each
-only where the key is missing or empty, so it never overwrites you. See
+Enrichment writes into the blob too. RAWG writes `average_playtime_hours`,
+`franchise` and `series_position`, TMDB writes `series_name`, `series_position`
+and `tmdb_collection_id`. `merge_enrichment` (`src/enrichment/manager.py`) fills
+each only where the key is missing or empty, so it never overwrites you. See
 [ARCHITECTURE.md](../ARCHITECTURE.md).
 
 ### Shape rules
