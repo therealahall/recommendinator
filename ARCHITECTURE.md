@@ -303,14 +303,15 @@ See [docs/SCORING.md](docs/SCORING.md).
 The first three assemble into the effective global. A per-user override
 (`users.settings` JSON, `"preference_config"`) then wins per key, and an unset key
 keeps the global. `min_rating_for_preference` and the counts have no per-user
-field. The engine asks for the running config and re-resolves the weights and
-`min_rating_for_preference` on every request, so a Settings-page edit reaches
-the next set of recommendations without a restart. It asks rather than holds
-because scoring runs off the event loop (Starlette streams the synchronous SSE
-generator in a threadpool worker) while config writes run on it: a hot-reload
-binds a whole new config in one statement, and a live-applied setting swaps the
-mappings on its path for updated copies, so a request in flight always finishes
-on the configuration it started with.
+field. The engine asks for the running config once per request and resolves the
+weights, `min_rating_for_preference` and the custom-rule weight from that one
+read, so a Settings-page edit reaches the next set of recommendations without a
+restart. It asks rather than holds because scoring runs off the event loop
+(Starlette streams the synchronous SSE generator in a threadpool worker) while
+config writes run on it: a hot-reload binds a whole new config in one statement,
+and a save publishes all of its live-applied leaves as one swap per section. A
+request in flight therefore scores on the configuration it read at its start,
+whole, and a save landing mid-request reaches the next one instead.
 
 Invariants:
 
@@ -348,8 +349,10 @@ Cross-type reference items use cluster overlap rather than raw Jaccard, so
 broadly-matching items cannot dominate.
 
 **Adaptations and reference items are matched through an index**
-(`reference_index.py`), built once per request over the taste signal and queried
-once per candidate. Each signal item's normalized title, genres, thematic
+(`reference_index.py`), built once per request over the taste signal. The
+adaptation lookup runs once per candidate, before scoring. The reference lookup
+runs after the slice, once per emitted recommendation, because nothing but those
+records reads its result. Each signal item's normalized title, genres, thematic
 clusters, creator and series name are derived when the index is built, and a
 candidate reaches its matches by lookup: an adaptation by normalized title or
 author, a reference by shared genre within its own content type or by shared

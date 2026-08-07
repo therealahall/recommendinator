@@ -236,7 +236,9 @@ class SignalIndex:
     """Lookup structures over one request's taste-signal set.
 
     Built once per :meth:`~src.recommendations.engine.RecommendationEngine.\
-generate_recommendations` call and queried once per candidate.
+generate_recommendations` call.  :meth:`adaptations_of` is asked about every
+    candidate, before scoring.  :meth:`references_for` is asked only about the
+    recommendations actually emitted, since nothing else reads its answer.
 
     Items the user is currently consuming are left out entirely: displayed
     reasoning cites what the user finished, never what they are part-way

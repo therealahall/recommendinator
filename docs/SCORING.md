@@ -11,7 +11,7 @@ The engine scores every candidate through weighted factors. Setting a weight to
 | `tag_overlap` | Threshold tag matching, bridged by semantic genre clusters | 1.0 |
 | `series_order` | Prioritises the next entry in a series you are partway through | 1.5 |
 | `rating_pattern` | Learns from your rating history within a genre | 1.0 |
-| `semantic_similarity` | Conceptually similar content, active only when `features.ai_enabled` is true | 1.5 |
+| `semantic_similarity` | Conceptually similar content, active only when `features.ai_enabled` is true and the vector search finds something | 1.5 |
 | `content_length` | Soft penalty for a length mismatch | 1.0 |
 | `continuation` | Boosts items you are actively consuming. Dropped from the pipeline when you have none | 2.0 |
 | `series_affinity` | Boosts franchises you have rated well | 1.0 |

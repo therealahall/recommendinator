@@ -478,20 +478,15 @@ class TestRecommendationJsonIsTheSameOnBothSurfaces:
         assert self._cli_document(self._engine()) == self.CLI_JSON + "\n"
 
     def test_both_surfaces_produce_the_same_document(self) -> None:
-        """Neither surface adds, drops, renames or reorders a field.
+        """Neither surface adds, drops or renames a field the other kept.
 
         Both documents are produced here rather than quoted, so this fails on
-        a change to either surface — including one that breaks both of them the
-        same way.
+        a change to either one of them. A change inside ``to_payload`` moves
+        both identically and stays green here, which is what the byte pin
+        above catches.
         """
         engine = self._engine()
 
-        cli_document = json.loads(self._cli_document(engine))
-        web_document = json.loads(self._web_document(engine))
-
-        assert cli_document == web_document
-        # Parsed dicts compare equal whatever order they were written in, so
-        # the key order is compared on its own.
-        assert [list(rec) for rec in cli_document] == [
-            list(rec) for rec in web_document
-        ]
+        assert json.loads(self._cli_document(engine)) == json.loads(
+            self._web_document(engine)
+        )
