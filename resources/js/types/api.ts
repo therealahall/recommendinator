@@ -26,8 +26,6 @@ export interface RecommendationResponse {
   title: string
   author: string | null
   score: number
-  similarity_score: number
-  preference_score: number
   reasoning: string
   llm_reasoning: string | null
   score_breakdown: Record<string, number>

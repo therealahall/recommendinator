@@ -280,6 +280,14 @@ _REGISTRY: tuple[SettingMetadata, ...] = (
         validation=Validation(min=0.0),
     ),
     _entry(
+        "recommendations.scorer_weights.adaptation",
+        label="Adaptation weight",
+        help="Weight boosting films, shows and games adapting content you rated well (0 disables).",
+        type="float",
+        default=1.5,
+        validation=Validation(min=0.0),
+    ),
+    _entry(
         "recommendations.scorer_weights.custom_preference",
         label="Custom preference weight",
         help="Weight for user-defined natural-language preference rules (0 disables).",

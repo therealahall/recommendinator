@@ -16,6 +16,7 @@ from src.llm.embeddings import EmbeddingGenerator
 from src.llm.recommendations import RecommendationGenerator
 from src.recommendations.engine import RecommendationEngine
 from src.recommendations.scorers import (
+    AdaptationScorer,
     ContentLengthScorer,
     ContinuationScorer,
     CreatorMatchScorer,
@@ -338,6 +339,7 @@ _SCORER_CONFIG_MAP: dict[str, type[Scorer]] = {
     "content_length": ContentLengthScorer,
     "continuation": ContinuationScorer,
     "series_affinity": SeriesAffinityScorer,
+    "adaptation": AdaptationScorer,
 }
 
 
@@ -348,8 +350,10 @@ def build_scorers_from_config(config: dict[str, Any]) -> list[Scorer]:
     instances with the specified weights. Falls back to each scorer's class
     default weight for any scorer not listed in the config.
 
-    Does **not** include :class:`SemanticSimilarityScorer` — the engine
-    handles that conditionally based on whether AI is enabled.
+    Does **not** include :class:`SemanticSimilarityScorer` or
+    :class:`CustomPreferenceScorer` — the engine builds those conditionally,
+    on whether AI is enabled and on the user's custom rules respectively, and
+    :func:`create_recommendation_engine` passes it their configured weights.
 
     Args:
         config: Full configuration dictionary.
@@ -398,6 +402,12 @@ def create_recommendation_engine(
             default_of("recommendations.scorer_weights.semantic_similarity"),
         )
     )
+    custom_preference_weight = float(
+        scorer_weights.get(
+            "custom_preference",
+            default_of("recommendations.scorer_weights.custom_preference"),
+        )
+    )
 
     scorers = build_scorers_from_config(config)
 
@@ -408,4 +418,5 @@ def create_recommendation_engine(
         min_rating=min_rating,
         scorers=scorers,
         semantic_similarity_weight=semantic_similarity_weight,
+        custom_preference_weight=custom_preference_weight,
     )

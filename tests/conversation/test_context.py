@@ -954,8 +954,6 @@ class TestPipelineBacklogIntegration:
                 "score_breakdown": {"genre_match": 0.85},
                 "contributing_items": [contributing_item],
                 "adaptations": [],
-                "similarity_score": 0.8,
-                "preference_score": 0.7,
             },
         ]
 
@@ -1011,8 +1009,6 @@ class TestPipelineBacklogIntegration:
                 "score_breakdown": {},
                 "contributing_items": [],
                 "adaptations": [],
-                "similarity_score": 0.7,
-                "preference_score": 0.6,
             },
         ]
 
@@ -1176,10 +1172,10 @@ class TestScoreToQualitative:
         ("score", "expected"),
         [
             (1.0, "Excellent fit"),
-            (0.85, "Excellent fit"),
-            (0.84, "Strong fit"),
-            (0.70, "Strong fit"),
-            (0.69, "Good fit"),
+            (0.80, "Excellent fit"),
+            (0.79, "Strong fit"),
+            (0.65, "Strong fit"),
+            (0.64, "Good fit"),
             (0.55, "Good fit"),
             (0.54, "Decent fit"),
             (0.40, "Decent fit"),
@@ -1228,8 +1224,6 @@ class TestRecommendationBriefFormatting:
                     rating=5,
                 ),
             ],
-            similarity_score=0.8,
-            preference_score=0.75,
         )
 
     def test_format_brief_includes_qualitative_fit(
@@ -1554,8 +1548,6 @@ class TestRAGBypassWithPipeline:
                 "score_breakdown": {},
                 "contributing_items": [],
                 "adaptations": [],
-                "similarity_score": 0.7,
-                "preference_score": 0.6,
             },
         ]
 

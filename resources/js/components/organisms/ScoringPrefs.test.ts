@@ -33,13 +33,13 @@ describe('ScoringPrefs', () => {
     expect(wrapper.text()).not.toContain('Toggles')
   })
 
-  it('renders 8 scorer sliders plus 1 variety slider by default (AI off)', () => {
+  it('renders 10 scorer sliders plus 1 variety slider by default (AI off)', () => {
     const wrapper = mount(ScoringPrefs)
 
-    // 8 scorer sliders (semantic_similarity is gated off when AI is disabled)
-    // plus 1 variety slider = 9.
+    // 10 scorer sliders (semantic_similarity is gated off when AI is disabled)
+    // plus 1 variety slider = 11.
     const sliders = wrapper.findAll('input[type="range"]')
-    expect(sliders).toHaveLength(9)
+    expect(sliders).toHaveLength(11)
     // Every slider now uses the shared 0–5 ScorerSlider scale.
     expect(sliders.every((s) => s.attributes('max') === '5')).toBe(true)
   })

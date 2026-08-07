@@ -93,6 +93,7 @@ class ScoringContext:
         ratings_by_genre: Genre -> list of ratings from consumed items.
         series_ratings: Series name -> list of ratings from consumed items.
         unconsumed_series_positions: Series name -> item numbers still unconsumed.
+        adaptations: Candidate id -> consumed items the candidate adapts.
     """
 
     preferences: UserPreferences
@@ -111,6 +112,9 @@ class ScoringContext:
 
     # Pre-computed similarity scores (populated by engine when AI enabled)
     similarity_scores: dict[str | None, float] = field(default_factory=dict)
+
+    # Cross-media adaptations the user rated well, keyed by candidate id
+    adaptations: dict[str | None, list[ContentItem]] = field(default_factory=dict)
 
     # User content-length preferences (e.g. {"book": "short", "movie": "any"})
     content_length_preferences: dict[str, str] = field(default_factory=dict)
@@ -456,14 +460,14 @@ class CustomPreferenceScorer(Scorer):
     Applies genre boosts and penalties from interpreted natural language
     rules. The interpreter output is passed at construction time.
 
-    Weight default: 2.0 (strong influence since these are explicit user prefs)
+    Weight default: 1.0
     """
 
     def __init__(
         self,
         genre_boosts: dict[str, float] | None = None,
         genre_penalties: dict[str, float] | None = None,
-        weight: float = 2.0,
+        weight: float = 1.0,
     ) -> None:
         """Initialize the custom preference scorer.
 
@@ -578,6 +582,33 @@ class SeriesAffinityScorer(Scorer):
         return 0.5
 
 
+class AdaptationScorer(Scorer):
+    """Boost a candidate that adapts consumed content the user rated well.
+
+    The engine pre-computes the adaptations (e.g. the LOTR books for the LOTR
+    films) into :attr:`ScoringContext.adaptations`.  The best rating among them
+    maps onto the 1-5 scale, so a 5-star source scores 1.0 and a 4-star one
+    0.75.  A candidate that adapts nothing scores 0.0, and the engine drops this
+    scorer from the pipeline when no candidate adapts anything.
+
+    Weight default: 1.5
+    """
+
+    def __init__(self, weight: float = 1.5) -> None:
+        super().__init__(weight)
+
+    def score(self, candidate: ContentItem, context: ScoringContext) -> float:
+        adaptations = context.adaptations.get(candidate.id)
+        if not adaptations:
+            return 0.0
+
+        best_rating = max(
+            (item.rating for item in adaptations if item.rating is not None),
+            default=1,
+        )
+        return (best_rating - 1.0) / 4.0
+
+
 class ContentLengthScorer(Scorer):
     """Score based on how well the candidate matches user's length preference.
 
@@ -609,6 +640,7 @@ DEFAULT_SCORERS: list[Scorer] = [
     ContentLengthScorer(),
     ContinuationScorer(),
     SeriesAffinityScorer(),
+    AdaptationScorer(),
 ]
 
 
@@ -627,6 +659,7 @@ SCORER_NAME_MAP: dict[str, type[Scorer]] = {
     "content_length": ContentLengthScorer,
     "continuation": ContinuationScorer,
     "series_affinity": SeriesAffinityScorer,
+    "adaptation": AdaptationScorer,
 }
 
 

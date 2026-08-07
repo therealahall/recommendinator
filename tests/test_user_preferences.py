@@ -12,7 +12,6 @@ class TestUserPreferenceConfig:
         assert config.variety_penalty == 0.0
         assert config.custom_rules == []
         assert config.content_length_preferences == {}
-        assert config.diversity_weight == 0.0
 
     def test_round_trip(self) -> None:
         """to_dict -> from_dict produces an equal object."""
@@ -50,16 +49,21 @@ class TestUserPreferenceConfig:
             "variety_penalty",
             "custom_rules",
             "content_length_preferences",
-            "diversity_weight",
             "theme",
         }
         assert set(data.keys()) == expected_keys
 
-    def test_diversity_weight_round_trip(self) -> None:
-        """diversity_weight survives to_dict -> from_dict."""
-        config = UserPreferenceConfig(diversity_weight=0.3)
-        restored = UserPreferenceConfig.from_dict(config.to_dict())
-        assert restored.diversity_weight == 0.3
+    def test_from_dict_reads_past_the_retired_diversity_weight(self) -> None:
+        """Preference JSON stored before diversity_weight was deleted still loads.
+
+        The key is written into ``users.settings`` for anyone who ran an
+        earlier release, so from_dict must ignore it rather than raise.
+        """
+        config = UserPreferenceConfig.from_dict(
+            {"diversity_weight": 0.3, "series_in_order": False}
+        )
+
+        assert config == UserPreferenceConfig(series_in_order=False)
 
     def test_variety_penalty_round_trip(self) -> None:
         """variety_penalty survives to_dict -> from_dict."""

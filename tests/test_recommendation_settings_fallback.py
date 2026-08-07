@@ -26,6 +26,8 @@ from typing import Any
 import pytest
 
 from src.cli.config import create_recommendation_engine
+from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.scorers import (
     CreatorMatchScorer,
     GenreMatchScorer,
@@ -187,6 +189,108 @@ class TestCountFallback:
         migrate_config_settings(config, storage)
 
         assert _get_recommendations_config(config).default_count == 8
+
+
+class TestCustomPreferenceWeightRegression:
+    """Bug reported: the custom-rule scorer ignored both of its weight knobs.
+
+    Bug reported: setting ``recommendations.scorer_weights.custom_preference``
+    to 0 left horror candidates penalised, and a per-user override of the same
+    key did nothing either.
+    Root cause: the engine appended ``CustomPreferenceScorer`` at its class
+    default weight *after* the per-user override pass had already run, so
+    neither the global setting nor the override could reach it.
+    Fix: the scorer is built at the configured weight and joins the list before
+    the override pass, so it resolves through the same chain as every other
+    scorer. A weight of 0 therefore disables it, which is what the docs
+    promise.
+    """
+
+    _RULES = ["avoid horror"]
+
+    @staticmethod
+    def _seed_library(storage: StorageManager) -> None:
+        """A liked thriller, plus a horror and a thriller candidate."""
+        for item_id, title, status, rating, genre in (
+            ("liked", "Gone Girl", ConsumptionStatus.COMPLETED, 5, "Thriller"),
+            ("horror", "Blood Chapel", ConsumptionStatus.UNREAD, None, "Horror"),
+            (
+                "thriller",
+                "The Silent Patient",
+                ConsumptionStatus.UNREAD,
+                None,
+                "Thriller",
+            ),
+        ):
+            storage.save_content_item(
+                ContentItem(
+                    id=item_id,
+                    title=title,
+                    content_type=ContentType.BOOK,
+                    status=status,
+                    rating=rating,
+                    metadata={"genre": genre},
+                )
+            )
+
+    @staticmethod
+    def _scores(engine: Any, config: UserPreferenceConfig) -> dict[str, float]:
+        """Title -> emitted score for a book run under *config*."""
+        return {
+            rec["item"].title: rec["score"]
+            for rec in engine.generate_recommendations(
+                content_type=ContentType.BOOK,
+                count=5,
+                use_llm=False,
+                user_preference_config=config,
+            )
+        }
+
+    def test_global_custom_preference_weight_is_effective_regression(
+        self, storage: StorageManager
+    ) -> None:
+        """A global weight of 0 makes the rule inert, matching no rules at all."""
+        self._seed_library(storage)
+        storage.set_setting("recommendations.scorer_weights.custom_preference", 0.0)
+        engine = _build_engine({}, storage)
+
+        with_rule = self._scores(engine, UserPreferenceConfig(custom_rules=self._RULES))
+        without_rule = self._scores(engine, UserPreferenceConfig())
+
+        assert with_rule == without_rule
+
+    def test_per_user_custom_preference_override_is_effective_regression(
+        self, storage: StorageManager
+    ) -> None:
+        """A per-user 0 disables it too, with the global left at its default."""
+        self._seed_library(storage)
+        engine = _build_engine({}, storage)
+
+        with_rule = self._scores(
+            engine,
+            UserPreferenceConfig(
+                custom_rules=self._RULES, scorer_weights={"custom_preference": 0.0}
+            ),
+        )
+        without_rule = self._scores(engine, UserPreferenceConfig())
+
+        assert with_rule == without_rule
+
+    def test_the_rule_still_bites_at_its_default_weight(
+        self, storage: StorageManager
+    ) -> None:
+        """Positive control: at the default weight the rule demotes horror.
+
+        Without this, both zero-weight assertions above would pass on a scorer
+        that never did anything.
+        """
+        self._seed_library(storage)
+        engine = _build_engine({}, storage)
+
+        with_rule = self._scores(engine, UserPreferenceConfig(custom_rules=self._RULES))
+        without_rule = self._scores(engine, UserPreferenceConfig())
+
+        assert with_rule["Blood Chapel"] < without_rule["Blood Chapel"]
 
 
 class TestConstDefaultFallback:

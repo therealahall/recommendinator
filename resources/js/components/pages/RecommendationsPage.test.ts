@@ -68,8 +68,8 @@ describe('RecommendationsPage', () => {
     wrapper = mount(RecommendationsPage, { global: { stubs }, attachTo: document.body })
     const store = useRecommendationsStore()
     mockGet.mockResolvedValue([
-      { db_id: 1, title: 'A', score: 0.9, similarity_score: 0, preference_score: 0, reasoning: '', llm_reasoning: null, score_breakdown: {}, variety_penalty: 0 },
-      { db_id: 2, title: 'B', score: 0.8, similarity_score: 0, preference_score: 0, reasoning: '', llm_reasoning: null, score_breakdown: {}, variety_penalty: 0 },
+      { db_id: 1, title: 'A', score: 0.9, reasoning: '', llm_reasoning: null, score_breakdown: {}, variety_penalty: 0 },
+      { db_id: 2, title: 'B', score: 0.8, reasoning: '', llm_reasoning: null, score_breakdown: {}, variety_penalty: 0 },
     ])
     await store.fetch(false)
     await flushPromises()
@@ -165,7 +165,7 @@ describe('RecommendationsPage', () => {
     wrapper = mount(RecommendationsPage, { global: { stubs }, attachTo: document.body })
     const store = useRecommendationsStore()
     mockGet.mockResolvedValue([
-      { db_id: 1, title: 'A', score: 0.9, similarity_score: 0, preference_score: 0, reasoning: '', llm_reasoning: null, score_breakdown: {}, variety_penalty: 0 },
+      { db_id: 1, title: 'A', score: 0.9, reasoning: '', llm_reasoning: null, score_breakdown: {}, variety_penalty: 0 },
     ])
     await store.fetch(false)
     await flushPromises()

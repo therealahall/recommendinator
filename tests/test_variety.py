@@ -267,7 +267,7 @@ class TestVarietySeriesContinuationRegression:
         Root cause: the variety-after-completion penalty hit the next-in-series
         book at full strength because it shares the just-completed sci-fi
         cluster — finishing book #1 was treated as finishing the genre.
-        Fix: soften (halve) — not remove — the variety penalty for an item that
+        Fix: soften — not remove — the variety penalty for an item that
         continues a series the user is actively progressing through, so genre
         fatigue still nudges but no longer buries the next book.
         """
@@ -301,7 +301,7 @@ class TestOngoingTvShowFinishedSeasons:
         )
         assert build_variety_ladder([show], top_penalty=1.0) == {}
 
-    def test_next_season_of_same_show_gets_halved_continuation_penalty(self) -> None:
+    def test_next_season_of_same_show_gets_softened_continuation_penalty(self) -> None:
         show = _ongoing_show("Wheel", ["Fantasy"], {"1": "2026-05-01T00:00:00+00:00"})
         ladder = build_variety_ladder([show], top_penalty=1.0)
         next_season = ContentItem(

@@ -19,19 +19,32 @@ from src.models.content import (
     ContentItem,
     ContentType,
 )
+from src.models.user_preferences import UserPreferenceConfig
+from src.recommendations.scorers import SCORER_NAME_MAP
 from src.storage.manager import StorageManager
 from src.utils.sorting import MAX_SEARCH_LENGTH
-from src.web.api import CompletionRequest, ItemEditRequest
+from src.web.api import (
+    CompletionRequest,
+    ItemEditRequest,
+    UserPreferenceResponse,
+)
 from tests.cli.conftest import _invoke_with_mocks
 
 # parents[1] resolves /tests/test_interface_parity.py -> repo root.
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 PYTHON_SEARCH_BOUND = "src/utils/sorting.py"
 FRONTEND_CONSTANTS = "resources/js/constants/library.ts"
+FRONTEND_PREFERENCES = "resources/js/stores/preferences.ts"
 
 # `export const MAX_SEARCH_LENGTH = 200` — the only form that file uses.
 _TS_SEARCH_LENGTH = re.compile(
     r"^export const MAX_SEARCH_LENGTH = (?P<value>\d+)\s*$", re.MULTILINE
+)
+
+# The quoted entries of `export const SCORER_KEYS = [ ... ] as const`.
+_TS_SCORER_KEYS = re.compile(
+    r"^export const SCORER_KEYS = \[(?P<entries>[^\]]*)\] as const\s*$",
+    re.MULTILINE | re.DOTALL,
 )
 
 # The two spellings of an empty review. Every review-writing surface is
@@ -260,3 +273,50 @@ class TestBlankReviewRemedyNamesTheSurfacesOwn:
         stored = storage.get_content_item(db_id, user_id=1)
         assert stored is not None
         assert stored.review == "Loved it"
+
+
+class TestPreferenceJsonKeysAgree:
+    """``preferences get --format json`` and the web GET return one key set.
+
+    The CLI serialises ``UserPreferenceConfig.to_dict()`` straight out, while
+    the web feeds the same dict into ``UserPreferenceResponse``, whose Pydantic
+    default silently drops anything the model does not declare. A field on the
+    dataclass but not the response model is therefore a divergence neither
+    side's suite can see.
+    """
+
+    def test_the_cli_dict_and_the_response_model_declare_the_same_fields(
+        self,
+    ) -> None:
+        """Neither surface carries a preference field the other omits."""
+        assert set(UserPreferenceConfig().to_dict()) == set(
+            UserPreferenceResponse.model_fields
+        )
+
+
+class TestScorerKeysMatchTheFrontendList:
+    """The Preferences page must offer a slider for every scorer, and no more.
+
+    ``SCORER_NAME_MAP`` is what ``preferences set-weight`` accepts and what the
+    engine resolves overrides against. A scorer missing from the TypeScript
+    list has a weight the CLI can set and the web cannot, and a key only in the
+    TypeScript list renders a slider that resolves against nothing.
+    """
+
+    def test_typescript_scorer_keys_equal_the_python_ones(self) -> None:
+        """The exported TypeScript list is the scorer registry, exactly."""
+        source = (_REPO_ROOT / FRONTEND_PREFERENCES).read_text()
+        match = _TS_SCORER_KEYS.search(source)
+
+        assert match is not None, (
+            f"{FRONTEND_PREFERENCES} no longer exports SCORER_KEYS as a plain"
+            f" array of string literals, so it can no longer be checked against"
+            f" SCORER_NAME_MAP."
+        )
+        assert set(re.findall(r"'([^']+)'", match.group("entries"))) == set(
+            SCORER_NAME_MAP
+        ), (
+            f"{FRONTEND_PREFERENCES} and SCORER_NAME_MAP disagree about which"
+            f" scorers exist, so the Preferences page and the CLI offer"
+            f" different weights."
+        )

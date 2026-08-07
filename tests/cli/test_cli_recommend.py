@@ -144,8 +144,6 @@ class TestRecommendJsonOutput:
             {
                 "item": item,
                 "score": 0.9,
-                "similarity_score": 0.7,
-                "preference_score": 0.8,
                 "reasoning": "Great match",
                 "llm_reasoning": "LLM says so",
                 "score_breakdown": {"genre": 0.5, "theme": 0.4},
@@ -169,8 +167,6 @@ class TestRecommendJsonOutput:
             "title",
             "author",
             "score",
-            "similarity_score",
-            "preference_score",
             "reasoning",
             "llm_reasoning",
             "score_breakdown",
@@ -208,8 +204,6 @@ class TestRecommendCreatorColumnRegression:
             {
                 "item": item,
                 "score": 0.9,
-                "similarity_score": 0.7,
-                "preference_score": 0.8,
                 "reasoning": "Great match",
             }
         ]
