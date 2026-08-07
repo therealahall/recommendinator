@@ -1,6 +1,35 @@
 # CHANGELOG
 
 
+## v0.25.2 (2026-08-07)
+
+### Chores
+
+- **agents**: Cut the review agents back to findings that matter
+  ([`f06e1d5`](https://github.com/therealahall/recommendinator/commit/f06e1d5b31c7e07a27715cca39c0cd19e6b3dde7))
+
+### Documentation
+
+- **architecture**: Describe the one time migration scheme
+  ([`45bf5f7`](https://github.com/therealahall/recommendinator/commit/45bf5f7ec0a536cb7dd5bd41b180c891d0031c1c))
+
+- **security**: Say the git diff grant is unguarded here
+  ([`403ce7c`](https://github.com/therealahall/recommendinator/commit/403ce7c9b0704ad4bbcf136fd762dfcfdd3efad9))
+
+### Performance Improvements
+
+- **storage**: Page the library list and the search in SQL
+  ([`36bb721`](https://github.com/therealahall/recommendinator/commit/36bb7216c5d345403a782dcc35232be36517a7a5))
+
+- **storage**: Run the one time repairs once, not on every open
+  ([`8863112`](https://github.com/therealahall/recommendinator/commit/886311213bbd3ed68d541abb5491082f45982cbf))
+
+### Testing
+
+- **agents**: Stop pinning the shared guidance wording
+  ([`3a4abfb`](https://github.com/therealahall/recommendinator/commit/3a4abfb557b55d44899eb4ba1b6e00e7cac52aaf))
+
+
 ## v0.25.1 (2026-08-04)
 
 ### Bug Fixes
