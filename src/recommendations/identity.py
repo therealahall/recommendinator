@@ -35,6 +35,11 @@ def candidate_key(item: ContentItem) -> str:
     Season-expanded TV candidates share their parent show's ``db_id``, so the
     season number is appended to keep siblings distinct.
 
+    A season read back out of a stored metadata blob arrives as the string
+    ``"1"``, which must key the same candidate as the integer 1: keying it as a
+    show instead would collapse it onto its show's bare key and back onto the
+    sibling seasons sharing it.
+
     Args:
         item: A candidate being scored, filtered, ranked or formatted.
 
@@ -42,6 +47,8 @@ def candidate_key(item: ContentItem) -> str:
         The library key, suffixed ``#s<n>`` for a season-level candidate.
     """
     season = item.metadata.get("season")
+    if isinstance(season, str) and season.isdigit():
+        season = int(season)
     if isinstance(season, int):
         return f"{library_key(item)}#s{season}"
     return library_key(item)
