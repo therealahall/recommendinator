@@ -494,21 +494,23 @@ def expand_tv_shows_to_seasons(items: list[ContentItem]) -> list[ContentItem]:
 
 
 def build_series_tracking(
-    consumed_items: list[ContentItem],
+    items: list[ContentItem],
 ) -> dict[str, set[float]]:
-    """Build a map of series names to item numbers the user has consumed.
+    """Build a map of series names to the item numbers present in *items*.
 
-    Works for all content types (books, games, TV shows, movies).
+    Works for all content types (books, games, TV shows, movies). Callers pass
+    consumed items to track reading progress, or unconsumed ones to learn which
+    positions are still available.
 
     Args:
-        consumed_items: List of consumed ContentItem objects
+        items: List of ContentItem objects
 
     Returns:
         Dictionary mapping series names to sets of item numbers
     """
     series_tracking: dict[str, set[float]] = defaultdict(set)
 
-    for item in consumed_items:
+    for item in items:
         series_info = extract_series_info(item.title, item.metadata, item.content_type)
         if series_info:
             series_name, item_num = series_info
@@ -533,6 +535,38 @@ def is_first_item_in_series(
     """
     info = _get_series_info(item, title=title)
     return info is not None and info[1] == 1
+
+
+def is_next_after_consumed(
+    item_number: float,
+    consumed_numbers: set[float],
+    known_positions: set[float],
+) -> bool:
+    """Check whether *item_number* is the earliest entry ahead of the consumed run.
+
+    The entries ahead are the positions known to exist in the data, the item's
+    own position, and the next whole-numbered slot after the consumed run. So a
+    half-numbered novella such as ``#2.5`` is the next entry for a reader on
+    ``#2`` while ``#3`` waits its turn, and a series with nothing in between
+    still advances to the next whole number. Flooring the slot keeps a consumed
+    ``#2.5`` pointing at ``#3``.
+
+    Args:
+        item_number: Series position of the item being checked.
+        consumed_numbers: Positions the user has consumed. Must not be empty.
+        known_positions: Other positions of the series known to exist.
+
+    Returns:
+        True if no known entry sits between the consumed run and this item.
+    """
+    max_consumed = max(consumed_numbers)
+    if item_number <= max_consumed:
+        return False
+
+    ahead = {pos for pos in known_positions if pos > max_consumed}
+    ahead.add(float(int(max_consumed) + 1))
+    ahead.add(item_number)
+    return item_number == min(ahead)
 
 
 def should_recommend_item(

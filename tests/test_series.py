@@ -16,6 +16,7 @@ from src.utils.series import (
     inject_seasons_watched_tracking,
     is_active_series_continuation,
     is_first_item_in_series,
+    is_next_after_consumed,
     latest_season_watched_date,
     should_recommend_item,
     strip_series_suffix_from_title,
@@ -286,6 +287,50 @@ def test_is_first_item_in_series():
         metadata={"series": "Star Wars", "episode": 1},
     )
     assert is_first_item_in_series(item=item_with_metadata) is True
+
+
+class TestIsNextAfterConsumed:
+    """Contract of the shared next-in-sequence helper.
+
+    ``SeriesOrderScorer`` orders entries with it, so the boundaries it draws
+    decide which candidate gets the rating-boosted score. Positions arrive as
+    floats, and the helper compares them instead of enumerating slots.
+    """
+
+    def test_next_whole_number_when_nothing_sits_between(self) -> None:
+        assert is_next_after_consumed(3.0, {1.0, 2.0}, set()) is True
+
+    def test_fraction_takes_the_slot_ahead_of_the_next_book(self) -> None:
+        known = {2.5, 3.0}
+        assert is_next_after_consumed(2.5, {1.0, 2.0}, known) is True
+        assert is_next_after_consumed(3.0, {1.0, 2.0}, known) is False
+
+    def test_earlier_of_two_fractions_wins_the_slot(self) -> None:
+        known = {2.1, 2.5}
+        assert is_next_after_consumed(2.1, {1.0, 2.0}, known) is True
+        assert is_next_after_consumed(2.5, {1.0, 2.0}, known) is False
+
+    def test_position_at_or_below_the_consumed_run_is_never_next(self) -> None:
+        assert is_next_after_consumed(2.0, {1.0, 2.0}, {3.0}) is False
+        assert is_next_after_consumed(1.0, {1.0, 2.0}, {3.0}) is False
+        assert is_next_after_consumed(2.5, {1.0, 2.0, 2.5}, {3.0}) is False
+        # A gap the reader gets to only by going backwards stays behind them.
+        assert is_next_after_consumed(2.0, {1.0, 3.0}, {2.0}) is False
+
+    def test_consumed_fraction_advances_to_the_next_whole_number(self) -> None:
+        assert is_next_after_consumed(3.0, {1.0, 2.0, 2.5}, set()) is True
+        assert is_next_after_consumed(3.5, {1.0, 2.0, 2.5}, set()) is False
+
+    def test_prequel_unlocks_book_one(self) -> None:
+        assert is_next_after_consumed(1.0, {0.0}, {1.0, 2.0}) is True
+        assert is_next_after_consumed(2.0, {0.0}, {1.0, 2.0}) is False
+
+    def test_known_positions_behind_the_reader_do_not_block(self) -> None:
+        assert is_next_after_consumed(3.0, {1.0, 2.0}, {0.5, 1.0, 3.0}) is True
+
+    def test_high_positions_compare_rather_than_enumerate(self) -> None:
+        assert is_next_after_consumed(1000.0, {999.0}, set()) is True
+        assert is_next_after_consumed(1000.0, {998.0}, set()) is False
 
 
 def test_should_recommend_book_not_in_series():
