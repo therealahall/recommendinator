@@ -6,7 +6,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from src.llm.client import OllamaClient
-from src.llm.recommendations import RecommendationGenerator
+from src.llm.recommendations import BlurbRequest, RecommendationGenerator
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 
 # ===========================================================================
@@ -477,13 +477,16 @@ def test_generate_blurbs_per_item(mock_ollama_client: Mock) -> None:
     generator = RecommendationGenerator(mock_ollama_client)
     blurbs = generator.generate_blurbs_per_item(
         content_type=ContentType.BOOK,
-        items_with_refs=[(items[0], []), (items[1], [])],
+        blurb_requests=[
+            BlurbRequest("key-a", items[0], []),
+            BlurbRequest("key-b", items[1], []),
+        ],
         consumed_items=consumed,
     )
 
     assert len(blurbs) == 2
-    assert "2" in blurbs
-    assert "3" in blurbs
+    assert "key-a" in blurbs
+    assert "key-b" in blurbs
     assert mock_ollama_client.generate_text.call_count == 2
 
 
@@ -492,7 +495,7 @@ def test_generate_blurbs_per_item_empty(mock_ollama_client: Mock) -> None:
     generator = RecommendationGenerator(mock_ollama_client)
     blurbs = generator.generate_blurbs_per_item(
         content_type=ContentType.BOOK,
-        items_with_refs=[],
+        blurb_requests=[],
         consumed_items=[],
     )
 
@@ -537,14 +540,15 @@ def test_generate_blurbs_per_item_partial_failure(
     generator = RecommendationGenerator(mock_ollama_client)
     blurbs = generator.generate_blurbs_per_item(
         content_type=ContentType.BOOK,
-        items_with_refs=[(items[0], []), (items[1], [])],
+        blurb_requests=[
+            BlurbRequest("key-a", items[0], []),
+            BlurbRequest("key-b", items[1], []),
+        ],
         consumed_items=[],
     )
 
     # Book A succeeded, Book B failed — should still get the successful one
-    assert len(blurbs) == 1
-    assert "1" in blurbs
-    assert blurbs["1"] == "Great match for your taste."
+    assert blurbs == {"key-a": "Great match for your taste."}
 
 
 # ===========================================================================
@@ -555,9 +559,9 @@ def test_generate_blurbs_per_item_partial_failure(
 class TestGenerateBlurbsPerItemSingleItemFastPath:
     """Tests for the single-item fast path in generate_blurbs_per_item.
 
-    When ``len(items_with_refs) == 1``, the method skips
-    ``ThreadPoolExecutor`` overhead and calls ``generate_single_blurb``
-    directly in the current thread.
+    When there is a single request, the method skips ``ThreadPoolExecutor``
+    overhead and calls ``generate_single_blurb`` directly in the current
+    thread.
     """
 
     @pytest.fixture()
@@ -599,11 +603,11 @@ class TestGenerateBlurbsPerItemSingleItemFastPath:
 
         blurbs = generator.generate_blurbs_per_item(
             content_type=ContentType.BOOK,
-            items_with_refs=[(item, refs)],
+            blurb_requests=[BlurbRequest("key-x", item, refs)],
             consumed_items=consumed,
         )
 
-        assert blurbs == {"42": "A perfect sci-fi pick."}
+        assert blurbs == {"key-x": "A perfect sci-fi pick."}
         mock_ollama_client.generate_text.assert_called_once()
 
     def test_single_item_fast_path_handles_failure(
@@ -622,7 +626,7 @@ class TestGenerateBlurbsPerItemSingleItemFastPath:
 
         blurbs = generator.generate_blurbs_per_item(
             content_type=ContentType.BOOK,
-            items_with_refs=[(item, [])],
+            blurb_requests=[BlurbRequest("key-x", item, [])],
             consumed_items=[],
         )
 
@@ -644,9 +648,9 @@ class TestGenerateBlurbsPerItemSingleItemFastPath:
         with patch("src.llm.recommendations.ThreadPoolExecutor") as mock_pool_cls:
             blurbs = generator.generate_blurbs_per_item(
                 content_type=ContentType.BOOK,
-                items_with_refs=[(item, [])],
+                blurb_requests=[BlurbRequest("key-x", item, [])],
                 consumed_items=[],
             )
 
         mock_pool_cls.assert_not_called()
-        assert blurbs == {"42": "Good match."}
+        assert blurbs == {"key-x": "Good match."}

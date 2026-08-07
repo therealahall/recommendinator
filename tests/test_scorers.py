@@ -1,6 +1,7 @@
 """Tests for the individual scorers and ScoringContext."""
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.recommendations.identity import candidate_key, library_key
 from src.recommendations.preferences import PreferenceAnalyzer
 from src.recommendations.scorers import (
     AdaptationScorer,
@@ -19,7 +20,11 @@ from src.recommendations.scorers import (
     extract_creator,
     extract_genres,
 )
-from src.utils.series import build_series_tracking, should_recommend_item
+from src.utils.series import (
+    build_series_tracking,
+    expand_tv_shows_to_seasons,
+    should_recommend_item,
+)
 from tests.factories import make_item
 
 
@@ -840,58 +845,53 @@ class TestRatingPatternScorer:
 class TestSemanticSimilarityScorer:
     def test_returns_precomputed_score(self) -> None:
         """Scorer returns the pre-computed similarity score for a candidate."""
-        candidate = make_item(item_id="item-1", status=ConsumptionStatus.UNREAD)
+        candidate = make_item(db_id=1, status=ConsumptionStatus.UNREAD)
         context = _build_context(consumed=[])
-        context.similarity_scores = {"item-1": 0.85}
+        context.similarity_scores = {library_key(candidate): 0.85}
         scorer = SemanticSimilarityScorer()
         assert scorer.score(candidate, context) == 0.85
 
     def test_returns_zero_when_candidate_not_in_scores(self) -> None:
-        """Scorer returns 0.0 when candidate id is not in similarity_scores."""
-        candidate = make_item(item_id="item-2", status=ConsumptionStatus.UNREAD)
+        """Scorer returns 0.0 when the candidate's row has no score."""
+        scored = make_item(db_id=1, status=ConsumptionStatus.UNREAD)
+        candidate = make_item(db_id=2, status=ConsumptionStatus.UNREAD)
         context = _build_context(consumed=[])
-        context.similarity_scores = {"item-1": 0.85}
+        context.similarity_scores = {library_key(scored): 0.85}
         scorer = SemanticSimilarityScorer()
         assert scorer.score(candidate, context) == 0.0
 
     def test_returns_zero_when_similarity_scores_empty(self) -> None:
         """Scorer returns 0.0 when no similarity scores are available."""
-        candidate = make_item(item_id="item-1", status=ConsumptionStatus.UNREAD)
+        candidate = make_item(db_id=1, status=ConsumptionStatus.UNREAD)
         context = _build_context(consumed=[])
         scorer = SemanticSimilarityScorer()
         assert scorer.score(candidate, context) == 0.0
 
-    def test_handles_none_candidate_id(self) -> None:
-        """Scorer handles candidates with None id via dict lookup."""
-        candidate = make_item(status=ConsumptionStatus.UNREAD)
+    def test_scores_a_candidate_with_no_external_id(self) -> None:
+        """A candidate imported without an external id still scores."""
+        candidate = make_item(db_id=1, status=ConsumptionStatus.UNREAD)
         assert candidate.id is None
         context = _build_context(consumed=[])
-        context.similarity_scores = {None: 0.7}
+        context.similarity_scores = {library_key(candidate): 0.7}
         scorer = SemanticSimilarityScorer()
         assert scorer.score(candidate, context) == 0.7
 
-    def test_falls_back_to_parent_id(self) -> None:
-        """Scorer falls back to parent_id when candidate id has no score."""
-        candidate = ContentItem(
-            id="tvdb:123:s1",
-            title="Show (Season 1)",
+    def test_season_candidate_takes_the_shows_score(self) -> None:
+        """A season candidate scores on the row its embedding belongs to."""
+        show = ContentItem(
+            id="tvdb:123",
+            db_id=9,
+            title="Show",
             content_type=ContentType.TV_SHOW,
             status=ConsumptionStatus.UNREAD,
-            parent_id="tvdb:123",
+            metadata={"total_seasons": 2},
         )
+        first_season, second_season = expand_tv_shows_to_seasons([show])
         context = _build_context(consumed=[])
-        context.similarity_scores = {"tvdb:123": 0.9}
+        context.similarity_scores = {library_key(show): 0.9}
         scorer = SemanticSimilarityScorer()
-        assert scorer.score(candidate, context) == 0.9
-
-    def test_no_fallback_without_parent_id(self) -> None:
-        """Scorer does not fall back when parent_id is None."""
-        candidate = make_item(item_id="tvdb:123:s1", status=ConsumptionStatus.UNREAD)
-        assert candidate.parent_id is None
-        context = _build_context(consumed=[])
-        context.similarity_scores = {"tvdb:123": 0.9}
-        scorer = SemanticSimilarityScorer()
-        assert scorer.score(candidate, context) == 0.0
+        assert scorer.score(first_season, context) == 0.9
+        assert scorer.score(second_season, context) == 0.9
 
     def test_default_weight(self) -> None:
         """SemanticSimilarityScorer default weight is 1.5."""
@@ -1490,12 +1490,12 @@ class TestAdaptationScorer:
     """
 
     @staticmethod
-    def _context_with(
-        adaptations: dict[str | None, list[ContentItem]]
+    def _context_where(
+        candidate: ContentItem, adapts: list[ContentItem]
     ) -> ScoringContext:
-        """A context carrying *adaptations* and nothing else of note."""
+        """A context in which *candidate* adapts *adapts* and nothing else."""
         context = _build_context(consumed=[])
-        context.adaptations = adaptations
+        context.adaptations = {candidate_key(candidate): adapts} if adapts else {}
         return context
 
     def test_five_star_adaptation_scores_1(self) -> None:
@@ -1507,7 +1507,7 @@ class TestAdaptationScorer:
 
         scorer = AdaptationScorer()
 
-        assert scorer.score(candidate, self._context_with({"film": [source]})) == 1.0
+        assert scorer.score(candidate, self._context_where(candidate, [source])) == 1.0
 
     def test_four_star_adaptation_scores_below_a_five_star_one(self) -> None:
         """The rating carries through rather than flattening to one bonus."""
@@ -1518,7 +1518,7 @@ class TestAdaptationScorer:
 
         scorer = AdaptationScorer()
 
-        assert scorer.score(candidate, self._context_with({"film": [source]})) == 0.75
+        assert scorer.score(candidate, self._context_where(candidate, [source])) == 0.75
 
     def test_best_rated_source_wins(self) -> None:
         """With several sources, the best-rated one sets the score."""
@@ -1532,7 +1532,7 @@ class TestAdaptationScorer:
 
         scorer = AdaptationScorer()
 
-        assert scorer.score(candidate, self._context_with({"film": sources})) == 1.0
+        assert scorer.score(candidate, self._context_where(candidate, sources)) == 1.0
 
     def test_candidate_adapting_nothing_scores_0(self) -> None:
         """No entry in the map means no boost."""
@@ -1542,7 +1542,7 @@ class TestAdaptationScorer:
 
         scorer = AdaptationScorer()
 
-        assert scorer.score(candidate, self._context_with({})) == 0.0
+        assert scorer.score(candidate, self._context_where(candidate, [])) == 0.0
 
     def test_unrated_source_scores_0(self) -> None:
         """An adaptation of something unrated says nothing about taste."""
@@ -1553,7 +1553,21 @@ class TestAdaptationScorer:
 
         scorer = AdaptationScorer()
 
-        assert scorer.score(candidate, self._context_with({"film": [source]})) == 0.0
+        assert scorer.score(candidate, self._context_where(candidate, [source])) == 0.0
+
+    def test_another_candidates_adaptations_do_not_leak(self) -> None:
+        """A candidate reads only its own entry, never a sibling's."""
+        source = make_item(item_id="book", title="Dune", rating=5)
+        adapter = make_item(
+            item_id="film", title="Dune", content_type=ContentType.MOVIE
+        )
+        other = make_item(
+            item_id="other", title="Solaris", content_type=ContentType.MOVIE
+        )
+
+        scorer = AdaptationScorer()
+
+        assert scorer.score(other, self._context_where(adapter, [source])) == 0.0
 
     def test_default_weight(self) -> None:
         """AdaptationScorer default weight is 1.5."""

@@ -17,6 +17,7 @@ from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.recommendations.content_length import score_length_match
 from src.recommendations.genre_clusters import get_clusters_for_terms
 from src.recommendations.genre_normalizer import extract_and_normalize_genres
+from src.recommendations.identity import candidate_key, library_key
 from src.recommendations.preferences import UserPreferences
 from src.utils.series import (
     build_series_tracking,
@@ -93,7 +94,7 @@ class ScoringContext:
         ratings_by_genre: Genre -> list of ratings from consumed items.
         series_ratings: Series name -> list of ratings from consumed items.
         unconsumed_series_positions: Series name -> item numbers still unconsumed.
-        adaptations: Candidate id -> consumed items the candidate adapts.
+        adaptations: Candidate key -> consumed items the candidate adapts.
     """
 
     preferences: UserPreferences
@@ -110,11 +111,11 @@ class ScoringContext:
     series_ratings: dict[str, list[int]] = field(default_factory=dict)
     unconsumed_series_positions: dict[str, set[float]] = field(default_factory=dict)
 
-    # Pre-computed similarity scores (populated by engine when AI enabled)
-    similarity_scores: dict[str | None, float] = field(default_factory=dict)
+    # Similarity scores keyed by library key (populated by engine when AI enabled)
+    similarity_scores: dict[str, float] = field(default_factory=dict)
 
-    # Cross-media adaptations the user rated well, keyed by candidate id
-    adaptations: dict[str | None, list[ContentItem]] = field(default_factory=dict)
+    # Cross-media adaptations the user rated well, keyed by candidate key
+    adaptations: dict[str, list[ContentItem]] = field(default_factory=dict)
 
     # User content-length preferences (e.g. {"book": "short", "movie": "any"})
     content_length_preferences: dict[str, str] = field(default_factory=dict)
@@ -437,6 +438,9 @@ class SemanticSimilarityScorer(Scorer):
     the engine populates before running the pipeline.  It is only added to
     the pipeline when AI features are enabled.
 
+    The scores are keyed by library key, because an embedding belongs to a
+    stored row: season-level candidates therefore share their show's score.
+
     Weight default: 1.5
     """
 
@@ -444,14 +448,7 @@ class SemanticSimilarityScorer(Scorer):
         super().__init__(weight)
 
     def score(self, candidate: ContentItem, context: ScoringContext) -> float:
-        if not context.similarity_scores:
-            return 0.0
-        lookup_id = candidate.id
-        score = context.similarity_scores.get(lookup_id, 0.0)
-        # For TV season items, fall back to the parent show's similarity score
-        if score == 0.0 and candidate.parent_id is not None:
-            score = context.similarity_scores.get(candidate.parent_id, 0.0)
-        return score
+        return context.similarity_scores.get(library_key(candidate), 0.0)
 
 
 class CustomPreferenceScorer(Scorer):
@@ -598,7 +595,7 @@ class AdaptationScorer(Scorer):
         super().__init__(weight)
 
     def score(self, candidate: ContentItem, context: ScoringContext) -> float:
-        adaptations = context.adaptations.get(candidate.id)
+        adaptations = context.adaptations.get(candidate_key(candidate))
         if not adaptations:
             return 0.0
 

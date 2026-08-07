@@ -6,11 +6,9 @@ import numpy as np
 
 from src.llm.embeddings import EmbeddingGenerator
 from src.models.content import ContentItem, ContentType
-from src.storage.manager import StorageManager
+from src.storage.manager import StorageManager, stored_embedding_key
 
 logger = logging.getLogger(__name__)
-
-_MAX_SIMILARITY_CANDIDATES = 500
 
 
 class SimilarityMatcher:
@@ -42,11 +40,13 @@ class SimilarityMatcher:
         Args:
             reference_items: Items to find similar content for
             content_type: Optional filter by content type
-            exclude_ids: Optional list of IDs to exclude
+            exclude_ids: Optional list of embedding keys to exclude, as
+                ``stored_embedding_key`` derives them — the search returns
+                keys, not external ids
             limit: Maximum number of results
             user_id: User ID to scope item lookup (defaults to default user)
-            include_ignored: Whether ignored items may appear in the result
-                lookup table (default True). Recommendation callers pass False
+            include_ignored: Whether ignored items may be resolved from the
+                search hits (default True). Recommendation callers pass False
                 so ignored items are never surfaced as similar candidates.
 
         Returns:
@@ -58,14 +58,15 @@ class SimilarityMatcher:
         # Generate embeddings for reference items if needed
         reference_embeddings = []
         for item in reference_items:
-            # Check if embedding exists
-            content_id = item.id
+            # The key the item's own embedding was written under, which for an
+            # item with no external id is its row rather than nothing.
+            reference_key = stored_embedding_key(item)
             if (
-                content_id
+                reference_key
                 and self.storage.vector_db is not None
-                and self.storage.vector_db.has_embedding(content_id)
+                and self.storage.vector_db.has_embedding(reference_key)
             ):
-                embedding = self.storage.vector_db.get_embedding(content_id)
+                embedding = self.storage.vector_db.get_embedding(reference_key)
                 if embedding is not None:
                     reference_embeddings.append(embedding)
             else:
@@ -74,7 +75,7 @@ class SimilarityMatcher:
                     embedding = self.embedding_gen.generate_content_embedding(item)
                     reference_embeddings.append(embedding)
                     # Save embedding for future use
-                    if content_id:
+                    if reference_key:
                         self.storage.save_content_item(item, embedding=embedding)
                 except Exception as error:
                     logger.warning(
@@ -90,20 +91,16 @@ class SimilarityMatcher:
         embeddings_array = np.array(reference_embeddings)
         query_embedding = np.mean(embeddings_array, axis=0).tolist()
 
-        # Search for similar items
         try:
-            # StorageManager.search_similar uses exclude_consumed (bool) and n_results (int)
-            # We need to handle exclude_ids by checking if items should be excluded
-            # For now, we'll use exclude_consumed=True to exclude completed items
-            # and filter out exclude_ids manually if needed
+            # search_similar already drops completed items; exclude_ids is
+            # filtered here because it is a per-call list, not a status.
             similar_results = self.storage.search_similar(
                 query_embedding=query_embedding,
                 n_results=limit,
                 content_type=content_type,
-                exclude_consumed=True,  # Exclude completed items by default
+                exclude_consumed=True,
             )
 
-            # Filter out explicitly excluded IDs if provided
             if exclude_ids:
                 similar_results = [
                     result
@@ -111,35 +108,32 @@ class SimilarityMatcher:
                     if result.get("content_id") not in exclude_ids
                 ]
 
-            # Convert dictionary results to (ContentItem, float) tuples
-            # The results contain content_id, score, and metadata
-            # We need to look up the actual ContentItem objects
-            similar_items: list[tuple[ContentItem, float]] = []
-
-            if not similar_results:
+            hits = [
+                (content_id, result.get("score", 0.0))
+                for result in similar_results
+                if (content_id := result.get("content_id"))
+            ]
+            if not hits:
                 return []
 
-            # Build a lookup dictionary for efficient item retrieval
-            # Get items of this content type (bounded) and index by external_id
-            all_items = self.storage.get_content_items(
+            # Resolve exactly the keys the search returned, so the lookup does
+            # not depend on how large the library is or how it sorts.
+            items_by_key = self.storage.get_items_by_embedding_keys(
+                [key for key, _ in hits],
                 user_id=user_id,
                 content_type=content_type,
-                limit=_MAX_SIMILARITY_CANDIDATES,
                 include_ignored=include_ignored,
             )
-            items_by_id = {item.id: item for item in all_items if item.id}
 
-            for result in similar_results:
-                content_id = result.get("content_id")
-                score = result.get("score", 0.0)
-
-                if not content_id:
-                    continue
-
-                # Look up the ContentItem by external_id
-                matching_item = items_by_id.get(content_id)
-                if matching_item:
-                    similar_items.append((matching_item, score))
+            similar_items = [
+                (items_by_key[key], score) for key, score in hits if key in items_by_key
+            ]
+            if len(similar_items) < len(hits):
+                logger.info(
+                    "Similarity search: %d of %d hits matched no visible item",
+                    len(hits) - len(similar_items),
+                    len(hits),
+                )
 
             # Sort by score (descending)
             similar_items.sort(key=lambda entry: entry[1], reverse=True)

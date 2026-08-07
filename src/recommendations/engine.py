@@ -6,7 +6,7 @@ from collections.abc import Callable
 from typing import Any, TypeVar
 
 from src.llm.embeddings import EmbeddingGenerator
-from src.llm.recommendations import RecommendationGenerator
+from src.llm.recommendations import BlurbRequest, RecommendationGenerator
 from src.models.content import (
     ConsumptionStatus,
     ContentItem,
@@ -19,6 +19,7 @@ from src.recommendations.constants import (
     SCORE_PROXIMITY_THRESHOLD,
 )
 from src.recommendations.genre_clusters import cluster_overlap
+from src.recommendations.identity import candidate_key, library_key
 from src.recommendations.preference_interpreter import (
     InterpretedPreference,
     PatternBasedInterpreter,
@@ -37,14 +38,14 @@ from src.recommendations.scorers import (
     extract_genres,
 )
 from src.recommendations.scoring_pipeline import ScoredCandidate, ScoringPipeline
-from src.recommendations.similarity import _MAX_SIMILARITY_CANDIDATES, SimilarityMatcher
+from src.recommendations.similarity import SimilarityMatcher
 from src.recommendations.variety import (
     PenaltyFraction,
     build_variety_ladder,
     top_penalty_for_preference,
     variety_penalty_for,
 )
-from src.storage.manager import StorageManager
+from src.storage.manager import StorageManager, stored_embedding_key
 from src.utils.series import (
     build_series_tracking,
     expand_tv_shows_to_seasons,
@@ -66,6 +67,9 @@ _T = TypeVar("_T")
 #: A candidate after ranking: the item, its score, and the variety penalty
 #: fraction applied to it (0.0 when the penalty is off or did not bite).
 _RankedCandidate = tuple[ContentItem, float, float]
+
+#: Upper bound on the hits one vector-similarity search may return.
+_MAX_SIMILARITY_RESULTS = 500
 
 
 def _collapse_duplicate_db_ids(
@@ -394,8 +398,9 @@ class RecommendationEngine:
             filtered_candidates, all_consumed_items, adaptations
         )
 
-        breakdown_by_id: dict[str | None, dict[str, float]] = {
-            meta["item"].id: meta["score_breakdown"] for meta in candidate_metadata
+        breakdown_by_key: dict[str, dict[str, float]] = {
+            candidate_key(meta["item"]): meta["score_breakdown"]
+            for meta in candidate_metadata
         }
 
         # The pipeline aggregate is the score, and the pipeline already sorted
@@ -438,7 +443,7 @@ class RecommendationEngine:
 
         # Format recommendations
         recommendations = self._format_recommendations(
-            top_recommendations, candidate_metadata, breakdown_by_id, preferences
+            top_recommendations, candidate_metadata, breakdown_by_key, preferences
         )
 
         # Optionally enhance with LLM reasoning
@@ -470,7 +475,7 @@ class RecommendationEngine:
         all_consumed_items: list[ContentItem],
         content_type: ContentType,
         candidate_count: int,
-    ) -> dict[str | None, float]:
+    ) -> dict[str, float]:
         """Pre-compute vector-similarity scores for candidate items.
 
         Selects reference items from highly-rated and low-rated consumed
@@ -482,10 +487,11 @@ class RecommendationEngine:
             content_type: Target content type for recommendations.
             candidate_count: Upper bound on similarity search results,
                 set to the number of unconsumed candidates so no candidate
-                is missed. Capped at _MAX_SIMILARITY_CANDIDATES internally.
+                is missed. Capped at _MAX_SIMILARITY_RESULTS internally.
 
         Returns:
-            Mapping of item ID to similarity score. Empty when AI is disabled.
+            Mapping of library key to similarity score, so season-level
+            candidates share their show's score. Empty when AI is disabled.
         """
         if self.similarity_matcher is None:
             return {}
@@ -509,21 +515,23 @@ class RecommendationEngine:
         if not reference_items:
             reference_items = all_consumed_items[:5]
 
-        exclude_ids = [item.id for item in all_consumed_items if item.id]
+        # The search returns embedding keys, so the exclusions must be keys
+        # too: an id-less consumed item is excluded by its row.
+        exclude_keys = [
+            key for item in all_consumed_items if (key := stored_embedding_key(item))
+        ]
 
-        capped_limit = min(candidate_count, _MAX_SIMILARITY_CANDIDATES)
+        capped_limit = min(candidate_count, _MAX_SIMILARITY_RESULTS)
 
         similar_candidates = self.similarity_matcher.find_similar(
             reference_items=reference_items,
             content_type=content_type,
-            exclude_ids=exclude_ids,
+            exclude_ids=exclude_keys,
             limit=capped_limit,
             include_ignored=False,
         )
 
-        if similar_candidates:
-            return {item.id: sim_score for item, sim_score in similar_candidates}
-        return {}
+        return {library_key(item): sim_score for item, sim_score in similar_candidates}
 
     def _apply_series_filtering(
         self,
@@ -545,11 +553,11 @@ class RecommendationEngine:
         Returns:
             Filtered and substituted candidate list.
         """
-        scored_by_id: dict[str | None, ScoredCandidate] = {
-            scored.item.id: scored for scored in pipeline_scored
+        scored_by_key: dict[str, ScoredCandidate] = {
+            candidate_key(scored.item): scored for scored in pipeline_scored
         }
         substituted_series: set[str] = set()
-        seen_ids: set[str | None] = set()
+        seen_keys: set[str] = set()
 
         filtered_candidates: list[ScoredCandidate] = []
         for scored_candidate in pipeline_scored:
@@ -558,9 +566,10 @@ class RecommendationEngine:
                 series_tracking,
                 unconsumed_items=unconsumed_items,
             ):
-                if scored_candidate.item.id not in seen_ids:
+                key = candidate_key(scored_candidate.item)
+                if key not in seen_keys:
                     filtered_candidates.append(scored_candidate)
-                    seen_ids.add(scored_candidate.item.id)
+                    seen_keys.add(key)
             else:
                 series_info = extract_series_info(
                     scored_candidate.item.title,
@@ -575,11 +584,15 @@ class RecommendationEngine:
                             series_tracking,
                             unconsumed_items,
                         )
-                        if substitute is not None and substitute.id not in seen_ids:
-                            substitute_scored = scored_by_id.get(substitute.id)
-                            if substitute_scored is not None:
+                        if substitute is not None:
+                            substitute_key = candidate_key(substitute)
+                            substitute_scored = scored_by_key.get(substitute_key)
+                            if (
+                                substitute_key not in seen_keys
+                                and substitute_scored is not None
+                            ):
                                 filtered_candidates.append(substitute_scored)
-                                seen_ids.add(substitute.id)
+                                seen_keys.add(substitute_key)
                                 logger.debug(
                                     "Substituted %s with %s (earliest in %s)",
                                     scored_candidate.item.title,
@@ -605,21 +618,22 @@ class RecommendationEngine:
         self,
         unconsumed_items: list[ContentItem],
         all_consumed_items: list[ContentItem],
-    ) -> dict[str | None, list[ContentItem]]:
-        """Map each candidate id to the consumed items it adapts.
+    ) -> dict[str, list[ContentItem]]:
+        """Map each candidate to the consumed items it adapts.
 
         Args:
             unconsumed_items: Every candidate the pipeline will score.
             all_consumed_items: The taste-signal set to match against.
 
         Returns:
-            Candidate id -> adaptations, omitting candidates that adapt nothing.
+            Candidate key -> adaptations, omitting candidates that adapt
+            nothing.
         """
-        adaptations: dict[str | None, list[ContentItem]] = {}
+        adaptations: dict[str, list[ContentItem]] = {}
         for item in unconsumed_items:
             found = self._find_direct_adaptations(item, all_consumed_items)
             if found:
-                adaptations[item.id] = found
+                adaptations[candidate_key(item)] = found
         return adaptations
 
     def _build_active_pipeline(
@@ -683,14 +697,14 @@ class RecommendationEngine:
         self,
         filtered_candidates: list[ScoredCandidate],
         all_consumed_items: list[ContentItem],
-        adaptations: dict[str | None, list[ContentItem]],
+        adaptations: dict[str, list[ContentItem]],
     ) -> list[dict[str, Any]]:
         """Build the display metadata for each surviving candidate.
 
         Args:
             filtered_candidates: Scored candidates after series filtering.
             all_consumed_items: All consumed items for reference detection.
-            adaptations: Pre-computed candidate id -> adaptations map.
+            adaptations: Pre-computed candidate key -> adaptations map.
 
         Returns:
             One metadata dict per candidate, in the order given.
@@ -698,7 +712,9 @@ class RecommendationEngine:
         return [
             {
                 "item": scored_candidate.item,
-                "adaptations": adaptations.get(scored_candidate.item.id, []),
+                "adaptations": adaptations.get(
+                    candidate_key(scored_candidate.item), []
+                ),
                 "contributing_items": self._find_contributing_reference_items(
                     scored_candidate.item, all_consumed_items
                 ),
@@ -769,7 +785,7 @@ class RecommendationEngine:
         self,
         ranked_items: list[_RankedCandidate],
         candidate_metadata: list[dict[str, Any]],
-        breakdown_by_id: dict[str | None, dict[str, float]],
+        breakdown_by_key: dict[str, dict[str, float]],
         preferences: UserPreferences,
     ) -> list[dict[str, Any]]:
         """Format ranked candidates into recommendation dictionaries.
@@ -777,19 +793,20 @@ class RecommendationEngine:
         Args:
             ranked_items: Ranked candidates, best first.
             candidate_metadata: Per-candidate metadata from build step.
-            breakdown_by_id: Score breakdown keyed by item ID.
+            breakdown_by_key: Score breakdown keyed by candidate key.
             preferences: User preferences for reasoning generation.
 
         Returns:
             List of recommendation dictionaries.
         """
-        candidate_metadata_by_id = {
-            meta["item"].id: meta for meta in candidate_metadata
+        candidate_metadata_by_key = {
+            candidate_key(meta["item"]): meta for meta in candidate_metadata
         }
 
         recommendations: list[dict[str, Any]] = []
         for item, score, variety_penalty in ranked_items:
-            item_meta = candidate_metadata_by_id.get(item.id)
+            key = candidate_key(item)
+            item_meta = candidate_metadata_by_key.get(key)
 
             adaptations_list: list[ContentItem] = []
             contributing_list: list[ContentItem] = []
@@ -806,7 +823,7 @@ class RecommendationEngine:
                     adaptations_list,
                     contributing_list,
                 ),
-                "score_breakdown": breakdown_by_id.get(item.id, {}),
+                "score_breakdown": breakdown_by_key.get(key, {}),
                 "variety_penalty": variety_penalty,
                 "contributing_items": contributing_list,
                 "adaptations": adaptations_list,
@@ -854,24 +871,24 @@ class RecommendationEngine:
 
         try:
             if recommendations:
-                # Build (item, references) pairs for per-item blurb generation
-                items_with_refs = [
-                    (
-                        rec["item"],
-                        list(rec.get("contributing_items") or []),
+                blurb_requests = [
+                    BlurbRequest(
+                        key=candidate_key(rec["item"]),
+                        item=rec["item"],
+                        references=list(rec.get("contributing_items") or []),
                     )
                     for rec in recommendations
                 ]
-                # One LLM call per item, concurrent — returns {item_id: blurb}
+                # One LLM call per item, concurrent — returns {key: blurb}
                 blurbs = self.llm_generator.generate_blurbs_per_item(
                     content_type=content_type,
-                    items_with_refs=items_with_refs,
+                    blurb_requests=blurb_requests,
                     consumed_items=completed_consumed_items,
                 )
-                # Direct assignment by item ID — no title matching needed
+                # Direct assignment by candidate key — no title matching needed
                 enhanced_count = 0
                 for rec in recommendations:
-                    blurb = blurbs.get(rec["item"].id, "")
+                    blurb = blurbs.get(candidate_key(rec["item"]), "")
                     if blurb:
                         rec["llm_reasoning"] = blurb
                         enhanced_count += 1

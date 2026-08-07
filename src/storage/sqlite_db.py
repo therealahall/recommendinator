@@ -941,6 +941,48 @@ class SQLiteDB:
             self._row_to_content_item(rows[db_id]) for db_id in db_ids if db_id in rows
         ]
 
+    def get_content_items_by_external_ids(
+        self,
+        external_ids: list[str],
+        user_id: int | None = None,
+        content_type: ContentType | None = None,
+    ) -> list[ContentItem]:
+        """Get multiple content items by their external IDs in a single query.
+
+        Args:
+            external_ids: External IDs to fetch.
+            user_id: Filter by user ID (defaults to default user).
+            content_type: Filter by content type. One external id may name a
+                row of each type, since rows are unique per
+                ``(user, external id, content type)``.
+
+        Returns:
+            One ContentItem per row matching the filters, in no particular
+            order. An id naming no such row is skipped.
+        """
+        if not external_ids:
+            return []
+
+        type_clause = " AND ci.content_type = ?" if content_type is not None else ""
+        type_params = [get_enum_value(content_type)] if content_type is not None else []
+        effective_user_id = user_id if user_id is not None else get_default_user_id()
+
+        items: list[ContentItem] = []
+        with self.connection() as conn:
+            cursor = conn.cursor()
+            for i in range(0, len(external_ids), _IN_CLAUSE_CHUNK_SIZE):
+                chunk = external_ids[i : i + _IN_CLAUSE_CHUNK_SIZE]
+                placeholders = ", ".join("?" for _ in chunk)
+                cursor.execute(
+                    f"{_CONTENT_ITEM_SELECT} WHERE ci.user_id = ?"
+                    f" AND ci.external_id IN ({placeholders}){type_clause}",
+                    [effective_user_id, *chunk, *type_params],
+                )
+                items.extend(
+                    self._row_to_content_item(row) for row in cursor.fetchall()
+                )
+        return items
+
     def get_content_items(
         self,
         user_id: int | None = None,

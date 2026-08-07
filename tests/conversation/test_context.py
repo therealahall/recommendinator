@@ -1520,6 +1520,51 @@ class TestExtractContributingItems:
         assert all(item.status == ConsumptionStatus.COMPLETED for item in result)
 
 
+class TestContributingItemDedupRegression:
+    """Contributing items are deduplicated by row, not by external id."""
+
+    def test_id_less_items_are_not_collapsed_together_regression(self) -> None:
+        """Regression test: distinct CSV-imported items survive dedup.
+
+        Bug reported: chat context named a single contributing item for a
+        library imported from CSV, however many recommendations it explained.
+        Root cause: the dedup keyed on ``ContentItem.id``, which is ``None``
+        for every item imported without an external id, so the first one seen
+        claimed the key for all of them.
+        Fix: the dedup keys on the library row, which every stored item has.
+        """
+        items = [
+            ContentItem(
+                id=None,
+                db_id=db_id,
+                title=title,
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+            )
+            for db_id, title in ((1, "First CSV Book"), (2, "Second CSV Book"))
+        ]
+        brief = RecommendationBrief(
+            item=ContentItem(
+                title="Rec",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            ),
+            score=0.9,
+            reasoning="",
+            score_breakdown={},
+            contributing_items=items,
+            adaptations=[],
+        )
+
+        result = _extract_contributing_items([brief])
+
+        assert [item.title for item in result] == [
+            "First CSV Book",
+            "Second CSV Book",
+        ]
+
+
 class TestRAGBypassWithPipeline:
     """Tests verifying that RAG embedding call is skipped when pipeline is active."""
 
