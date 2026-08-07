@@ -34,7 +34,7 @@ from src.storage.source_migration import (
 from src.web.api import APP_VERSION
 from src.web.api import router as api_router
 from src.web.chat_api import router as chat_router
-from src.web.state import app_state
+from src.web.state import app_state, get_config
 
 logger = logging.getLogger(__name__)
 
@@ -224,7 +224,11 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         logger.info("Logging configured from application config")
 
         llm_client, embedding_gen, rec_gen = create_llm_components(config)
-        engine = create_recommendation_engine(storage, embedding_gen, rec_gen, config)
+        # get_config, not the dict: a hot-reload swaps in a fresh one, and the
+        # engine must score against whichever is current at the time.
+        engine = create_recommendation_engine(
+            storage, embedding_gen, rec_gen, config, config_provider=get_config
+        )
 
         # Determine actual config path used
         try:

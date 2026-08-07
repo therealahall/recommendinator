@@ -6,6 +6,7 @@ pre-database web bind settings.
 """
 
 import logging
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, NamedTuple
 
@@ -378,18 +379,23 @@ def create_recommendation_engine(
     embedding_generator: EmbeddingGenerator | None,
     recommendation_generator: RecommendationGenerator | None,
     config: dict[str, Any],
+    config_provider: Callable[[], dict[str, Any] | None] | None = None,
 ) -> RecommendationEngine:
     """Create recommendation engine from components and config.
 
-    The values read here seed the engine's baseline; *config* is also handed to
-    the engine by reference so a settings change live-applied into it reaches
-    the next ``generate_recommendations`` call without a restart.
+    The values read here seed the engine's baseline, which the running config
+    then overlays on every call so a settings change reaches the next one
+    without a restart.
 
     Args:
         storage_manager: Storage manager instance
         embedding_generator: Embedding generator instance
         recommendation_generator: Recommendation generator instance
-        config: The running configuration dictionary
+        config: The configuration dictionary the baseline is read from
+        config_provider: Returns the running config on every read. Defaults to
+            returning *config*, which is right for a process that never
+            replaces it; the web app passes ``get_config`` so that a hot-reload
+            swapping in a fresh dict is picked up.
 
     Returns:
         RecommendationEngine instance
@@ -423,5 +429,7 @@ def create_recommendation_engine(
         scorers=scorers,
         semantic_similarity_weight=semantic_similarity_weight,
         custom_preference_weight=custom_preference_weight,
-        config=config,
+        config_provider=(
+            config_provider if config_provider is not None else lambda: config
+        ),
     )
