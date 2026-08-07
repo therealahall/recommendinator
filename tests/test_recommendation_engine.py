@@ -20,10 +20,10 @@ from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.engine import (
     RecommendationEngine,
     _collapse_duplicate_db_ids,
-    _shuffle_close_scores,
 )
 from src.recommendations.identity import candidate_key
 from src.recommendations.preferences import PreferenceAnalyzer, UserPreferences
+from src.recommendations.reference_index import SignalIndex, _shuffle_close_scores
 from src.recommendations.scorers import SCORER_NAME_MAP
 from src.recommendations.scoring_pipeline import ScoredCandidate
 from src.recommendations.variety import (
@@ -1688,9 +1688,9 @@ class TestContributingReferenceItemsRegression:
             metadata={"genres": ["Thriller", "Crime"]},
         )
 
-        result = engine._find_contributing_reference_items(
-            candidate, [consumed_game, consumed_tv, consumed_book]
-        )
+        result = SignalIndex(
+            [consumed_game, consumed_tv, consumed_book]
+        ).references_for(candidate, engine.rng)
 
         # All three content types should be represented
         result_types = {get_enum_value(item.content_type) for item in result}
@@ -1755,8 +1755,8 @@ class TestCrossTypeClusterOverlapRegression:
             metadata={"genres": ["Science Fiction", "Adventure"]},
         )
 
-        references = engine._find_contributing_reference_items(
-            sci_fi_candidate, [show_1923, sci_fi_consumed]
+        references = SignalIndex([show_1923, sci_fi_consumed]).references_for(
+            sci_fi_candidate, engine.rng
         )
 
         reference_titles = [ref.title for ref in references]
@@ -1803,8 +1803,8 @@ class TestCrossTypeClusterOverlapRegression:
             metadata={"genres": ["Drama"]},
         )
 
-        references = engine._find_contributing_reference_items(
-            candidate, [drama_tv, war_tv]
+        references = SignalIndex([drama_tv, war_tv]).references_for(
+            candidate, engine.rng
         )
 
         reference_titles = [ref.title for ref in references]
@@ -2026,8 +2026,8 @@ class TestContributingReferenceRatingFloorRegression:
             metadata={"genres": ["Drama", "Crime"]},
         )
 
-        result = engine._find_contributing_reference_items(
-            candidate, [disliked_item, liked_item]
+        result = SignalIndex([disliked_item, liked_item]).references_for(
+            candidate, engine.rng
         )
 
         result_titles = [item.title for item in result]
@@ -2057,7 +2057,7 @@ class TestContributingReferenceRatingFloorRegression:
             metadata={"genres": ["Drama", "Crime"]},
         )
 
-        result = engine._find_contributing_reference_items(candidate, [unrated_item])
+        result = SignalIndex([unrated_item]).references_for(candidate, engine.rng)
 
         result_titles = [item.title for item in result]
         assert (
@@ -2097,7 +2097,7 @@ class TestSameTypeLimitRegression:
             for index in range(6)
         ]
 
-        result = engine._find_contributing_reference_items(candidate, consumed_items)
+        result = SignalIndex(consumed_items).references_for(candidate, engine.rng)
 
         same_type_items = [
             item for item in result if get_enum_value(item.content_type) == "tv_show"
@@ -2249,7 +2249,7 @@ class TestSeededReferenceOrderRegression:
             )
             for letter in ("a", "b", "c")
         ]
-        references = engine._find_contributing_reference_items(candidate, consumed)
+        references = SignalIndex(consumed).references_for(candidate, engine.rng)
         return [item.id for item in references]
 
     def test_seeded_engine_repeats_a_pinned_reference_order(self, mock_storage) -> None:
@@ -3768,8 +3768,8 @@ class TestSameSeriesReferenceExclusionRegression:
             metadata={"genres": ["Science Fiction", "Drama"]},
         )
 
-        result = engine._find_contributing_reference_items(
-            candidate, [same_series_consumed, other_consumed]
+        result = SignalIndex([same_series_consumed, other_consumed]).references_for(
+            candidate, engine.rng
         )
 
         result_titles = [item.title for item in result]
@@ -3799,7 +3799,7 @@ class TestSameSeriesReferenceExclusionRegression:
             metadata={"genres": ["Drama", "Crime"]},
         )
 
-        result = engine._find_contributing_reference_items(candidate, [series_consumed])
+        result = SignalIndex([series_consumed]).references_for(candidate, engine.rng)
 
         result_titles = [item.title for item in result]
         assert "The Godfather (The Godfather, Part 2)" in result_titles, (
@@ -3838,7 +3838,7 @@ class TestSameSeriesReferenceExclusionRegression:
             metadata={"genres": ["Science Fiction"]},
         )
 
-        result = engine._find_contributing_reference_items(candidate, [consumed, other])
+        result = SignalIndex([consumed, other]).references_for(candidate, engine.rng)
 
         result_titles = [item.title for item in result]
         assert (
@@ -3894,8 +3894,8 @@ class TestSameSeriesReferenceExclusionRegression:
             metadata={"genres": ["Science Fiction"]},
         )
 
-        result = engine._find_contributing_reference_items(
-            candidate, [show_level_consumed, other_consumed]
+        result = SignalIndex([show_level_consumed, other_consumed]).references_for(
+            candidate, engine.rng
         )
 
         result_titles = [item.title for item in result]
@@ -3956,8 +3956,8 @@ class TestSameSeriesReferenceExclusionRegression:
             metadata={"genres": ["Science Fiction"]},
         )
 
-        result = engine._find_contributing_reference_items(
-            candidate, [consumed_with_meta, other]
+        result = SignalIndex([consumed_with_meta, other]).references_for(
+            candidate, engine.rng
         )
 
         result_titles = [item.title for item in result]
@@ -3998,7 +3998,7 @@ class TestSameSeriesReferenceExclusionRegression:
             metadata={"genres": ["Science Fiction"], metadata_key: "The Expanse"},
         )
 
-        result = engine._find_contributing_reference_items(candidate, [consumed])
+        result = SignalIndex([consumed]).references_for(candidate, engine.rng)
 
         result_titles = [item.title for item in result]
         assert "My Expanse Review" not in result_titles, (
@@ -4017,14 +4017,14 @@ class TestInProgressItemsExcludedFromBasisRegression:
 
     Root cause: `get_completed_items()` correctly includes CURRENTLY_CONSUMING
     so in-progress media still informs preference scoring, but the display
-    helpers (_find_contributing_reference_items, _find_direct_adaptations)
+    helpers (now SignalIndex.references_for and SignalIndex.adaptations_of)
     and the LLM-prompt callsites in _enhance_with_llm had no secondary
     status filter, so the in-progress items leaked into the user-visible
     reasoning.
 
-    Fix: the display helpers and the LLM-prompt callsites now skip
-    CURRENTLY_CONSUMING items so the "recommended because you liked X"
-    surface only cites completed media.
+    Fix: the signal index leaves CURRENTLY_CONSUMING items out entirely, and
+    the LLM-prompt callsites skip them, so the "recommended because you liked
+    X" surface only cites completed media.
     """
 
     def test_contributing_excludes_currently_consuming(self) -> None:
@@ -4056,8 +4056,8 @@ class TestInProgressItemsExcludedFromBasisRegression:
             metadata={"genres": ["Drama", "Crime"]},
         )
 
-        result = engine._find_contributing_reference_items(
-            candidate, [in_progress, completed]
+        result = SignalIndex([in_progress, completed]).references_for(
+            candidate, engine.rng
         )
 
         result_ids = {item.id for item in result}
@@ -4068,8 +4068,6 @@ class TestInProgressItemsExcludedFromBasisRegression:
 
     def test_adaptations_exclude_currently_consuming(self) -> None:
         """In-progress items must not appear as cross-type adaptations."""
-        engine = _engine_for_helpers()
-
         candidate = ContentItem(
             id="lotr_movie",
             title="The Fellowship of the Ring",
@@ -4095,8 +4093,8 @@ class TestInProgressItemsExcludedFromBasisRegression:
             author="J.R.R. Tolkien",
         )
 
-        result = engine._find_direct_adaptations(
-            candidate, [in_progress_book, completed_book]
+        result = SignalIndex([in_progress_book, completed_book]).adaptations_of(
+            candidate
         )
 
         result_ids = {item.id for item in result}
@@ -5282,7 +5280,9 @@ class TestSeasonSiblingsStayDistinctInEveryMap:
             rating=5,
         )
 
-        adaptations = engine._build_adaptations([first, second], [adapted_film])
+        adaptations = engine._build_adaptations(
+            [first, second], SignalIndex([adapted_film])
+        )
 
         assert adaptations == {candidate_key(first): [adapted_film]}
 

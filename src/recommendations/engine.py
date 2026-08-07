@@ -14,17 +14,13 @@ from src.models.content import (
     get_enum_value,
 )
 from src.models.user_preferences import UserPreferenceConfig
-from src.recommendations.constants import (
-    CROSS_TYPE_MIN_OVERLAP,
-    SCORE_PROXIMITY_THRESHOLD,
-)
-from src.recommendations.genre_clusters import cluster_overlap
 from src.recommendations.identity import candidate_key, library_key
 from src.recommendations.preference_interpreter import (
     InterpretedPreference,
     PatternBasedInterpreter,
 )
 from src.recommendations.preferences import PreferenceAnalyzer, UserPreferences
+from src.recommendations.reference_index import SignalIndex
 from src.recommendations.scorers import (
     DEFAULT_SCORERS,
     AdaptationScorer,
@@ -34,8 +30,6 @@ from src.recommendations.scorers import (
     ScoringContext,
     SemanticSimilarityScorer,
     build_scorers_with_overrides,
-    extract_creator,
-    extract_genres,
 )
 from src.recommendations.scoring_pipeline import ScoredCandidate, ScoringPipeline
 from src.recommendations.similarity import SimilarityMatcher
@@ -51,14 +45,11 @@ from src.utils.series import (
     expand_tv_shows_to_seasons,
     extract_series_info,
     find_earliest_recommendable,
-    get_series_name,
-    get_series_name_from_metadata,
     inject_seasons_watched_tracking,
     is_active_series_continuation,
     should_recommend_item,
     strip_series_suffix_from_title,
 )
-from src.utils.sorting import get_sort_title, titles_similar
 
 logger = logging.getLogger(__name__)
 
@@ -127,38 +118,6 @@ _CONTENT_TYPE_NATURAL_LABEL: dict[str, str] = {
 # Shuffle source for engines built without one.  Shared rather than per-engine
 # so seeding it seeds every engine that did not bring its own.
 _DEFAULT_RNG = random.Random()
-
-
-def _shuffle_close_scores(
-    items_with_scores: list[tuple[ContentItem, float]],
-    rng: random.Random,
-) -> list[ContentItem]:
-    """Shuffle items that have similar overlap scores.
-
-    Items are already sorted by descending score.  Adjacent items whose
-    scores differ by at most ``SCORE_PROXIMITY_THRESHOLD`` are grouped
-    together and shuffled with *rng*, so the ordering feels dynamic across
-    runs while still respecting meaningful relevance differences.  A seeded
-    *rng* makes the ordering reproducible.
-    """
-    if not items_with_scores:
-        return []
-
-    groups: list[list[ContentItem]] = [[items_with_scores[0][0]]]
-    group_score = items_with_scores[0][1]
-
-    for item, score in items_with_scores[1:]:
-        if group_score - score <= SCORE_PROXIMITY_THRESHOLD:
-            groups[-1].append(item)
-        else:
-            groups.append([item])
-            group_score = score
-
-    result: list[ContentItem] = []
-    for group in groups:
-        rng.shuffle(group)
-        result.extend(group)
-    return result
 
 
 class RecommendationEngine:
@@ -347,9 +306,14 @@ class RecommendationEngine:
             all_consumed_items, content_type, len(unconsumed_items)
         )
 
+        # One index over the signal set answers both the adaptation lookup
+        # below and the reference lookup after filtering, so neither re-derives
+        # a consumed item's title, genres, creator or series per candidate.
+        signal_index = SignalIndex(all_consumed_items)
+
         # Detect cross-media adaptations before scoring: AdaptationScorer reads
         # them from the context, and the formatted output cites them as reasons.
-        adaptations = self._build_adaptations(unconsumed_items, all_consumed_items)
+        adaptations = self._build_adaptations(unconsumed_items, signal_index)
 
         # Score all unconsumed candidates via the pipeline (always runs)
         content_length_preferences = (
@@ -395,7 +359,7 @@ class RecommendationEngine:
 
         # Find the consumed items that explain each surviving candidate
         candidate_metadata = self._build_candidate_metadata(
-            filtered_candidates, all_consumed_items, adaptations
+            filtered_candidates, signal_index, adaptations
         )
 
         breakdown_by_key: dict[str, dict[str, float]] = {
@@ -614,16 +578,16 @@ class RecommendationEngine:
 
         return filtered_candidates
 
+    @staticmethod
     def _build_adaptations(
-        self,
         unconsumed_items: list[ContentItem],
-        all_consumed_items: list[ContentItem],
+        signal_index: SignalIndex,
     ) -> dict[str, list[ContentItem]]:
         """Map each candidate to the consumed items it adapts.
 
         Args:
             unconsumed_items: Every candidate the pipeline will score.
-            all_consumed_items: The taste-signal set to match against.
+            signal_index: The indexed taste-signal set to match against.
 
         Returns:
             Candidate key -> adaptations, omitting candidates that adapt
@@ -631,7 +595,7 @@ class RecommendationEngine:
         """
         adaptations: dict[str, list[ContentItem]] = {}
         for item in unconsumed_items:
-            found = self._find_direct_adaptations(item, all_consumed_items)
+            found = signal_index.adaptations_of(item)
             if found:
                 adaptations[candidate_key(item)] = found
         return adaptations
@@ -696,14 +660,14 @@ class RecommendationEngine:
     def _build_candidate_metadata(
         self,
         filtered_candidates: list[ScoredCandidate],
-        all_consumed_items: list[ContentItem],
+        signal_index: SignalIndex,
         adaptations: dict[str, list[ContentItem]],
     ) -> list[dict[str, Any]]:
         """Build the display metadata for each surviving candidate.
 
         Args:
             filtered_candidates: Scored candidates after series filtering.
-            all_consumed_items: All consumed items for reference detection.
+            signal_index: The indexed taste-signal set to cite references from.
             adaptations: Pre-computed candidate key -> adaptations map.
 
         Returns:
@@ -715,8 +679,8 @@ class RecommendationEngine:
                 "adaptations": adaptations.get(
                     candidate_key(scored_candidate.item), []
                 ),
-                "contributing_items": self._find_contributing_reference_items(
-                    scored_candidate.item, all_consumed_items
+                "contributing_items": signal_index.references_for(
+                    scored_candidate.item, self.rng
                 ),
                 "score_breakdown": scored_candidate.score_breakdown,
             }
@@ -1020,206 +984,6 @@ class RecommendationEngine:
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
-
-    def _find_direct_adaptations(
-        self, item: ContentItem, consumed_items: list[ContentItem]
-    ) -> list[ContentItem]:
-        """Find direct adaptations of this item in consumed content.
-
-        An adaptation is when the same title/author exists in a different content type.
-        For example, "Lord of the Rings" book -> "Lord of the Rings" movie.
-
-        Only adaptations the user rated 4+ are surfaced. Callers pass the
-        taste-signal set, so every item is already rated and not ignored.
-
-        Args:
-            item: Item to check for adaptations.
-            consumed_items: Signal-set items to check against (all rated).
-
-        Returns:
-            List of consumed items that are adaptations of this item.
-        """
-        adaptations = []
-
-        item_title_norm = get_sort_title(item.title)
-        item_author_norm = get_sort_title(item.author) if item.author else None
-
-        for consumed in consumed_items:
-            # Only completed items belong in displayed reasoning — items
-            # the user is actively consuming should not be cited as a
-            # basis for the recommendation.
-            if consumed.status == ConsumptionStatus.CURRENTLY_CONSUMING:
-                continue
-
-            if consumed.content_type == item.content_type:
-                continue
-
-            consumed_title_norm = get_sort_title(consumed.title)
-            consumed_author_norm = (
-                get_sort_title(consumed.author) if consumed.author else None
-            )
-
-            title_match = item_title_norm == consumed_title_norm
-            author_match = False
-            if item_author_norm and consumed_author_norm:
-                author_match = item_author_norm == consumed_author_norm
-
-            if title_match or (
-                author_match and titles_similar(item.title, consumed.title)
-            ):
-                if consumed.rating is not None and consumed.rating >= 4:
-                    adaptations.append(consumed)
-
-        return adaptations
-
-    def _find_contributing_reference_items(
-        self,
-        candidate: ContentItem,
-        all_consumed_items: list[ContentItem],
-    ) -> list[ContentItem]:
-        """Find consumed items that share metadata with *candidate*.
-
-        Uses genre and creator overlap to identify which consumed items
-        are most related — no embeddings required.  Returns up to 3 items
-        of the same content type as the candidate and up to 3 from each
-        other type that exceeds a minimum overlap threshold.  Cross-type
-        items that don't genuinely relate to the candidate are omitted
-        rather than padded.
-
-        Callers pass the taste-signal set, so every item is already rated and
-        not ignored. Items rated below 3 are still excluded here — they
-        represent content the user disliked and should never appear as
-        "you liked".
-
-        For same-type items, raw genre Jaccard is used (works well since
-        the same vocabulary is shared).  For cross-type items, thematic
-        cluster overlap is used instead, which is more discriminating than
-        raw Jaccard on broad terms like "drama".
-
-        Args:
-            candidate: The recommended item.
-            all_consumed_items: The taste-signal set (all rated, not ignored).
-
-        Returns:
-            Contributing consumed items grouped by type: up to 3 same-type,
-            up to 3 per other type (only those with meaningful overlap).
-        """
-        candidate_genres = list(extract_genres(candidate))
-        candidate_genres_set = set(candidate_genres)
-        candidate_creator = extract_creator(candidate)
-        candidate_type = get_enum_value(candidate.content_type)
-
-        # Determine candidate's series name so we can exclude same-series
-        # items from contributing references — e.g., "The Expanse (Season 2)"
-        # must not cite "The Expanse (Season 1)" as a reason.
-        candidate_series_name = get_series_name(candidate)
-        candidate_series_lower = (
-            candidate_series_name.lower() if candidate_series_name is not None else None
-        )
-
-        scored: list[tuple[ContentItem, float]] = []
-        for consumed in all_consumed_items:
-            # Only completed items belong in displayed reasoning — items
-            # the user is actively consuming should not be cited as a
-            # basis for the recommendation.
-            if consumed.status == ConsumptionStatus.CURRENTLY_CONSUMING:
-                continue
-
-            # Skip items the user actively disliked — they should never
-            # appear as "recommended because you liked".
-            if consumed.rating is not None and consumed.rating < 3:
-                continue
-
-            # Skip items from the same series — a continuation recommendation
-            # shouldn't cite earlier entries as "why" it was recommended.
-            if candidate_series_lower is not None:
-                consumed_series = get_series_name(consumed)
-                if (
-                    consumed_series is not None
-                    and consumed_series.lower() == candidate_series_lower
-                ):
-                    continue
-
-                # Fallback: consumed item may be a show-level entry without
-                # a season marker (e.g. "The Expanse" with no Season N).
-                if consumed_series is None:
-                    if consumed.title.strip().lower() == candidate_series_lower:
-                        continue
-                    consumed_meta_series = get_series_name_from_metadata(
-                        consumed.metadata
-                    )
-                    if (
-                        consumed_meta_series is not None
-                        and consumed_meta_series.lower() == candidate_series_lower
-                    ):
-                        continue
-
-            overlap = 0.0
-            consumed_genres = list(extract_genres(consumed))
-            consumed_genres_set = set(consumed_genres)
-            consumed_type = get_enum_value(consumed.content_type)
-            is_same_type = consumed_type == candidate_type
-
-            if candidate_genres_set and consumed_genres_set:
-                if is_same_type:
-                    # Same type: raw Jaccard (shared vocabulary)
-                    intersection = candidate_genres_set & consumed_genres_set
-                    if intersection:
-                        overlap += len(intersection) / len(
-                            candidate_genres_set | consumed_genres_set
-                        )
-                else:
-                    # Cross type: thematic cluster overlap
-                    overlap += cluster_overlap(candidate_genres, consumed_genres)
-
-            consumed_creator = extract_creator(consumed)
-            if (
-                candidate_creator
-                and consumed_creator
-                and candidate_creator == consumed_creator
-            ):
-                overlap += 0.5
-
-            # Boost highly-rated items so they surface as references more
-            # often, without excluding lower-rated ones.
-            if consumed.rating and consumed.rating >= 4:
-                overlap += 0.15
-
-            if overlap > 0:
-                scored.append((consumed, overlap))
-
-        scored.sort(key=lambda pair: pair[1], reverse=True)
-
-        # Group by content type: up to 3 for same type (any overlap),
-        # up to 3 for others (only if meaningfully related).
-        same_type_limit = 3
-        other_type_limit = 3
-
-        by_type: dict[str, list[tuple[ContentItem, float]]] = {}
-        for item, score in scored:
-            item_type = get_enum_value(item.content_type)
-            is_same_type = item_type == candidate_type
-            limit = same_type_limit if is_same_type else other_type_limit
-
-            # Cross-type items must clear a minimum overlap threshold
-            # to avoid the same broadly-matching items appearing for
-            # every recommendation in a category.
-            if not is_same_type and score < CROSS_TYPE_MIN_OVERLAP:
-                continue
-
-            type_list = by_type.setdefault(item_type, [])
-            if len(type_list) < limit:
-                type_list.append((item, score))
-
-        # Return same type first, then others sorted by their best score.
-        # Within each group, shuffle items that have similar overlap scores
-        # so the order feels dynamic across runs.
-        result: list[ContentItem] = _shuffle_close_scores(
-            by_type.pop(candidate_type, []), self.rng
-        )
-        for content_type_items in by_type.values():
-            result.extend(_shuffle_close_scores(content_type_items, self.rng))
-        return result
 
     def _generate_reasoning(
         self,

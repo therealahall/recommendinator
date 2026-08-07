@@ -3,6 +3,7 @@
 from src.recommendations.genre_clusters import (
     CLUSTERS,
     cluster_overlap,
+    cluster_similarity,
     get_clusters_for_terms,
 )
 
@@ -85,6 +86,51 @@ class TestClusterOverlap:
         score = cluster_overlap(["drama"], ["science fiction"])
         # These are in different clusters, so no overlap
         assert score == 0.0
+
+
+class TestClusterSimilarity:
+    """Tests for comparing two already-derived cluster memberships.
+
+    ``cluster_overlap`` derives both memberships and delegates here, so a
+    caller comparing one item against many can derive each membership once.
+    The two must agree on every input.
+    """
+
+    def test_it_agrees_with_deriving_the_memberships_inline(self) -> None:
+        """The same terms score the same whichever entry point is used."""
+        terms_a = ["science fiction", "war"]
+        terms_b = ["space warfare"]
+
+        assert cluster_similarity(
+            get_clusters_for_terms(terms_a), get_clusters_for_terms(terms_b)
+        ) == cluster_overlap(terms_a, terms_b)
+
+    def test_identical_memberships_score_one(self) -> None:
+        clusters = get_clusters_for_terms(["science fiction"])
+
+        assert cluster_similarity(clusters, clusters) == 1.0
+
+    def test_an_empty_membership_scores_zero(self) -> None:
+        """Either side being empty is a no-overlap answer, not a divide by zero."""
+        clusters = get_clusters_for_terms(["science fiction"])
+
+        assert cluster_similarity(set(), clusters) == 0.0
+        assert cluster_similarity(clusters, set()) == 0.0
+        assert cluster_similarity(set(), set()) == 0.0
+
+    def test_it_accepts_frozen_memberships(self) -> None:
+        """The index holds frozensets, so both set flavours must work."""
+        clusters = get_clusters_for_terms(["science fiction"])
+
+        assert cluster_similarity(frozenset(clusters), frozenset(clusters)) == 1.0
+
+    def test_disjoint_memberships_score_zero(self) -> None:
+        assert (
+            cluster_similarity(
+                get_clusters_for_terms(["comedy"]), get_clusters_for_terms(["horror"])
+            )
+            == 0.0
+        )
 
 
 class TestExpandedClusters:
