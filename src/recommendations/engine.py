@@ -3,7 +3,7 @@
 import logging
 import random
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Any, TypeVar
 
 from src.llm.embeddings import EmbeddingGenerator
@@ -123,6 +123,40 @@ _CONTENT_TYPE_NATURAL_LABEL: dict[str, str] = {
 _DEFAULT_RNG = random.Random()
 
 
+@dataclass(frozen=True)
+class _ConfiguredScoring:
+    """Every configurable scoring knob, resolved from one read of the config.
+
+    Attributes:
+        pipeline: The pipeline at the configured global scorer weights.
+        preference_analyzer: The analyser at the configured
+            ``min_rating_for_preference``.
+        custom_preference_weight: The configured weight for the custom-rule
+            scorer, which is built per call from the user's rules.
+    """
+
+    pipeline: ScoringPipeline
+    preference_analyzer: PreferenceAnalyzer
+    custom_preference_weight: float
+
+
+def _weights_in(section: dict[str, Any]) -> dict[str, float]:
+    """Return *section*'s ``scorer_weights``, keyed by known scorer name.
+
+    Names outside :data:`SCORER_NAME_MAP` are dropped: they weight no scorer,
+    so a typo in a hand-edited ``config.yaml`` stays as inert here as it was
+    when this resolution happened at boot.
+    """
+    weights = section.get("scorer_weights")
+    if not isinstance(weights, dict):
+        return {}
+    return {
+        name: float(weight)
+        for name, weight in weights.items()
+        if name in SCORER_NAME_MAP
+    }
+
+
 class RecommendationEngine:
     """Main recommendation engine.
 
@@ -135,18 +169,20 @@ class RecommendationEngine:
 
     When a *config_provider* is supplied, the ``recommendations`` knobs
     (:attr:`pipeline` weights, :attr:`preference_analyzer` and
-    :attr:`custom_preference_weight`) resolve from the config it returns on
-    every read rather than freezing at construction, so a Settings-page change
-    reaches the next ``generate_recommendations`` call without a restart.  The
-    constructor arguments stay the baseline the config overlays, keeping the
-    resolution order class default < ``config.yaml`` < global settings <
-    per-user override.
+    :attr:`custom_preference_weight`) resolve from the config it returns rather
+    than freezing at construction, so a Settings-page change reaches the next
+    ``generate_recommendations`` call without a restart.  The constructor
+    arguments stay the baseline the config overlays, keeping the resolution
+    order class default < ``config.yaml`` < global settings < per-user
+    override.
 
     A provider rather than the dict itself, because scoring runs off the event
     loop (Starlette streams the synchronous SSE generator in a threadpool
     worker) while config writes run on it.  Holding the dict would mean reading
     one a writer is part-way through rewriting; asking for it each time means
-    the writer can only ever swap in a finished one.
+    the writer can only ever swap in a finished one.  One call asks once, at
+    its start, and scores on that answer throughout: a save landing mid-request
+    therefore reaches the next request whole rather than this one in part.
     """
 
     def __init__(
@@ -205,24 +241,39 @@ class RecommendationEngine:
     @property
     def pipeline(self) -> ScoringPipeline:
         """The pipeline at the currently configured global scorer weights."""
-        return ScoringPipeline(
-            build_scorers_with_overrides(self._base_scorers, self._configured_weights())
-        )
+        return self._configured_scoring().pipeline
 
     @property
     def preference_analyzer(self) -> PreferenceAnalyzer:
         """The analyser at the currently configured ``min_rating_for_preference``."""
-        return PreferenceAnalyzer(
-            min_rating=self._recommendations_config().get(
-                "min_rating_for_preference", self._base_min_rating
-            )
-        )
+        return self._configured_scoring().preference_analyzer
 
     @property
     def custom_preference_weight(self) -> float:
         """The currently configured weight for the custom-rule scorer."""
-        return self._configured_weights().get(
-            "custom_preference", self._base_custom_preference_weight
+        return self._configured_scoring().custom_preference_weight
+
+    def _configured_scoring(self) -> _ConfiguredScoring:
+        """Resolve every configured scoring knob from a single config read.
+
+        One read, because a request uses all three: reading again part-way
+        through would let a save landing in between hand it one leaf from
+        before the save and another from after.
+        """
+        section = self._recommendations_config()
+        weights = _weights_in(section)
+        return _ConfiguredScoring(
+            pipeline=ScoringPipeline(
+                build_scorers_with_overrides(self._base_scorers, weights)
+            ),
+            preference_analyzer=PreferenceAnalyzer(
+                min_rating=section.get(
+                    "min_rating_for_preference", self._base_min_rating
+                )
+            ),
+            custom_preference_weight=weights.get(
+                "custom_preference", self._base_custom_preference_weight
+            ),
         )
 
     def _recommendations_config(self) -> dict[str, Any]:
@@ -237,22 +288,6 @@ class RecommendationEngine:
             return {}
         section = config.get("recommendations")
         return section if isinstance(section, dict) else {}
-
-    def _configured_weights(self) -> dict[str, float]:
-        """Return the running ``scorer_weights``, keyed by known scorer name.
-
-        Names outside :data:`SCORER_NAME_MAP` are dropped: they weight no
-        scorer, so a typo in a hand-edited ``config.yaml`` stays as inert here
-        as it was when this resolution happened at boot.
-        """
-        weights = self._recommendations_config().get("scorer_weights")
-        if not isinstance(weights, dict):
-            return {}
-        return {
-            name: float(weight)
-            for name, weight in weights.items()
-            if name in SCORER_NAME_MAP
-        }
 
     def generate_recommendations(
         self,
@@ -280,6 +315,11 @@ class RecommendationEngine:
         Returns:
             The recommendations, best first.
         """
+        # The configuration this request runs on, fixed here.  A settings save
+        # landing while it scores changes what the next request resolves, and
+        # nothing about this one.
+        scoring = self._configured_scoring()
+
         # Taste-signal items (completed, rated, not ignored) shape every
         # recommendation: preference analysis, scoring, similarity seeds, and
         # explanation references (issue #99).
@@ -367,7 +407,7 @@ class RecommendationEngine:
                     )
 
         # Analyze preferences from ALL consumed content types
-        preferences = self.preference_analyzer.analyze(all_consumed_items)
+        preferences = scoring.preference_analyzer.analyze(all_consumed_items)
 
         logger.info(
             "Analyzed preferences from %d consumed items "
@@ -409,6 +449,7 @@ class RecommendationEngine:
         )
 
         active_pipeline = self._build_active_pipeline(
+            scoring,
             user_preference_config,
             interpreted_prefs,
             unconsumed_items,
@@ -679,6 +720,7 @@ class RecommendationEngine:
 
     def _build_active_pipeline(
         self,
+        scoring: _ConfiguredScoring,
         user_preference_config: UserPreferenceConfig | None,
         interpreted_prefs: InterpretedPreference | None,
         unconsumed_items: list[ContentItem],
@@ -694,6 +736,7 @@ class RecommendationEngine:
         change the ranking and would only clutter the breakdown display.
 
         Args:
+            scoring: The configuration this request resolved at its start.
             user_preference_config: Optional per-user preference config.
             interpreted_prefs: Interpreted custom rules, when the user has any.
             unconsumed_items: The candidates about to be scored.
@@ -705,14 +748,14 @@ class RecommendationEngine:
         Returns:
             The pipeline to score this call's candidates with.
         """
-        scorers = list(self.pipeline.scorers)
+        scorers = list(scoring.pipeline.scorers)
 
         if interpreted_prefs is not None and not interpreted_prefs.is_empty():
             scorers.append(
                 CustomPreferenceScorer(
                     genre_boosts=interpreted_prefs.genre_boosts,
                     genre_penalties=interpreted_prefs.genre_penalties,
-                    weight=self.custom_preference_weight,
+                    weight=scoring.custom_preference_weight,
                 )
             )
 

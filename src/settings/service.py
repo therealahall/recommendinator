@@ -13,8 +13,13 @@ Design:
   plaintext).
 * **Write** — :func:`apply_settings` validates every update up front and only
   then writes, so a single bad key never leaves a partial write. For
-  non-``restart_required`` leaves it also mutates the passed-in running config
-  in place (live-apply) via the same nested-leaf helpers the boot assembly uses.
+  non-``restart_required`` leaves it also publishes the new values into the
+  passed-in running config (live-apply). Unlike the boot assembly, which owns
+  the config it is building and writes it with :func:`set_leaf`, live-apply
+  writes a config the engine is reading from another thread, so it goes
+  through :func:`set_leaves_atomically`. The two are not interchangeable.
+  Swapping this one back for the in-place helper reopens the window described
+  on :func:`_apply_live`.
 * **Reset** — :func:`reset_setting` drops the DB row and live-applies the const
   default so the running config immediately reflects the reset-to-default.
 * **Secrets** — :func:`set_secret` / :func:`clear_secret` gate on the registry's
@@ -24,6 +29,7 @@ Design:
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, assert_never
 from urllib.parse import urlsplit
 
@@ -36,9 +42,9 @@ from src.settings.metadata import (
 )
 
 # Live-apply addresses the running config by the same nested leaf paths
-# ``migrate_config_settings`` overlays DB leaves at, but writes them atomically
-# (see ``_apply_live``).
-from src.utils.dotted_path import get_leaf, set_leaf_atomically
+# ``migrate_config_settings`` overlays DB leaves at, but publishes a whole save
+# at once rather than writing in place (see ``_apply_live``).
+from src.utils.dotted_path import get_leaf, set_leaves_atomically
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
@@ -124,7 +130,8 @@ def apply_settings(
     All-or-nothing: if any key is unknown, sensitive, or fails validation, a
     :class:`SettingsValidationError` is raised before anything is written, so a
     bad key cannot leave a partial write. Non-``restart_required`` leaves are
-    also written into *config* in place so the change takes effect immediately;
+    then published into *config*, all of them at once so that a reader cannot
+    rank a request on half of one save, and take effect immediately;
     ``restart_required`` leaves are persisted only (they apply on next boot).
     """
     validated: list[tuple[SettingMetadata, Any]] = []
@@ -138,8 +145,15 @@ def apply_settings(
 
     for entry, coerced in validated:
         storage.set_setting(entry.key, coerced)
-        if not entry.restart_required:
-            _apply_live(config, entry.key, coerced)
+
+    _apply_live(
+        config,
+        [
+            (entry.key, coerced)
+            for entry, coerced in validated
+            if not entry.restart_required
+        ],
+    )
 
 
 def reset_setting(config: dict[str, Any], storage: StorageManager, key: str) -> None:
@@ -159,7 +173,7 @@ def reset_setting(config: dict[str, Any], storage: StorageManager, key: str) -> 
     if not entry.restart_required:
         # default_of, not entry.default: this writes into the running config, so
         # it must not be the registry's own object.
-        _apply_live(config, key, default_of(key))
+        _apply_live(config, [(key, default_of(key))])
 
 
 def set_secret(storage: StorageManager, key: str, value: str) -> None:
@@ -360,15 +374,19 @@ def _effective_value(config: dict[str, Any], entry: SettingMetadata) -> Any:
     return get_leaf(config, tuple(entry.key.split(".")), default_of(entry.key))
 
 
-def _apply_live(config: dict[str, Any], key: str, value: Any) -> None:
-    """Write *value* into the running *config* at *key*'s dotted path.
+def _apply_live(config: dict[str, Any], updates: Sequence[tuple[str, Any]]) -> None:
+    """Publish *updates* into the running *config* at their dotted paths.
 
-    Atomically, because the engine reads the running config from a threadpool
-    worker while this runs on the event loop: it iterates
-    ``recommendations.scorer_weights``, and inserting a key into the mapping it
-    holds would raise rather than merely race.
+    All of them together, because the engine reads the running config from a
+    threadpool worker while this runs on the event loop. Writing them one at a
+    time would leave a window where a request reads the first key of a save and
+    the baseline for the rest, and writing any of them in place would break the
+    engine's iteration of ``recommendations.scorer_weights`` outright, since
+    inserting a key into a dict under an iterator raises.
     """
-    set_leaf_atomically(config, tuple(key.split(".")), value)
+    set_leaves_atomically(
+        config, [(tuple(key.split(".")), value) for key, value in updates]
+    )
 
 
 def _require_sensitive(key: str) -> None:
