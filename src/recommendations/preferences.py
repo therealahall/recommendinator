@@ -131,31 +131,35 @@ class PreferenceAnalyzer:
     ) -> tuple[dict[str, float], dict[str, float]]:
         """Accumulate and normalize attribute scores based on ratings.
 
-        Positive weights (rating >= min_rating): maps 4->0.5, 5->1.0
-        Negative weights (rating < min_rating): maps 1->1.0, 2->0.5, 3->0.0
+        A preferred weight (rating >= min_rating) is the rating's distance above
+        the threshold, so the threshold rating itself weighs 1 and each step
+        above it one more. A disliked weight (rating < min_rating) is the
+        distance below the neutral rating of 3: maps 3->0.0, 2->0.5, 1->1.0.
 
         Args:
             attribute_ratings: List of (attribute_value, rating) pairs.
 
         Returns:
-            Tuple of (preferred, disliked) normalized score dicts.
+            Tuple of (preferred, disliked) score dicts, each normalized into
+            0.0..1.0 against its own maximum.
         """
         preferred: dict[str, float] = {}
         disliked: dict[str, float] = {}
 
         for value, rating in attribute_ratings:
-            weight = (rating - 3) / 2.0
             if rating >= self.min_rating:
+                weight = rating - self.min_rating + 1
                 preferred[value] = preferred.get(value, 0.0) + weight
             else:
-                disliked[value] = disliked.get(value, 0.0) + abs(weight)
+                weight = abs(rating - 3) / 2.0
+                disliked[value] = disliked.get(value, 0.0) + weight
 
-        # Normalize preferred scores
+        # Every preferred weight is at least 1, so this maximum is never zero
         if preferred:
             max_score = max(preferred.values())
             preferred = {k: v / max_score for k, v in preferred.items()}
 
-        # Normalize disliked scores
+        # A rating of 3 weighs nothing, so this maximum can be zero
         if disliked:
             max_score = max(disliked.values())
             if max_score > 0:
