@@ -25,6 +25,10 @@ python3.11 -m src.cli settings set-secret enrichment.providers.rawg.api_key
 | `api_key` | str | yes (sensitive) | RAWG API key. |
 
 ## Behavior
+- Writes `average_playtime_hours`, the average playtime RAWG reports, which is
+  the only figure the
+  [length scorer](../../../../docs/SCORING.md#content-length-preferences) reads
+  for a game.
 - Resolves franchise membership and series ordering when RAWG has the data.
 - Uses gap-filling — never overwrites existing fields.
 - Outlier titles in fuzzy matches are filtered via longest-common-prefix heuristics.

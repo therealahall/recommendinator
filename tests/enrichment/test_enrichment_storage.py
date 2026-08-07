@@ -4,7 +4,14 @@ from pathlib import Path
 
 import pytest
 
+from src.enrichment.manager import merge_enrichment
+from src.enrichment.provider_base import EnrichmentResult
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.recommendations.content_length import (
+    LengthPreference,
+    classify_length,
+    score_length_match,
+)
 from src.storage.manager import StorageManager
 
 
@@ -1136,3 +1143,94 @@ class TestManualMetadataEdit:
         assert loaded.metadata.get("tags") == ["epic"]
         assert loaded.metadata.get("description") == "A sweeping tale."
         assert loaded.enriched is True
+
+
+class TestGameLengthAfterEnrichment:
+    """The length scorer reads what RAWG enrichment leaves in the database.
+
+    ``average_playtime_hours`` has no detail-table column, so it rides in the
+    free-form metadata blob. These tests take the whole path a real game walks
+    (Steam item, RAWG result, gap-filling merge, save, load) and score the item
+    that comes back, so a blob that dropped the key would fail here rather than
+    quietly leaving every game unclassified.
+    """
+
+    @pytest.fixture
+    def storage_manager(self, tmp_path: Path) -> StorageManager:
+        db_path = tmp_path / "test.db"
+        return StorageManager(sqlite_path=db_path, ai_enabled=False)
+
+    @staticmethod
+    def _steam_game() -> ContentItem:
+        """A game Steam ingested, carrying the user's own 300 hours."""
+        return ContentItem(
+            id="game1",
+            title="Vampire Survivors",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.COMPLETED,
+            metadata={"playtime_minutes": 18000, "playtime_hours": 300.0},
+        )
+
+    def test_rawg_average_survives_the_round_trip_and_classifies(
+        self, storage_manager: StorageManager
+    ) -> None:
+        item = self._steam_game()
+        result = EnrichmentResult(
+            external_id="rawg:301566",
+            extra_metadata={"average_playtime_hours": 6, "metacritic": 77},
+            provider="rawg",
+        )
+        merged = merge_enrichment(item.metadata, result)
+        item.metadata = merged
+
+        loaded = storage_manager.get_content_item(
+            storage_manager.save_content_item(item)
+        )
+
+        assert loaded.metadata.get("average_playtime_hours") == 6
+        assert classify_length(loaded) == LengthPreference.SHORT
+        assert score_length_match(loaded, {"video_game": "short"}) == 1.0
+        # The user's own hours are stored and exported unchanged beside it
+        assert loaded.metadata.get("playtime_hours") == 300.0
+
+    def test_own_hours_alone_leave_the_game_unclassified(
+        self, storage_manager: StorageManager
+    ) -> None:
+        loaded = storage_manager.get_content_item(
+            storage_manager.save_content_item(self._steam_game())
+        )
+
+        assert loaded.metadata.get("playtime_hours") == 300.0
+        assert classify_length(loaded) is None
+        assert score_length_match(loaded, {"video_game": "short"}) == 0.8
+
+    def test_enrichment_never_fills_the_users_own_hours(
+        self, storage_manager: StorageManager
+    ) -> None:
+        """RAWG's average stays out of the field the export calls hours_played.
+
+        A GOG or Epic game has no own playtime, so the gap-filling merge used to
+        drop RAWG's average straight into ``playtime_hours`` and export it as
+        hours the user never played. The average now has its own key and that
+        field stays empty.
+        """
+        item = ContentItem(
+            id="game2",
+            title="Cyberpunk 2077",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"platform": "GOG"},
+        )
+        result = EnrichmentResult(
+            external_id="rawg:41494",
+            extra_metadata={"average_playtime_hours": 60},
+            provider="rawg",
+        )
+        item.metadata = merge_enrichment(item.metadata, result)
+
+        loaded = storage_manager.get_content_item(
+            storage_manager.save_content_item(item)
+        )
+
+        assert "playtime_hours" not in loaded.metadata
+        assert classify_length(loaded) == LengthPreference.LONG

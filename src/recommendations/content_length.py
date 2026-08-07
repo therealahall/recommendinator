@@ -29,15 +29,18 @@ _THRESHOLDS: dict[str, tuple[int, int]] = {
     "book": (250, 500),  # pages
     "movie": (90, 150),  # minutes
     "tv_show": (3, 6),  # seasons
-    "video_game": (10, 40),  # hours (main story)
+    "video_game": (10, 40),  # hours of average playtime
 }
 
-# Metadata keys to check for each content type
+# Metadata keys to check for each content type.
+# A game has one key only, RAWG's average across players. playtime_hours holds
+# the user's own hours, from Steam or an imported hours_played column, which
+# describes the player rather than the game.
 _LENGTH_METADATA_KEYS: dict[str, list[str]] = {
     "book": ["pages", "num_pages", "number_of_pages"],
     "movie": ["runtime", "runtime_minutes"],
     "tv_show": ["seasons", "number_of_seasons"],
-    "video_game": ["playtime_hours", "main_story_hours", "average_playtime_hours"],
+    "video_game": ["average_playtime_hours"],
 }
 
 

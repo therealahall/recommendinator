@@ -228,6 +228,49 @@ class TestRAWGProviderEnrichment:
         assert result.extra_metadata.get("developer") == "CD Projekt Red"
         assert result.extra_metadata.get("metacritic") == 93
         assert result.extra_metadata.get("release_year") == 2015
+        # Its own key, not the playtime_hours Steam fills with the user's hours
+        assert result.extra_metadata.get("average_playtime_hours") == 46
+        assert "playtime_hours" not in result.extra_metadata
+
+    def test_enrich_game_with_no_playtime_writes_no_average(
+        self,
+        provider: RAWGProvider,
+        game_item: ContentItem,
+        config: dict[str, Any],
+    ) -> None:
+        """RAWG reports 0 hours for a game nobody has logged, which is no length.
+
+        Writing the 0 would classify every such game as short, so the key stays
+        out and the length scorer falls through to benefit of the doubt.
+        """
+        mock_search = {"results": [{"id": 3328, "name": "The Witcher 3: Wild Hunt"}]}
+        mock_game = {
+            "id": 3328,
+            "name": "The Witcher 3: Wild Hunt",
+            "genres": [{"name": "RPG"}],
+            "tags": [],
+            "playtime": 0,
+        }
+
+        with patch("src.enrichment.providers.rawg.rawg.requests.get") as mock_get:
+            mock_get.side_effect = [
+                MagicMock(
+                    spec=requests.Response, status_code=200, json=lambda: mock_search
+                ),
+                MagicMock(
+                    spec=requests.Response, status_code=200, json=lambda: mock_game
+                ),
+                MagicMock(
+                    spec=requests.Response,
+                    status_code=200,
+                    json=lambda: {"results": []},
+                ),
+            ]
+
+            result = provider.enrich(game_item, config)
+
+        assert result is not None
+        assert "average_playtime_hours" not in result.extra_metadata
 
     def test_enrich_game_not_found(
         self,

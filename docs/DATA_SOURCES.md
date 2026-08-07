@@ -137,9 +137,8 @@ file. Three things still need care:
   before that column was renamed** to the library's own `playtime_hours`. Those
   rows still carry the old key and export blank. The number is not lost, and
   syncing that source again writes the new key. Nothing but the export is
-  affected, because the
-  [length scorer](SCORING.md#content-length-preferences) has only ever read
-  `playtime_hours`.
+  affected: the [length scorer](SCORING.md#content-length-preferences) reads
+  RAWG's average playtime, never your own hours.
 
 ## Credential storage
 
