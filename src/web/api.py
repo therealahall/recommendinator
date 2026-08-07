@@ -217,7 +217,12 @@ class ContentItemResponse(BaseModel):
 
 
 class RecommendationResponse(BaseModel):
-    """Response model for recommendations."""
+    """Response model for recommendations.
+
+    The fields are declared in the order
+    :class:`src.recommendations.record.RecommendationPayload` builds them, and
+    every one of them is validated from that mapping.
+    """
 
     db_id: int | None = None  # Database ID for actions like ignore
     title: str
@@ -229,32 +234,6 @@ class RecommendationResponse(BaseModel):
     # Stepped genre-fatigue penalty applied when the variety_penalty preference
     # is set (0.0 when off or the item's genre was not recently finished).
     variety_penalty: float = Field(0.0, ge=0.0, le=1.0)
-
-
-def _recommendation_payload(rec: dict[str, Any]) -> dict[str, Any]:
-    """Build the common RecommendationResponse field mapping from a rec dict.
-
-    Shared by the synchronous endpoint and the SSE Phase 1 payload so the two
-    serialization paths cannot drift.  The caller supplies ``llm_reasoning``
-    separately: the synchronous endpoint passes the rec's value, while the SSE
-    Phase 1 payload forces ``None`` because blurbs stream in later.
-
-    Args:
-        rec: A recommendation dict produced by the engine.
-
-    Returns:
-        Mapping of RecommendationResponse fields (excluding ``llm_reasoning``).
-    """
-    item = rec["item"]
-    return {
-        "db_id": item.db_id,
-        "title": item.title,
-        "author": item.author,
-        "score": rec["score"],
-        "reasoning": rec["reasoning"],
-        "score_breakdown": rec.get("score_breakdown", {}),
-        "variety_penalty": rec.get("variety_penalty", 0.0),
-    }
 
 
 class FeaturesStatus(BaseModel):
@@ -731,20 +710,10 @@ async def get_recommendations(
             user_preference_config=user_preference_config,
         )
 
-        if not recommendations:
-            return []
-
-        # Format response
-        response = []
-        for rec in recommendations:
-            response.append(
-                RecommendationResponse(
-                    **_recommendation_payload(rec),
-                    llm_reasoning=rec.get("llm_reasoning"),
-                )
-            )
-
-        return response
+        return [
+            RecommendationResponse.model_validate(rec.to_payload())
+            for rec in recommendations
+        ]
 
     except Exception as error:
         logger.error("Error generating recommendations: %s", error)
@@ -821,15 +790,12 @@ async def stream_recommendations(
                 yield f"data: {json.dumps({'type': 'done'})}\n\n"
                 return
 
-            # Phase 1: send recommendations immediately (no LLM reasoning)
-            items_payload: list[dict[str, Any]] = []
-            for rec in recommendations:
-                items_payload.append(
-                    {**_recommendation_payload(rec), "llm_reasoning": None}
-                )
+            # Phase 1: send recommendations immediately.  ``use_llm=False``
+            # above, so every blurb slot is still empty — they arrive as
+            # Phase 2 events.
             event: dict[str, Any] = {
                 "type": "recommendations",
-                "items": items_payload,
+                "items": [rec.to_payload() for rec in recommendations],
             }
             yield f"data: {json.dumps(event)}\n\n"
 
@@ -839,10 +805,10 @@ async def stream_recommendations(
             # (issue #99).
             consumed_items = engine.storage.get_signal_items(content_type=None)
 
-            items_with_index: list[tuple[int, ContentItem, list[ContentItem]]] = []
-            for idx, rec in enumerate(recommendations):
-                refs = list(rec.get("contributing_items") or [])
-                items_with_index.append((idx, rec["item"], refs))
+            items_with_index: list[tuple[int, ContentItem, list[ContentItem]]] = [
+                (idx, rec.item, list(rec.contributing_items))
+                for idx, rec in enumerate(recommendations)
+            ]
 
             with ThreadPoolExecutor(
                 max_workers=min(len(items_with_index), 4)

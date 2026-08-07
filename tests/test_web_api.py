@@ -20,6 +20,7 @@ from src.llm.recommendations import RecommendationGenerator
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.engine import RecommendationEngine
+from src.recommendations.record import Recommendation
 from src.settings.metadata import default_of
 from src.storage.manager import UNSET, StorageManager
 from src.storage.settings_migration import migrate_config_settings
@@ -1011,11 +1012,9 @@ def test_recommendations_endpoint(client, mock_components):
     )
 
     mock_recommendations = [
-        {
-            "item": mock_item,
-            "score": 0.85,
-            "reasoning": "Recommended highly similar",
-        }
+        Recommendation(
+            item=mock_item, score=0.85, reasoning="Recommended highly similar"
+        )
     ]
 
     mock_components["engine"].generate_recommendations.return_value = (
@@ -1619,12 +1618,12 @@ def test_recommendations_include_breakdown(client, mock_components):
     )
 
     mock_recommendations = [
-        {
-            "item": mock_item,
-            "score": 0.85,
-            "reasoning": "Recommended highly similar",
-            "score_breakdown": {"genre_match": 0.9, "creator_match": 0.5},
-        }
+        Recommendation(
+            item=mock_item,
+            score=0.85,
+            reasoning="Recommended highly similar",
+            score_breakdown={"genre_match": 0.9, "creator_match": 0.5},
+        )
     ]
 
     mock_components["engine"].generate_recommendations.return_value = (
@@ -1650,13 +1649,13 @@ def test_recommendations_include_variety_penalty(client, mock_components):
         status=ConsumptionStatus.UNREAD,
     )
     mock_recommendations = [
-        {
-            "item": mock_item,
-            "score": 0.2,
-            "reasoning": "Recommended",
-            "score_breakdown": {"genre_match": 0.9},
-            "variety_penalty": 0.8,
-        }
+        Recommendation(
+            item=mock_item,
+            score=0.2,
+            reasoning="Recommended",
+            score_breakdown={"genre_match": 0.9},
+            variety_penalty=0.8,
+        )
     ]
     mock_components["engine"].generate_recommendations.return_value = (
         mock_recommendations
@@ -1669,7 +1668,7 @@ def test_recommendations_include_variety_penalty(client, mock_components):
 
 
 def test_recommendations_variety_penalty_defaults_to_zero(client, mock_components):
-    """variety_penalty defaults to 0.0 when the engine omits it."""
+    """variety_penalty is 0.0 on the wire when the producer sets none."""
     mock_item = ContentItem(
         id="1",
         title="Plain Book",
@@ -1678,12 +1677,12 @@ def test_recommendations_variety_penalty_defaults_to_zero(client, mock_component
         status=ConsumptionStatus.UNREAD,
     )
     mock_recommendations = [
-        {
-            "item": mock_item,
-            "score": 0.85,
-            "reasoning": "Recommended",
-            "score_breakdown": {"genre_match": 0.9},
-        }
+        Recommendation(
+            item=mock_item,
+            score=0.85,
+            reasoning="Recommended",
+            score_breakdown={"genre_match": 0.9},
+        )
     ]
     mock_components["engine"].generate_recommendations.return_value = (
         mock_recommendations
@@ -1706,11 +1705,9 @@ def test_recommendations_with_user_id(client, mock_components):
     )
 
     mock_recommendations = [
-        {
-            "item": mock_item,
-            "score": 0.85,
-            "reasoning": "Recommended highly similar",
-        }
+        Recommendation(
+            item=mock_item, score=0.85, reasoning="Recommended highly similar"
+        )
     ]
 
     mock_components["engine"].generate_recommendations.return_value = (
@@ -1963,11 +1960,9 @@ def test_recommendations_include_db_id(client, mock_components):
     )
 
     mock_recommendations = [
-        {
-            "item": mock_item,
-            "score": 0.85,
-            "reasoning": "Recommended highly similar",
-        }
+        Recommendation(
+            item=mock_item, score=0.85, reasoning="Recommended highly similar"
+        )
     ]
 
     mock_components["engine"].generate_recommendations.return_value = (
@@ -2948,15 +2943,14 @@ def test_recommendations_count_at_max_is_allowed(client, mock_components):
     assert response.status_code == 200
 
 
-def _rec_dict(item: ContentItem) -> dict:
-    """Wrap a ContentItem in the recommendation dict shape the engine emits."""
-    return {
-        "item": item,
-        "score": 0.85,
-        "reasoning": "Rule-based reasoning",
-        "score_breakdown": {"genre_match": 0.9},
-        "contributing_items": [],
-    }
+def _rec_record(item: ContentItem) -> Recommendation:
+    """Wrap a ContentItem in the recommendation record the engine emits."""
+    return Recommendation(
+        item=item,
+        score=0.85,
+        reasoning="Rule-based reasoning",
+        score_breakdown={"genre_match": 0.9},
+    )
 
 
 def test_recommendations_tv_season_payload_includes_db_id(client, mock_components):
@@ -2976,7 +2970,7 @@ def test_recommendations_tv_season_payload_includes_db_id(client, mock_component
         parent_id="tvdb:42",
     )
     mock_components["engine"].generate_recommendations.return_value = [
-        _rec_dict(season_item)
+        _rec_record(season_item)
     ]
     mock_components["storage"].get_user_preference_config.return_value = None
 
@@ -3003,7 +2997,7 @@ def test_recommendations_non_tv_payload_preserves_db_id(client, mock_components)
         status=ConsumptionStatus.UNREAD,
     )
     mock_components["engine"].generate_recommendations.return_value = [
-        _rec_dict(book_item)
+        _rec_record(book_item)
     ]
     mock_components["storage"].get_user_preference_config.return_value = None
 
@@ -3390,8 +3384,8 @@ class TestSSEStreamingEndpoint:
         item_id: str = "1",
         title: str = "Test Book",
         author: str = "Author A",
-    ) -> dict:
-        """Create a mock recommendation dict matching engine output."""
+    ) -> Recommendation:
+        """Create a mock recommendation matching engine output."""
         item = ContentItem(
             id=item_id,
             db_id=int(item_id),
@@ -3400,13 +3394,7 @@ class TestSSEStreamingEndpoint:
             content_type=ContentType.BOOK,
             status=ConsumptionStatus.UNREAD,
         )
-        return {
-            "item": item,
-            "score": 0.85,
-            "reasoning": "Rule-based reasoning",
-            "score_breakdown": {"genre_match": 0.9},
-            "contributing_items": [],
-        }
+        return _rec_record(item)
 
     def test_phase1_recommendations_event(
         self, client: TestClient, mock_components: dict
@@ -3439,7 +3427,7 @@ class TestSSEStreamingEndpoint:
     ) -> None:
         """SSE phase 1 serializes a TV season rec with its parent show db_id.
 
-        The streaming path shares ``_recommendation_payload`` with the sync
+        The streaming path shares ``Recommendation.to_payload`` with the sync
         endpoint, so a season-expanded candidate (id ``tvdb:42:s1``, db_id 42)
         must stream with a non-null db_id and keep the card actionable.
         """
@@ -3452,13 +3440,7 @@ class TestSSEStreamingEndpoint:
             status=ConsumptionStatus.UNREAD,
             parent_id="tvdb:42",
         )
-        rec = {
-            "item": season_item,
-            "score": 0.85,
-            "reasoning": "Rule-based reasoning",
-            "score_breakdown": {"genre_match": 0.9},
-            "contributing_items": [],
-        }
+        rec = _rec_record(season_item)
         mock_components["engine"].generate_recommendations.return_value = [rec]
         mock_components["engine"].generate_blurb_for_item.return_value = None
         mock_components["storage"].get_user_preference_config.return_value = None
@@ -4356,14 +4338,7 @@ class TestStreamRecommendationsSignalRegression:
             status=ConsumptionStatus.UNREAD,
         )
         engine.generate_recommendations.return_value = [
-            {
-                "item": candidate,
-                "score": 0.9,
-                "reasoning": "because sci-fi",
-                "score_breakdown": {},
-                "variety_penalty": 0.0,
-                "contributing_items": [],
-            }
+            Recommendation(item=candidate, score=0.9, reasoning="because sci-fi")
         ]
 
         signal_item = ContentItem(

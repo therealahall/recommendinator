@@ -16,6 +16,7 @@ from src.llm.recommendations import RecommendationGenerator
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.engine import RecommendationEngine
+from src.recommendations.record import Recommendation
 from src.storage.manager import StorageManager
 from tests.cli.conftest import _invoke_with_mocks
 from tests.factories import back_mock_settings_store
@@ -139,11 +140,11 @@ def test_recommend_command_basic(mock_components):
     )
 
     mock_recommendations = [
-        {
-            "item": mock_item,
-            "score": 0.85,
-            "reasoning": "Recommended highly similar to items you've enjoyed",
-        }
+        Recommendation(
+            item=mock_item,
+            score=0.85,
+            reasoning="Recommended highly similar to items you've enjoyed",
+        )
     ]
 
     # Mock storage to return consumed items
@@ -183,11 +184,9 @@ def test_recommend_command_json(mock_components):
     )
 
     mock_recommendations = [
-        {
-            "item": mock_item,
-            "score": 0.85,
-            "reasoning": "Recommended highly similar",
-        }
+        Recommendation(
+            item=mock_item, score=0.85, reasoning="Recommended highly similar"
+        )
     ]
 
     # Mock storage to return consumed items
@@ -229,12 +228,9 @@ def test_recommend_command_surfaces_variety_penalty(mock_components):
         status=ConsumptionStatus.UNREAD,
     )
     mock_recommendations = [
-        {
-            "item": mock_item,
-            "score": 0.2,
-            "reasoning": "Recommended",
-            "variety_penalty": 0.64,
-        }
+        Recommendation(
+            item=mock_item, score=0.2, reasoning="Recommended", variety_penalty=0.64
+        )
     ]
     mock_components["storage"].get_completed_items.return_value = [
         ContentItem(
@@ -273,12 +269,9 @@ def test_recommend_command_omits_zero_variety_penalty_note(mock_components):
         status=ConsumptionStatus.UNREAD,
     )
     mock_recommendations = [
-        {
-            "item": mock_item,
-            "score": 0.85,
-            "reasoning": "Recommended",
-            "variety_penalty": 0.0,
-        }
+        Recommendation(
+            item=mock_item, score=0.85, reasoning="Recommended", variety_penalty=0.0
+        )
     ]
     mock_components["storage"].get_completed_items.return_value = [
         ContentItem(
@@ -1076,11 +1069,9 @@ def test_recommend_command_with_user(mock_components):
     )
 
     mock_recommendations = [
-        {
-            "item": mock_item,
-            "score": 0.85,
-            "reasoning": "Recommended highly similar",
-        }
+        Recommendation(
+            item=mock_item, score=0.85, reasoning="Recommended highly similar"
+        )
     ]
 
     mock_components["engine"].generate_recommendations.return_value = (

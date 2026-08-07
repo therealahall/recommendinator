@@ -20,6 +20,7 @@ from src.llm.recommendations import BlurbRequest, RecommendationGenerator
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.recommendations.engine import RecommendationEngine
 from src.recommendations.preference_interpreter import PatternBasedInterpreter
+from src.recommendations.record import Recommendation
 from src.storage.schema import (
     create_schema,
     get_enrichment_stats,
@@ -484,17 +485,17 @@ class TestLlmReasoningMismatchRegression:
         )
 
         # Simulate pipeline recommendations in order: Way of Kings, Fire & Blood
-        recommendations: list[dict[str, Any]] = [
-            {
-                "item": way_of_kings,
-                "score": 0.9,
-                "reasoning": "Pipeline reasoning for Way of Kings",
-            },
-            {
-                "item": fire_and_blood,
-                "score": 0.85,
-                "reasoning": "Pipeline reasoning for Fire & Blood",
-            },
+        recommendations = [
+            Recommendation(
+                item=way_of_kings,
+                score=0.9,
+                reasoning="Pipeline reasoning for Way of Kings",
+            ),
+            Recommendation(
+                item=fire_and_blood,
+                score=0.85,
+                reasoning="Pipeline reasoning for Fire & Blood",
+            ),
         ]
 
         # Per-item blurbs come back keyed by the request key the engine sent
@@ -506,7 +507,7 @@ class TestLlmReasoningMismatchRegression:
         )
 
         # Call the actual production code
-        engine._enhance_with_llm(
+        enhanced = engine._enhance_with_llm(
             recommendations=recommendations,
             content_type=ContentType.BOOK,
             all_consumed_items=[],
@@ -516,10 +517,8 @@ class TestLlmReasoningMismatchRegression:
         )
 
         # Each recommendation must have its OWN reasoning matched by its key
-        assert (
-            recommendations[0]["llm_reasoning"] == "LLM reasoning for The Way of Kings"
-        )
-        assert recommendations[1]["llm_reasoning"] == "LLM reasoning for Fire & Blood"
+        assert enhanced[0].llm_reasoning == "LLM reasoning for The Way of Kings"
+        assert enhanced[1].llm_reasoning == "LLM reasoning for Fire & Blood"
 
     def test_enhance_uses_per_item_blurbs_for_pipeline_recommendations_regression(
         self,
@@ -528,7 +527,7 @@ class TestLlmReasoningMismatchRegression:
 
         Bug reported: When requesting 5 recommendations with AI reasoning
         enabled, only 3 received LLM reasoning. The remaining 2 had no
-        llm_reasoning field.
+        llm_reasoning at all.
 
         Root cause: _enhance_with_llm called generate_recommendations which
         asks the LLM to "Pick the N best..." from the candidates. The LLM
@@ -555,8 +554,8 @@ class TestLlmReasoningMismatchRegression:
         ]
 
         # Pipeline produced 5 recommendations
-        recommendations: list[dict[str, Any]] = [
-            {"item": item, "score": 0.9 - index * 0.05, "reasoning": "Pipeline"}
+        recommendations = [
+            Recommendation(item=item, score=0.9 - index * 0.05, reasoning="Pipeline")
             for index, item in enumerate(items)
         ]
 
@@ -568,7 +567,7 @@ class TestLlmReasoningMismatchRegression:
             }
         )
 
-        engine._enhance_with_llm(
+        enhanced = engine._enhance_with_llm(
             recommendations=recommendations,
             content_type=ContentType.BOOK,
             all_consumed_items=[],
@@ -578,11 +577,10 @@ class TestLlmReasoningMismatchRegression:
         )
 
         # ALL 5 recommendations must have LLM reasoning
-        for index, rec in enumerate(recommendations):
+        for index, rec in enumerate(enhanced):
             assert (
-                "llm_reasoning" in rec
-            ), f"Recommendation {index} ({rec['item'].title}) missing llm_reasoning"
-            assert rec["llm_reasoning"] == f"LLM blurb for Book {index + 1}"
+                rec.llm_reasoning == f"LLM blurb for Book {index + 1}"
+            ), f"Recommendation {index} ({rec.item.title}) missing its blurb"
 
         # Must call generate_blurbs_per_item (not generate_recommendations)
         engine.llm_generator.generate_blurbs_per_item.assert_called_once()

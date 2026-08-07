@@ -6,11 +6,14 @@ against the TypeScript one the UI submits under. A test living on one side of
 such a boundary keeps passing while the other side drifts away from it.
 """
 
+import json
 import re
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
+from fastapi.testclient import TestClient
 from pydantic import BaseModel, ValidationError
 
 from src.models.content import (
@@ -20,6 +23,8 @@ from src.models.content import (
     ContentType,
 )
 from src.models.user_preferences import UserPreferenceConfig
+from src.recommendations.engine import RecommendationEngine
+from src.recommendations.record import Recommendation
 from src.recommendations.scorers import SCORER_NAME_MAP
 from src.storage.manager import StorageManager
 from src.utils.sorting import MAX_SEARCH_LENGTH
@@ -28,6 +33,7 @@ from src.web.api import (
     ItemEditRequest,
     UserPreferenceResponse,
 )
+from src.web.app import app as web_app
 from tests.cli.conftest import _invoke_with_mocks
 
 # parents[1] resolves /tests/test_interface_parity.py -> repo root.
@@ -320,3 +326,112 @@ class TestScorerKeysMatchTheFrontendList:
             f" scorers exist, so the Preferences page and the CLI offer"
             f" different weights."
         )
+
+
+class TestRecommendationJsonIsByteIdenticalOnBothSurfaces:
+    """``recommend --format json`` and ``GET /api/recommendations`` agree.
+
+    Both serialise one :class:`Recommendation` through ``to_payload``, so the
+    field set, the values and the key order are one decision made in one place.
+    The expected text below is what both surfaces emitted while each built its
+    own dict by hand, which is what makes this a pin rather than a snapshot:
+    a change to the payload shows up here as changed bytes on both sides.
+    """
+
+    # One recommendation carrying a distinguishable value in every field the
+    # payload names, so a dropped, renamed or reordered field is visible.
+    RECOMMENDATION = Recommendation(
+        item=ContentItem(
+            id="ol-1",
+            db_id=42,
+            title="Hyperion",
+            author="Dan Simmons",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        ),
+        score=0.875,
+        reasoning="Recommended because you liked the book Dune",
+        score_breakdown={"genre_match": 0.9, "creator_match": 0.5},
+        variety_penalty=0.25,
+        # Reference lists stay off the wire: neither surface has ever sent them.
+        contributing_items=[
+            ContentItem(
+                id="ol-2",
+                db_id=7,
+                title="Dune",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+            )
+        ],
+        llm_reasoning="Big ideas, bigger prose.",
+    )
+
+    CLI_JSON = """[
+  {
+    "db_id": 42,
+    "title": "Hyperion",
+    "author": "Dan Simmons",
+    "score": 0.875,
+    "reasoning": "Recommended because you liked the book Dune",
+    "llm_reasoning": "Big ideas, bigger prose.",
+    "score_breakdown": {
+      "genre_match": 0.9,
+      "creator_match": 0.5
+    },
+    "variety_penalty": 0.25
+  }
+]"""
+
+    WEB_JSON = (
+        '[{"db_id":42,"title":"Hyperion","author":"Dan Simmons","score":0.875,'
+        '"reasoning":"Recommended because you liked the book Dune",'
+        '"llm_reasoning":"Big ideas, bigger prose.",'
+        '"score_breakdown":{"genre_match":0.9,"creator_match":0.5},'
+        '"variety_penalty":0.25}]'
+    )
+
+    def _engine(self) -> MagicMock:
+        """An engine that recommends exactly the record above."""
+        engine = MagicMock(spec=RecommendationEngine)
+        engine.generate_recommendations.return_value = [self.RECOMMENDATION]
+        return engine
+
+    def test_the_cli_emits_the_pinned_json(self) -> None:
+        """``recommend --type book --format json`` prints it, byte for byte."""
+        storage = MagicMock(spec=StorageManager)
+        storage.get_user_preference_config.return_value = None
+
+        result = _invoke_with_mocks(
+            CliRunner(),
+            ["recommend", "--type", "book", "--format", "json"],
+            storage,
+            engine=self._engine(),
+        )
+
+        assert result.exit_code == 0
+        # The command prints a progress line before the document.
+        assert result.output.endswith(self.CLI_JSON + "\n")
+
+    def test_the_web_endpoint_emits_the_pinned_json(self) -> None:
+        """``GET /api/recommendations`` returns the same document, compacted."""
+        storage = MagicMock(spec=StorageManager)
+        storage.get_user_preference_config.return_value = None
+
+        with (
+            patch("src.web.api.get_engine", return_value=self._engine()),
+            patch("src.web.api.get_storage", return_value=storage),
+            patch("src.web.api.get_config", return_value={}),
+        ):
+            response = TestClient(web_app).get("/api/recommendations?type=book&count=1")
+
+        assert response.status_code == 200
+        assert response.text == self.WEB_JSON
+
+    def test_the_two_documents_carry_the_same_data(self) -> None:
+        """Neither surface adds, drops or renames a field the other does not.
+
+        The pins above are per-surface; this is the parity claim itself, and it
+        survives a reformat of either document.
+        """
+        assert json.loads(self.CLI_JSON) == json.loads(self.WEB_JSON)

@@ -278,31 +278,17 @@ def recommend(
             return
 
         if output_format == "json":
-            # JSON output matches web API RecommendationResponse shape
-            output = []
-            for rec in recommendations:
-                item = rec["item"]
-                output.append(
-                    {
-                        "db_id": item.db_id,
-                        "title": item.title,
-                        "author": item.author,
-                        "score": rec["score"],
-                        "reasoning": rec["reasoning"],
-                        "llm_reasoning": rec.get("llm_reasoning"),
-                        "score_breakdown": rec.get("score_breakdown", {}),
-                        "variety_penalty": rec.get("variety_penalty", 0.0),
-                    }
-                )
+            # The shared payload is the web API RecommendationResponse shape
+            output = [rec.to_payload() for rec in recommendations]
             click.echo(json.dumps(output, indent=2))
         else:
             # Table output
             table_data = []
             for rank, rec in enumerate(recommendations, 1):
-                item = rec["item"]
+                item = rec.item
                 author = item.author or "N/A"
-                reasoning = rec["reasoning"]
-                penalty = rec.get("variety_penalty", 0.0)
+                reasoning = rec.reasoning
+                penalty = rec.variety_penalty
                 if penalty > 0:
                     # Surface the stepped variety penalty inline so CLI users
                     # can see why a recently finished genre was demoted.
@@ -314,7 +300,7 @@ def recommend(
                         rank,
                         item.title,
                         author,
-                        f"{rec['score']:.2f}",
+                        f"{rec.score:.2f}",
                         reasoning,
                     ]
                 )

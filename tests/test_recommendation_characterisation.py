@@ -29,6 +29,7 @@ from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations import engine as engine_module
 from src.recommendations.engine import RecommendationEngine
+from src.recommendations.record import Recommendation
 from src.recommendations.scorers import (
     DEFAULT_SCORERS,
     SCORER_NAME_MAP,
@@ -639,19 +640,19 @@ def engine() -> RecommendationEngine:
     return _engine_over(LIBRARY)
 
 
-def _titles(recommendations: list[dict[str, Any]]) -> list[str]:
+def _titles(recommendations: list[Recommendation]) -> list[str]:
     """Recommended titles, best first."""
-    return [rec["item"].title for rec in recommendations]
+    return [rec.item.title for rec in recommendations]
 
 
-def _scores(recommendations: list[dict[str, Any]]) -> list[float]:
+def _scores(recommendations: list[Recommendation]) -> list[float]:
     """Emitted final scores, best first."""
-    return [rec["score"] for rec in recommendations]
+    return [rec.score for rec in recommendations]
 
 
-def _by_title(recommendations: list[dict[str, Any]], title: str) -> dict[str, Any]:
+def _by_title(recommendations: list[Recommendation], title: str) -> Recommendation:
     """The single recommendation for *title*."""
-    matches = [rec for rec in recommendations if rec["item"].title == title]
+    matches = [rec for rec in recommendations if rec.item.title == title]
     assert len(matches) == 1, f"expected exactly one {title!r}, got {len(matches)}"
     return matches[0]
 
@@ -703,16 +704,16 @@ class TestMovieBaseline:
 
         titles = _titles(recommendations)
         assert titles.index("Dune") < titles.index("Arrakis Dreaming")
-        assert adaptation["score_breakdown"]["adaptation"] == pytest.approx(
+        assert adaptation.score_breakdown["adaptation"] == pytest.approx(
             1.0, abs=SCORE_TOLERANCE
         )
-        assert twin["score_breakdown"]["adaptation"] == pytest.approx(
+        assert twin.score_breakdown["adaptation"] == pytest.approx(
             0.0, abs=SCORE_TOLERANCE
         )
-        assert adaptation["score"] - twin["score"] == pytest.approx(
+        assert adaptation.score - twin.score == pytest.approx(
             ADAPTATION_CONTRIBUTION, abs=SCORE_TOLERANCE
         )
-        assert [item.id for item in adaptation["adaptations"]] == ["b-dune"]
+        assert [item.id for item in adaptation.adaptations] == ["b-dune"]
 
     def test_item_with_every_genre_disliked_scores_low_but_not_zero(self, engine):
         """Horror is the user's only 1-star genre, and it is this item's only one.
@@ -726,13 +727,13 @@ class TestMovieBaseline:
         )
         disliked = _by_title(recommendations, "Blood Chapel")
 
-        assert disliked["score_breakdown"]["genre_match"] == pytest.approx(
+        assert disliked.score_breakdown["genre_match"] == pytest.approx(
             0.0, abs=SCORE_TOLERANCE
         )
-        assert disliked["score"] == pytest.approx(
+        assert disliked.score == pytest.approx(
             DISLIKED_GENRE_SCORE, abs=SCORE_TOLERANCE
         )
-        assert disliked["score"] > 0.0
+        assert disliked.score > 0.0
         assert _titles(recommendations)[-1] == "Blood Chapel"
 
 
@@ -768,10 +769,10 @@ class TestBookBaseline:
         assert _titles(recommendations).index("The Second Grimoire") == (
             DISLIKED_AUTHOR_POSITION
         )
-        assert disliked["score_breakdown"]["creator_match"] == pytest.approx(
+        assert disliked.score_breakdown["creator_match"] == pytest.approx(
             0.0, abs=SCORE_TOLERANCE
         )
-        assert disliked["score"] == pytest.approx(
+        assert disliked.score == pytest.approx(
             DISLIKED_AUTHOR_SCORE, abs=SCORE_TOLERANCE
         )
 
@@ -825,8 +826,8 @@ class TestScoreMatchesItsBreakdown:
 
         assert recommendations
         for recommendation in recommendations:
-            assert recommendation["score"] == pytest.approx(
-                _weighted_mean(recommendation["score_breakdown"], weights),
+            assert recommendation.score == pytest.approx(
+                _weighted_mean(recommendation.score_breakdown, weights),
                 abs=SCORE_TOLERANCE,
             )
 
@@ -846,14 +847,12 @@ class TestScoreMatchesItsBreakdown:
             ),
         )
 
-        assert any(rec["variety_penalty"] > 0.0 for rec in recommendations)
+        assert any(rec.variety_penalty > 0.0 for rec in recommendations)
         for recommendation in recommendations:
-            expected = _weighted_mean(recommendation["score_breakdown"], weights) * (
-                1.0 - recommendation["variety_penalty"]
+            expected = _weighted_mean(recommendation.score_breakdown, weights) * (
+                1.0 - recommendation.variety_penalty
             )
-            assert recommendation["score"] == pytest.approx(
-                expected, abs=SCORE_TOLERANCE
-            )
+            assert recommendation.score == pytest.approx(expected, abs=SCORE_TOLERANCE)
 
 
 class TestSemanticSimilarityStaysOptional:
@@ -871,7 +870,7 @@ class TestSemanticSimilarityStaysOptional:
         )
         assert recommendations
         for recommendation in recommendations:
-            assert "semantic_similarity" not in recommendation["score_breakdown"]
+            assert "semantic_similarity" not in recommendation.score_breakdown
 
     def test_present_when_an_embedding_generator_is_supplied(self):
         """Positive control: the scorer is conditional, not simply gone."""
@@ -907,7 +906,7 @@ class TestIgnoredItems:
         cited = {
             reference.title
             for recommendation in movies
-            for reference in recommendation["contributing_items"]
+            for reference in recommendation.contributing_items
         }
         assert cited
         assert "Grim Tide" not in cited
@@ -966,7 +965,7 @@ class TestSparseCandidates:
         )
 
         assert _titles(recommendations) == ["Ünicode Träumerei"]
-        assert recommendations[0]["score"] == pytest.approx(
+        assert recommendations[0].score == pytest.approx(
             NO_GENRE_CANDIDATE_SCORE, abs=SCORE_TOLERANCE
         )
 

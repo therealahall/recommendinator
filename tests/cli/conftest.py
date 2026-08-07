@@ -46,6 +46,7 @@ def _invoke_with_mocks(
     config: dict | None = None,
     input_text: str | None = None,
     llm_client: MagicMock | None = None,
+    engine: MagicMock | None = None,
 ) -> object:
     """Invoke CLI with standard mock setup.
 
@@ -57,13 +58,15 @@ def _invoke_with_mocks(
         config: Config dict (default: empty)
         input_text: Simulated stdin input
         llm_client: Optional LLM client mock (default: None/AI disabled)
+        engine: Pre-configured engine mock, for a command whose output is
+            built from what the engine returns (default: a bare mock)
     """
     p_config, p_storage, p_llm, p_engine, p_labels, p_plugins = _cli_patches()
     with (
         p_config as mock_load,
         p_storage as mock_storage_fn,
         p_llm as mock_llm,
-        p_engine,
+        p_engine as mock_engine_fn,
         p_labels,
         p_plugins,
     ):
@@ -75,4 +78,6 @@ def _invoke_with_mocks(
             MagicMock(spec=EmbeddingGenerator),
             MagicMock(spec=RecommendationGenerator),
         )
+        if engine is not None:
+            mock_engine_fn.return_value = engine
         return cli_runner.invoke(cli, args, input=input_text)

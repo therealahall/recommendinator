@@ -308,6 +308,12 @@ edit reaches the next set of recommendations without a restart.
 
 Invariants:
 
+- The engine's output is one declared record (`record.py`). Every path that
+  produces recommendations — scored, LLM-only, library fallback — returns
+  `Recommendation`, and a path with nothing to say about references or blurbs
+  says so with an empty default rather than a missing field. Both interfaces
+  serialise it through `to_payload`, which is what keeps `recommend --format
+  json` and `GET /api/recommendations` one document.
 - The taste signal is completed items that are **rated** and **not ignored**,
   across all content types. Nothing else shapes preferences, scoring, similarity
   or explanations.
