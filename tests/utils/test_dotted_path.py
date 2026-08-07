@@ -1,6 +1,6 @@
 """Tests for the nested-dict leaf helpers used by the dotted-key config layer."""
 
-from src.utils.dotted_path import get_leaf, pop_leaf, set_leaf
+from src.utils.dotted_path import get_leaf, pop_leaf, set_leaf, set_leaf_atomically
 
 
 class TestGetLeaf:
@@ -52,6 +52,55 @@ class TestSetLeaf:
         """A single-segment path writes a top-level key."""
         config: dict = {}
         set_leaf(config, ("port",), 1)
+        assert config == {"port": 1}
+
+
+class TestSetLeafAtomically:
+    """Tests for set_leaf_atomically."""
+
+    def test_writes_the_same_result_as_set_leaf(self) -> None:
+        """The mapping ends up exactly where the in-place write puts it."""
+        config = {"web": {"port": 1, "host": "x"}}
+        set_leaf_atomically(config, ("web", "port"), 2)
+        assert config == {"web": {"port": 2, "host": "x"}}
+
+    def test_leaves_the_replaced_intermediate_untouched(self) -> None:
+        """A reader holding the old nested dict keeps it exactly as it was.
+
+        This is the whole point of the helper: the settings service writes a
+        scorer weight while the recommendation engine iterates that mapping
+        from a threadpool worker, and inserting a key into a dict under an
+        iterator raises rather than merely racing.
+        """
+        held = {"genre_match": 3.0}
+        config = {"recommendations": {"scorer_weights": held}}
+
+        set_leaf_atomically(
+            config, ("recommendations", "scorer_weights", "adaptation"), 1.5
+        )
+
+        assert held == {"genre_match": 3.0}
+        assert config["recommendations"]["scorer_weights"] == {
+            "genre_match": 3.0,
+            "adaptation": 1.5,
+        }
+
+    def test_creates_intermediate_dicts(self) -> None:
+        """Missing intermediate dicts are created on the way down."""
+        config: dict = {}
+        set_leaf_atomically(config, ("web", "port"), 18473)
+        assert config == {"web": {"port": 18473}}
+
+    def test_replaces_non_dict_intermediate(self) -> None:
+        """A non-dict intermediate segment is replaced with a fresh dict."""
+        config = {"web": 5}
+        set_leaf_atomically(config, ("web", "port"), 18473)
+        assert config == {"web": {"port": 18473}}
+
+    def test_single_segment_path(self) -> None:
+        """A single-segment path writes a top-level key."""
+        config: dict = {}
+        set_leaf_atomically(config, ("port",), 1)
         assert config == {"port": 1}
 
 

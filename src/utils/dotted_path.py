@@ -52,6 +52,33 @@ def set_leaf(root: dict[str, Any], path: tuple[str, ...], value: Any) -> None:
     node[path[-1]] = value
 
 
+def set_leaf_atomically(
+    root: dict[str, Any], path: tuple[str, ...], value: Any
+) -> None:
+    """Write *value* at *path* in *root*, replacing the dicts along the way.
+
+    Same result as :func:`set_leaf`, except that every intermediate dict is
+    swapped for an updated copy instead of being mutated. A reader that already
+    holds one of them keeps the mapping it fetched, whole, so it can iterate it
+    while this writes — which :func:`set_leaf` cannot promise, since adding a
+    key to a dict under an iterator raises.
+
+    Args:
+        root: The mapping to write into. Only its own key at ``path[0]`` is
+            reassigned, which is a single store no reader can land inside.
+        path: Keys describing the nested location (must be non-empty).
+        value: The leaf value to set.
+    """
+    head, *rest = path
+    if not rest:
+        root[head] = value
+        return
+    existing = root.get(head)
+    branch = dict(existing) if isinstance(existing, dict) else {}
+    set_leaf_atomically(branch, tuple(rest), value)
+    root[head] = branch
+
+
 def pop_leaf(root: dict[str, Any], path: tuple[str, ...]) -> None:
     """Delete the leaf at *path* in *root*, leaving parent dicts intact.
 

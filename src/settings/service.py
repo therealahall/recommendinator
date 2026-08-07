@@ -35,9 +35,10 @@ from src.settings.metadata import (
     get_entry,
 )
 
-# Live-apply mutates the running config through the same nested-leaf helpers
-# ``migrate_config_settings`` uses to overlay DB leaves.
-from src.utils.dotted_path import get_leaf, set_leaf
+# Live-apply addresses the running config by the same nested leaf paths
+# ``migrate_config_settings`` overlays DB leaves at, but writes them atomically
+# (see ``_apply_live``).
+from src.utils.dotted_path import get_leaf, set_leaf_atomically
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
@@ -360,8 +361,14 @@ def _effective_value(config: dict[str, Any], entry: SettingMetadata) -> Any:
 
 
 def _apply_live(config: dict[str, Any], key: str, value: Any) -> None:
-    """Write *value* into the running *config* at *key*'s dotted path."""
-    set_leaf(config, tuple(key.split(".")), value)
+    """Write *value* into the running *config* at *key*'s dotted path.
+
+    Atomically, because the engine reads the running config from a threadpool
+    worker while this runs on the event loop: it iterates
+    ``recommendations.scorer_weights``, and inserting a key into the mapping it
+    holds would raise rather than merely race.
+    """
+    set_leaf_atomically(config, tuple(key.split(".")), value)
 
 
 def _require_sensitive(key: str) -> None:
