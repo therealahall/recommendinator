@@ -18,7 +18,11 @@ from src.recommendations.content_length import score_length_match
 from src.recommendations.genre_clusters import get_clusters_for_terms
 from src.recommendations.genre_normalizer import extract_and_normalize_genres
 from src.recommendations.preferences import UserPreferences
-from src.utils.series import extract_series_info
+from src.utils.series import (
+    build_series_tracking,
+    extract_series_info,
+    is_next_after_consumed,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +92,7 @@ class ScoringContext:
         consumed_creators: Set of all creators from consumed items.
         ratings_by_genre: Genre -> list of ratings from consumed items.
         series_ratings: Series name -> list of ratings from consumed items.
+        unconsumed_series_positions: Series name -> item numbers still unconsumed.
     """
 
     preferences: UserPreferences
@@ -102,6 +107,7 @@ class ScoringContext:
     consumed_creators: set[str] = field(default_factory=set)
     ratings_by_genre: dict[str, list[int]] = field(default_factory=dict)
     series_ratings: dict[str, list[int]] = field(default_factory=dict)
+    unconsumed_series_positions: dict[str, set[float]] = field(default_factory=dict)
 
     # Pre-computed similarity scores (populated by engine when AI enabled)
     similarity_scores: dict[str | None, float] = field(default_factory=dict)
@@ -110,7 +116,7 @@ class ScoringContext:
     content_length_preferences: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        """Build lookup structures from consumed items."""
+        """Build lookup structures from the consumed and unconsumed items."""
         genre_ratings: dict[str, list[int]] = defaultdict(list)
         series_ratings: dict[str, list[int]] = defaultdict(list)
         creators: set[str] = set()
@@ -140,6 +146,9 @@ class ScoringContext:
         self.consumed_creators = creators
         self.ratings_by_genre = dict(genre_ratings)
         self.series_ratings = dict(series_ratings)
+        self.unconsumed_series_positions = build_series_tracking(
+            self.all_unconsumed_items
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -343,14 +352,16 @@ class SeriesOrderScorer(Scorer):
                 return 0.8  # first item in unstarted series
             return 0.3  # later item with nothing consumed
 
-        max_consumed = max(consumed_numbers)
-        if item_number == max_consumed + 1:
+        if is_next_after_consumed(
+            item_number,
+            consumed_numbers,
+            context.unconsumed_series_positions.get(series_name, set()),
+        ):
             # Next in sequence - boost based on how much user enjoyed the series
             return self._rating_boosted_score(series_name, context)
-        if item_number > max_consumed + 1:
+        if item_number > max(consumed_numbers):
             return 0.3  # too far ahead
-        # Item is at or before max_consumed (already consumed or earlier)
-        return 0.2
+        return 0.2  # already consumed, or an entry the user has moved past
 
     def _rating_boosted_score(self, series_name: str, context: ScoringContext) -> float:
         """Calculate score for next-in-sequence item based on series ratings.

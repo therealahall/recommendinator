@@ -18,7 +18,7 @@ from src.recommendations.scorers import (
     extract_creator,
     extract_genres,
 )
-from src.utils.series import build_series_tracking
+from src.utils.series import build_series_tracking, should_recommend_item
 from tests.factories import make_item
 
 
@@ -482,6 +482,305 @@ class TestSeriesOrderScorer:
         assert scorer.score(candidate, context) == 0.5
 
 
+class TestSeriesOrderFractionalPositions:
+    """Regression: a half-numbered novella scored as already consumed.
+
+    Symptom: with The Expanse #1 and #2 read, "Gods of Risk (The Expanse, #2.5)"
+    scored 0.2, below the 0.3 given to an entry that is too far ahead, so the
+    novella series filtering had just unblocked ranked under unrelated books.
+
+    Root cause: SeriesOrderScorer recognised succession as
+    ``item_number == max_consumed + 1``, which no fractional position satisfies,
+    so #2.5 fell through to the already-consumed branch.
+
+    Fix: the scorer asks ``is_next_after_consumed`` in src/utils/series.py which
+    entry comes next, the same fractional ordering ``should_recommend_item``
+    already applied.
+    """
+
+    @staticmethod
+    def _consumed() -> list[ContentItem]:
+        return [
+            make_item(title="Leviathan Wakes (The Expanse, #1)", rating=5),
+            make_item(title="Caliban's War (The Expanse, #2)", rating=5),
+        ]
+
+    def test_next_up_half_numbered_entry_scores_as_next_regression(self) -> None:
+        context = _build_context(consumed=self._consumed())
+        novella = make_item(
+            title="Gods of Risk (The Expanse, #2.5)", status=ConsumptionStatus.UNREAD
+        )
+        score = SeriesOrderScorer().score(novella, context)
+        assert score == 1.0  # 5-star series average
+        assert score > 0.3  # beats the "too far ahead" bucket
+
+    def test_scorer_agrees_with_should_recommend_item_regression(self) -> None:
+        consumed = self._consumed()
+        novella = make_item(
+            title="Gods of Risk (The Expanse, #2.5)", status=ConsumptionStatus.UNREAD
+        )
+        book_three = make_item(
+            title="Abaddon's Gate (The Expanse, #3)", status=ConsumptionStatus.UNREAD
+        )
+        unconsumed = [novella, book_three]
+        context = _build_context(consumed=consumed, unconsumed=unconsumed)
+        scorer = SeriesOrderScorer()
+
+        for candidate in unconsumed:
+            recommended = should_recommend_item(
+                candidate, context.series_tracking, unconsumed_items=unconsumed
+            )
+            assert (scorer.score(candidate, context) > 0.3) is recommended
+
+        assert scorer.score(novella, context) == 1.0
+        assert scorer.score(book_three, context) == 0.3
+
+
+class TestSeriesOrderFractionalBoundaries:
+    """Boundaries of the fractional next-in-sequence rule.
+
+    Each case pins the scorer against ``should_recommend_item`` so the two
+    cannot drift apart again, and covers the positions the happy path misses:
+    a consumed novella, a novella still blocked by the book before it, two
+    novellas competing for the same slot, another series' entries, and a
+    non-ASCII series name.
+    """
+
+    def test_consumed_novella_advances_to_the_next_whole_number(self) -> None:
+        consumed = [
+            make_item(title="Leviathan Wakes (The Expanse, #1)", rating=5),
+            make_item(title="Caliban's War (The Expanse, #2)", rating=5),
+            make_item(title="Gods of Risk (The Expanse, #2.5)", rating=5),
+        ]
+        book_three = make_item(
+            title="Abaddon's Gate (The Expanse, #3)", status=ConsumptionStatus.UNREAD
+        )
+        unconsumed = [book_three]
+        context = _build_context(consumed=consumed, unconsumed=unconsumed)
+
+        assert should_recommend_item(
+            book_three, context.series_tracking, unconsumed_items=unconsumed
+        )
+        assert SeriesOrderScorer().score(book_three, context) == 1.0
+
+    def test_half_numbered_entry_waits_for_the_book_before_it(self) -> None:
+        consumed = [make_item(title="Leviathan Wakes (The Expanse, #1)", rating=5)]
+        book_two = make_item(
+            title="Caliban's War (The Expanse, #2)", status=ConsumptionStatus.UNREAD
+        )
+        novella = make_item(
+            title="Gods of Risk (The Expanse, #2.5)", status=ConsumptionStatus.UNREAD
+        )
+        unconsumed = [book_two, novella]
+        context = _build_context(consumed=consumed, unconsumed=unconsumed)
+        scorer = SeriesOrderScorer()
+
+        assert should_recommend_item(
+            book_two, context.series_tracking, unconsumed_items=unconsumed
+        )
+        assert not should_recommend_item(
+            novella, context.series_tracking, unconsumed_items=unconsumed
+        )
+        assert scorer.score(book_two, context) == 1.0
+        assert scorer.score(novella, context) == 0.3
+
+    def test_earlier_of_two_novellas_takes_the_next_slot(self) -> None:
+        consumed = [
+            make_item(title="Leviathan Wakes (The Expanse, #1)", rating=5),
+            make_item(title="Caliban's War (The Expanse, #2)", rating=5),
+        ]
+        first_novella = make_item(
+            title="The Butcher of Anderson Station (The Expanse, #2.1)",
+            status=ConsumptionStatus.UNREAD,
+        )
+        later_novella = make_item(
+            title="Gods of Risk (The Expanse, #2.5)", status=ConsumptionStatus.UNREAD
+        )
+        unconsumed = [later_novella, first_novella]
+        context = _build_context(consumed=consumed, unconsumed=unconsumed)
+        scorer = SeriesOrderScorer()
+
+        for candidate in unconsumed:
+            recommended = should_recommend_item(
+                candidate, context.series_tracking, unconsumed_items=unconsumed
+            )
+            assert (scorer.score(candidate, context) > 0.3) is recommended
+        assert scorer.score(first_novella, context) == 1.0
+        assert scorer.score(later_novella, context) == 0.3
+
+    def test_fractional_position_at_max_consumed_stays_in_the_lowest_bucket(
+        self,
+    ) -> None:
+        consumed = [
+            make_item(title="Leviathan Wakes (The Expanse, #1)", rating=5),
+            make_item(title="Caliban's War (The Expanse, #2)", rating=5),
+            make_item(title="Gods of Risk (The Expanse, #2.5)", rating=5),
+        ]
+        context = _build_context(consumed=consumed)
+        scorer = SeriesOrderScorer()
+
+        reread_novella = make_item(
+            title="Gods of Risk (The Expanse, #2.5)", status=ConsumptionStatus.UNREAD
+        )
+        reread_book_one = make_item(
+            title="Leviathan Wakes (The Expanse, #1)", status=ConsumptionStatus.UNREAD
+        )
+        assert scorer.score(reread_novella, context) == 0.2
+        assert scorer.score(reread_book_one, context) == 0.2
+
+    def test_another_series_entry_does_not_take_the_slot(self) -> None:
+        consumed = [
+            make_item(title="Leviathan Wakes (The Expanse, #1)", rating=5),
+            make_item(title="Caliban's War (The Expanse, #2)", rating=5),
+        ]
+        novella = make_item(
+            title="Gods of Risk (The Expanse, #2.5)", status=ConsumptionStatus.UNREAD
+        )
+        other_series = make_item(
+            title="Secret History (Mistborn, #2.2)", status=ConsumptionStatus.UNREAD
+        )
+        context = _build_context(consumed=consumed, unconsumed=[novella, other_series])
+
+        assert SeriesOrderScorer().score(novella, context) == 1.0
+
+    def test_non_ascii_series_name_scores_as_next(self) -> None:
+        consumed = [
+            make_item(title="Пробуждение (Тьма, #1)", rating=5),
+            make_item(title="Затмение (Тьма, #2)", rating=5),
+        ]
+        novella = make_item(title="Искра (Тьма, #2.5)", status=ConsumptionStatus.UNREAD)
+        context = _build_context(consumed=consumed, unconsumed=[novella])
+
+        assert context.unconsumed_series_positions == {"Тьма": {2.5}}
+        assert SeriesOrderScorer().score(novella, context) == 1.0
+
+    def test_unconsumed_series_positions_are_grouped_and_deduplicated(self) -> None:
+        unconsumed = [
+            make_item(
+                title="Gods of Risk (The Expanse, #2.5)",
+                status=ConsumptionStatus.UNREAD,
+            ),
+            make_item(
+                title="Gods of Risk (The Expanse, #2.5)",
+                status=ConsumptionStatus.UNREAD,
+            ),
+            make_item(
+                title="Abaddon's Gate (The Expanse, #3)",
+                status=ConsumptionStatus.UNREAD,
+            ),
+            make_item(title="Mistborn (Mistborn, #1)", status=ConsumptionStatus.UNREAD),
+            make_item(title="Standalone Novel", status=ConsumptionStatus.UNREAD),
+        ]
+        context = _build_context(unconsumed=unconsumed)
+
+        assert context.unconsumed_series_positions == {
+            "The Expanse": {2.5, 3.0},
+            "Mistborn": {1.0},
+        }
+        assert _build_context().unconsumed_series_positions == {}
+
+
+class TestSeriesOrderNextInSequenceEdges:
+    """Paths into the next-in-sequence branch the fractional cases do not reach.
+
+    Season-level TV candidates, a series with no ratings, a position carried in
+    metadata rather than the title, and a series long enough that the whole tail
+    of it is unconsumed.
+    """
+
+    def test_tv_seasons_advance_to_the_next_unwatched_season(self) -> None:
+        consumed = [
+            make_item(
+                title="The Expanse (The Expanse, Season 1)",
+                content_type=ContentType.TV_SHOW,
+                rating=5,
+            ),
+            make_item(
+                title="The Expanse (The Expanse, Season 2)",
+                content_type=ContentType.TV_SHOW,
+                rating=5,
+            ),
+        ]
+        season_three = make_item(
+            title="The Expanse (The Expanse, Season 3)",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+        )
+        season_five = make_item(
+            title="The Expanse (The Expanse, Season 5)",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+        )
+        unconsumed = [season_three, season_five]
+        context = _build_context(
+            consumed=consumed,
+            unconsumed=unconsumed,
+            content_type=ContentType.TV_SHOW,
+        )
+        scorer = SeriesOrderScorer()
+
+        for candidate in unconsumed:
+            recommended = should_recommend_item(
+                candidate, context.series_tracking, unconsumed_items=unconsumed
+            )
+            assert (scorer.score(candidate, context) > 0.3) is recommended
+        assert scorer.score(season_three, context) == 1.0
+        assert scorer.score(season_five, context) == 0.3
+
+    def test_unrated_series_gives_the_default_boost_to_a_novella(self) -> None:
+        consumed = [
+            make_item(title="Leviathan Wakes (The Expanse, #1)", rating=None),
+            make_item(title="Caliban's War (The Expanse, #2)", rating=None),
+        ]
+        novella = make_item(
+            title="Gods of Risk (The Expanse, #2.5)", status=ConsumptionStatus.UNREAD
+        )
+        context = _build_context(consumed=consumed, unconsumed=[novella])
+
+        assert SeriesOrderScorer().score(novella, context) == 0.85
+
+    def test_fractional_position_from_metadata_scores_as_next(self) -> None:
+        consumed = [
+            make_item(title="Leviathan Wakes (The Expanse, #1)", rating=5),
+            make_item(title="Caliban's War (The Expanse, #2)", rating=5),
+        ]
+        novella = make_item(
+            title="Gods of Risk",
+            status=ConsumptionStatus.UNREAD,
+            metadata={"series_name": "The Expanse", "series_position": "2.5"},
+        )
+        book_three = make_item(
+            title="Abaddon's Gate (The Expanse, #3)", status=ConsumptionStatus.UNREAD
+        )
+        context = _build_context(consumed=consumed, unconsumed=[novella, book_three])
+        scorer = SeriesOrderScorer()
+
+        assert scorer.score(novella, context) == 1.0
+        assert scorer.score(book_three, context) == 0.3
+
+    def test_only_the_earliest_of_a_long_unconsumed_tail_scores_as_next(self) -> None:
+        consumed = [make_item(title="Wheel (Wheel, #1)", rating=5)]
+        tail = [
+            make_item(
+                title=f"Wheel (Wheel, #{position})", status=ConsumptionStatus.UNREAD
+            )
+            for position in range(2, 40)
+        ]
+        novella = make_item(
+            title="Wheel Novella (Wheel, #1.5)", status=ConsumptionStatus.UNREAD
+        )
+        unconsumed = [*tail, novella]
+        context = _build_context(consumed=consumed, unconsumed=unconsumed)
+        scorer = SeriesOrderScorer()
+
+        assert scorer.score(novella, context) == 1.0
+        assert [
+            candidate.title
+            for candidate in unconsumed
+            if scorer.score(candidate, context) > 0.3
+        ] == ["Wheel Novella (Wheel, #1.5)"]
+
+
 # ---------------------------------------------------------------------------
 # RatingPatternScorer tests
 # ---------------------------------------------------------------------------
@@ -847,6 +1146,47 @@ class TestContentLengthScorer:
         """ContentLengthScorer default weight is 1.0."""
         scorer = ContentLengthScorer()
         assert scorer.weight == 1.0
+
+    def test_video_game_scores_on_rawg_average(self) -> None:
+        """A six-hour average against a short preference is an exact match."""
+        candidate = make_item(
+            content_type=ContentType.VIDEO_GAME,
+            metadata={"average_playtime_hours": 6},
+            status=ConsumptionStatus.UNREAD,
+        )
+        context = _build_context(consumed=[], content_type=ContentType.VIDEO_GAME)
+        context.content_length_preferences = {"video_game": "short"}
+        scorer = ContentLengthScorer()
+        assert scorer.score(candidate, context) == 1.0
+
+    def test_video_game_with_only_own_hours_is_benefit_of_the_doubt(self) -> None:
+        """300 logged hours are the player's, not the game's, so no penalty lands.
+
+        The scorer is the path the engine actually calls, so this pins the
+        product behaviour rather than the helper: unenriched games take 0.8,
+        not the 0.4 an opposite-end classification would cost them.
+        """
+        candidate = make_item(
+            content_type=ContentType.VIDEO_GAME,
+            metadata={"playtime_minutes": 18000, "playtime_hours": 300.0},
+            status=ConsumptionStatus.UNREAD,
+        )
+        context = _build_context(consumed=[], content_type=ContentType.VIDEO_GAME)
+        context.content_length_preferences = {"video_game": "short"}
+        scorer = ContentLengthScorer()
+        assert scorer.score(candidate, context) == 0.8
+
+    def test_video_game_long_average_still_penalised(self) -> None:
+        """Dropping own hours does not disarm the scorer: RAWG's average bites."""
+        candidate = make_item(
+            content_type=ContentType.VIDEO_GAME,
+            metadata={"average_playtime_hours": 90, "playtime_hours": 0.5},
+            status=ConsumptionStatus.UNREAD,
+        )
+        context = _build_context(consumed=[], content_type=ContentType.VIDEO_GAME)
+        context.content_length_preferences = {"video_game": "short"}
+        scorer = ContentLengthScorer()
+        assert scorer.score(candidate, context) == 0.4
 
 
 # ---------------------------------------------------------------------------

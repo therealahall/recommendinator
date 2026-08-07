@@ -4170,3 +4170,70 @@ class TestSeriesTrackingFullSetRegression:
         assert not any(
             "Foundation's Edge" in t for t in titles
         ), "#4 must stay held until #3 is consumed"
+
+
+class TestHalfNumberedEntryScoringRegression:
+    """Regression: an up-next novella was scored as already consumed.
+
+    Reported: with The Expanse #1 and #2 read and rated 5, the recommendation
+    for "Gods of Risk (The Expanse, #2.5)" carried a ``series_order`` of 0.2,
+    the already-consumed bucket and lower than the 0.3 an entry too far ahead
+    gets, so the novella series filtering had just unblocked ranked beneath
+    unrelated books.
+
+    Root cause: SeriesOrderScorer recognised succession as
+    ``item_number == max_consumed + 1``, which no fractional position
+    satisfies, so #2.5 fell through to the terminal already-consumed branch.
+
+    Fix: the scorer orders entries through ``is_next_after_consumed`` in
+    src/utils/series.py, the fractional ordering ``should_recommend_item``
+    already applied, so #2.5 takes the rating-boosted next-in-sequence score.
+    """
+
+    @staticmethod
+    def _stock_library(storage):
+        _save_book(
+            storage,
+            item_id="x1",
+            title="Leviathan Wakes (The Expanse, #1)",
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+        )
+        _save_book(
+            storage,
+            item_id="x2",
+            title="Caliban's War (The Expanse, #2)",
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+        )
+        _save_book(
+            storage,
+            item_id="x25",
+            title="Gods of Risk (The Expanse, #2.5)",
+            status=ConsumptionStatus.UNREAD,
+        )
+        _save_book(
+            storage,
+            item_id="x3",
+            title="Abaddon's Gate (The Expanse, #3)",
+            status=ConsumptionStatus.UNREAD,
+        )
+
+    def test_up_next_novella_scores_as_next_in_sequence_regression(
+        self, real_engine, real_storage
+    ):
+        self._stock_library(real_storage)
+
+        recs = real_engine.generate_recommendations(
+            content_type=ContentType.BOOK, count=5
+        )
+        by_title = {rec["item"].title: rec for rec in recs}
+
+        assert "Gods of Risk (The Expanse, #2.5)" in by_title
+        assert (
+            by_title["Gods of Risk (The Expanse, #2.5)"]["score_breakdown"][
+                "series_order"
+            ]
+            == 1.0
+        )
+        assert "Abaddon's Gate (The Expanse, #3)" not in by_title
