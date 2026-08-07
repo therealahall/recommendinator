@@ -1,5 +1,6 @@
 """Tests for web API endpoints."""
 
+import inspect
 import json
 import logging
 import threading
@@ -26,7 +27,12 @@ from src.storage.manager import UNSET, StorageManager
 from src.storage.settings_migration import migrate_config_settings
 from src.utils.series import MAX_SEASONS
 from src.utils.sorting import MAX_SEARCH_LENGTH
-from src.web.api import APP_VERSION, _item_to_response
+from src.web.api import (
+    APP_VERSION,
+    _item_to_response,
+    reset_setting_endpoint,
+    update_settings,
+)
 from src.web.app import _LOG_BASE_DIR, _safe_log_path, create_app
 from src.web.enrichment_manager import WebEnrichmentManager
 from src.web.epic_auth import EpicAuthError
@@ -4645,6 +4651,20 @@ class TestSettingsEndpoints:
             json={"key": _SETTINGS_SECRET_KEY, "value": "x"},
         )
         assert response.status_code == 503
+
+    def test_both_settings_writers_stay_on_the_event_loop(self) -> None:
+        """Both writers must remain ``async def``, and this fails if one is not.
+
+        ``set_leaves_atomically`` reads a section, copies it and stores the
+        copy back with nothing serialising that sequence, so it is safe only
+        because every writer runs on the single event loop. FastAPI runs a
+        plain ``def`` endpoint in the threadpool instead, where two saves
+        interleave and the later store drops the earlier one from the running
+        config while the database keeps both, leaving the two disagreeing with
+        no error anywhere. Nothing else stops that edit being made.
+        """
+        assert inspect.iscoroutinefunction(update_settings)
+        assert inspect.iscoroutinefunction(reset_setting_endpoint)
 
     def test_secret_delete_returns_503_when_storage_unavailable(
         self, settings_env

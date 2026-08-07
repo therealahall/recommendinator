@@ -649,6 +649,9 @@ class TestSettingsWriteDuringScoringRegression:
     ``set_leaves_atomically``, one store per section, and the engine resolves
     every configured knob from a single read taken at the start of the request.
     A reader therefore always finishes on the configuration it started with.
+    The tests here cover the windows a run can actually observe. That the
+    publish is one store per section is pinned in
+    ``tests/utils/test_dotted_path.py``, which watches the stores themselves.
     """
 
     @staticmethod
@@ -779,8 +782,12 @@ class TestSettingsWriteDuringScoringRegression:
         Bug: ``apply_settings`` published each key on its own, so a run
         landing between two of the swaps of a single save read the new
         ``genre_match`` weight and the old ``min_rating_for_preference``.
-        Fix: a save publishes all of its live-applied leaves in one swap per
-        section, so a reader sees all of the save or none of it.
+        Fix: ``apply_settings`` persists every key before it publishes any of
+        them, which is the part this hook can see. It fires mid-persist, so a
+        run landing there ranks on the whole pre-save config. That the publish
+        itself is one store per section rather than one per key is pinned by
+        ``test_no_state_the_config_passes_through_holds_half_the_batch`` in
+        ``tests/utils/test_dotted_path.py``, which watches the stores directly.
         """
         storage = _StorageThatReadsMidSave(tmp_path / "test.db", _MIN_RATING_KEY)
         _seed_split_taste_library(storage)
@@ -804,13 +811,20 @@ class TestSettingsWriteDuringScoringRegression:
 
         # And the next run ranks exactly as an engine booted on the saved
         # config does, so both keys reached it rather than only the first.
+        # The literal order is spelled out as well as compared, because it is
+        # where the margin lives: the raised rating floor holds this order,
+        # while the weight alone would reverse it, as
+        # test_a_weight_changed_mid_read_does_not_score_a_mixture_regression
+        # shows. A comparison of two engines alone would pass on either.
         saved_from_the_start = create_recommendation_engine(
             storage_manager=storage,
             embedding_generator=None,
             recommendation_generator=None,
             config=copy.deepcopy(config),
         )
-        assert self._ranked_titles(engine) == self._ranked_titles(saved_from_the_start)
+        after_the_save = self._ranked_titles(engine)
+        assert after_the_save == ["Neon Divide", "Quiet Harvest"]
+        assert after_the_save == self._ranked_titles(saved_from_the_start)
 
     def test_apply_settings_leaves_the_mapping_a_reader_holds_alone(
         self, storage: StorageManager

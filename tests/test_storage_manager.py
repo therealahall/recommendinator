@@ -840,6 +840,24 @@ class TestGetItemsByEmbeddingKeys:
 
         assert list(found) == ["ext-1"]
 
+    def test_omits_a_db_key_only_int_would_read_as_a_row(
+        self, temp_storage_manager: StorageManager
+    ) -> None:
+        """Only a plain run of decimal digits names a row.
+
+        ``int()`` also accepts a sign, surrounding whitespace and PEP 515
+        underscores, none of which ``stored_embedding_key`` ever writes. Each
+        spelling below carries the digits of a row that really exists, and
+        none of them may resolve to it.
+        """
+        db_id = self._save(temp_storage_manager, None, "Without Id")
+
+        found = temp_storage_manager.get_items_by_embedding_keys(
+            [f"db_+{db_id}", f"db_ {db_id}", f"db_{db_id} "]
+        )
+
+        assert found == {}
+
     def test_an_external_id_shaped_like_the_synthetic_form_wins(
         self, temp_storage_manager: StorageManager
     ) -> None:

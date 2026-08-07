@@ -91,6 +91,11 @@ def set_leaves_atomically(
     reader holding, or about to read, one section sees either all of the
     updates landing in it or none.
 
+    Readers are what this protects. It serialises nothing, so two writers
+    running at once each copy the same branch and the last store wins,
+    silently dropping the other write. Keeping concurrent writers apart is the
+    caller's job: the settings endpoints do it by staying on the event loop.
+
     Args:
         root: The mapping to write into. Only the top-level keys the updates
             address are reassigned, one store each.

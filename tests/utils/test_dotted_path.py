@@ -85,6 +85,7 @@ class TestSetLeafAtomically:
         set_leaf(in_place, path, 2)
         set_leaf_atomically(swapped, path, 2)
 
+        assert get_leaf(swapped, path) == 2
         assert swapped == in_place
 
     def test_leaves_the_replaced_intermediate_untouched(self) -> None:
@@ -127,8 +128,87 @@ class TestSetLeafAtomically:
         assert config == {"port": 1}
 
 
+class _RecordingRoot(dict):
+    """A root config that snapshots itself after every write it receives.
+
+    Both ``__setitem__`` and ``update`` are recorded, because those are the two
+    ways a value reaches a top-level key, and the choice between them is
+    exactly what the batching guarantee turns on.
+    """
+
+    def __init__(self, initial: dict) -> None:
+        super().__init__(initial)
+        self.snapshots: list[dict] = []
+
+    def _record(self) -> None:
+        # dict(self) first: deep-copying the subclass itself would rebuild it
+        # through this same recording machinery.
+        self.snapshots.append(copy.deepcopy(dict(self)))
+
+    def __setitem__(self, key: str, value: object) -> None:
+        super().__setitem__(key, value)
+        self._record()
+
+    def update(self, *args: object, **kwargs: object) -> None:
+        super().update(*args, **kwargs)
+        self._record()
+
+
+_WEIGHT_PATH = ("recommendations", "scorer_weights", "genre_match")
+_PORT_PATH = ("web", "port")
+_TWO_SECTION_BATCH = [(_WEIGHT_PATH, 0.0), (_PORT_PATH, 18473)]
+
+
+def _recording_root() -> _RecordingRoot:
+    """A two-section root, recording, ready for :data:`_TWO_SECTION_BATCH`."""
+    return _RecordingRoot(
+        {"recommendations": {"scorer_weights": {"genre_match": 3.0}}, "web": {}}
+    )
+
+
 class TestSetLeavesAtomically:
     """Tests for set_leaves_atomically."""
+
+    def test_no_state_the_config_passes_through_holds_half_the_batch(self) -> None:
+        """Every state the root passes through carries both updates or neither.
+
+        The end state cannot tell this helper apart from a loop calling
+        :func:`set_leaf_atomically` once per update: identical bytes, and the
+        same held mappings left alone. Watching the stores can. The batch
+        arrives as one ``update``, while the loop stores ``recommendations``
+        and then ``web``. That half-batch state is what the test below reads
+        back off the same recorder, and what this assertion forbids.
+        """
+        config = _recording_root()
+
+        set_leaves_atomically(config, _TWO_SECTION_BATCH)
+
+        assert config.snapshots, "the updates never reached the root"
+        for snapshot in config.snapshots:
+            weight_landed = get_leaf(snapshot, _WEIGHT_PATH) == 0.0
+            port_landed = get_leaf(snapshot, _PORT_PATH) == 18473
+            assert (
+                weight_landed == port_landed
+            ), f"half a batch was readable: {snapshot}"
+        assert get_leaf(config, _WEIGHT_PATH) == 0.0
+        assert get_leaf(config, _PORT_PATH) == 18473
+
+    def test_the_per_update_loop_this_replaces_does_publish_half_a_batch(self) -> None:
+        """One :func:`set_leaf_atomically` call per update is readable mid-batch.
+
+        The same recorder, the same updates, one call each. Its first snapshot
+        carries the new weight beside the untouched port, which is precisely
+        what the test above rejects, so no loop over the single-leaf helper can
+        satisfy that test.
+        """
+        config = _recording_root()
+
+        for path, value in _TWO_SECTION_BATCH:
+            set_leaf_atomically(config, path, value)
+
+        first = config.snapshots[0]
+        assert get_leaf(first, _WEIGHT_PATH) == 0.0
+        assert get_leaf(first, _PORT_PATH) is None
 
     def test_a_reader_sees_every_update_or_none_of_them(self) -> None:
         """The whole batch replaces the section a reader holds, in one store.
