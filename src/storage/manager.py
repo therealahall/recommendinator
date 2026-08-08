@@ -518,19 +518,19 @@ class StorageManager:
     ) -> list[ContentItem]:
         """Get taste-signal items: completed, rated, and not ignored.
 
-        This is the single source of truth for the set of items that may
-        shape recommendations — preference analysis, scoring, similarity
-        seeds, and explanation references. Ignored items are excluded by the
-        user, and completed-but-unrated items carry no taste signal, so
-        neither may shape recommendations (issue #99). The "not ignored"
-        constraint is expressed once, via the SQL ``include_ignored=False``
-        predicate; only the rating floor is applied in Python because it has
-        no dedicated query parameter.
+        This is the single source of truth for the set of items that may shape
+        *taste* — preference analysis, scoring, similarity seeds, and
+        explanation references. Ignored items are excluded by the user, and
+        completed-but-unrated items carry no taste signal, so neither may shape
+        recommendations (issue #99). The "not ignored" constraint is expressed
+        once, via the SQL ``include_ignored=False`` predicate; only the rating
+        floor is applied in Python because it has no dedicated query parameter.
 
-        This is deliberately distinct from series-ordering fetches: whether
-        the user has *consumed* an earlier series entry is a fact independent
-        of rating or ignore state, so series tracking must use the full
-        completed set, not this signal set.
+        This is deliberately distinct from two consumption fetches. Series
+        ordering uses the full completed set, because whether the user has
+        *consumed* an earlier entry is independent of rating and ignore state.
+        Genre fatigue uses :meth:`get_consumption_items`, because finishing
+        something causes fatigue whether or not the user rated it.
 
         Args:
             user_id: Filter by user ID
@@ -550,6 +550,45 @@ class StorageManager:
             include_ignored=False,
         )
         return [item for item in completed if item.rating is not None]
+
+    def get_consumption_items(
+        self,
+        user_id: int | None = None,
+        content_type: ContentType | None = None,
+        limit: int | None = None,
+    ) -> list[ContentItem]:
+        """Get consumption items: non-ignored, rating irrelevant.
+
+        What the user has actually consumed, which is what genre fatigue reacts
+        to. Deliberately wider than :meth:`get_signal_items`: an unrated
+        completion says nothing about taste, but a user who finishes six
+        fantasy novels has still had six fantasy novels. Ignored items stay out
+        of both — ignoring something says the user wants less of it, so letting
+        it claim a variety-ladder rung would invert that.
+
+        Inherits :meth:`get_completed_items`' status set, so items the user is
+        *currently consuming* are included alongside finished ones. The variety
+        ladder narrows that itself, counting an in-progress item only when it is
+        an ongoing show with a finished season; a caller wanting finished-only
+        must filter for it.
+
+        Args:
+            user_id: Filter by user ID
+            content_type: Filter by content type
+            limit: Maximum number of results, applied by
+                ``get_completed_items`` over a title-sorted set — so a caller
+                bounding a recency-based read gets an alphabetical prefix, not
+                the most recent items.
+
+        Returns:
+            List of non-ignored completed and in-progress ContentItem objects
+        """
+        return self.get_completed_items(
+            user_id=user_id,
+            content_type=content_type,
+            limit=limit,
+            include_ignored=False,
+        )
 
     def search_similar(
         self,
