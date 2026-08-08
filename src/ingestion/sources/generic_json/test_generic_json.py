@@ -1,6 +1,7 @@
 """Tests for generic JSON/JSONL import plugin."""
 
 import json
+from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 
@@ -70,9 +71,11 @@ class TestJsonImportPluginValidation:
         errors = plugin.validate_config({"content_type": "book"})
         assert any("path" in error for error in errors)
 
-    def test_validate_nonexistent_file(self, plugin: JsonImportPlugin) -> None:
+    def test_validate_nonexistent_file(
+        self, plugin: JsonImportPlugin, tmp_path: Path
+    ) -> None:
         errors = plugin.validate_config(
-            {"path": "/nonexistent/path.json", "content_type": "book"}
+            {"path": str(tmp_path / "missing.json"), "content_type": "book"}
         )
         assert any("not found" in error for error in errors)
 
@@ -393,10 +396,14 @@ class TestJsonImportPluginRating:
 class TestJsonImportPluginErrors:
     """Tests for error handling."""
 
-    def test_file_not_found_raises_source_error(self, plugin: JsonImportPlugin) -> None:
+    def test_file_not_found_raises_source_error(
+        self, plugin: JsonImportPlugin, tmp_path: Path
+    ) -> None:
         with pytest.raises(SourceError, match="JSON file not found"):
             list(
-                plugin.fetch({"path": "/nonexistent/file.json", "content_type": "book"})
+                plugin.fetch(
+                    {"path": str(tmp_path / "missing.json"), "content_type": "book"}
+                )
             )
 
     def test_invalid_json_raises_source_error(
@@ -439,8 +446,11 @@ class TestJsonTemplates:
     """Tests that template files are valid and can be parsed."""
 
     @pytest.fixture()
-    def templates_dir(self) -> Path:
-        return Path("templates")
+    def templates_dir(self, allowed_source_roots: Callable[[Path], None]) -> Path:
+        """The repository templates, added to the file-import allowlist."""
+        directory = Path("templates")
+        allowed_source_roots(directory)
+        return directory
 
     def test_books_template_parseable(
         self, plugin: JsonImportPlugin, templates_dir: Path
@@ -625,3 +635,51 @@ class TestJsonImportSeasonsWatched:
         # null seasons_watched becomes [], which is falsy so _build_json_metadata
         # won't include it, but the post-processing replaces it
         assert items[0].metadata.get("seasons_watched", []) == []
+
+
+class TestJsonImportPathContainmentRegression:
+    """Regression: source config as an arbitrary-file reader.
+
+    Bug: ``path`` came straight from HTTP-writable source config, so any host
+    file could be imported. Cause: no containment. Fix: validate and fetch
+    resolve it against ``security.allowed_source_roots``.
+    """
+
+    def test_validate_refuses_a_path_outside_every_root(
+        self, plugin: JsonImportPlugin
+    ) -> None:
+        errors = plugin.validate_config({"path": "/etc/hosts", "content_type": "book"})
+        assert errors == [
+            "Path is outside the allowed source roots: /etc/hosts. "
+            "Add its directory to security.allowed_source_roots in config.yaml."
+        ]
+
+    def test_validate_refuses_a_symlink_escaping_its_root(
+        self, plugin: JsonImportPlugin, tmp_path: Path
+    ) -> None:
+        outside = tmp_path.parent / f"{tmp_path.name}-outside"
+        outside.mkdir()
+        secret = outside / "secret.json"
+        secret.write_text(json.dumps([{"title": "Leaked"}]))
+        link = tmp_path / "books.json"
+        link.symlink_to(secret)
+
+        errors = plugin.validate_config({"path": str(link), "content_type": "book"})
+
+        assert any("outside the allowed source roots" in error for error in errors)
+
+    def test_fetch_refuses_and_yields_nothing(
+        self, plugin: JsonImportPlugin, tmp_path: Path
+    ) -> None:
+        outside = tmp_path.parent / f"{tmp_path.name}-outside"
+        outside.mkdir()
+        secret = outside / "secret.json"
+        secret.write_text(json.dumps([{"title": "Leaked"}]))
+
+        collected = []
+        with pytest.raises(SourceError, match="outside the allowed source roots"):
+            for item in plugin.fetch({"path": str(secret), "content_type": "book"}):
+                collected.append(item)
+
+        # list() would discard these, leaving the leak half of the name unproven.
+        assert collected == []

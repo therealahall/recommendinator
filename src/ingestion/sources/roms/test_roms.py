@@ -103,8 +103,8 @@ class TestRomScannerValidation:
         errors = plugin.validate_config({"paths": str(rom_dir)})
         assert any("list" in error.lower() for error in errors)
 
-    def test_nonexistent_path(self, plugin: RomScannerPlugin) -> None:
-        errors = plugin.validate_config({"paths": ["/does/not/exist"]})
+    def test_nonexistent_path(self, plugin: RomScannerPlugin, tmp_path: Path) -> None:
+        errors = plugin.validate_config({"paths": [str(tmp_path / "missing")]})
         assert any("not found" in error.lower() for error in errors)
 
     def test_path_is_file_not_directory(
@@ -147,9 +147,11 @@ class TestRomScannerValidation:
         )
         assert any("exclude_names" in error for error in errors)
 
-    def test_collects_multiple_errors(self, plugin: RomScannerPlugin) -> None:
+    def test_collects_multiple_errors(
+        self, plugin: RomScannerPlugin, tmp_path: Path
+    ) -> None:
         errors = plugin.validate_config(
-            {"paths": ["/does/not/exist"], "exclude_names": "scripts"}
+            {"paths": [str(tmp_path / "missing")], "exclude_names": "scripts"}
         )
         assert any("not found" in error.lower() for error in errors)
         assert any("exclude_names" in error for error in errors)
@@ -591,9 +593,11 @@ class TestRomScannerProgressCallback:
 
 
 class TestRomScannerErrors:
-    def test_missing_path_raises(self, plugin: RomScannerPlugin) -> None:
+    def test_missing_path_raises(
+        self, plugin: RomScannerPlugin, tmp_path: Path
+    ) -> None:
         with pytest.raises(SourceError, match="not found"):
-            list(plugin.fetch({"paths": ["/nonexistent/scan/root"]}))
+            list(plugin.fetch({"paths": [str(tmp_path / "missing")]}))
 
     def test_path_not_directory_raises(
         self, plugin: RomScannerPlugin, tmp_path: Path
@@ -703,3 +707,55 @@ class TestRomScannerErrors:
         monkeypatch.setattr(Path, "resolve", fake_resolve)
         items = list(plugin.fetch({"paths": [str(root)]}))
         assert {item.title for item in items} == {"Good"}
+
+
+class TestRomScannerPathContainmentRegression:
+    """Regression: source config as a filesystem enumeration primitive.
+
+    Bug: ``paths`` came straight from HTTP-writable source config, so a scan of
+    ``/home`` listed every directory as an item. Cause: no containment. Fix:
+    every entry resolves against ``security.allowed_source_roots``.
+    """
+
+    def test_validate_refuses_a_scan_root_outside_every_allowed_root(
+        self, plugin: RomScannerPlugin, tmp_path: Path
+    ) -> None:
+        """Two entries, because every one of them is resolved, not just the first."""
+        allowed = tmp_path / "stash"
+        allowed.mkdir()
+
+        errors = plugin.validate_config({"paths": [str(allowed), "/etc"]})
+
+        assert errors == [
+            "Path is outside the allowed source roots: /etc. "
+            "Add its directory to security.allowed_source_roots in config.yaml."
+        ]
+
+    def test_validate_refuses_a_symlinked_scan_root(
+        self, plugin: RomScannerPlugin, tmp_path: Path
+    ) -> None:
+        outside = tmp_path.parent / f"{tmp_path.name}-outside"
+        outside.mkdir()
+        link = tmp_path / "stash"
+        link.symlink_to(outside, target_is_directory=True)
+
+        errors = plugin.validate_config({"paths": [str(link)]})
+
+        assert any("outside the allowed source roots" in error for error in errors)
+
+    def test_fetch_refuses_and_yields_nothing(
+        self, plugin: RomScannerPlugin, tmp_path: Path
+    ) -> None:
+        outside = tmp_path.parent / f"{tmp_path.name}-outside"
+        outside.mkdir()
+        (outside / "Private Game.zip").write_bytes(b"x")
+        allowed = tmp_path / "stash"
+        allowed.mkdir()
+
+        collected = []
+        with pytest.raises(SourceError, match="outside the allowed source roots"):
+            for item in plugin.fetch({"paths": [str(allowed), str(outside)]}):
+                collected.append(item)
+
+        # list() would discard these, leaving the leak half of the name unproven.
+        assert collected == []

@@ -12,7 +12,7 @@ A CSV file with at least a `title` column, and a `content_type` of `book`,
 
 ```bash
 python3.11 -m src.cli source create my_csv csv_import
-python3.11 -m src.cli source set my_csv path /path/to/library.csv
+python3.11 -m src.cli source set my_csv path inputs/library.csv
 python3.11 -m src.cli source set my_csv content_type book
 ```
 
@@ -21,8 +21,13 @@ so you can run several CSV sources over different files.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `path` | str | yes | Path to the CSV file. |
+| `path` | str | yes | Path to the CSV file, under an allowed source root. |
 | `content_type` | str | yes | One of `book`, `movie`, `tv_show`, `video_game`. |
+
+`path` must resolve under `security.allowed_source_roots` in `config.yaml`,
+which defaults to `inputs/`. Keeping the file elsewhere means adding that
+directory to the list — see
+[SECURITY.md](../../../../docs/SECURITY.md#where-file-imports-may-read).
 
 ## Recognized columns
 

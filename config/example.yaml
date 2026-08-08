@@ -61,3 +61,13 @@ storage:
 
   # Cache directory
   cache_dir: "data/cache"
+
+# Where file-based sources (CSV/JSON/Markdown import, ROM scan) may read.
+# BOOTSTRAP: source config is writable over the API, so this list is
+# deliberately NOT manageable from the Settings page — a caller who could widen
+# it could make the server read any file and import it into your library.
+# Paths are resolved (symlinks followed) and must contain the configured path.
+# Defaults to ["inputs"] when the section is absent. An empty list allows none.
+#security:
+#  allowed_source_roots:
+#    - "inputs"

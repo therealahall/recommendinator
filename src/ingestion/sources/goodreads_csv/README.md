@@ -12,14 +12,19 @@ Imports books from a Goodreads CSV export.
 
 ```bash
 python3.11 -m src.cli source create goodreads_csv goodreads_csv
-python3.11 -m src.cli source set goodreads_csv path /path/to/goodreads_export.csv
+python3.11 -m src.cli source set goodreads_csv path inputs/goodreads_export.csv
 ```
 
 Or add it from the **Data** tab with **+ Add source**.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `path` | str | yes | Path to the Goodreads CSV export file. |
+| `path` | str | yes | Path to the Goodreads CSV export file, under an allowed source root. |
+
+`path` must resolve under `security.allowed_source_roots` in `config.yaml`,
+which defaults to `inputs/`. Keeping the file elsewhere means adding that
+directory to the list — see
+[SECURITY.md](../../../../docs/SECURITY.md#where-file-imports-may-read).
 
 ## Notes
 - No API key or network access required — pure file import.

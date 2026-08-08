@@ -22,11 +22,16 @@ see the table below for what each one does.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `paths` | list[str] | yes | One or more directories to scan. Each direct child (folder, or file with a matching extension) becomes one game. |
+| `paths` | list[str] | yes | One or more directories to scan, each under an allowed source root. Each direct child (folder, or file with a matching extension) becomes one game. |
 | `include_extensions` | list[str] | no | Extensions added to the built-in ROM extension list. Leading dot optional; case-insensitive. |
 | `exclude_extensions` | list[str] | no | Extensions removed from the built-in list. |
 | `exclude_names` | list[str] | no | Glob patterns matched against file or folder names to skip. Hidden dotfiles are always skipped. |
 | `extra_strip_patterns` | list[str] | no | Extra Python regex patterns appended to the title cleaner. Avoid unbounded repetition that could backtrack catastrophically. |
+
+Every entry in `paths` must resolve under `security.allowed_source_roots` in
+`config.yaml`, which defaults to `inputs/`. A ROM stash living anywhere else
+needs its directory added to that list — see
+[SECURITY.md](../../../../docs/SECURITY.md#where-file-imports-may-read).
 
 ## Notes
 - Title cleanup (`Game (USA) [!].zip` → `Game`) is performed by the [`_rom_title`](_rom_title.py) helper.

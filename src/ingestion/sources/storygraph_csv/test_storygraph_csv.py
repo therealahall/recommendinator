@@ -113,9 +113,11 @@ class TestStorygraphCsvPluginValidation:
         assert len(errors) == 1
         assert "'path' is required" in errors[0]
 
-    def test_validate_nonexistent_file(self, plugin: StorygraphCsvPlugin) -> None:
+    def test_validate_nonexistent_file(
+        self, plugin: StorygraphCsvPlugin, tmp_path: Path
+    ) -> None:
         """Test validation fails when CSV file does not exist."""
-        errors = plugin.validate_config({"path": "/nonexistent/library.csv"})
+        errors = plugin.validate_config({"path": str(tmp_path / "library.csv")})
 
         assert len(errors) == 1
         assert "CSV file not found" in errors[0]
@@ -376,11 +378,11 @@ class TestStorygraphCsvPluginFetch:
         assert items[0].source == "my_storygraph"
 
     def test_fetch_file_not_found_raises_source_error(
-        self, plugin: StorygraphCsvPlugin
+        self, plugin: StorygraphCsvPlugin, tmp_path: Path
     ) -> None:
         """Test that fetching a nonexistent file raises SourceError."""
         with pytest.raises(SourceError, match="CSV file not found") as exc_info:
-            list(plugin.fetch({"path": "/nonexistent/library.csv"}))
+            list(plugin.fetch({"path": str(tmp_path / "library.csv")}))
 
         assert exc_info.value.plugin_name == "storygraph_csv"
 

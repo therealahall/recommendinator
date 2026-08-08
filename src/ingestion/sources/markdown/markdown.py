@@ -6,9 +6,9 @@ import logging
 import re
 from collections.abc import Iterator
 from datetime import datetime
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from src.ingestion.paths import PathNotAllowed, resolve_source_path
 from src.ingestion.plugin_base import (
     ConfigField,
     ProgressCallback,
@@ -103,6 +103,7 @@ class MarkdownImportPlugin(SourcePlugin):
                 name="path",
                 field_type=str,
                 required=True,
+                reads_path=True,
                 description="Path to Markdown file in the prescribed format",
             ),
             ConfigField(
@@ -124,8 +125,16 @@ class MarkdownImportPlugin(SourcePlugin):
         path = config.get("path")
         if not path:
             errors.append("'path' is required")
-        elif not Path(path).resolve().exists():
-            errors.append(f"Markdown file not found: {path}")
+        else:
+            # Containment before existence: the "not found" message is an
+            # oracle for any path the caller cares to probe.
+            try:
+                resolved = resolve_source_path(str(path))
+            except PathNotAllowed as error:
+                errors.append(str(error))
+            else:
+                if not resolved.exists():
+                    errors.append(f"Markdown file not found: {path}")
 
         content_type = config.get("content_type", "")
         valid_types = [content_type_enum.value for content_type_enum in ContentType]
@@ -158,7 +167,6 @@ class MarkdownImportPlugin(SourcePlugin):
         """
         path = config.get("path", "")
         content_type_str = config.get("content_type", "")
-        file_path = Path(path)
 
         try:
             content_type = ContentType(content_type_str)
@@ -166,6 +174,11 @@ class MarkdownImportPlugin(SourcePlugin):
             raise SourceError(
                 self.name, f"Invalid content type: {content_type_str}"
             ) from error
+
+        try:
+            file_path = resolve_source_path(str(path))
+        except PathNotAllowed as error:
+            raise SourceError(self.name, str(error)) from error
 
         logger.info("Parsing Markdown file: %s", file_path)
 

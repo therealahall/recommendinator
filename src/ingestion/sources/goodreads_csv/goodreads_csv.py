@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from src.ingestion.paths import PathNotAllowed, resolve_source_path
 from src.ingestion.plugin_base import (
     ConfigField,
     ProgressCallback,
@@ -62,6 +63,7 @@ class GoodreadsCsvPlugin(SourcePlugin):
                 name="path",
                 field_type=str,
                 required=True,
+                reads_path=True,
                 description="Path to Goodreads CSV export file",
             ),
         ]
@@ -76,8 +78,16 @@ class GoodreadsCsvPlugin(SourcePlugin):
         path = config.get("path")
         if not path:
             errors.append("'path' is required")
-        elif not Path(path).exists():
-            errors.append(f"CSV file not found: {path}")
+        else:
+            # Containment before existence: the "not found" message is an
+            # oracle for any path the caller cares to probe.
+            try:
+                resolved = resolve_source_path(str(path))
+            except PathNotAllowed as error:
+                errors.append(str(error))
+            else:
+                if not resolved.exists():
+                    errors.append(f"CSV file not found: {path}")
         return errors
 
     def fetch(
@@ -98,7 +108,11 @@ class GoodreadsCsvPlugin(SourcePlugin):
             SourceError: If the file cannot be read or parsed
         """
         path = config.get("path", "")
-        file_path = Path(path)
+
+        try:
+            file_path = resolve_source_path(str(path))
+        except PathNotAllowed as error:
+            raise SourceError(self.name, str(error)) from error
 
         try:
             yield from self._parse_csv(file_path, config, progress_callback)
