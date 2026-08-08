@@ -94,7 +94,9 @@ def set_leaves_atomically(
     Readers are what this protects. It serialises nothing, so two writers
     running at once each copy the same branch and the last store wins,
     silently dropping the other write. Keeping concurrent writers apart is the
-    caller's job: the settings endpoints do it by staying on the event loop.
+    caller's job: the settings endpoints do it by writing under
+    ``src.web.state``'s config lock, which they reach through
+    ``src.web.guards.writable_config``.
 
     Args:
         root: The mapping to write into. Only the top-level keys the updates
