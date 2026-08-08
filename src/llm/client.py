@@ -1,8 +1,11 @@
 """Ollama client wrapper for LLM interactions."""
 
 import logging
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from typing import Any
+
+from src.utils.urls import is_local_url
 
 # Optional dependency: ollama is only installed with the [ai] extra.
 # The non-AI Docker image does not include it. ImportError is caught by
@@ -15,8 +18,28 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class _OllamaSettings:
+    """Where to reach Ollama and which model to ask, from one config read."""
+
+    base_url: str
+    default_model: str
+    embedding_model: str
+    conversation_model: str
+
+
+def _text(value: Any, fallback: str) -> str:
+    """Return *value* when it is a non-empty string, else *fallback*."""
+    return value if isinstance(value, str) and value else fallback
+
+
 class OllamaClient:
-    """Client for interacting with Ollama API."""
+    """Client for interacting with Ollama API.
+
+    With a *config_provider* the ``ollama`` section resolves per call instead
+    of freezing at construction, so a Settings-page change reaches the next
+    request without a restart.
+    """
 
     def __init__(
         self,
@@ -25,29 +48,107 @@ class OllamaClient:
         embedding_model: str = "nomic-embed-text",
         timeout: float = 300.0,
         conversation_model: str = "",
+        config_provider: Callable[[], dict[str, Any] | None] | None = None,
     ) -> None:
         """Initialize Ollama client.
 
-        Args:
-            base_url: Base URL for Ollama API
-            default_model: Default model for text generation
-            embedding_model: Model for generating embeddings
-            timeout: Request timeout in seconds
-            conversation_model: Model for conversation chat (defaults to
-                default_model when empty)
-
-        Raises:
-            ImportError: If the ollama package is not installed.
+        The arguments are the baseline *config_provider*'s ``ollama`` section
+        overlays; an empty *conversation_model* means the generation model.
+        Raises ImportError when the ollama package is missing.
         """
         if Client is None:
             raise ImportError("ollama package is not installed")
 
-        self.base_url = base_url
-        self.default_model = default_model
-        self.embedding_model = embedding_model
         self.timeout = timeout
-        self.conversation_model = conversation_model or default_model
-        self.client = Client(host=base_url, timeout=timeout)
+        self._config_provider = config_provider
+        self._baseline = _OllamaSettings(
+            base_url=base_url,
+            default_model=default_model,
+            embedding_model=embedding_model,
+            # Kept raw: folding the fallback in here would pin chat to
+            # whichever generation model was configured at boot.
+            conversation_model=conversation_model,
+        )
+        self._client: Client | None = None
+        self._client_host: str | None = None
+
+    @property
+    def base_url(self) -> str:
+        """The Ollama URL the next call will be sent to."""
+        return self._resolved().base_url
+
+    @property
+    def default_model(self) -> str:
+        """The currently configured model for text generation."""
+        return self._resolved().default_model
+
+    @property
+    def embedding_model(self) -> str:
+        """The currently configured model for embeddings."""
+        return self._resolved().embedding_model
+
+    @property
+    def conversation_model(self) -> str:
+        """The currently configured chat model, or the generation model."""
+        return self._resolved().conversation_model
+
+    @property
+    def client(self) -> "Client":
+        """The ``ollama.Client`` for the currently configured base URL."""
+        return self._client_for(self.base_url)
+
+    def _resolved(self) -> _OllamaSettings:
+        """Overlay the running ``ollama`` section onto the baseline, in one read.
+
+        One read: a call uses the URL and a model together, and reading again
+        in between would let a save land inside one request.
+        """
+        section = self._ollama_config()
+        baseline = self._baseline
+        default_model = _text(section.get("model"), baseline.default_model)
+        return _OllamaSettings(
+            base_url=_text(section.get("base_url"), baseline.base_url),
+            default_model=default_model,
+            embedding_model=_text(
+                section.get("embedding_model"), baseline.embedding_model
+            ),
+            conversation_model=_text(
+                section.get("conversation_model"), baseline.conversation_model
+            )
+            or default_model,
+        )
+
+    def _ollama_config(self) -> dict[str, Any]:
+        """Return the running ``ollama`` section, or an empty mapping.
+
+        Type-guarded rather than defaulted: an ``ollama:`` header with no
+        children parses to ``None``, which ``dict.get``'s default never
+        catches because the key is present.
+        """
+        config = self._config_provider() if self._config_provider is not None else None
+        if config is None:
+            return {}
+        section = config.get("ollama")
+        return section if isinstance(section, dict) else {}
+
+    def _client_for(self, base_url: str) -> "Client":
+        """Return the transport for *base_url*, rebuilt when the URL changes.
+
+        Cached because one per call is one connection pool per call. Two
+        threads racing here each build one and the last stored wins, costing
+        a socket.
+        """
+        if self._client is None or self._client_host != base_url:
+            if not is_local_url(base_url):
+                logger.warning(
+                    "Ollama base URL %s is not on this machine or network — "
+                    "prompts, titles, ratings and reviews are being sent there. "
+                    "Only config.yaml can set that.",
+                    base_url,
+                )
+            self._client = Client(host=base_url, timeout=self.timeout)
+            self._client_host = base_url
+        return self._client
 
     def generate_embedding(self, text: str, model: str | None = None) -> list[float]:
         """Generate embedding for text.
@@ -62,10 +163,13 @@ class OllamaClient:
         Raises:
             RuntimeError: If embedding generation fails
         """
-        model = model or self.embedding_model
+        settings = self._resolved()
+        model = model or settings.embedding_model
 
         try:
-            response = self.client.embeddings(model=model, prompt=text)
+            response = self._client_for(settings.base_url).embeddings(
+                model=model, prompt=text
+            )
             embedding: list[float] = response.get("embedding", [])
             if not embedding:
                 raise RuntimeError(f"No embedding returned from model {model}")
@@ -150,7 +254,8 @@ class OllamaClient:
         Raises:
             RuntimeError: If text generation fails
         """
-        model = model or self.default_model
+        settings = self._resolved()
+        model = model or settings.default_model
 
         try:
             messages = []
@@ -161,7 +266,9 @@ class OllamaClient:
             options = self._build_options(
                 temperature, max_tokens, context_window_size=context_window_size
             )
-            response = self.client.chat(model=model, messages=messages, options=options)
+            response = self._client_for(settings.base_url).chat(
+                model=model, messages=messages, options=options
+            )
 
             content: str = response.get("message", {}).get("content", "")
             if not content:
@@ -234,7 +341,8 @@ class OllamaClient:
         Raises:
             RuntimeError: If text generation fails
         """
-        model = model or self.default_model
+        settings = self._resolved()
+        model = model or settings.default_model
 
         try:
             messages = []
@@ -245,7 +353,7 @@ class OllamaClient:
             options = self._build_options(
                 temperature, max_tokens, context_window_size=context_window_size
             )
-            response = self.client.chat(
+            response = self._client_for(settings.base_url).chat(
                 model=model, messages=messages, options=options, stream=True
             )
 
@@ -280,7 +388,8 @@ class OllamaClient:
         Raises:
             RuntimeError: If chat fails
         """
-        model = model or self.default_model
+        settings = self._resolved()
+        model = model or settings.default_model
 
         try:
             full_messages = []
@@ -291,7 +400,7 @@ class OllamaClient:
             options = self._build_options(
                 temperature, max_tokens, context_window_size=context_window_size
             )
-            response = self.client.chat(
+            response = self._client_for(settings.base_url).chat(
                 model=model, messages=full_messages, options=options, stream=True
             )
 

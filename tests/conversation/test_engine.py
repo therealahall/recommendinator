@@ -3,6 +3,7 @@
 import tempfile
 from collections.abc import Generator, Iterator
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -16,7 +17,10 @@ from src.conversation.engine import (
 from src.llm.client import OllamaClient
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.conversation import ConversationContext, ConversationMessage
+from src.settings.metadata import all_entries
+from src.settings.service import apply_settings
 from src.storage.manager import StorageManager
+from src.storage.settings_migration import migrate_config_settings
 
 
 @pytest.fixture
@@ -827,3 +831,189 @@ class TestBuildMessages:
         )
         messages = conversation_engine._build_messages(context, "New question")
         assert len(messages[0]["content"]) == 100
+
+
+class TestLiveSettingsApply:
+    """Bug reported: a ``conversation.*`` change on Settings needed a restart.
+
+    Root cause: the section was frozen into the engine while ``apply_settings``
+    only published it into the running config. Fixed as qs5i.10.7 fixed
+    ``recommendations.*``: resolved per turn.
+    """
+
+    @pytest.fixture()
+    def running(
+        self, storage_manager: StorageManager, mock_ollama: MagicMock
+    ) -> tuple[ConversationEngine, dict[str, Any], StorageManager]:
+        """A booted engine, the running config it reads, and the settings store."""
+        config: dict[str, Any] = {}
+        migrate_config_settings(config, storage_manager)
+        engine = ConversationEngine(
+            storage_manager=storage_manager,
+            ollama_client=mock_ollama,
+            config_provider=lambda: config,
+        )
+        return engine, config, storage_manager
+
+    @staticmethod
+    def _next_turn(engine: ConversationEngine, mock_ollama: MagicMock) -> Any:
+        """Run one chat turn and return the kwargs it sent to the LLM."""
+        list(engine.process_message(user_id=1, message="What should I play?"))
+        return mock_ollama.chat_stream.call_args.kwargs
+
+    def test_temperature_change_reaches_the_next_turn_regression(
+        self,
+        running: tuple[ConversationEngine, dict[str, Any], StorageManager],
+        mock_ollama: MagicMock,
+    ) -> None:
+        """A saved temperature is what the next turn samples at."""
+        engine, config, storage = running
+
+        apply_settings(config, storage, {"conversation.llm.temperature": 0.2})
+
+        assert self._next_turn(engine, mock_ollama)["temperature"] == 0.2
+
+    def test_max_tokens_change_reaches_the_next_turn_regression(
+        self,
+        running: tuple[ConversationEngine, dict[str, Any], StorageManager],
+        mock_ollama: MagicMock,
+    ) -> None:
+        """A saved reply cap is what the next turn is given."""
+        engine, config, storage = running
+
+        apply_settings(config, storage, {"conversation.llm.max_tokens": 512})
+
+        assert self._next_turn(engine, mock_ollama)["max_tokens"] == 512
+
+    def test_context_window_change_reaches_the_next_turn_regression(
+        self,
+        running: tuple[ConversationEngine, dict[str, Any], StorageManager],
+        mock_ollama: MagicMock,
+    ) -> None:
+        """A saved context window is what the next turn asks Ollama for."""
+        engine, config, storage = running
+
+        apply_settings(config, storage, {"conversation.llm.context_window_size": 4096})
+
+        assert self._next_turn(engine, mock_ollama)["context_window_size"] == 4096
+
+    def test_compact_mode_change_reaches_the_next_turn_regression(
+        self,
+        running: tuple[ConversationEngine, dict[str, Any], StorageManager],
+        mock_ollama: MagicMock,
+    ) -> None:
+        """Turning compact mode on swaps the prompt template for the next turn.
+
+        The template is picked from the mode, so a frozen mode froze the
+        prompt with it.
+        """
+        engine, config, storage = running
+        assert engine.system_prompt_template is FULL_SYSTEM_PROMPT
+
+        apply_settings(config, storage, {"conversation.context.compact_mode": True})
+
+        assert engine.system_prompt_template is COMPACT_SYSTEM_PROMPT
+        assert (
+            "mark_completed"
+            not in self._next_turn(engine, mock_ollama)["system_prompt"]
+        )
+
+    def test_an_explicit_prompt_template_still_wins(
+        self,
+        storage_manager: StorageManager,
+        mock_ollama: MagicMock,
+    ) -> None:
+        """A caller-supplied template outranks the running compact-mode leaf."""
+        engine = ConversationEngine(
+            storage_manager=storage_manager,
+            ollama_client=mock_ollama,
+            system_prompt_template="just {user_context}",
+            config_provider=lambda: {
+                "conversation": {"context": {"compact_mode": True}}
+            },
+        )
+
+        assert engine.system_prompt_template == "just {user_context}"
+
+    def test_a_save_landing_mid_turn_lands_on_the_next_turn(
+        self,
+        running: tuple[ConversationEngine, dict[str, Any], StorageManager],
+        mock_ollama: MagicMock,
+        sample_items: list[int],
+    ) -> None:
+        """One turn runs on one configuration, start to finish.
+
+        Compact mode is read before the LLM call and again after it, so a save
+        arriving between would drop a tool call the prompt just asked for.
+        """
+        engine, config, storage = running
+
+        def save_then_answer(*_args: Any, **_kwargs: Any) -> Iterator[str]:
+            apply_settings(config, storage, {"conversation.context.compact_mode": True})
+            yield '{"tool": "mark_completed", "params": {"item_id": '
+            yield f"{sample_items[1]}, "
+            yield '"rating": 5}}'
+
+        mock_ollama.chat_stream.side_effect = save_then_answer
+
+        chunks = list(engine.process_message(user_id=1, message="finished it, 5 stars"))
+
+        assert [c.tool_name for c in chunks if c.chunk_type == "tool_call"] == [
+            "mark_completed"
+        ]
+        assert engine.compact_mode is True
+
+    @pytest.mark.parametrize(
+        "config",
+        [None, {}, {"conversation": None}, {"conversation": {"llm": None}}],
+    )
+    def test_a_section_that_says_nothing_leaves_the_defaults_alone(
+        self,
+        config: dict[str, Any] | None,
+        storage_manager: StorageManager,
+        mock_ollama: MagicMock,
+    ) -> None:
+        """A bare ``conversation:`` header parses to None, not to an empty dict.
+
+        The provider itself can also answer None, before the app has a config.
+        """
+        engine = ConversationEngine(
+            storage_manager=storage_manager,
+            ollama_client=mock_ollama,
+            config_provider=lambda: config,
+        )
+
+        assert engine.temperature == 0.7
+        assert engine.max_tokens is None
+        assert engine.compact_mode is False
+
+    def test_the_running_section_wins_over_the_boot_baseline(
+        self, storage_manager: StorageManager, mock_ollama: MagicMock
+    ) -> None:
+        """A YAML value seeded at boot must not outrank the saved one.
+
+        The baseline is only for leaves the running config says nothing about.
+        """
+        engine = ConversationEngine(
+            storage_manager=storage_manager,
+            ollama_client=mock_ollama,
+            conversation_config={"llm": {"temperature": 0.9, "max_tokens": 128}},
+            config_provider=lambda: {"conversation": {"llm": {"temperature": 0.1}}},
+        )
+
+        assert engine.temperature == 0.1
+        assert engine.max_tokens == 128
+
+    def test_no_conversation_setting_requires_a_restart(self) -> None:
+        """Marking one ``restart_required`` would silently re-freeze the engine.
+
+        ``apply_settings`` skips the running config for those leaves, so the
+        page would go back to persisting a value nothing reads.
+        """
+        restart_gated = [
+            entry.key
+            for entry in all_entries()
+            if entry.key.startswith("conversation.") and entry.restart_required
+        ]
+
+        assert restart_gated == []
