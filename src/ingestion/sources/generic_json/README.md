@@ -13,7 +13,7 @@ JSON array.
 
 ```bash
 python3.11 -m src.cli source create my_json json_import
-python3.11 -m src.cli source set my_json path /path/to/library.json
+python3.11 -m src.cli source set my_json path inputs/library.json
 python3.11 -m src.cli source set my_json content_type book
 ```
 
@@ -21,8 +21,13 @@ Or use **+ Add source** on the **Data** tab. The id (`my_json`) is yours to pick
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `path` | str | yes | Path to the JSON or JSONL file. |
+| `path` | str | yes | Path to the JSON or JSONL file, under an allowed source root. |
 | `content_type` | str | yes | One of `book`, `movie`, `tv_show`, `video_game`. |
+
+`path` must resolve under `security.allowed_source_roots` in `config.yaml`,
+which defaults to `inputs/`. Keeping the file elsewhere means adding that
+directory to the list — see
+[SECURITY.md](../../../../docs/SECURITY.md#where-file-imports-may-read).
 
 ## Fields
 

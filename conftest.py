@@ -16,6 +16,8 @@ from unittest.mock import patch
 
 import pytest
 
+from src.ingestion.paths import get_allowed_source_roots, set_allowed_source_roots
+
 
 def _remove_production_log_handlers() -> None:
     """Remove FileHandlers targeting ``recommendations.log`` from the root logger."""
@@ -73,6 +75,26 @@ def host_timezone() -> Iterator[Callable[[str], None]]:
     else:
         os.environ["TZ"] = previous
     time.tzset()
+
+
+@pytest.fixture(autouse=True)
+def allowed_source_roots(tmp_path: Path) -> Iterator[Callable[[Path], None]]:
+    """Contain file-based source plugins to this test's ``tmp_path``.
+
+    ``security.allowed_source_roots`` is process-global, so a test that
+    widened it would leak into the next. A test reading a repository
+    directory requests this fixture and adds that root.
+    """
+    saved = get_allowed_source_roots()
+    roots = [str(tmp_path)]
+    set_allowed_source_roots(roots)
+
+    def allow(root: Path) -> None:
+        roots.append(str(root))
+        set_allowed_source_roots(roots)
+
+    yield allow
+    set_allowed_source_roots(saved)
 
 
 @pytest.fixture(autouse=True)

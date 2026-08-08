@@ -38,6 +38,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from src.ingestion.paths import PathNotAllowed, resolve_source_path
 from src.ingestion.plugin_base import (
     ConfigField,
     ProgressCallback,
@@ -240,6 +241,7 @@ class RomScannerPlugin(SourcePlugin):
                 name="paths",
                 field_type=list,
                 required=True,
+                reads_path=True,
                 description=(
                     "List of directory paths to scan. Each direct child "
                     "(folder, or file with a matching extension) becomes "
@@ -316,7 +318,13 @@ class RomScannerPlugin(SourcePlugin):
             errors.append("'paths' must contain at least one directory")
 
         for path_str in paths:
-            path = Path(path_str).expanduser()
+            # Containment before existence: the "not found" message is an
+            # oracle for any path the caller cares to probe.
+            try:
+                path = resolve_source_path(path_str)
+            except PathNotAllowed as containment_error:
+                errors.append(str(containment_error))
+                continue
             if not path.exists():
                 errors.append(f"Scan path not found: {path_str}")
             elif not path.is_dir():
@@ -345,7 +353,10 @@ class RomScannerPlugin(SourcePlugin):
         config: dict[str, Any],
         progress_callback: ProgressCallback | None = None,
     ) -> Iterator[ContentItem]:
-        scan_roots = [Path(str(p)).expanduser() for p in config["paths"]]
+        try:
+            scan_roots = [resolve_source_path(str(p)) for p in config["paths"]]
+        except PathNotAllowed as error:
+            raise SourceError(self.name, str(error)) from error
         for root in scan_roots:
             if not root.exists():
                 raise SourceError(self.name, f"Scan path not found: {root}")

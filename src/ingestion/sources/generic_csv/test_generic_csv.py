@@ -1,5 +1,6 @@
 """Tests for generic CSV import plugin."""
 
+from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 
@@ -83,9 +84,11 @@ class TestCsvImportPluginValidation:
         errors = plugin.validate_config({"path": "", "content_type": "book"})
         assert any("path" in error for error in errors)
 
-    def test_validate_nonexistent_file(self, plugin: CsvImportPlugin) -> None:
+    def test_validate_nonexistent_file(
+        self, plugin: CsvImportPlugin, tmp_path: Path
+    ) -> None:
         errors = plugin.validate_config(
-            {"path": "/nonexistent/path.csv", "content_type": "book"}
+            {"path": str(tmp_path / "missing.csv"), "content_type": "book"}
         )
         assert any("not found" in error for error in errors)
 
@@ -363,10 +366,14 @@ class TestCsvImportPluginRating:
 class TestCsvImportPluginErrors:
     """Tests for error handling."""
 
-    def test_file_not_found_raises_source_error(self, plugin: CsvImportPlugin) -> None:
+    def test_file_not_found_raises_source_error(
+        self, plugin: CsvImportPlugin, tmp_path: Path
+    ) -> None:
         with pytest.raises(SourceError, match="CSV file not found"):
             list(
-                plugin.fetch({"path": "/nonexistent/file.csv", "content_type": "book"})
+                plugin.fetch(
+                    {"path": str(tmp_path / "missing.csv"), "content_type": "book"}
+                )
             )
 
     def test_invalid_content_type_raises_source_error(
@@ -400,8 +407,11 @@ class TestCsvTemplates:
     """Tests that template files are valid and can be parsed."""
 
     @pytest.fixture()
-    def templates_dir(self) -> Path:
-        return Path("templates")
+    def templates_dir(self, allowed_source_roots: Callable[[Path], None]) -> Path:
+        """The repository templates, added to the file-import allowlist."""
+        directory = Path("templates")
+        allowed_source_roots(directory)
+        return directory
 
     def test_books_template_exists(self, templates_dir: Path) -> None:
         assert (templates_dir / "books.csv").exists()
@@ -674,3 +684,51 @@ class TestParseSeasonsWatched:
             2,
             MAX_SEASONS,
         ]
+
+
+class TestCsvImportPathContainmentRegression:
+    """Regression: source config as an arbitrary-file reader.
+
+    Bug: ``path`` came straight from HTTP-writable source config, so any host
+    file could be imported. Cause: no containment. Fix: validate and fetch
+    resolve it against ``security.allowed_source_roots``.
+    """
+
+    def test_validate_refuses_a_path_outside_every_root(
+        self, plugin: CsvImportPlugin
+    ) -> None:
+        errors = plugin.validate_config({"path": "/etc/passwd", "content_type": "book"})
+        assert errors == [
+            "Path is outside the allowed source roots: /etc/passwd. "
+            "Add its directory to security.allowed_source_roots in config.yaml."
+        ]
+
+    def test_validate_refuses_a_symlink_escaping_its_root(
+        self, plugin: CsvImportPlugin, tmp_path: Path
+    ) -> None:
+        outside = tmp_path.parent / f"{tmp_path.name}-outside"
+        outside.mkdir()
+        secret = outside / "secret.csv"
+        secret.write_text("title\nLeaked\n")
+        link = tmp_path / "books.csv"
+        link.symlink_to(secret)
+
+        errors = plugin.validate_config({"path": str(link), "content_type": "book"})
+
+        assert any("outside the allowed source roots" in error for error in errors)
+
+    def test_fetch_refuses_and_yields_nothing(
+        self, plugin: CsvImportPlugin, tmp_path: Path
+    ) -> None:
+        outside = tmp_path.parent / f"{tmp_path.name}-outside"
+        outside.mkdir()
+        secret = outside / "secret.csv"
+        secret.write_text("title\nLeaked\n")
+
+        collected = []
+        with pytest.raises(SourceError, match="outside the allowed source roots"):
+            for item in plugin.fetch({"path": str(secret), "content_type": "book"}):
+                collected.append(item)
+
+        # list() would discard these, leaving the leak half of the name unproven.
+        assert collected == []
