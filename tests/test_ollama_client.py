@@ -1,12 +1,23 @@
 """Tests for Ollama client."""
 
+import logging
+from collections.abc import Iterator
+from copy import deepcopy
+from pathlib import Path
+from typing import Any
 from unittest.mock import Mock, patch
 
 import pytest
+from _pytest.logging import LogCaptureFixture
 from ollama import ChatResponse, Client, ListResponse, ShowResponse
 from ollama._types import Message
 
+from src.cli.config import create_llm_components
 from src.llm.client import OllamaClient
+from src.settings.metadata import all_entries, default_of
+from src.settings.service import apply_settings, reset_setting
+from src.storage.manager import StorageManager
+from src.storage.settings_migration import migrate_config_settings
 
 
 @pytest.fixture
@@ -378,3 +389,223 @@ class TestGenerateTextStream:
 
         with pytest.raises(RuntimeError, match="Streaming text generation failed"):
             list(client.generate_text_stream("prompt"))
+
+
+class TestLiveSettingsApply:
+    """Bug reported: an ``ollama.*`` change on Settings needed a restart.
+
+    Root cause: the section was frozen into ``OllamaClient`` while
+    ``apply_settings`` only published it into the running config. Fixed as
+    qs5i.10.7 fixed ``recommendations.*``: resolved per call.
+    """
+
+    @pytest.fixture()
+    def storage(self, tmp_path: Path) -> StorageManager:
+        return StorageManager(sqlite_path=tmp_path / "settings.db")
+
+    @pytest.fixture()
+    def client_class(self) -> Iterator[Mock]:
+        """The patched ``ollama.Client`` class, one fresh instance per host."""
+        with patch("src.llm.client.Client") as mock_client_class:
+            mock_client_class.side_effect = lambda **_kwargs: Mock(spec=Client)
+            yield mock_client_class
+
+    @staticmethod
+    def _booted(config: dict[str, Any], storage: StorageManager) -> OllamaClient:
+        """The client boot builds: DB overlay applied, then the components."""
+        migrate_config_settings(config, storage)
+        client, _embeddings, _generator = create_llm_components(config)
+        assert client is not None
+        return client
+
+    @pytest.fixture()
+    def running(
+        self, storage: StorageManager, client_class: Mock
+    ) -> tuple[OllamaClient, dict[str, Any], StorageManager]:
+        config: dict[str, Any] = {"features": {"ai_enabled": True}}
+        return self._booted(config, storage), config, storage
+
+    def test_model_change_reaches_the_next_call_regression(
+        self, running: tuple[OllamaClient, dict[str, Any], StorageManager]
+    ) -> None:
+        """A saved ``ollama.model`` is the model the next generation asks for."""
+        client, config, storage = running
+        assert client.default_model == default_of("ollama.model")
+
+        apply_settings(config, storage, {"ollama.model": "qwen2.5:14b"})
+
+        client.client.chat.return_value = {"message": {"content": "hi"}}
+        client.generate_text("prompt")
+        assert client.client.chat.call_args.kwargs["model"] == "qwen2.5:14b"
+
+    def test_embedding_model_change_reaches_the_next_call_regression(
+        self, running: tuple[OllamaClient, dict[str, Any], StorageManager]
+    ) -> None:
+        """A saved ``ollama.embedding_model`` is what the next embed asks for."""
+        client, config, storage = running
+
+        apply_settings(config, storage, {"ollama.embedding_model": "mxbai-embed-large"})
+
+        client.client.embeddings.return_value = {"embedding": [0.1]}
+        client.generate_embedding("text")
+        assert client.client.embeddings.call_args.kwargs["model"] == "mxbai-embed-large"
+
+    def test_base_url_change_reaches_the_next_call_regression(
+        self,
+        running: tuple[OllamaClient, dict[str, Any], StorageManager],
+        client_class: Mock,
+    ) -> None:
+        """A saved ``ollama.base_url`` is the host the next call is sent to."""
+        client, config, storage = running
+        client.client.chat.return_value = {"message": {"content": "hi"}}
+        client.generate_text("prompt")
+        assert client_class.call_args.kwargs["host"] == default_of("ollama.base_url")
+
+        apply_settings(config, storage, {"ollama.base_url": "http://127.0.0.1:11500"})
+
+        client.client.chat.return_value = {"message": {"content": "hi"}}
+        client.generate_text("prompt")
+        assert client_class.call_args.kwargs["host"] == "http://127.0.0.1:11500"
+
+    def test_an_unchanged_base_url_reuses_one_connection(
+        self,
+        running: tuple[OllamaClient, dict[str, Any], StorageManager],
+        client_class: Mock,
+    ) -> None:
+        """Re-resolving per call must not mean a new HTTP client per call."""
+        client, _config, _storage = running
+        client.client.chat.return_value = {"message": {"content": "hi"}}
+
+        client.generate_text("one")
+        client.generate_text("two")
+
+        assert client_class.call_count == 1
+
+    def test_conversation_model_follows_a_changed_generation_model(
+        self, running: tuple[OllamaClient, dict[str, Any], StorageManager]
+    ) -> None:
+        """An empty ``conversation_model`` tracks the model in force now.
+
+        Folding the fallback in at construction would pin chat to the model
+        configured at boot.
+        """
+        client, config, storage = running
+
+        apply_settings(config, storage, {"ollama.model": "qwen2.5:14b"})
+
+        assert client.conversation_model == "qwen2.5:14b"
+
+    def test_no_ollama_setting_requires_a_restart(self) -> None:
+        """Marking one ``restart_required`` would silently re-freeze the client.
+
+        ``apply_settings`` skips the running config for those leaves, so the
+        page would go back to persisting a value nothing reads.
+        """
+        restart_gated = [
+            entry.key
+            for entry in all_entries()
+            if entry.key.startswith("ollama.") and entry.restart_required
+        ]
+
+        assert restart_gated == []
+
+    def test_resetting_a_model_reaches_the_next_call(
+        self, running: tuple[OllamaClient, dict[str, Any], StorageManager]
+    ) -> None:
+        """Reset is the second live-apply path, and lands on the same read."""
+        client, config, storage = running
+        apply_settings(config, storage, {"ollama.model": "qwen2.5:14b"})
+
+        reset_setting(config, storage, "ollama.model")
+
+        client.client.chat.return_value = {"message": {"content": "hi"}}
+        client.generate_text("prompt")
+        assert client.client.chat.call_args.kwargs["model"] == default_of(
+            "ollama.model"
+        )
+
+    def test_a_conversation_model_change_reaches_the_next_call(
+        self, running: tuple[OllamaClient, dict[str, Any], StorageManager]
+    ) -> None:
+        """Set explicitly, chat stops tracking the generation model."""
+        client, config, storage = running
+
+        apply_settings(config, storage, {"ollama.conversation_model": "llama3.2:3b"})
+
+        assert client.conversation_model == "llama3.2:3b"
+        assert client.default_model == default_of("ollama.model")
+
+    @pytest.mark.parametrize(
+        "config", [{}, {"ollama": None}, {"ollama": []}, {"ollama": {"model": ""}}]
+    )
+    def test_a_section_that_says_nothing_leaves_the_baseline_alone(
+        self, config: dict[str, Any], client_class: Mock
+    ) -> None:
+        """A bare ``ollama:`` header parses to None, and a cleared field to ''.
+
+        Both are "no answer", not "no model" — falling through to either would
+        send an empty model name to Ollama.
+        """
+        client = OllamaClient(
+            base_url="http://127.0.0.1:11434",
+            default_model="mistral:7b",
+            config_provider=lambda: config,
+        )
+
+        assert client.default_model == "mistral:7b"
+        assert client.base_url == "http://127.0.0.1:11434"
+
+    def test_resolving_never_writes_to_the_config_it_reads(
+        self, running: tuple[OllamaClient, dict[str, Any], StorageManager]
+    ) -> None:
+        """The per-call read is a reader: the lock in state.py guards writers.
+
+        Materialising a default into the running config here would be a fifth
+        writer of it, and one that never takes the lock.
+        """
+        client, config, _storage = running
+        before = deepcopy(config)
+
+        client.client.chat.return_value = {"message": {"content": "hi"}}
+        client.generate_text("prompt")
+
+        assert config == before
+
+    def test_a_base_url_off_the_machine_is_logged(
+        self, storage: StorageManager, client_class: Mock, caplog: LogCaptureFixture
+    ) -> None:
+        """config.yaml is the one way a remote host gets in, so say so once.
+
+        The settings service rejects it, leaving a hand-edited file as the
+        only route and nothing in the log to notice it by.
+        """
+        config: dict[str, Any] = {
+            "features": {"ai_enabled": True},
+            "ollama": {"base_url": "http://gpu.example.com:11434"},
+        }
+
+        with caplog.at_level(logging.WARNING, logger="src.llm.client"):
+            client = self._booted(config, storage)
+            client.client.embeddings.return_value = {"embedding": [0.1]}
+            client.generate_embedding("text")
+
+        assert "gpu.example.com" in caplog.text
+        assert "not on this machine or network" in caplog.text
+
+    def test_a_local_base_url_is_not_logged(
+        self, storage: StorageManager, client_class: Mock, caplog: LogCaptureFixture
+    ) -> None:
+        """Without this the warning could fire on every localhost boot, which
+        is how a real signal gets muted.
+        """
+        config: dict[str, Any] = {
+            "features": {"ai_enabled": True},
+            "ollama": {"base_url": "http://127.0.0.1:11434"},
+        }
+
+        with caplog.at_level(logging.WARNING, logger="src.llm.client"):
+            client = self._booted(config, storage)
+            client.client.embeddings.return_value = {"embedding": [0.1]}
+            client.generate_embedding("text")
+
+        assert caplog.text == ""

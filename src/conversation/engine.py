@@ -2,7 +2,8 @@
 
 import logging
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from src.conversation.context import (
@@ -197,11 +198,37 @@ The solar system is ending in 22 minutes. Every time. And you're going to love e
 """
 
 
+@dataclass(frozen=True)
+class _ConversationSettings:
+    """Every configurable chat knob, resolved from one read of the config."""
+
+    temperature: float
+    max_tokens: int | None
+    context_window_size: int | None
+    compact_mode: bool
+    system_prompt_template: str
+
+
+def _leaf(section: dict[str, Any], group: str, key: str, fallback: Any) -> Any:
+    """Return ``section[group][key]``, or *fallback* when it is not there.
+
+    Type-guarded: an ``llm:`` header with no children parses to ``None``,
+    which ``dict.get``'s default never catches because the key is present.
+    """
+    values = section.get(group)
+    if not isinstance(values, dict) or key not in values:
+        return fallback
+    return values[key]
+
+
 class ConversationEngine:
     """Main orchestrator for conversational AI.
 
     Coordinates context assembly, LLM interaction, tool execution,
     and memory extraction for conversational recommendations.
+
+    With a *config_provider* the ``conversation`` section resolves per turn,
+    so a Settings-page change reaches the next message without a restart.
     """
 
     def __init__(
@@ -214,21 +241,15 @@ class ConversationEngine:
         system_prompt_template: str | None = None,
         recommendation_engine: "RecommendationEngine | None" = None,
         conversation_config: dict[str, Any] | None = None,
+        config_provider: Callable[[], dict[str, Any] | None] | None = None,
     ) -> None:
         """Initialize the conversation engine.
 
         Args:
-            storage_manager: Storage manager for database operations
-            ollama_client: Ollama client for LLM interactions
-            memory_manager: Memory manager (created if not provided)
-            context_assembler: Context assembler (created if not provided)
-            tool_executor: Tool executor (created if not provided)
-            system_prompt_template: Custom system prompt template
-            recommendation_engine: Optional recommendation engine for
-                generating pre-filtered, scored backlog items
-            conversation_config: Optional conversation section from config,
-                with keys like ``llm.temperature``, ``llm.max_tokens``,
-                ``llm.context_window_size``, and ``context.compact_mode``
+            conversation_config: Baseline ``conversation`` section; collaborators
+                left unset are built from *storage_manager*.
+            config_provider: Returns the running config, read per turn. Its
+                ``conversation`` section overlays that baseline.
         """
         self.storage = storage_manager
         self.ollama_client = ollama_client
@@ -242,24 +263,72 @@ class ConversationEngine:
         )
         self.tools = tool_executor or ToolExecutor(storage_manager)
 
-        # Read conversation config
-        conversation_config = conversation_config or {}
-        llm_config = conversation_config.get("llm", {})
-        context_config = conversation_config.get("context", {})
+        self._baseline = conversation_config or {}
+        self._config_provider = config_provider
+        self._system_prompt_override = system_prompt_template
 
-        self.temperature: float = llm_config.get("temperature", 0.7)
-        self.max_tokens: int | None = llm_config.get("max_tokens") or None
-        self.context_window_size: int | None = (
-            llm_config.get("context_window_size") or None
+    @property
+    def temperature(self) -> float:
+        """The currently configured sampling temperature."""
+        return self._settings().temperature
+
+    @property
+    def max_tokens(self) -> int | None:
+        """The currently configured reply cap, or None for the model's own."""
+        return self._settings().max_tokens
+
+    @property
+    def context_window_size(self) -> int | None:
+        """The currently configured num_ctx, or None for the model's own."""
+        return self._settings().context_window_size
+
+    @property
+    def compact_mode(self) -> bool:
+        """Whether chat is currently running the condensed context."""
+        return self._settings().compact_mode
+
+    @property
+    def system_prompt_template(self) -> str:
+        """The template the next turn will fill."""
+        return self._settings().system_prompt_template
+
+    def _settings(self) -> _ConversationSettings:
+        """Resolve every chat knob from one read of the running config.
+
+        One read, because a turn uses all of them: reading again part-way
+        through would let a save hand it one leaf from before and one after.
+        """
+        running = self._conversation_config()
+        base = self._baseline
+
+        def overlaid(group: str, key: str, fallback: Any) -> Any:
+            return _leaf(running, group, key, _leaf(base, group, key, fallback))
+
+        compact_mode = bool(overlaid("context", "compact_mode", False))
+        return _ConversationSettings(
+            temperature=float(overlaid("llm", "temperature", 0.7)),
+            # ``or None`` on both: 0 is the registry default for each, meaning
+            # the model's own, and the registry materialises every leaf — so
+            # 0-present rather than key-absent is what a fresh install has.
+            max_tokens=overlaid("llm", "max_tokens", None) or None,
+            context_window_size=overlaid("llm", "context_window_size", None) or None,
+            compact_mode=compact_mode,
+            system_prompt_template=self._template_for(compact_mode),
         )
-        self.compact_mode: bool = context_config.get("compact_mode", False)
 
-        if system_prompt_template:
-            self.system_prompt_template = system_prompt_template
-        elif self.compact_mode:
-            self.system_prompt_template = COMPACT_SYSTEM_PROMPT
-        else:
-            self.system_prompt_template = FULL_SYSTEM_PROMPT
+    def _template_for(self, compact_mode: bool) -> str:
+        """Return the caller's template, else the one the mode calls for."""
+        if self._system_prompt_override:
+            return self._system_prompt_override
+        return COMPACT_SYSTEM_PROMPT if compact_mode else FULL_SYSTEM_PROMPT
+
+    def _conversation_config(self) -> dict[str, Any]:
+        """Return the running ``conversation`` section, or an empty mapping."""
+        config = self._config_provider() if self._config_provider is not None else None
+        if config is None:
+            return {}
+        section = config.get("conversation")
+        return section if isinstance(section, dict) else {}
 
     def process_message(
         self,
@@ -281,6 +350,10 @@ class ConversationEngine:
         """
         start_time = time.monotonic()
 
+        # The configuration this turn runs on, fixed here. A settings save
+        # landing while it streams changes the next turn and not this one.
+        settings = self._settings()
+
         # 1. Save user message to history
         self.memory.save_conversation_message(
             user_id=user_id,
@@ -289,7 +362,7 @@ class ConversationEngine:
         )
 
         # 1b. Pre-LLM intent detection (compact mode only)
-        if self.compact_mode:
+        if settings.compact_mode:
             intent = detect_intent(
                 message=message,
                 user_id=user_id,
@@ -304,7 +377,7 @@ class ConversationEngine:
 
         # 2. Assemble context (reduced limits in compact mode)
         context_start = time.monotonic()
-        if self.compact_mode:
+        if settings.compact_mode:
             context = self.context_assembler.assemble_context(
                 user_id=user_id,
                 user_query=message,
@@ -322,15 +395,15 @@ class ConversationEngine:
         logger.info("Context assembled in %.1fs", time.monotonic() - context_start)
 
         # 3. Build system prompt with context (and tools for full mode)
-        if self.compact_mode:
+        if settings.compact_mode:
             user_context_block = build_user_context_block_compact(context)
-            system_prompt = self.system_prompt_template.format(
+            system_prompt = settings.system_prompt_template.format(
                 user_context=user_context_block,
             )
         else:
             user_context_block = build_user_context_block(context)
             tool_descriptions = get_tool_descriptions()
-            system_prompt = self.system_prompt_template.format(
+            system_prompt = settings.system_prompt_template.format(
                 tool_descriptions=tool_descriptions,
                 user_context=user_context_block,
             )
@@ -354,9 +427,9 @@ class ConversationEngine:
                     messages=messages,
                     system_prompt=system_prompt,
                     model=self.ollama_client.conversation_model,
-                    temperature=self.temperature,
-                    max_tokens=self.max_tokens,
-                    context_window_size=self.context_window_size,
+                    temperature=settings.temperature,
+                    max_tokens=settings.max_tokens,
+                    context_window_size=settings.context_window_size,
                 ):
                     if first_token_time is None:
                         first_token_time = time.monotonic()
@@ -375,9 +448,9 @@ class ConversationEngine:
                     prompt=message,
                     system_prompt=system_prompt,
                     model=self.ollama_client.conversation_model,
-                    temperature=self.temperature,
-                    max_tokens=self.max_tokens,
-                    context_window_size=self.context_window_size,
+                    temperature=settings.temperature,
+                    max_tokens=settings.max_tokens,
+                    context_window_size=settings.context_window_size,
                 )
                 yield ConversationChunk(
                     chunk_type="text",
@@ -400,7 +473,7 @@ class ConversationEngine:
         #    tools are handled pre-LLM via intent detection)
         tool_name: str | None = None
         tool_params: dict[str, Any] | None = None
-        if not self.compact_mode:
+        if not settings.compact_mode:
             tool_name, tool_params = parse_tool_call_from_text(full_response)
         if tool_name and tool_params:
             yield ConversationChunk(
@@ -636,22 +709,17 @@ def create_conversation_engine(
     ollama_client: "OllamaClient",
     recommendation_engine: "RecommendationEngine | None" = None,
     conversation_config: dict[str, Any] | None = None,
+    config_provider: Callable[[], dict[str, Any] | None] | None = None,
 ) -> ConversationEngine:
     """Factory function to create a fully configured ConversationEngine.
 
-    Args:
-        storage_manager: Storage manager for database operations
-        ollama_client: Ollama client for LLM interactions
-        recommendation_engine: Optional recommendation engine for
-            generating pre-filtered, scored backlog items
-        conversation_config: Optional conversation section from config
-
-    Returns:
-        Configured ConversationEngine
+    *conversation_config* seeds the baseline; *config_provider* returns the
+    running config the engine re-reads per turn.
     """
     return ConversationEngine(
         storage_manager=storage_manager,
         ollama_client=ollama_client,
         recommendation_engine=recommendation_engine,
         conversation_config=conversation_config,
+        config_provider=config_provider,
     )
