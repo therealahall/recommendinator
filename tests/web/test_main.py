@@ -8,7 +8,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.cli.config import BOOTSTRAP_WEB_HOST, BOOTSTRAP_WEB_PORT
+from src.cli.config import (
+    BOOTSTRAP_WEB_HOST,
+    BOOTSTRAP_WEB_PORT,
+    MissingApiTokenError,
+)
 from src.web.main import get_local_ip_addresses, main
 
 
@@ -261,8 +265,8 @@ def _no_real_network(request: pytest.FixtureRequest):
 class TestMainBindResolution:
     """main() must never bind more broadly than the operator asked for.
 
-    The app ships no authentication, so the bind address is a security control:
-    a wildcard bind exposes the whole library, read/write, to the local network.
+    The bind address is a security control in its own right: a bearer token on
+    a wildcard bind is a credential crossing the LAN in cleartext.
     ``web.host``/``web.port`` are deliberately NOT settings-registry leaves —
     the launcher resolves them before any database is open — so this is the only
     place the resulting value is decided, and the only place it can be pinned.
@@ -591,3 +595,27 @@ class TestMainReloadBehavior:
 
         # No --config supplied: CONFIG_PATH must not be injected into env.
         assert "CONFIG_PATH" not in os.environ
+
+
+class TestMainWithoutAnApiToken:
+    """The launcher's half of the boot refusal.
+
+    ``create_app`` raises by name; what is left to decide is what the operator
+    sees. A traceback above the remedy reads like a crash rather than a thing
+    to go and fix.
+    """
+
+    @patch("src.web.main.uvicorn.run")
+    @patch("src.web.main.create_app", side_effect=MissingApiTokenError("set a token"))
+    @patch("src.web.main.load_config", return_value={})
+    def test_it_exits_with_the_message_and_never_binds(
+        self,
+        mock_load_config: MagicMock,
+        mock_create_app: MagicMock,
+        mock_uvicorn_run: MagicMock,
+    ) -> None:
+        with patch("sys.argv", ["src.web"]), pytest.raises(SystemExit) as exited:
+            main()
+
+        assert str(exited.value) == "set a token"
+        mock_uvicorn_run.assert_not_called()

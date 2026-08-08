@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from src.enrichment.manager import EnrichmentManager
 from src.storage.manager import StorageManager
 from src.web.enrichment_manager import reset_enrichment_manager
-from tests.factories import booted_web_app
+from tests.factories import authenticated_client, booted_web_app
 
 
 @pytest.fixture
@@ -51,7 +51,7 @@ def _client(storage: MagicMock, config: dict) -> Iterator[TestClient]:
     reset_enrichment_manager()
     try:
         with booted_web_app(storage, config) as app:
-            yield TestClient(app)
+            yield authenticated_client(app)
     finally:
         reset_enrichment_manager()
 

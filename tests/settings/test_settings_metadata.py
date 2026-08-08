@@ -79,14 +79,21 @@ class TestExampleConfigIsBootstrapOnly:
         ), f"registry leaves must not appear in example.yaml: {present}"
 
     def test_example_carries_only_bootstrap_web_leaves(self) -> None:
-        """example.yaml's ``web`` section holds the bind settings and nothing else.
+        """example.yaml's ``web`` section holds the boot settings, nothing else.
 
-        These three cannot be registry leaves — the launcher reads them before a
-        database exists — so the file is the only place they can live.
+        None can be a registry leaf: the launcher reads the bind settings
+        before a database exists, and ``api_token`` guards the API the
+        Settings page is served over.
         """
         config = yaml.safe_load(_EXAMPLE_CONFIG.read_text())
 
-        assert set(config["web"]) == {"host", "port", "debug"}
+        assert set(config["web"]) == {"api_token", "host", "port", "debug"}
+
+    def test_the_example_api_token_is_a_blank_to_fill_in(self) -> None:
+        """A shipped default token would authenticate every clone alike."""
+        config = yaml.safe_load(_EXAMPLE_CONFIG.read_text())
+
+        assert config["web"]["api_token"] == ""
 
     def test_only_bootstrap_sections_remain(self) -> None:
         """example.yaml carries the two bootstrap sections and nothing else.

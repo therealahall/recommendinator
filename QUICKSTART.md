@@ -18,7 +18,7 @@ mkdir -p recommendinator/{config,data,inputs} && cd recommendinator
 
 docker run -d \
   --name recommendinator \
-  -p 18473:8000 \
+  -p 127.0.0.1:18473:8000 \
   -v "$(pwd)/config:/app/config" \
   -v "$(pwd)/data:/app/data" \
   -v "$(pwd)/inputs:/app/inputs:ro" \
@@ -26,11 +26,22 @@ docker run -d \
   ghcr.io/therealahall/recommendinator:latest
 ```
 
-The container writes a starter `config/config.yaml` on first run. You do not need
-to edit it. Under Docker the bind comes from the image's `--host` and `--port`,
-which beat `config.yaml`, so **publish a different port with the `-p` mapping**
-(or `APP_PORT` under Compose) rather than `web.port`. Sources, settings and API
-keys live in the database and are managed from the app.
+The container writes a starter `config/config.yaml` on first run and mints an API
+token into it, which it prints once:
+
+```
+[entrypoint] Minted an API token. Every API request must carry it, and the web UI asks for it once:
+[entrypoint]   3f9c…
+```
+
+`docker logs recommendinator` gets it back, or read `web.api_token` out of
+`config/config.yaml`. Paste it into the UI the first time you open it.
+
+Nothing else in that file needs editing. Under Docker the bind comes from the
+image's `--host` and `--port`, which beat `config.yaml`, so **publish a different
+port with the `-p` mapping** (or `APP_PORT` under Compose) rather than
+`web.port`. Sources, settings and API keys live in the database and are managed
+from the app.
 
 For AI features, with an Ollama sidecar that downloads models for you, use
 Compose:
@@ -63,9 +74,17 @@ pnpm build
 cp config/example.yaml config/config.yaml
 ```
 
+Then set `web.api_token` in `config/config.yaml`. Every API request needs it and
+the server will not start without it:
+
+```bash
+openssl rand -hex 32
+```
+
 Node.js is only needed to build the web UI. CLI-only users can skip those three
-lines. Start the server with `python3.11 -m src.web` and open
-<http://localhost:18473>.
+lines, and the CLI needs no token — it works directly against the database.
+Start the server with `python3.11 -m src.web`, open <http://localhost:18473>, and
+paste the token when the UI asks.
 
 ## Set up enrichment first
 
@@ -202,10 +221,11 @@ python3.11 -m src.cli profile regenerate
 python3.11 -m src.web
 ```
 
-Open <http://localhost:18473>. Browsing, syncing, recommendations, a **Settings**
-page for feature flags, enrichment, scorer defaults, provider secrets and the
-advanced infrastructure options, and chat when AI is on. The sidebar shows the
-running version and banners a reload when a newer one appears.
+Open <http://localhost:18473>. It asks for the API token once and remembers it in
+the browser. Browsing, syncing, recommendations, a **Settings** page for feature
+flags, enrichment, scorer defaults, provider secrets and the advanced
+infrastructure options, and chat when AI is on. The sidebar shows the running
+version and banners a reload when a newer one appears.
 
 Each recommendation card has two actions. **Ignore** drops the item out of future
 recommendations. **Mark complete** opens an edit dialog for status, rating and

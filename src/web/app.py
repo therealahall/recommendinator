@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request, Response
+from fastapi import Depends, FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -20,6 +20,7 @@ from src.cli.config import (
     load_config,
     resolve_bootstrap_web,
     resolve_config_path,
+    take_api_token,
 )
 from src.conversation.engine import create_conversation_engine
 from src.conversation.memory import MemoryManager
@@ -33,6 +34,7 @@ from src.storage.source_migration import (
 )
 from src.web.api import APP_VERSION
 from src.web.api import router as api_router
+from src.web.auth import require_api_token
 from src.web.chat_api import router as chat_router
 from src.web.state import app_state, get_config
 
@@ -192,13 +194,19 @@ def create_app(config_path: Path | None = None) -> FastAPI:
 
     Returns:
         Configured FastAPI application
+
+    Raises:
+        MissingApiTokenError: When the config carries no usable API token.
     """
-    # Load configuration
     try:
         config = load_config(config_path)
     except FileNotFoundError as error:
         logger.error("Config file not found: %s", error)
         raise
+
+    # Outside the try below, so a missing token fails by name rather than as
+    # one more "Failed to initialize components".
+    api_token = take_api_token(config)
 
     # Resolved from raw YAML BEFORE the database overlay, so a legacy `web.debug`
     # row in the settings table cannot open /docs here while src/web/main.py
@@ -250,6 +258,7 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         # Store in app state
         app_state.config = config
         app_state.config_path = str(actual_config_path.resolve())
+        app_state.api_token = api_token
         app_state.storage = storage
         app_state.embedding_gen = embedding_gen
         app_state.engine = engine
@@ -354,9 +363,12 @@ def create_app(config_path: Path | None = None) -> FastAPI:
 
     app.add_middleware(SecurityHeadersMiddleware)
 
-    # Include API routers
-    app.include_router(api_router)
-    app.include_router(chat_router)
+    # Router-level, so an endpoint is authenticated by being registered rather
+    # than by its author remembering. Nothing under /api is exempt — including
+    # /api/status, whose version and feature report is a free fingerprint.
+    api_auth = [Depends(require_api_token)]
+    app.include_router(api_router, dependencies=api_auth)
+    app.include_router(chat_router, dependencies=api_auth)
 
     # Serve static files (for web UI)
     static_dir = Path("src/web/static")

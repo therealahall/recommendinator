@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { setActivePinia, createPinia } from 'pinia'
+import { useAuthStore } from '@/stores/auth'
 import { useApi, ApiError } from './useApi'
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -14,6 +16,8 @@ function jsonResponse(status: number, body: unknown): Response {
 
 describe('useApi ApiError', () => {
   beforeEach(() => {
+    localStorage.clear()
+    setActivePinia(createPinia())
     vi.stubGlobal('fetch', vi.fn())
   })
 
@@ -48,5 +52,85 @@ describe('useApi ApiError', () => {
     expect(err).toBeInstanceOf(ApiError)
     expect((err as ApiError).status).toBe(500)
     expect((err as ApiError).body).toBeUndefined()
+  })
+})
+
+function headersOf(call: number): Record<string, string> {
+  return vi.mocked(fetch).mock.calls[call][1]?.headers as Record<string, string>
+}
+
+describe('useApi authentication', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    setActivePinia(createPinia())
+    vi.stubGlobal('fetch', vi.fn())
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('sends the stored token as a bearer credential', async () => {
+    useAuthStore().setToken('the-token')
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(200, []))
+
+    await useApi().get('/users')
+
+    expect(headersOf(0)['Authorization']).toBe('Bearer the-token')
+  })
+
+  it('sends it on streaming requests too, which bypass request()', async () => {
+    useAuthStore().setToken('the-token')
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(200, []))
+
+    await useApi().raw('/recommendations/stream', { method: 'GET' })
+
+    expect(headersOf(0)['Authorization']).toBe('Bearer the-token')
+  })
+
+  it('keeps the caller-supplied headers alongside it', async () => {
+    useAuthStore().setToken('the-token')
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(200, {}))
+
+    await useApi().raw('/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    })
+
+    expect(headersOf(0)).toMatchObject({
+      Authorization: 'Bearer the-token',
+      'Content-Type': 'application/json',
+    })
+  })
+
+  it('sends no Authorization header when there is no token', async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(200, []))
+
+    await useApi().get('/users')
+
+    expect(headersOf(0)['Authorization']).toBeUndefined()
+  })
+
+  it('drops a token the server refuses, so the gate asks again', async () => {
+    const auth = useAuthStore()
+    auth.setToken('stale-token')
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(401, { detail: 'nope' }))
+
+    await expect(useApi().get('/users')).rejects.toBeInstanceOf(ApiError)
+
+    expect(auth.isAuthenticated).toBe(false)
+    expect(auth.rejected).toBe(true)
+  })
+
+  it('leaves the token alone on any other failure', async () => {
+    const auth = useAuthStore()
+    auth.setToken('good-token')
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(503, { detail: 'down' }))
+
+    await expect(useApi().get('/users')).rejects.toBeInstanceOf(ApiError)
+
+    expect(auth.token).toBe('good-token')
+    expect(auth.rejected).toBe(false)
   })
 })

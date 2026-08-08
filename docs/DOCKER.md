@@ -19,7 +19,7 @@ cd recommendinator
 
 docker run -d \
   --name recommendinator \
-  -p 18473:8000 \
+  -p 127.0.0.1:18473:8000 \
   -v "$(pwd)/config:/app/config" \
   -v "$(pwd)/data:/app/data" \
   -v "$(pwd)/inputs:/app/inputs:ro" \
@@ -28,11 +28,15 @@ docker run -d \
 ```
 
 Open <http://localhost:18473>. The container copies the bundled `example.yaml` to
-`config/config.yaml` on first run. Under Docker that file only matters for the
-`storage` paths and `web.debug`, because the image passes `--host` and `--port`
-on its command line and CLI flags beat `config.yaml`. **Publish a different port
-with the `-p` mapping, not `web.port`.** Sources, settings and API keys live in
-the database and are managed from inside the app.
+`config/config.yaml` on first run and mints an API token into it, printing it
+once — `docker logs recommendinator` if you miss it. The UI asks for it the first
+time you open it.
+
+Under Docker that file matters for the `storage` paths, `web.api_token` and
+`web.debug`, because the image passes `--host` and `--port` on its command line
+and CLI flags beat `config.yaml`. **Publish a different port with the `-p`
+mapping, not `web.port`.** Sources, settings and API keys live in the database
+and are managed from inside the app.
 
 ## Docker Compose
 
@@ -63,7 +67,7 @@ services:
   app:
     image: ghcr.io/therealahall/recommendinator:${IMAGE_TAG:-latest}
     ports:
-      - "${APP_BIND_PREFIX:-}${APP_PORT:-18473}:8000"
+      - "${APP_BIND_PREFIX-127.0.0.1:}${APP_PORT:-18473}:8000"
     volumes:
       - ./config:/app/config
       - ./data:/app/data
@@ -87,9 +91,22 @@ With no private plugins, leave `./private` empty or drop that volume.
 
 ### Ports
 
-The app listens on `8000` inside the container, published on `18473`. Change the
-host side with `APP_PORT` or the `ports:` mapping. The Ollama sidecar listens on
-`11434` inside the network and is not published to the host at all.
+The app listens on `8000` inside the container, published on `127.0.0.1:18473` —
+**this host only**. Change the port with `APP_PORT`, and the interface with
+`APP_BIND_PREFIX`:
+
+```bash
+APP_BIND_PREFIX=            docker compose up -d   # every interface
+APP_BIND_PREFIX=192.168.1.5: docker compose up -d  # one address
+```
+
+Both open the app to the network, and **the app never serves TLS** — the bearer
+token then crosses the network in cleartext. Put a
+[reverse proxy](#reverse-proxy) in front of it instead and leave the published
+port on loopback.
+
+The Ollama sidecar listens on `11434` inside the network and is not published to
+the host at all.
 
 ### Environment variables
 
@@ -98,7 +115,7 @@ host side with `APP_PORT` or the `ports:` mapping. The Ollama sidecar listens on
 | `TZ` | unset, so UTC | Timezone both app containers run in. Any IANA name resolves, the image carries `tzdata`. Completions are dated by the calendar day in this zone, so west of UTC an evening watch is dated a day forward until you set it. |
 | `IMAGE_TAG` | `latest` | Tag the compose file pulls. The `-ai` suffix is appended for the AI service. |
 | `APP_PORT` | `18473` | Host port for the web UI. |
-| `APP_BIND_PREFIX` | unset, so every interface | Host interface to publish on, written **with a trailing colon**: `APP_BIND_PREFIX=127.0.0.1:`. |
+| `APP_BIND_PREFIX` | `127.0.0.1:`, so this host only | Host interface to publish on, written **with a trailing colon**: `APP_BIND_PREFIX=192.168.1.5:`. Set it empty for every interface. Anything but the default puts a cleartext bearer token on your network — use a reverse proxy. |
 | `COMPOSE_PROFILES` | unset | Alternative to `--profile ai`. You still have to name `app-ai` on the up command. |
 | `OLLAMA_BASE_URL` | `http://ollama:11434` | Set for you inside the AI service. Override only for a remote Ollama. |
 | `OLLAMA_MODEL` | `mistral:7b` | Generation model the sidecar pulls. Must match the app's `ollama.model`. |
@@ -111,9 +128,13 @@ of two dates. Only new completions get the right day.
 
 ## First run
 
-The entrypoint copies `example.yaml` to `config.yaml` when none exists, says so
-in the log, and starts the app. It never overwrites an existing file, so restarts
-are safe.
+The entrypoint copies `example.yaml` to `config.yaml` when none exists, mints a
+random `web.api_token` into it, prints that token once, and starts the app. It
+never overwrites an existing file, so restarts are safe — and never reprints the
+token, so it is not repeated into your logs on every start.
+
+Rotating it is an edit to `config.yaml`: the config watcher picks the new value
+up without a restart, and every browser is asked for it again.
 
 The UI comes up with no sources, so ingestion does nothing until you add them
 from the **Data** tab or `source create`, with API keys from the **Settings**
@@ -197,8 +218,10 @@ To pin, set `IMAGE_TAG=X.Y.Z` and run the same two commands.
 
 ## Reverse proxy
 
-The app speaks plain HTTP and expects TLS to terminate in front of it. With
-[Caddy](https://caddyserver.com/):
+**The app never serves TLS**, and it never will — HTTPS terminates in front of
+it. That is not optional for anything beyond loopback: the API is authenticated
+with a bearer token, and plain HTTP puts that token on the wire in cleartext.
+With [Caddy](https://caddyserver.com/):
 
 ```caddyfile
 recommendinator.example.com {
@@ -208,14 +231,15 @@ recommendinator.example.com {
 
 nginx and Traefik are a conventional `proxy_pass` to the same host and port.
 
-With the proxy on the same host, set `APP_BIND_PREFIX=127.0.0.1:` (trailing colon
-included) so the published port binds to loopback. The proxy still reaches it,
-nothing else on the network does.
+With the proxy on the same host, leave `APP_BIND_PREFIX` at its default so the
+published port stays on loopback. The proxy still reaches it, nothing else on
+the network does.
 
-**The app has no authentication anywhere**, so the proxy has to enforce its own:
-basic auth, forward auth, an IP allowlist or a VPN. It does not trust
-`X-Forwarded-*` headers, so the links it emits use the host and port the request
-arrived on. That is correct wherever the proxy preserves `Host`.
+The token authenticates the API; the proxy is welcome to add its own layer
+(forward auth, an IP allowlist, a VPN) and several deployments will want one.
+The app does not trust `X-Forwarded-*` headers, so the links it emits use the
+host and port the request arrived on. That is correct wherever the proxy
+preserves `Host`.
 
 ## Architectures
 
@@ -232,6 +256,22 @@ docker pull --platform linux/arm64 ghcr.io/therealahall/recommendinator:latest
 Settings badged "restart required" need `docker compose restart`. Everything else
 on the **Settings** page applies immediately. `config.yaml` is only written on
 first run, so edit it on the host and restart.
+
+### The container exits saying "No API token configured"
+
+`config.yaml` exists but has no `web.api_token`, so the entrypoint's first-run
+mint was skipped. Add one and restart:
+
+```bash
+openssl rand -hex 32   # paste into web.api_token in ./config/config.yaml
+docker compose restart
+```
+
+### The app is unreachable from another machine
+
+That is the default: the port is published on `127.0.0.1` only. Put a reverse
+proxy in front of it, or set `APP_BIND_PREFIX` and accept a cleartext token on
+your network. See [Ports](#ports).
 
 ### Port 18473 is taken
 

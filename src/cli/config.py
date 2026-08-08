@@ -45,6 +45,50 @@ BOOTSTRAP_WEB_HOST = "127.0.0.1"
 BOOTSTRAP_WEB_PORT = 18473
 BOOTSTRAP_WEB_DEBUG = False
 
+# Bootstrap-only for the same reason as the bind settings, and deliberately not
+# a settings-registry leaf: no API caller may read this back or rewrite it.
+MIN_API_TOKEN_LENGTH = 32
+
+_HOW_TO_MINT = (
+    f"a random string of at least {MIN_API_TOKEN_LENGTH} characters, such as "
+    "the output of `openssl rand -hex 32`"
+)
+
+NO_API_TOKEN_MESSAGE = (
+    f"No API token configured. Set web.api_token in config.yaml to {_HOW_TO_MINT}, "
+    "then start again. The API answers 401 without it, so there is no "
+    "unauthenticated mode to fall back to. Docker mints one on first run."
+)
+
+SHORT_API_TOKEN_MESSAGE = (
+    f"web.api_token is shorter than {MIN_API_TOKEN_LENGTH} characters. Replace "
+    f"it with {_HOW_TO_MINT}, then start again."
+)
+
+
+class MissingApiTokenError(RuntimeError):
+    """No usable ``web.api_token`` was configured."""
+
+
+def take_api_token(config: dict[str, Any]) -> str:
+    """Remove ``web.api_token`` from *config* and return it.
+
+    Popped, not read: the credential every request is checked against must not
+    survive in the dict handed to every component.
+
+    Raises:
+        MissingApiTokenError: When no usable token is configured.
+    """
+    raw_web = config.get("web")
+    raw_token = raw_web.pop("api_token", None) if isinstance(raw_web, dict) else None
+
+    token = raw_token.strip() if isinstance(raw_token, str) else ""
+    if not token:
+        raise MissingApiTokenError(NO_API_TOKEN_MESSAGE)
+    if len(token) < MIN_API_TOKEN_LENGTH:
+        raise MissingApiTokenError(SHORT_API_TOKEN_MESSAGE)
+    return token
+
 
 class BootstrapWebSettings(NamedTuple):
     """The pre-database web bind settings."""
@@ -71,8 +115,8 @@ def resolve_bootstrap_web(
     * ``host`` requires a non-empty ``str``. A blank ``host:`` yields None or ""
       and both are wildcard binds at the socket layer; a non-string (an unquoted
       ``8080``, a list) would reach uvicorn and either fail or bind somewhere
-      unexpected. This app has no authentication, so an accidental wildcard
-      exposes the whole library — every malformed shape must land on loopback.
+      unexpected. This app never serves TLS, so an accidental wildcard puts the
+      API token on the wire — every malformed shape must land on loopback.
     * ``port`` checks ``isinstance`` rather than truthiness, because 0 is a
       meaningful value (ask the OS for an ephemeral port) rather than a blank.
     * ``debug`` requires a real ``bool`` and falls back to

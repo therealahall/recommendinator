@@ -8,7 +8,7 @@ configure.
 
 | File | Contains |
 |------|----------|
-| `config/config.yaml` | Bootstrap secrets, migrated to the database on startup |
+| `config/config.yaml` | The API token, plus bootstrap secrets migrated to the database on startup |
 | `data/recommendations.db` | Consumption history, encrypted credentials |
 | `data/.credential_key` | Fernet key for those credentials |
 | `data/chroma_db/` | Vector embeddings of your content, AI only |
@@ -48,6 +48,50 @@ sensitive.** A secret is left behind when the plugin is no longer installed, or
 when the field holding it is no longer marked sensitive. Removal deletes no
 library items.
 
+## API authentication
+
+**Every `/api` route requires a bearer token, and the server refuses to start
+without one.** There is no unauthenticated mode.
+
+```yaml
+# config/config.yaml
+web:
+  api_token: "…"   # openssl rand -hex 32
+```
+
+```
+Authorization: Bearer <token>
+```
+
+Under Docker the entrypoint mints a token into `config.yaml` on first run and
+prints it once, so a fresh `docker compose up` is authenticated with nothing to
+set. From source, generate one yourself — boot fails with the same instruction
+if you do not. Minimum 32 characters.
+
+The web UI asks for the token once and keeps it in the browser's local storage.
+The CLI needs nothing: it works directly against the database and never calls
+the API.
+
+- **No `/api` route is exempt**, including `GET /api/status`. It reports which
+  components are up, which is a version and feature fingerprint and not
+  something an unauthenticated caller needs.
+- **The SPA shell (`/`, `/static/*`) is not gated**, because it is what asks
+  for the token: a browser sends no `Authorization` header on a top-level
+  navigation. Those responses are the application's own JavaScript, CSS and
+  themes, and hold none of your data.
+- **The token is not a setting.** It lives in `config.yaml`, is read once at
+  boot and removed from the in-memory config, and is not in the settings
+  registry — so `GET /api/settings` cannot list it and `PUT /api/settings`
+  cannot change it.
+- Comparison is constant-time. The token is never logged, never echoed in an
+  error, and a 401 body carries neither the configured token nor the guess.
+- Editing `web.api_token` and saving is picked up by the config watcher, so a
+  rotation takes effect without a restart. Removing the key leaves the running
+  token in place and warns; the next start then fails.
+- **The app never serves TLS.** A bearer token over plain HTTP crosses the
+  network in cleartext, so anything beyond loopback belongs behind a reverse
+  proxy terminating HTTPS. See [docs/DOCKER.md](DOCKER.md#reverse-proxy).
+
 ## Entering keys
 
 Enter secrets in the app, never in `config.yaml`:
@@ -69,11 +113,16 @@ access to your Steam library. Rotate it by re-running `source set-secret`.
 | Sonarr, Radarr | Media library sync | Configured |
 | TMDB, OpenLibrary, RAWG | Metadata enrichment | Enrichment enabled |
 
-The web interface binds `127.0.0.1` by default and has **no authentication on
-any endpoint**. Running `python3.11 -m src.web --host 0.0.0.0` hands everyone on
-your network read and write access to your library. Do not expose it to the
-public internet. Under Docker, services talk over an internal network isolated
-from the host by default.
+The web interface binds `127.0.0.1` by default, and Docker publishes its port on
+`127.0.0.1` too (`APP_BIND_PREFIX`). Both are deliberate: the API token is the
+only thing standing between the network and your library, and the app serves it
+over plain HTTP.
+
+Reaching it from another machine means either a reverse proxy terminating TLS
+(the supported path) or accepting that the token crosses your network in
+cleartext. Do not expose it to the public internet without the proxy. Under
+Docker, services talk over an internal network isolated from the host by
+default.
 
 ## Input handling
 
@@ -103,9 +152,11 @@ ChromaDB stores embeddings locally, and Ollama is reachable on localhost only.
 ## Deployment checklist
 
 - [ ] `config/config.yaml` is git-ignored
+- [ ] `web.api_token` is a value you generated, not one you copied from a doc
 - [ ] API keys are not in code or logs
 - [ ] Database file has restricted permissions
-- [ ] Web interface bound to localhost, or behind a reverse proxy
+- [ ] Web interface bound to localhost (and `APP_BIND_PREFIX` left at
+      `127.0.0.1:` under Docker), or behind a reverse proxy terminating TLS
 - [ ] Docker containers run as a non-root user
 - [ ] Ollama only reachable internally
 

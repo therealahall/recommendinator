@@ -53,6 +53,7 @@ from src.storage.settings_migration import migrate_config_settings
 from src.web.api import _get_recommendations_config
 from src.web.app import create_app
 from src.web.state import app_state, get_config, get_engine, get_storage
+from tests.factories import API_TOKEN, authenticated_client
 
 _GENRE_WEIGHT_KEY = "recommendations.scorer_weights.genre_match"
 _CREATOR_WEIGHT_KEY = "recommendations.scorer_weights.creator_match"
@@ -112,12 +113,14 @@ def booted_app(tmp_path: Path) -> Iterator[TestClient]:
                 "storage": {
                     "database_path": str(tmp_path / "recommendations.db"),
                     "vector_db_path": str(tmp_path / "chroma_db"),
-                }
+                },
+                # create_app refuses to boot without one.
+                "web": {"api_token": API_TOKEN},
             }
         )
     )
     try:
-        yield TestClient(create_app(config_path))
+        yield authenticated_client(create_app(config_path))
     finally:
         for name, value in saved.items():
             setattr(app_state, name, value)

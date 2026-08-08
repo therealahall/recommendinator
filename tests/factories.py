@@ -2,17 +2,32 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import fields
 from typing import Any
 from unittest.mock import NonCallableMock, patch
 
 from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
+from src.cli.config import take_api_token
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.web.app import create_app
 from src.web.state import AppState, app_state
+
+# The token ``booted_web_app`` boots with and ``authenticated_client``
+# presents. Long enough to satisfy ``MIN_API_TOKEN_LENGTH``.
+API_TOKEN = "test-api-token-000102030405060708090a0b"
+
+
+def authenticated_client(app: FastAPI, **kwargs: Any) -> TestClient:
+    """Return a ``TestClient`` presenting :data:`API_TOKEN` on every request.
+
+    Every ``/api`` route requires the token, so a bare ``TestClient`` reaches
+    no endpoint at all.
+    """
+    return TestClient(app, headers={"Authorization": f"Bearer {API_TOKEN}"}, **kwargs)
 
 
 def back_mock_settings_store(storage: Any) -> dict[str, Any]:
@@ -50,6 +65,7 @@ def booted_web_app(
     config: dict[str, Any],
     llm_components: tuple[Any, Any, Any] = (None, None, None),
     engine: Any = None,
+    api_token: str | None = API_TOKEN,
 ) -> Iterator[FastAPI]:
     """Boot ``create_app`` over patched I/O boundaries, with ``storage``/``config``.
 
@@ -78,9 +94,16 @@ def booted_web_app(
     leaked into a field ``create_app`` never assigns, and a raise inside
     ``create_app`` would otherwise leave the singleton half-populated for the
     rest of the session.
+
+    ``api_token`` is supplied to the boot rather than written into *config*, so
+    a caller testing a malformed ``web:`` section still gets the section it
+    passed. ``None`` runs the real read, for the tests that are about it.
     """
     saved = {f.name: getattr(app_state, f.name) for f in fields(app_state)}
     back_mock_settings_store(storage)
+    read_token: Callable[[dict[str, Any]], str] = (
+        take_api_token if api_token is None else lambda _config: api_token
+    )
     defaults = AppState()
     try:
         # Field by field, never a rebind: the singleton is imported by name in
@@ -93,6 +116,7 @@ def booted_web_app(
             patch("src.web.app.create_llm_components", return_value=llm_components),
             patch("src.web.app.create_recommendation_engine", return_value=engine),
             patch("src.web.app.migrate_config_credentials"),
+            patch("src.web.app.take_api_token", read_token),
             # Resolved independently of the patched loader, so unpatched this
             # binds the path of whatever config file the machine has — which a
             # reload would then read for real. The raise takes create_app's own

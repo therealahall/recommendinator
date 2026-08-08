@@ -16,10 +16,27 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
+
+from src.cli.config import MIN_API_TOKEN_LENGTH as _MIN_TOKEN_LENGTH
 
 # parents[2] resolves /tests/docker/test_entrypoint.py -> repo root.
 # If this test file is ever moved, this constant must be updated.
-ENTRYPOINT = Path(__file__).resolve().parents[2] / "docker" / "entrypoint.sh"
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+ENTRYPOINT = _REPO_ROOT / "docker" / "entrypoint.sh"
+
+# The shape of the shipped example.yaml the token substitution depends on: an
+# empty api_token inside a web section carrying other keys.
+_EXAMPLE_WITH_PLACEHOLDER = (
+    'web:\n  api_token: ""\n  host: "127.0.0.1"\n  port: 18473\n  debug: false\n'
+)
+
+
+def _api_token(config: Path) -> str:
+    """Read ``web.api_token`` back out of a written config file."""
+    token = yaml.safe_load(config.read_text())["web"]["api_token"]
+    assert isinstance(token, str)
+    return token
 
 
 def _run(config_dir: Path, *cmd: str) -> subprocess.CompletedProcess[str]:
@@ -86,6 +103,87 @@ class TestEntrypointFirstRun:
         # Verify exec actually replaced the shell — the passed command's
         # stdout must reach the test, not get swallowed.
         assert "exec-target-ran" in result.stdout
+
+
+class TestEntrypointMintsTheApiToken:
+    """The container's answer to auth being required rather than optional.
+
+    A fresh `docker compose up` has to reach a working, authenticated app, and
+    the operator has to be told the token exactly once.
+    """
+
+    def test_the_placeholder_is_replaced_with_a_random_token(
+        self, config_dir: Path
+    ) -> None:
+        """Both halves matter: a token is written, and it is not a constant."""
+        (config_dir / "example.yaml").write_text(_EXAMPLE_WITH_PLACEHOLDER)
+
+        first = _run(config_dir, "echo", "ok")
+        written = _api_token(config_dir / "config.yaml")
+
+        (config_dir / "config.yaml").unlink()
+        _run(config_dir, "echo", "ok")
+
+        assert first.returncode == 0
+        assert len(written) >= _MIN_TOKEN_LENGTH
+        assert written != _api_token(config_dir / "config.yaml")
+
+    def test_the_token_is_printed_once_with_the_bearer_instruction(
+        self, config_dir: Path
+    ) -> None:
+        """Nothing else tells the operator what to paste into the UI."""
+        (config_dir / "example.yaml").write_text(_EXAMPLE_WITH_PLACEHOLDER)
+
+        result = _run(config_dir, "echo", "ok")
+
+        token = _api_token(config_dir / "config.yaml")
+        assert result.stdout.count(token) == 1
+        assert "Minted an API token" in result.stdout
+
+    def test_the_rest_of_the_web_section_survives(self, config_dir: Path) -> None:
+        """Substituted in place, so host, port and debug are not rewritten."""
+        (config_dir / "example.yaml").write_text(_EXAMPLE_WITH_PLACEHOLDER)
+
+        _run(config_dir, "echo", "ok")
+
+        written = (config_dir / "config.yaml").read_text()
+        assert yaml.safe_load(written)["web"]["port"] == 18473
+        assert written.count("web:") == 1
+
+    def test_a_second_start_neither_remints_nor_reprints(
+        self, config_dir: Path
+    ) -> None:
+        """The token is a credential, so a steady-state restart must not log it."""
+        (config_dir / "example.yaml").write_text(_EXAMPLE_WITH_PLACEHOLDER)
+        _run(config_dir, "echo", "ok")
+        token = _api_token(config_dir / "config.yaml")
+
+        second = _run(config_dir, "echo", "ok")
+
+        assert _api_token(config_dir / "config.yaml") == token
+        assert token not in second.stdout
+        assert token not in second.stderr
+
+    def test_an_example_with_no_placeholder_warns_instead_of_failing_silently(
+        self, config_dir: Path
+    ) -> None:
+        """Otherwise the app dies at boot and nothing says why."""
+        (config_dir / "example.yaml").write_text("web:\n  port: 18473\n")
+
+        result = _run(config_dir, "echo", "still-ran")
+
+        assert result.returncode == 0
+        assert "could not write web.api_token" in result.stderr
+        assert "still-ran" in result.stdout
+
+    def test_the_shipped_example_carries_the_placeholder_the_script_looks_for(
+        self,
+    ) -> None:
+        """The substitution and the file it edits are in two repositories' worth
+        of distance from each other, and nothing else pairs them."""
+        example = (_REPO_ROOT / "config" / "example.yaml").read_text()
+
+        assert '  api_token: ""' in example
 
 
 class TestEntrypointIdempotency:
