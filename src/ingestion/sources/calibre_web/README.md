@@ -32,6 +32,12 @@ password at create time.
 | `password` | str | yes | Calibre-Web login password. Sensitive — stored encrypted, not in YAML. |
 | `verify_ssl` | bool | no | Verify the TLS certificate (default `true`; set `false` for self-signed instances). |
 
+**Changing `url` or `verify_ssl` clears the stored password.** It was entrusted
+to one host over one kind of connection, and a rewritable URL that carried it
+elsewhere would be a way to steal it. Re-run `source set-secret` (or use
+**Replace**) after either edit. `url` must be `http` or `https`, name a host,
+and not embed `user:password@`.
+
 Set the password when you create the source in the web UI **Data** tab — enter it
 directly in the **+ Add source** modal (it renders as a password field and is
 stored encrypted). To set or rotate it later, use the Replace action on the

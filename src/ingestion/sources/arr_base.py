@@ -15,6 +15,7 @@ from src.ingestion.plugin_base import (
     SourceError,
     SourcePlugin,
 )
+from src.ingestion.urls import source_url_error
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.utils.progress import log_progress
 
@@ -82,6 +83,7 @@ class ArrPlugin(SourcePlugin):
                 field_type=str,
                 required=True,
                 default=self._default_url,
+                credential_bound=True,
                 description=f"{self.display_name} base URL",
             ),
             ConfigField(
@@ -107,8 +109,13 @@ class ArrPlugin(SourcePlugin):
                 "'api_key' is required. "
                 f"Find it in {self.display_name}: Settings > General > Security"
             )
-        if not config.get("url", "").strip():
+        url = (config.get("url") or "").strip()
+        if not url:
             errors.append("'url' is required")
+        else:
+            url_error = source_url_error(url)
+            if url_error is not None:
+                errors.append(url_error)
         return errors
 
     @abstractmethod
@@ -171,6 +178,12 @@ class ArrPlugin(SourcePlugin):
         """
         base_url = config.get("url", self._default_url).rstrip("/")
         api_key = config.get("api_key", "").strip()
+
+        # A sync of every source skips validate_config, so the api key would
+        # otherwise reach whatever scheme and host the config now names.
+        url_error = source_url_error(base_url)
+        if url_error is not None:
+            raise SourceError(self.name, url_error)
 
         logger.info("Fetching items from %s...", self.display_name)
         try:

@@ -996,13 +996,12 @@ def create_user(
 
 def update_user_settings(
     conn: sqlite3.Connection, user_id: int, settings: dict
-) -> None:
-    """Update user settings.
+) -> bool:
+    """Merge *settings* into the user's blob.
 
-    Args:
-        conn: SQLite database connection
-        user_id: User ID
-        settings: Settings dict to merge with existing
+    Returns:
+        False when the UPDATE matched no row, so a caller can tell a write
+        that landed from one naming a user that does not exist.
     """
     cursor = conn.cursor()
 
@@ -1025,6 +1024,7 @@ def update_user_settings(
         (json.dumps(existing), user_id),
     )
     conn.commit()
+    return cursor.rowcount > 0
 
 
 def get_all_users(conn: sqlite3.Connection) -> list[UserDict]:
@@ -1906,6 +1906,30 @@ def delete_credential(
     )
     conn.commit()
     return cursor.rowcount > 0
+
+
+def delete_credentials_for_source(
+    conn: sqlite3.Connection,
+    user_id: int,
+    source_id: str,
+) -> int:
+    """Delete every credential row for a source.
+
+    Args:
+        conn: SQLite database connection
+        user_id: User ID
+        source_id: Source identifier
+
+    Returns:
+        Number of rows deleted.
+    """
+    cursor = conn.cursor()
+    cursor.execute(
+        "DELETE FROM credentials WHERE user_id = ? AND source_id = ?",
+        (user_id, source_id),
+    )
+    conn.commit()
+    return cursor.rowcount
 
 
 def credential_row_exists(

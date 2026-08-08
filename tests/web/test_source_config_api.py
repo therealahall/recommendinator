@@ -8,6 +8,7 @@ non-sensitive fields, secrets, and the enabled flag.
 
 from __future__ import annotations
 
+import logging
 import threading
 from collections.abc import Iterator
 from pathlib import Path
@@ -650,6 +651,178 @@ class TestCreateSourceEndpoint:
         assert response.status_code == 400
 
 
+class TestTheWriteBoundaryRefusesWhatTheSyncWouldReject:
+    """Reported: a web operator never learns why a sync fails.
+
+    ``PUT .../config`` stored ``path: /etc/passwd`` with a 200, and the sync
+    that then failed answers a fixed string naming no reason.
+    """
+
+    @pytest.fixture()
+    def client(self, storage: StorageManager) -> Iterator[TestClient]:
+        """Against the real plugin registry: the fakes validate nothing."""
+        config: dict[str, Any] = {
+            "storage": {"database_path": "data/test.db"},
+            "inputs": {},
+        }
+        with (
+            patch("src.web.app.migrate_source_labels"),
+            patch("src.web.app.migrate_source_config_plugins"),
+            booted_web_app(storage, config) as app,
+        ):
+            yield authenticated_client(app)
+
+    def test_a_created_path_outside_the_allowed_roots_is_refused_with_the_reason(
+        self, client: TestClient, storage: StorageManager
+    ) -> None:
+        response = client.post(
+            "/api/sync/sources",
+            json={
+                "id": "leaky",
+                "plugin": "csv_import",
+                "values": {"path": "/etc/passwd", "content_type": "book"},
+            },
+        )
+
+        assert response.status_code == 400
+        assert "outside the allowed source roots" in response.json()["detail"]
+        assert storage.get_source_config(1, "leaky") is None
+
+    def test_an_updated_path_outside_the_allowed_roots_is_refused_with_the_reason(
+        self, client: TestClient, storage: StorageManager, tmp_path: Path
+    ) -> None:
+        readable = tmp_path / "books.csv"
+        readable.write_text("title\n")
+        client.post(
+            "/api/sync/sources",
+            json={
+                "id": "books",
+                "plugin": "csv_import",
+                "values": {"path": str(readable), "content_type": "book"},
+            },
+        )
+
+        response = client.put(
+            "/api/sync/sources/books/config",
+            json={"values": {"path": "/etc/passwd"}},
+        )
+
+        assert response.status_code == 400
+        assert "outside the allowed source roots" in response.json()["detail"]
+        row = storage.get_source_config(1, "books")
+        assert row is not None
+        assert row["config"]["path"] == str(readable)
+
+    def test_a_file_url_is_refused_with_the_reason(self, client: TestClient) -> None:
+        """``source_url_error`` was reachable from sync alone until now."""
+        response = client.post(
+            "/api/sync/sources",
+            json={
+                "id": "sonarr",
+                "plugin": "sonarr",
+                "values": {"url": "file:///etc/passwd"},
+            },
+        )
+
+        assert response.status_code == 400
+        assert "http:// or https://" in response.json()["detail"]
+
+    def test_an_unparseable_url_answers_400_rather_than_500(
+        self, client: TestClient
+    ) -> None:
+        """``urlsplit`` raises on this netloc, and nothing above catches it.
+
+        Uncaught it leaves ``validate_config`` raising instead of returning
+        errors, which the API answers 500 with a traceback.
+        """
+        response = client.post(
+            "/api/sync/sources",
+            json={
+                "id": "sonarr",
+                "plugin": "sonarr",
+                "values": {"url": "http://[foo]"},
+            },
+        )
+
+        assert response.status_code == 400
+        assert "is not a valid URL" in response.json()["detail"]
+
+    def test_a_source_whose_secret_is_not_entered_yet_stays_editable(
+        self, client: TestClient
+    ) -> None:
+        """Only what the write breaks is refused.
+
+        The secret endpoint runs after create, so a network source is briefly
+        missing its api_key — refusing edits then would deadlock it.
+        """
+        created = client.post(
+            "/api/sync/sources",
+            json={
+                "id": "sonarr",
+                "plugin": "sonarr",
+                "values": {"url": "http://sonarr.internal:8989"},
+            },
+        )
+
+        moved = client.put(
+            "/api/sync/sources/sonarr/config",
+            json={"values": {"url": "http://sonarr.internal:9999"}},
+        )
+
+        assert (created.status_code, moved.status_code) == (201, 200)
+        assert moved.json()["field_values"]["url"] == "http://sonarr.internal:9999"
+
+
+class TestSyncNamesTheReasonItRefused:
+    """Reported: a web operator is told to check settings reporting nothing
+    wrong. The write boundary refuses only what a write introduces, so a
+    source broken since edits clean while sync named no reason. Sync returns
+    the plugin's messages now.
+    """
+
+    @pytest.fixture()
+    def client(self, storage: StorageManager) -> Iterator[TestClient]:
+        """Against the real plugin registry: the fakes validate nothing."""
+        config: dict[str, Any] = {
+            "storage": {"database_path": "data/test.db"},
+            "inputs": {},
+        }
+        with (
+            patch("src.web.app.migrate_source_labels"),
+            patch("src.web.app.migrate_source_config_plugins"),
+            booted_web_app(storage, config) as app,
+        ):
+            yield authenticated_client(app)
+
+    def test_a_source_broken_after_it_was_written_still_says_why(
+        self, client: TestClient, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The write was valid, so no edit will ever refuse this one.
+
+        Containment runs before existence in all six file plugins, so a
+        surviving "not found" names a path inside the allowed roots.
+        """
+        readable = tmp_path / "books.csv"
+        readable.write_text("title\n")
+        created = client.post(
+            "/api/sync/sources",
+            json={
+                "id": "books",
+                "plugin": "csv_import",
+                "values": {"path": str(readable), "content_type": "book"},
+            },
+        )
+        readable.unlink()
+
+        with caplog.at_level(logging.WARNING, logger="src.web.api"):
+            sync = client.post("/api/update", json={"source": "books"})
+
+        assert created.status_code == 201
+        assert sync.status_code == 400
+        assert "CSV file not found" in sync.json()["detail"]
+        assert "CSV file not found" in caplog.text
+
+
 class TestDeleteSourceEndpoint:
     def test_removes_db_row_and_credentials(
         self, client: TestClient, storage: StorageManager
@@ -800,3 +973,73 @@ class TestUpdateEndpointDbOnlySourcesRegression:
         response = client.post("/api/update", json={"source": "no_such_source"})
         assert response.status_code == 400
         assert "disabled or not configured" in response.json()["detail"]
+
+
+class TestSourceCredentialExfiltrationRegression:
+    """Regression: one PUT repointed a source and the next sync sent its secret.
+
+    Bug: ``url`` and ``verify_ssl`` were freely writable. Fix: both are
+    ``credential_bound``, so the write clears the stored password first.
+    """
+
+    @pytest.fixture()
+    def real_plugin_client(self, storage: StorageManager) -> Iterator[TestClient]:
+        """A booted app over the real plugin registry, so calibre_web resolves."""
+        engine = Mock(spec=RecommendationEngine)
+        engine.storage = storage
+        config: dict[str, Any] = {
+            "storage": {"database_path": "data/test.db"},
+            "inputs": {},
+        }
+        with (
+            patch("src.web.app.migrate_source_labels"),
+            patch("src.web.app.migrate_source_config_plugins"),
+            booted_web_app(storage, config, engine=engine) as app,
+        ):
+            yield authenticated_client(app)
+
+    def test_the_reported_sequence_leaves_the_password_behind(
+        self,
+        real_plugin_client: TestClient,
+        storage: StorageManager,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        client = real_plugin_client
+        create = client.post(
+            "/api/sync/sources",
+            json={
+                "id": "calibre",
+                "plugin": "calibre_web",
+                "values": {
+                    "url": "http://localhost:8083",
+                    "username": "reader",
+                    "verify_ssl": True,
+                },
+                "enabled": True,
+            },
+        )
+        assert create.status_code == 201
+        stored = client.put(
+            "/api/sync/sources/calibre/secret/password", json={"value": "hunter2"}
+        )
+        assert stored.status_code == 204
+        assert storage.get_credential(1, "calibre", "password") == "hunter2"
+
+        repointed = client.put(
+            "/api/sync/sources/calibre/config",
+            json={"values": {"url": "https://attacker.example", "verify_ssl": False}},
+        )
+
+        assert repointed.status_code == 200
+        body = repointed.json()
+        assert body["secret_status"]["password"] is False
+        assert body["field_values"]["url"] == "https://attacker.example"
+        assert storage.get_credential(1, "calibre", "password") is None
+
+        with patch("requests.get") as requested, caplog.at_level(logging.WARNING):
+            sync = client.post("/api/update", json={"source": "calibre"})
+
+        assert sync.status_code == 400
+        assert "'password' is required" in sync.json()["detail"]
+        assert "'password' is required" in caplog.text
+        requested.assert_not_called()

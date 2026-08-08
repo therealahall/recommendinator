@@ -1046,3 +1046,65 @@ class TestSourceRemove:
             config=base_config,
         )
         assert result.exit_code != 0
+
+
+class TestSourceSetClearsBoundCredentials:
+    """The CLI repoints a source too, so it must drop the same secrets.
+
+    Runs against the real registry: the shared fakes carry no
+    ``credential_bound`` field, and one that did would prove only that this
+    test's own schema was honoured.
+    """
+
+    @pytest.fixture()
+    def migrated(self, storage: StorageManager) -> StorageManager:
+        storage.upsert_source_config(
+            1,
+            "calibre",
+            "calibre_web",
+            {"url": "http://localhost:8083", "username": "reader"},
+            enabled=True,
+        )
+        storage.save_credential(1, "calibre", "password", "hunter2")
+        return storage
+
+    def test_repointing_the_url_clears_the_password(
+        self, cli_runner: CliRunner, migrated: StorageManager
+    ) -> None:
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["source", "set", "calibre", "url", "https://attacker.example"],
+            mock_storage=migrated,
+            config={"inputs": {}},
+        )
+
+        assert result.exit_code == 0
+        assert migrated.get_credential(1, "calibre", "password") is None
+
+    def test_disabling_tls_verification_clears_the_password(
+        self, cli_runner: CliRunner, migrated: StorageManager
+    ) -> None:
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["source", "set", "calibre", "verify_ssl", "false"],
+            mock_storage=migrated,
+            config={"inputs": {}},
+        )
+
+        assert result.exit_code == 0
+        row = migrated.get_source_config(1, "calibre")
+        assert row is not None and row["config"]["verify_ssl"] is False
+        assert migrated.get_credential(1, "calibre", "password") is None
+
+    def test_an_unrelated_field_keeps_the_password(
+        self, cli_runner: CliRunner, migrated: StorageManager
+    ) -> None:
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["source", "set", "calibre", "username", "someone-else"],
+            mock_storage=migrated,
+            config={"inputs": {}},
+        )
+
+        assert result.exit_code == 0
+        assert migrated.get_credential(1, "calibre", "password") == "hunter2"

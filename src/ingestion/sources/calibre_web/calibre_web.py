@@ -16,6 +16,7 @@ from src.ingestion.plugin_base import (
     SourceError,
     SourcePlugin,
 )
+from src.ingestion.urls import source_url_error
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 
 if TYPE_CHECKING:
@@ -104,6 +105,7 @@ class CalibreWebPlugin(SourcePlugin):
                 name="url",
                 field_type=str,
                 required=True,
+                credential_bound=True,
                 description="Calibre-Web base URL (e.g. http://localhost:8083)",
             ),
             ConfigField(
@@ -124,6 +126,7 @@ class CalibreWebPlugin(SourcePlugin):
                 field_type=bool,
                 required=False,
                 default=True,
+                credential_bound=True,
                 description="Verify the TLS certificate (disable for self-signed)",
             ),
         ]
@@ -136,8 +139,13 @@ class CalibreWebPlugin(SourcePlugin):
     ) -> list[str]:
         errors: list[str] = []
 
-        if not (config.get("url") or "").strip():
+        url = (config.get("url") or "").strip()
+        if not url:
             errors.append("'url' is required")
+        else:
+            url_error = source_url_error(url)
+            if url_error is not None:
+                errors.append(url_error)
         if not (config.get("username") or "").strip():
             errors.append("'username' is required")
 
@@ -181,6 +189,12 @@ class CalibreWebPlugin(SourcePlugin):
         verify_ssl = config.get("verify_ssl", True)
         auth = (username, password)
         source = self.get_source_identifier(config)
+
+        # A sync of every source skips validate_config, so the basic-auth
+        # password would otherwise reach whatever host the config now names.
+        url_error = source_url_error(base_url)
+        if url_error is not None:
+            raise SourceError(self.name, url_error)
 
         read_ids = self._fetch_read_book_ids(base_url, auth, verify_ssl)
 

@@ -26,6 +26,10 @@ python3.11 -m src.cli source set-secret sonarr api_key
 | `url` | str | yes | Sonarr base URL (no trailing slash). |
 | `api_key` | str | yes (sensitive) | Sonarr API key. |
 
+**Changing `url` clears the stored API key**, so it cannot be sent to a host it
+was never issued for. Re-run `source set-secret` after moving Sonarr. The URL
+must be `http` or `https`, name a host, and not embed `user:password@`.
+
 ## Notes
 - Items are imported as `unread` (Sonarr tracks downloads, not consumption).
 - Per-season episode counts and status are extracted from the API response.

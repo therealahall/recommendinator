@@ -11,9 +11,12 @@ from src.ingestion.registry import PluginRegistry
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.manager import StorageManager
 from src.web.sync_sources import (
+    create_source,
+    delete_source,
     get_available_sync_sources,
     get_sync_handler,
     resolve_inputs,
+    update_source_config_values,
     validate_source_config,
 )
 
@@ -80,6 +83,10 @@ class FakeGamePlugin(SourcePlugin):
     def get_config_schema(self) -> list[ConfigField]:
         return [
             ConfigField(name="api_key", field_type=str, required=True, sensitive=True),
+            ConfigField(
+                name="url", field_type=str, required=False, credential_bound=True
+            ),
+            ConfigField(name="label", field_type=str, required=False),
         ]
 
     def validate_config(self, config: dict[str, Any], **kwargs: Any) -> list[str]:
@@ -162,6 +169,22 @@ class FakeCredentialPlugin(SourcePlugin):
             status=ConsumptionStatus.UNREAD,
             source=self.get_source_identifier(config),
         )
+
+
+class RecordingGamePlugin(FakeGamePlugin):
+    """Keeps every config and storage it was asked to validate against."""
+
+    def __init__(self) -> None:
+        self.validated: list[tuple[dict[str, Any], StorageManager | None]] = []
+
+    def validate_config(
+        self,
+        config: dict[str, Any],
+        storage: StorageManager | None = None,
+        user_id: int = 1,
+    ) -> list[str]:
+        self.validated.append((dict(config), storage))
+        return super().validate_config(config)
 
 
 @pytest.fixture()
@@ -862,3 +885,159 @@ class TestResolveInputsWithDbSourceConfig:
         resolved = resolve_inputs(config, storage=storage)
 
         assert resolved == []
+
+
+@pytest.mark.usefixtures("_registry_with_fakes")
+class TestCredentialBoundUpdates:
+    """Moving a ``credential_bound`` field invalidates the source's secrets."""
+
+    @pytest.fixture()
+    def storage(self, tmp_path: Path) -> StorageManager:
+        return StorageManager(sqlite_path=tmp_path / "test.db")
+
+    @pytest.fixture()
+    def migrated(self, storage: StorageManager) -> StorageManager:
+        storage.upsert_source_config(
+            1, "my_games", "fake_games", {"url": "http://localhost:7878"}, enabled=True
+        )
+        storage.save_credential(1, "my_games", "api_key", "issued-for-localhost")
+        return storage
+
+    def test_repointing_the_url_clears_the_stored_secret(
+        self, migrated: StorageManager
+    ) -> None:
+        update_source_config_values(
+            "my_games",
+            FakeGamePlugin(),
+            migrated,
+            {"url": "http://attacker.example"},
+        )
+
+        assert migrated.get_credential(1, "my_games", "api_key") is None
+        row = migrated.get_source_config(1, "my_games")
+        assert row is not None
+        assert row["config"]["url"] == "http://attacker.example"
+
+    def test_giving_an_unset_bound_field_its_first_value_clears_the_secret(
+        self, storage: StorageManager
+    ) -> None:
+        """A stored config with no ``url`` is still a host the secret is bound to.
+
+        The plugin default decided where the last sync sent it, so naming one
+        explicitly moves it just as rewriting an existing value does.
+        """
+        storage.upsert_source_config(1, "my_games", "fake_games", {}, enabled=True)
+        storage.save_credential(1, "my_games", "api_key", "issued-for-the-default")
+
+        update_source_config_values(
+            "my_games", FakeGamePlugin(), storage, {"url": "http://attacker.example"}
+        )
+
+        assert storage.get_credential(1, "my_games", "api_key") is None
+
+    def test_an_empty_update_leaves_the_secret_alone(
+        self, migrated: StorageManager
+    ) -> None:
+        update_source_config_values("my_games", FakeGamePlugin(), migrated, {})
+
+        assert migrated.get_credential(1, "my_games", "api_key") == (
+            "issued-for-localhost"
+        )
+
+    def test_a_non_binding_field_leaves_the_secret_alone(
+        self, migrated: StorageManager
+    ) -> None:
+        update_source_config_values(
+            "my_games", FakeGamePlugin(), migrated, {"label": "Games"}
+        )
+
+        assert migrated.get_credential(1, "my_games", "api_key") == (
+            "issued-for-localhost"
+        )
+
+    def test_a_new_source_does_not_inherit_an_orphaned_secret(
+        self, storage: StorageManager
+    ) -> None:
+        """Delete-then-recreate must not resurrect a secret under a new url."""
+        storage.save_credential(1, "my_games", "api_key", "issued-for-localhost")
+
+        create_source(
+            "my_games",
+            "fake_games",
+            {"url": "http://attacker.example"},
+            storage,
+        )
+
+        assert storage.get_credential(1, "my_games", "api_key") is None
+
+
+@pytest.mark.usefixtures("_registry_with_fakes")
+class TestDeleteSourceOrphanedCredentialsRegression:
+    """Regression: removing a source left encrypted rows behind.
+
+    Bug: cleanup iterated the registered plugin's sensitive fields, so an
+    unregistered plugin skipped it entirely and a field that stopped being
+    sensitive was missed. Fix: delete every row keyed by source id.
+    """
+
+    @pytest.fixture()
+    def storage(self, tmp_path: Path) -> StorageManager:
+        return StorageManager(sqlite_path=tmp_path / "test.db")
+
+    def test_unregistered_plugin_leaves_no_credential_row(
+        self, storage: StorageManager
+    ) -> None:
+        storage.upsert_source_config(
+            1, "ghost", "this_plugin_no_longer_exists", {}, enabled=True
+        )
+        storage.save_credential(1, "ghost", "api_key", "still-valid-upstream")
+
+        delete_source("ghost", storage)
+
+        assert storage.get_credentials_for_source(1, "ghost") == {}
+        assert storage.get_source_config(1, "ghost") is None
+
+    def test_a_field_no_longer_marked_sensitive_is_removed_too(
+        self, storage: StorageManager
+    ) -> None:
+        """``fake_games`` has no ``legacy_token`` field; the row exists anyway."""
+        storage.upsert_source_config(1, "my_games", "fake_games", {}, enabled=True)
+        storage.save_credential(1, "my_games", "api_key", "secret")
+        storage.save_credential(1, "my_games", "legacy_token", "was-sensitive-once")
+
+        delete_source("my_games", storage)
+
+        assert storage.get_credentials_for_source(1, "my_games") == {}
+
+    def test_another_sources_credentials_survive(self, storage: StorageManager) -> None:
+        storage.upsert_source_config(1, "my_games", "fake_games", {}, enabled=True)
+        storage.save_credential(1, "my_games", "api_key", "secret")
+        storage.save_credential(1, "other", "api_key", "untouched")
+
+        delete_source("my_games", storage)
+
+        assert storage.get_credential(1, "other", "api_key") == "untouched"
+
+
+class TestWriteValidationNeverSeesTheDecryptedSecretRegression:
+    """Reported: the write door validated a config carrying the decrypted
+    credential, and those messages reach the wire now. A plugin quoting a
+    value it was handed would answer an HTTP body holding the secret.
+    """
+
+    def test_neither_validated_config_carries_the_stored_credential(
+        self, tmp_path: Path
+    ) -> None:
+        """``storage`` still goes through, so a plugin can ask whether it is set."""
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+        storage.upsert_source_config(
+            1, "my_games", "fake_games", {"label": "Games"}, enabled=True
+        )
+        storage.save_credential(1, "my_games", "api_key", "issued-for-localhost")
+        plugin = RecordingGamePlugin()
+
+        update_source_config_values("my_games", plugin, storage, {"label": "Shelf"})
+
+        assert len(plugin.validated) == 2
+        assert all(config.get("api_key") is None for config, _ in plugin.validated)
+        assert all(seen is storage for _, seen in plugin.validated)
