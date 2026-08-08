@@ -62,15 +62,20 @@ class WebEnrichmentManager:
                 if status.running:
                     return False, "Enrichment job already running"
 
-            # Create new manager and start
+            # Built and started without releasing the lock in between. Both
+            # callers are threadpool workers, so releasing it lets the second
+            # one see a manager that has not started yet, judge the server
+            # idle, and start a manager of its own: two jobs against the same
+            # provider key, each with its own rate limiters, and only the last
+            # one stored visible to the status and stop endpoints. Nothing
+            # long is held — ``start_enrichment`` spawns a daemon thread and
+            # returns.
             self._manager = EnrichmentManager(storage_manager, config)
-
-        # Start outside lock to avoid holding it during long operation
-        started = self._manager.start_enrichment(
-            content_type=content_type,
-            user_id=user_id,
-            include_not_found=include_not_found,
-        )
+            started = self._manager.start_enrichment(
+                content_type=content_type,
+                user_id=user_id,
+                include_not_found=include_not_found,
+            )
 
         if started:
             type_desc = content_type.value if content_type else "all types"
@@ -88,8 +93,7 @@ class WebEnrichmentManager:
         with self._lock:
             if self._manager is None:
                 return False, "No enrichment job to stop"
-
-        self._manager.stop_enrichment()
+            self._manager.stop_enrichment()
         return True, "Enrichment job stop requested"
 
     def get_status(self) -> EnrichmentJobStatus | None:
@@ -116,6 +120,11 @@ class WebEnrichmentManager:
 # Global enrichment manager instance
 _enrichment_manager: WebEnrichmentManager | None = None
 
+# Same check-then-set as ``get_sync_manager``, reachable from the API handlers
+# and from the sync thread's auto-enrich callback: two builders means the job
+# one of them started is invisible to the status endpoint reading the other.
+_enrichment_manager_lock = threading.Lock()
+
 
 def get_enrichment_manager() -> WebEnrichmentManager:
     """Get the global enrichment manager instance.
@@ -124,9 +133,10 @@ def get_enrichment_manager() -> WebEnrichmentManager:
         The global WebEnrichmentManager instance.
     """
     global _enrichment_manager
-    if _enrichment_manager is None:
-        _enrichment_manager = WebEnrichmentManager()
-    return _enrichment_manager
+    with _enrichment_manager_lock:
+        if _enrichment_manager is None:
+            _enrichment_manager = WebEnrichmentManager()
+        return _enrichment_manager
 
 
 def reset_enrichment_manager() -> None:

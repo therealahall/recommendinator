@@ -341,6 +341,13 @@ class SyncManager:
 # Global sync manager instance
 _sync_manager: SyncManager | None = None
 
+# The lazy build below is a check-then-set, and both callers of it are plain
+# ``def`` handlers running in threadpool workers. Unserialised, two requests on
+# a cold process each build a manager of their own, and a job started through
+# one is invisible to ``GET /api/sync/status`` served off the other — sync
+# progress that never moves.
+_sync_manager_lock = threading.Lock()
+
 
 def get_sync_manager() -> SyncManager:
     """Get the global sync manager instance.
@@ -349,9 +356,10 @@ def get_sync_manager() -> SyncManager:
         The global SyncManager instance.
     """
     global _sync_manager
-    if _sync_manager is None:
-        _sync_manager = SyncManager()
-    return _sync_manager
+    with _sync_manager_lock:
+        if _sync_manager is None:
+            _sync_manager = SyncManager()
+        return _sync_manager
 
 
 def reset_sync_manager() -> None:
