@@ -1,6 +1,7 @@
 """Tests for web API endpoints."""
 
 import asyncio
+import gc
 import inspect
 import json
 import logging
@@ -9,6 +10,7 @@ from collections.abc import AsyncIterator, Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, fields, replace
 from datetime import UTC, date, datetime
+from math import inf
 from pathlib import Path
 from secrets import compare_digest
 from typing import Any
@@ -16,13 +18,16 @@ from unittest.mock import MagicMock, Mock, patch
 
 import anyio.from_thread
 import pytest
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi.dependencies.models import Dependant
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
+from pydantic import BaseModel, Field
 
 from src.cli.config import MissingApiTokenError, load_config
 from src.conversation.engine import ConversationEngine
+from src.ingestion.paths import get_allowed_source_roots
 from src.ingestion.sync import SyncResult
 from src.llm.client import OllamaClient
 from src.llm.embeddings import EmbeddingGenerator
@@ -30,11 +35,14 @@ from src.llm.recommendations import RecommendationGenerator
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.conversation import ConversationChunk
 from src.models.user_preferences import UserPreferenceConfig
+from src.recommendations.content_length import LengthPreference
 from src.recommendations.engine import RecommendationEngine
 from src.recommendations.record import Recommendation
+from src.recommendations.scorers import SCORER_NAME_MAP
 from src.settings.metadata import default_of
 from src.settings.service import build_settings_view
 from src.storage.manager import UNSET, StorageManager
+from src.storage.schema import update_user_settings
 from src.storage.settings_migration import migrate_config_settings
 from src.utils.dotted_path import get_leaf
 from src.utils.series import MAX_SEASONS
@@ -71,6 +79,13 @@ from src.web.state import (
     locked_running_config,
     reload_config,
 )
+from src.web.stream_limit import (
+    MAX_CONCURRENT_STREAMS,
+    TOO_MANY_STREAMS_DETAIL,
+    _HeldSlot,
+    _slots,
+    bounded_sse,
+)
 from src.web.sync_manager import (
     SyncManager,
     _sync_manager_lock,
@@ -78,7 +93,12 @@ from src.web.sync_manager import (
     reset_sync_manager,
 )
 from src.web.trakt_auth import DevicePollResult, DevicePollStatus, TraktAuthError
-from tests.factories import API_TOKEN, authenticated_client, booted_web_app
+from tests.factories import (
+    API_TOKEN,
+    authenticated_client,
+    back_mock_preference_store,
+    booted_web_app,
+)
 
 
 @pytest.fixture
@@ -449,6 +469,35 @@ class TestCreateAppSettingsMigration:
             # A concrete origin list may carry credentials.
             assert _cors_kwargs(app)["allow_credentials"] is True
         reset_sync_manager()
+
+    def test_a_preflight_from_an_allowed_origin_may_send_authorization(
+        self, mock_config, tmp_path
+    ):
+        """Reported: a configured origin produced no working client.
+
+        Cause: ``Authorization`` is not CORS-safelisted and was absent from
+        ``allow_headers``, so a preflight naming it got 400. Fix: allow it.
+        """
+        reset_sync_manager()
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        config = {
+            **mock_config,
+            "web": {"allowed_origins": ["https://app.example.com"]},
+        }
+        with booted_web_app(storage_manager, config) as app:
+            response = TestClient(app).options(
+                "/api/status",
+                headers={
+                    "Origin": "https://app.example.com",
+                    "Access-Control-Request-Method": "GET",
+                    "Access-Control-Request-Headers": "authorization",
+                },
+            )
+        reset_sync_manager()
+
+        assert response.status_code == 200
+        allowed = response.headers["access-control-allow-headers"].lower()
+        assert "authorization" in allowed
 
     def test_wildcard_origin_disables_credentials(self, mock_config, tmp_path):
         """``["*"]`` must turn credentials off — a browser-security invariant.
@@ -1221,7 +1270,7 @@ def test_update_endpoint_steam_disabled(client, mock_components):
     assert "disabled or not configured" in data["detail"]
 
 
-def test_update_endpoint_steam_missing_api_key(client, mock_components):
+def test_update_endpoint_steam_missing_api_key(client, mock_components, caplog):
     """Test update endpoint with missing Steam API key."""
     app_state.config["inputs"]["steam"] = {
         "plugin": "steam",
@@ -1230,15 +1279,15 @@ def test_update_endpoint_steam_missing_api_key(client, mock_components):
         "enabled": True,
     }
 
-    response = client.post("/api/update", json={"source": "steam"})
+    with caplog.at_level(logging.WARNING, logger="src.web.api"):
+        response = client.post("/api/update", json={"source": "steam"})
 
     assert response.status_code == 400
-    data = response.json()
-    assert "not properly configured" in data["detail"]
-    assert "api_key" in data["detail"].lower()
+    assert "api_key" in response.json()["detail"]
+    assert "api_key" in caplog.text
 
 
-def test_update_endpoint_steam_missing_id(client, mock_components):
+def test_update_endpoint_steam_missing_id(client, mock_components, caplog):
     """Test update endpoint with missing Steam ID."""
     app_state.config["inputs"]["steam"] = {
         "plugin": "steam",
@@ -1248,12 +1297,13 @@ def test_update_endpoint_steam_missing_id(client, mock_components):
         "enabled": True,
     }
 
-    response = client.post("/api/update", json={"source": "steam"})
+    with caplog.at_level(logging.WARNING, logger="src.web.api"):
+        response = client.post("/api/update", json={"source": "steam"})
 
     assert response.status_code == 400
-    data = response.json()
-    assert "not properly configured" in data["detail"]
-    assert "steam_id" in data["detail"] or "vanity_url" in data["detail"]
+    detail = response.json()["detail"]
+    assert "steam_id" in detail or "vanity_url" in detail
+    assert "steam_id" in caplog.text or "vanity_url" in caplog.text
 
 
 def test_update_endpoint_steam_api_error(client, mock_components):
@@ -1339,29 +1389,124 @@ def test_update_endpoint_all_sources(client, mock_components):
         assert "steam" in data["sources"]
 
 
+class TestUpdateDetailKeepsCallerInputOffTheWireRegression:
+    """Reported: ``POST /api/update`` echoed the caller's source id, which is
+    unbounded caller input. It goes to the log alone now, as ``require_plugin``
+    already did. The plugin's own validation text is a separate question and
+    the opposite answer — see ``TestSyncNamesTheReasonItRefused``.
+    """
+
+    def test_an_unknown_source_id_is_logged_not_echoed(self, client, caplog):
+        """The id is unbounded caller input, so it stays out of the body."""
+        with caplog.at_level(logging.INFO, logger="src.web.api"):
+            response = client.post("/api/update", json={"source": "probe-me-42"})
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Source is disabled or not configured."
+        assert "probe-me-42" not in response.text
+        assert "probe-me-42" in caplog.text
+
+    def test_the_source_id_stays_off_a_validation_refusal_too(
+        self, client, mock_components, caplog
+    ):
+        """The plugin's reason is returned; the id it was asked about is not.
+
+        Named distinctly because the steam plugin's own messages say "steam",
+        which would pass this assertion without the endpoint keeping quiet.
+        """
+        app_state.config["inputs"]["probe_me_42"] = {
+            "plugin": "steam",
+            "api_key": "",
+            "steam_id": "",
+            "vanity_url": "",
+            "enabled": True,
+        }
+
+        with caplog.at_level(logging.WARNING, logger="src.web.api"):
+            response = client.post("/api/update", json={"source": "probe_me_42"})
+
+        assert response.status_code == 400
+        assert "api_key" in response.json()["detail"]
+        assert "probe_me_42" not in response.text
+        assert "probe_me_42" in caplog.text
+
+    def test_a_newline_in_the_source_id_cannot_forge_a_log_line(self, client, caplog):
+        """CR/LF is escaped before the id reaches the log (CWE-117)."""
+        with caplog.at_level(logging.INFO, logger="src.web.api"):
+            response = client.post(
+                "/api/update", json={"source": "ok\nWARNING forged line"}
+            )
+
+        assert response.status_code == 400
+        assert "\\nWARNING forged line" in caplog.text
+
+    def test_a_newline_in_the_plugins_reason_cannot_forge_a_log_line(
+        self, client, mock_components, caplog
+    ):
+        """The plugin's message is escaped too, not just the id.
+
+        Plugin messages quote configured values verbatim, and a value
+        authored in ``config.yaml`` never passes the write door that
+        refuses newlines.
+        """
+        app_state.config["inputs"]["steam"] = {
+            "plugin": "steam",
+            "api_key": "test_api_key",
+            "steam_id": "76561198000000000",
+            "enabled": True,
+        }
+
+        with (
+            patch(
+                "src.ingestion.sources.steam.SteamPlugin.validate_config",
+                return_value=["'api_key' is invalid\nWARNING forged line"],
+            ),
+            caplog.at_level(logging.WARNING, logger="src.web.api"),
+        ):
+            response = client.post("/api/update", json={"source": "steam"})
+
+        assert response.status_code == 400
+        assert "\\nWARNING forged line" in caplog.text
+        assert "\nWARNING forged line" not in caplog.text
+
+
+class TestUpdateResolvesTheSourceOnceRegression:
+    """Reported: the handler resolved the source id twice, and a delete landing
+    between the two made the second lookup miss — answering with the caller's
+    own unbounded id. Fixed by validating the entry already in hand.
+    """
+
+    def test_the_second_lookup_is_never_reached(self, client, mock_components):
+        """A source vanishing after the first lookup changes no answer.
+
+        The sync manager is stubbed because the real one spawns a thread
+        that outlives the test calling the live Steam API.
+        """
+        app_state.config["inputs"]["probe_me_42"] = {
+            "plugin": "steam",
+            "api_key": "test_api_key",
+            "steam_id": "76561198000000000",
+            "enabled": True,
+        }
+        sync_manager = Mock(spec=SyncManager)
+        sync_manager.start_sync.return_value = (True, "Started sync for Probe Me 42")
+
+        with (
+            patch("src.web.api.get_sync_manager", return_value=sync_manager),
+            patch(
+                "src.web.sync_sources.get_sync_handler", return_value=None
+            ) as second_lookup,
+        ):
+            response = client.post("/api/update", json={"source": "probe_me_42"})
+
+        assert response.status_code == 200
+        assert response.json()["sources"] == ["probe_me_42"]
+        second_lookup.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # User preferences endpoint tests (Phase 5)
 # ---------------------------------------------------------------------------
-
-
-def _stub_preference_merge(
-    storage: Mock, stored: UserPreferenceConfig | None = None
-) -> Mock:
-    """Give the mock store a ``merge_user_preference_config`` that really merges.
-
-    The handler hands its edits to storage, so a bare ``Mock`` would return a
-    ``Mock`` and prove nothing about the merge.
-    """
-    existing = stored if stored is not None else UserPreferenceConfig()
-
-    def merge(
-        _user_id: int, apply: Callable[[UserPreferenceConfig], None]
-    ) -> UserPreferenceConfig:
-        apply(existing)
-        return existing
-
-    storage.merge_user_preference_config = Mock(side_effect=merge)
-    return storage.merge_user_preference_config
 
 
 def test_get_user_preferences_defaults(client, mock_components):
@@ -1380,7 +1525,7 @@ def test_get_user_preferences_defaults(client, mock_components):
 
 def test_put_user_preferences_partial(client, mock_components):
     """PUT /api/users/1/preferences merges partial update."""
-    _stub_preference_merge(mock_components["storage"])
+    back_mock_preference_store(mock_components["storage"])
 
     response = client.put(
         "/api/users/1/preferences",
@@ -1394,7 +1539,7 @@ def test_put_user_preferences_partial(client, mock_components):
 
 def test_put_user_preferences_full(client, mock_components):
     """PUT /api/users/1/preferences can update all fields."""
-    _stub_preference_merge(mock_components["storage"])
+    back_mock_preference_store(mock_components["storage"])
 
     response = client.put(
         "/api/users/1/preferences",
@@ -1415,7 +1560,7 @@ def test_put_user_preferences_full(client, mock_components):
 
 def test_put_user_preferences_accepts_max_variety_penalty(client, mock_components):
     """variety_penalty at the 5.0 maximum is accepted and saved."""
-    merge = _stub_preference_merge(mock_components["storage"])
+    merge = back_mock_preference_store(mock_components["storage"])
 
     response = client.put(
         "/api/users/1/preferences",
@@ -1428,7 +1573,7 @@ def test_put_user_preferences_accepts_max_variety_penalty(client, mock_component
 
 def test_put_user_preferences_accepts_zero_variety_penalty(client, mock_components):
     """variety_penalty at the 0.0 minimum is accepted and saved (penalty off)."""
-    merge = _stub_preference_merge(mock_components["storage"])
+    merge = back_mock_preference_store(mock_components["storage"])
 
     response = client.put(
         "/api/users/1/preferences",
@@ -1443,7 +1588,7 @@ def test_put_user_preferences_rejects_out_of_range_variety_penalty(
     client, mock_components
 ):
     """variety_penalty above the 5.0 maximum is rejected with a 422."""
-    merge = _stub_preference_merge(mock_components["storage"])
+    merge = back_mock_preference_store(mock_components["storage"])
 
     response = client.put(
         "/api/users/1/preferences",
@@ -1455,7 +1600,7 @@ def test_put_user_preferences_rejects_out_of_range_variety_penalty(
 
 def test_put_user_preferences_rejects_negative_variety_penalty(client, mock_components):
     """variety_penalty below 0.0 is rejected with a 422 and never saved."""
-    merge = _stub_preference_merge(mock_components["storage"])
+    merge = back_mock_preference_store(mock_components["storage"])
 
     response = client.put(
         "/api/users/1/preferences",
@@ -1469,7 +1614,7 @@ def test_put_user_preferences_keeps_stored_fields_the_request_omits(
     client, mock_components
 ):
     """A partial update merges onto what was stored, not onto the defaults."""
-    _stub_preference_merge(
+    back_mock_preference_store(
         mock_components["storage"],
         UserPreferenceConfig(theme="midnight", custom_rules=["no horror"]),
     )
@@ -1494,7 +1639,7 @@ def test_put_user_preferences_merges_for_the_user_named_in_the_path(
     Every other case on this route uses user 1, so a handler that merged a
     hardcoded 1 would keep the whole suite green.
     """
-    merge = _stub_preference_merge(mock_components["storage"])
+    merge = back_mock_preference_store(mock_components["storage"])
 
     response = client.put(
         "/api/users/2/preferences",
@@ -1503,6 +1648,278 @@ def test_put_user_preferences_merges_for_the_user_named_in_the_path(
 
     assert response.status_code == 200
     assert merge.call_args.args[0] == 2
+
+
+_OVER_LONG_THEME_ID = "k" * (UserPreferenceConfig.MAX_THEME_ID_LENGTH + 1)
+_CONTENT_TYPE_NAMES = [member.value for member in ContentType]
+_LENGTH_PREFERENCE_NAMES = [member.value for member in LengthPreference]
+
+
+class TestUserPreferenceBounds:
+    """The merge is additive, so keys a request names stay in
+    ``users.settings`` for good and every recommendation request parses them.
+    The sibling ``ItemEditRequest`` bounds its collections; this one did not.
+    """
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            pytest.param(
+                {
+                    "custom_rules": ["no horror"]
+                    * (UserPreferenceConfig.MAX_CUSTOM_RULES + 1)
+                },
+                id="too-many-rules",
+            ),
+            pytest.param(
+                {
+                    "custom_rules": [
+                        "r" * (UserPreferenceConfig.MAX_CUSTOM_RULE_LENGTH + 1)
+                    ]
+                },
+                id="over-long-rule",
+            ),
+            pytest.param({"theme": _OVER_LONG_THEME_ID}, id="over-long-theme"),
+        ],
+    )
+    def test_an_over_long_payload_is_rejected_rather_than_persisted(
+        self, client, mock_components, payload
+    ):
+        """Validation refuses it, so storage is never asked to merge it."""
+        merge = back_mock_preference_store(mock_components["storage"])
+
+        response = client.put("/api/users/1/preferences", json=payload)
+
+        assert response.status_code == 422
+        merge.assert_not_called()
+
+    def test_a_payload_sitting_exactly_on_every_bound_is_accepted(
+        self, client, mock_components
+    ):
+        """An off-by-one the other way refuses what the bound allows.
+
+        The rule is astral-plane characters: ``max_length`` counting UTF-8
+        bytes would cut this one to a quarter of the documented 500.
+        """
+        merge = back_mock_preference_store(mock_components["storage"])
+        at_bound_theme_id = "k" * UserPreferenceConfig.MAX_THEME_ID_LENGTH
+        at_bound_rule = "🎬" * UserPreferenceConfig.MAX_CUSTOM_RULE_LENGTH
+
+        response = client.put(
+            "/api/users/1/preferences",
+            json={
+                "scorer_weights": dict.fromkeys(SCORER_NAME_MAP, 1.0),
+                "custom_rules": [at_bound_rule] * UserPreferenceConfig.MAX_CUSTOM_RULES,
+                "content_length_preferences": dict.fromkeys(
+                    _CONTENT_TYPE_NAMES, "long"
+                ),
+                "theme": at_bound_theme_id,
+            },
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["scorer_weights"] == dict.fromkeys(SCORER_NAME_MAP, 1.0)
+        assert body["content_length_preferences"] == dict.fromkeys(
+            _CONTENT_TYPE_NAMES, "long"
+        )
+        assert body["custom_rules"][0] == at_bound_rule
+        assert body["theme"] == at_bound_theme_id
+        merge.assert_called_once()
+
+    @pytest.mark.parametrize("literal", ["Infinity", "NaN"])
+    def test_a_non_finite_scorer_weight_is_refused_rather_than_stored(
+        self, settings_app, literal
+    ):
+        """``JSONResponse`` will not render one, so a stored one answers 500
+        on every later read of the page. Sent raw because ``json=`` declines
+        to encode it, and read back over the real store.
+        """
+        client, _storage = settings_app
+        tolerant = authenticated_client(client.app, raise_server_exceptions=False)
+
+        written = tolerant.put(
+            "/api/users/1/preferences",
+            content=f'{{"scorer_weights": {{"recency": {literal}}}}}',
+            headers={"Content-Type": "application/json"},
+        )
+        read_back = tolerant.get("/api/users/1/preferences")
+
+        assert (written.status_code, read_back.status_code) == (422, 200)
+
+    def test_a_weight_stored_before_the_bound_no_longer_500s_the_read(
+        self, settings_app
+    ):
+        """The refusal above arrived after rows like this were already written.
+
+        Poisoned through ``update_user_settings`` because every door the app
+        offers now refuses one, which is exactly why the read has to cope.
+        """
+        client, storage = settings_app
+        with storage.sqlite_db.connection() as conn:
+            update_user_settings(
+                conn, 1, {"preference_config": {"scorer_weights": {"recency": inf}}}
+            )
+        tolerant = authenticated_client(client.app, raise_server_exceptions=False)
+
+        read_back = tolerant.get("/api/users/1/preferences")
+
+        assert read_back.status_code == 200
+        assert read_back.json()["scorer_weights"] == {}
+
+    @pytest.mark.parametrize("literal", ["Infinity", "NaN"])
+    def test_a_non_finite_variety_penalty_is_refused_the_same_way(
+        self, settings_app, literal
+    ):
+        """The sibling instance: the bound already rejected it, and quoting it
+        back in the 422 body is what turned the refusal into a 500.
+        """
+        client, _storage = settings_app
+        tolerant = authenticated_client(client.app, raise_server_exceptions=False)
+
+        written = tolerant.put(
+            "/api/users/1/preferences",
+            content=f'{{"variety_penalty": {literal}}}',
+            headers={"Content-Type": "application/json"},
+        )
+
+        assert written.status_code == 422
+
+    def test_a_full_preferences_page_still_saves(self, client, mock_components):
+        """The bound is above what the UI sends: every scorer plus rules."""
+        merge = back_mock_preference_store(mock_components["storage"])
+
+        response = client.put(
+            "/api/users/1/preferences",
+            json={
+                "scorer_weights": dict.fromkeys(SCORER_NAME_MAP, 2.0),
+                "custom_rules": ["avoid horror", "prefer sci-fi"],
+                "content_length_preferences": {"book": "short", "movie": "any"},
+                "theme": "nord",
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["scorer_weights"] == dict.fromkeys(SCORER_NAME_MAP, 2.0)
+        merge.assert_called_once()
+
+    def test_a_stored_weight_survives_a_write_that_fills_the_bound(self, settings_app):
+        """An earlier fix evicted by insertion order, so one write naming every
+        scorer discarded the weight the user set first. The filling write omits
+        that one, or overwriting it would read as surviving.
+        """
+        client, _storage = settings_app
+        client.put(
+            "/api/users/1/preferences",
+            json={"scorer_weights": {"genre_match": 4.5}},
+        )
+        rest = {name: 1.0 for name in SCORER_NAME_MAP if name != "genre_match"}
+
+        filled = client.put("/api/users/1/preferences", json={"scorer_weights": rest})
+
+        assert filled.status_code == 200
+        stored = client.get("/api/users/1/preferences").json()["scorer_weights"]
+        assert stored == {**rest, "genre_match": 4.5}
+
+
+class TestPreferenceKeysAreAClosedSet:
+    """Reported: the web accepted any scorer name where the CLI checks against
+    ``SCORER_NAME_MAP``. The engine drops an unknown one, so it weighted
+    nothing and grew the blob every recommendation request parses.
+    """
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            pytest.param({"scorer_weights": {"recency": 1.0}}, id="unknown-scorer"),
+            pytest.param(
+                {"content_length_preferences": {"audiobook": "short"}},
+                id="unknown-content-type",
+            ),
+            pytest.param(
+                {"content_length_preferences": {"book": "brief"}},
+                id="unknown-length-preference",
+            ),
+        ],
+    )
+    def test_a_key_outside_the_set_is_refused_rather_than_stored(
+        self, client, mock_components, payload
+    ):
+        merge = back_mock_preference_store(mock_components["storage"])
+
+        response = client.put("/api/users/1/preferences", json=payload)
+
+        assert response.status_code == 422
+        merge.assert_not_called()
+
+    def test_the_refusal_names_what_would_have_been_accepted(
+        self, client, mock_components
+    ):
+        """A 422 saying only "unknown" leaves the operator guessing."""
+        back_mock_preference_store(mock_components["storage"])
+
+        response = client.put(
+            "/api/users/1/preferences", json={"scorer_weights": {"recency": 1.0}}
+        )
+
+        assert "genre_match" in json.dumps(response.json())
+
+    @pytest.mark.parametrize("preference", _LENGTH_PREFERENCE_NAMES)
+    def test_every_legal_name_is_still_accepted(
+        self, client, mock_components, preference
+    ):
+        """Closing the set the wrong way refuses what the CLI can set."""
+        back_mock_preference_store(mock_components["storage"])
+
+        response = client.put(
+            "/api/users/1/preferences",
+            json={
+                "scorer_weights": dict.fromkeys(SCORER_NAME_MAP, 2.0),
+                "content_length_preferences": dict.fromkeys(
+                    _CONTENT_TYPE_NAMES, preference
+                ),
+            },
+        )
+
+        assert response.status_code == 200
+
+
+class TestPreferenceWriteNamingAnUnknownUser:
+    """Reported: the write is an ``UPDATE`` keyed on the id, so for a missing
+    user it changed nothing, committed, and answered 200. The 404 comes from
+    that write's refusal — a pre-check would be a second answer to it.
+    """
+
+    def test_a_real_store_answers_404_for_a_row_it_does_not_have(self, settings_app):
+        """Against SQLite, not a mock: the id is the one with no users row."""
+        client, _storage = settings_app
+
+        missing = client.put(
+            "/api/users/999/preferences", json={"series_in_order": False}
+        )
+        seeded = client.put("/api/users/1/preferences", json={"series_in_order": False})
+
+        assert missing.status_code == 404
+        assert missing.json()["detail"] == "User not found."
+        assert seeded.status_code == 200
+        assert seeded.json()["series_in_order"] is False
+
+    @pytest.mark.parametrize("user_id", [0, -1])
+    def test_a_non_positive_user_id_is_rejected(self, client, mock_components, user_id):
+        """A path id matching no row is validation's answer, not storage's."""
+        merge = back_mock_preference_store(mock_components["storage"])
+
+        response = client.put(
+            f"/api/users/{user_id}/preferences", json={"series_in_order": False}
+        )
+
+        assert response.status_code == 422
+        merge.assert_not_called()
+
+    @pytest.mark.parametrize("user_id", [0, -1])
+    def test_the_read_side_rejects_a_non_positive_user_id_too(self, client, user_id):
+        """Both handlers on the route carry the same bound."""
+        assert client.get(f"/api/users/{user_id}/preferences").status_code == 422
 
 
 def test_get_user_preferences_includes_variety_penalty(client, mock_components):
@@ -3549,6 +3966,187 @@ class TestSSEStreamingEndpoint:
         assert events[-1]["type"] == "done"
 
 
+def _free_stream_slots() -> int:
+    """How much of the process-wide stream budget is available right now."""
+    taken = 0
+    while _slots.acquire(blocking=False):
+        taken += 1
+    for _ in range(taken):
+        _slots.release()
+    return taken
+
+
+@pytest.fixture()
+def whole_stream_budget() -> Iterator[None]:
+    """Attribute a leaked slot to the test that leaked it.
+
+    ``_slots`` is process-global and nothing else resets it, so a leak
+    anywhere surfaces as an unexplained 503 in the cap tests below.
+    """
+    assert _free_stream_slots() == MAX_CONCURRENT_STREAMS
+    yield
+    assert _free_stream_slots() == MAX_CONCURRENT_STREAMS
+
+
+@pytest.mark.usefixtures("whole_stream_budget")
+class TestStreamConcurrencyCap:
+    """Each in-flight stream holds one of anyio's 40 threadpool tokens per
+    generator step, so uncapped, streams left open stop every endpoint
+    answering. The two SSE routes share one bounded budget and answer 503
+    past it.
+    """
+
+    STREAM_URL = "/api/recommendations/stream?type=book&count=1"
+
+    def test_the_cap_answers_503_while_the_rest_of_the_api_still_answers(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """One saturated budget, and ``GET /api/status`` unaffected by it."""
+        holding = threading.Semaphore(0)
+        release = threading.Event()
+
+        def blocked_scoring_pass(**_kwargs):
+            holding.release()
+            release.wait(timeout=_STALL_TIMEOUT_SECONDS)
+            return []
+
+        mock_components["engine"].generate_recommendations.side_effect = (
+            blocked_scoring_pass
+        )
+        mock_components["storage"].get_user_preference_config.return_value = None
+
+        with ThreadPoolExecutor(max_workers=MAX_CONCURRENT_STREAMS) as pool:
+            in_flight = [
+                pool.submit(client.get, self.STREAM_URL)
+                for _ in range(MAX_CONCURRENT_STREAMS)
+            ]
+            try:
+                for _ in range(MAX_CONCURRENT_STREAMS):
+                    assert holding.acquire(timeout=_STALL_TIMEOUT_SECONDS)
+
+                refused = client.get(self.STREAM_URL)
+                refused_chat = client.post("/api/chat", json={"message": "hi"})
+                unrelated = client.get("/api/status")
+            finally:
+                release.set()
+
+            assert refused.status_code == 503
+            assert refused.json()["detail"] == TOO_MANY_STREAMS_DETAIL
+            assert refused_chat.status_code == 503
+            assert refused_chat.json()["detail"] == TOO_MANY_STREAMS_DETAIL
+            assert unrelated.status_code == 200
+            assert [stream.result().status_code for stream in in_flight] == [
+                200
+            ] * MAX_CONCURRENT_STREAMS
+
+        assert client.get(self.STREAM_URL).status_code == 200
+
+
+@pytest.mark.usefixtures("whole_stream_budget")
+class TestStreamBudgetIsGivenBack:
+    """The budget is process-wide and never refilled, so a slot leaked once
+    per request turns the cap itself into the outage it prevents. Each case
+    runs one request past the cap: a leak refuses the last one.
+    """
+
+    STREAM_URL = "/api/recommendations/stream?type=book&count=1"
+
+    def test_giving_one_slot_back_twice_does_not_widen_the_budget(self) -> None:
+        """Two paths release a slot and either may be the only one.
+
+        The second lands in a ``weakref.finalize`` callback, where the
+        over-release is unraisable and the widened budget trips no cap
+        assertion — so it is taken at the guard.
+        """
+        assert _slots.acquire(blocking=False)
+        slot = _HeldSlot()
+
+        slot.give_back()
+        slot.give_back()
+
+        assert _free_stream_slots() == MAX_CONCURRENT_STREAMS
+
+    def test_a_stream_that_ends_in_an_error_event_returns_its_slot(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """The failure path is the common one while the LLM is down."""
+        mock_components["engine"].generate_recommendations.side_effect = RuntimeError(
+            "engine down"
+        )
+        mock_components["storage"].get_user_preference_config.return_value = None
+
+        for _ in range(MAX_CONCURRENT_STREAMS + 1):
+            response = client.get(self.STREAM_URL)
+            assert response.status_code == 200
+            assert _parse_sse_events(response.text)[-1]["type"] == "error"
+
+    def test_a_chat_stream_returns_its_slot_to_the_shared_budget(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """One budget for two endpoints: a chat leak refuses recommendations."""
+        conversation = Mock(spec=ConversationEngine)
+        conversation.process_message.side_effect = lambda **_kwargs: iter(
+            [ConversationChunk(chunk_type="done")]
+        )
+        app_state.conversation_engine = conversation
+        mock_components["engine"].generate_recommendations.return_value = []
+        mock_components["storage"].get_user_preference_config.return_value = None
+
+        for _ in range(MAX_CONCURRENT_STREAMS + 1):
+            assert client.post("/api/chat", json={"message": "hi"}).status_code == 200
+
+        assert client.get(self.STREAM_URL).status_code == 200
+
+    def test_a_stream_abandoned_before_its_first_chunk_returns_its_slot(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """Closing an unstarted generator runs no frame code, so its ``finally``
+        never fires. Taken at the helper: no TestClient request can open the
+        window between the handler returning and Starlette's first pull.
+        """
+        for _ in range(MAX_CONCURRENT_STREAMS + 1):
+            abandoned = bounded_sse(iter(["data: never read\n\n"]))
+            abandoned.close()
+            del abandoned
+            gc.collect()
+
+        mock_components["engine"].generate_recommendations.return_value = []
+        mock_components["storage"].get_user_preference_config.return_value = None
+        assert client.get(self.STREAM_URL).status_code == 200
+
+    def test_closing_an_unstarted_generator_runs_no_finally(self) -> None:
+        """The premise of the case above: without it, nothing is being fixed."""
+        ran: list[str] = []
+
+        def body() -> Iterator[str]:
+            try:
+                yield "chunk"
+            finally:
+                ran.append("finally")
+
+        unstarted = body()
+        unstarted.close()
+
+        assert ran == []
+
+    def test_a_request_refused_before_the_stream_starts_takes_no_slot(
+        self, client: TestClient, anonymous_client: TestClient, mock_components: dict
+    ) -> None:
+        """Otherwise an unauthenticated caller empties the budget for free."""
+        for _ in range(MAX_CONCURRENT_STREAMS + 1):
+            assert anonymous_client.get(self.STREAM_URL).status_code == 401
+            assert (
+                client.get(
+                    "/api/recommendations/stream?type=invalid&count=1"
+                ).status_code
+                == 400
+            )
+
+        mock_components["engine"].generate_recommendations.return_value = []
+        mock_components["storage"].get_user_preference_config.return_value = None
+        assert client.get(self.STREAM_URL).status_code == 200
+
+
 class TestConfigReload:
     """Tests for POST /api/config/reload."""
 
@@ -4357,6 +4955,7 @@ class TestStreamRecommendationsSignalRegression:
 # Sensitive and non-sensitive leaves reused across the settings endpoint tests.
 _SETTINGS_SECRET_KEY = "enrichment.providers.tmdb.api_key"
 _SETTINGS_INT_KEY = "recommendations.default_count"
+_SETTINGS_OLLAMA_URL_KEY = "ollama.base_url"
 
 
 class TestSettingsEndpoints:
@@ -4489,6 +5088,66 @@ class TestSettingsEndpoints:
         response = client.delete("/api/settings/web.nonsense")
 
         assert response.status_code == 404
+
+    def test_the_file_import_allowlist_is_not_reachable(self, settings_env) -> None:
+        """``security.allowed_source_roots`` is config.yaml only, by design.
+
+        A caller able to widen it could point a file-based source anywhere and
+        read the host's filesystem, so it is deliberately not a registry leaf.
+        """
+        client, storage, _config = settings_env
+        key = "security.allowed_source_roots"
+        before = get_allowed_source_roots()
+
+        listed = client.get("/api/settings").json()
+        assert not any(
+            setting["key"] == key
+            for section in listed["sections"]
+            for setting in section["settings"]
+        )
+
+        response = client.put("/api/settings", json={"updates": {key: ["/"]}})
+
+        assert response.status_code == 422
+        assert response.json()["detail"] == {"key": key, "reason": "unknown setting"}
+        assert storage.list_settings() == {}
+        assert get_allowed_source_roots() == before
+
+    def test_a_non_local_ollama_base_url_is_refused_over_http(
+        self, settings_env
+    ) -> None:
+        """The locality rule is tested at the service; this is the door.
+
+        A host with no ASCII dot reads as one local label until IDNA splits
+        it, which is how this one reached the service.
+        """
+        client, storage, config = settings_env
+        before = config["ollama"]["base_url"]
+
+        response = client.put(
+            "/api/settings",
+            json={"updates": {_SETTINGS_OLLAMA_URL_KEY: "http://ollama。example。com"}},
+        )
+
+        assert response.status_code == 422
+        assert response.json()["detail"]["key"] == _SETTINGS_OLLAMA_URL_KEY
+        assert storage.get_setting(_SETTINGS_OLLAMA_URL_KEY) is None
+        assert config["ollama"]["base_url"] == before
+
+    def test_a_local_ollama_base_url_is_stored_as_it_will_be_dialled(
+        self, settings_env
+    ) -> None:
+        """A trailing slash is a path, and the stored value is what httpx gets."""
+        client, storage, config = settings_env
+
+        response = client.put(
+            "/api/settings",
+            json={"updates": {_SETTINGS_OLLAMA_URL_KEY: " http://ollama:11434/ "}},
+        )
+
+        assert response.status_code == 200
+        assert storage.get_setting(_SETTINGS_OLLAMA_URL_KEY) == "http://ollama:11434"
+        assert config["ollama"]["base_url"] == "http://ollama:11434"
 
     def test_delete_sensitive_key_is_graceful_not_500(self, settings_env) -> None:
         """DELETE /api/settings/{key} on a sensitive key must not 500.
@@ -5252,6 +5911,96 @@ class TestEveryApiRouteRequiresTheToken:
             return {}
 
         assert _exempt_api_routes(probe) == {("GET", "/api/open")}
+
+
+def _user_id_fields(dependant: Dependant) -> Iterator[Any]:
+    """Yield the ``FieldInfo`` of every ``user_id`` one request can carry.
+
+    Body fields included: ``ChatRequest`` takes its id there. One level deep,
+    because no route carries an id in a sub-dependency or nested model — one
+    that did would be invisible.
+    """
+    for param in dependant.path_params + dependant.query_params:
+        if param.name == "user_id":
+            yield param.field_info
+    for body_param in dependant.body_params:
+        model = body_param.type_
+        if isinstance(model, type) and issubclass(model, BaseModel):
+            for name, field in model.model_fields.items():
+                if name == "user_id":
+                    yield field
+
+
+def _unbounded_user_id_params(app: FastAPI) -> set[tuple[str, str]]:
+    """Every ``/api`` route taking a ``user_id`` that admits 0 or below."""
+    found = set()
+    for route in app.routes:
+        if not isinstance(route, APIRoute) or not route.path.startswith("/api"):
+            continue
+        for field_info in _user_id_fields(route.dependant):
+            metadata = getattr(field_info, "metadata", [])
+            if not any(getattr(item, "ge", None) == 1 for item in metadata):
+                found.add((next(iter(route.methods)), route.path))
+    return found
+
+
+class TestEveryUserIdParamIsBounded:
+    """``UserIdPath``'s comment claims every sibling carries ``ge=1``, and the
+    chat router's did not. A non-positive id matches no row, so it reads as an
+    empty library rather than a bad request.
+    """
+
+    def test_no_route_accepts_a_non_positive_user_id(self, mock_components) -> None:
+        assert _unbounded_user_id_params(mock_components["app"]) == set()
+
+    def test_the_deriver_finds_an_unbounded_one(self) -> None:
+        """Without this the sweep could hold on a deriver that never matches."""
+        probe = FastAPI()
+
+        class _LooseBody(BaseModel):
+            user_id: int = Field(default=1)
+
+        @probe.get("/api/loose")
+        def _loose(user_id: int = Query(default=1)) -> dict[str, str]:
+            return {}
+
+        @probe.post("/api/loose-body")
+        def _loose_body(body: _LooseBody) -> dict[str, str]:
+            return {}
+
+        @probe.get("/api/tight")
+        def _tight(user_id: int = Query(default=1, ge=1)) -> dict[str, str]:
+            return {}
+
+        assert _unbounded_user_id_params(probe) == {
+            ("GET", "/api/loose"),
+            ("POST", "/api/loose-body"),
+        }
+
+
+class TestAServerWithNoTokenConfiguredAcceptsNothing:
+    """``create_app`` refuses to boot without one, so nothing reaches this
+    branch today. Dropping it makes an unconfigured server 500 on every
+    request, or worse, take an empty bearer as the matching credential.
+    """
+
+    @pytest.fixture()
+    def unconfigured(self, mock_components, monkeypatch) -> TestClient:
+        monkeypatch.setattr(app_state, "api_token", None)
+        return TestClient(mock_components["app"])
+
+    def test_a_request_carrying_no_header_is_401(self, unconfigured) -> None:
+        response = unconfigured.get("/api/status")
+
+        assert response.status_code == 401
+        assert response.json()["detail"] == UNAUTHORIZED_DETAIL
+
+    def test_an_empty_bearer_is_refused_rather_than_matched(self, unconfigured) -> None:
+        """The absent token must not read as "" and match an empty guess."""
+        response = unconfigured.get("/api/status", headers={"Authorization": "Bearer "})
+
+        assert response.status_code == 401
+        assert response.json()["detail"] == UNAUTHORIZED_DETAIL
 
 
 class TestTokenComparisonIsConstantTime:

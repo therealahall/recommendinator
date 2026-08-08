@@ -2,28 +2,59 @@
 
 import asyncio
 import logging
+import threading
 from collections.abc import AsyncIterator, Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import fields
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
+import yaml
 
 from src.conversation.engine import ConversationEngine
 from src.llm.client import OllamaClient
+from src.settings.service import apply_settings
 from src.storage.manager import StorageManager
+from src.web.api import SettingsUpdateRequest, update_settings
+from src.web.app import create_app
 from src.web.state import (
     AppState,
     ConfigWatcher,
     app_state,
+    get_config,
     get_conversation_engine,
     get_ollama_client,
+    get_storage,
+    locked_running_config,
     reload_config,
 )
-from tests.factories import back_mock_settings_store
+from tests.factories import API_TOKEN, back_mock_settings_store
 
 _AWATCH_PATCH_TARGET = "watchfiles.awatch"
+
+# Long enough that a loaded machine does not report a lock as never released;
+# _BLOCKED_SECONDS is the opposite, the wait an uncontended save fits inside
+# and a blocked one does not.
+_LOCK_TIMEOUT_SECONDS = 5.0
+_BLOCKED_SECONDS = 0.2
+
+
+def _config_yaml(tmp_path: Path, model: str) -> str:
+    """A config file naming a tmp database, AI on, and *model* to generate with."""
+    return yaml.safe_dump(
+        {
+            "storage": {
+                "database_path": str(tmp_path / "recommendations.db"),
+                "vector_db_path": str(tmp_path / "chroma_db"),
+            },
+            "features": {"ai_enabled": True},
+            "ollama": {"model": model},
+            # create_app refuses to boot without one.
+            "web": {"api_token": API_TOKEN},
+        }
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -593,3 +624,126 @@ class TestLifespan:
 
         asyncio.run(_run())
         assert "Config watcher not started" in caplog.text
+
+
+class TestLlmComponentsFollowTheRunningConfig:
+    """A settings save must reach the components ``create_app`` built.
+
+    Both froze their section at boot, so the Settings page reported success
+    while the process kept its old model and temperature.
+    """
+
+    @pytest.fixture()
+    def booted(self, tmp_path: Path) -> None:
+        """Boot the real app on a tmp database with AI on."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            yaml.safe_dump(
+                {
+                    "storage": {
+                        "database_path": str(tmp_path / "recommendations.db"),
+                        "vector_db_path": str(tmp_path / "chroma_db"),
+                    },
+                    "features": {"ai_enabled": True},
+                    # create_app refuses to boot without one.
+                    "web": {"api_token": API_TOKEN},
+                }
+            )
+        )
+        create_app(config_path)
+
+    @staticmethod
+    def _apply(updates: dict[str, Any]) -> None:
+        config, storage = get_config(), get_storage()
+        assert config is not None and storage is not None
+        apply_settings(config, storage, updates)
+
+    def test_an_ollama_save_reaches_the_client_boot_built(self, booted: None) -> None:
+        """The model the next generation asks for is the saved one."""
+        self._apply({"ollama.model": "qwen2.5:14b"})
+
+        client = get_ollama_client()
+        assert client is not None
+        assert client.default_model == "qwen2.5:14b"
+
+    def test_a_chat_save_reaches_the_engine_boot_built(self, booted: None) -> None:
+        """The temperature the next turn samples at is the saved one."""
+        self._apply({"conversation.llm.temperature": 0.15})
+
+        engine = get_conversation_engine()
+        assert engine is not None
+        assert engine.temperature == 0.15
+
+
+class TestAHotReloadReachesTheLlmComponents:
+    """The config file is the other writer, and it rebinds rather than mutates.
+
+    A component reading the dict it was handed at boot would keep the old
+    file's values for the life of the process.
+    """
+
+    def test_a_reloaded_model_reaches_the_client_boot_built(
+        self, tmp_path: Path
+    ) -> None:
+        """An edited ``config.yaml`` is what the next generation asks for."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(_config_yaml(tmp_path, "mistral:7b"))
+        create_app(config_path)
+        client = get_ollama_client()
+        assert client is not None
+        assert client.default_model == "mistral:7b"
+
+        config_path.write_text(_config_yaml(tmp_path, "qwen2.5:14b"))
+
+        assert reload_config() is True
+        assert client.default_model == "qwen2.5:14b"
+
+
+class TestSettingsWritesStillRunUnderTheConfigLock:
+    """The ollama rule runs inside the critical section, so it must not block.
+
+    It is text-only for that reason, and the save it is part of still has to
+    be the serialised read-copy-store every other config writer is.
+    """
+
+    def test_a_save_waits_for_the_lock_and_then_lands(self, tmp_path: Path) -> None:
+        """The uncontended save is the control.
+
+        Without it the ``TimeoutError`` below holds just as well for a save
+        that is merely slow, and this one rewrites ``config.yaml``.
+        """
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(_config_yaml(tmp_path, "mistral:7b"))
+        create_app(config_path)
+        storage = get_storage()
+        assert storage is not None
+        lock_held = threading.Event()
+        release = threading.Event()
+
+        def hold_the_lock() -> None:
+            with locked_running_config():
+                lock_held.set()
+                release.wait(timeout=_LOCK_TIMEOUT_SECONDS)
+
+        def save(model: str) -> None:
+            update_settings(
+                SettingsUpdateRequest(updates={"ollama.model": model}), storage
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            pool.submit(save, "llama3.1:8b").result(timeout=_BLOCKED_SECONDS)
+
+            holder = pool.submit(hold_the_lock)
+            assert lock_held.wait(timeout=_LOCK_TIMEOUT_SECONDS)
+            saver = pool.submit(save, "qwen2.5:14b")
+
+            with pytest.raises(TimeoutError):
+                saver.result(timeout=_BLOCKED_SECONDS)
+
+            release.set()
+            holder.result(timeout=_LOCK_TIMEOUT_SECONDS)
+            saver.result(timeout=_LOCK_TIMEOUT_SECONDS)
+
+        client = get_ollama_client()
+        assert client is not None
+        assert client.default_model == "qwen2.5:14b"

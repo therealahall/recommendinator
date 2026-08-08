@@ -2,7 +2,7 @@
 
 import tempfile
 from collections.abc import Generator
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -15,7 +15,8 @@ from src.conversation.tools import (
     parse_tool_call_from_text,
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
-from src.storage.manager import StorageManager
+from src.storage.manager import FutureCompletionDateError, StorageManager
+from src.utils.dates import local_today
 
 # The same list every other review-writing surface is checked against,
 # imported rather than repeated so chat cannot come to refuse a different set
@@ -516,6 +517,126 @@ class TestChatCompletionUsesTheCompletionDoor:
         assert stored is not None
         assert stored.rating == 2
         assert stored.date_completed is None
+
+
+class TestChatCannotDateACompletionInTheFuture:
+    """Reported: the tool loop reaches ``mark_completed`` with a model-chosen
+    date, so chat alone could write one no other surface produces. The door
+    now bounds it, and the handler reports the refusal rather than raising.
+    """
+
+    def _seed_completed_on(self, storage_manager: StorageManager) -> int:
+        """Store one book an import dated 2020-01-01."""
+        return storage_manager.save_content_item(
+            ContentItem(
+                id="book-dated",
+                title="Dune",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                date_completed=date(2020, 1, 1),
+            ),
+            user_id=1,
+        )
+
+    def test_a_future_date_is_refused_and_the_stored_one_survives_regression(
+        self,
+        tool_executor: ToolExecutor,
+        storage_manager: StorageManager,
+    ) -> None:
+        """The refusal reaches the user as a message, not a generic failure."""
+        db_id = self._seed_completed_on(storage_manager)
+
+        result = tool_executor.execute(
+            "mark_completed",
+            {"item_id": db_id, "date_completed": "9999-12-31"},
+            user_id=1,
+        )
+
+        assert not result.success
+        assert "future" in result.message.lower()
+        stored = storage_manager.get_content_item(db_id, user_id=1)
+        assert stored is not None
+        assert stored.date_completed == date(2020, 1, 1)
+
+    def test_the_other_surfaces_meet_the_same_bound_at_the_same_door(
+        self, storage_manager: StorageManager
+    ) -> None:
+        """``complete`` and ``POST /api/complete`` call this entry point."""
+        with pytest.raises(FutureCompletionDateError):
+            storage_manager.complete_content_item(
+                ContentItem(
+                    id="book-command",
+                    title="Neuromancer",
+                    content_type=ContentType.BOOK,
+                    status=ConsumptionStatus.COMPLETED,
+                    date_completed=local_today() + timedelta(days=2),
+                ),
+                user_id=1,
+            )
+
+        assert storage_manager.count_items(user_id=1) == 0
+
+    def test_tomorrow_lands_through_chat_for_a_user_a_zone_ahead(
+        self,
+        tool_executor: ToolExecutor,
+        storage_manager: StorageManager,
+    ) -> None:
+        """The skew allowance is only real if chat can spend it."""
+        db_id = self._seed_completed_on(storage_manager)
+        tomorrow = local_today() + timedelta(days=1)
+
+        result = tool_executor.execute(
+            "mark_completed",
+            {"item_id": db_id, "date_completed": tomorrow.isoformat()},
+            user_id=1,
+        )
+
+        assert result.success
+        stored = storage_manager.get_content_item(db_id, user_id=1)
+        assert stored is not None
+        assert stored.date_completed == tomorrow
+
+    def test_the_first_day_past_the_allowance_is_refused_through_chat(
+        self,
+        tool_executor: ToolExecutor,
+        storage_manager: StorageManager,
+    ) -> None:
+        """9999-12-31 clears a bound the real edge of the window would not."""
+        db_id = self._seed_completed_on(storage_manager)
+
+        result = tool_executor.execute(
+            "mark_completed",
+            {
+                "item_id": db_id,
+                "date_completed": (local_today() + timedelta(days=2)).isoformat(),
+            },
+            user_id=1,
+        )
+
+        assert not result.success
+        assert "future" in result.message.lower()
+        stored = storage_manager.get_content_item(db_id, user_id=1)
+        assert stored is not None
+        assert stored.date_completed == date(2020, 1, 1)
+
+    def test_a_correction_pointing_backwards_still_lands(
+        self,
+        tool_executor: ToolExecutor,
+        storage_manager: StorageManager,
+    ) -> None:
+        """The bound is on the future half only — an old read is a real date."""
+        db_id = self._seed_completed_on(storage_manager)
+
+        result = tool_executor.execute(
+            "mark_completed",
+            {"item_id": db_id, "date_completed": "1998-06-01"},
+            user_id=1,
+        )
+
+        assert result.success
+        stored = storage_manager.get_content_item(db_id, user_id=1)
+        assert stored is not None
+        assert stored.date_completed == date(1998, 6, 1)
 
 
 class TestUpdateRating:

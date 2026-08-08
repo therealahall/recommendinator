@@ -13,7 +13,7 @@ from src.models.content import (
     get_enum_value,
 )
 from src.models.conversation import ToolResult
-from src.storage.manager import unset_if_none
+from src.storage.manager import FutureCompletionDateError, unset_if_none
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
@@ -45,7 +45,9 @@ CONVERSATION_TOOLS = [
                 },
                 "date_completed": {
                     "type": "string",
-                    "description": "Optional completion date (YYYY-MM-DD)",
+                    "description": (
+                        "Optional completion date (YYYY-MM-DD), not in the future"
+                    ),
                 },
             },
             "required": ["item_id"],
@@ -315,6 +317,8 @@ class ToolExecutor:
         host's zone, a stored one is kept — which is why nothing here decides
         it. A date the user does name is passed on and written as given,
         including a correction pointing to an earlier day than the stored one.
+        The door refuses a date nobody has lived yet, and that refusal is
+        reported here rather than raised, since the model chose the date.
 
         Args:
             params: Tool parameters (item_id, rating, review, date_completed)
@@ -350,18 +354,21 @@ class ToolExecutor:
         # The item is identified by external id and title rather than by
         # db_id because the door finds or creates its own row, so the id it
         # returns — not the one asked for — names the row that was written.
-        db_id = self.storage.complete_content_item(
-            ContentItem(
-                id=item.id,
-                title=item.title,
-                content_type=item.content_type,
-                status=ConsumptionStatus.COMPLETED,
-                rating=rating,
-                review=_supplied_review(params),
-                date_completed=completed_on,
-            ),
-            user_id=user_id,
-        )
+        try:
+            db_id = self.storage.complete_content_item(
+                ContentItem(
+                    id=item.id,
+                    title=item.title,
+                    content_type=item.content_type,
+                    status=ConsumptionStatus.COMPLETED,
+                    rating=rating,
+                    review=_supplied_review(params),
+                    date_completed=completed_on,
+                ),
+                user_id=user_id,
+            )
+        except FutureCompletionDateError as error:
+            return ToolResult(success=False, message=str(error))
         stored = self.storage.get_content_item(db_id, user_id=user_id)
         if stored is None:
             return ToolResult(

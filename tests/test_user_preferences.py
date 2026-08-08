@@ -139,3 +139,50 @@ class TestVarietyPenaltyMigrationRegression:
             {"variety_after_completion": True, "variety_penalty": 0.3}
         )
         assert config.variety_penalty == 0.3
+
+
+class TestAPoisonedRowIsStillReadableRegression:
+    """Reported: a row predating ``raise_if_unstorable`` can hold ``Infinity``,
+    which no JSON response renders, so the preferences page 500s forever and no
+    door is left to correct it by. The penalty was clamped on read; the weights
+    were taken raw.
+    """
+
+    def test_a_non_finite_stored_weight_is_read_past(self) -> None:
+        """Dropped, not clamped: there is no bound to clamp a weight into."""
+        config = UserPreferenceConfig.from_dict(
+            {"scorer_weights": {"recency": float("inf"), "genre_match": 2.0}}
+        )
+
+        assert config.scorer_weights == {"genre_match": 2.0}
+
+    def test_a_stored_nan_goes_the_same_way(self) -> None:
+        """The sibling literal ``json.loads`` accepts."""
+        config = UserPreferenceConfig.from_dict(
+            {"scorer_weights": {"recency": float("nan")}}
+        )
+
+        assert config.scorer_weights == {}
+
+    def test_a_stored_weight_that_is_not_a_number_is_dropped(self) -> None:
+        """``float("high")`` raises, so the type half of the guard carries it."""
+        config = UserPreferenceConfig.from_dict(
+            {"scorer_weights": {"recency": "high", "genre_match": 2.0}}
+        )
+
+        assert config.scorer_weights == {"genre_match": 2.0}
+
+    def test_a_stored_boolean_weight_reads_as_its_numeric_value(self) -> None:
+        """``bool`` is an ``int``, so it survives as 1.0 rather than being lost."""
+        config = UserPreferenceConfig.from_dict({"scorer_weights": {"recency": True}})
+
+        # Equality alone holds for a surviving ``True``, which the preferences
+        # response renders as ``true`` rather than ``1.0``.
+        assert config.scorer_weights == {"recency": 1.0}
+        assert [type(weight) for weight in config.scorer_weights.values()] == [float]
+
+    def test_a_non_finite_penalty_is_still_clamped(self) -> None:
+        """The half that already worked, so the weights fix cannot cost it."""
+        assert (
+            UserPreferenceConfig.from_dict({"variety_penalty": float("inf")})
+        ).variety_penalty == UserPreferenceConfig.MAX_VARIETY_PENALTY
