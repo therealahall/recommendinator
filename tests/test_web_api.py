@@ -1,62 +1,82 @@
 """Tests for web API endpoints."""
 
+import asyncio
 import inspect
 import json
 import logging
 import threading
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, fields, replace
 from datetime import UTC, date, datetime
 from pathlib import Path
-from unittest.mock import Mock, patch
+from typing import Any
+from unittest.mock import MagicMock, Mock, patch
 
+import anyio.from_thread
 import pytest
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
+from src.cli.config import load_config
+from src.conversation.engine import ConversationEngine
 from src.ingestion.sync import SyncResult
 from src.llm.client import OllamaClient
 from src.llm.embeddings import EmbeddingGenerator
 from src.llm.recommendations import RecommendationGenerator
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.models.conversation import ConversationChunk
 from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.engine import RecommendationEngine
 from src.recommendations.record import Recommendation
 from src.settings.metadata import default_of
+from src.settings.service import build_settings_view
 from src.storage.manager import UNSET, StorageManager
 from src.storage.settings_migration import migrate_config_settings
+from src.utils.dotted_path import get_leaf
 from src.utils.series import MAX_SEASONS
 from src.utils.sorting import MAX_SEARCH_LENGTH
-from src.web.api import (
-    APP_VERSION,
-    _item_to_response,
-    reset_setting_endpoint,
-    update_settings,
+from src.web.api import APP_VERSION, _item_to_response
+from src.web.app import _LOG_BASE_DIR, _safe_log_path
+from src.web.enrichment_manager import (
+    WebEnrichmentManager,
+    _enrichment_manager_lock,
+    get_enrichment_manager,
+    reset_enrichment_manager,
 )
-from src.web.app import _LOG_BASE_DIR, _safe_log_path, create_app
-from src.web.enrichment_manager import WebEnrichmentManager
 from src.web.epic_auth import EpicAuthError
 from src.web.gog_auth import GogAuthError
-from src.web.state import AppState, app_state
+from src.web.guards import (
+    RequiredStorage,
+    require_config,
+    require_conversation_engine,
+    require_engine,
+    require_memory_manager,
+    require_storage,
+    writable_config,
+)
+from src.web.state import (
+    ConfigWatcher,
+    _config_lock,
+    app_state,
+    get_config,
+    get_conversation_engine,
+    get_engine,
+    get_memory_manager,
+    get_storage,
+    locked_running_config,
+    reload_config,
+)
 from src.web.sync_manager import (
     SyncManager,
+    _sync_manager_lock,
     get_sync_manager,
     reset_sync_manager,
 )
 from src.web.trakt_auth import DevicePollResult, DevicePollStatus, TraktAuthError
 from tests.factories import booted_web_app
-
-
-def _reset_app_state() -> None:
-    """Reset the global ``app_state`` singleton to AppState defaults.
-
-    Tests that drive ``create_app`` share the module-level ``app_state``; this
-    copies a fresh ``AppState()`` field-by-field so no state leaks between tests.
-    """
-    fresh = AppState()
-    for f in fields(fresh):
-        setattr(app_state, f.name, getattr(fresh, f.name))
 
 
 @pytest.fixture
@@ -110,16 +130,16 @@ def mock_components(mock_config):
     mock_engine_instance.storage = mock_storage_manager
 
     with (
-        patch(
-            "src.web.app.create_recommendation_engine",
-            return_value=mock_engine_instance,
-        ),
         patch("src.web.app.migrate_source_labels") as mock_migrate_labels,
         patch("src.web.app.migrate_source_config_plugins") as mock_migrate_plugins,
-        booted_web_app(mock_storage_manager, mock_config, llm_components) as app,
+        booted_web_app(
+            mock_storage_manager,
+            mock_config,
+            llm_components,
+            engine=mock_engine_instance,
+        ) as app,
     ):
         app_state.embedding_gen = mock_embedding_gen
-        app_state.engine = mock_engine_instance
 
         yield {
             "app": app,
@@ -333,21 +353,7 @@ class TestCreateAppSettingsMigration:
         storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
         # A stored DB leaf must win over the YAML value on boot.
         storage_manager.set_setting("recommendations.default_count", 9)
-        with (
-            patch("src.web.app.load_config", return_value=mock_config),
-            patch(
-                "src.web.app.create_storage_manager",
-                return_value=storage_manager,
-            ),
-            patch("src.web.app.create_llm_components", return_value=(None, None, None)),
-            patch("src.web.app.create_recommendation_engine"),
-            patch("src.web.app.migrate_config_credentials"),
-            patch("src.web.app.configure_logging"),
-        ):
-            _reset_app_state()
-
-            create_app()
-
+        with booted_web_app(storage_manager, mock_config):
             # Real hook overlaid the DB leaf onto the in-memory config.
             assert app_state.config["recommendations"]["default_count"] == 9
             # Boot seeded nothing: only the pre-existing leaf remains in the DB.
@@ -371,28 +377,14 @@ class TestCreateAppSettingsMigration:
         storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
         # Write the row directly: the settings API would reject this key now.
         storage_manager.set_setting("web.debug", True)
-        with (
-            patch("src.web.app.load_config", return_value=mock_config),
-            patch(
-                "src.web.app.create_storage_manager",
-                return_value=storage_manager,
-            ),
-            patch("src.web.app.create_llm_components", return_value=(None, None, None)),
-            patch("src.web.app.create_recommendation_engine"),
-            patch("src.web.app.migrate_config_credentials"),
-            patch("src.web.app.configure_logging"),
-        ):
-            _reset_app_state()
-
-            app = create_app()
-
-        # mock_config carries no web.debug, so the bootstrap default (False)
-        # applies and the docs stay closed despite the stored row.
-        assert app.docs_url is None
-        assert app.redoc_url is None
-        # The schema too: docs_url=None alone would still serve the full route
-        # inventory at /openapi.json.
-        assert app.openapi_url is None
+        with booted_web_app(storage_manager, mock_config) as app:
+            # mock_config carries no web.debug, so the bootstrap default (False)
+            # applies and the docs stay closed despite the stored row.
+            assert app.docs_url is None
+            assert app.redoc_url is None
+            # The schema too: docs_url=None alone would still serve the full
+            # route inventory at /openapi.json.
+            assert app.openapi_url is None
         reset_sync_manager()
 
     def test_yaml_debug_true_opens_the_openapi_docs(self, mock_config, tmp_path):
@@ -405,25 +397,11 @@ class TestCreateAppSettingsMigration:
         reset_sync_manager()
         storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
         config = {**mock_config, "web": {**mock_config.get("web", {}), "debug": True}}
-        with (
-            patch("src.web.app.load_config", return_value=config),
-            patch(
-                "src.web.app.create_storage_manager",
-                return_value=storage_manager,
-            ),
-            patch("src.web.app.create_llm_components", return_value=(None, None, None)),
-            patch("src.web.app.create_recommendation_engine"),
-            patch("src.web.app.migrate_config_credentials"),
-            patch("src.web.app.configure_logging"),
-        ):
-            _reset_app_state()
-
-            app = create_app()
-
-        assert app.docs_url == "/docs"
-        assert app.redoc_url == "/redoc"
-        # Swagger and ReDoc need the schema, so it opens with them.
-        assert app.openapi_url == "/openapi.json"
+        with booted_web_app(storage_manager, config) as app:
+            assert app.docs_url == "/docs"
+            assert app.redoc_url == "/redoc"
+            # Swagger and ReDoc need the schema, so it opens with them.
+            assert app.openapi_url == "/openapi.json"
         reset_sync_manager()
 
     def test_non_dict_web_section_does_not_crash_boot(self, mock_config, tmp_path):
@@ -437,25 +415,12 @@ class TestCreateAppSettingsMigration:
         reset_sync_manager()
         storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
         config = {**mock_config, "web": None}
-        with (
-            patch("src.web.app.load_config", return_value=config),
-            patch(
-                "src.web.app.create_storage_manager",
-                return_value=storage_manager,
-            ),
-            patch("src.web.app.create_llm_components", return_value=(None, None, None)),
-            patch("src.web.app.create_recommendation_engine"),
-            patch("src.web.app.migrate_config_credentials"),
-            patch("src.web.app.configure_logging"),
-        ):
-            _reset_app_state()
-
-            app = create_app()
-
-        # Fails closed on both counts: no debug, and CORS pinned to the
-        # restrictive default rather than whatever a malformed section produced.
-        assert app.docs_url is None
-        assert _cors_origins(app) == default_of("web.allowed_origins")
+        with booted_web_app(storage_manager, config) as app:
+            # Fails closed on both counts: no debug, and CORS pinned to the
+            # restrictive default rather than whatever a malformed section
+            # produced.
+            assert app.docs_url is None
+            assert _cors_origins(app) == default_of("web.allowed_origins")
         reset_sync_manager()
 
     def test_configured_origins_reach_the_middleware(self, mock_config, tmp_path):
@@ -471,24 +436,10 @@ class TestCreateAppSettingsMigration:
             **mock_config,
             "web": {"allowed_origins": ["https://app.example.com"]},
         }
-        with (
-            patch("src.web.app.load_config", return_value=config),
-            patch(
-                "src.web.app.create_storage_manager",
-                return_value=storage_manager,
-            ),
-            patch("src.web.app.create_llm_components", return_value=(None, None, None)),
-            patch("src.web.app.create_recommendation_engine"),
-            patch("src.web.app.migrate_config_credentials"),
-            patch("src.web.app.configure_logging"),
-        ):
-            _reset_app_state()
-
-            app = create_app()
-
-        assert _cors_origins(app) == ["https://app.example.com"]
-        # A concrete origin list may carry credentials.
-        assert _cors_kwargs(app)["allow_credentials"] is True
+        with booted_web_app(storage_manager, config) as app:
+            assert _cors_origins(app) == ["https://app.example.com"]
+            # A concrete origin list may carry credentials.
+            assert _cors_kwargs(app)["allow_credentials"] is True
         reset_sync_manager()
 
     def test_wildcard_origin_disables_credentials(self, mock_config, tmp_path):
@@ -501,23 +452,9 @@ class TestCreateAppSettingsMigration:
         reset_sync_manager()
         storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
         config = {**mock_config, "web": {"allowed_origins": ["*"]}}
-        with (
-            patch("src.web.app.load_config", return_value=config),
-            patch(
-                "src.web.app.create_storage_manager",
-                return_value=storage_manager,
-            ),
-            patch("src.web.app.create_llm_components", return_value=(None, None, None)),
-            patch("src.web.app.create_recommendation_engine"),
-            patch("src.web.app.migrate_config_credentials"),
-            patch("src.web.app.configure_logging"),
-        ):
-            _reset_app_state()
-
-            app = create_app()
-
-        assert _cors_origins(app) == ["*"]
-        assert _cors_kwargs(app)["allow_credentials"] is False
+        with booted_web_app(storage_manager, config) as app:
+            assert _cors_origins(app) == ["*"]
+            assert _cors_kwargs(app)["allow_credentials"] is False
         reset_sync_manager()
 
     def test_db_set_origins_reach_the_middleware(self, mock_config, tmp_path):
@@ -529,22 +466,8 @@ class TestCreateAppSettingsMigration:
         reset_sync_manager()
         storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
         storage_manager.set_setting("web.allowed_origins", ["https://stored.example"])
-        with (
-            patch("src.web.app.load_config", return_value=mock_config),
-            patch(
-                "src.web.app.create_storage_manager",
-                return_value=storage_manager,
-            ),
-            patch("src.web.app.create_llm_components", return_value=(None, None, None)),
-            patch("src.web.app.create_recommendation_engine"),
-            patch("src.web.app.migrate_config_credentials"),
-            patch("src.web.app.configure_logging"),
-        ):
-            _reset_app_state()
-
-            app = create_app()
-
-        assert _cors_origins(app) == ["https://stored.example"]
+        with booted_web_app(storage_manager, mock_config) as app:
+            assert _cors_origins(app) == ["https://stored.example"]
         reset_sync_manager()
 
     @pytest.mark.parametrize("bad_origins", [None, "https://app.example.com", [1, 2]])
@@ -563,20 +486,10 @@ class TestCreateAppSettingsMigration:
         storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
         config = {**mock_config, "web": {"allowed_origins": bad_origins}}
         with (
-            patch("src.web.app.load_config", return_value=config),
-            patch(
-                "src.web.app.create_storage_manager",
-                return_value=storage_manager,
-            ),
-            patch("src.web.app.create_llm_components", return_value=(None, None, None)),
-            patch("src.web.app.create_recommendation_engine"),
-            patch("src.web.app.migrate_config_credentials"),
-            patch("src.web.app.configure_logging"),
             caplog.at_level(logging.WARNING, logger="src.web.app"),
+            booted_web_app(storage_manager, config),
         ):
-            _reset_app_state()
-
-            create_app()
+            pass
 
         assert any("web.allowed_origins" in m for m in caplog.messages)
         reset_sync_manager()
@@ -589,22 +502,11 @@ class TestCreateAppSettingsMigration:
         storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
         config = {**mock_config, "web": {"allowed_origins": ["https://ok.example"]}}
         with (
-            patch("src.web.app.load_config", return_value=config),
-            patch(
-                "src.web.app.create_storage_manager",
-                return_value=storage_manager,
-            ),
-            patch("src.web.app.create_llm_components", return_value=(None, None, None)),
-            patch("src.web.app.create_recommendation_engine"),
-            patch("src.web.app.migrate_config_credentials"),
-            patch("src.web.app.configure_logging"),
             caplog.at_level(logging.WARNING, logger="src.web.app"),
+            booted_web_app(storage_manager, config) as app,
         ):
-            _reset_app_state()
+            assert _cors_origins(app) == ["https://ok.example"]
 
-            app = create_app()
-
-        assert _cors_origins(app) == ["https://ok.example"]
         assert not any("web.allowed_origins" in m for m in caplog.messages)
         reset_sync_manager()
 
@@ -624,22 +526,8 @@ class TestCreateAppSettingsMigration:
         reset_sync_manager()
         storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
         config = {**mock_config, "web": {"allowed_origins": bad_origins}}
-        with (
-            patch("src.web.app.load_config", return_value=config),
-            patch(
-                "src.web.app.create_storage_manager",
-                return_value=storage_manager,
-            ),
-            patch("src.web.app.create_llm_components", return_value=(None, None, None)),
-            patch("src.web.app.create_recommendation_engine"),
-            patch("src.web.app.migrate_config_credentials"),
-            patch("src.web.app.configure_logging"),
-        ):
-            _reset_app_state()
-
-            app = create_app()
-
-        assert _cors_origins(app) == default_of("web.allowed_origins")
+        with booted_web_app(storage_manager, config) as app:
+            assert _cors_origins(app) == default_of("web.allowed_origins")
         reset_sync_manager()
 
     def test_logging_configured_after_settings_overlay(self, mock_config, tmp_path):
@@ -657,26 +545,19 @@ class TestCreateAppSettingsMigration:
             migrate_config_settings(config, storage)
 
         with (
-            patch("src.web.app.load_config", return_value=mock_config),
-            patch(
-                "src.web.app.create_storage_manager",
-                return_value=storage_manager,
-            ),
-            patch("src.web.app.create_llm_components", return_value=(None, None, None)),
-            patch("src.web.app.create_recommendation_engine"),
-            patch("src.web.app.migrate_config_credentials"),
             patch(
                 "src.web.app.migrate_config_settings",
                 side_effect=_record_settings,
             ),
+            # Overrides the root conftest's blanket no-op patch, which is what
+            # keeps every other boot here off the production log file.
             patch(
                 "src.web.app.configure_logging",
                 side_effect=lambda *a, **k: order.append("logging"),
             ),
+            booted_web_app(storage_manager, mock_config),
         ):
-            _reset_app_state()
-
-            create_app()
+            pass
 
         assert order == ["settings", "logging"]
         # The real hook ran via the spy but wrote nothing to the DB.
@@ -697,21 +578,7 @@ class TestCreateAppSettingsMigration:
             "storage": {"database_path": str(tmp_path / "test.db")},
             "enrichment": {"providers": {"tmdb": {"api_key": "tmdb-secret"}}},
         }
-        with (
-            patch("src.web.app.load_config", return_value=config),
-            patch(
-                "src.web.app.create_storage_manager",
-                return_value=storage_manager,
-            ),
-            patch("src.web.app.create_llm_components", return_value=(None, None, None)),
-            patch("src.web.app.create_recommendation_engine"),
-            patch("src.web.app.migrate_config_credentials"),
-            patch("src.web.app.configure_logging"),
-        ):
-            _reset_app_state()
-
-            create_app()
-
+        with booted_web_app(storage_manager, config):
             # The secret was encrypted into storage on boot.
             assert (
                 storage_manager.has_global_secret("enrichment.providers.tmdb.api_key")
@@ -721,6 +588,58 @@ class TestCreateAppSettingsMigration:
             providers = app_state.config["enrichment"]["providers"]
             assert providers.get("tmdb", {}).get("api_key") is None
         reset_sync_manager()
+
+
+class TestBootStartsFromCleanStateRegression:
+    """A boot must not inherit what an earlier test left in ``app_state``.
+
+    Bug reported: ``config_watcher`` is the one ``AppState`` field
+    ``create_app`` never assigns, so a test that installed a mock watcher
+    handed that mock to every app booted after it — a later lifespan would
+    start and stop somebody else's mock instead of a watcher of its own.
+    Root cause: ``booted_web_app`` snapshotted ``app_state`` and restored it,
+    which protects the caller's own mutations but carries a pre-existing leak
+    straight into the boot.
+    Fix: the helper installs ``AppState()`` defaults before the boot as well as
+    restoring the snapshot after, so it is clean-start and leak-free both.
+    """
+
+    def test_a_leaked_watcher_does_not_reach_the_booted_app(
+        self, mock_config, tmp_path, monkeypatch
+    ) -> None:
+        """The boot sees a real watcher, and the caller gets its mock back."""
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        leaked = MagicMock(spec=ConfigWatcher)
+        monkeypatch.setattr(app_state, "config_watcher", leaked)
+
+        with booted_web_app(storage_manager, mock_config):
+            assert isinstance(app_state.config_watcher, ConfigWatcher)
+
+        assert app_state.config_watcher is leaked
+
+    def test_no_field_survives_the_boot_and_every_one_comes_back(
+        self, mock_config, tmp_path, monkeypatch
+    ) -> None:
+        """Clean-start and leak-free hold for the whole dataclass, not one field.
+
+        A sentinel per field, so a field the helper forgot to reset shows up as
+        the caller's object reaching the boot, and one it forgot to restore
+        shows up as the caller's object not coming back.
+        """
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        sentinels = {field.name: object() for field in fields(app_state)}
+        for name, sentinel in sentinels.items():
+            monkeypatch.setattr(app_state, name, sentinel)
+
+        with booted_web_app(storage_manager, mock_config):
+            inherited = {
+                name
+                for name, sentinel in sentinels.items()
+                if getattr(app_state, name) is sentinel
+            }
+
+        assert inherited == set()
+        assert {name: getattr(app_state, name) for name in sentinels} == sentinels
 
 
 class TestRootEndpoint:
@@ -1417,6 +1336,26 @@ def test_update_endpoint_all_sources(client, mock_components):
 # ---------------------------------------------------------------------------
 
 
+def _stub_preference_merge(
+    storage: Mock, stored: UserPreferenceConfig | None = None
+) -> Mock:
+    """Give the mock store a ``merge_user_preference_config`` that really merges.
+
+    The handler hands its edits to storage, so a bare ``Mock`` would return a
+    ``Mock`` and prove nothing about the merge.
+    """
+    existing = stored if stored is not None else UserPreferenceConfig()
+
+    def merge(
+        _user_id: int, apply: Callable[[UserPreferenceConfig], None]
+    ) -> UserPreferenceConfig:
+        apply(existing)
+        return existing
+
+    storage.merge_user_preference_config = Mock(side_effect=merge)
+    return storage.merge_user_preference_config
+
+
 def test_get_user_preferences_defaults(client, mock_components):
     """GET /api/users/1/preferences returns defaults for new user."""
     mock_components["storage"].get_user_preference_config = Mock(
@@ -1433,10 +1372,7 @@ def test_get_user_preferences_defaults(client, mock_components):
 
 def test_put_user_preferences_partial(client, mock_components):
     """PUT /api/users/1/preferences merges partial update."""
-    mock_components["storage"].get_user_preference_config = Mock(
-        return_value=UserPreferenceConfig()
-    )
-    mock_components["storage"].save_user_preference_config = Mock()
+    _stub_preference_merge(mock_components["storage"])
 
     response = client.put(
         "/api/users/1/preferences",
@@ -1450,10 +1386,7 @@ def test_put_user_preferences_partial(client, mock_components):
 
 def test_put_user_preferences_full(client, mock_components):
     """PUT /api/users/1/preferences can update all fields."""
-    mock_components["storage"].get_user_preference_config = Mock(
-        return_value=UserPreferenceConfig()
-    )
-    mock_components["storage"].save_user_preference_config = Mock()
+    _stub_preference_merge(mock_components["storage"])
 
     response = client.put(
         "/api/users/1/preferences",
@@ -1474,10 +1407,7 @@ def test_put_user_preferences_full(client, mock_components):
 
 def test_put_user_preferences_accepts_max_variety_penalty(client, mock_components):
     """variety_penalty at the 5.0 maximum is accepted and saved."""
-    mock_components["storage"].get_user_preference_config = Mock(
-        return_value=UserPreferenceConfig()
-    )
-    mock_components["storage"].save_user_preference_config = Mock()
+    merge = _stub_preference_merge(mock_components["storage"])
 
     response = client.put(
         "/api/users/1/preferences",
@@ -1485,15 +1415,12 @@ def test_put_user_preferences_accepts_max_variety_penalty(client, mock_component
     )
     assert response.status_code == 200
     assert response.json()["variety_penalty"] == 5.0
-    mock_components["storage"].save_user_preference_config.assert_called_once()
+    merge.assert_called_once()
 
 
 def test_put_user_preferences_accepts_zero_variety_penalty(client, mock_components):
     """variety_penalty at the 0.0 minimum is accepted and saved (penalty off)."""
-    mock_components["storage"].get_user_preference_config = Mock(
-        return_value=UserPreferenceConfig()
-    )
-    mock_components["storage"].save_user_preference_config = Mock()
+    merge = _stub_preference_merge(mock_components["storage"])
 
     response = client.put(
         "/api/users/1/preferences",
@@ -1501,39 +1428,73 @@ def test_put_user_preferences_accepts_zero_variety_penalty(client, mock_componen
     )
     assert response.status_code == 200
     assert response.json()["variety_penalty"] == 0.0
-    mock_components["storage"].save_user_preference_config.assert_called_once()
+    merge.assert_called_once()
 
 
 def test_put_user_preferences_rejects_out_of_range_variety_penalty(
     client, mock_components
 ):
     """variety_penalty above the 5.0 maximum is rejected with a 422."""
-    mock_components["storage"].get_user_preference_config = Mock(
-        return_value=UserPreferenceConfig()
-    )
-    mock_components["storage"].save_user_preference_config = Mock()
+    merge = _stub_preference_merge(mock_components["storage"])
 
     response = client.put(
         "/api/users/1/preferences",
         json={"variety_penalty": 6.0},
     )
     assert response.status_code == 422
-    mock_components["storage"].save_user_preference_config.assert_not_called()
+    merge.assert_not_called()
 
 
 def test_put_user_preferences_rejects_negative_variety_penalty(client, mock_components):
     """variety_penalty below 0.0 is rejected with a 422 and never saved."""
-    mock_components["storage"].get_user_preference_config = Mock(
-        return_value=UserPreferenceConfig()
-    )
-    mock_components["storage"].save_user_preference_config = Mock()
+    merge = _stub_preference_merge(mock_components["storage"])
 
     response = client.put(
         "/api/users/1/preferences",
         json={"variety_penalty": -0.1},
     )
     assert response.status_code == 422
-    mock_components["storage"].save_user_preference_config.assert_not_called()
+    merge.assert_not_called()
+
+
+def test_put_user_preferences_keeps_stored_fields_the_request_omits(
+    client, mock_components
+):
+    """A partial update merges onto what was stored, not onto the defaults."""
+    _stub_preference_merge(
+        mock_components["storage"],
+        UserPreferenceConfig(theme="midnight", custom_rules=["no horror"]),
+    )
+
+    response = client.put(
+        "/api/users/1/preferences",
+        json={"variety_penalty": 1.0},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["variety_penalty"] == 1.0
+    assert data["theme"] == "midnight"
+    assert data["custom_rules"] == ["no horror"]
+
+
+def test_put_user_preferences_merges_for_the_user_named_in_the_path(
+    client, mock_components
+):
+    """The path id is what storage merges on.
+
+    Every other case on this route uses user 1, so a handler that merged a
+    hardcoded 1 would keep the whole suite green.
+    """
+    merge = _stub_preference_merge(mock_components["storage"])
+
+    response = client.put(
+        "/api/users/2/preferences",
+        json={"variety_penalty": 1.0},
+    )
+
+    assert response.status_code == 200
+    assert merge.call_args.args[0] == 2
 
 
 def test_get_user_preferences_includes_variety_penalty(client, mock_components):
@@ -4407,20 +4368,8 @@ class TestSettingsEndpoints:
             "recommendations": {"default_count": 5, "max_count": 20},
             "web": {"host": "127.0.0.1", "port": 18473},
         }
-        with (
-            patch("src.web.app.load_config", return_value=config),
-            patch("src.web.app.create_storage_manager", return_value=storage),
-            patch("src.web.app.create_llm_components", return_value=(None, None, None)),
-            patch("src.web.app.create_recommendation_engine"),
-            patch("src.web.app.migrate_config_credentials"),
-            patch("src.web.app.configure_logging"),
-        ):
-            _reset_app_state()
-            app = create_app()
-            app_state.config = config
-            app_state.storage = storage
+        with booted_web_app(storage, config) as app:
             yield TestClient(app), storage, config
-        _reset_app_state()
         reset_sync_manager()
 
     def _find(self, body: dict, key: str) -> dict:
@@ -4476,6 +4425,26 @@ class TestSettingsEndpoints:
         # Nothing persisted and the running config is untouched.
         assert storage.list_settings() == {}
         assert config["recommendations"]["default_count"] == 5
+
+    def test_a_rejected_update_leaves_the_next_one_writable(self, settings_env) -> None:
+        """``SettingsValidationError`` unwinds ``writable_config``, lock included.
+
+        A leaked ``_config_lock`` would hang the next settings write rather
+        than name a failure, so the lock is asserted free between the two PUTs
+        and the second one landing is the behavioural half.
+        """
+        client, storage, _config = settings_env
+
+        rejected = client.put(
+            "/api/settings", json={"updates": {"recommendations.max_count": 0}}
+        )
+        assert not _config_lock.locked()
+
+        accepted = client.put("/api/settings", json={"updates": {_SETTINGS_INT_KEY: 7}})
+
+        assert rejected.status_code == 422
+        assert accepted.status_code == 200
+        assert storage.get_setting(_SETTINGS_INT_KEY) == 7
 
     def test_put_restart_required_persists_but_flagged(self, settings_env) -> None:
         client, storage, config = settings_env
@@ -4643,19 +4612,52 @@ class TestSettingsEndpoints:
         )
         assert response.status_code == 503
 
-    def test_both_settings_writers_stay_on_the_event_loop(self) -> None:
-        """Both writers must remain ``async def``, and this fails if one is not.
+    def test_a_reset_survives_a_reload_that_lands_mid_request(
+        self, settings_env
+    ) -> None:
+        """The reset writer's half of what the config lock guarantees.
 
-        ``set_leaves_atomically`` reads a section, copies it and stores the
-        copy back with nothing serialising that sequence, so it is safe only
-        because every writer runs on the single event loop. FastAPI runs a
-        plain ``def`` endpoint in the threadpool instead, where two saves
-        interleave and the later store drops the earlier one from the running
-        config while the database keeps both, leaving the two disagreeing with
-        no error anywhere. Nothing else stops that edit being made.
+        ``TestConfigReloadRacingASettingsSaveRegression`` pins the same thing
+        for ``PUT``: a writer must publish into the config the server is
+        running, not into the one its ``RequiredConfig`` dependency resolved
+        before ``POST /api/config/reload`` replaced it. Both writers resolve
+        the binding inside ``writable_config`` for that reason, and this is the
+        one that says so for ``DELETE``.
         """
-        assert inspect.iscoroutinefunction(update_settings)
-        assert inspect.iscoroutinefunction(reset_setting_endpoint)
+        client, storage, _config = settings_env
+        # Pinned, not just performed: this test asserts an absence, and without
+        # the override in place the const default is already what both final
+        # assertions look for — so a broken arrangement reads as a pass.
+        arrange = client.put("/api/settings", json={"updates": {_SETTINGS_INT_KEY: 11}})
+        assert arrange.status_code == 200
+        assert storage.get_setting(_SETTINGS_INT_KEY) == 11
+        reset_holds_its_config = threading.Event()
+        reload_finished = threading.Event()
+
+        def hand_over_the_config_then_pause() -> dict[str, Any] | None:
+            config = app_state.config
+            reset_holds_its_config.set()
+            reload_finished.wait(timeout=_STALL_TIMEOUT_SECONDS)
+            return config
+
+        with (
+            patch("src.web.guards.get_config", hand_over_the_config_then_pause),
+            ThreadPoolExecutor(max_workers=1) as pool,
+        ):
+            reset = pool.submit(client.delete, f"/api/settings/{_SETTINGS_INT_KEY}")
+            assert reset_holds_its_config.wait(timeout=_STALL_TIMEOUT_SECONDS)
+
+            assert client.post("/api/config/reload").status_code == 200
+
+            reload_finished.set()
+            assert reset.result(timeout=_STALL_TIMEOUT_SECONDS).status_code == 200
+
+        assert storage.get_setting(_SETTINGS_INT_KEY) is None
+        assert get_leaf(
+            app_state.config, tuple(_SETTINGS_INT_KEY.split("."))
+        ) == default_of(
+            _SETTINGS_INT_KEY
+        ), "the database and the running config disagree about a reset setting"
 
     def test_secret_delete_returns_503_when_storage_unavailable(
         self, settings_env
@@ -4766,10 +4768,13 @@ _GUARDED_ENDPOINTS = [
     ),
     _Endpoint("POST", "/api/update", ("storage", "config"), body={"source": "all"}),
     _Endpoint("GET", "/api/sync/sources", ("config", "storage")),
+    # Creating reads both halves — the id is refused when YAML already holds
+    # it — and deleting reads neither: ``delete_source`` drops a database row
+    # and never opens the config.
     _Endpoint(
         "POST",
         "/api/sync/sources",
-        ("storage",),
+        ("storage", "config"),
         body={"id": "my_books", "plugin": "goodreads_csv"},
     ),
     _Endpoint(
@@ -4778,7 +4783,7 @@ _GUARDED_ENDPOINTS = [
         ("storage",),
         url="/api/sync/sources/my_books",
     ),
-    # Every route below resolves the id through ``_require_plugin``, which
+    # Every route below resolves the id through ``require_plugin``, which
     # reads both halves of the truth and so guards both.
     _Endpoint(
         "GET",
@@ -4927,6 +4932,22 @@ _GUARD_CASES = [
 ]
 
 
+def _served_api_routes(app: FastAPI) -> set[tuple[str, str]]:
+    """Every ``(method, path)`` under ``/api`` the app actually serves."""
+    return {
+        (method, route.path)
+        for route in app.routes
+        if isinstance(route, APIRoute) and route.path.startswith("/api")
+        for method in route.methods
+    }
+
+
+_CLASSIFIED_API_ROUTES = {
+    (endpoint.method, endpoint.route)
+    for endpoint in _GUARDED_ENDPOINTS + _DEPENDENCY_FREE_ENDPOINTS
+}
+
+
 def _clear_dependencies() -> None:
     """Drop every component the guards check, ahead of a request."""
     app_state.storage = None
@@ -5015,18 +5036,196 @@ class TestDependencyGuards:
         above then hold it to the list it landed in: 503 naming each component
         it needs, or an answer that is not a fault at all.
         """
-        served = {
-            (method, route.path)
-            for route in mock_components["app"].routes
-            if isinstance(route, APIRoute) and route.path.startswith("/api")
-            for method in route.methods
-        }
-        classified = {
-            (endpoint.method, endpoint.route)
-            for endpoint in _GUARDED_ENDPOINTS + _DEPENDENCY_FREE_ENDPOINTS
+        assert _served_api_routes(mock_components["app"]) == _CLASSIFIED_API_ROUTES
+
+    def test_an_unclassified_route_is_what_that_comparison_catches(
+        self, mock_components
+    ) -> None:
+        """The same comparison, against an app carrying one route nobody listed.
+
+        Set equality passing is not by itself evidence that anything is being
+        checked; this is what says the test above would go red rather than
+        quietly widen.
+        """
+        app = mock_components["app"]
+
+        @app.get("/api/unclassified")
+        def _unclassified() -> dict[str, str]:
+            return {}
+
+        assert _served_api_routes(app) - _CLASSIFIED_API_ROUTES == {
+            ("GET", "/api/unclassified")
         }
 
-        assert served == classified
+
+# The ``AppState`` field each guard defends, keyed by the guard itself.
+_GUARD_COMPONENT = {
+    require_storage: "storage",
+    require_config: "config",
+    require_engine: "engine",
+    require_memory_manager: "memory_manager",
+    require_conversation_engine: "conversation_engine",
+}
+
+
+def _declared_guards(route: APIRoute) -> set[str]:
+    """Every guarded component in *route*'s dependency tree, off the signatures.
+
+    Walks sub-dependencies too, so a guard a route inherits through
+    ``require_plugin`` counts exactly as one it declares itself.
+    """
+    found: set[str] = set()
+    pending = list(route.dependant.dependencies)
+    while pending:
+        dependency = pending.pop()
+        component = _GUARD_COMPONENT.get(dependency.call)
+        if component is not None:
+            found.add(component)
+        pending.extend(dependency.dependencies)
+    return found
+
+
+def _route_for(app: FastAPI, endpoint: _Endpoint) -> APIRoute:
+    for route in app.routes:
+        if (
+            isinstance(route, APIRoute)
+            and route.path == endpoint.route
+            and endpoint.method in route.methods
+        ):
+            return route
+    raise AssertionError(f"{_endpoint_id(endpoint)} is not served")
+
+
+class TestClassificationIsDerivedFromTheSignatures:
+    """``requires`` must restate what the handler's parameters already say.
+
+    The behavioural matrix proves each declared component answers 503 when it
+    is down. It cannot prove the converse — that a guard nobody classified is
+    absent — and on a handler that acquires one component through two routes it
+    cannot see the second acquisition go away. Reading the guards back off the
+    dependency tree closes both: delete a ``Required*`` parameter and the
+    derived set stops matching the list, whichever way the deletion leans.
+    """
+
+    @pytest.mark.parametrize(
+        "endpoint",
+        _GUARDED_ENDPOINTS + _DEPENDENCY_FREE_ENDPOINTS,
+        ids=_endpoint_id,
+    )
+    def test_route_guards_exactly_the_components_it_is_classified_with(
+        self, mock_components, endpoint
+    ) -> None:
+        """Signature and classification agree, on every route the app serves."""
+        route = _route_for(mock_components["app"], endpoint)
+
+        assert _declared_guards(route) == set(endpoint.requires)
+
+    def test_the_deriver_reads_the_signature_and_not_the_list(self) -> None:
+        """A guard that is not in the parameters is not in the derived set.
+
+        Without this the test above could be passing on a deriver that reports
+        whatever it is asked about. Two handlers differing only in that
+        parameter derive differently, so removing one really is what the
+        parametrised case sees.
+        """
+        probe = FastAPI()
+
+        @probe.get("/guarded")
+        def _guarded(storage: RequiredStorage) -> dict[str, str]:
+            return {}
+
+        @probe.get("/unguarded")
+        def _unguarded() -> dict[str, str]:
+            return {}
+
+        derived = {
+            route.path: _declared_guards(route)
+            for route in probe.routes
+            if isinstance(route, APIRoute)
+        }
+
+        assert derived == {"/guarded": {"storage"}, "/unguarded": set()}
+
+
+# The methods whose callers have never sent a body, so one appearing on them
+# is a break rather than an addition.
+_BODYLESS_METHODS = {"GET", "DELETE"}
+
+
+class TestInjectedDependenciesStayOffTheWire:
+    """A ``Depends`` parameter must not turn into something a caller sends.
+
+    Drop the ``Depends`` from ``RequiredStorage``, ``RequiredEngine`` or
+    ``ResolvedPlugin`` and FastAPI raises at route registration: those
+    annotations are classes it cannot build a field from, so the mistake never
+    reaches a caller. ``RequiredConfig`` is the quiet one. ``dict[str, Any]``
+    is a shape FastAPI can serialise, so unrecognised it becomes a **required
+    request body** — on ``GET /api/settings`` and ``DELETE
+    /api/settings/{key}`` among others, breaking every existing caller of a
+    route that has never had one. A body is not a parameter, so reading
+    ``operation["parameters"]`` is exactly what misses it.
+    """
+
+    @staticmethod
+    def _operations(app: FastAPI) -> list[tuple[str, str, APIRoute]]:
+        return [
+            (method, route.path, route)
+            for route in app.routes
+            if isinstance(route, APIRoute) and route.path.startswith("/api")
+            for method in route.methods & _BODYLESS_METHODS
+        ]
+
+    def test_no_get_or_delete_route_asks_for_a_body(self, mock_components) -> None:
+        """``body_field`` is the field FastAPI would populate from the request."""
+        operations = self._operations(mock_components["app"])
+
+        assert operations, "no bodyless /api operations to check"
+        assert {
+            f"{method} {path}"
+            for method, path, route in operations
+            if route.body_field is not None
+        } == set()
+
+    def test_the_published_schema_advertises_no_body_on_them_either(
+        self, mock_components
+    ) -> None:
+        """The same claim read off the document clients are generated from."""
+        schema = mock_components["app"].openapi()
+
+        assert {
+            f"{method.upper()} {path}"
+            for path, operations in schema["paths"].items()
+            if path.startswith("/api")
+            for method, operation in operations.items()
+            if method.upper() in _BODYLESS_METHODS and "requestBody" in operation
+        } == set()
+
+
+class TestWritableConfigGuardsItsOwnBlock:
+    """The 503 inside ``writable_config``, which no request can reach.
+
+    Both routes using it also declare ``Depends(require_config)``, so config
+    being down is answered before the body runs and this branch never fires
+    from the outside. It is not redundant: the dependency resolves and is
+    released first, and this is what answers if the config goes ``None``
+    between then and the write. Driven directly because nothing else can, over
+    a booted app so ``app_state`` is restored after the field is cleared.
+    """
+
+    def test_a_config_that_went_away_mid_request_is_a_503(
+        self, mock_components
+    ) -> None:
+        """Status and message match every other reader's answer for that state."""
+        app_state.config = None
+
+        with pytest.raises(HTTPException) as raised, writable_config():
+            pytest.fail("the block ran with no config to write into")
+
+        assert raised.value.status_code == 503
+        assert raised.value.detail == _CONFIG_UNAVAILABLE
+        # A lock left held by the raise would show up as the next settings
+        # write hanging, in whatever test happens to run after this one.
+        assert not _config_lock.locked()
 
 
 class TestSourceReadGuardsRegression:
@@ -5045,11 +5244,11 @@ class TestSourceReadGuardsRegression:
         exists answered 404 "Source not found.", while every write on that same
         source answered 503 "Storage unavailable".
         Root cause: ``get_source_schema`` and ``get_source_config_endpoint``
-        reached ``_require_plugin`` with no guard in front of it.
+        reached ``require_plugin`` with no guard in front of it.
         ``resolve_source_plugin`` reads the plugin name off storage, falling
         back to config, so with both ``None`` it resolved nothing and the
         handler raised 404 — blaming the caller for the server being down.
-        Fix: ``_require_plugin`` calls ``require_storage()`` itself, so no
+        Fix: ``require_plugin`` takes ``RequiredStorage`` itself, so no
         caller can reach the lookup before the outage has been reported.
         """
         _clear_dependencies()
@@ -5074,10 +5273,10 @@ class TestSourceReadGuardsRegression:
         found." for a YAML-only source, 200 off a stale-by-half view for a
         migrated one — while ``GET /api/sync/sources`` answered 503 for that
         same server state.
-        Root cause: ``_require_plugin`` guarded storage only, and
+        Root cause: ``require_plugin`` guarded storage only, and
         ``resolve_source_plugin`` treats a missing config as "no YAML entry"
         rather than as an outage.
-        Fix: ``_require_plugin`` calls ``require_config()`` too.
+        Fix: ``require_plugin`` takes ``RequiredConfig`` too.
         The DB row is what makes this fail on the bug rather than on an id
         nothing could resolve: with it the lookup succeeds, so the 503 is the
         guard firing and nothing else.
@@ -5121,18 +5320,25 @@ class TestDependencyGuardPrecedence:
         assert response.status_code == 503
         assert response.json()["detail"] == _ENGINE_UNAVAILABLE
 
-    def test_request_validation_still_precedes_the_guard(self, client) -> None:
-        """Where the precedence stops: a request FastAPI rejects never arrives.
+    def test_the_guard_outranks_request_validation_too(self, client) -> None:
+        """Even a request FastAPI would reject is answered with the outage.
 
-        ``count=0`` fails the ``ge=1`` bound while the request is being parsed,
-        so the 422 is not something a guard could outrank. Stated here so the
-        test above does not read as a promise about every rejection.
+        ``count=0`` fails the ``ge=1`` bound, and while the guards were called
+        from the handler body that 422 came back: parsing finished before the
+        handler ran, so the guard never got a say. A guard that IS the
+        parameter is resolved with the rest of the dependency tree, which
+        FastAPI does before validating the endpoint's own params — so the 503
+        now outranks the 422 as well. This is the one answer the conversion
+        changed, and it changed toward this class's rule rather than away from
+        it: the caller is not faulted for a request the server could not have
+        served whatever it said.
         """
         _clear_dependencies()
 
         response = client.get("/api/recommendations?type=book&count=0")
 
-        assert response.status_code == 422
+        assert response.status_code == 503
+        assert response.json()["detail"] == _ENGINE_UNAVAILABLE
 
     def test_guard_precedes_lookup_of_an_unresolvable_source_id(self, client) -> None:
         """A non-ASCII id no source could carry reports the outage, not a miss."""
@@ -5222,3 +5428,813 @@ class TestUnguardedReadsAreOptional:
 
         assert response.status_code == 200
         assert response.json()["id"] == 7
+
+
+class TestSourceCreateReadsBothHalvesRegression:
+    """The last unguarded read on the sync-sources surface.
+
+    Bug reported: ``POST /api/sync/sources`` passed ``get_config()`` straight
+    into ``create_source``, which refuses an id YAML already defines. With
+    config down that check saw no ``inputs`` section and read it as "no
+    collision possible", so the create the server would have answered 409 to
+    succeeded instead and planted a database source over the YAML one — the
+    same one-state-two-answers shape the other source routes were swept for,
+    except that here the wrong answer is a write.
+    Root cause: the endpoint guarded storage only, so config being unreadable
+    was indistinguishable from there being nothing to read.
+    Fix: the endpoint takes ``RequiredConfig``, and is classified
+    ``('storage', 'config')`` alongside every other route that reads both.
+    """
+
+    def test_create_refuses_rather_than_shadowing_a_yaml_source(
+        self, client, mock_components
+    ) -> None:
+        """With config down the create is refused, and nothing is written."""
+        storage = mock_components["storage"]
+        storage.get_source_config.return_value = None
+        app_state.config = None
+
+        response = client.post(
+            "/api/sync/sources", json={"id": "my_books", "plugin": "goodreads_csv"}
+        )
+
+        assert response.status_code == 503
+        assert response.json()["detail"] == _CONFIG_UNAVAILABLE
+        storage.upsert_source_config.assert_not_called()
+
+    def test_delete_still_serves_without_config(self, client, mock_components) -> None:
+        """Its sibling reads no config at all, so an outage is not its problem.
+
+        Pins why ``DELETE`` keeps the narrower classification: guard config
+        there too and this 204 becomes a 503 with the matrix still green.
+        """
+        mock_components["storage"].get_source_config.return_value = {
+            "source_id": "my_books",
+            "plugin": "goodreads_csv",
+            "enabled": 1,
+            "config": {},
+            "migrated_at": "2026-01-01T00:00:00",
+        }
+        app_state.config = None
+
+        response = client.delete("/api/sync/sources/my_books")
+
+        assert response.status_code == 204
+
+
+# The three plugin-resolving routes that also carry a body, so the order
+# between the lookup and body validation is observable on them.
+_PLUGIN_ROUTES_WITH_A_BODY = [
+    "/api/sync/sources/no_such_source/config",
+    "/api/sync/sources/no_such_source/secret/api_key",
+    "/api/sync/sources/no_such_source/enabled",
+]
+
+
+class TestPluginLookupVersusRequestValidation:
+    """The URL is answered before the body, on the three routes carrying both.
+
+    ``require_plugin`` is a dependency now rather than the handler's first
+    statement, so FastAPI resolves it with the rest of the dependency tree —
+    ahead of validating the endpoint's own params — and its 404 outranks the
+    422 an invalid body used to get. That is the accepted answer
+    rather than a regression, and it is the same argument as the 503 that now
+    outranks a 422: the URL names a resource this server cannot serve, so
+    reporting the body error would be faulting the caller for a request that
+    could never have succeeded whatever it said. Fix the id, then the body.
+    """
+
+    @pytest.mark.parametrize("url", _PLUGIN_ROUTES_WITH_A_BODY)
+    def test_an_unresolvable_source_outranks_an_invalid_body(
+        self, client, mock_components, url
+    ) -> None:
+        """Bad body plus unknown id answers 404 for the id, not 422 for the body."""
+        mock_components["storage"].get_source_config.return_value = None
+
+        response = client.put(url, json={})
+
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Source not found."
+
+    @pytest.mark.parametrize("url", _PLUGIN_ROUTES_WITH_A_BODY)
+    def test_a_valid_body_on_an_unresolvable_source_still_404s(
+        self, client, mock_components, url
+    ) -> None:
+        """The lookup keeps its own answer once the body parses — unchanged."""
+        mock_components["storage"].get_source_config.return_value = None
+        bodies = {
+            "config": {"values": {}},
+            "api_key": {"value": "secret"},
+            "enabled": {"enabled": True},
+        }
+
+        response = client.put(url, json=bodies[url.rsplit("/", 1)[-1]])
+
+        assert response.status_code == 404
+
+
+class TestGuardsResolveOncePerRequest:
+    """One request, one trip through the guard for each component it needs.
+
+    Guard-mediated acquisition only. A handler is free to read the unguarded
+    ``src.web.state`` accessors as well — ``TestUnguardedReadsAreOptional``
+    covers the four that do — and those reads are imported into
+    ``src.web.api``'s own namespace, so nothing here sees or counts them.
+    """
+
+    def test_a_handler_and_its_dependency_share_one_lookup(
+        self, client, mock_components
+    ) -> None:
+        """``/sync/sources/{id}/config`` needs storage twice over and asks once.
+
+        The handler needs storage itself and reaches the plugin through
+        ``require_plugin``, which needs storage too. Called from the handler
+        body those were two acquisitions of the same component inside one
+        request; declared as dependencies, FastAPI caches the first for the
+        life of the request.
+        """
+        mock_components["storage"].get_source_config.return_value = {
+            "source_id": "my_books",
+            "plugin": "goodreads_csv",
+            "enabled": 1,
+            "config": {},
+            "migrated_at": "2026-01-01T00:00:00",
+        }
+
+        with patch("src.web.guards.get_storage", wraps=get_storage) as acquisitions:
+            response = client.get("/api/sync/sources/my_books/config")
+
+        assert response.status_code == 200
+        assert acquisitions.call_count == 1
+
+    @pytest.mark.parametrize("endpoint", _GUARDED_ENDPOINTS, ids=_endpoint_id)
+    def test_no_endpoint_resolves_a_guard_more_than_once(
+        self, mock_components, endpoint
+    ) -> None:
+        """The cache holds on every route, not just the one measured above.
+
+        The six routes reaching ``require_plugin`` are the known duplicates,
+        but a handler that grew a second acquisition of anything would be a
+        second read of state that can change between them. Counting zero for
+        the unlisted components is the same claim from the other side: a guard
+        nobody classified would show up here as a read.
+
+        ``raise_server_exceptions=False`` because the guards all resolve before
+        the body runs, so what a stub-thin mock does once it gets there decides
+        the status code and nothing about the count. The sync manager is
+        stubbed for the same reason from the other direction: every component
+        is wired here, so ``POST /api/update`` would otherwise reach
+        ``start_sync`` and spawn a real background sync over whatever files the
+        fixture config names.
+        """
+        mock_components["storage"].get_source_config.return_value = {
+            "source_id": "my_books",
+            "plugin": "goodreads_csv",
+            "enabled": 1,
+            "config": {},
+            "migrated_at": "2026-01-01T00:00:00",
+        }
+        client = TestClient(mock_components["app"], raise_server_exceptions=False)
+
+        with (
+            patch("src.web.api.get_sync_manager"),
+            patch("src.web.guards.get_storage", wraps=get_storage) as storage_reads,
+            patch("src.web.guards.get_config", wraps=get_config) as config_reads,
+            patch("src.web.guards.get_engine", wraps=get_engine) as engine_reads,
+            patch(
+                "src.web.guards.get_memory_manager", wraps=get_memory_manager
+            ) as memory_reads,
+            patch(
+                "src.web.guards.get_conversation_engine",
+                wraps=get_conversation_engine,
+            ) as chat_reads,
+        ):
+            client.request(endpoint.method, endpoint.target, json=endpoint.body)
+
+        assert {
+            "storage": storage_reads.call_count,
+            "config": config_reads.call_count,
+            "engine": engine_reads.call_count,
+            "memory_manager": memory_reads.call_count,
+            "conversation_engine": chat_reads.call_count,
+        } == {
+            component: 1 if component in endpoint.requires else 0
+            for component in _UNAVAILABLE_DETAIL
+        }
+
+
+class TestHandlersRunOffTheEventLoop:
+    """Every ``/api`` handler is plain ``def``, with no exceptions.
+
+    FastAPI runs an ``async def`` endpoint on the event loop and a plain ``def``
+    one in Starlette's threadpool. Every handler here does blocking work —
+    SQLite, the scoring pipeline, outbound OAuth calls — and none of them
+    awaits anything, so declaring one ``async`` stalls every other request on
+    the server for its whole duration. The settings writers were the last two
+    holding the loop, and they hold ``writable_config`` instead now.
+    """
+
+    def test_no_api_handler_is_a_coroutine(self, mock_components) -> None:
+        """A new ``async def`` handler is caught here rather than in production."""
+        coroutines = {
+            route.endpoint.__name__
+            for route in mock_components["app"].routes
+            if isinstance(route, APIRoute)
+            and route.path.startswith("/api")
+            and inspect.iscoroutinefunction(route.endpoint)
+        }
+
+        assert coroutines == set()
+
+
+# Bounded so a handler nothing releases fails the test instead of hanging the
+# suite; nothing waits this long on the passing path.
+_STALL_TIMEOUT_SECONDS = 5.0
+
+# How long a caller that must not get through is given to prove it. Only spent
+# on the passing path, and only by the tests asserting that something blocks.
+_BLOCKED_GRACE_SECONDS = 0.5
+
+
+class TestSlowRequestsDoNotStallTheServerRegression:
+    """A request in flight must not hold the loop against every other one.
+
+    Bug reported: while a recommendation generation was running, the Data
+    page's two-second sync poll and the chat SSE stream both froze, so sync
+    progress appeared stuck.
+    Root cause: ``get_recommendations`` was ``async def`` with no ``await`` in
+    its body, so FastAPI ran the whole scoring pass — plus, by default, a
+    fan-out of synchronous Ollama calls — directly on the event loop.
+    Fix: the handler is plain ``def``, which Starlette runs in a threadpool
+    worker, leaving the loop free to serve everything else.
+    """
+
+    def test_status_answers_while_a_recommendation_is_in_flight(
+        self, mock_components
+    ) -> None:
+        """A concurrent ``/api/status`` returns before the slow request does."""
+        engine_reached = threading.Event()
+        release_engine = threading.Event()
+        engine_returned = threading.Event()
+
+        def blocking_scoring_pass(*_args, **_kwargs):
+            engine_reached.set()
+            release_engine.wait(timeout=_STALL_TIMEOUT_SECONDS)
+            engine_returned.set()
+            return []
+
+        mock_components["engine"].generate_recommendations.side_effect = (
+            blocking_scoring_pass
+        )
+        mock_components["storage"].get_user_preference_config.return_value = None
+        # The context-manager form shares ONE portal, so both requests land on
+        # one event loop. A bare TestClient builds a portal per request, each
+        # with a loop of its own, where this stall cannot be observed at all.
+        # Clearing config_path keeps that lifespan off the config watcher.
+        app_state.config_path = None
+
+        with (
+            TestClient(mock_components["app"]) as client,
+            ThreadPoolExecutor(max_workers=1) as pool,
+        ):
+            slow = pool.submit(client.get, "/api/recommendations?type=book")
+            assert engine_reached.wait(timeout=_STALL_TIMEOUT_SECONDS)
+
+            status = client.get("/api/status")
+
+            # The discriminator: back on the event loop, this request could
+            # only be served once the engine had returned.
+            assert not engine_returned.is_set()
+            release_engine.set()
+            assert slow.result(timeout=_STALL_TIMEOUT_SECONDS).status_code == 200
+
+        assert status.status_code == 200
+
+
+def _awatch_reporting_one_change_on(
+    trigger: threading.Event,
+) -> Callable[[Path], AsyncIterator[set[tuple[str, str]]]]:
+    """A ``watchfiles.awatch`` stand-in reporting one change when *trigger* is set.
+
+    Waits off the loop so the fake is never itself the thing stalling it, which
+    is what the test using this is trying to observe.
+    """
+
+    async def awatch(path: Path) -> AsyncIterator[set[tuple[str, str]]]:
+        await asyncio.to_thread(trigger.wait, _STALL_TIMEOUT_SECONDS)
+        yield {("modified", str(path))}
+        await asyncio.Event().wait()
+
+    return awatch
+
+
+class TestTheConfigWatcherDoesNotStallTheServerRegression:
+    """The fourth config writer is a task on the serving loop, and must not be.
+
+    Defect: ``ConfigWatcher._watch`` called ``reload_config()`` straight, so the
+    event loop itself waited on the config lock — held by ``PUT /api/settings``
+    across a whole registry sweep, one SQLite connection per entry — and then on
+    the reload's own file read, migrations and Fernet decrypts. A config file
+    touched during a settings save therefore stopped the server answering
+    anything at all: the head-of-line stall this change exists to remove,
+    reintroduced at the one caller that is not a handler.
+    Fix: ``_watch`` hands the reload to a worker thread.
+    """
+
+    def test_status_answers_while_the_watchers_reload_waits_for_the_lock(
+        self, mock_components
+    ) -> None:
+        """A concurrent ``/api/status`` returns before the blocked reload does."""
+        lock_held = threading.Event()
+        release_lock = threading.Event()
+        file_changed = threading.Event()
+        reload_entered = threading.Event()
+        reload_finished = threading.Event()
+
+        def hold_the_config_lock() -> None:
+            with locked_running_config():
+                lock_held.set()
+                release_lock.wait(timeout=_STALL_TIMEOUT_SECONDS)
+
+        def announce_then_reload() -> bool:
+            reload_entered.set()
+            reloaded = reload_config()
+            reload_finished.set()
+            return reloaded
+
+        with (
+            patch(
+                "watchfiles.awatch",
+                side_effect=_awatch_reporting_one_change_on(file_changed),
+            ),
+            patch("src.web.state.reload_config", announce_then_reload),
+            # The context-manager form is what starts the lifespan, and so the
+            # watcher, on the same loop the requests are served from.
+            TestClient(mock_components["app"]) as client,
+            ThreadPoolExecutor(max_workers=1) as pool,
+        ):
+            holder = pool.submit(hold_the_config_lock)
+            assert lock_held.wait(timeout=_STALL_TIMEOUT_SECONDS)
+            file_changed.set()
+            assert reload_entered.wait(timeout=_STALL_TIMEOUT_SECONDS)
+
+            status = client.get("/api/status")
+
+            # The discriminator: on the loop, the watcher's reload had to reach
+            # the lock and finish before any request could be served at all.
+            assert not reload_finished.is_set()
+            release_lock.set()
+            holder.result(timeout=_STALL_TIMEOUT_SECONDS)
+            assert reload_finished.wait(timeout=_STALL_TIMEOUT_SECONDS)
+
+        assert status.status_code == 200
+
+
+def _asgi_request(
+    app,
+    method: str,
+    target: str,
+    on_body: Callable[[bytes], None],
+    request_body: bytes = b"",
+) -> int:
+    """Drive *app* over raw ASGI, calling *on_body* per response body chunk.
+
+    ``TestClient`` accumulates the whole response into a ``BytesIO`` before it
+    hands anything back, so even ``client.stream`` cannot see whether an
+    endpoint trickled or buffered. The ASGI boundary is the last place that is
+    observable, which is why this drives the app rather than the client.
+    """
+    path, _, query = target.partition("?")
+    headers = [(b"host", b"testserver")]
+    if request_body:
+        headers += [
+            (b"content-type", b"application/json"),
+            (b"content-length", str(len(request_body)).encode()),
+        ]
+    scope = {
+        "type": "http",
+        "http_version": "1.1",
+        "method": method,
+        "path": path,
+        "raw_path": path.encode(),
+        "root_path": "",
+        "scheme": "http",
+        "query_string": query.encode(),
+        "headers": headers,
+        "client": ("testclient", 50000),
+        "server": ("testserver", 80),
+    }
+
+    async def drive() -> int:
+        status = 0
+        # The middleware chain asks again once it has the body, and answering
+        # "disconnected" straight away makes it abandon the response.
+        finished = anyio.Event()
+        delivered = False
+
+        async def receive():
+            nonlocal delivered
+            if delivered:
+                await finished.wait()
+                return {"type": "http.disconnect"}
+            delivered = True
+            return {"type": "http.request", "body": request_body, "more_body": False}
+
+        async def send(message):
+            nonlocal status
+            if message["type"] == "http.response.start":
+                status = message["status"]
+            elif message["type"] == "http.response.body":
+                if message.get("body"):
+                    on_body(message["body"])
+                if not message.get("more_body", False):
+                    finished.set()
+
+        await app(scope, receive, send)
+        return status
+
+    with anyio.from_thread.start_blocking_portal() as portal:
+        return portal.call(drive)
+
+
+class TestStreamingStaysIncremental:
+    """A ``def`` handler returning a ``StreamingResponse`` must still trickle.
+
+    The handler moved to a threadpool worker, and the SSE generator it returns
+    is a plain iterator Starlette drives in one of its own. Materialise that
+    generator at either end and the two-phase protocol collapses: every event
+    arrives at once, after the slowest LLM call, which is the stall this whole
+    change is about rather than a cosmetic difference.
+    """
+
+    def test_phase_one_is_sent_before_a_blurb_has_come_back(
+        self, mock_components
+    ) -> None:
+        """The recommendations event leaves the app while a blurb is blocked."""
+        release_blurb = threading.Event()
+        blurb_returned = threading.Event()
+        blurb_pending_at_first_chunk: list[bool] = []
+        chunks: list[bytes] = []
+
+        def slow_blurb(*_args, **_kwargs):
+            release_blurb.wait(timeout=_STALL_TIMEOUT_SECONDS)
+            blurb_returned.set()
+            return "a blurb"
+
+        def record(body: bytes) -> None:
+            if not chunks:
+                blurb_pending_at_first_chunk.append(not blurb_returned.is_set())
+                release_blurb.set()
+            chunks.append(body)
+
+        engine = mock_components["engine"]
+        engine.generate_recommendations.return_value = [
+            Recommendation(
+                item=ContentItem(
+                    id="1",
+                    title="Dune",
+                    content_type=ContentType.BOOK,
+                    status=ConsumptionStatus.UNREAD,
+                ),
+                score=0.9,
+                reasoning="because",
+            )
+        ]
+        engine.generate_blurb_for_item.side_effect = slow_blurb
+        engine.storage.get_signal_items.return_value = []
+        mock_components["storage"].get_user_preference_config.return_value = None
+
+        status = _asgi_request(
+            mock_components["app"],
+            "GET",
+            "/api/recommendations/stream?type=book&count=1",
+            record,
+        )
+
+        assert status == 200
+        assert blurb_pending_at_first_chunk == [True]
+        # One ASGI body message per ``yield``. Buffered, there would be one for
+        # the lot, which is the other half of what "still streams" means.
+        assert [
+            json.loads(chunk.removeprefix(b"data: "))["type"] for chunk in chunks
+        ] == [
+            "recommendations",
+            "blurb",
+            "done",
+        ]
+
+    def test_chat_sends_its_first_event_before_the_next_one_exists(
+        self, mock_components
+    ) -> None:
+        """The other stream the stall report named, on the same conversion.
+
+        ``chat`` became plain ``def`` returning the same synchronous-generator
+        ``StreamingResponse``, and the reported freeze was of the chat stream
+        as much as the sync poll — so proving only ``/recommendations/stream``
+        trickles leaves the reported symptom itself unpinned.
+        """
+        release_second = threading.Event()
+        second_returned = threading.Event()
+        second_pending_at_first_chunk: list[bool] = []
+        chunks: list[bytes] = []
+
+        def two_chunks(**_kwargs) -> Iterator[ConversationChunk]:
+            yield ConversationChunk(chunk_type="text", content="first")
+            release_second.wait(timeout=_STALL_TIMEOUT_SECONDS)
+            second_returned.set()
+            yield ConversationChunk(chunk_type="done")
+
+        def record(body: bytes) -> None:
+            if not chunks:
+                second_pending_at_first_chunk.append(not second_returned.is_set())
+                release_second.set()
+            chunks.append(body)
+
+        engine = Mock(spec=ConversationEngine)
+        engine.process_message.side_effect = two_chunks
+        app_state.conversation_engine = engine
+
+        status = _asgi_request(
+            mock_components["app"],
+            "POST",
+            "/api/chat",
+            record,
+            request_body=json.dumps({"message": "hi"}).encode(),
+        )
+
+        assert status == 200
+        assert second_pending_at_first_chunk == [True]
+        assert [
+            json.loads(chunk.removeprefix(b"data: "))["type"] for chunk in chunks
+        ] == ["text", "done"]
+
+
+@pytest.fixture()
+def settings_app(tmp_path: Path):
+    """A booted app over a real temp-DB store, plus that store.
+
+    The settings suite's own fixture in miniature; a module-level copy because
+    a fixture defined inside a class is not visible from another one.
+    """
+    reset_sync_manager()
+    storage = StorageManager(sqlite_path=tmp_path / "settings.db")
+    config = {
+        "storage": {"database_path": str(tmp_path / "settings.db")},
+        "recommendations": {"default_count": 5, "max_count": 20},
+    }
+    with booted_web_app(storage, config) as app:
+        yield TestClient(app), storage
+    reset_sync_manager()
+
+
+class TestConfigReloadRacingASettingsSaveRegression:
+    """Every writer of the running config has to be kept apart from the others.
+
+    Defect: the sweep left ``PUT /api/settings`` and ``DELETE
+    /api/settings/{key}`` ``async`` because the single event loop is the only
+    thing serialising a write to the running config — and then converted
+    ``POST /api/config/reload``, which writes the running config too and
+    wholesale, to plain ``def``. In a threadpool worker it can rebind
+    ``app_state.config`` while a save is mid-request, and the save then
+    publishes its live-apply into the dict nobody reads any more: the database
+    keeps the new value, the running config keeps the old one, and nothing
+    reports an error. That is the exact disagreement the two exceptions exist
+    to prevent, arriving through the third writer.
+    """
+
+    def test_a_save_survives_a_reload_that_lands_mid_request(
+        self, settings_app
+    ) -> None:
+        """The value the save persisted is the value the server is running."""
+        client, storage = settings_app
+        save_holds_its_config = threading.Event()
+        reload_finished = threading.Event()
+
+        def hand_over_the_config_then_pause() -> dict[str, Any] | None:
+            # Only the save reaches the guards — ``/config/reload`` declares no
+            # dependencies — so this pauses one request and not the other.
+            config = app_state.config
+            save_holds_its_config.set()
+            reload_finished.wait(timeout=_STALL_TIMEOUT_SECONDS)
+            return config
+
+        with (
+            patch("src.web.guards.get_config", hand_over_the_config_then_pause),
+            ThreadPoolExecutor(max_workers=1) as pool,
+        ):
+            save = pool.submit(
+                client.put,
+                "/api/settings",
+                json={"updates": {_SETTINGS_INT_KEY: 11}},
+            )
+            assert save_holds_its_config.wait(timeout=_STALL_TIMEOUT_SECONDS)
+
+            assert client.post("/api/config/reload").status_code == 200
+
+            reload_finished.set()
+            assert save.result(timeout=_STALL_TIMEOUT_SECONDS).status_code == 200
+
+        assert storage.get_setting(_SETTINGS_INT_KEY) == 11
+        assert (
+            get_leaf(app_state.config, tuple(_SETTINGS_INT_KEY.split("."))) == 11
+        ), "the database and the running config disagree about a saved setting"
+
+    def test_a_reload_cannot_land_while_a_save_holds_the_lock(
+        self, settings_app
+    ) -> None:
+        """The lock itself, rather than what surviving a reload looks like.
+
+        The two tests above pass with ``with _config_lock:`` deleted from both
+        of its sites: the reload simply completes first, and the save then
+        resolves the new binding inside ``writable_config`` and publishes into
+        that, so the database and the running config still agree. What they pin
+        is the re-resolution, which is worth pinning and is not this.
+
+        This one parks the save inside its locked block and then asks the
+        reload to run. ``load_config`` is the reload's first statement inside
+        the lock, so calling it at all is the reload having got past a lock
+        that should have stopped it — and with the lock removed the whole
+        request completes here rather than after the save is released.
+        """
+        client, storage = settings_app
+        save_inside_the_lock = threading.Event()
+        release_save = threading.Event()
+
+        def park_inside_the_locked_block(
+            config: dict[str, Any], settings_storage: StorageManager
+        ) -> dict[str, Any]:
+            save_inside_the_lock.set()
+            assert release_save.wait(timeout=_STALL_TIMEOUT_SECONDS)
+            return build_settings_view(config, settings_storage)
+
+        with (
+            patch("src.web.api.build_settings_view", park_inside_the_locked_block),
+            patch("src.web.state.load_config", wraps=load_config) as reload_read_yaml,
+            ThreadPoolExecutor(max_workers=2) as pool,
+        ):
+            save = pool.submit(
+                client.put,
+                "/api/settings",
+                json={"updates": {_SETTINGS_INT_KEY: 11}},
+            )
+            assert save_inside_the_lock.wait(timeout=_STALL_TIMEOUT_SECONDS)
+
+            reload = pool.submit(client.post, "/api/config/reload")
+            with pytest.raises(TimeoutError):
+                reload.result(timeout=_BLOCKED_GRACE_SECONDS)
+            assert reload_read_yaml.call_count == 0
+
+            release_save.set()
+            assert save.result(timeout=_STALL_TIMEOUT_SECONDS).status_code == 200
+            assert reload.result(timeout=_STALL_TIMEOUT_SECONDS).status_code == 200
+            assert reload_read_yaml.call_count == 1
+
+        assert storage.get_setting(_SETTINGS_INT_KEY) == 11
+
+
+class TestOverlappingPreferenceWritesRegression:
+    """Two preference writes at once must both survive.
+
+    Bug: the handler read, merged and wrote as three calls, so the later write
+    stored a blob built before the earlier landed, losing all of
+    ``users.settings``.
+    Fix: storage merges under ``_save_lock``.
+    """
+
+    def test_the_first_write_survives_a_second_that_overlaps_it(
+        self, settings_app
+    ) -> None:
+        """Forced interleaving: the first request is parked holding its read."""
+        client, storage = settings_app
+        parked = threading.Event()
+        release = threading.Event()
+        real_read = StorageManager.get_user_preference_config
+
+        def park_the_first_read(
+            self: StorageManager, user_id: int
+        ) -> UserPreferenceConfig:
+            preference_config = real_read(self, user_id)
+            if not parked.is_set():
+                parked.set()
+                assert release.wait(timeout=_STALL_TIMEOUT_SECONDS)
+            return preference_config
+
+        with (
+            patch.object(
+                StorageManager, "get_user_preference_config", park_the_first_read
+            ),
+            ThreadPoolExecutor(max_workers=2) as pool,
+        ):
+            theme = pool.submit(
+                client.put, "/api/users/1/preferences", json={"theme": "midnight"}
+            )
+            assert parked.wait(timeout=_STALL_TIMEOUT_SECONDS)
+
+            weights = pool.submit(
+                client.put,
+                "/api/users/1/preferences",
+                json={"scorer_weights": {"genre_match": 3.0}},
+            )
+            # Merged in the handler, the second request reads the pre-theme
+            # blob and finishes here rather than waiting for the save lock.
+            with pytest.raises(TimeoutError):
+                weights.result(timeout=_BLOCKED_GRACE_SECONDS)
+
+            release.set()
+            assert theme.result(timeout=_STALL_TIMEOUT_SECONDS).status_code == 200
+            assert weights.result(timeout=_STALL_TIMEOUT_SECONDS).status_code == 200
+
+        stored = storage.get_user_preference_config(1)
+        assert stored.theme == "midnight"
+        assert stored.scorer_weights == {"genre_match": 3.0}
+
+
+# Each lazily-built process singleton behind the sync and enrichment endpoints:
+# the accessor, its reset hook, the name its module builds, and the lock the
+# build is supposed to happen under.
+_LAZY_SINGLETONS = [
+    pytest.param(
+        get_sync_manager,
+        reset_sync_manager,
+        "src.web.sync_manager.SyncManager",
+        SyncManager,
+        _sync_manager_lock,
+        id="sync_manager",
+    ),
+    pytest.param(
+        get_enrichment_manager,
+        reset_enrichment_manager,
+        "src.web.enrichment_manager.WebEnrichmentManager",
+        WebEnrichmentManager,
+        _enrichment_manager_lock,
+        id="enrichment_manager",
+    ),
+]
+
+
+class TestLazySingletonsAreBuiltOnceRegression:
+    """A cold process must not hand two callers two managers.
+
+    Bug reported: sync progress freezes — a job started through ``POST
+    /api/update`` never appears in ``GET /api/sync/status``.
+    Root cause: ``get_sync_manager`` is a check-then-set with no lock, and the
+    threadpool conversion made both of its callers plain ``def``. Two requests
+    arriving together on a cold process both see ``None`` and each keep a
+    manager of their own, so the job lives in one and the status endpoint reads
+    the other. ``get_enrichment_manager`` is the same three lines.
+    Fix: the lazy build happens under a module-level lock.
+    """
+
+    @pytest.mark.parametrize(
+        ("acquire", "reset", "target", "manager_class", "module_lock"), _LAZY_SINGLETONS
+    )
+    def test_two_cold_callers_share_one_manager(
+        self, acquire, reset, target, manager_class, module_lock
+    ) -> None:
+        """Forced interleaving, not a race: the build cannot finish unreleased.
+
+        The first caller is parked inside the constructor until the test lets
+        it out, so the second reaches the accessor while the first is still
+        building — the window the missing lock left open. Unlocked, the second
+        passes the ``is None`` check and builds a second manager, and ``built``
+        ends up holding two objects that are not each other.
+
+        The constructor asserts the lock is held rather than the test asserting
+        the second caller has not finished: "not done yet" is also what a
+        thread that has merely been descheduled looks like, so it would hold on
+        the unlocked code too.
+        """
+        building = threading.Event()
+        release = threading.Event()
+        built: list[Any] = []
+
+        class _StallingManager(manager_class):
+            def __init__(self) -> None:
+                assert module_lock.locked(), "the lazy build is not serialised"
+                building.set()
+                assert release.wait(timeout=_STALL_TIMEOUT_SECONDS)
+                super().__init__()
+                built.append(self)
+
+        reset()
+        try:
+            with (
+                patch(target, _StallingManager),
+                ThreadPoolExecutor(max_workers=2) as pool,
+            ):
+                first = pool.submit(acquire)
+                assert building.wait(timeout=_STALL_TIMEOUT_SECONDS)
+
+                second = pool.submit(acquire)
+                # Unlocked, the second caller passes the ``is None`` check and
+                # builds a manager of its own while the first is still parked,
+                # so it finishes here rather than waiting for the release.
+                with pytest.raises(TimeoutError):
+                    second.result(timeout=_BLOCKED_GRACE_SECONDS)
+
+                release.set()
+                manager = first.result(timeout=_STALL_TIMEOUT_SECONDS)
+                assert second.result(timeout=_STALL_TIMEOUT_SECONDS) is manager
+            assert built == [manager]
+        finally:
+            reset()

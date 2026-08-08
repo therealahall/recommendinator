@@ -12,7 +12,7 @@ from fastapi import FastAPI
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.web.app import create_app
-from src.web.state import app_state
+from src.web.state import AppState, app_state
 
 
 def back_mock_settings_store(storage: Any) -> dict[str, Any]:
@@ -49,31 +49,49 @@ def booted_web_app(
     storage: Any,
     config: dict[str, Any],
     llm_components: tuple[Any, Any, Any] = (None, None, None),
+    engine: Any = None,
 ) -> Iterator[FastAPI]:
     """Boot ``create_app`` over patched I/O boundaries, with ``storage``/``config``.
 
-    The supported way for a test to obtain the web app; the boots still spelled
-    out by hand are the ones it cannot serve, needing a real ``StorageManager``
-    or patching more of ``create_app`` than this does. An unpatched boot
+    The one supported way for a test to obtain the web app. An unpatched boot
     resolves whatever config file the process finds, opens the database that
     file names and runs the credential migration against it — re-encrypting
     real rows under the throwaway key the root conftest installs. Importing
     ``src.web.app:app`` does the same at collection time, before any fixture
     runs at all, which is why ``tests/test_web_app_import.py`` forbids it.
 
-    ``back_mock_settings_store`` lets the settings and secret boot hooks run for
-    real against an empty store. ``app_state`` is a module-level singleton, so
-    every field is snapshotted and restored around the boot; a raise inside
-    ``create_app`` would otherwise leave it half-populated for the rest of the
-    session.
+    A real temp-DB ``StorageManager`` is as welcome as a mock:
+    ``back_mock_settings_store`` lets the settings and secret boot hooks run
+    for real against an empty store and no-ops for storage that isolates
+    itself. Anything this does not patch — ``configure_logging`` (already a
+    no-op via the root conftest), the source migrations — a caller wraps around
+    the call.
+
+    No ``engine`` means no recommendation engine, so ``/api/recommendations``
+    and its stream answer 503 until one is passed, and a truthy LLM client in
+    ``llm_components`` wires the conversation engine with
+    ``recommendation_engine=None``.
+
+    ``app_state`` is a module-level singleton, so the boot starts from
+    ``AppState()`` defaults and the caller's fields are restored afterwards.
+    Both halves matter: restoring alone preserves whatever a previous test
+    leaked into a field ``create_app`` never assigns, and a raise inside
+    ``create_app`` would otherwise leave the singleton half-populated for the
+    rest of the session.
     """
     saved = {f.name: getattr(app_state, f.name) for f in fields(app_state)}
     back_mock_settings_store(storage)
+    defaults = AppState()
     try:
+        # Field by field, never a rebind: the singleton is imported by name in
+        # a dozen modules, all of which must keep seeing the current state.
+        for field in fields(defaults):
+            setattr(app_state, field.name, getattr(defaults, field.name))
         with (
             patch("src.web.app.load_config", return_value=config),
             patch("src.web.app.create_storage_manager", return_value=storage),
             patch("src.web.app.create_llm_components", return_value=llm_components),
+            patch("src.web.app.create_recommendation_engine", return_value=engine),
             patch("src.web.app.migrate_config_credentials"),
             # Resolved independently of the patched loader, so unpatched this
             # binds the path of whatever config file the machine has — which a

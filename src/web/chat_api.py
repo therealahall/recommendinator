@@ -13,9 +13,9 @@ from pydantic import BaseModel, Field
 from src.conversation.profile import ProfileGenerator
 from src.models.content import ContentType
 from src.web.guards import (
-    require_conversation_engine,
-    require_memory_manager,
-    require_storage,
+    RequiredConversationEngine,
+    RequiredMemoryManager,
+    RequiredStorage,
 )
 
 logger = logging.getLogger(__name__)
@@ -96,7 +96,7 @@ class ProfileResponse(BaseModel):
 
 
 @router.post("/chat")
-async def chat(request: ChatRequest) -> StreamingResponse:
+def chat(request: ChatRequest, engine: RequiredConversationEngine) -> StreamingResponse:
     """Process a chat message and stream the response.
 
     Uses Server-Sent Events (SSE) for streaming responses.
@@ -107,8 +107,6 @@ async def chat(request: ChatRequest) -> StreamingResponse:
     - data: {"type": "tool_result", "result": {...}}
     - data: {"type": "done"}
     """
-    engine = require_conversation_engine()
-
     # Parse content type if provided
     content_type = None
     if request.content_type:
@@ -183,13 +181,13 @@ async def chat(request: ChatRequest) -> StreamingResponse:
 
 
 @router.post("/chat/reset")
-async def reset_chat(user_id: int = Query(default=1)) -> dict:
+def reset_chat(
+    engine: RequiredConversationEngine, user_id: int = Query(default=1)
+) -> dict:
     """Reset conversation history for a user.
 
     This clears the chat history but preserves core memories.
     """
-    engine = require_conversation_engine()
-
     deleted_count = engine.reset_conversation(user_id)
     return {
         "success": True,
@@ -199,13 +197,12 @@ async def reset_chat(user_id: int = Query(default=1)) -> dict:
 
 
 @router.get("/chat/history")
-async def get_chat_history(
+def get_chat_history(
+    memory_manager: RequiredMemoryManager,
     user_id: int = Query(default=1),
     limit: int = Query(default=50, ge=1, le=200),
 ) -> list[MessageResponse]:
     """Get recent conversation history for a user."""
-    memory_manager = require_memory_manager()
-
     messages = memory_manager.get_conversation_history(user_id=user_id, limit=limit)
 
     return [
@@ -226,13 +223,12 @@ async def get_chat_history(
 
 
 @router.get("/memories")
-async def get_memories(
+def get_memories(
+    memory_manager: RequiredMemoryManager,
     user_id: int = Query(default=1),
     include_inactive: bool = Query(default=False),
 ) -> list[MemoryResponse]:
     """Get user's core memories."""
-    memory_manager = require_memory_manager()
-
     memories = memory_manager.get_core_memories(
         user_id=user_id,
         active_only=not include_inactive,
@@ -253,10 +249,10 @@ async def get_memories(
 
 
 @router.post("/memories")
-async def create_memory(request: MemoryCreateRequest) -> MemoryResponse:
+def create_memory(
+    request: MemoryCreateRequest, memory_manager: RequiredMemoryManager
+) -> MemoryResponse:
     """Create a new user-stated memory."""
-    memory_manager = require_memory_manager()
-
     memory = memory_manager.save_core_memory(
         user_id=request.user_id,
         memory_text=request.memory_text,
@@ -277,14 +273,12 @@ async def create_memory(request: MemoryCreateRequest) -> MemoryResponse:
 
 
 @router.put("/memories/{memory_id}")
-async def update_memory(
+def update_memory(
     memory_id: int,
     request: MemoryUpdateRequest,
+    memory_manager: RequiredMemoryManager,
 ) -> dict:
     """Update a memory (edit text or toggle active status)."""
-    memory_manager = require_memory_manager()
-
-    # Update the memory
     success = memory_manager.update_core_memory(
         memory_id=memory_id,
         memory_text=request.memory_text,
@@ -298,10 +292,8 @@ async def update_memory(
 
 
 @router.delete("/memories/{memory_id}")
-async def delete_memory(memory_id: int) -> dict:
+def delete_memory(memory_id: int, storage: RequiredStorage) -> dict:
     """Delete a memory."""
-    storage = require_storage()
-
     # Use storage directly since MemoryManager doesn't have delete
     success = storage.delete_core_memory(memory_id)
 
@@ -317,10 +309,10 @@ async def delete_memory(memory_id: int) -> dict:
 
 
 @router.get("/profile")
-async def get_profile(user_id: int = Query(default=1)) -> ProfileResponse:
+def get_profile(
+    storage: RequiredStorage, user_id: int = Query(default=1)
+) -> ProfileResponse:
     """Get user's preference profile summary."""
-    storage = require_storage()
-
     # Try to get existing profile
     profile_data = storage.get_preference_profile(user_id)
 
@@ -352,10 +344,10 @@ async def get_profile(user_id: int = Query(default=1)) -> ProfileResponse:
 
 
 @router.post("/profile/regenerate")
-async def regenerate_profile(user_id: int = Query(default=1)) -> ProfileResponse:
+def regenerate_profile(
+    storage: RequiredStorage, user_id: int = Query(default=1)
+) -> ProfileResponse:
     """Force regeneration of the preference profile."""
-    storage = require_storage()
-
     generator = ProfileGenerator(storage)
     profile = generator.regenerate_and_save(user_id)
 

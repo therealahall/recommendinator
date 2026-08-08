@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Annotated, Any, assert_never, cast
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response, StreamingResponse
 from pydantic import AfterValidator, BaseModel, Field
 
@@ -62,7 +62,13 @@ from src.web.gog_auth import (
 )
 from src.web.gog_auth import exchange_code_for_tokens as exchange_gog_tokens
 from src.web.gog_auth import extract_code_from_input as extract_gog_code
-from src.web.guards import require_config, require_engine, require_storage
+from src.web.guards import (
+    RequiredConfig,
+    RequiredEngine,
+    RequiredStorage,
+    require_config,
+    writable_config,
+)
 from src.web.state import (
     get_config,
     get_embedding_gen,
@@ -657,7 +663,8 @@ def _get_recommendations_config(config: dict[str, Any] | None) -> Recommendation
 
 
 @router.get("/recommendations", response_model=list[RecommendationResponse])
-async def get_recommendations(
+def get_recommendations(
+    engine: RequiredEngine,
     type: str = Query(
         ..., description="Content type (book, movie, tv_show, video_game)"
     ),
@@ -676,7 +683,6 @@ async def get_recommendations(
     Returns:
         List of recommendations
     """
-    engine = require_engine()
     storage = get_storage()
     config = get_config()
 
@@ -722,7 +728,8 @@ async def get_recommendations(
 
 
 @router.get("/recommendations/stream")
-async def stream_recommendations(
+def stream_recommendations(
+    engine: RequiredEngine,
     type: str = Query(
         ..., description="Content type (book, movie, tv_show, video_game)"
     ),
@@ -747,7 +754,6 @@ async def stream_recommendations(
     Returns:
         SSE streaming response
     """
-    engine = require_engine()
     storage = get_storage()
     config = get_config()
 
@@ -859,14 +865,12 @@ async def stream_recommendations(
 
 
 @router.get("/users", response_model=list[UserResponse])
-async def list_users() -> list[UserResponse]:
+def list_users(storage: RequiredStorage) -> list[UserResponse]:
     """List all users.
 
     Returns:
         List of users.
     """
-    storage = require_storage()
-
     users = storage.get_all_users()
     return [
         UserResponse(
@@ -884,7 +888,8 @@ def _item_to_response(item: "ContentItem") -> ContentItemResponse:
 
 
 @router.get("/items", response_model=list[ContentItemResponse])
-async def list_items(
+def list_items(
+    storage: RequiredStorage,
     type: str | None = Query(None, description="Content type filter"),
     status: str | None = Query(None, description="Status filter"),
     user_id: int = Query(1, ge=1, description="User ID"),
@@ -932,8 +937,6 @@ async def list_items(
     Returns:
         List of content items.
     """
-    storage = require_storage()
-
     content_type = None
     if type is not None:
         try:
@@ -983,7 +986,8 @@ async def list_items(
 
 
 @router.get("/items/export")
-async def export_items(
+def export_items(
+    storage: RequiredStorage,
     type: str = Query(
         ..., description="Content type (book, movie, tv_show, video_game)"
     ),
@@ -1000,8 +1004,6 @@ async def export_items(
     Returns:
         File download response
     """
-    storage = require_storage()
-
     try:
         content_type = ContentType.from_string(type)
     except ValueError:
@@ -1040,9 +1042,10 @@ async def export_items(
 
 
 @router.patch("/items/{db_id}/ignore")
-async def set_item_ignored(
+def set_item_ignored(
     db_id: int,
     request: IgnoreItemRequest,
+    storage: RequiredStorage,
     user_id: int = Query(1, ge=1, description="User ID for authorization"),
 ) -> dict[str, Any]:
     """Set the ignored status of a content item.
@@ -1057,8 +1060,6 @@ async def set_item_ignored(
     Returns:
         Updated item info
     """
-    storage = require_storage()
-
     # Verify item exists and belongs to user
     item = storage.get_content_item(db_id, user_id=user_id)
     if not item:
@@ -1078,8 +1079,9 @@ async def set_item_ignored(
 
 
 @router.get("/items/{db_id}", response_model=ContentItemResponse)
-async def get_single_item(
+def get_single_item(
     db_id: int,
+    storage: RequiredStorage,
     user_id: int = Query(1, ge=1, description="User ID for authorization"),
 ) -> ContentItemResponse:
     """Get a single content item by database ID.
@@ -1091,8 +1093,6 @@ async def get_single_item(
     Returns:
         Content item details.
     """
-    storage = require_storage()
-
     item = storage.get_content_item(db_id, user_id=user_id)
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
@@ -1101,9 +1101,10 @@ async def get_single_item(
 
 
 @router.patch("/items/{db_id}", response_model=ContentItemResponse)
-async def edit_item(
+def edit_item(
     db_id: int,
     request: ItemEditRequest,
+    storage: RequiredStorage,
     user_id: int = Query(1, ge=1, description="User ID for authorization"),
 ) -> ContentItemResponse:
     """Edit a content item from the UI.
@@ -1126,8 +1127,6 @@ async def edit_item(
     Returns:
         Updated content item.
     """
-    storage = require_storage()
-
     # Validate status
     valid_statuses = {"unread", "currently_consuming", "completed"}
     if request.status not in valid_statuses:
@@ -1160,7 +1159,9 @@ async def edit_item(
 
 
 @router.get("/users/{user_id}/preferences", response_model=UserPreferenceResponse)
-async def get_user_preferences(user_id: int) -> UserPreferenceResponse:
+def get_user_preferences(
+    user_id: int, storage: RequiredStorage
+) -> UserPreferenceResponse:
     """Get user preference configuration.
 
     Args:
@@ -1169,15 +1170,15 @@ async def get_user_preferences(user_id: int) -> UserPreferenceResponse:
     Returns:
         User preference configuration.
     """
-    storage = require_storage()
-
     preference_config = storage.get_user_preference_config(user_id)
     return UserPreferenceResponse(**preference_config.to_dict())
 
 
 @router.put("/users/{user_id}/preferences", response_model=UserPreferenceResponse)
-async def update_user_preferences(
-    user_id: int, request: UserPreferenceUpdateRequest
+def update_user_preferences(
+    user_id: int,
+    request: UserPreferenceUpdateRequest,
+    storage: RequiredStorage,
 ) -> UserPreferenceResponse:
     """Update user preference configuration (partial merge).
 
@@ -1191,32 +1192,35 @@ async def update_user_preferences(
     Returns:
         Updated user preference configuration.
     """
-    storage = require_storage()
 
-    # Load existing config
-    existing = storage.get_user_preference_config(user_id)
+    # Storage does the read, this merge and the write as one locked operation:
+    # two of these requests otherwise both read the old ``users.settings`` blob
+    # and the later write discards the earlier one.
+    def merge_supplied_fields(existing: UserPreferenceConfig) -> None:
+        if request.scorer_weights is not None:
+            existing.scorer_weights.update(request.scorer_weights)
+        if request.series_in_order is not None:
+            existing.series_in_order = request.series_in_order
+        if request.variety_penalty is not None:
+            existing.variety_penalty = request.variety_penalty
+        if request.custom_rules is not None:
+            existing.custom_rules = request.custom_rules
+        if request.content_length_preferences is not None:
+            existing.content_length_preferences.update(
+                request.content_length_preferences
+            )
+        if request.theme is not None:
+            existing.theme = request.theme
 
-    # Merge only provided fields
-    if request.scorer_weights is not None:
-        existing.scorer_weights.update(request.scorer_weights)
-    if request.series_in_order is not None:
-        existing.series_in_order = request.series_in_order
-    if request.variety_penalty is not None:
-        existing.variety_penalty = request.variety_penalty
-    if request.custom_rules is not None:
-        existing.custom_rules = request.custom_rules
-    if request.content_length_preferences is not None:
-        existing.content_length_preferences.update(request.content_length_preferences)
-    if request.theme is not None:
-        existing.theme = request.theme
+    updated = storage.merge_user_preference_config(user_id, merge_supplied_fields)
 
-    storage.save_user_preference_config(user_id, existing)
-
-    return UserPreferenceResponse(**existing.to_dict())
+    return UserPreferenceResponse(**updated.to_dict())
 
 
 @router.post("/complete")
-async def mark_complete(request: CompletionRequest) -> dict[str, Any]:
+def mark_complete(
+    request: CompletionRequest, storage: RequiredStorage
+) -> dict[str, Any]:
     """Mark content as completed.
 
     A blank ``review`` is rejected rather than stored, as it is on the edit
@@ -1231,7 +1235,6 @@ async def mark_complete(request: CompletionRequest) -> dict[str, Any]:
     Returns:
         Success message
     """
-    storage = require_storage()
     embedding_gen = get_embedding_gen()
     config = get_config()
 
@@ -1273,7 +1276,9 @@ async def mark_complete(request: CompletionRequest) -> dict[str, Any]:
 
 
 @router.post("/update")
-async def update_data(request: UpdateRequest) -> dict[str, Any]:
+def update_data(
+    request: UpdateRequest, storage: RequiredStorage, config: RequiredConfig
+) -> dict[str, Any]:
     """Start a background sync job for the specified data source.
 
     The sync runs in the background. Use GET /sync/status to monitor progress.
@@ -1286,8 +1291,6 @@ async def update_data(request: UpdateRequest) -> dict[str, Any]:
     Returns:
         Message indicating sync was started or error if already running.
     """
-    storage = require_storage()
-    config = require_config()
     embedding_gen = get_embedding_gen()
 
     sync_manager = get_sync_manager()
@@ -1431,7 +1434,7 @@ async def update_data(request: UpdateRequest) -> dict[str, Any]:
 
 
 @router.get("/status", response_model=StatusResponse)
-async def get_status() -> StatusResponse:
+def get_status() -> StatusResponse:
     """Get system status.
 
     Returns:
@@ -1471,7 +1474,7 @@ async def get_status() -> StatusResponse:
 
 
 @router.post("/config/reload")
-async def reload_config_endpoint() -> dict[str, Any]:
+def reload_config_endpoint() -> dict[str, Any]:
     """Reload configuration from disk.
 
     Useful for picking up config changes without restarting the server.
@@ -1487,7 +1490,9 @@ async def reload_config_endpoint() -> dict[str, Any]:
 
 
 @router.get("/sync/sources", response_model=list[SyncSourceResponse])
-async def get_sync_sources() -> list[SyncSourceResponse]:
+def get_sync_sources(
+    config: RequiredConfig, storage: RequiredStorage
+) -> list[SyncSourceResponse]:
     """Get list of available sync sources from config and the database.
 
     Both components are guarded because the answer is assembled from both, and
@@ -1496,8 +1501,6 @@ async def get_sync_sources() -> list[SyncSourceResponse]:
     drops DB-only sources and reports every migrated one off its stale YAML
     row rather than the authoritative DB values.
     """
-    config = require_config()
-    storage = require_storage()
     sources = get_available_sync_sources(config, storage=storage)
     return [
         SyncSourceResponse(
@@ -1511,7 +1514,7 @@ async def get_sync_sources() -> list[SyncSourceResponse]:
 
 
 @router.get("/plugins", response_model=list[PluginInfoResponse])
-async def list_plugins() -> list[PluginInfoResponse]:
+def list_plugins() -> list[PluginInfoResponse]:
     """List every registered source plugin (for the Add-Source picker)."""
     return [PluginInfoResponse(**info) for info in list_available_plugins()]
 
@@ -1521,16 +1524,23 @@ async def list_plugins() -> list[PluginInfoResponse]:
     response_model=SourceConfigResponse,
     status_code=201,
 )
-async def create_source_endpoint(
+def create_source_endpoint(
     payload: SourceCreateRequest,
+    storage: RequiredStorage,
+    config: RequiredConfig,
 ) -> SourceConfigResponse:
     """Create a new DB-backed source.
 
     Sensitive fields must be set via ``PUT /secret/{key}`` *after* this
     call returns; the create path rejects them in the body to keep the
     sensitive-write surface narrow.
+
+    Config is guarded because the answer is assembled from both halves, as it
+    is on every other route that reads them: the id is refused when YAML
+    already holds it. Unguarded, config being unreadable was indistinguishable
+    from there being no YAML entry, so an outage turned a 409 into a DB source
+    shadowing the YAML one — a write, and one the caller cannot see is wrong.
     """
-    storage = require_storage()
     try:
         view = create_source(
             payload.id,
@@ -1538,7 +1548,7 @@ async def create_source_endpoint(
             payload.values,
             storage,
             enabled=payload.enabled,
-            config=get_config(),
+            config=config,
         )
     except SourceConfigError as error:
         raise _config_error_to_http(error) from error
@@ -1546,9 +1556,12 @@ async def create_source_endpoint(
 
 
 @router.delete("/sync/sources/{source_id}", status_code=204)
-async def delete_source_endpoint(source_id: str) -> Response:
-    """Drop a DB-backed source and clear its credentials."""
-    storage = require_storage()
+def delete_source_endpoint(source_id: str, storage: RequiredStorage) -> Response:
+    """Drop a DB-backed source and clear its credentials.
+
+    Storage alone: the row this drops is the database's, and a source YAML
+    still defines is not deletable through here at all.
+    """
     try:
         delete_source(source_id, storage)
     except SourceConfigError as error:
@@ -1599,7 +1612,9 @@ def _sanitize_for_log(value: str) -> str:
     return value.replace("\n", "\\n").replace("\r", "\\r").replace("\0", "\\0")
 
 
-def _require_plugin(source_id: str) -> SourcePlugin:
+def require_plugin(
+    source_id: str, storage: RequiredStorage, config: RequiredConfig
+) -> SourcePlugin:
     """Resolve a source id to its plugin, or 404 if no source carries that id.
 
     Both halves are guarded before the lookup because either one missing runs
@@ -1609,14 +1624,15 @@ def _require_plugin(source_id: str) -> SourcePlugin:
     that exists only in YAML does — while every write on those same sources
     answers 503. One server state, one answer.
     """
-    storage = require_storage()
-    config = require_config()
     plugin = resolve_source_plugin(source_id, config, storage)
     if plugin is None:
         # Server-side log carries the identifier; the wire response stays generic.
         logger.info("Source lookup miss for source_id=%s", _sanitize_for_log(source_id))
         raise HTTPException(status_code=404, detail="Source not found.")
     return plugin
+
+
+ResolvedPlugin = Annotated[SourcePlugin, Depends(require_plugin)]
 
 
 def _config_error_to_http(error: SourceConfigError) -> HTTPException:
@@ -1630,57 +1646,60 @@ def _config_error_to_http(error: SourceConfigError) -> HTTPException:
 
 
 @router.get("/sync/sources/{source_id}/schema", response_model=SourceSchemaResponse)
-async def get_source_schema(source_id: str) -> SourceSchemaResponse:
+def get_source_schema(source_id: str, plugin: ResolvedPlugin) -> SourceSchemaResponse:
     """Return the plugin config schema for a source (drives autogen forms)."""
-    plugin = _require_plugin(source_id)
     return SourceSchemaResponse(**build_schema_view(source_id, plugin))
 
 
 @router.get("/sync/sources/{source_id}/config", response_model=SourceConfigResponse)
-async def get_source_config_endpoint(source_id: str) -> SourceConfigResponse:
+def get_source_config_endpoint(
+    source_id: str,
+    plugin: ResolvedPlugin,
+    config: RequiredConfig,
+    storage: RequiredStorage,
+) -> SourceConfigResponse:
     """Return current config values for a source. Sensitive fields are stripped."""
-    storage = require_storage()
-    plugin = _require_plugin(source_id)
-    return SourceConfigResponse(
-        **build_config_view(source_id, plugin, get_config(), storage)
-    )
+    return SourceConfigResponse(**build_config_view(source_id, plugin, config, storage))
 
 
 @router.post(
     "/sync/sources/{source_id}/migrate", response_model=SourceMigrationResponse
 )
-async def migrate_source_to_db(source_id: str) -> SourceMigrationResponse:
+def migrate_source_to_db(
+    source_id: str,
+    plugin: ResolvedPlugin,
+    config: RequiredConfig,
+    storage: RequiredStorage,
+) -> SourceMigrationResponse:
     """Copy a YAML source entry into the database (idempotent)."""
-    storage = require_storage()
-    plugin = _require_plugin(source_id)
-    return SourceMigrationResponse(
-        **migrate_source(source_id, plugin, get_config(), storage)
-    )
+    return SourceMigrationResponse(**migrate_source(source_id, plugin, config, storage))
 
 
 @router.put("/sync/sources/{source_id}/config", response_model=SourceConfigResponse)
-async def update_source_config_endpoint(
-    source_id: str, payload: SourceConfigUpdateRequest
+def update_source_config_endpoint(
+    source_id: str,
+    payload: SourceConfigUpdateRequest,
+    plugin: ResolvedPlugin,
+    config: RequiredConfig,
+    storage: RequiredStorage,
 ) -> SourceConfigResponse:
     """Update non-sensitive fields on a migrated source."""
-    storage = require_storage()
-    plugin = _require_plugin(source_id)
     try:
         update_source_config_values(source_id, plugin, storage, payload.values)
     except SourceConfigError as error:
         raise _config_error_to_http(error) from error
-    return SourceConfigResponse(
-        **build_config_view(source_id, plugin, get_config(), storage)
-    )
+    return SourceConfigResponse(**build_config_view(source_id, plugin, config, storage))
 
 
 @router.put("/sync/sources/{source_id}/secret/{key}", status_code=204)
-async def set_source_secret_endpoint(
-    source_id: str, key: str, payload: SourceSecretUpdateRequest
+def set_source_secret_endpoint(
+    source_id: str,
+    key: str,
+    payload: SourceSecretUpdateRequest,
+    plugin: ResolvedPlugin,
+    storage: RequiredStorage,
 ) -> Response:
     """Encrypt and store a sensitive field for a source."""
-    storage = require_storage()
-    plugin = _require_plugin(source_id)
     try:
         set_source_secret_value(source_id, plugin, storage, key, payload.value)
     except SourceConfigError as error:
@@ -1689,10 +1708,13 @@ async def set_source_secret_endpoint(
 
 
 @router.delete("/sync/sources/{source_id}/secret/{key}", status_code=204)
-async def clear_source_secret_endpoint(source_id: str, key: str) -> Response:
+def clear_source_secret_endpoint(
+    source_id: str,
+    key: str,
+    plugin: ResolvedPlugin,
+    storage: RequiredStorage,
+) -> Response:
     """Delete a sensitive field's stored value for a source."""
-    storage = require_storage()
-    plugin = _require_plugin(source_id)
     try:
         clear_source_secret_value(source_id, plugin, storage, key)
     except SourceConfigError as error:
@@ -1701,19 +1723,19 @@ async def clear_source_secret_endpoint(source_id: str, key: str) -> Response:
 
 
 @router.put("/sync/sources/{source_id}/enabled", response_model=SourceConfigResponse)
-async def set_source_enabled_endpoint(
-    source_id: str, payload: SourceEnabledUpdateRequest
+def set_source_enabled_endpoint(
+    source_id: str,
+    payload: SourceEnabledUpdateRequest,
+    plugin: ResolvedPlugin,
+    config: RequiredConfig,
+    storage: RequiredStorage,
 ) -> SourceConfigResponse:
     """Toggle the enabled flag on a migrated source."""
-    storage = require_storage()
-    plugin = _require_plugin(source_id)
     try:
         set_source_enabled_state(source_id, storage, payload.enabled)
     except SourceConfigError as error:
         raise _config_error_to_http(error) from error
-    return SourceConfigResponse(
-        **build_config_view(source_id, plugin, get_config(), storage)
-    )
+    return SourceConfigResponse(**build_config_view(source_id, plugin, config, storage))
 
 
 # Global settings endpoints. Business logic lives in ``src.settings.service``
@@ -1726,10 +1748,8 @@ async def set_source_enabled_endpoint(
     response_model=SettingsResponse,
     response_model_exclude_unset=True,
 )
-async def get_settings() -> SettingsResponse:
+def get_settings(config: RequiredConfig, storage: RequiredStorage) -> SettingsResponse:
     """Return every in-scope setting grouped by section (secrets masked)."""
-    config = require_config()
-    storage = require_storage()
     return SettingsResponse(**build_settings_view(config, storage))
 
 
@@ -1737,58 +1757,73 @@ async def get_settings() -> SettingsResponse:
     "/settings",
     response_model=SettingsResponse,
     response_model_exclude_unset=True,
+    dependencies=[Depends(require_config)],
 )
-async def update_settings(request: SettingsUpdateRequest) -> SettingsResponse:
+def update_settings(
+    request: SettingsUpdateRequest, storage: RequiredStorage
+) -> SettingsResponse:
     """Validate and apply a batch of non-sensitive setting updates.
 
     Validation is all-or-nothing: an invalid key or value returns 422 (with the
     offending key + reason) and nothing is written. Non-restart settings are
     live-applied to the running config; restart-required settings persist and
     apply on next boot.
+
+    The config arrives through ``writable_config`` rather than as a
+    ``RequiredConfig`` parameter because the live-apply is a read-copy-store of
+    the running config and has to be serialised against the other writers of
+    it. The view is built inside the same block, so the response describes the
+    config the save landed in rather than one a concurrent reload has since
+    replaced.
     """
-    config = require_config()
-    storage = require_storage()
     try:
-        apply_settings(config, storage, request.updates)
+        with writable_config() as config:
+            apply_settings(config, storage, request.updates)
+            view = build_settings_view(config, storage)
     except SettingsValidationError as error:
         raise HTTPException(
             status_code=422,
             detail={"key": error.key, "reason": error.reason},
         ) from error
-    return SettingsResponse(**build_settings_view(config, storage))
+    return SettingsResponse(**view)
 
 
 @router.delete(
     "/settings/{key}",
     response_model=SettingsResponse,
     response_model_exclude_unset=True,
+    dependencies=[Depends(require_config)],
 )
-async def reset_setting_endpoint(key: str) -> SettingsResponse:
+def reset_setting_endpoint(key: str, storage: RequiredStorage) -> SettingsResponse:
     """Reset a setting to its default by dropping the DB override.
 
     Returns 404 for a key that is not in the settings registry, and 422 (with
     the offending key + reason) when the key is registered but cannot be reset
     this way — e.g. a sensitive leaf, which must go through the secret endpoint.
+
+    Takes the config lock for the reason spelled out on ``update_settings``: it
+    writes the running config the same way.
     """
-    config = require_config()
-    storage = require_storage()
     if get_entry(key) is None:
         logger.info("Settings reset miss for key=%s", _sanitize_for_log(key))
         raise HTTPException(status_code=404, detail="Unknown setting.")
     try:
-        reset_setting(config, storage, key)
+        with writable_config() as config:
+            reset_setting(config, storage, key)
+            view = build_settings_view(config, storage)
     except SettingsValidationError as error:
         raise HTTPException(
             status_code=422,
             detail={"key": error.key, "reason": error.reason},
         ) from error
-    return SettingsResponse(**build_settings_view(config, storage))
+    return SettingsResponse(**view)
 
 
 @router.put("/settings/secret", status_code=204)
-async def set_setting_secret(request: SettingSecretRequest) -> Response:
+def set_setting_secret(
+    request: SettingSecretRequest, storage: RequiredStorage
+) -> Response:
     """Store a sensitive setting's value in the encrypted secret store."""
-    storage = require_storage()
     try:
         set_secret(storage, request.key, request.value)
     except SettingsValidationError as error:
@@ -1799,9 +1834,8 @@ async def set_setting_secret(request: SettingSecretRequest) -> Response:
 
 
 @router.delete("/settings/secret/{key}", status_code=204)
-async def clear_setting_secret(key: str) -> Response:
+def clear_setting_secret(key: str, storage: RequiredStorage) -> Response:
     """Delete a sensitive setting's stored secret."""
-    storage = require_storage()
     try:
         clear_secret(storage, key)
     except SettingsValidationError as error:
@@ -1812,7 +1846,7 @@ async def clear_setting_secret(key: str) -> Response:
 
 
 @router.get("/sync/status", response_model=SyncStatusResponse)
-async def get_sync_status() -> SyncStatusResponse:
+def get_sync_status() -> SyncStatusResponse:
     """Get the current status of every tracked sync job.
 
     Returns:
@@ -1835,8 +1869,10 @@ async def get_sync_status() -> SyncStatusResponse:
 
 
 @router.post("/enrichment/start")
-async def start_enrichment(
+def start_enrichment(
     request: EnrichmentStartRequest,
+    storage: RequiredStorage,
+    config: RequiredConfig,
 ) -> dict[str, Any]:
     """Start background metadata enrichment.
 
@@ -1849,9 +1885,6 @@ async def start_enrichment(
     Returns:
         Message indicating enrichment was started or error
     """
-    storage = require_storage()
-    config = require_config()
-
     # Check if enrichment is enabled
     enrichment_config = config.get("enrichment", {})
     if not enrichment_config.get("enabled", False):
@@ -1887,7 +1920,7 @@ async def start_enrichment(
 
 
 @router.post("/enrichment/stop")
-async def stop_enrichment() -> dict[str, Any]:
+def stop_enrichment() -> dict[str, Any]:
     """Stop the current enrichment job.
 
     Returns:
@@ -1903,7 +1936,7 @@ async def stop_enrichment() -> dict[str, Any]:
 
 
 @router.get("/enrichment/status", response_model=EnrichmentJobStatusResponse | None)
-async def get_enrichment_status() -> EnrichmentJobStatusResponse | None:
+def get_enrichment_status() -> EnrichmentJobStatusResponse | None:
     """Get current enrichment job status.
 
     Returns:
@@ -1933,7 +1966,9 @@ async def get_enrichment_status() -> EnrichmentJobStatusResponse | None:
 
 
 @router.get("/enrichment/stats", response_model=EnrichmentStatsResponse)
-async def get_enrichment_stats(
+def get_enrichment_stats(
+    config: RequiredConfig,
+    storage: RequiredStorage,
     user_id: int = Query(1, ge=1, description="User ID for filtering stats"),
 ) -> EnrichmentStatsResponse:
     """Get enrichment statistics.
@@ -1944,9 +1979,6 @@ async def get_enrichment_stats(
     Returns:
         Enrichment statistics
     """
-    config = require_config()
-    storage = require_storage()
-
     enrichment_config = config.get("enrichment", {})
     enrichment_enabled = enrichment_config.get("enabled", False)
 
@@ -1965,8 +1997,9 @@ async def get_enrichment_stats(
 
 
 @router.post("/enrichment/reset")
-async def reset_enrichment(
+def reset_enrichment(
     request: EnrichmentResetRequest,
+    storage: RequiredStorage,
 ) -> dict[str, Any]:
     """Reset enrichment status for re-processing.
 
@@ -1979,8 +2012,6 @@ async def reset_enrichment(
     Returns:
         Count of items reset
     """
-    storage = require_storage()
-
     # Map content type if provided
     content_type = None
     if request.content_type:
@@ -2009,7 +2040,7 @@ THEMES_DIR = Path(__file__).resolve().parent / "static" / "themes"
 
 
 @router.get("/themes", response_model=list[ThemeResponse])
-async def list_themes() -> list[ThemeResponse]:
+def list_themes() -> list[ThemeResponse]:
     """List all available UI themes.
 
     Scans the themes directory for subdirectories containing theme.json.
@@ -2021,7 +2052,7 @@ async def list_themes() -> list[ThemeResponse]:
 
 
 @router.get("/themes/default")
-async def get_default_theme() -> dict[str, str]:
+def get_default_theme() -> dict[str, str]:
     """Get the default theme for new users.
 
     Returns "nord" as the built-in default. Per-user theme preferences
@@ -2039,15 +2070,12 @@ async def get_default_theme() -> dict[str, str]:
 
 
 @router.get("/gog/status")
-async def get_gog_status() -> dict[str, Any]:
+def get_gog_status(config: RequiredConfig, storage: RequiredStorage) -> dict[str, Any]:
     """Get GOG integration status.
 
     Returns:
         Status of GOG integration (enabled, connected, auth_url).
     """
-    config = require_config()
-    storage = require_storage()
-
     enabled = is_gog_enabled(config)
     connected = has_gog_token(config, storage=storage)
 
@@ -2059,7 +2087,9 @@ async def get_gog_status() -> dict[str, Any]:
 
 
 @router.post("/gog/exchange")
-async def exchange_gog_token(request: GogExchangeRequest) -> dict[str, Any]:
+def exchange_gog_token(
+    request: GogExchangeRequest, config: RequiredConfig, storage: RequiredStorage
+) -> dict[str, Any]:
     """Exchange GOG authorization code for tokens.
 
     Accepts either the raw authorization code or the full redirect URL.
@@ -2071,9 +2101,6 @@ async def exchange_gog_token(request: GogExchangeRequest) -> dict[str, Any]:
     Returns:
         Success message. The token is never included in the HTTP response.
     """
-    config = require_config()
-    storage = require_storage()
-
     if not is_gog_enabled(config):
         raise HTTPException(
             status_code=400,
@@ -2110,13 +2137,13 @@ async def exchange_gog_token(request: GogExchangeRequest) -> dict[str, Any]:
 
 
 @router.delete("/gog/token")
-async def disconnect_gog(user_id: int = Query(1, ge=1)) -> dict[str, Any]:
+def disconnect_gog(
+    storage: RequiredStorage, user_id: int = Query(1, ge=1)
+) -> dict[str, Any]:
     """Disconnect GOG by deleting the stored refresh token.
 
     Mirrors the CLI `auth disconnect --source gog` command.
     """
-    storage = require_storage()
-
     deleted = storage.delete_credential(user_id, "gog", "refresh_token")
     if not deleted:
         raise HTTPException(status_code=404, detail="No active GOG connection found")
@@ -2130,15 +2157,12 @@ async def disconnect_gog(user_id: int = Query(1, ge=1)) -> dict[str, Any]:
 
 
 @router.get("/epic/status")
-async def get_epic_status() -> dict[str, Any]:
+def get_epic_status(config: RequiredConfig, storage: RequiredStorage) -> dict[str, Any]:
     """Get Epic Games integration status.
 
     Returns:
         Status of Epic Games integration (enabled, connected, auth_url).
     """
-    config = require_config()
-    storage = require_storage()
-
     enabled = is_epic_enabled(config)
     connected = has_epic_token(config, storage=storage)
 
@@ -2157,7 +2181,9 @@ async def get_epic_status() -> dict[str, Any]:
 
 
 @router.post("/epic/exchange")
-async def exchange_epic_token(request: EpicExchangeRequest) -> dict[str, Any]:
+def exchange_epic_token(
+    request: EpicExchangeRequest, config: RequiredConfig, storage: RequiredStorage
+) -> dict[str, Any]:
     """Exchange Epic Games authorization code for tokens.
 
     Accepts either the raw authorization code or JSON containing it.
@@ -2169,9 +2195,6 @@ async def exchange_epic_token(request: EpicExchangeRequest) -> dict[str, Any]:
     Returns:
         Success message. The token is never included in the HTTP response.
     """
-    config = require_config()
-    storage = require_storage()
-
     if not is_epic_enabled(config):
         raise HTTPException(
             status_code=400,
@@ -2209,13 +2232,13 @@ async def exchange_epic_token(request: EpicExchangeRequest) -> dict[str, Any]:
 
 
 @router.delete("/epic/token")
-async def disconnect_epic(user_id: int = Query(1, ge=1)) -> dict[str, Any]:
+def disconnect_epic(
+    storage: RequiredStorage, user_id: int = Query(1, ge=1)
+) -> dict[str, Any]:
     """Disconnect Epic Games by deleting the stored refresh token.
 
     Mirrors the CLI `auth disconnect --source epic` command.
     """
-    storage = require_storage()
-
     deleted = storage.delete_credential(user_id, "epic_games", "refresh_token")
     if not deleted:
         raise HTTPException(
@@ -2238,7 +2261,9 @@ _TRAKT_POLL_MESSAGES: dict[DevicePollStatus, str] = {
 
 
 @router.get("/trakt/status")
-async def get_trakt_status(user_id: int = Query(1, ge=1)) -> dict[str, Any]:
+def get_trakt_status(
+    config: RequiredConfig, storage: RequiredStorage, user_id: int = Query(1, ge=1)
+) -> dict[str, Any]:
     """Get Trakt integration status.
 
     ``enabled`` is true when the Trakt source has client credentials saved
@@ -2246,9 +2271,6 @@ async def get_trakt_status(user_id: int = Query(1, ge=1)) -> dict[str, Any]:
     is stored AND the source is enabled — a source whose client credentials
     can no longer resolve is not usable, so it is never reported connected.
     """
-    config = require_config()
-    storage = require_storage()
-
     enabled = True
     try:
         resolve_trakt_client_credentials(config, storage, user_id=user_id)
@@ -2261,7 +2283,9 @@ async def get_trakt_status(user_id: int = Query(1, ge=1)) -> dict[str, Any]:
 
 
 @router.post("/trakt/start-device-flow")
-async def start_trakt_device_flow(user_id: int = Query(1, ge=1)) -> dict[str, Any]:
+def start_trakt_device_flow(
+    config: RequiredConfig, storage: RequiredStorage, user_id: int = Query(1, ge=1)
+) -> dict[str, Any]:
     """Begin the Trakt device-code flow.
 
     Resolves the saved client_id/client_secret server-side and returns the
@@ -2274,9 +2298,6 @@ async def start_trakt_device_flow(user_id: int = Query(1, ge=1)) -> dict[str, An
     bounded by the short device-code expiry and a server-side session mapping
     is intentionally not used here.
     """
-    config = require_config()
-    storage = require_storage()
-
     try:
         client_id, _ = resolve_trakt_client_credentials(
             config, storage, user_id=user_id
@@ -2298,8 +2319,11 @@ async def start_trakt_device_flow(user_id: int = Query(1, ge=1)) -> dict[str, An
 
 
 @router.post("/trakt/poll-device-approval")
-async def poll_trakt_device_approval(
-    request: TraktPollRequest, user_id: int = Query(1, ge=1)
+def poll_trakt_device_approval(
+    request: TraktPollRequest,
+    config: RequiredConfig,
+    storage: RequiredStorage,
+    user_id: int = Query(1, ge=1),
 ) -> dict[str, Any]:
     """Poll Trakt once for device approval.
 
@@ -2308,9 +2332,6 @@ async def poll_trakt_device_approval(
     otherwise the current poll ``status`` is returned. This handler performs a
     single poll and never blocks on a server-side loop.
     """
-    config = require_config()
-    storage = require_storage()
-
     try:
         client_id, client_secret = resolve_trakt_client_credentials(
             config, storage, user_id=user_id
@@ -2355,13 +2376,13 @@ async def poll_trakt_device_approval(
 
 
 @router.delete("/trakt/token")
-async def disconnect_trakt(user_id: int = Query(1, ge=1)) -> dict[str, Any]:
+def disconnect_trakt(
+    storage: RequiredStorage, user_id: int = Query(1, ge=1)
+) -> dict[str, Any]:
     """Disconnect Trakt by deleting the stored refresh token.
 
     Mirrors the CLI `auth disconnect --source trakt` command.
     """
-    storage = require_storage()
-
     deleted = storage.delete_credential(user_id, "trakt", "refresh_token")
     if not deleted:
         raise HTTPException(status_code=404, detail="No active Trakt connection found")
