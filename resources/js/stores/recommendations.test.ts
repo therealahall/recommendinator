@@ -1,7 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { useRecommendationsStore } from './recommendations'
+import { ApiError } from '@/composables/useApi'
+import { useAppStore } from '@/stores/app'
+import { jsonResponse } from '@/testing/http'
 import type { ContentItemResponse } from '@/types/api'
+
+/** src/web/stream_limit.py TOO_MANY_STREAMS_DETAIL. */
+const STREAM_CAP_DETAIL = 'Too many streams in progress. Try again in a moment.'
 
 function makeItem(overrides: Partial<ContentItemResponse> = {}): ContentItemResponse {
   return {
@@ -29,7 +35,10 @@ const mockGet = vi.fn()
 const mockPatch = vi.fn()
 const mockRaw = vi.fn()
 
-vi.mock('@/composables/useApi', () => ({
+// Only useApi is replaced: the streaming error path runs the real body parse,
+// so a stubbed one cannot make it pass.
+vi.mock('@/composables/useApi', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/composables/useApi')>()),
   useApi: () => ({
     get: (...args: unknown[]) => mockGet(...args),
     post: vi.fn(),
@@ -90,6 +99,36 @@ describe('useRecommendationsStore', () => {
     await store.fetch(false)
 
     expect(store.error).toBe('Server error')
+    expect(store.loading).toBe(false)
+  })
+
+  it('serves the unstreamed list when the stream is refused', async () => {
+    const app = useAppStore()
+    app.features.llm_reasoning_enabled = true
+    mockRaw.mockResolvedValue(jsonResponse(503, { detail: STREAM_CAP_DETAIL }))
+    const recs = [{ db_id: 1, title: 'Rec 1', score: 0.9, reasoning: '', score_breakdown: {} }]
+    mockGet.mockResolvedValue(recs)
+
+    const store = useRecommendationsStore()
+    await store.fetch(true)
+
+    expect(store.items).toEqual(recs)
+    expect(store.error).toBe('')
+    expect(store.streaming).toBe(false)
+  })
+
+  it('surfaces what the server said when the fallback fails too', async () => {
+    // Regression: a refused stream became "HTTP 503" and the cap's own wording,
+    // which tells the user to close the tabs holding the slots, never showed.
+    const app = useAppStore()
+    app.features.llm_reasoning_enabled = true
+    mockRaw.mockResolvedValue(jsonResponse(503, { detail: STREAM_CAP_DETAIL }))
+    mockGet.mockRejectedValue(new ApiError(503, 'Service Unavailable', { detail: STREAM_CAP_DETAIL }))
+
+    const store = useRecommendationsStore()
+    await store.fetch(true)
+
+    expect(store.error).toBe(STREAM_CAP_DETAIL)
     expect(store.loading).toBe(false)
   })
 

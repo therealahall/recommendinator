@@ -35,6 +35,11 @@
   --color-error: #bf616a;
   --color-info: var(--accent);
 
+  /* --color-error is a fill colour and reaches only 2.46:1 as text on
+     --bg-card. Mixing toward --text-primary tracks whichever palette is
+     active: 4.82:1 on Nord, 8.54:1 on Snowstorm. */
+  --color-error-text: color-mix(in srgb, var(--color-error) 50%, var(--text-primary));
+
   /* Overlays */
   --overlay-dark: rgba(0, 0, 0, 0.6);
   --overlay-medium: rgba(0, 0, 0, 0.5);

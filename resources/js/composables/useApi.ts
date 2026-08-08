@@ -17,9 +17,32 @@ export class ApiError extends Error {
      *  `{ detail: { key, reason } }` validation payload). Undefined otherwise. */
     public body?: unknown,
   ) {
-    super(`${status} ${statusText}`)
+    super(stringDetail(body) ?? `${status} ${statusText}`)
     this.name = 'ApiError'
   }
+}
+
+/** FastAPI's `{"detail": "..."}`, the one part of an error response written for
+ *  the user to read. Validation payloads put an object there instead, which is
+ *  no use as a message. */
+function stringDetail(body: unknown): string | undefined {
+  if (typeof body !== 'object' || body === null || !('detail' in body)) return undefined
+  // A blank detail is still a string, so it would win the `??` above and leave
+  // the message empty — the page renders its prefix and nothing after it.
+  if (typeof body.detail !== 'string' || body.detail.trim() === '') return undefined
+  return body.detail
+}
+
+/** Read a failed response into an ApiError. Exported for the SSE callers, which
+ *  hold the raw Response and would otherwise each re-invent the parse. */
+export async function errorFromResponse(response: Response): Promise<ApiError> {
+  let body: unknown
+  try {
+    body = await response.json()
+  } catch {
+    body = undefined
+  }
+  return new ApiError(response.status, response.statusText, body)
 }
 
 function buildUrl(
@@ -40,40 +63,37 @@ function buildUrl(
   return url
 }
 
-/** Every /api route requires the token, so nothing here goes out without it. */
-function withAuth(headers: Record<string, string> | undefined): Record<string, string> {
+/** The single door out to /api, so the streaming path cannot miss the token or
+ *  the refusal. Callers swallow their own errors, so an unhandled 401 strands
+ *  the user in a half-empty app with no way back to the gate. */
+async function apiFetch(path: string, options: ApiOptions): Promise<Response> {
   const auth = useAuthStore()
+  const { params, headers, ...fetchOptions } = options
+
   const merged: Record<string, string> = { ...headers }
   if (auth.token) {
     merged['Authorization'] = `Bearer ${auth.token}`
   }
-  return merged
+
+  const response = await fetch(buildUrl(path, params), { ...fetchOptions, headers: merged })
+
+  if (response.status === 401) {
+    auth.reject()
+  }
+
+  return response
 }
 
 async function request<T>(path: string, options: ApiOptions = {}): Promise<T> {
-  const { params, ...fetchOptions } = options
-  const url = buildUrl(path, params)
-
-  const headers = withAuth(fetchOptions.headers)
-  if (fetchOptions.body !== undefined) {
+  const headers = { ...options.headers }
+  if (options.body !== undefined) {
     headers['Content-Type'] = 'application/json'
   }
 
-  const response = await fetch(url, { ...fetchOptions, headers })
+  const response = await apiFetch(path, { ...options, headers })
 
   if (!response.ok) {
-    // A stored token the server refuses is worse than none: every caller
-    // swallows its own errors, so the app would sit half-empty saying nothing.
-    if (response.status === 401) {
-      useAuthStore().reject()
-    }
-    let body: unknown
-    try {
-      body = await response.json()
-    } catch {
-      body = undefined
-    }
-    throw new ApiError(response.status, response.statusText, body)
+    throw await errorFromResponse(response)
   }
 
   const contentType = response.headers.get('content-type')
@@ -117,11 +137,7 @@ export function useApi() {
 
     /** Return raw Response for SSE / streaming endpoints */
     raw(path: string, options: ApiOptions = {}) {
-      const { params, ...fetchOptions } = options
-      return fetch(buildUrl(path, params), {
-        ...fetchOptions,
-        headers: withAuth(fetchOptions.headers),
-      })
+      return apiFetch(path, options)
     },
   }
 }

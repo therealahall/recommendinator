@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { useApi } from '@/composables/useApi'
+import { ApiError, errorFromResponse, useApi } from '@/composables/useApi'
 import { useAppStore } from '@/stores/app'
 import { readSseStream } from '@/composables/useSse'
 import type { MemoryResponse, ProfileResponse, SseChunk } from '@/types/api'
@@ -58,7 +58,7 @@ export const useChatStore = defineStore('chat', () => {
         body: JSON.stringify(body),
       })
 
-      if (!response.ok) throw new Error('Chat request failed')
+      if (!response.ok) throw await errorFromResponse(response)
 
       await readSseStream<SseChunk>(response, (chunk) => {
         if (chunk.type === 'text' && chunk.content) {
@@ -106,8 +106,16 @@ export const useChatStore = defineStore('chat', () => {
           pushMessage({ role: 'assistant', content: `Error: ${chunk.content}` })
         }
       })
-    } catch {
-      pushMessage({ role: 'assistant', content: 'Sorry, I encountered an error. Please try again.' })
+    } catch (err) {
+      // The server's wording when there is any — the stream cap's says how to
+      // get unstuck. A dropped connection has none, so keep the generic line.
+      pushMessage({
+        role: 'assistant',
+        content:
+          err instanceof ApiError
+            ? err.message
+            : 'Sorry, I encountered an error. Please try again.',
+      })
     } finally {
       isStreaming.value = false
     }
