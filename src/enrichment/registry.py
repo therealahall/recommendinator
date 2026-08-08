@@ -4,6 +4,7 @@ import importlib
 import logging
 import pkgutil
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,11 @@ from src.enrichment.provider_base import EnrichmentProvider
 from src.models.content import ContentType
 
 logger = logging.getLogger(__name__)
+
+# Serialises the singleton build and the publish ending a discovery pass, for
+# the reason spelled out on ``src.ingestion.registry``: two concurrent passes
+# rebuilding in place left the process serving a partial map for good.
+_registry_lock = threading.Lock()
 
 
 class EnrichmentRegistry:
@@ -55,9 +61,10 @@ class EnrichmentRegistry:
         Returns:
             The global EnrichmentRegistry instance
         """
-        if cls._instance is None:
-            cls._instance = EnrichmentRegistry()
-        return cls._instance
+        with _registry_lock:
+            if cls._instance is None:
+                cls._instance = EnrichmentRegistry()
+            return cls._instance
 
     @classmethod
     def reset_instance(cls) -> None:
@@ -71,27 +78,32 @@ class EnrichmentRegistry:
         """Discover and register all available providers.
 
         Scans built-in and private provider directories for EnrichmentProvider
-        subclasses and registers them.
+        subclasses and registers them. A pass accumulates into a registry of its
+        own and swaps the finished map in, and the scan itself runs outside
+        ``_registry_lock`` because it imports and constructs third-party
+        provider code — both as in :meth:`PluginRegistry.discover_plugins`,
+        which spells out why.
 
         Args:
             force: If True, re-discover even if already done
         """
-        if self._discovered and not force:
-            return
+        with _registry_lock:
+            if self._discovered and not force:
+                return
 
-        self._providers.clear()
+        staging = EnrichmentRegistry()
+        staging._discover_builtin_providers()
+        staging._discover_private_providers()
+        providers = staging._providers
 
-        # 1. Discover built-in providers
-        self._discover_builtin_providers()
+        with _registry_lock:
+            self._providers = providers
+            self._discovered = True
 
-        # 2. Discover private providers (if directory exists)
-        self._discover_private_providers()
-
-        self._discovered = True
         logger.info(
             "Discovered %d enrichment providers: %s",
-            len(self._providers),
-            list(self._providers.keys()),
+            len(providers),
+            list(providers.keys()),
         )
 
     def _discover_builtin_providers(self) -> None:
