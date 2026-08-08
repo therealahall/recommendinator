@@ -1,5 +1,8 @@
 """Tests for WebEnrichmentManager."""
 
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any
 from unittest.mock import Mock, patch
 
 import pytest
@@ -12,6 +15,14 @@ from src.web.enrichment_manager import (
     get_enrichment_manager,
     reset_enrichment_manager,
 )
+
+# Bounded so a thread nothing releases fails the test instead of hanging the
+# suite; nothing waits this long on the passing path.
+_STALL_TIMEOUT_SECONDS = 5.0
+
+# How long the second caller is given to prove it cannot get in. Only spent on
+# the passing path.
+_BLOCKED_GRACE_SECONDS = 0.5
 
 
 @pytest.fixture
@@ -143,6 +154,77 @@ class TestStartEnrichment:
 
         assert success is False
         assert "already running" in message
+
+
+class TestTwoConcurrentStartsRunOneJobRegression:
+    """A double-clicked Start must not put two enrichment jobs on the wire.
+
+    Bug shape: the build happened under the lock and the start happened after
+    it was released, so a second caller arriving in between saw a manager that
+    had not started yet, judged the server idle, and started one of its own.
+    Both handlers were ``async def`` with no ``await`` before the threadpool
+    conversion, so the event loop made their bodies atomic against each other;
+    now nothing does. Two jobs means two sets of rate limiters against the same
+    provider API key, and only the last manager stored is the one ``GET
+    /api/enrichment/status`` and ``POST /api/enrichment/stop`` can see — so the
+    other one is invisible and unstoppable for the life of the process.
+    Fix: the manager is built and started without releasing the lock.
+    """
+
+    def test_the_second_start_is_refused_rather_than_starting_a_job(
+        self, manager: WebEnrichmentManager
+    ) -> None:
+        """Forced interleaving: the first start is parked while the second runs."""
+        built: list[Any] = []
+        started: list[Any] = []
+        first_start_reached = threading.Event()
+        release_first_start = threading.Event()
+
+        def build_manager(_storage: Any, _config: dict[str, Any]) -> Any:
+            job = Mock(spec=EnrichmentManager)
+            job.get_status.return_value = EnrichmentJobStatus(running=False)
+
+            def start(**_kwargs: Any) -> bool:
+                started.append(job)
+                if job is built[0]:
+                    first_start_reached.set()
+                    assert release_first_start.wait(timeout=_STALL_TIMEOUT_SECONDS)
+                job.get_status.return_value = EnrichmentJobStatus(running=True)
+                return True
+
+            job.start_enrichment.side_effect = start
+            built.append(job)
+            return job
+
+        with (
+            patch("src.web.enrichment_manager.EnrichmentManager", build_manager),
+            ThreadPoolExecutor(max_workers=2) as pool,
+        ):
+            first = pool.submit(
+                manager.start_enrichment, Mock(spec=StorageManager), {"enrichment": {}}
+            )
+            assert first_start_reached.wait(timeout=_STALL_TIMEOUT_SECONDS)
+
+            second = pool.submit(
+                manager.start_enrichment, Mock(spec=StorageManager), {"enrichment": {}}
+            )
+            # Started outside the lock, the second caller runs straight through
+            # here — which is also what makes releasing the first one safe:
+            # this is the wait that says the second is definitely in.
+            with pytest.raises(TimeoutError):
+                second.result(timeout=_BLOCKED_GRACE_SECONDS)
+            release_first_start.set()
+
+            assert first.result(timeout=_STALL_TIMEOUT_SECONDS)[0] is True
+            assert second.result(timeout=_STALL_TIMEOUT_SECONDS) == (
+                False,
+                "Enrichment job already running",
+            )
+
+        # With the lock released mid-start, the second caller would have built
+        # a manager of its own and started it, leaving two entries in each.
+        assert len(built) == 1
+        assert started == built
 
 
 class TestStopEnrichment:
