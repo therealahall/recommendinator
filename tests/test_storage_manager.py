@@ -11,7 +11,7 @@ import pytest
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.user_preferences import UserPreferenceConfig
 from src.storage.manager import StorageManager, stored_embedding_key
-from src.storage.schema import create_user
+from src.storage.schema import create_user, get_user_by_id, update_user_settings
 from src.storage.vector_db import VectorDB
 
 
@@ -393,6 +393,55 @@ def test_save_preference_config_does_not_clobber_other_settings(
         assert user is not None
         assert user["settings"]["theme"] == "dark"
         assert "preference_config" in user["settings"]
+    finally:
+        conn.close()
+
+
+def test_merge_user_preference_config_edits_the_stored_config(
+    temp_storage_manager: StorageManager,
+) -> None:
+    """``apply`` is handed what was stored, and its edit round-trips."""
+    temp_storage_manager.save_user_preference_config(
+        user_id=1,
+        preference_config=UserPreferenceConfig(
+            scorer_weights={"genre_match": 2.0}, series_in_order=False
+        ),
+    )
+
+    def add_a_weight(existing: UserPreferenceConfig) -> None:
+        assert existing.scorer_weights == {"genre_match": 2.0}
+        existing.scorer_weights["tag_overlap"] = 0.5
+
+    merged = temp_storage_manager.merge_user_preference_config(1, add_a_weight)
+
+    assert merged.scorer_weights == {"genre_match": 2.0, "tag_overlap": 0.5}
+    assert merged.series_in_order is False
+    assert temp_storage_manager.get_user_preference_config(user_id=1) == merged
+
+
+def test_merge_preference_config_does_not_clobber_other_settings(
+    temp_storage_manager: StorageManager,
+) -> None:
+    """Merging preference_config preserves other keys in users.settings."""
+    conn = temp_storage_manager.sqlite_db._get_connection()
+    try:
+        update_user_settings(conn, 1, {"theme": "dark"})
+    finally:
+        conn.close()
+
+    def set_a_weight(existing: UserPreferenceConfig) -> None:
+        existing.scorer_weights["genre_match"] = 2.5
+
+    temp_storage_manager.merge_user_preference_config(1, set_a_weight)
+
+    conn = temp_storage_manager.sqlite_db._get_connection()
+    try:
+        user = get_user_by_id(conn, 1)
+        assert user is not None
+        assert user["settings"]["theme"] == "dark"
+        assert user["settings"]["preference_config"]["scorer_weights"] == {
+            "genre_match": 2.5
+        }
     finally:
         conn.close()
 

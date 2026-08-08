@@ -8,7 +8,7 @@ import logging
 import os
 import sqlite3
 import threading
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -172,12 +172,10 @@ class StorageManager:
         self.vector_db: VectorDB | None = None
         self.ai_enabled = ai_enabled
         self._credential_key_path = self._resolve_key_path(sqlite_path)
-        # Serialises the lookup-then-write sequence in save_content_item and
-        # the encrypt-then-write sequence in save_credential. SQLite WAL allows
-        # concurrent readers, but the cross-source dedup path (match by
-        # external id, then by normalized title) and the credential rotation
-        # path both have a read-then-write gap that can race under parallel
-        # sync (max_workers > 1).
+        # Serialises every read-then-write on this manager: each `with` site
+        # below leaves a gap between read and write that WAL's concurrent
+        # readers do not close, and the callers that collide there are parallel
+        # sync workers and FastAPI threadpool workers alike.
         self._save_lock = threading.Lock()
 
         # Only initialize vector DB if AI is enabled and path provided.
@@ -867,6 +865,29 @@ class StorageManager:
             update_user_settings(
                 conn, user_id, {"preference_config": preference_config.to_dict()}
             )
+
+    def merge_user_preference_config(
+        self, user_id: int, apply: Callable[[UserPreferenceConfig], None]
+    ) -> UserPreferenceConfig:
+        """Apply *apply* to the user's preferences and save the result.
+
+        Read, edit and write as one operation: separate calls lose a concurrent
+        write's ``users.settings`` blob.
+
+        Args:
+            user_id: User ID.
+            apply: Edits the config in place. Must not call another
+                ``_save_lock`` writer: the lock is not reentrant, so that
+                wedges the worker for good, silently.
+
+        Returns:
+            The saved config.
+        """
+        with self._save_lock:
+            preference_config = self.get_user_preference_config(user_id)
+            apply(preference_config)
+            self.save_user_preference_config(user_id, preference_config)
+            return preference_config
 
     def get_cached_preference_interpretation(self, cache_key: str) -> str | None:
         """Get a cached preference interpretation.
