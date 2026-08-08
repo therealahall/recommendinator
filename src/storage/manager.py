@@ -33,6 +33,7 @@ from src.storage.schema import (
     credential_row_exists,
     delete_core_memory,
     delete_credential,
+    delete_credentials_for_source,
     delete_setting,
     delete_source_config,
     get_all_users,
@@ -71,6 +72,9 @@ from src.storage.schema import (
 # intentional public re-export for type checkers.
 from src.storage.sqlite_db import UNSET as UNSET
 from src.storage.sqlite_db import VALID_SORT_OPTIONS as VALID_SORT_OPTIONS
+from src.storage.sqlite_db import (
+    FutureCompletionDateError as FutureCompletionDateError,
+)
 from src.storage.sqlite_db import SQLiteDB
 from src.storage.sqlite_db import Unset as Unset
 from src.storage.sqlite_db import unset_if_none as unset_if_none
@@ -83,6 +87,10 @@ logger = logging.getLogger(__name__)
 
 #: Prefix of the synthetic vector-DB key used for an item with no external id.
 _DB_EMBEDDING_PREFIX = "db_"
+
+
+class UnknownUserError(LookupError):
+    """A write named a user id no ``users`` row carries."""
 
 
 def _embedding_key(item: ContentItem, db_id: int) -> str:
@@ -287,6 +295,10 @@ class StorageManager:
 
         Returns:
             Database ID of the completed item
+
+        Raises:
+            FutureCompletionDateError: ``item.date_completed`` is a day nobody
+                has lived yet. Nothing is written.
         """
         with self._save_lock:
             db_id = self.sqlite_db.complete_content_item(item, user_id=user_id)
@@ -854,17 +866,31 @@ class StorageManager:
     ) -> None:
         """Save user preference config to DB.
 
-        Merges into the ``users.settings`` JSON blob under the
-        ``"preference_config"`` key without clobbering other settings.
+        Merges into the ``users.settings`` blob under ``"preference_config"``
+        without clobbering other settings.
 
-        Args:
-            user_id: User ID.
-            preference_config: Preference config to persist.
+        Raises:
+            PreferenceValidationError: A config no later read survives.
+            UnknownUserError: No user carries *user_id*; nothing was written.
         """
+        with self._save_lock:
+            self._write_preference_config(user_id, preference_config)
+
+    def _write_preference_config(
+        self, user_id: int, preference_config: UserPreferenceConfig
+    ) -> None:
+        """The one site every preference write passes through.
+
+        Both interfaces reach it, so a rule enforced here closes the CLI's
+        door and the API's at once rather than once per command.
+        """
+        preference_config.raise_if_unstorable()
         with self.sqlite_db.connection() as conn:
-            update_user_settings(
+            written = update_user_settings(
                 conn, user_id, {"preference_config": preference_config.to_dict()}
             )
+        if not written:
+            raise UnknownUserError(f"No user with id {user_id}.")
 
     def merge_user_preference_config(
         self, user_id: int, apply: Callable[[UserPreferenceConfig], None]
@@ -882,11 +908,15 @@ class StorageManager:
 
         Returns:
             The saved config.
+
+        Raises:
+            PreferenceValidationError: See ``save_user_preference_config``.
+            UnknownUserError: See ``save_user_preference_config``.
         """
         with self._save_lock:
             preference_config = self.get_user_preference_config(user_id)
             apply(preference_config)
-            self.save_user_preference_config(user_id, preference_config)
+            self._write_preference_config(user_id, preference_config)
             return preference_config
 
     def get_cached_preference_interpretation(self, cache_key: str) -> str | None:
@@ -1371,6 +1401,18 @@ class StorageManager:
         """
         with self.sqlite_db.connection() as conn:
             return delete_credential(conn, user_id, source_id, key)
+
+    def delete_credentials_for_source(self, user_id: int, source_id: str) -> int:
+        """Delete every stored credential for a source.
+
+        Keyed by source, not by a plugin's current schema: an unregistered
+        plugin or a no-longer-sensitive field must not leave a row behind.
+
+        Returns:
+            Number of credential rows deleted.
+        """
+        with self.sqlite_db.connection() as conn:
+            return delete_credentials_for_source(conn, user_id, source_id)
 
     # Global secret methods (encrypted; write-only surface for settings UI/CLI)
 

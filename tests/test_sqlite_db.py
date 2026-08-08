@@ -2,7 +2,7 @@
 
 import json
 import sqlite3
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -5009,6 +5009,86 @@ class TestCompletionDoorExplicitDate:
         retrieved = temp_db.get_content_item(db_id)
         assert retrieved is not None
         assert retrieved.date_completed == date(2026, 7, 28)
+
+
+class TestCompletionDoorFutureDate:
+    """Reported: chat names a completion date and nothing bounded the value,
+    so ``date.fromisoformat`` let 9999-12-31 through. Fixed at the door, which
+    ``complete`` and ``POST /api/complete`` share, rather than at one surface.
+    """
+
+    def _complete_on(self, temp_db: SQLiteDB, supplied: date) -> None:
+        """Complete one book, naming *supplied* as the date."""
+        with patch("src.utils.dates.utc_now", return_value=FROZEN_NOW):
+            temp_db.complete_content_item(
+                ContentItem(
+                    id="book-1",
+                    title="Dune",
+                    content_type=ContentType.BOOK,
+                    status=ConsumptionStatus.COMPLETED,
+                    date_completed=supplied,
+                )
+            )
+
+    def test_tomorrow_is_accepted_for_a_caller_a_zone_ahead(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """A user east of the server calls tomorrow "today"."""
+        self._complete_on(temp_db, FROZEN_TODAY + timedelta(days=1))
+
+        stored = temp_db.get_content_items()
+        assert [item.date_completed for item in stored] == [
+            FROZEN_TODAY + timedelta(days=1)
+        ]
+
+    def test_the_day_after_tomorrow_is_refused(self, temp_db: SQLiteDB) -> None:
+        """Past the skew allowance is a day nobody has lived."""
+        with pytest.raises(sqlite_db.FutureCompletionDateError):
+            self._complete_on(temp_db, FROZEN_TODAY + timedelta(days=2))
+
+    def test_a_refused_completion_writes_nothing_regression(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """The refusal rolls back every write the door had already made."""
+        db_id = temp_db.save_content_item(
+            ContentItem(
+                id="book-1",
+                title="Dune",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.CURRENTLY_CONSUMING,
+                date_completed=None,
+            )
+        )
+
+        with pytest.raises(sqlite_db.FutureCompletionDateError):
+            self._complete_on(temp_db, date(9999, 12, 31))
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.date_completed is None
+        assert retrieved.status == ConsumptionStatus.CURRENTLY_CONSUMING
+
+    def test_the_sync_door_lands_a_date_this_one_would_refuse(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """The guard is this door's alone, deliberately.
+
+        A sync mirrors somebody else's library, where one row dated 2099 must
+        not fail the whole run — which is what raising inside a sync does.
+        """
+        db_id = temp_db.save_content_item(
+            ContentItem(
+                id="book-2",
+                title="Dune Messiah",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                date_completed=date(2099, 1, 1),
+            )
+        )
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.date_completed == date(2099, 1, 1)
 
 
 class TestIgnoredSyncDoor:

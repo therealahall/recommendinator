@@ -5,11 +5,15 @@ import os
 import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from math import isfinite
 from pathlib import Path
+from typing import cast
 
 from fastapi import Depends, FastAPI, Request, Response
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
@@ -21,6 +25,7 @@ from src.cli.config import (
     resolve_bootstrap_web,
     resolve_config_path,
     take_api_token,
+    warn_if_config_is_shared,
 )
 from src.conversation.engine import create_conversation_engine
 from src.conversation.memory import MemoryManager
@@ -54,6 +59,26 @@ _LOG_LEVELS = {
     for name, level in logging.getLevelNamesMapping().items()
     if level != logging.NOTSET
 }
+
+
+def _quotable(value: float) -> float | str:
+    return value if isfinite(value) else repr(value)
+
+
+async def _refusal_json_can_carry(_request: Request, exc: Exception) -> JSONResponse:
+    """Answer 422 with a body ``JSONResponse`` can actually render.
+
+    ``json.loads`` accepts the ``Infinity`` and ``NaN`` literals and the
+    default handler quotes the rejected input back, so refusing a non-finite
+    number rendered as a 500 instead.
+    """
+    # Starlette types every handler against bare Exception and dispatches this
+    # one on the registered class alone.
+    errors = cast(RequestValidationError, exc).errors()
+    return JSONResponse(
+        status_code=422,
+        content={"detail": jsonable_encoder(errors, custom_encoder={float: _quotable})},
+    )
 
 
 def _safe_log_path(log_file: str) -> Path:
@@ -231,7 +256,9 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         configure_logging(config)
         logger.info("Logging configured from application config")
 
-        llm_client, embedding_gen, rec_gen = create_llm_components(config)
+        llm_client, embedding_gen, rec_gen = create_llm_components(
+            config, config_provider=get_config
+        )
         # get_config, not the dict: a hot-reload swaps in a fresh one, and the
         # engine must score against whichever is current at the time.
         engine = create_recommendation_engine(
@@ -243,6 +270,10 @@ def create_app(config_path: Path | None = None) -> FastAPI:
             actual_config_path = resolve_config_path(config_path)
         except FileNotFoundError:
             actual_config_path = config_path or Path("config/example.yaml")
+
+        # Here rather than beside take_api_token: this is the first point that
+        # knows which file the token was read out of.
+        warn_if_config_is_shared(actual_config_path)
 
         # Migrate sensitive config credentials to encrypted DB storage
         migrate_config_credentials(config, storage)
@@ -271,6 +302,7 @@ def create_app(config_path: Path | None = None) -> FastAPI:
                 ollama_client=llm_client,
                 recommendation_engine=engine,
                 conversation_config=config.get("conversation"),
+                config_provider=get_config,
             )
             app_state.conversation_engine = conversation_engine
             logger.info("Conversation engine initialized")
@@ -335,7 +367,11 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         allow_origins=allowed_origins,
         allow_credentials=allow_credentials,
         allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
-        allow_headers=["Content-Type", "Accept"],
+        # Authorization is not one of the CORS-safelisted request headers, and
+        # every /api route requires it, so leaving it out makes a preflight from
+        # an allowed origin fail before routing and web.allowed_origins name a
+        # client that can never work.
+        allow_headers=["Authorization", "Content-Type", "Accept"],
     )
 
     # Security headers middleware
@@ -362,6 +398,8 @@ def create_app(config_path: Path | None = None) -> FastAPI:
             return response
 
     app.add_middleware(SecurityHeadersMiddleware)
+
+    app.add_exception_handler(RequestValidationError, _refusal_json_can_carry)
 
     # Router-level, so an endpoint is authenticated by being registered rather
     # than by its author remembering. Nothing under /api is exempt — including

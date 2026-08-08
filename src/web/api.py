@@ -2,12 +2,13 @@
 
 import json
 import logging
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Annotated, Any, assert_never, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import Path as PathParam  # this module's ``Path`` is pathlib's
 from fastapi.responses import Response, StreamingResponse
 from pydantic import AfterValidator, BaseModel, Field
 
@@ -28,6 +29,8 @@ from src.models.content import (
     get_enum_value,
 )
 from src.models.user_preferences import UserPreferenceConfig
+from src.recommendations.content_length import LengthPreference
+from src.recommendations.scorers import SCORER_NAME_MAP
 from src.settings.metadata import get_entry
 from src.settings.service import (
     SettingsValidationError,
@@ -37,7 +40,7 @@ from src.settings.service import (
     reset_setting,
     set_secret,
 )
-from src.storage.manager import UNSET, VALID_SORT_OPTIONS
+from src.storage.manager import UNSET, VALID_SORT_OPTIONS, UnknownUserError
 from src.utils.item_serialization import item_to_dict
 from src.utils.series import MAX_SEASONS
 from src.utils.sorting import MAX_SEARCH_LENGTH
@@ -76,6 +79,7 @@ from src.web.state import (
     get_storage,
     reload_config,
 )
+from src.web.stream_limit import bounded_sse
 from src.web.sync_manager import SyncJob, get_sync_manager
 from src.web.sync_sources import (
     SourceConfigError,
@@ -92,7 +96,6 @@ from src.web.sync_sources import (
     set_source_enabled_state,
     set_source_secret_value,
     update_source_config_values,
-    validate_source_config,
 )
 from src.web.trakt_auth import (
     DevicePollStatus,
@@ -147,6 +150,58 @@ CompletionReviewText = Annotated[
     Field(min_length=1, max_length=MAX_REVIEW_LENGTH),
     AfterValidator(_blank_review_validator("")),
 ]
+
+
+def _member_validator(noun: str, allowed: Iterable[str]) -> Callable[[str], str]:
+    """Build the membership check for one closed set of preference keys.
+
+    The CLI spells each as a Click choice. A name outside the set weights
+    nothing and sits in ``users.settings`` for every later read to parse.
+    """
+    permitted = sorted(allowed)
+
+    def reject(value: str) -> str:
+        if value not in permitted:
+            raise ValueError(f"unknown {noun}; expected one of {', '.join(permitted)}")
+        return value
+
+    return reject
+
+
+ScorerName = Annotated[
+    str, AfterValidator(_member_validator("scorer", SCORER_NAME_MAP))
+]
+
+ContentTypeName = Annotated[
+    str,
+    AfterValidator(
+        _member_validator("content type", (member.value for member in ContentType))
+    ),
+]
+
+LengthPreferenceName = Annotated[
+    str,
+    AfterValidator(
+        _member_validator(
+            "length preference", (member.value for member in LengthPreference)
+        )
+    ),
+]
+
+ThemeId = Annotated[str, Field(max_length=UserPreferenceConfig.MAX_THEME_ID_LENGTH)]
+
+#: ``json.loads`` accepts the ``Infinity`` and ``NaN`` literals and
+#: ``JSONResponse`` refuses to render them, so one stored non-finite weight
+#: answers 500 on every later read of the preferences page.
+PreferenceWeight = Annotated[float, Field(allow_inf_nan=False)]
+
+CustomRuleText = Annotated[
+    str, Field(max_length=UserPreferenceConfig.MAX_CUSTOM_RULE_LENGTH)
+]
+
+#: Every user id in a path. The query-param siblings all carry ``ge=1``, and a
+#: non-positive id matches no row.
+UserIdPath = Annotated[int, PathParam(ge=1, description="User ID")]
 
 
 # Request/Response models
@@ -274,7 +329,12 @@ class StatusResponse(BaseModel):
 
 
 class UserPreferenceResponse(BaseModel):
-    """Response model for user preferences."""
+    """Response model for user preferences.
+
+    ``scorer_weights`` needs no bound of its own: ``from_dict`` drops the
+    non-finite ones on read, and a second refusal here would answer a bare
+    ``ValidationError`` rather than anything an operator can act on.
+    """
 
     scorer_weights: dict[str, float]
     series_in_order: bool
@@ -322,16 +382,25 @@ class SyncStatusResponse(BaseModel):
 
 
 class UserPreferenceUpdateRequest(BaseModel):
-    """Request model for updating user preferences (partial merge)."""
+    """Request model for updating user preferences (partial merge).
 
-    scorer_weights: dict[str, float] | None = None
+    The merge is additive, so the key set is what bounds the stored blob.
+    Both dicts are keyed on a closed one; ``custom_rules`` is free text and
+    carries a count.
+    """
+
+    scorer_weights: dict[ScorerName, PreferenceWeight] | None = None
     series_in_order: bool | None = None
     variety_penalty: float | None = Field(
         None, ge=0.0, le=UserPreferenceConfig.MAX_VARIETY_PENALTY
     )
-    custom_rules: list[str] | None = None
-    content_length_preferences: dict[str, str] | None = None
-    theme: str | None = None
+    custom_rules: list[CustomRuleText] | None = Field(
+        None, max_length=UserPreferenceConfig.MAX_CUSTOM_RULES
+    )
+    content_length_preferences: dict[ContentTypeName, LengthPreferenceName] | None = (
+        None
+    )
+    theme: ThemeId | None = None
 
 
 class IgnoreItemRequest(BaseModel):
@@ -746,6 +815,9 @@ def stream_recommendations(
       per item as each LLM call completes.
     - Final: ``{"type": "done"}``
 
+    Shares one concurrency budget with ``POST /api/chat`` and answers 503 once
+    it is full.
+
     Args:
         type: Content type
         count: Number of recommendations
@@ -855,7 +927,7 @@ def stream_recommendations(
             yield f"data: {json.dumps(error_event)}\n\n"
 
     return StreamingResponse(
-        generate_sse(),
+        bounded_sse(generate_sse()),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -1160,7 +1232,7 @@ def edit_item(
 
 @router.get("/users/{user_id}/preferences", response_model=UserPreferenceResponse)
 def get_user_preferences(
-    user_id: int, storage: RequiredStorage
+    user_id: UserIdPath, storage: RequiredStorage
 ) -> UserPreferenceResponse:
     """Get user preference configuration.
 
@@ -1176,7 +1248,7 @@ def get_user_preferences(
 
 @router.put("/users/{user_id}/preferences", response_model=UserPreferenceResponse)
 def update_user_preferences(
-    user_id: int,
+    user_id: UserIdPath,
     request: UserPreferenceUpdateRequest,
     storage: RequiredStorage,
 ) -> UserPreferenceResponse:
@@ -1212,7 +1284,13 @@ def update_user_preferences(
         if request.theme is not None:
             existing.theme = request.theme
 
-    updated = storage.merge_user_preference_config(user_id, merge_supplied_fields)
+    # The write is an UPDATE keyed on the id, so it is the write that knows
+    # whether the user exists. A pre-check here is a second answer to the same
+    # question, and the two disagreeing would be a 500.
+    try:
+        updated = storage.merge_user_preference_config(user_id, merge_supplied_fields)
+    except UnknownUserError as error:
+        raise HTTPException(status_code=404, detail="User not found.") from error
 
     return UserPreferenceResponse(**updated.to_dict())
 
@@ -1322,22 +1400,29 @@ def update_data(
             # A 4xx (not a 200 "message") is required so the frontend ``catch``
             # clears the optimistic "syncing" flag; a 200 leaves the Sync button
             # stuck because no SyncJob is ever created to end the polling.
+            logger.info(
+                "Sync requested for unavailable source_id=%s", _sanitize_for_log(source)
+            )
             raise HTTPException(
                 status_code=400,
-                detail=f"Source '{source}' is disabled or not configured",
+                detail="Source is disabled or not configured.",
             )
-        validation_errors = validate_source_config(source, config, storage=storage)
+        # Validate the entry resolved above rather than resolving the id again:
+        # a delete landing between the two makes the second lookup miss, and its
+        # "unknown source" text carries the caller's own id onto the wire.
+        source_entry = resolved[0]
+        validation_errors = source_entry.plugin.validate_config(
+            source_entry.config, storage=storage
+        )
         if validation_errors:
             logger.warning(
                 "Sync config validation failed for %s: %s",
-                source,
-                "; ".join(validation_errors),
+                _sanitize_for_log(source),
+                _sanitize_for_log("; ".join(validation_errors)),
             )
-            raise HTTPException(
-                status_code=400,
-                detail=f"Source '{source}' is not properly configured: "
-                + "; ".join(validation_errors),
-            )
+            # The messages the write door already returns. A source broken
+            # before this write is refused by nothing else that can say why.
+            raise HTTPException(status_code=400, detail=" ".join(validation_errors))
 
     if not resolved:
         return {"message": "No sources enabled or configured for sync", "count": 0}
@@ -1587,7 +1672,8 @@ _ERROR_KIND_TO_STATUS: dict[str, int] = {
 
 # Fixed user-facing strings keyed by error kind so HTTP responses never
 # echo back caller-controlled identifiers (path params would otherwise
-# end up in JSON `detail` fields).
+# end up in JSON `detail` fields). ``invalid_values`` is deliberately absent
+# from both maps — see ``_config_error_to_http``.
 _ERROR_KIND_TO_DETAIL: dict[str, str] = {
     "not_found": "Field or source not found.",
     "not_migrated": "Source has not been migrated to the database.",
@@ -1639,6 +1725,11 @@ def _config_error_to_http(error: SourceConfigError) -> HTTPException:
     # error.kind is controlled internally; error.message embeds caller-supplied
     # values so it stays out of the log to prevent log injection.
     logger.info("Source config error kind=%s", error.kind)
+    if error.kind == "invalid_values":
+        # The one kind whose message is returned. The fixed strings keep
+        # caller-supplied *identifiers* off the wire; this is the operator's
+        # own configuration, and nothing else would say why it was refused.
+        return HTTPException(status_code=400, detail=error.message)
     return HTTPException(
         status_code=_ERROR_KIND_TO_STATUS.get(error.kind, 400),
         detail=_ERROR_KIND_TO_DETAIL.get(error.kind, "Invalid request."),

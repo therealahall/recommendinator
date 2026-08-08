@@ -3,7 +3,6 @@
 import csv
 import io
 import json
-import tempfile
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -1095,7 +1094,7 @@ class TestShippedTemplatesCarryTheExportColumns:
 class TestExportRoundtrip:
     """Tests that exported data can be re-imported identically."""
 
-    def test_csv_roundtrip_book(self) -> None:
+    def test_csv_roundtrip_book(self, tmp_path: Path) -> None:
         """Export a book to CSV, re-import it, verify fields match."""
         original = ContentItem(
             id="rt1",
@@ -1110,17 +1109,13 @@ class TestExportRoundtrip:
 
         csv_content = export_items_csv([original], ContentType.BOOK)
 
-        # Write to temp file and re-import
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".csv", delete=False
-        ) as temp_file:
-            temp_file.write(csv_content)
-            temp_path = temp_file.name
+        temp_path = tmp_path / "roundtrip.csv"
+        temp_path.write_text(csv_content)
 
         plugin = CsvImportPlugin()
-        reimported = list(plugin.fetch({"path": temp_path, "content_type": "book"}))
-
-        Path(temp_path).unlink()
+        reimported = list(
+            plugin.fetch({"path": str(temp_path), "content_type": "book"})
+        )
 
         assert len(reimported) == 1
         assert reimported[0].title == original.title
@@ -1128,7 +1123,7 @@ class TestExportRoundtrip:
         assert reimported[0].rating == original.rating
         assert reimported[0].ignored is True
 
-    def test_json_roundtrip_tv_show_with_seasons(self) -> None:
+    def test_json_roundtrip_tv_show_with_seasons(self, tmp_path: Path) -> None:
         """Export a TV show with seasons_watched to JSON, re-import, verify."""
         original = ContentItem(
             id="rt2",
@@ -1147,16 +1142,13 @@ class TestExportRoundtrip:
 
         json_content = export_items_json([original], ContentType.TV_SHOW)
 
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as temp_file:
-            temp_file.write(json_content)
-            temp_path = temp_file.name
+        temp_path = tmp_path / "roundtrip.json"
+        temp_path.write_text(json_content)
 
         plugin = JsonImportPlugin()
-        reimported = list(plugin.fetch({"path": temp_path, "content_type": "tv_show"}))
-
-        Path(temp_path).unlink()
+        reimported = list(
+            plugin.fetch({"path": str(temp_path), "content_type": "tv_show"})
+        )
 
         assert len(reimported) == 1
         assert reimported[0].title == original.title

@@ -6,13 +6,14 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import fields
 from typing import Any
-from unittest.mock import NonCallableMock, patch
+from unittest.mock import Mock, NonCallableMock, patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from src.cli.config import take_api_token
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.models.user_preferences import UserPreferenceConfig
 from src.web.app import create_app
 from src.web.state import AppState, app_state
 
@@ -57,6 +58,28 @@ def back_mock_settings_store(storage: Any) -> dict[str, Any]:
     storage.credential_row_exists.return_value = False
     storage.has_global_secret.return_value = False
     return store
+
+
+def back_mock_preference_store(
+    storage: Any, stored: UserPreferenceConfig | None = None
+) -> Mock:
+    """Make a mocked StorageManager hold one real ``UserPreferenceConfig``.
+
+    Both interfaces hand their edit to ``merge_user_preference_config``, and a
+    bare Mock returns a Mock, proving nothing about what the edit did. Returns
+    that mock, for asserting it was not called.
+    """
+    existing = stored if stored is not None else UserPreferenceConfig()
+
+    def merge(
+        _user_id: int, apply: Callable[[UserPreferenceConfig], None]
+    ) -> UserPreferenceConfig:
+        apply(existing)
+        return existing
+
+    storage.get_user_preference_config = Mock(return_value=existing)
+    storage.merge_user_preference_config = Mock(side_effect=merge)
+    return storage.merge_user_preference_config
 
 
 @contextmanager

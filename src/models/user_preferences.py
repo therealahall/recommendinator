@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from math import isfinite
 from typing import Any, ClassVar
+
+
+class PreferenceValidationError(ValueError):
+    """A preference config the store must not accept."""
 
 
 @dataclass
@@ -46,11 +51,38 @@ class UserPreferenceConfig:
     #: that fully zeroes a just-finished genre (no score floor).
     MAX_VARIETY_PENALTY: ClassVar[float] = 5.0
 
+    #: Most rules ``custom_rules`` holds. A write merges into a single
+    #: ``users.settings`` blob that each recommendation request parses, and
+    #: free text is the one collection here no closed key set bounds.
+    MAX_CUSTOM_RULES: ClassVar[int] = 50
+
+    #: Longest theme id.
+    MAX_THEME_ID_LENGTH: ClassVar[int] = 64
+
+    #: A rule feeds the LLM preference interpreter, so its length is prompt
+    #: size as much as it is storage.
+    MAX_CUSTOM_RULE_LENGTH: ClassVar[int] = 500
+
     #: Strength a legacy ``variety_after_completion = true`` migrates to. The old
     #: boolean applied a fixed 0.8 top-penalty fraction; on the 0.0-5.0 scale that
     #: same full-strength fraction is ``0.8 * MAX_VARIETY_PENALTY == 4.0``, so
     #: migrated users keep the exact behaviour they had before the slider existed.
     LEGACY_VARIETY_ON: ClassVar[float] = 0.8 * MAX_VARIETY_PENALTY
+
+    def raise_if_unstorable(self) -> None:
+        """Raise ``PreferenceValidationError`` for a config no read survives.
+
+        ``JSONResponse`` will not render a non-finite float, so one stored
+        answers 500 on every later read. HTTP is not the only door: Click's
+        ``float`` takes ``inf``.
+        """
+        for name, weight in self.scorer_weights.items():
+            if not isfinite(weight):
+                raise PreferenceValidationError(
+                    f"Scorer weight '{name}' must be a finite number."
+                )
+        if not isfinite(self.variety_penalty):
+            raise PreferenceValidationError("variety_penalty must be a finite number.")
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a dictionary for JSON storage.
@@ -63,6 +95,10 @@ class UserPreferenceConfig:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> UserPreferenceConfig:
         """Deserialize from a dictionary.
+
+        Sanitizes on read as well as refusing on write: rows written before
+        ``raise_if_unstorable`` existed can hold a weight or a penalty no JSON
+        response renders, and those 500 every read until they are read past.
 
         Migrates the legacy boolean ``variety_after_completion`` field: stored
         JSON written before the slider existed maps ``True`` -> ``LEGACY_VARIETY_ON``
@@ -81,13 +117,29 @@ class UserPreferenceConfig:
             New UserPreferenceConfig instance.
         """
         return cls(
-            scorer_weights=data.get("scorer_weights", {}),
+            scorer_weights=cls._resolve_scorer_weights(data),
             series_in_order=data.get("series_in_order", True),
             variety_penalty=cls._resolve_variety_penalty(data),
             custom_rules=data.get("custom_rules", []),
             content_length_preferences=data.get("content_length_preferences", {}),
             theme=data.get("theme", ""),
         )
+
+    @classmethod
+    def _resolve_scorer_weights(cls, data: dict[str, Any]) -> dict[str, float]:
+        """Keep only the weights a JSON response can render.
+
+        A stored ``Infinity`` predating the write-side bound would otherwise
+        500 the preferences page forever, leaving no door to correct it by.
+
+        Returns:
+            The weights that are finite numbers.
+        """
+        return {
+            name: float(weight)
+            for name, weight in data.get("scorer_weights", {}).items()
+            if isinstance(weight, (int, float)) and isfinite(weight)
+        }
 
     @classmethod
     def _resolve_variety_penalty(cls, data: dict[str, Any]) -> float:

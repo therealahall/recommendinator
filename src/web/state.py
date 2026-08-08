@@ -13,7 +13,12 @@ from typing import TYPE_CHECKING, Any
 
 import watchfiles
 
-from src.cli.config import MissingApiTokenError, load_config, take_api_token
+from src.cli.config import (
+    MissingApiTokenError,
+    load_config,
+    take_api_token,
+    warn_if_config_is_shared,
+)
 from src.storage.credential_migration import migrate_config_credentials
 from src.storage.global_secrets import migrate_config_secrets
 from src.storage.settings_migration import migrate_config_settings
@@ -207,6 +212,7 @@ def reload_config() -> bool:
             # over a half-saved edit.
             try:
                 app_state.api_token = take_api_token(config)
+                warn_if_config_is_shared(Path(config_path))
             except MissingApiTokenError as error:
                 logger.warning(
                     "Keeping the API token this server booted with. %s", error

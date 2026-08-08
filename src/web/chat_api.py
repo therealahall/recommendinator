@@ -17,6 +17,7 @@ from src.web.guards import (
     RequiredMemoryManager,
     RequiredStorage,
 )
+from src.web.stream_limit import bounded_sse
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +32,7 @@ router = APIRouter(prefix="/api", tags=["chat"])
 class ChatRequest(BaseModel):
     """Request model for chat message."""
 
-    user_id: int = Field(default=1, description="User ID")
+    user_id: int = Field(default=1, ge=1, description="User ID")
     message: str = Field(..., max_length=5000, description="User's message")
     content_type: str | None = Field(
         None,
@@ -64,7 +65,7 @@ class MemoryResponse(BaseModel):
 class MemoryCreateRequest(BaseModel):
     """Request model for creating a memory."""
 
-    user_id: int = Field(default=1, description="User ID")
+    user_id: int = Field(default=1, ge=1, description="User ID")
     memory_text: str = Field(
         ..., max_length=2000, description="The memory/preference text"
     )
@@ -106,6 +107,9 @@ def chat(request: ChatRequest, engine: RequiredConversationEngine) -> StreamingR
     - data: {"type": "tool_call", "tool": "...", "params": {...}}
     - data: {"type": "tool_result", "result": {...}}
     - data: {"type": "done"}
+
+    Shares one concurrency budget with the recommendation stream and answers
+    503 once it is full.
     """
     # Parse content type if provided
     content_type = None
@@ -171,7 +175,7 @@ def chat(request: ChatRequest, engine: RequiredConversationEngine) -> StreamingR
             yield f"data: {json.dumps(error_event)}\n\n"
 
     return StreamingResponse(
-        generate_sse(),
+        bounded_sse(generate_sse()),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -182,7 +186,7 @@ def chat(request: ChatRequest, engine: RequiredConversationEngine) -> StreamingR
 
 @router.post("/chat/reset")
 def reset_chat(
-    engine: RequiredConversationEngine, user_id: int = Query(default=1)
+    engine: RequiredConversationEngine, user_id: int = Query(default=1, ge=1)
 ) -> dict:
     """Reset conversation history for a user.
 
@@ -199,7 +203,7 @@ def reset_chat(
 @router.get("/chat/history")
 def get_chat_history(
     memory_manager: RequiredMemoryManager,
-    user_id: int = Query(default=1),
+    user_id: int = Query(default=1, ge=1),
     limit: int = Query(default=50, ge=1, le=200),
 ) -> list[MessageResponse]:
     """Get recent conversation history for a user."""
@@ -225,7 +229,7 @@ def get_chat_history(
 @router.get("/memories")
 def get_memories(
     memory_manager: RequiredMemoryManager,
-    user_id: int = Query(default=1),
+    user_id: int = Query(default=1, ge=1),
     include_inactive: bool = Query(default=False),
 ) -> list[MemoryResponse]:
     """Get user's core memories."""
@@ -310,7 +314,7 @@ def delete_memory(memory_id: int, storage: RequiredStorage) -> dict:
 
 @router.get("/profile")
 def get_profile(
-    storage: RequiredStorage, user_id: int = Query(default=1)
+    storage: RequiredStorage, user_id: int = Query(default=1, ge=1)
 ) -> ProfileResponse:
     """Get user's preference profile summary."""
     # Try to get existing profile
@@ -345,7 +349,7 @@ def get_profile(
 
 @router.post("/profile/regenerate")
 def regenerate_profile(
-    storage: RequiredStorage, user_id: int = Query(default=1)
+    storage: RequiredStorage, user_id: int = Query(default=1, ge=1)
 ) -> ProfileResponse:
     """Force regeneration of the preference profile."""
     generator = ProfileGenerator(storage)

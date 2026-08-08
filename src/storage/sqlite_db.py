@@ -55,14 +55,20 @@ action replaces a stored date only when the caller names one. A completion
 carrying no date fills an empty column with today in the host's zone and
 leaves a date the item already carries as it is — "I finished this" is not "I
 finished this today". A named date is written as given — a correction pointing
-backwards is still a correction.
+backwards is still a correction — provided it is a day that has happened; see
+:data:`MAX_COMPLETION_DATE_SKEW`.
+
+**That skew guard is the completion door's alone.** :meth:`SQLiteDB._upsert_content_item`
+writes whatever date the source gave it, so an import carrying 2099 lands. It
+is a mirror of somebody else's library and one bad row must not fail the sync,
+which is what raising from inside a sync would do.
 """
 
 import json
 import sqlite3
 from collections.abc import Generator
 from contextlib import contextmanager
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from enum import Enum
 from pathlib import Path
 from typing import Any, TypeVar
@@ -117,6 +123,23 @@ class Unset(Enum):
 #: Marks an argument the caller did not supply, which ``None`` cannot mean
 #: on a nullable field: ``None`` clears the value, ``UNSET`` leaves it alone.
 UNSET = Unset.UNSET
+
+#: A caller a zone ahead of the server calls tomorrow "today". Further ahead is
+#: a day nobody has lived, and an item dated there heads the variety ladder
+#: until the date arrives.
+MAX_COMPLETION_DATE_SKEW = timedelta(days=1)
+
+
+class FutureCompletionDateError(ValueError):
+    """A completion dated past :data:`MAX_COMPLETION_DATE_SKEW`.
+
+    Carries its own wording because chat, the one surface that can name a
+    date, quotes it back to the user.
+    """
+
+    def __init__(self) -> None:
+        super().__init__("A completion date cannot be in the future.")
+
 
 _T = TypeVar("_T")
 
@@ -354,6 +377,11 @@ class SQLiteDB:
 
         Returns:
             Database ID of the completed item
+
+        Raises:
+            FutureCompletionDateError: ``item.date_completed`` is further
+                ahead than :data:`MAX_COMPLETION_DATE_SKEW`. The transaction
+                rolls back, so nothing is written.
         """
         with self.connection() as conn:
             cursor = conn.cursor()
@@ -403,9 +431,21 @@ class SQLiteDB:
                 never sees what it writes — separately declines to fill from
                 one.
             date_completed: Completion date the user supplied, written as
-                given. UNSET fills an empty column with today in the host's
-                zone and leaves a stored date alone.
+                given unless it is further ahead than
+                :data:`MAX_COMPLETION_DATE_SKEW`. UNSET fills an empty column
+                with today in the host's zone and leaves a stored date alone.
+
+        Raises:
+            FutureCompletionDateError: *date_completed* is a day nobody has
+                lived yet. Checked here rather than at each surface, so no
+                caller can write one.
         """
+        if (
+            date_completed is not UNSET
+            and date_completed > local_today() + MAX_COMPLETION_DATE_SKEW
+        ):
+            raise FutureCompletionDateError
+
         set_parts = ["status = 'completed'", "updated_at = CURRENT_TIMESTAMP"]
         params: list[Any] = []
         if date_completed is not UNSET:
