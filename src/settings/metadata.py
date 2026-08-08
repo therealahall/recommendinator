@@ -157,9 +157,13 @@ _REGISTRY: tuple[SettingMetadata, ...] = (
     _entry(
         "ollama.base_url",
         label="Ollama base URL",
-        help="Base URL of the Ollama server.",
+        help="Base URL of the Ollama server: scheme://host[:port] on a loopback, private-network or single-label host (http://ollama:11434, http://192.168.1.5:11434). A host beyond your network would receive every prompt, so it can only be set in config.yaml.",
         type="string",
         default="http://ollama:11434",
+        # No pattern: the host rule is a category check (see
+        # _validated_ollama_base_url), and a regex claiming to be it would
+        # under-reject while looking authoritative.
+        validation=Validation(max_length=255),
     ),
     _entry(
         "ollama.model",

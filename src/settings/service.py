@@ -31,7 +31,6 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, assert_never
-from urllib.parse import urlsplit
 
 from src.settings.metadata import (
     SettingMetadata,
@@ -45,6 +44,7 @@ from src.settings.metadata import (
 # ``migrate_config_settings`` overlays DB leaves at, but publishes a whole save
 # at once rather than writing in place (see ``_apply_live``).
 from src.utils.dotted_path import get_leaf, set_leaves_atomically
+from src.utils.urls import is_bare_origin, is_local_url, normalize_origin
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
@@ -54,9 +54,9 @@ if TYPE_CHECKING:
 # lists — see :func:`_validated_cors_origins`.
 _ALLOWED_ORIGINS_KEY = "web.allowed_origins"
 
-# The only schemes a browser puts in an Origin header for a page that could
-# reach this app.
-_ORIGIN_SCHEMES = frozenset({"http", "https"})
+# Where every prompt goes. Checked beyond its type for the reason given on
+# :func:`_validated_ollama_base_url`.
+_OLLAMA_BASE_URL_KEY = "ollama.base_url"
 
 
 class SettingsValidationError(Exception):
@@ -203,7 +203,8 @@ def coerce_and_validate(entry: SettingMetadata, value: Any) -> Any:
     Returns the coerced value on success. Raises
     :class:`SettingsValidationError` (with the offending key + reason) on a type
     mismatch, an out-of-range number, an over-long/non-matching string, an enum
-    value outside ``choices``, or a CORS origin a browser could never send.
+    value outside ``choices``, a CORS origin a browser could never send, or an
+    Ollama base URL that would leave the local network.
     """
     setting_type = entry.type
     if setting_type == "bool":
@@ -232,6 +233,8 @@ def coerce_and_validate(entry: SettingMetadata, value: Any) -> Any:
         if not isinstance(value, str):
             raise SettingsValidationError(entry.key, "expected a string")
         _check_string_constraints(entry, value)
+        if entry.key == _OLLAMA_BASE_URL_KEY:
+            return _validated_ollama_base_url(entry, value)
         return value
     if setting_type == "list":
         if not isinstance(value, list):
@@ -245,7 +248,7 @@ def coerce_and_validate(entry: SettingMetadata, value: Any) -> Any:
 
 
 def _validated_cors_origins(entry: SettingMetadata, origins: list[str]) -> list[str]:
-    """Return the CORS allowlist with each entry trimmed and checked.
+    """Return the CORS allowlist with each entry normalised and checked.
 
     Starlette matches with ``origin in self.allow_origins`` — an exact string
     comparison — so a malformed entry can never match any request and is a
@@ -255,12 +258,14 @@ def _validated_cors_origins(entry: SettingMetadata, origins: list[str]) -> list[
     ``allow_credentials`` on, so allowing it lets any page the user visits read
     and write the library on the strength of the browser's own credentials.
 
-    Items are trimmed before checking, and the trimmed list is what gets
-    persisted: a pasted origin with a stray space would otherwise validate on
-    its trimmed form and then never match.
+    Items are normalised before checking, and the normalised list is what gets
+    persisted: a pasted origin carrying a stray space, a tab, a Unicode label
+    separator or a trailing slash would otherwise validate on one spelling and
+    then be compared as another. A trailing slash is therefore accepted rather
+    than refused — no browser sends one, so keeping it would be inert.
     """
-    trimmed = [origin.strip() for origin in origins]
-    for origin in trimmed:
+    normalized = [normalize_origin(origin) for origin in origins]
+    for origin in normalized:
         # The documented allow-all escape hatch. create_app turns
         # allow_credentials off whenever it is present, so it stays supported.
         if origin == "*":
@@ -274,37 +279,39 @@ def _validated_cors_origins(entry: SettingMetadata, origins: list[str]) -> list[
                 "documents send that origin, so allowing it would let any page "
                 "read and write your library",
             )
-        if not _is_browser_origin(origin):
+        if not is_bare_origin(origin):
             raise SettingsValidationError(
                 entry.key,
                 f"{origin!r} is not an origin a browser can send — use "
                 'scheme://host[:port] (for example http://localhost:18473), or "*"',
             )
-    return trimmed
+    return normalized
 
 
-def _is_browser_origin(origin: str) -> bool:
-    """Return True when *origin* has the bare ``scheme://host[:port]`` shape.
+def _validated_ollama_base_url(entry: SettingMetadata, value: str) -> str:
+    """Return the normalised base URL, rejecting a host off the local network.
 
-    Anything else — a trailing path, a wildcard subdomain, embedded credentials,
-    an unparseable port — never appears in an ``Origin`` header, so it could
-    only ever sit in the allowlist doing nothing.
+    One request sets where every prompt goes, so a remote Ollama needs a file
+    on the box: ``config.yaml``, which this never checks.
     """
-    parsed = urlsplit(origin)
-    try:
-        port_is_usable = parsed.port is None or parsed.port > 0
-    except ValueError:
-        return False
-    return bool(
-        port_is_usable
-        and parsed.scheme in _ORIGIN_SCHEMES
-        and parsed.hostname
-        and not parsed.path
-        and not parsed.query
-        and not parsed.fragment
-        and not parsed.username
-        and not parsed.password
-    )
+    # Persist what was validated: the stored value is what reaches
+    # ollama.Client, and urlsplit reads a spelling of its own unless the two
+    # are normalised to one first.
+    url = normalize_origin(value)
+    if not is_bare_origin(url):
+        raise SettingsValidationError(
+            entry.key,
+            "must be http(s)://host[:port] with no path, query or credentials "
+            "(for example http://ollama:11434)",
+        )
+    if not is_local_url(url):
+        raise SettingsValidationError(
+            entry.key,
+            "must be a loopback, private-network or single-label host, so your "
+            "prompts and library stay on your network — point it at a remote "
+            "Ollama in config.yaml if you mean to",
+        )
+    return url
 
 
 def _coerce_int(entry: SettingMetadata, value: Any) -> int:

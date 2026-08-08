@@ -8,9 +8,12 @@ nothing writes with live-apply, reset-to-default, and secret gating.
 
 from __future__ import annotations
 
+import socket
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
+import httpx
 import pytest
 
 from src.enrichment.providers.tmdb.tmdb import TMDBProvider
@@ -32,12 +35,14 @@ from src.settings.service import (
     setting_view,
 )
 from src.storage.manager import StorageManager
+from src.utils.urls import is_bare_origin, is_local_url
 
 # A representative sensitive leaf and a non-sensitive numeric leaf reused across
 # tests. Kept as module constants so a registry rename fails loudly in one place.
 _SECRET_KEY = "enrichment.providers.tmdb.api_key"
 _INT_KEY = "recommendations.default_count"
 _ORIGINS_KEY = "web.allowed_origins"
+_OLLAMA_URL_KEY = "ollama.base_url"
 
 
 @pytest.fixture()
@@ -406,7 +411,6 @@ class TestCoerceAndValidate:
     @pytest.mark.parametrize(
         "origin",
         [
-            "http://x.example/",
             "http://x.example/path",
             "http://x.example?q=1",
             "http://x.example#frag",
@@ -436,15 +440,134 @@ class TestCoerceAndValidate:
         assert _ORIGINS_KEY in str(exc_info.value)
         assert "scheme://host[:port]" in exc_info.value.reason
 
-    def test_allowed_origins_persists_the_trimmed_value(self) -> None:
-        """Surrounding whitespace is trimmed, not just tolerated during validation.
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            pytest.param(" http://localhost:18473 ", id="surrounding-space"),
+            pytest.param("http://localhost:18473/", id="trailing-slash"),
+            pytest.param("http://local\thost:18473", id="embedded-tab"),
+        ],
+    )
+    def test_allowed_origins_persists_the_normalized_value(self, raw: str) -> None:
+        """Validating one spelling and persisting another stores a dead entry.
 
-        Validating the trimmed form and persisting the raw one would store an
-        origin that passed the check yet could never match a request.
+        ``str.strip`` caught the first of these only. A trailing slash is
+        dropped rather than refused: no ``Origin`` header carries one.
         """
-        assert coerce_and_validate(
-            _entry(_ORIGINS_KEY), [" http://localhost:18473 "]
-        ) == ["http://localhost:18473"]
+        assert coerce_and_validate(_entry(_ORIGINS_KEY), [raw]) == [
+            "http://localhost:18473"
+        ]
+
+    @pytest.mark.parametrize(
+        "base_url",
+        [
+            "http://ollama:11434",
+            "http://localhost:11434",
+            "http://127.0.0.1:11434",
+            "https://[::1]:11434",
+            "http://192.168.1.5:11434",
+            "http://10.0.0.4:11434",
+            # Tailscale hands out 100.64.0.0/10, and Docker Desktop resolves
+            # host.docker.internal to the host gateway.
+            "http://100.101.102.103:11434",
+            "http://host.docker.internal:11434",
+            "http://nas.local:11434",
+        ],
+    )
+    def test_ollama_base_url_accepts_hosts_that_keep_prompts_on_the_network(
+        self, base_url: str
+    ) -> None:
+        """Every shape a real local Ollama is reached at still round-trips."""
+        assert coerce_and_validate(_entry(_OLLAMA_URL_KEY), base_url) == base_url
+
+    @pytest.mark.parametrize(
+        "base_url",
+        ["http://attacker.example:11434", "https://api.example.com", "http://8.8.8.8"],
+    )
+    def test_ollama_base_url_rejects_a_host_off_the_machine(
+        self, base_url: str
+    ) -> None:
+        """One write would send every prompt, and the library in it, elsewhere.
+
+        A remote Ollama is still reachable through ``config.yaml``, which takes
+        a file on the box rather than a request.
+        """
+        with pytest.raises(SettingsValidationError) as exc_info:
+            coerce_and_validate(_entry(_OLLAMA_URL_KEY), base_url)
+
+        assert exc_info.value.key == _OLLAMA_URL_KEY
+        assert "config.yaml" in exc_info.value.reason
+
+    @pytest.mark.parametrize(
+        "base_url",
+        [
+            "",
+            "javascript:alert(1)",
+            "ftp://localhost",
+            "http://user:pw@localhost:11434",
+            "http://localhost:11434/api",
+            "http://localhost:11434?q=1",
+            "http://localhost:11434#frag",
+            "http://localhost:notaport",
+            "http://localhost:99999",
+        ],
+    )
+    def test_ollama_base_url_rejects_anything_but_a_bare_origin(
+        self, base_url: str
+    ) -> None:
+        """Credentials and a path are refused here, not handed to ``ollama.Client``."""
+        with pytest.raises(SettingsValidationError) as exc_info:
+            coerce_and_validate(_entry(_OLLAMA_URL_KEY), base_url)
+
+        assert exc_info.value.key == _OLLAMA_URL_KEY
+        assert "http(s)://host[:port]" in exc_info.value.reason
+
+    def test_ollama_base_url_persists_the_normalised_value(self) -> None:
+        """Whitespace and a trailing slash are removed, not merely tolerated."""
+        assert (
+            coerce_and_validate(_entry(_OLLAMA_URL_KEY), "  http://ollama:11434/  ")
+            == "http://ollama:11434"
+        )
+
+    def test_ollama_base_url_rejects_a_value_that_is_not_a_string(self) -> None:
+        """A JSON number reaches this before anything tries to split it."""
+        with pytest.raises(SettingsValidationError) as exc_info:
+            coerce_and_validate(_entry(_OLLAMA_URL_KEY), 11434)
+
+        assert exc_info.value.reason == "expected a string"
+
+    def test_ollama_base_url_rejects_a_host_longer_than_the_field(self) -> None:
+        """``max_length`` is checked before the locality rule sees it.
+
+        Asserted on the reason, because a single-label host that long is
+        local enough for the rule after it to accept.
+        """
+        with pytest.raises(SettingsValidationError) as exc_info:
+            coerce_and_validate(
+                _entry(_OLLAMA_URL_KEY), "http://" + "a" * 300 + ":11434"
+            )
+
+        assert "at most" in exc_info.value.reason
+
+    def test_validating_a_base_url_resolves_no_name(self) -> None:
+        """The rule is text alone, and has to be: it runs under the config lock.
+
+        ``PUT /api/settings`` holds ``src.web.state._config_lock`` across the
+        whole save, so a DNS lookup in here would park every other request
+        behind a resolver timeout.
+        """
+        with (
+            patch.object(
+                socket, "getaddrinfo", side_effect=AssertionError("resolved a name")
+            ),
+            patch.object(
+                socket, "gethostbyname", side_effect=AssertionError("resolved a name")
+            ),
+        ):
+            assert coerce_and_validate(_entry(_OLLAMA_URL_KEY), "http://ollama:11434")
+            for remote in ("http://gpu.example.com:11434", "http://8.8.8.8:11434"):
+                with pytest.raises(SettingsValidationError):
+                    coerce_and_validate(_entry(_OLLAMA_URL_KEY), remote)
 
     def test_logging_file_pattern_rejects_absolute_traversal_and_non_logs_paths(
         self,
@@ -613,6 +736,110 @@ class TestResetSetting:
     ) -> None:
         with pytest.raises(SettingsValidationError):
             reset_setting(config, storage, _SECRET_KEY)
+
+
+class TestOllamaBaseUrlHostsThatOnlyLookLocal:
+    """Hosts whose validated spelling looks local and whose address is not.
+
+    ``is_local_url`` reads the hostname ``urlsplit`` returns; the transport
+    hands the same string to ``idna`` and the resolver, which split and parse
+    it differently.
+    """
+
+    @pytest.mark.parametrize("separator", ["。", "．", "｡"])
+    def test_a_unicode_label_separator_is_not_one_label(self, separator: str) -> None:
+        """IDNA splits on three more dots than ``str`` does.
+
+        With no ASCII dot in it, ``"." not in host`` reads the whole name as a
+        single label served by the local resolver, so it is accepted and
+        stored — and the transport then sends every prompt to example.com.
+        """
+        base_url = f"http://ollama{separator}example{separator}com:11434"
+        assert httpx.URL(base_url).raw_host == b"ollama.example.com"
+
+        with pytest.raises(SettingsValidationError) as exc_info:
+            coerce_and_validate(_entry(_OLLAMA_URL_KEY), base_url)
+
+        assert "config.yaml" in exc_info.value.reason
+
+    @pytest.mark.parametrize(
+        "host", ["134744072", "0x8080808", "01002004010", "8.526344"]
+    )
+    def test_an_ipv4_in_a_non_dotted_quad_form_is_still_that_address(
+        self, host: str
+    ) -> None:
+        """Every one of these is 8.8.8.8 to ``inet_aton``, which is what resolves.
+
+        ``ipaddress`` parses dotted-quad only, so the integer, hex, octal and
+        short forms fall through to the single-label branch.
+        """
+        assert socket.inet_aton(host) == socket.inet_aton("8.8.8.8")
+
+        with pytest.raises(SettingsValidationError) as exc_info:
+            coerce_and_validate(_entry(_OLLAMA_URL_KEY), f"http://{host}:11434")
+
+        assert "config.yaml" in exc_info.value.reason
+
+    @pytest.mark.parametrize(
+        "host",
+        [
+            pytest.param("::ffff:8.8.8.8", id="ipv4-mapped"),
+            pytest.param("2002:808:808::", id="6to4"),
+            # The Teredo client field is stored inverted, so f7f7:f7f7 is 8.8.8.8.
+            pytest.param("2001:0:4136:e378:8000:63bf:f7f7:f7f7", id="teredo"),
+        ],
+    )
+    def test_a_v6_host_carrying_a_public_ipv4_is_judged_by_that_ipv4(
+        self, host: str
+    ) -> None:
+        """Each of these is 8.8.8.8 wearing a v6 hat.
+
+        ``IPv6Address.is_private`` counts all of 6to4 and Teredo private, and
+        answered the mapped form only from CPython 3.11.10 (CVE-2024-4032) —
+        a patch level ``requires-python = ">=3.11"`` does not guarantee.
+        """
+        with pytest.raises(SettingsValidationError) as exc_info:
+            coerce_and_validate(_entry(_OLLAMA_URL_KEY), f"http://[{host}]")
+
+        # Locality, not grammar: the same exception covers both, and only this
+        # reason names the file a remote Ollama has to be configured in.
+        assert "config.yaml" in exc_info.value.reason
+
+    @pytest.mark.parametrize(
+        "value", ["http://[foo]", "http://[1.2.3.4]", "http://ollama]"]
+    )
+    def test_a_netloc_urlsplit_cannot_parse_is_refused_not_raised(
+        self, value: str
+    ) -> None:
+        """``urlsplit`` raises ``ValueError`` on these, outside the old guard.
+
+        ``update_settings`` catches ``SettingsValidationError`` alone, so it
+        escaped as a 500 carrying a traceback.
+        """
+        with pytest.raises(SettingsValidationError) as exc_info:
+            coerce_and_validate(_entry(_OLLAMA_URL_KEY), value)
+
+        # Grammar, not locality: an unparseable netloc has no host to judge.
+        assert "http(s)://host[:port]" in exc_info.value.reason
+
+    def test_a_bare_origin_check_answers_false_for_an_unparseable_netloc(self) -> None:
+        """The sibling entry point: ``web.allowed_origins`` validates each item
+        through ``is_bare_origin`` without an ``is_local_url`` call after it.
+        """
+        assert is_bare_origin("http://[foo]") is False
+        assert is_local_url("http://[foo]") is False
+
+    def test_the_stored_url_is_the_one_the_transport_will_dial(self) -> None:
+        """What was validated is what gets used, or the check judged another URL.
+
+        ``urlsplit`` drops tab, CR and LF before the host is read, so a value
+        carrying one is checked as a different string from the one persisted.
+        """
+        stored = coerce_and_validate(
+            _entry(_OLLAMA_URL_KEY), "http://local\thost:11434"
+        )
+
+        assert httpx.URL(stored).host == "localhost"
 
 
 class TestSecretGating:
