@@ -12,6 +12,7 @@ PR build's smoke test.
 
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -176,14 +177,30 @@ class TestEntrypointMintsTheApiToken:
         assert "could not write web.api_token" in result.stderr
         assert "still-ran" in result.stdout
 
+    def test_the_written_config_is_readable_only_by_its_owner(
+        self, config_dir: Path
+    ) -> None:
+        """``cp`` inherits example.yaml's 0644 and ``sed -i`` preserves it.
+
+        ``./config`` is bind-mounted, so that put the API token in a file every
+        user on the host could read.
+        """
+        (config_dir / "example.yaml").write_text(_EXAMPLE_WITH_PLACEHOLDER)
+
+        _run(config_dir, "echo", "ok")
+
+        mode = (config_dir / "config.yaml").stat().st_mode & 0o777
+        assert mode == 0o600
+
     def test_the_shipped_example_carries_the_placeholder_the_script_looks_for(
         self,
     ) -> None:
         """The substitution and the file it edits are in two repositories' worth
-        of distance from each other, and nothing else pairs them."""
+        of distance from each other, and nothing else pairs them. Matched on the
+        script's own pattern, which takes any indentation."""
         example = (_REPO_ROOT / "config" / "example.yaml").read_text()
 
-        assert '  api_token: ""' in example
+        assert re.search(r'^ *api_token: ""', example, re.MULTILINE) is not None
 
 
 class TestEntrypointIdempotency:

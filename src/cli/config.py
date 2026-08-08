@@ -6,12 +6,14 @@ pre-database web bind settings.
 """
 
 import logging
+import stat
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, NamedTuple
 
 import yaml
 
+from src.ingestion.paths import configure_allowed_source_roots
 from src.llm.client import OllamaClient
 from src.llm.embeddings import EmbeddingGenerator
 from src.llm.recommendations import RecommendationGenerator
@@ -65,6 +67,12 @@ SHORT_API_TOKEN_MESSAGE = (
     f"it with {_HOW_TO_MINT}, then start again."
 )
 
+NON_ASCII_API_TOKEN_MESSAGE = (
+    "web.api_token contains a non-ASCII character. Request headers arrive "
+    "decoded as latin-1, so such a token would boot cleanly and then answer "
+    f"401 to every request. Replace it with {_HOW_TO_MINT}, then start again."
+)
+
 
 class MissingApiTokenError(RuntimeError):
     """No usable ``web.api_token`` was configured."""
@@ -77,7 +85,8 @@ def take_api_token(config: dict[str, Any]) -> str:
     survive in the dict handed to every component.
 
     Raises:
-        MissingApiTokenError: When no usable token is configured.
+        MissingApiTokenError: Absent, blank, too short, or carrying a
+            character no request header can.
     """
     raw_web = config.get("web")
     raw_token = raw_web.pop("api_token", None) if isinstance(raw_web, dict) else None
@@ -85,9 +94,31 @@ def take_api_token(config: dict[str, Any]) -> str:
     token = raw_token.strip() if isinstance(raw_token, str) else ""
     if not token:
         raise MissingApiTokenError(NO_API_TOKEN_MESSAGE)
+    if not token.isascii():
+        raise MissingApiTokenError(NON_ASCII_API_TOKEN_MESSAGE)
     if len(token) < MIN_API_TOKEN_LENGTH:
         raise MissingApiTokenError(SHORT_API_TOKEN_MESSAGE)
     return token
+
+
+def warn_if_config_is_shared(path: Path) -> None:
+    """Log when the file holding the API token is readable beyond its owner.
+
+    A warning rather than the key file's refusal: a wrong mode here breaks
+    nothing, and failing boot would strand installs that predate the token.
+    """
+    try:
+        mode = path.stat().st_mode
+    except OSError:
+        return
+    if mode & (stat.S_IRWXG | stat.S_IRWXO):
+        logger.warning(
+            "%s holds web.api_token and is readable beyond its owner (%s). "
+            "Fix with: chmod 600 %s",
+            path,
+            oct(mode & 0o777),
+            path,
+        )
 
 
 class BootstrapWebSettings(NamedTuple):
@@ -248,6 +279,9 @@ def load_config(config_path: Path | None = None) -> dict[str, Any]:
     is deliberate and idempotent (an identical merge changes nothing), not an
     accident — do not drop the const layer from either site.
 
+    Also installs ``security.allowed_source_roots`` as the process-wide
+    file-import allowlist (see :mod:`src.ingestion.paths`).
+
     Args:
         config_path: Path to config file (default: config/config.yaml)
 
@@ -271,6 +305,10 @@ def load_config(config_path: Path | None = None) -> dict[str, Any]:
     # layer only; the database overlay (migrate_config_settings) still wins on
     # top of this at boot, preserving const default < YAML < DB.
     config: dict[str, Any] = deep_merge(default_config(), yaml_config)
+
+    # Never from the database overlay: the settings API must not be able to
+    # widen what a file-based source is allowed to read.
+    configure_allowed_source_roots(config)
 
     return config
 
@@ -327,20 +365,15 @@ def create_storage_manager(config: dict[str, Any]) -> StorageManager:
 
 def create_llm_components(
     config: dict[str, Any],
+    config_provider: Callable[[], dict[str, Any] | None] | None = None,
 ) -> tuple[
     OllamaClient | None, EmbeddingGenerator | None, RecommendationGenerator | None
 ]:
-    """Create LLM components from config.
+    """Create LLM components, or ``(None, None, None)`` when AI is disabled.
 
-    When AI features are disabled (features.ai_enabled: false), returns
-    (None, None, None) to prevent any LLM/embedding operations.
-
-    Args:
-        config: Configuration dictionary
-
-    Returns:
-        Tuple of (OllamaClient, EmbeddingGenerator, RecommendationGenerator)
-        or (None, None, None) if AI is disabled.
+    The ``ollama`` values read here seed the client's baseline, which
+    *config_provider* overlays per call. The web app passes ``get_config``, so
+    a hot-reload is picked up.
     """
     if not get_feature_flags(config)["ai_enabled"]:
         return None, None, None
@@ -361,6 +394,9 @@ def create_llm_components(
             default_model=model,
             embedding_model=embedding_model,
             conversation_model=conversation_model,
+            config_provider=(
+                config_provider if config_provider is not None else lambda: config
+            ),
         )
     except ImportError:
         logger.warning(

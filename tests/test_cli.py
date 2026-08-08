@@ -19,7 +19,7 @@ from src.recommendations.engine import RecommendationEngine
 from src.recommendations.record import Recommendation
 from src.storage.manager import StorageManager
 from tests.cli.conftest import _invoke_with_mocks
-from tests.factories import back_mock_settings_store
+from tests.factories import back_mock_preference_store, back_mock_settings_store
 
 
 @pytest.fixture
@@ -1107,24 +1107,21 @@ def test_preferences_get(mock_components):
 
 def test_preferences_set_weight(mock_components):
     """Test preferences set-weight command."""
-    mock_components["storage"].get_user_preference_config = Mock(
-        return_value=UserPreferenceConfig()
-    )
-    mock_components["storage"].save_user_preference_config = Mock()
+    config = UserPreferenceConfig()
+    back_mock_preference_store(mock_components["storage"], config)
 
     runner = CliRunner()
     result = runner.invoke(cli, ["preferences", "set-weight", "genre_match", "3.0"])
 
     assert result.exit_code == 0
     assert "Set genre_match weight to 3.0" in result.output
-    mock_components["storage"].save_user_preference_config.assert_called_once()
+    assert config.scorer_weights == {"genre_match": 3.0}
 
 
 def test_preferences_set_variety(mock_components):
     """Test setting the numeric variety penalty via set-variety."""
     config = UserPreferenceConfig()
-    mock_components["storage"].get_user_preference_config = Mock(return_value=config)
-    mock_components["storage"].save_user_preference_config = Mock()
+    back_mock_preference_store(mock_components["storage"], config)
 
     runner = CliRunner()
     result = runner.invoke(cli, ["preferences", "set-variety", "5.0"])
@@ -1132,14 +1129,12 @@ def test_preferences_set_variety(mock_components):
     assert result.exit_code == 0
     assert "Set variety_penalty to 5.0" in result.output
     assert config.variety_penalty == 5.0
-    mock_components["storage"].save_user_preference_config.assert_called_once()
 
 
 def test_preferences_set_variety_off(mock_components):
     """Setting variety to 0.0 disables the penalty."""
     config = UserPreferenceConfig(variety_penalty=4.0)
-    mock_components["storage"].get_user_preference_config = Mock(return_value=config)
-    mock_components["storage"].save_user_preference_config = Mock()
+    back_mock_preference_store(mock_components["storage"], config)
 
     runner = CliRunner()
     result = runner.invoke(cli, ["preferences", "set-variety", "0.0"])
@@ -1147,7 +1142,6 @@ def test_preferences_set_variety_off(mock_components):
     assert result.exit_code == 0
     assert "Set variety_penalty to 0.0" in result.output
     assert config.variety_penalty == 0.0
-    mock_components["storage"].save_user_preference_config.assert_called_once()
 
 
 def test_preferences_get_includes_variety_penalty(mock_components):
@@ -1166,10 +1160,7 @@ def test_preferences_get_includes_variety_penalty(mock_components):
 
 def test_preferences_set_variety_rejects_out_of_range(mock_components):
     """A value above the 5.0 maximum is rejected with a non-zero exit and no save."""
-    mock_components["storage"].get_user_preference_config = Mock(
-        return_value=UserPreferenceConfig()
-    )
-    mock_components["storage"].save_user_preference_config = Mock()
+    merge = back_mock_preference_store(mock_components["storage"])
 
     runner = CliRunner()
     result = runner.invoke(cli, ["preferences", "set-variety", "6.0"])
@@ -1178,15 +1169,12 @@ def test_preferences_set_variety_rejects_out_of_range(mock_components):
     # The rejection must name both ends of the accepted range.
     assert "0.0" in result.output
     assert "5.0" in result.output
-    mock_components["storage"].save_user_preference_config.assert_not_called()
+    merge.assert_not_called()
 
 
 def test_preferences_set_variety_rejects_negative(mock_components):
     """A value below the 0.0 minimum is rejected with a non-zero exit and no save."""
-    mock_components["storage"].get_user_preference_config = Mock(
-        return_value=UserPreferenceConfig()
-    )
-    mock_components["storage"].save_user_preference_config = Mock()
+    merge = back_mock_preference_store(mock_components["storage"])
 
     runner = CliRunner()
     # "--" stops option parsing so the negative number reaches the argument.
@@ -1196,14 +1184,13 @@ def test_preferences_set_variety_rejects_negative(mock_components):
     # The rejection must name both ends of the accepted range.
     assert "0.0" in result.output
     assert "5.0" in result.output
-    mock_components["storage"].save_user_preference_config.assert_not_called()
+    merge.assert_not_called()
 
 
 def test_preferences_set_toggle_off(mock_components):
     """Test disabling a toggle via set-toggle."""
     config = UserPreferenceConfig(series_in_order=True)
-    mock_components["storage"].get_user_preference_config = Mock(return_value=config)
-    mock_components["storage"].save_user_preference_config = Mock()
+    back_mock_preference_store(mock_components["storage"], config)
 
     runner = CliRunner()
     result = runner.invoke(cli, ["preferences", "set-toggle", "series_in_order", "off"])
@@ -1254,10 +1241,7 @@ def test_custom_rules_list_empty(mock_components):
 def test_custom_rules_add(mock_components):
     """Test adding a custom rule."""
     mock_config = UserPreferenceConfig()
-    mock_components["storage"].get_user_preference_config = Mock(
-        return_value=mock_config
-    )
-    mock_components["storage"].save_user_preference_config = Mock()
+    back_mock_preference_store(mock_components["storage"], mock_config)
 
     runner = CliRunner()
     result = runner.invoke(cli, ["preferences", "custom-rules", "add", "avoid horror"])
@@ -1265,7 +1249,58 @@ def test_custom_rules_add(mock_components):
     assert result.exit_code == 0
     assert "Added rule" in result.output
     assert "avoid horror" in result.output
-    mock_components["storage"].save_user_preference_config.assert_called_once()
+    assert mock_config.custom_rules == ["avoid horror"]
+
+
+def test_custom_rules_add_refuses_an_over_long_rule(mock_components):
+    """A rule the Preferences page could not save back is refused here too."""
+    merge = back_mock_preference_store(mock_components["storage"])
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "preferences",
+            "custom-rules",
+            "add",
+            "r" * (UserPreferenceConfig.MAX_CUSTOM_RULE_LENGTH + 1),
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "at most" in result.output
+    merge.assert_not_called()
+
+
+def test_custom_rules_add_refuses_one_rule_past_the_bound(mock_components):
+    """The list itself is bounded, since the CLI appends and the web merges."""
+    stored = UserPreferenceConfig(
+        custom_rules=["avoid horror"] * UserPreferenceConfig.MAX_CUSTOM_RULES
+    )
+    back_mock_preference_store(mock_components["storage"], stored)
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["preferences", "custom-rules", "add", "prefer sci-fi"])
+
+    assert result.exit_code != 0
+    assert "Remove one first" in result.output
+    assert "prefer sci-fi" not in stored.custom_rules
+
+
+def test_custom_rules_add_accepts_the_rule_that_fills_the_bound(mock_components):
+    """The list the web API accepts is one the CLI can still complete."""
+    stored = UserPreferenceConfig(
+        custom_rules=["avoid horror"] * (UserPreferenceConfig.MAX_CUSTOM_RULES - 1)
+    )
+    back_mock_preference_store(mock_components["storage"], stored)
+    last_rule = "r" * UserPreferenceConfig.MAX_CUSTOM_RULE_LENGTH
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["preferences", "custom-rules", "add", last_rule])
+
+    assert result.exit_code == 0
+    assert len(stored.custom_rules) == UserPreferenceConfig.MAX_CUSTOM_RULES
+    assert stored.custom_rules[-1] == last_rule
 
 
 def test_custom_rules_list_with_rules(mock_components):
@@ -1286,47 +1321,39 @@ def test_custom_rules_list_with_rules(mock_components):
 def test_custom_rules_remove(mock_components):
     """Test removing a custom rule."""
     mock_config = UserPreferenceConfig(custom_rules=["avoid horror"])
-    mock_components["storage"].get_user_preference_config = Mock(
-        return_value=mock_config
-    )
-    mock_components["storage"].save_user_preference_config = Mock()
+    back_mock_preference_store(mock_components["storage"], mock_config)
 
     runner = CliRunner()
     result = runner.invoke(cli, ["preferences", "custom-rules", "remove", "0"])
 
     assert result.exit_code == 0
-    assert "Removed rule" in result.output
-    mock_components["storage"].save_user_preference_config.assert_called_once()
+    assert "Removed rule: 'avoid horror'" in result.output
+    assert mock_config.custom_rules == []
 
 
 def test_custom_rules_remove_invalid_index(mock_components):
     """Test removing a rule with invalid index."""
-    mock_config = UserPreferenceConfig()  # No rules
-    mock_components["storage"].get_user_preference_config = Mock(
-        return_value=mock_config
-    )
+    merge = back_mock_preference_store(mock_components["storage"])
 
     runner = CliRunner()
     result = runner.invoke(cli, ["preferences", "custom-rules", "remove", "99"])
 
     assert result.exit_code != 0
     assert "Invalid index" in result.output
+    merge.assert_called_once()
 
 
 def test_custom_rules_clear(mock_components):
     """Test clearing all custom rules."""
     mock_config = UserPreferenceConfig(custom_rules=["avoid horror", "prefer sci-fi"])
-    mock_components["storage"].get_user_preference_config = Mock(
-        return_value=mock_config
-    )
-    mock_components["storage"].save_user_preference_config = Mock()
+    back_mock_preference_store(mock_components["storage"], mock_config)
 
     runner = CliRunner()
     result = runner.invoke(cli, ["preferences", "custom-rules", "clear", "--yes"])
 
     assert result.exit_code == 0
     assert "Cleared 2" in result.output
-    mock_components["storage"].save_user_preference_config.assert_called_once()
+    assert mock_config.custom_rules == []
 
 
 def test_custom_rules_interpret_pattern(mock_components):
@@ -1344,10 +1371,7 @@ def test_custom_rules_interpret_pattern(mock_components):
 def test_set_length_preference(mock_components):
     """Test setting a length preference."""
     mock_config = UserPreferenceConfig()
-    mock_components["storage"].get_user_preference_config = Mock(
-        return_value=mock_config
-    )
-    mock_components["storage"].save_user_preference_config = Mock()
+    back_mock_preference_store(mock_components["storage"], mock_config)
 
     runner = CliRunner()
     result = runner.invoke(cli, ["preferences", "set-length", "book", "short"])
@@ -1355,7 +1379,139 @@ def test_set_length_preference(mock_components):
     assert result.exit_code == 0
     assert "book" in result.output
     assert "short" in result.output
-    mock_components["storage"].save_user_preference_config.assert_called_once()
+    assert mock_config.content_length_preferences == {"book": "short"}
+
+
+class TestPreferenceWritesTheStoreRefusesRegression:
+    """Reported: ``--user 999`` printed success and persisted nothing, and
+    ``set-weight genre_match inf`` stored a value every later read of the
+    Preferences page then answered 500 for. Both doors now close in
+    ``StorageManager``, the one site each interface's writes pass through.
+    """
+
+    @pytest.fixture()
+    def storage(self, tmp_path: Path) -> StorageManager:
+        """A real store: the defect is which rows the UPDATE matched."""
+        return StorageManager(sqlite_path=tmp_path / "test.db")
+
+    def test_an_unknown_user_is_reported_rather_than_silently_dropped(
+        self, storage: StorageManager
+    ) -> None:
+        result = _invoke_with_mocks(
+            CliRunner(),
+            ["preferences", "set-weight", "genre_match", "3.0", "--user", "999"],
+            storage,
+        )
+
+        assert result.exit_code != 0
+        assert "No user with id 999" in result.output
+        assert storage.get_user_preference_config(999).scorer_weights == {}
+
+    @pytest.mark.parametrize("literal", ["inf", "nan"])
+    def test_a_non_finite_weight_is_refused(
+        self, storage: StorageManager, literal: str
+    ) -> None:
+        """Click's ``float`` takes these, and the API's guard is HTTP-side."""
+        result = _invoke_with_mocks(
+            CliRunner(),
+            ["preferences", "set-weight", "genre_match", literal],
+            storage,
+        )
+
+        assert result.exit_code != 0
+        assert "must be a finite number" in result.output
+        assert storage.get_user_preference_config(1).scorer_weights == {}
+
+    def test_the_same_write_lands_for_a_user_that_exists(
+        self, storage: StorageManager
+    ) -> None:
+        """Without this the refusals above would hold on a store that never
+        writes at all.
+        """
+        result = _invoke_with_mocks(
+            CliRunner(),
+            ["preferences", "set-weight", "genre_match", "3.0"],
+            storage,
+        )
+
+        assert result.exit_code == 0
+        assert storage.get_user_preference_config(1).scorer_weights == {
+            "genre_match": 3.0
+        }
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param(
+                ["preferences", "set-toggle", "series_in_order", "off"], id="set-toggle"
+            ),
+            pytest.param(["preferences", "set-variety", "2.0"], id="set-variety"),
+            pytest.param(
+                ["preferences", "set-length", "book", "short"], id="set-length"
+            ),
+            pytest.param(
+                ["preferences", "custom-rules", "add", "prefer sci-fi"],
+                id="custom-rules-add",
+            ),
+        ],
+    )
+    def test_every_other_edit_names_the_unknown_user_too(
+        self, storage: StorageManager, command: list[str]
+    ) -> None:
+        """One door in four more places: they all write via ``_edit_preferences``."""
+        result = _invoke_with_mocks(CliRunner(), [*command, "--user", "999"], storage)
+
+        assert result.exit_code != 0
+        assert "No user with id 999" in result.output
+        assert storage.get_user_preference_config(999) == UserPreferenceConfig()
+
+    def test_removing_a_rule_refuses_before_it_reaches_the_write(
+        self, storage: StorageManager
+    ) -> None:
+        """The index check answers first, so this one never names the user."""
+        result = _invoke_with_mocks(
+            CliRunner(),
+            ["preferences", "custom-rules", "remove", "0", "--user", "999"],
+            storage,
+        )
+
+        assert result.exit_code != 0
+        assert "Invalid index 0" in result.output
+
+    def test_reset_names_the_unknown_user_too(self, storage: StorageManager) -> None:
+        """The one write that does not read first, so it took another path."""
+        result = _invoke_with_mocks(
+            CliRunner(), ["preferences", "reset", "--user", "999"], storage
+        )
+
+        assert result.exit_code != 0
+        assert "No user with id 999" in result.output
+
+    def test_custom_rules_clear_names_the_unknown_user_too(
+        self, storage: StorageManager
+    ) -> None:
+        """It returned early on the empty rule list defaults answer for an id
+        no ``users`` row carries, so it never reached the write that refuses.
+        """
+        result = _invoke_with_mocks(
+            CliRunner(),
+            ["preferences", "custom-rules", "clear", "--user", "999", "--yes"],
+            storage,
+        )
+
+        assert result.exit_code != 0
+        assert "No user with id 999" in result.output
+
+    def test_clearing_nothing_for_a_real_user_still_says_so(
+        self, storage: StorageManager
+    ) -> None:
+        """The refusal above must not have cost the empty-list message."""
+        result = _invoke_with_mocks(
+            CliRunner(), ["preferences", "custom-rules", "clear", "--yes"], storage
+        )
+
+        assert result.exit_code == 0
+        assert "No custom rules to clear for user 1" in result.output
 
 
 class TestConfigLoadingRegression:
