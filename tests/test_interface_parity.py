@@ -9,7 +9,7 @@ such a boundary keeps passing while the other side drifts away from it.
 import json
 import re
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from click.testing import CliRunner
@@ -34,8 +34,9 @@ from src.web.api import (
     RecommendationResponse,
     UserPreferenceResponse,
 )
-from src.web.app import app as web_app
+from src.web.state import app_state
 from tests.cli.conftest import _invoke_with_mocks
+from tests.factories import booted_web_app
 
 # parents[1] resolves /tests/test_interface_parity.py -> repo root.
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -458,12 +459,9 @@ class TestRecommendationJsonIsTheSameOnBothSurfaces:
         storage = MagicMock(spec=StorageManager)
         storage.get_user_preference_config.return_value = None
 
-        with (
-            patch("src.web.api.get_engine", return_value=engine),
-            patch("src.web.api.get_storage", return_value=storage),
-            patch("src.web.api.get_config", return_value={}),
-        ):
-            response = TestClient(web_app).get("/api/recommendations?type=book&count=1")
+        with booted_web_app(storage, {}) as app:
+            app_state.engine = engine
+            response = TestClient(app).get("/api/recommendations?type=book&count=1")
 
         assert response.status_code == 200
         return response.text

@@ -5,13 +5,14 @@ import json
 import logging
 import threading
 from collections.abc import Callable
-from dataclasses import fields, replace
+from dataclasses import dataclass, fields, replace
 from datetime import UTC, date, datetime
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 from src.ingestion.sync import SyncResult
@@ -44,7 +45,7 @@ from src.web.sync_manager import (
     reset_sync_manager,
 )
 from src.web.trakt_auth import DevicePollResult, DevicePollStatus, TraktAuthError
-from tests.factories import back_mock_settings_store
+from tests.factories import booted_web_app
 
 
 def _reset_app_state() -> None:
@@ -94,45 +95,31 @@ def mock_components(mock_config):
     # Reset sync manager to ensure clean state between tests
     reset_sync_manager()
 
+    mock_storage_manager = Mock(spec=StorageManager)
+    mock_storage_manager.get_credentials_for_source.return_value = {}
+    mock_storage_manager.list_source_configs.return_value = []
+
+    mock_embedding_gen = Mock(spec=EmbeddingGenerator)
+    llm_components = (
+        Mock(spec=OllamaClient),
+        mock_embedding_gen,
+        Mock(spec=RecommendationGenerator),
+    )
+
+    mock_engine_instance = Mock(spec=RecommendationEngine)
+    mock_engine_instance.storage = mock_storage_manager
+
     with (
-        patch("src.web.app.load_config", return_value=mock_config),
-        patch("src.web.app.create_storage_manager") as mock_storage,
-        patch("src.web.app.create_llm_components") as mock_llm,
-        patch("src.web.app.create_recommendation_engine") as mock_engine,
-        patch("src.web.app.migrate_config_credentials"),
+        patch(
+            "src.web.app.create_recommendation_engine",
+            return_value=mock_engine_instance,
+        ),
         patch("src.web.app.migrate_source_labels") as mock_migrate_labels,
         patch("src.web.app.migrate_source_config_plugins") as mock_migrate_plugins,
+        booted_web_app(mock_storage_manager, mock_config, llm_components) as app,
     ):
-        # Setup mocks
-        mock_storage_manager = Mock(spec=StorageManager)
-        mock_storage_manager.get_credentials_for_source.return_value = {}
-        mock_storage_manager.list_source_configs.return_value = []
-        # Let the real migrate_config_settings boot hook run against an empty
-        # settings store (no stub) — the DB overlay is a no-op and nothing
-        # leaks across tests.
-        back_mock_settings_store(mock_storage_manager)
-        mock_storage.return_value = mock_storage_manager
-
-        mock_client = Mock(spec=OllamaClient)
-        mock_embedding_gen = Mock(spec=EmbeddingGenerator)
-        mock_rec_gen = Mock(spec=RecommendationGenerator)
-        mock_llm.return_value = (mock_client, mock_embedding_gen, mock_rec_gen)
-
-        mock_engine_instance = Mock(spec=RecommendationEngine)
-        mock_engine_instance.storage = mock_storage_manager
-        mock_engine.return_value = mock_engine_instance
-
-        # Reset app state to defaults
-        _reset_app_state()
-
-        # Create app
-        app = create_app()
-
-        # Store mocks in app state for access in tests
-        app_state.storage = mock_storage_manager
         app_state.embedding_gen = mock_embedding_gen
         app_state.engine = mock_engine_instance
-        app_state.config = mock_config
 
         yield {
             "app": app,
@@ -143,8 +130,8 @@ def mock_components(mock_config):
             "migrate_source_config_plugins": mock_migrate_plugins,
         }
 
-        # Clean up sync manager after test
-        reset_sync_manager()
+    # Clean up sync manager after test
+    reset_sync_manager()
 
 
 @pytest.fixture
@@ -3642,10 +3629,11 @@ class TestGogStatus:
         assert data["auth_url"] is None
 
     def test_gog_status_no_config(self, client, mock_components):
-        """No config returns 500."""
+        """No config returns 503."""
         app_state.config = None
         response = client.get("/api/gog/status")
-        assert response.status_code == 500
+        assert response.status_code == 503
+        assert response.json()["detail"] == "Config unavailable"
 
 
 class TestExchangeEpicTokenEndpoint:
@@ -3740,17 +3728,17 @@ class TestExchangeEpicTokenEndpoint:
             == "Epic Games is not enabled in the current configuration."
         )
 
-    def test_no_storage_returns_500(
+    def test_no_storage_returns_503(
         self, client: TestClient, mock_components: dict
     ) -> None:
-        """Missing storage returns 500."""
+        """Missing storage returns 503."""
         app_state.config["inputs"]["epic_games"] = {"enabled": True}
         app_state.storage = None
 
         response = client.post("/api/epic/exchange", json={"code_or_json": "some_code"})
 
-        assert response.status_code == 500
-        assert response.json()["detail"] == "Storage not initialized"
+        assert response.status_code == 503
+        assert response.json()["detail"] == "Storage unavailable"
 
     def test_unexpected_error_returns_500(
         self, client: TestClient, mock_components: dict
@@ -3774,14 +3762,14 @@ class TestExchangeEpicTokenEndpoint:
         assert body["detail"] == "Unexpected error during Epic Games authentication"
         assert "RuntimeError" not in str(body)
 
-    def test_no_config_returns_500(
+    def test_no_config_returns_503(
         self, client: TestClient, mock_components: dict
     ) -> None:
-        """Missing config returns 500."""
+        """Missing config returns 503."""
         app_state.config = None
         response = client.post("/api/epic/exchange", json={"code_or_json": "some_code"})
-        assert response.status_code == 500
-        assert response.json()["detail"] == "Config not initialized"
+        assert response.status_code == 503
+        assert response.json()["detail"] == "Config unavailable"
 
 
 class TestEpicStatus:
@@ -3852,11 +3840,11 @@ class TestEpicStatus:
         assert data["auth_url"] is None
 
     def test_epic_status_no_config(self, client, mock_components):
-        """No config returns 500."""
+        """No config returns 503."""
         app_state.config = None
         response = client.get("/api/epic/status")
-        assert response.status_code == 500
-        assert response.json()["detail"] == "Config not initialized"
+        assert response.status_code == 503
+        assert response.json()["detail"] == "Config unavailable"
 
 
 class TestExchangeEpicTokenEndpointRegression:
@@ -3913,13 +3901,14 @@ class TestEnrichmentErrorPaths:
         assert response.status_code == 400
 
     def test_reset_enrichment_no_storage(self, client, mock_components):
-        """Reset when storage not available returns 500."""
+        """Reset when storage not available returns 503."""
         app_state.storage = None
         response = client.post(
             "/api/enrichment/reset",
             json={"reset_type": "all"},
         )
-        assert response.status_code == 500
+        assert response.status_code == 503
+        assert response.json()["detail"] == "Storage unavailable"
 
 
 class TestIgnoreItem500:
@@ -4087,18 +4076,20 @@ class TestTraktStatus:
         assert response.status_code == 200
         assert response.json() == {"enabled": False, "connected": False}
 
-    def test_no_storage_returns_not_connected(self, client, mock_components) -> None:
-        """Status degrades to connected=False (not a 500) when storage is None."""
+    def test_no_storage_returns_503(self, client, mock_components) -> None:
+        """Storage down is 503, not a fabricated ``enabled: false``.
+
+        ``resolve_trakt_client_credentials`` raises without storage, and the
+        handler answered that with 200 ``{"enabled": false}`` — the same body
+        as a machine that has no Trakt credentials, for a state that is not
+        that.
+        """
         app_state.storage = None
 
-        with patch(
-            "src.web.api.resolve_trakt_client_credentials",
-            side_effect=TraktAuthError("not configured"),
-        ):
-            response = client.get("/api/trakt/status")
+        response = client.get("/api/trakt/status")
 
-        assert response.status_code == 200
-        assert response.json() == {"enabled": False, "connected": False}
+        assert response.status_code == 503
+        assert response.json()["detail"] == "Storage unavailable"
 
 
 class TestTraktStartDeviceFlow:
@@ -4150,14 +4141,14 @@ class TestTraktStartDeviceFlow:
         assert response.status_code == 400
         assert response.json()["detail"] == "Trakt authentication failed"
 
-    def test_no_storage_returns_500(self, client, mock_components) -> None:
-        """Start returns 500 'Storage not initialized' when storage is None."""
+    def test_no_storage_returns_503(self, client, mock_components) -> None:
+        """Start returns 503 'Storage unavailable' when storage is None."""
         app_state.storage = None
 
         response = client.post("/api/trakt/start-device-flow")
 
-        assert response.status_code == 500
-        assert response.json()["detail"] == "Storage not initialized"
+        assert response.status_code == 503
+        assert response.json()["detail"] == "Storage unavailable"
 
 
 class TestTraktPollDeviceApproval:
@@ -4321,16 +4312,16 @@ class TestTraktPollDeviceApproval:
         assert response.status_code == 422
         mock_poll.assert_not_called()
 
-    def test_no_storage_returns_500(self, client, mock_components) -> None:
-        """Poll returns 500 'Storage not initialized' when storage is None."""
+    def test_no_storage_returns_503(self, client, mock_components) -> None:
+        """Poll returns 503 'Storage unavailable' when storage is None."""
         app_state.storage = None
 
         response = client.post(
             "/api/trakt/poll-device-approval", json={"device_code": "dev1234567"}
         )
 
-        assert response.status_code == 500
-        assert response.json()["detail"] == "Storage not initialized"
+        assert response.status_code == 503
+        assert response.json()["detail"] == "Storage unavailable"
 
 
 class TestStreamRecommendationsSignalRegression:
@@ -4674,3 +4665,560 @@ class TestSettingsEndpoints:
 
         response = client.delete(f"/api/settings/secret/{_SETTINGS_SECRET_KEY}")
         assert response.status_code == 503
+
+
+_STORAGE_UNAVAILABLE = "Storage unavailable"
+_CONFIG_UNAVAILABLE = "Config unavailable"
+_ENGINE_UNAVAILABLE = "Recommendation engine unavailable"
+_MEMORY_UNAVAILABLE = "Memory manager unavailable"
+_CHAT_UNAVAILABLE = "Chat is not available. LLM is not configured."
+
+# The 503 message each guarded component produces, keyed by its AppState field.
+_UNAVAILABLE_DETAIL = {
+    "storage": _STORAGE_UNAVAILABLE,
+    "config": _CONFIG_UNAVAILABLE,
+    "engine": _ENGINE_UNAVAILABLE,
+    "memory_manager": _MEMORY_UNAVAILABLE,
+    "conversation_engine": _CHAT_UNAVAILABLE,
+}
+
+
+@dataclass(frozen=True)
+class _Endpoint:
+    """One API endpoint and the components it needs initialised.
+
+    ``requires`` names ``AppState`` fields, and is empty for an endpoint that
+    needs no initialised component at all. Which of several a handler names
+    first is not observable to a caller, so the tests below assert the set and
+    never the order — reordering two adjacent guard calls changes nothing a
+    caller can see and must not turn anything red.
+    """
+
+    method: str
+    route: str
+    requires: tuple[str, ...] = ()
+    url: str | None = None
+    body: dict[str, object] | None = None
+
+    @property
+    def target(self) -> str:
+        return self.url or self.route
+
+    @property
+    def details(self) -> set[str]:
+        return {_UNAVAILABLE_DETAIL[component] for component in self.requires}
+
+
+_GUARDED_ENDPOINTS = [
+    _Endpoint(
+        "GET",
+        "/api/recommendations",
+        ("engine",),
+        url="/api/recommendations?type=book",
+    ),
+    _Endpoint(
+        "GET",
+        "/api/recommendations/stream",
+        ("engine",),
+        url="/api/recommendations/stream?type=book",
+    ),
+    _Endpoint("GET", "/api/users", ("storage",)),
+    _Endpoint("GET", "/api/items", ("storage",)),
+    _Endpoint(
+        "GET",
+        "/api/items/export",
+        ("storage",),
+        url="/api/items/export?type=book",
+    ),
+    _Endpoint(
+        "PATCH",
+        "/api/items/{db_id}/ignore",
+        ("storage",),
+        url="/api/items/1/ignore",
+        body={"ignored": True},
+    ),
+    _Endpoint("GET", "/api/items/{db_id}", ("storage",), url="/api/items/1"),
+    _Endpoint(
+        "PATCH",
+        "/api/items/{db_id}",
+        ("storage",),
+        url="/api/items/1",
+        body={"status": "completed"},
+    ),
+    _Endpoint(
+        "GET",
+        "/api/users/{user_id}/preferences",
+        ("storage",),
+        url="/api/users/1/preferences",
+    ),
+    _Endpoint(
+        "PUT",
+        "/api/users/{user_id}/preferences",
+        ("storage",),
+        url="/api/users/1/preferences",
+        body={},
+    ),
+    _Endpoint(
+        "POST",
+        "/api/complete",
+        ("storage",),
+        body={"content_type": "book", "title": "Dune"},
+    ),
+    _Endpoint("POST", "/api/update", ("storage", "config"), body={"source": "all"}),
+    _Endpoint("GET", "/api/sync/sources", ("config", "storage")),
+    _Endpoint(
+        "POST",
+        "/api/sync/sources",
+        ("storage",),
+        body={"id": "my_books", "plugin": "goodreads_csv"},
+    ),
+    _Endpoint(
+        "DELETE",
+        "/api/sync/sources/{source_id}",
+        ("storage",),
+        url="/api/sync/sources/my_books",
+    ),
+    # Every route below resolves the id through ``_require_plugin``, which
+    # reads both halves of the truth and so guards both.
+    _Endpoint(
+        "GET",
+        "/api/sync/sources/{source_id}/schema",
+        ("storage", "config"),
+        url="/api/sync/sources/my_books/schema",
+    ),
+    _Endpoint(
+        "GET",
+        "/api/sync/sources/{source_id}/config",
+        ("storage", "config"),
+        url="/api/sync/sources/my_books/config",
+    ),
+    _Endpoint(
+        "POST",
+        "/api/sync/sources/{source_id}/migrate",
+        ("storage", "config"),
+        url="/api/sync/sources/my_books/migrate",
+    ),
+    _Endpoint(
+        "PUT",
+        "/api/sync/sources/{source_id}/config",
+        ("storage", "config"),
+        url="/api/sync/sources/my_books/config",
+        body={"values": {}},
+    ),
+    _Endpoint(
+        "PUT",
+        "/api/sync/sources/{source_id}/secret/{key}",
+        ("storage", "config"),
+        url="/api/sync/sources/my_books/secret/api_key",
+        body={"value": "secret"},
+    ),
+    _Endpoint(
+        "DELETE",
+        "/api/sync/sources/{source_id}/secret/{key}",
+        ("storage", "config"),
+        url="/api/sync/sources/my_books/secret/api_key",
+    ),
+    _Endpoint(
+        "PUT",
+        "/api/sync/sources/{source_id}/enabled",
+        ("storage", "config"),
+        url="/api/sync/sources/my_books/enabled",
+        body={"enabled": True},
+    ),
+    _Endpoint("GET", "/api/settings", ("config", "storage")),
+    _Endpoint("PUT", "/api/settings", ("config", "storage"), body={"updates": {}}),
+    _Endpoint(
+        "DELETE",
+        "/api/settings/{key}",
+        ("config", "storage"),
+        url=f"/api/settings/{_SETTINGS_INT_KEY}",
+    ),
+    _Endpoint(
+        "PUT",
+        "/api/settings/secret",
+        ("storage",),
+        body={"key": _SETTINGS_SECRET_KEY, "value": "x"},
+    ),
+    _Endpoint(
+        "DELETE",
+        "/api/settings/secret/{key}",
+        ("storage",),
+        url=f"/api/settings/secret/{_SETTINGS_SECRET_KEY}",
+    ),
+    _Endpoint("POST", "/api/enrichment/start", ("storage", "config"), body={}),
+    _Endpoint("GET", "/api/enrichment/stats", ("config", "storage")),
+    _Endpoint("POST", "/api/enrichment/reset", ("storage",), body={}),
+    _Endpoint("GET", "/api/gog/status", ("config", "storage")),
+    _Endpoint(
+        "POST",
+        "/api/gog/exchange",
+        ("config", "storage"),
+        body={"code_or_url": "code"},
+    ),
+    _Endpoint("DELETE", "/api/gog/token", ("storage",)),
+    _Endpoint("GET", "/api/epic/status", ("config", "storage")),
+    _Endpoint(
+        "POST",
+        "/api/epic/exchange",
+        ("config", "storage"),
+        body={"code_or_json": "code"},
+    ),
+    _Endpoint("DELETE", "/api/epic/token", ("storage",)),
+    _Endpoint("GET", "/api/trakt/status", ("config", "storage")),
+    _Endpoint("POST", "/api/trakt/start-device-flow", ("config", "storage")),
+    _Endpoint(
+        "POST",
+        "/api/trakt/poll-device-approval",
+        ("config", "storage"),
+        body={"device_code": "dev1234567"},
+    ),
+    _Endpoint("DELETE", "/api/trakt/token", ("storage",)),
+    _Endpoint("POST", "/api/chat", ("conversation_engine",), body={"message": "hi"}),
+    _Endpoint("POST", "/api/chat/reset", ("conversation_engine",)),
+    _Endpoint("GET", "/api/chat/history", ("memory_manager",)),
+    _Endpoint("GET", "/api/memories", ("memory_manager",)),
+    _Endpoint(
+        "POST", "/api/memories", ("memory_manager",), body={"memory_text": "sci-fi"}
+    ),
+    _Endpoint(
+        "PUT",
+        "/api/memories/{memory_id}",
+        ("memory_manager",),
+        url="/api/memories/1",
+        body={"memory_text": "sci-fi"},
+    ),
+    _Endpoint(
+        "DELETE",
+        "/api/memories/{memory_id}",
+        ("storage",),
+        url="/api/memories/1",
+    ),
+    _Endpoint("GET", "/api/profile", ("storage",)),
+    _Endpoint("POST", "/api/profile/regenerate", ("storage",)),
+]
+
+# Endpoints that serve off constants, the filesystem or a manager of their own,
+# so an uninitialised component is not their problem.
+_DEPENDENCY_FREE_ENDPOINTS = [
+    _Endpoint("GET", "/api/status"),
+    # Listed here rather than guarded: an unset ``config_path`` makes
+    # ``reload_config`` return False, which the handler turns into a 500. Only
+    # ``create_app`` sets that field, and it sets it or raises.
+    _Endpoint("POST", "/api/config/reload"),
+    _Endpoint("GET", "/api/plugins"),
+    _Endpoint("GET", "/api/sync/status"),
+    _Endpoint("POST", "/api/enrichment/stop"),
+    _Endpoint("GET", "/api/enrichment/status"),
+    _Endpoint("GET", "/api/themes"),
+    _Endpoint("GET", "/api/themes/default"),
+]
+
+
+def _endpoint_id(endpoint: _Endpoint) -> str:
+    return f"{endpoint.method} {endpoint.route}"
+
+
+# One case per (endpoint, component) pair, so every guard on a multi-component
+# handler is exercised on its own rather than shadowed by the first one.
+_GUARD_CASES = [
+    pytest.param(endpoint, component, id=f"{_endpoint_id(endpoint)} [{component}]")
+    for endpoint in _GUARDED_ENDPOINTS
+    for component in endpoint.requires
+]
+
+
+def _clear_dependencies() -> None:
+    """Drop every component the guards check, ahead of a request."""
+    app_state.storage = None
+    app_state.config = None
+    app_state.engine = None
+    app_state.memory_manager = None
+    app_state.conversation_engine = None
+
+
+class TestDependencyGuards:
+    """Every uninitialised dependency answers 503, one message per dependency.
+
+    An absent component is unavailability, not a server fault, and one server
+    state has to read the same way everywhere: a 500 from ``/api/items`` and a
+    503 from ``/api/memories`` described the identical outage two ways.
+    """
+
+    @pytest.mark.parametrize("endpoint", _GUARDED_ENDPOINTS, ids=_endpoint_id)
+    def test_guarded_endpoint_returns_503(self, client, endpoint) -> None:
+        """With everything down, every endpoint names one of its dependencies."""
+        _clear_dependencies()
+
+        response = client.request(endpoint.method, endpoint.target, json=endpoint.body)
+
+        assert response.status_code == 503
+        assert response.json()["detail"] in endpoint.details
+
+    @pytest.mark.parametrize(("endpoint", "component"), _GUARD_CASES)
+    def test_each_dependency_is_guarded_on_its_own(
+        self, client, endpoint, component
+    ) -> None:
+        """Down alone, each component is named by every endpoint that needs it.
+
+        Clearing all five at once only ever reaches a handler's first guard, so
+        the second guard on a two-component handler could be deleted with the
+        suite staying green. One component down at a time is what pins it.
+        """
+        setattr(app_state, component, None)
+
+        response = client.request(endpoint.method, endpoint.target, json=endpoint.body)
+
+        assert response.status_code == 503
+        assert response.json()["detail"] == _UNAVAILABLE_DETAIL[component]
+
+    @pytest.mark.parametrize("endpoint", _DEPENDENCY_FREE_ENDPOINTS, ids=_endpoint_id)
+    def test_dependency_free_endpoint_still_answers(self, client, endpoint) -> None:
+        """These serve off constants or a manager of their own, so they answer.
+
+        ``< 500`` rather than ``!= 503``: a handler that grows a dependency and
+        hand-rolls a 500 for it belongs in the guarded list, and this is what
+        says so. The classification test alone only proves no route is
+        unlisted, not that it is listed in the right place.
+        """
+        _clear_dependencies()
+        # /config/reload re-reads whatever ``config_path`` names, so it is
+        # pinned to the example file here rather than mocked out: a mocked
+        # ``reload_config`` decides the assertion by itself, and an unpinned
+        # path is the developer's real config.yaml.
+        app_state.config_path = str(Path("config/example.yaml").resolve())
+
+        response = client.request(endpoint.method, endpoint.target, json=endpoint.body)
+
+        assert response.status_code < 500
+
+    def test_status_reports_initializing_when_components_are_down(self, client) -> None:
+        """``/api/status`` answers 200 and names the outage, rather than being it.
+
+        The counterpart to every 503 above, and the reason it is not guarded:
+        reporting which components are down is the whole of its contract, so a
+        503 here would replace the report with the thing it reports on.
+        """
+        _clear_dependencies()
+
+        response = client.get("/api/status")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["status"] == "initializing"
+        assert body["components"]["engine"] is False
+        assert body["components"]["storage"] is False
+
+    def test_every_api_route_is_classified(self, client, mock_components) -> None:
+        """Both lists together must name every route the app serves.
+
+        A new handler is unlisted until someone classifies it, and the tests
+        above then hold it to the list it landed in: 503 naming each component
+        it needs, or an answer that is not a fault at all.
+        """
+        served = {
+            (method, route.path)
+            for route in mock_components["app"].routes
+            if isinstance(route, APIRoute) and route.path.startswith("/api")
+            for method in route.methods
+        }
+        classified = {
+            (endpoint.method, endpoint.route)
+            for endpoint in _GUARDED_ENDPOINTS + _DEPENDENCY_FREE_ENDPOINTS
+        }
+
+        assert served == classified
+
+
+class TestSourceReadGuardsRegression:
+    """One server state, one answer, across every route on a source."""
+
+    @pytest.mark.parametrize(
+        "url",
+        ["/api/sync/sources/my_books/schema", "/api/sync/sources/my_books/config"],
+    )
+    def test_read_reports_unavailable_rather_than_missing_regression(
+        self, client, url
+    ) -> None:
+        """Regression: a source read 404s with storage down instead of 503.
+
+        Bug reported: with ``app_state.storage`` unset, a read on a source that
+        exists answered 404 "Source not found.", while every write on that same
+        source answered 503 "Storage unavailable".
+        Root cause: ``get_source_schema`` and ``get_source_config_endpoint``
+        reached ``_require_plugin`` with no guard in front of it.
+        ``resolve_source_plugin`` reads the plugin name off storage, falling
+        back to config, so with both ``None`` it resolved nothing and the
+        handler raised 404 — blaming the caller for the server being down.
+        Fix: ``_require_plugin`` calls ``require_storage()`` itself, so no
+        caller can reach the lookup before the outage has been reported.
+        """
+        _clear_dependencies()
+
+        response = client.get(url)
+
+        assert response.status_code == 503
+        assert response.json()["detail"] == _STORAGE_UNAVAILABLE
+
+    @pytest.mark.parametrize(
+        "url",
+        ["/api/sync/sources/my_books/schema", "/api/sync/sources/my_books/config"],
+    )
+    def test_read_reports_unavailable_with_config_down_regression(
+        self, client, mock_components, url
+    ) -> None:
+        """Regression: config down left source reads answering off storage alone.
+
+        Bug reported: the sweep above guarded storage and left ``get_config()``
+        passing through, so with ``app_state.config`` unset a source read
+        answered whatever the DB half alone could resolve — 404 "Source not
+        found." for a YAML-only source, 200 off a stale-by-half view for a
+        migrated one — while ``GET /api/sync/sources`` answered 503 for that
+        same server state.
+        Root cause: ``_require_plugin`` guarded storage only, and
+        ``resolve_source_plugin`` treats a missing config as "no YAML entry"
+        rather than as an outage.
+        Fix: ``_require_plugin`` calls ``require_config()`` too.
+        The DB row is what makes this fail on the bug rather than on an id
+        nothing could resolve: with it the lookup succeeds, so the 503 is the
+        guard firing and nothing else.
+        """
+        mock_components["storage"].get_source_config.return_value = {
+            "source_id": "my_books",
+            "plugin": "goodreads_csv",
+            "enabled": 1,
+        }
+        app_state.config = None
+
+        response = client.get(url)
+
+        assert response.status_code == 503
+        assert response.json()["detail"] == _CONFIG_UNAVAILABLE
+
+    def test_write_on_the_same_source_answers_503(self, client) -> None:
+        """The other half of the disagreement: one server state, one resource."""
+        _clear_dependencies()
+
+        response = client.post("/api/sync/sources/my_books/migrate")
+
+        assert response.status_code == 503
+        assert response.json()["detail"] == _STORAGE_UNAVAILABLE
+
+
+class TestDependencyGuardPrecedence:
+    """The guard answers before anything else the request could be faulted for.
+
+    A 400 or a 404 raised ahead of the guard reads as the caller's mistake, and
+    the caller cannot tell it from one — which is how the same server state came
+    to have several different answers in the first place.
+    """
+
+    def test_guard_precedes_the_handlers_own_rejections(self, client) -> None:
+        """An unknown type and an over-max count still answer 503, not 400."""
+        _clear_dependencies()
+
+        response = client.get("/api/recommendations?type=bogus&count=999999")
+
+        assert response.status_code == 503
+        assert response.json()["detail"] == _ENGINE_UNAVAILABLE
+
+    def test_request_validation_still_precedes_the_guard(self, client) -> None:
+        """Where the precedence stops: a request FastAPI rejects never arrives.
+
+        ``count=0`` fails the ``ge=1`` bound while the request is being parsed,
+        so the 422 is not something a guard could outrank. Stated here so the
+        test above does not read as a promise about every rejection.
+        """
+        _clear_dependencies()
+
+        response = client.get("/api/recommendations?type=book&count=0")
+
+        assert response.status_code == 422
+
+    def test_guard_precedes_lookup_of_an_unresolvable_source_id(self, client) -> None:
+        """A non-ASCII id no source could carry reports the outage, not a miss."""
+        _clear_dependencies()
+
+        response = client.post("/api/sync/sources/%F0%9F%92%A9/migrate")
+
+        assert response.status_code == 503
+        assert response.json()["detail"] == _STORAGE_UNAVAILABLE
+
+    def test_memory_manager_and_storage_are_separate_dependencies(
+        self, client, mock_components
+    ) -> None:
+        """The memory endpoints split across two components, so both are named.
+
+        ``DELETE /memories/{id}`` goes through storage because ``MemoryManager``
+        has no delete; with storage up it must keep working while the manager is
+        down, and the endpoints that do need the manager must say so.
+        """
+        app_state.memory_manager = None
+        mock_components["storage"].delete_core_memory.return_value = True
+
+        unavailable = client.get("/api/chat/history")
+        served = client.delete("/api/memories/1")
+
+        assert unavailable.status_code == 503
+        assert unavailable.json()["detail"] == _MEMORY_UNAVAILABLE
+        assert served.status_code == 200
+
+
+class TestUnguardedReadsAreOptional:
+    """A component a handler reads without guarding must really be optional.
+
+    ``requires`` proves which components produce a 503; nothing there proves the
+    unlisted ones were left out deliberately. Harden one of these reads into a
+    guard and the 200 becomes a 503 with every case above still green.
+    """
+
+    def test_recommendations_serve_with_only_the_engine_up(
+        self, client, mock_components
+    ) -> None:
+        """Preferences and the count bound both fall back without their reads."""
+        mock_components["engine"].generate_recommendations.return_value = []
+        app_state.storage = None
+        app_state.config = None
+
+        response = client.get("/api/recommendations?type=book")
+
+        assert response.status_code == 200
+        assert response.json() == []
+
+    def test_stream_serves_with_only_the_engine_up(
+        self, client, mock_components
+    ) -> None:
+        """The streaming sibling falls back the same way, so it is pinned too.
+
+        It reads storage and config exactly as the handler above does, and the
+        generator draws its taste signal off ``engine.storage`` rather than
+        ``app_state``. Sampling one of the pair would leave the other free to
+        grow a guard, or lose its fallback, with this class still green.
+        """
+        mock_components["engine"].generate_recommendations.return_value = []
+        app_state.storage = None
+        app_state.config = None
+
+        response = client.get("/api/recommendations/stream?type=book")
+
+        assert response.status_code == 200
+        events = [
+            json.loads(line.removeprefix("data: "))
+            for line in response.text.splitlines()
+            if line.startswith("data: ")
+        ]
+        assert events == [
+            {"type": "recommendations", "items": []},
+            {"type": "done"},
+        ]
+
+    def test_complete_serves_without_config(self, client, mock_components) -> None:
+        """``get_feature_flags(None)`` falls back to the registered defaults."""
+        mock_components["storage"].complete_content_item.return_value = 7
+        app_state.config = None
+
+        response = client.post(
+            "/api/complete", json={"content_type": "book", "title": "Dune"}
+        )
+
+        assert response.status_code == 200
+        assert response.json()["id"] == 7

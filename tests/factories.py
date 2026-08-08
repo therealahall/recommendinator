@@ -1,11 +1,18 @@
-"""Shared test factories for creating model instances with sensible defaults."""
+"""Shared test factories: model instances and app fixtures with sane defaults."""
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import fields
 from typing import Any
-from unittest.mock import NonCallableMock
+from unittest.mock import NonCallableMock, patch
+
+from fastapi import FastAPI
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.web.app import create_app
+from src.web.state import app_state
 
 
 def back_mock_settings_store(storage: Any) -> dict[str, Any]:
@@ -35,6 +42,50 @@ def back_mock_settings_store(storage: Any) -> dict[str, Any]:
     storage.credential_row_exists.return_value = False
     storage.has_global_secret.return_value = False
     return store
+
+
+@contextmanager
+def booted_web_app(
+    storage: Any,
+    config: dict[str, Any],
+    llm_components: tuple[Any, Any, Any] = (None, None, None),
+) -> Iterator[FastAPI]:
+    """Boot ``create_app`` over patched I/O boundaries, with ``storage``/``config``.
+
+    The supported way for a test to obtain the web app; the boots still spelled
+    out by hand are the ones it cannot serve, needing a real ``StorageManager``
+    or patching more of ``create_app`` than this does. An unpatched boot
+    resolves whatever config file the process finds, opens the database that
+    file names and runs the credential migration against it — re-encrypting
+    real rows under the throwaway key the root conftest installs. Importing
+    ``src.web.app:app`` does the same at collection time, before any fixture
+    runs at all, which is why ``tests/test_web_app_import.py`` forbids it.
+
+    ``back_mock_settings_store`` lets the settings and secret boot hooks run for
+    real against an empty store. ``app_state`` is a module-level singleton, so
+    every field is snapshotted and restored around the boot; a raise inside
+    ``create_app`` would otherwise leave it half-populated for the rest of the
+    session.
+    """
+    saved = {f.name: getattr(app_state, f.name) for f in fields(app_state)}
+    back_mock_settings_store(storage)
+    try:
+        with (
+            patch("src.web.app.load_config", return_value=config),
+            patch("src.web.app.create_storage_manager", return_value=storage),
+            patch("src.web.app.create_llm_components", return_value=llm_components),
+            patch("src.web.app.migrate_config_credentials"),
+            # Resolved independently of the patched loader, so unpatched this
+            # binds the path of whatever config file the machine has — which a
+            # reload would then read for real. The raise takes create_app's own
+            # not-found branch, landing on config/example.yaml.
+            patch("src.web.app.resolve_config_path", side_effect=FileNotFoundError),
+        ):
+            app = create_app()
+        yield app
+    finally:
+        for key, value in saved.items():
+            setattr(app_state, key, value)
 
 
 def make_item(

@@ -1,12 +1,13 @@
 """Regression tests for recommendations empty-state messaging."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from fastapi.testclient import TestClient
 
 from src.recommendations.engine import RecommendationEngine
 from src.storage.manager import StorageManager
-from src.web.app import app
+from src.web.state import app_state
+from tests.factories import booted_web_app
 
 
 class TestEmptyRecommendationsRegression:
@@ -24,13 +25,11 @@ class TestEmptyRecommendationsRegression:
         mock_storage = MagicMock(spec=StorageManager)
         mock_storage.get_user_preference_config.return_value = None
 
-        with patch("src.web.api.get_engine", return_value=mock_engine):
-            with patch("src.web.api.get_storage", return_value=mock_storage):
-                with patch("src.web.api.get_config", return_value={}):
-                    client = TestClient(app)
-                    response = client.get(
-                        "/api/recommendations?type=video_game&count=5"
-                    )
+        with booted_web_app(mock_storage, {}) as app:
+            app_state.engine = mock_engine
+            response = TestClient(app).get(
+                "/api/recommendations?type=video_game&count=5"
+            )
 
         assert response.status_code == 200
         assert response.json() == []
