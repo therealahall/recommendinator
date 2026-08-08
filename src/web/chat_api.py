@@ -12,7 +12,11 @@ from pydantic import BaseModel, Field
 
 from src.conversation.profile import ProfileGenerator
 from src.models.content import ContentType
-from src.web.state import get_conversation_engine, get_memory_manager, get_storage
+from src.web.guards import (
+    require_conversation_engine,
+    require_memory_manager,
+    require_storage,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -103,12 +107,7 @@ async def chat(request: ChatRequest) -> StreamingResponse:
     - data: {"type": "tool_result", "result": {...}}
     - data: {"type": "done"}
     """
-    engine = get_conversation_engine()
-    if not engine:
-        raise HTTPException(
-            status_code=503,
-            detail="Chat is not available. LLM is not configured.",
-        )
+    engine = require_conversation_engine()
 
     # Parse content type if provided
     content_type = None
@@ -189,12 +188,7 @@ async def reset_chat(user_id: int = Query(default=1)) -> dict:
 
     This clears the chat history but preserves core memories.
     """
-    engine = get_conversation_engine()
-    if not engine:
-        raise HTTPException(
-            status_code=503,
-            detail="Chat is not available. LLM is not configured.",
-        )
+    engine = require_conversation_engine()
 
     deleted_count = engine.reset_conversation(user_id)
     return {
@@ -210,9 +204,7 @@ async def get_chat_history(
     limit: int = Query(default=50, ge=1, le=200),
 ) -> list[MessageResponse]:
     """Get recent conversation history for a user."""
-    memory_manager = get_memory_manager()
-    if not memory_manager:
-        raise HTTPException(status_code=503, detail="Storage not available")
+    memory_manager = require_memory_manager()
 
     messages = memory_manager.get_conversation_history(user_id=user_id, limit=limit)
 
@@ -239,9 +231,7 @@ async def get_memories(
     include_inactive: bool = Query(default=False),
 ) -> list[MemoryResponse]:
     """Get user's core memories."""
-    memory_manager = get_memory_manager()
-    if not memory_manager:
-        raise HTTPException(status_code=503, detail="Storage not available")
+    memory_manager = require_memory_manager()
 
     memories = memory_manager.get_core_memories(
         user_id=user_id,
@@ -265,9 +255,7 @@ async def get_memories(
 @router.post("/memories")
 async def create_memory(request: MemoryCreateRequest) -> MemoryResponse:
     """Create a new user-stated memory."""
-    memory_manager = get_memory_manager()
-    if not memory_manager:
-        raise HTTPException(status_code=503, detail="Storage not available")
+    memory_manager = require_memory_manager()
 
     memory = memory_manager.save_core_memory(
         user_id=request.user_id,
@@ -294,9 +282,7 @@ async def update_memory(
     request: MemoryUpdateRequest,
 ) -> dict:
     """Update a memory (edit text or toggle active status)."""
-    memory_manager = get_memory_manager()
-    if not memory_manager:
-        raise HTTPException(status_code=503, detail="Storage not available")
+    memory_manager = require_memory_manager()
 
     # Update the memory
     success = memory_manager.update_core_memory(
@@ -314,9 +300,7 @@ async def update_memory(
 @router.delete("/memories/{memory_id}")
 async def delete_memory(memory_id: int) -> dict:
     """Delete a memory."""
-    storage = get_storage()
-    if not storage:
-        raise HTTPException(status_code=503, detail="Storage not available")
+    storage = require_storage()
 
     # Use storage directly since MemoryManager doesn't have delete
     success = storage.delete_core_memory(memory_id)
@@ -335,9 +319,7 @@ async def delete_memory(memory_id: int) -> dict:
 @router.get("/profile")
 async def get_profile(user_id: int = Query(default=1)) -> ProfileResponse:
     """Get user's preference profile summary."""
-    storage = get_storage()
-    if not storage:
-        raise HTTPException(status_code=503, detail="Storage not available")
+    storage = require_storage()
 
     # Try to get existing profile
     profile_data = storage.get_preference_profile(user_id)
@@ -372,9 +354,7 @@ async def get_profile(user_id: int = Query(default=1)) -> ProfileResponse:
 @router.post("/profile/regenerate")
 async def regenerate_profile(user_id: int = Query(default=1)) -> ProfileResponse:
     """Force regeneration of the preference profile."""
-    storage = get_storage()
-    if not storage:
-        raise HTTPException(status_code=503, detail="Storage not available")
+    storage = require_storage()
 
     generator = ProfileGenerator(storage)
     profile = generator.regenerate_and_save(user_id)

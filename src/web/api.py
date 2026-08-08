@@ -37,7 +37,7 @@ from src.settings.service import (
     reset_setting,
     set_secret,
 )
-from src.storage.manager import UNSET, VALID_SORT_OPTIONS, StorageManager
+from src.storage.manager import UNSET, VALID_SORT_OPTIONS
 from src.utils.item_serialization import item_to_dict
 from src.utils.series import MAX_SEASONS
 from src.utils.sorting import MAX_SEARCH_LENGTH
@@ -62,6 +62,7 @@ from src.web.gog_auth import (
 )
 from src.web.gog_auth import exchange_code_for_tokens as exchange_gog_tokens
 from src.web.gog_auth import extract_code_from_input as extract_gog_code
+from src.web.guards import require_config, require_engine, require_storage
 from src.web.state import (
     get_config,
     get_embedding_gen,
@@ -675,11 +676,9 @@ async def get_recommendations(
     Returns:
         List of recommendations
     """
-    engine = get_engine()
+    engine = require_engine()
     storage = get_storage()
     config = get_config()
-    if not engine:
-        raise HTTPException(status_code=500, detail="Engine not initialized")
 
     # Validate count against config-driven max_count (may be tighter than hard limit)
     max_count = _get_recommendations_config(config).max_count
@@ -748,12 +747,9 @@ async def stream_recommendations(
     Returns:
         SSE streaming response
     """
-    engine = get_engine()
+    engine = require_engine()
     storage = get_storage()
     config = get_config()
-
-    if not engine:
-        raise HTTPException(status_code=500, detail="Engine not initialized")
 
     max_count = _get_recommendations_config(config).max_count
     if count > max_count:
@@ -869,9 +865,7 @@ async def list_users() -> list[UserResponse]:
     Returns:
         List of users.
     """
-    storage = get_storage()
-    if not storage:
-        raise HTTPException(status_code=500, detail="Storage not initialized")
+    storage = require_storage()
 
     users = storage.get_all_users()
     return [
@@ -938,9 +932,7 @@ async def list_items(
     Returns:
         List of content items.
     """
-    storage = get_storage()
-    if not storage:
-        raise HTTPException(status_code=500, detail="Storage not initialized")
+    storage = require_storage()
 
     content_type = None
     if type is not None:
@@ -1008,9 +1000,7 @@ async def export_items(
     Returns:
         File download response
     """
-    storage = get_storage()
-    if not storage:
-        raise HTTPException(status_code=500, detail="Storage not initialized")
+    storage = require_storage()
 
     try:
         content_type = ContentType.from_string(type)
@@ -1067,9 +1057,7 @@ async def set_item_ignored(
     Returns:
         Updated item info
     """
-    storage = get_storage()
-    if not storage:
-        raise HTTPException(status_code=500, detail="Storage not initialized")
+    storage = require_storage()
 
     # Verify item exists and belongs to user
     item = storage.get_content_item(db_id, user_id=user_id)
@@ -1103,9 +1091,7 @@ async def get_single_item(
     Returns:
         Content item details.
     """
-    storage = get_storage()
-    if not storage:
-        raise HTTPException(status_code=500, detail="Storage not initialized")
+    storage = require_storage()
 
     item = storage.get_content_item(db_id, user_id=user_id)
     if not item:
@@ -1140,9 +1126,7 @@ async def edit_item(
     Returns:
         Updated content item.
     """
-    storage = get_storage()
-    if not storage:
-        raise HTTPException(status_code=500, detail="Storage not initialized")
+    storage = require_storage()
 
     # Validate status
     valid_statuses = {"unread", "currently_consuming", "completed"}
@@ -1185,9 +1169,7 @@ async def get_user_preferences(user_id: int) -> UserPreferenceResponse:
     Returns:
         User preference configuration.
     """
-    storage = get_storage()
-    if not storage:
-        raise HTTPException(status_code=500, detail="Storage not initialized")
+    storage = require_storage()
 
     preference_config = storage.get_user_preference_config(user_id)
     return UserPreferenceResponse(**preference_config.to_dict())
@@ -1209,9 +1191,7 @@ async def update_user_preferences(
     Returns:
         Updated user preference configuration.
     """
-    storage = get_storage()
-    if not storage:
-        raise HTTPException(status_code=500, detail="Storage not initialized")
+    storage = require_storage()
 
     # Load existing config
     existing = storage.get_user_preference_config(user_id)
@@ -1251,12 +1231,9 @@ async def mark_complete(request: CompletionRequest) -> dict[str, Any]:
     Returns:
         Success message
     """
-    storage = get_storage()
+    storage = require_storage()
     embedding_gen = get_embedding_gen()
     config = get_config()
-
-    if not storage:
-        raise HTTPException(status_code=500, detail="Storage not initialized")
 
     # Check if embeddings are enabled
     use_embeddings = get_feature_flags(config)["use_embeddings"]
@@ -1309,12 +1286,9 @@ async def update_data(request: UpdateRequest) -> dict[str, Any]:
     Returns:
         Message indicating sync was started or error if already running.
     """
-    storage = get_storage()
+    storage = require_storage()
+    config = require_config()
     embedding_gen = get_embedding_gen()
-    config = get_config()
-
-    if not storage or not config:
-        raise HTTPException(status_code=500, detail="Components not initialized")
 
     sync_manager = get_sync_manager()
     source = request.source
@@ -1514,16 +1488,16 @@ async def reload_config_endpoint() -> dict[str, Any]:
 
 @router.get("/sync/sources", response_model=list[SyncSourceResponse])
 async def get_sync_sources() -> list[SyncSourceResponse]:
-    """Get list of available sync sources from config.
+    """Get list of available sync sources from config and the database.
 
-    Returns sources defined in config.inputs with enabled: true.
-    No fallback to example config - uses the loaded config only.
+    Both components are guarded because the answer is assembled from both, and
+    a missing half read as a wrong library rather than an outage: without
+    config this returned 200 and an empty list, and without storage a list that
+    drops DB-only sources and reports every migrated one off its stale YAML
+    row rather than the authoritative DB values.
     """
-    config = get_config()
-    if not config:
-        return []
-
-    storage = get_storage()
+    config = require_config()
+    storage = require_storage()
     sources = get_available_sync_sources(config, storage=storage)
     return [
         SyncSourceResponse(
@@ -1556,7 +1530,7 @@ async def create_source_endpoint(
     call returns; the create path rejects them in the body to keep the
     sensitive-write surface narrow.
     """
-    storage = _require_storage()
+    storage = require_storage()
     try:
         view = create_source(
             payload.id,
@@ -1574,7 +1548,7 @@ async def create_source_endpoint(
 @router.delete("/sync/sources/{source_id}", status_code=204)
 async def delete_source_endpoint(source_id: str) -> Response:
     """Drop a DB-backed source and clear its credentials."""
-    storage = _require_storage()
+    storage = require_storage()
     try:
         delete_source(source_id, storage)
     except SourceConfigError as error:
@@ -1626,26 +1600,23 @@ def _sanitize_for_log(value: str) -> str:
 
 
 def _require_plugin(source_id: str) -> SourcePlugin:
-    plugin = resolve_source_plugin(source_id, get_config(), get_storage())
+    """Resolve a source id to its plugin, or 404 if no source carries that id.
+
+    Both halves are guarded before the lookup because either one missing runs
+    the resolution off the other alone: with storage down a source that exists
+    only in the database (created through POST /sync/sources, which rejects ids
+    YAML already holds) reads as "not found", and with config down a source
+    that exists only in YAML does — while every write on those same sources
+    answers 503. One server state, one answer.
+    """
+    storage = require_storage()
+    config = require_config()
+    plugin = resolve_source_plugin(source_id, config, storage)
     if plugin is None:
         # Server-side log carries the identifier; the wire response stays generic.
         logger.info("Source lookup miss for source_id=%s", _sanitize_for_log(source_id))
         raise HTTPException(status_code=404, detail="Source not found.")
     return plugin
-
-
-def _require_storage() -> StorageManager:
-    storage = get_storage()
-    if storage is None:
-        raise HTTPException(status_code=503, detail="Storage unavailable")
-    return storage
-
-
-def _require_config() -> dict[str, Any]:
-    config = get_config()
-    if config is None:
-        raise HTTPException(status_code=503, detail="Config unavailable")
-    return config
 
 
 def _config_error_to_http(error: SourceConfigError) -> HTTPException:
@@ -1668,9 +1639,10 @@ async def get_source_schema(source_id: str) -> SourceSchemaResponse:
 @router.get("/sync/sources/{source_id}/config", response_model=SourceConfigResponse)
 async def get_source_config_endpoint(source_id: str) -> SourceConfigResponse:
     """Return current config values for a source. Sensitive fields are stripped."""
+    storage = require_storage()
     plugin = _require_plugin(source_id)
     return SourceConfigResponse(
-        **build_config_view(source_id, plugin, get_config(), get_storage())
+        **build_config_view(source_id, plugin, get_config(), storage)
     )
 
 
@@ -1679,8 +1651,8 @@ async def get_source_config_endpoint(source_id: str) -> SourceConfigResponse:
 )
 async def migrate_source_to_db(source_id: str) -> SourceMigrationResponse:
     """Copy a YAML source entry into the database (idempotent)."""
+    storage = require_storage()
     plugin = _require_plugin(source_id)
-    storage = _require_storage()
     return SourceMigrationResponse(
         **migrate_source(source_id, plugin, get_config(), storage)
     )
@@ -1691,8 +1663,8 @@ async def update_source_config_endpoint(
     source_id: str, payload: SourceConfigUpdateRequest
 ) -> SourceConfigResponse:
     """Update non-sensitive fields on a migrated source."""
+    storage = require_storage()
     plugin = _require_plugin(source_id)
-    storage = _require_storage()
     try:
         update_source_config_values(source_id, plugin, storage, payload.values)
     except SourceConfigError as error:
@@ -1707,8 +1679,8 @@ async def set_source_secret_endpoint(
     source_id: str, key: str, payload: SourceSecretUpdateRequest
 ) -> Response:
     """Encrypt and store a sensitive field for a source."""
+    storage = require_storage()
     plugin = _require_plugin(source_id)
-    storage = _require_storage()
     try:
         set_source_secret_value(source_id, plugin, storage, key, payload.value)
     except SourceConfigError as error:
@@ -1719,8 +1691,8 @@ async def set_source_secret_endpoint(
 @router.delete("/sync/sources/{source_id}/secret/{key}", status_code=204)
 async def clear_source_secret_endpoint(source_id: str, key: str) -> Response:
     """Delete a sensitive field's stored value for a source."""
+    storage = require_storage()
     plugin = _require_plugin(source_id)
-    storage = _require_storage()
     try:
         clear_source_secret_value(source_id, plugin, storage, key)
     except SourceConfigError as error:
@@ -1733,8 +1705,8 @@ async def set_source_enabled_endpoint(
     source_id: str, payload: SourceEnabledUpdateRequest
 ) -> SourceConfigResponse:
     """Toggle the enabled flag on a migrated source."""
+    storage = require_storage()
     plugin = _require_plugin(source_id)
-    storage = _require_storage()
     try:
         set_source_enabled_state(source_id, storage, payload.enabled)
     except SourceConfigError as error:
@@ -1756,8 +1728,8 @@ async def set_source_enabled_endpoint(
 )
 async def get_settings() -> SettingsResponse:
     """Return every in-scope setting grouped by section (secrets masked)."""
-    config = _require_config()
-    storage = _require_storage()
+    config = require_config()
+    storage = require_storage()
     return SettingsResponse(**build_settings_view(config, storage))
 
 
@@ -1774,8 +1746,8 @@ async def update_settings(request: SettingsUpdateRequest) -> SettingsResponse:
     live-applied to the running config; restart-required settings persist and
     apply on next boot.
     """
-    config = _require_config()
-    storage = _require_storage()
+    config = require_config()
+    storage = require_storage()
     try:
         apply_settings(config, storage, request.updates)
     except SettingsValidationError as error:
@@ -1798,8 +1770,8 @@ async def reset_setting_endpoint(key: str) -> SettingsResponse:
     the offending key + reason) when the key is registered but cannot be reset
     this way — e.g. a sensitive leaf, which must go through the secret endpoint.
     """
-    config = _require_config()
-    storage = _require_storage()
+    config = require_config()
+    storage = require_storage()
     if get_entry(key) is None:
         logger.info("Settings reset miss for key=%s", _sanitize_for_log(key))
         raise HTTPException(status_code=404, detail="Unknown setting.")
@@ -1816,7 +1788,7 @@ async def reset_setting_endpoint(key: str) -> SettingsResponse:
 @router.put("/settings/secret", status_code=204)
 async def set_setting_secret(request: SettingSecretRequest) -> Response:
     """Store a sensitive setting's value in the encrypted secret store."""
-    storage = _require_storage()
+    storage = require_storage()
     try:
         set_secret(storage, request.key, request.value)
     except SettingsValidationError as error:
@@ -1829,7 +1801,7 @@ async def set_setting_secret(request: SettingSecretRequest) -> Response:
 @router.delete("/settings/secret/{key}", status_code=204)
 async def clear_setting_secret(key: str) -> Response:
     """Delete a sensitive setting's stored secret."""
-    storage = _require_storage()
+    storage = require_storage()
     try:
         clear_secret(storage, key)
     except SettingsValidationError as error:
@@ -1877,11 +1849,8 @@ async def start_enrichment(
     Returns:
         Message indicating enrichment was started or error
     """
-    storage = get_storage()
-    config = get_config()
-
-    if not storage or not config:
-        raise HTTPException(status_code=500, detail="Components not initialized")
+    storage = require_storage()
+    config = require_config()
 
     # Check if enrichment is enabled
     enrichment_config = config.get("enrichment", {})
@@ -1975,14 +1944,11 @@ async def get_enrichment_stats(
     Returns:
         Enrichment statistics
     """
-    config = get_config() or {}
+    config = require_config()
+    storage = require_storage()
+
     enrichment_config = config.get("enrichment", {})
     enrichment_enabled = enrichment_config.get("enabled", False)
-
-    storage = get_storage()
-
-    if not storage:
-        raise HTTPException(status_code=500, detail="Storage not initialized")
 
     stats = storage.get_enrichment_stats(user_id=user_id)
 
@@ -2013,10 +1979,7 @@ async def reset_enrichment(
     Returns:
         Count of items reset
     """
-    storage = get_storage()
-
-    if not storage:
-        raise HTTPException(status_code=500, detail="Storage not initialized")
+    storage = require_storage()
 
     # Map content type if provided
     content_type = None
@@ -2082,12 +2045,10 @@ async def get_gog_status() -> dict[str, Any]:
     Returns:
         Status of GOG integration (enabled, connected, auth_url).
     """
-    config = get_config()
-    if not config:
-        raise HTTPException(status_code=500, detail="Config not initialized")
+    config = require_config()
+    storage = require_storage()
 
     enabled = is_gog_enabled(config)
-    storage = get_storage()
     connected = has_gog_token(config, storage=storage)
 
     return {
@@ -2110,14 +2071,8 @@ async def exchange_gog_token(request: GogExchangeRequest) -> dict[str, Any]:
     Returns:
         Success message. The token is never included in the HTTP response.
     """
-    config = get_config()
-    storage = get_storage()
-
-    if not config:
-        raise HTTPException(status_code=500, detail="Config not initialized")
-
-    if not storage:
-        raise HTTPException(status_code=500, detail="Storage not initialized")
+    config = require_config()
+    storage = require_storage()
 
     if not is_gog_enabled(config):
         raise HTTPException(
@@ -2160,9 +2115,7 @@ async def disconnect_gog(user_id: int = Query(1, ge=1)) -> dict[str, Any]:
 
     Mirrors the CLI `auth disconnect --source gog` command.
     """
-    storage = get_storage()
-    if not storage:
-        raise HTTPException(status_code=500, detail="Storage not initialized")
+    storage = require_storage()
 
     deleted = storage.delete_credential(user_id, "gog", "refresh_token")
     if not deleted:
@@ -2183,12 +2136,10 @@ async def get_epic_status() -> dict[str, Any]:
     Returns:
         Status of Epic Games integration (enabled, connected, auth_url).
     """
-    config = get_config()
-    if not config:
-        raise HTTPException(status_code=500, detail="Config not initialized")
+    config = require_config()
+    storage = require_storage()
 
     enabled = is_epic_enabled(config)
-    storage = get_storage()
     connected = has_epic_token(config, storage=storage)
 
     auth_url: str | None = None
@@ -2218,14 +2169,8 @@ async def exchange_epic_token(request: EpicExchangeRequest) -> dict[str, Any]:
     Returns:
         Success message. The token is never included in the HTTP response.
     """
-    config = get_config()
-    storage = get_storage()
-
-    if not config:
-        raise HTTPException(status_code=500, detail="Config not initialized")
-
-    if not storage:
-        raise HTTPException(status_code=500, detail="Storage not initialized")
+    config = require_config()
+    storage = require_storage()
 
     if not is_epic_enabled(config):
         raise HTTPException(
@@ -2269,9 +2214,7 @@ async def disconnect_epic(user_id: int = Query(1, ge=1)) -> dict[str, Any]:
 
     Mirrors the CLI `auth disconnect --source epic` command.
     """
-    storage = get_storage()
-    if not storage:
-        raise HTTPException(status_code=500, detail="Storage not initialized")
+    storage = require_storage()
 
     deleted = storage.delete_credential(user_id, "epic_games", "refresh_token")
     if not deleted:
@@ -2303,11 +2246,8 @@ async def get_trakt_status(user_id: int = Query(1, ge=1)) -> dict[str, Any]:
     is stored AND the source is enabled — a source whose client credentials
     can no longer resolve is not usable, so it is never reported connected.
     """
-    config = get_config()
-    if not config:
-        raise HTTPException(status_code=500, detail="Config not initialized")
-
-    storage = get_storage()
+    config = require_config()
+    storage = require_storage()
 
     enabled = True
     try:
@@ -2334,13 +2274,8 @@ async def start_trakt_device_flow(user_id: int = Query(1, ge=1)) -> dict[str, An
     bounded by the short device-code expiry and a server-side session mapping
     is intentionally not used here.
     """
-    config = get_config()
-    storage = get_storage()
-
-    if not config:
-        raise HTTPException(status_code=500, detail="Config not initialized")
-    if not storage:
-        raise HTTPException(status_code=500, detail="Storage not initialized")
+    config = require_config()
+    storage = require_storage()
 
     try:
         client_id, _ = resolve_trakt_client_credentials(
@@ -2373,13 +2308,8 @@ async def poll_trakt_device_approval(
     otherwise the current poll ``status`` is returned. This handler performs a
     single poll and never blocks on a server-side loop.
     """
-    config = get_config()
-    storage = get_storage()
-
-    if not config:
-        raise HTTPException(status_code=500, detail="Config not initialized")
-    if not storage:
-        raise HTTPException(status_code=500, detail="Storage not initialized")
+    config = require_config()
+    storage = require_storage()
 
     try:
         client_id, client_secret = resolve_trakt_client_credentials(
@@ -2430,9 +2360,7 @@ async def disconnect_trakt(user_id: int = Query(1, ge=1)) -> dict[str, Any]:
 
     Mirrors the CLI `auth disconnect --source trakt` command.
     """
-    storage = get_storage()
-    if not storage:
-        raise HTTPException(status_code=500, detail="Storage not initialized")
+    storage = require_storage()
 
     deleted = storage.delete_credential(user_id, "trakt", "refresh_token")
     if not deleted:
