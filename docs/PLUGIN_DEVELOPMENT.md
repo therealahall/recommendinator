@@ -422,7 +422,8 @@ inside `execute_multi_source_sync`.
 - **Per-source rate limiting is yours.** Sleep or token-bucket inside `fetch()`.
   The framework adds cross-source parallelism, not intra-source pacing.
 - **Storage writes are already serialised.** `StorageManager` locks around
-  `save_content_item`, `complete_content_item` and `save_credential`.
+  `save_content_item`, `complete_content_item`, `save_credential` and
+  `merge_user_preference_config`.
 - **`progress_callback` is called from the worker thread**, and is thread-safe.
 
 Stateless plugins need no changes for parallel sync.
