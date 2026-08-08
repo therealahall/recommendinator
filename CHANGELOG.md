@@ -1,6 +1,97 @@
 # CHANGELOG
 
 
+## v0.26.1 (2026-08-08)
+
+### Bug Fixes
+
+- **recommendations**: Tire of a genre you finished, even unrated
+  ([`5f7e620`](https://github.com/therealahall/recommendinator/commit/5f7e620a3e1e2b0f859c8f4c4cd0c2d2fcdd8514))
+
+### Documentation
+
+- Name both facts that outlive a rating
+  ([`8766761`](https://github.com/therealahall/recommendinator/commit/8766761a50e24df275d7439e536f4ab8e9a93492))
+
+### Testing
+
+- **recommendations**: Cover the paths the widening opened
+  ([`6e395d2`](https://github.com/therealahall/recommendinator/commit/6e395d2f79c6a6d3b7467137aae95ce980741d96))
+
+- **storage**: Pin the two item sets apart
+  ([`b1199bb`](https://github.com/therealahall/recommendinator/commit/b1199bb0193388cc20ff994b0e939f01843f2adf))
+
+
+## v0.26.0 (2026-08-07)
+
+### Bug Fixes
+
+- **llm**: Recognise a creator whose name ends in punctuation
+  ([`2a41c02`](https://github.com/therealahall/recommendinator/commit/2a41c02dd9f777528370fb9cbadf5cf5bfa05ded))
+
+- **recommendations**: Apply settings changes without a restart
+  ([`e789231`](https://github.com/therealahall/recommendinator/commit/e7892310057efdf9f3f3a980bbcab64f6ac882da))
+
+- **recommendations**: Keep preference scores inside [-1, 1]
+  ([`3951e27`](https://github.com/therealahall/recommendinator/commit/3951e271d8a43d4069c8f86e527540a866d957c1))
+
+- **recommendations**: Key candidates by their library row, not a nullable id
+  ([`91720cc`](https://github.com/therealahall/recommendinator/commit/91720cc8f719ee169abd0d6173c61375c6c86dfc))
+
+- **recommendations**: Make the score shown the score explained
+  ([`195e2ab`](https://github.com/therealahall/recommendinator/commit/195e2ab17de05d77008f323d216375a787b99d33))
+
+- **recommendations**: Read game length from RAWG, not from your playtime
+  ([`cfb2754`](https://github.com/therealahall/recommendinator/commit/cfb2754de73ed936d8b4bf83010e108f2cb5919e))
+
+- **recommendations**: Score an up-next novella as next, not as read
+  ([`65db211`](https://github.com/therealahall/recommendinator/commit/65db211847e7ebbc24886f7bc3dbc7fe529eddc1))
+
+- **recommendations**: Stop trusting isdigit to mean int will work
+  ([`583c933`](https://github.com/therealahall/recommendinator/commit/583c93303e049a8b49674381f242a644aac8afd9))
+
+- **settings**: Give a request one configuration, not two or three
+  ([`2e7fd72`](https://github.com/therealahall/recommendinator/commit/2e7fd7293a3912a3d01f741c5235bf9c67574ee6))
+
+- **settings**: Stop mutating the running config under a live reader
+  ([`cfebb7e`](https://github.com/therealahall/recommendinator/commit/cfebb7ec9e1fa86b7e7392a2a08d00370bc9e773))
+
+### Documentation
+
+- Correct four claims the last three commits outran
+  ([`c498bc0`](https://github.com/therealahall/recommendinator/commit/c498bc07580bdf9cee6b57a53b4bfa9d84346efa))
+
+### Performance Improvements
+
+- **recommendations**: Index the signal set once instead of scanning it per candidate
+  ([`b96d3a2`](https://github.com/therealahall/recommendinator/commit/b96d3a2aeb267e7e9bdd439cd3b8bba377c7cfe1))
+
+- **recommendations**: Resolve references only for what is emitted
+  ([`2e2586f`](https://github.com/therealahall/recommendinator/commit/2e2586f7f0ef6390207508c9777cd9579a3bea38))
+
+### Refactoring
+
+- **recommendations**: Give the emitted record a real type
+  ([`89d42ea`](https://github.com/therealahall/recommendinator/commit/89d42ea380a80ccaa6095e98c39ae0cc0b74bd40))
+
+- **recommendations**: Name the variety set honestly and seed the shuffle
+  ([`42c129e`](https://github.com/therealahall/recommendinator/commit/42c129e1bc699c93f7a388c9d2c6e1c04e419965))
+
+### Testing
+
+- **recommendations**: Cover the LLM-only path, type exclusions and creators
+  ([`e833f8a`](https://github.com/therealahall/recommendinator/commit/e833f8abfecf2e0edb3c6a52b5290a3ed0c01c44))
+
+- **recommendations**: Fix three tests that had stopped proving anything
+  ([`4cc97f9`](https://github.com/therealahall/recommendinator/commit/4cc97f920049b2ce1c3777db742092432f0fe1b5))
+
+- **recommendations**: Pin today's ranking before the collapse
+  ([`9113d8f`](https://github.com/therealahall/recommendinator/commit/9113d8fb602bfbe85489f83e54125a3b33dde22b))
+
+- **settings**: Pin the guarantee the batched publish exists for
+  ([`f6f2c66`](https://github.com/therealahall/recommendinator/commit/f6f2c66a8820d4a93d65abcc5a10a4bd021e0356))
+
+
 ## v0.25.2 (2026-08-07)
 
 ### Chores

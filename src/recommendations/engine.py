@@ -333,7 +333,6 @@ class RecommendationEngine:
         consumed_items_of_type = self.storage.get_completed_items(
             content_type=content_type, min_rating=None
         )
-        signal_items_of_type = self.storage.get_signal_items(content_type=content_type)
 
         if not all_consumed_items:
             logger.warning(
@@ -491,16 +490,25 @@ class RecommendationEngine:
         # user has set a non-zero variety_penalty.  This multiplicatively
         # demotes candidates whose genre cluster the user recently finished,
         # so the next entry in a just-completed genre/series no longer
-        # automatically tops the list.  The ladder is built from signal items
-        # of the *same* content type, so finishing a fantasy book does not
-        # suppress fantasy movies or games — each type varies independently.
+        # automatically tops the list.  The ladder is built from what the user
+        # consumed of the *same* content type, so finishing a fantasy book does
+        # not suppress fantasy movies or games — each type varies
+        # independently, and the ladder narrows that set to completion events
+        # itself.  Its item set is neither of the ones fetched above: finishing
+        # something causes fatigue whether or not the user rated it, but an
+        # ignored item is a request for less of that, not evidence of having
+        # had enough.  Fetched inside the branch because variety_penalty
+        # defaults to zero and the scan would otherwise be thrown away.
         if (
             user_preference_config is not None
             and user_preference_config.variety_penalty > 0.0
         ):
+            unignored_consumption_of_type = self.storage.get_consumption_items(
+                content_type=content_type
+            )
             ranked_items = self._apply_variety_penalty(
                 ranked_items,
-                signal_items_of_type,
+                unignored_consumption_of_type,
                 series_tracking,
                 unconsumed_items,
                 top_penalty=top_penalty_for_preference(
@@ -785,7 +793,7 @@ class RecommendationEngine:
     @staticmethod
     def _apply_variety_penalty(
         ranked_items: list[_RankedCandidate],
-        signal_items_of_type: list[ContentItem],
+        unignored_consumption_of_type: list[ContentItem],
         series_tracking: dict[str, set[float]],
         unconsumed_items: list[ContentItem],
         *,
@@ -793,7 +801,7 @@ class RecommendationEngine:
     ) -> list[_RankedCandidate]:
         """Apply the stepped genre-fatigue penalty and re-sort (issue #74).
 
-        Builds a cluster -> penalty ladder from the user's taste-signal items
+        Builds a cluster -> penalty ladder from the user's completions
         *of the content type being recommended*, then multiplies each
         candidate's score by ``1 - penalty`` where the penalty is the strongest
         among the candidate's recently finished genre clusters.  Scoping the
@@ -810,9 +818,10 @@ class RecommendationEngine:
 
         Args:
             ranked_items: Ranked candidates, best first.
-            signal_items_of_type: Taste-signal items (completed, rated, not
-                ignored) of the recommended content type, used to build the
-                ladder.  Only completion events among them claim a rung.
+            unignored_consumption_of_type: What the user has consumed or is
+                consuming (not ignored, rated or not) of the recommended
+                content type, used to build the ladder. Only completion events
+                among them claim a rung.
             series_tracking: Series name -> consumed item numbers, used to
                 detect active series continuations.
             unconsumed_items: Candidate items, used for series ordering checks.
@@ -823,7 +832,9 @@ class RecommendationEngine:
             Re-sorted candidates carrying the penalty they took.  Returns the
             input unchanged when the ladder is empty.
         """
-        ladder = build_variety_ladder(signal_items_of_type, top_penalty=top_penalty)
+        ladder = build_variety_ladder(
+            unignored_consumption_of_type, top_penalty=top_penalty
+        )
         if not ladder:
             return ranked_items
 

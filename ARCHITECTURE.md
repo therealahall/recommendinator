@@ -323,7 +323,10 @@ Invariants:
   json` and `GET /api/recommendations` one document.
 - The taste signal is completed items that are **rated** and **not ignored**,
   across all content types. Nothing else shapes preferences, scoring, similarity
-  or explanations.
+  or explanations. Two consumption facts sit outside it and are answered from
+  wider sets: series ordering, from the full completed set, and the variety
+  penalty below, which multiplies the final score rather than contributing to
+  it.
 - Ignored items are filtered from the candidate pool at fetch time, as they are
   from the signal set. Consumed items are excluded too.
 - Series filtering with substitution (`series_in_order`) replaces a candidate
@@ -331,14 +334,16 @@ Invariants:
   scored on its own merits, once per series.
 - The variety penalty multiplies a candidate's final score by `1 - penalty`,
   taking the strongest penalty among its recently finished genre clusters. The
-  ladder is built from the taste-signal items **of the recommended content
-  type**, so an unrated or ignored completion claims no rung. Its top rung is
-  the user's `variety_penalty` over the `5.0` maximum, clamped into `[0, 1]` by
+  ladder is built from the completions **of the recommended content type**
+  (`get_consumption_items`: everything consumed or in progress that is not
+  ignored, rated or not, which the ladder then narrows to completion events),
+  because finishing something tires you of its genre whether or not you rated
+  it. An ignored completion claims no rung. Its top rung is the user's
+  `variety_penalty` over the `5.0` maximum, clamped into `[0, 1]` by
   `top_penalty_for_preference` so no candidate is penalised past zero. A
   finished season of an ongoing show counts as a completion, dated by that
-  season's watch timestamp.
-  An active series continuation takes 60% of the penalty
-  (`is_active_series_continuation`). See
+  season's watch timestamp. An active series continuation takes 60% of the
+  penalty (`is_active_series_continuation`). See
   [SCORING.md](docs/SCORING.md#variety-after-completion).
 
 **Cross-content-type matching works without AI.** Semantic genre clusters

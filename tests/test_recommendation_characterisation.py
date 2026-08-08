@@ -565,9 +565,10 @@ SCORE_TOLERANCE = 1e-9
 def _library_storage(items: Sequence[ContentItem]) -> Mock:
     """Return a spec'd StorageManager serving *items* from memory.
 
-    Mirrors the three accessors the engine reads: completed items include
-    in-progress ones, signal items are the rated, non-ignored subset, and
-    unconsumed items are everything not yet completed.
+    Mirrors the four accessors the engine reads: completed items include
+    in-progress ones, consumption items are the non-ignored subset of those,
+    signal items narrow that to the rated ones, and unconsumed items are
+    everything not yet completed.
     """
 
     def completed(
@@ -590,6 +591,16 @@ def _library_storage(items: Sequence[ContentItem]) -> Mock:
         ]
         return matches[:limit] if limit is not None else matches
 
+    def consumption(
+        content_type: ContentType | None = None,
+        limit: int | None = None,
+    ) -> list[ContentItem]:
+        return completed(
+            content_type=content_type,
+            limit=limit,
+            include_ignored=False,
+        )
+
     def signal(
         content_type: ContentType | None = None,
         limit: int | None = None,
@@ -597,9 +608,7 @@ def _library_storage(items: Sequence[ContentItem]) -> Mock:
         return [
             item
             for item in completed(
-                content_type=content_type,
-                limit=limit,
-                include_ignored=False,
+                content_type=content_type, limit=limit, include_ignored=False
             )
             if item.rating is not None
         ]
@@ -621,6 +630,7 @@ def _library_storage(items: Sequence[ContentItem]) -> Mock:
 
     storage = Mock(spec=StorageManager)
     storage.get_completed_items = Mock(side_effect=completed)
+    storage.get_consumption_items = Mock(side_effect=consumption)
     storage.get_signal_items = Mock(side_effect=signal)
     storage.get_unconsumed_items = Mock(side_effect=unconsumed)
     return storage
@@ -1210,7 +1220,7 @@ class TestBaselineStability:
     def test_no_storage_call_is_answered_by_the_mock(self, engine):
         """The baselines come from library data, never from a stub return value.
 
-        Only three accessors are modelled. A fourth storage read would be
+        Only four accessors are modelled. A fifth storage read would be
         answered by the spec'd mock with a Mock instance, and the baselines
         would quietly start characterising that instead.
         """
@@ -1220,9 +1230,32 @@ class TestBaselineStability:
         # swapping two independent ones is not a regression.
         assert Counter(call[0] for call in engine.storage.method_calls) == Counter(
             {
-                "get_signal_items": 2,
+                "get_signal_items": 1,
                 "get_completed_items": 1,
                 "get_unconsumed_items": 1,
+            }
+        )
+
+    def test_the_variety_feed_is_read_only_when_variety_is_on(self, engine):
+        """The default request does not pay for the ladder's item set.
+
+        ``variety_penalty`` defaults to zero, so the consumption fetch would be
+        an unbounded scan every request throws away. With the penalty on it is
+        read exactly once, alongside the same three reads the "off" case above
+        counts and nothing more.
+        """
+        engine.generate_recommendations(
+            content_type=ContentType.MOVIE,
+            count=20,
+            user_preference_config=UserPreferenceConfig(variety_penalty=2.0),
+        )
+
+        assert Counter(call[0] for call in engine.storage.method_calls) == Counter(
+            {
+                "get_signal_items": 1,
+                "get_completed_items": 1,
+                "get_unconsumed_items": 1,
+                "get_consumption_items": 1,
             }
         )
 
@@ -1296,7 +1329,12 @@ class TestFakeStorageMatchesReal:
 
     @pytest.mark.parametrize(
         "accessor",
-        ["get_completed_items", "get_signal_items", "get_unconsumed_items"],
+        [
+            "get_completed_items",
+            "get_consumption_items",
+            "get_signal_items",
+            "get_unconsumed_items",
+        ],
     )
     def test_fake_accessor_matches_the_real_parameters(self, accessor):
         """Every parameter the fake declares exists on StorageManager, same default.
