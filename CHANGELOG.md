@@ -1,6 +1,30 @@
 # CHANGELOG
 
 
+## v0.27.0 (2026-08-08)
+
+### Bug Fixes
+
+- **web**: Give one server state one answer
+  ([`6dc3493`](https://github.com/therealahall/recommendinator/commit/6dc349371f133d2e4ee7719f0ac20cdb63f33c6b))
+
+### Documentation
+
+- Say which reads are guarded and which are meant to fall back
+  ([`75097c9`](https://github.com/therealahall/recommendinator/commit/75097c98c6107e38aebeab8ac525ce30b8f8bf10))
+
+### Testing
+
+- **web**: Stop booting the real app during collection
+  ([`b9eadfa`](https://github.com/therealahall/recommendinator/commit/b9eadfa39c031d0ea45ba795cff42fe902537f1b))
+
+### Breaking Changes
+
+- **web**: Endpoints that reported an uninitialised component as 500, 404 or a 200 with an empty or
+  negative body now answer 503. A client checking for 500 should treat 503 as the transient case it
+  always was.
+
+
 ## v0.26.1 (2026-08-08)
 
 ### Bug Fixes
