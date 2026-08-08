@@ -474,6 +474,23 @@ SSE streams chat responses and recommendation blurbs. Internal network only.
 - The UI polls `GET /api/status` every 5 minutes and banners a newer server
   version.
 - Library export: `GET /api/items/export?type=book&format=csv`.
+- A component a handler **requires** answers **503**, never 500, with one
+  message per dependency: both routers guard through `src/web/guards.py`
+  (`require_storage`, `require_config`, `require_engine`, and the chat pair),
+  so one server state gets one status code and one message on every route. The
+  chat engine is the one component a running server is actually without, when
+  the LLM is disabled — `create_app` populates the others or raises, so their
+  guards hold that invariant.
+- A handler that does **not** require a component reads it through the
+  unguarded `get_*` accessors in `src/web/state.py` and falls back when it is
+  `None`, still answering 200: recommendations serve on the engine alone,
+  `POST /api/complete` falls back to the registered feature-flag defaults, and
+  `GET /api/status` guards none of the four it reads, because reporting which
+  are down is its job. In `tests/test_web_api.py`,
+  `TestUnguardedReadsAreOptional` pins the first two and
+  `TestDependencyGuards.test_status_reports_initializing_when_components_are_down`
+  pins the third, so a new handler picks one or the other: guard the read, or
+  make the fallback real.
 
 Dev server: Vite on `:5173` proxies `/api/*` and `/static/themes/*` to FastAPI on
 `:18473`. Ports, proxy target and HMR client settings default to those and take
