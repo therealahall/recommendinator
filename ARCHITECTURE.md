@@ -247,7 +247,11 @@ WAL mode, and `_get_connection` sets `PRAGMA busy_timeout = 5000` so concurrent
 writers block instead of raising `SQLITE_BUSY`. A per-`StorageManager`
 `threading.Lock` serialises the read-resolve-write dedup merge against the
 parallel sync executor. `StorageManager.save_content_item`,
-`complete_content_item` and `save_credential` all take it.
+`complete_content_item`, `save_credential` and
+`merge_user_preference_config` all take it — the last because
+`PUT /api/users/{id}/preferences` is a partial merge, and two of them at once
+would otherwise each write a `users.settings` blob read before the other
+landed, losing one wholesale.
 
 ### 3. LLM (`src/llm/`), optional
 
@@ -306,12 +310,12 @@ keeps the global. `min_rating_for_preference` and the counts have no per-user
 field. The engine asks for the running config once per request and resolves the
 weights, `min_rating_for_preference` and the custom-rule weight from that one
 read, so a Settings-page edit reaches the next set of recommendations without a
-restart. It asks rather than holds because scoring runs off the event loop
-(Starlette streams the synchronous SSE generator in a threadpool worker) while
-config writes run on it: a hot-reload binds a whole new config in one statement,
-and a save publishes all of its live-applied leaves as one swap per section. A
-request in flight therefore scores on the configuration it read at its start,
-whole, and a save landing mid-request reaches the next one instead.
+restart. It asks rather than holds because scoring and config writes run in
+different threadpool workers, so nothing keeps them apart in time: a hot-reload
+binds a whole new config in one statement, and a save publishes all of its
+live-applied leaves as one swap per section. A request in flight therefore
+scores on the configuration it read at its start, whole, and a save landing
+mid-request reaches the next one instead.
 
 Invariants:
 
@@ -474,13 +478,54 @@ SSE streams chat responses and recommendation blurbs. Internal network only.
 - The UI polls `GET /api/status` every 5 minutes and banners a newer server
   version.
 - Library export: `GET /api/items/export?type=book&format=csv`.
-- A component a handler **requires** answers **503**, never 500, with one
-  message per dependency: both routers guard through `src/web/guards.py`
-  (`require_storage`, `require_config`, `require_engine`, and the chat pair),
-  so one server state gets one status code and one message on every route. The
-  chat engine is the one component a running server is actually without, when
-  the LLM is disabled — `create_app` populates the others or raises, so their
-  guards hold that invariant.
+- A component a handler **requires** is a parameter of it, annotated with one
+  of the `Required*` aliases in `src/web/guards.py` (`RequiredStorage`,
+  `RequiredConfig`, `RequiredEngine`, and the chat pair). Absent, it answers
+  **503**, never 500, with one message per dependency, so one server state gets
+  one status code and one message on every route. Declaring it in the signature
+  rather than calling a guard in the body means it cannot be forgotten while
+  the handler still compiles, FastAPI caches it so a handler and its own
+  dependencies acquire it once, and it resolves **before** request validation —
+  an invalid request to an endpoint whose component is down answers 503, not
+  422. The chat engine is the one component a running server is actually
+  without, when the LLM is disabled — `create_app` populates the others or
+  raises, so their guards hold that invariant.
+- Every `/api` handler is plain `def`, so Starlette runs all of them in a
+  threadpool: they do blocking SQLite, scoring and outbound OAuth work with
+  nothing to await, and on the event loop one of them stalled every other
+  request for its whole duration. That threadpool is anyio's, capped at **40
+  tokens**, and a streaming endpoint holds a token for the duration of each
+  generator step — so roughly 40 concurrent long streams is where the API stops
+  answering, and it is the first thing to check when it does. The config
+  watcher is not a handler and hands its reload to a worker thread for the same
+  reason.
+- Writing the running config is serialised by one lock in `src/web/state.py`,
+  not by the event loop. Four paths write it — `PUT /api/settings`,
+  `DELETE /api/settings/{key}`, `POST /api/config/reload` and the config
+  watcher — and each is a read-copy-store, so a reload rebinding
+  `app_state.config` mid-save would leave the save publishing into a dict
+  nobody reads any more: database and running config disagreeing with no error
+  anywhere. The two writers reach the config through `writable_config()` rather
+  than their `RequiredConfig` dependency, because the binding has to be
+  resolved *inside* the lock — a dependency resolves and is released before the
+  handler body runs. `RequiredConfig` stays on those routes as the 503 guard.
+- The plugin and enrichment-provider registries publish under a module-level
+  lock too. Discovery used to clear and refill the live map, so a threadpool
+  worker reading mid-pass — or a second pass — left the registry flagged
+  discovered over a partial map for the life of the process: 404 for a source
+  that exists, and a sync of "all" reporting success having skipped it. A pass
+  now fills a map of its own and swaps it in. The scanning stays *outside* the
+  lock, because importing a module and constructing a plugin both run
+  third-party code from `private/plugins/`, and a plugin calling
+  `get_registry()` under the lock would hang the process with nothing logged.
+  The cost is that a re-entering plugin reads the pre-pass map, and that two
+  cold passes each do the work; both publish complete maps and the later swap
+  wins.
+- The lazily-built process singletons behind `/api/sync/*` and
+  `/api/enrichment/*` (`get_sync_manager`, `get_enrichment_manager`) build under
+  a module-level lock for the same reason: two threadpool requests on a cold
+  process would otherwise each get a manager of their own, and a job started
+  through one is invisible to the status endpoint reading the other.
 - A handler that does **not** require a component reads it through the
   unguarded `get_*` accessors in `src/web/state.py` and falls back when it is
   `None`, still answering 200: recommendations serve on the engine alone,
