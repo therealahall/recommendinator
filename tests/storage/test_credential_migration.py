@@ -6,8 +6,16 @@ from typing import Any
 
 import pytest
 
+from src.ingestion.registry import get_registry
 from src.storage.credential_migration import migrate_config_credentials
 from src.storage.manager import StorageManager
+from src.web.sync_sources import (
+    clear_source_secret_value,
+    create_source,
+    resolve_inputs,
+    set_source_secret_value,
+    update_source_config_values,
+)
 
 
 class TestMigrateConfigCredentials:
@@ -317,6 +325,95 @@ class TestMigrateConfigCredentials:
         # Row must still exist — never silently delete credentials
         assert storage.credential_row_exists(1, "gog", "refresh_token")
         assert "Cannot decrypt" in caplog.text
+
+    def test_a_migrated_source_is_never_re_seeded_from_the_file(
+        self, storage: StorageManager
+    ) -> None:
+        """Reported: the ``credential_bound`` clear undid itself on reload.
+
+        This sweep found no row, read the file and re-encrypted the api_key,
+        so the next sync handed it to the caller's host.
+        """
+        plugin = get_registry().get_plugin("sonarr")
+        assert plugin is not None
+        create_source(
+            "sonarr",
+            "sonarr",
+            {"url": "http://sonarr.internal:8989"},
+            storage,
+        )
+        set_source_secret_value("sonarr", plugin, storage, "api_key", "issued-secret")
+
+        update_source_config_values(
+            "sonarr", plugin, storage, {"url": "http://attacker.example"}
+        )
+        config = {
+            "inputs": {
+                "sonarr": {
+                    "plugin": "sonarr",
+                    "enabled": True,
+                    "api_key": "issued-secret",
+                }
+            }
+        }
+        migrate_config_credentials(config, storage)
+
+        resolved = resolve_inputs(config, storage=storage)
+        assert not any(entry.config.get("api_key") for entry in resolved)
+        assert storage.get_credential(1, "sonarr", "api_key") is None
+        assert "api_key" not in config["inputs"]["sonarr"]
+
+    def test_a_revoked_secret_is_not_resurrected_by_the_next_reload(
+        self, storage: StorageManager
+    ) -> None:
+        """The sibling instance: ``DELETE .../secret/{key}`` was as short-lived.
+
+        Nothing repoints the source here, so only the missing-row branch can
+        restore the value.
+        """
+        plugin = get_registry().get_plugin("sonarr")
+        assert plugin is not None
+        create_source("sonarr", "sonarr", {"url": "http://sonarr.internal"}, storage)
+        set_source_secret_value("sonarr", plugin, storage, "api_key", "issued-secret")
+        clear_source_secret_value("sonarr", plugin, storage, "api_key")
+
+        config = {
+            "inputs": {
+                "sonarr": {
+                    "plugin": "sonarr",
+                    "enabled": True,
+                    "api_key": "issued-secret",
+                }
+            }
+        }
+        migrate_config_credentials(config, storage)
+
+        assert storage.get_credential(1, "sonarr", "api_key") is None
+
+    def test_a_file_secret_a_migrated_source_ignores_is_named_in_the_warning(
+        self, storage: StorageManager, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Discarding it silently would read to the operator as it being used."""
+        create_source("sonarr", "sonarr", {"url": "http://sonarr.internal"}, storage)
+        config = {
+            "inputs": {
+                "sonarr": {
+                    "plugin": "sonarr",
+                    "enabled": True,
+                    "api_key": "file-only-secret",
+                }
+            }
+        }
+
+        with caplog.at_level(
+            logging.WARNING, logger="src.storage.credential_migration"
+        ):
+            migrate_config_credentials(config, storage)
+
+        deprecations = [m for m in caplog.messages if "DEPRECATED" in m]
+        assert len(deprecations) == 1
+        assert "'sonarr.api_key'" in deprecations[0]
+        assert all("file-only-secret" not in message for message in caplog.messages)
 
     def test_multiple_sources_migrated(self, storage: StorageManager) -> None:
         """Multiple sources with sensitive fields are all migrated."""

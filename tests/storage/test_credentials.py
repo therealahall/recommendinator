@@ -8,6 +8,7 @@ import pytest
 from src.storage.manager import StorageManager
 from src.storage.schema import (
     create_schema,
+    delete_credentials_for_source,
     get_credential,
     get_credentials_for_source,
     save_credential,
@@ -82,6 +83,24 @@ class TestCredentialCRUD:
         save_credential(conn, 2, "gog", "refresh_token", "user2_token")
 
         assert get_credential(conn, 1, "gog", "refresh_token") == "user1_token"
+        assert get_credential(conn, 2, "gog", "refresh_token") == "user2_token"
+
+    def test_deleting_a_sources_credentials_spares_the_other_users(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """Every other case here uses user 1, so dropping the ``user_id``
+        half of that ``DELETE`` — or swapping its ``AND`` for an ``OR`` —
+        stayed green while it cleared everybody's row for the source.
+        """
+        conn.cursor().execute("INSERT INTO users (id, username) VALUES (2, 'user2')")
+        conn.commit()
+        save_credential(conn, 1, "gog", "refresh_token", "user1_token")
+        save_credential(conn, 2, "gog", "refresh_token", "user2_token")
+
+        deleted = delete_credentials_for_source(conn, 1, "gog")
+
+        assert deleted == 1
+        assert get_credential(conn, 1, "gog", "refresh_token") is None
         assert get_credential(conn, 2, "gog", "refresh_token") == "user2_token"
 
 

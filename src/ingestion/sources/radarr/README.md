@@ -26,6 +26,10 @@ python3.11 -m src.cli source set-secret radarr api_key
 | `url` | str | yes | Radarr base URL (no trailing slash). |
 | `api_key` | str | yes (sensitive) | Radarr API key. |
 
+**Changing `url` clears the stored API key**, so it cannot be sent to a host it
+was never issued for. Re-run `source set-secret` after moving Radarr. The URL
+must be `http` or `https`, name a host, and not embed `user:password@`.
+
 ## Notes
 - Items are imported as `unread` (Radarr tracks downloads, not consumption).
 - Movies inside Radarr collections are tagged so the recommender can group them.

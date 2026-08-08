@@ -15,6 +15,7 @@ from src.ingestion.sources.calibre_web.calibre_web import (
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.manager import StorageManager
 from src.storage.sqlite_db import SQLiteDB
+from src.web.sync_sources import resolve_inputs, update_source_config_values
 
 _FEED_HEADER = (
     '<feed xmlns="http://www.w3.org/2005/Atom" '
@@ -1092,3 +1093,126 @@ class TestCalibreWebRegression:
         assert "'url' is required" in errors
         assert "'username' is required" in errors
         assert "'password' is required" in errors
+
+
+class TestCalibreWebCredentialExfiltrationRegression:
+    """Regression: rewriting ``url`` sent the stored password to the new host.
+
+    Bug: one PUT repointed the source and disabled TLS checks, both being
+    non-sensitive. Fix: both are ``credential_bound``, so changing either
+    clears the secret.
+    """
+
+    @pytest.fixture()
+    def storage(self, tmp_path: Path) -> StorageManager:
+        return StorageManager(sqlite_path=tmp_path / "calibre.db")
+
+    @pytest.fixture()
+    def migrated(self, storage: StorageManager) -> StorageManager:
+        storage.upsert_source_config(
+            1,
+            "calibre_web",
+            "calibre_web",
+            {"url": "http://localhost:8083", "username": "reader", "verify_ssl": True},
+            enabled=True,
+        )
+        storage.save_credential(1, "calibre_web", "password", "hunter2")
+        return storage
+
+    def _resolved(self, storage: StorageManager) -> dict[str, object]:
+        entries = resolve_inputs({}, storage=storage)
+        assert [entry.source_id for entry in entries] == ["calibre_web"]
+        return entries[0].config
+
+    def test_the_password_resolves_before_the_rewrite(
+        self, migrated: StorageManager
+    ) -> None:
+        """The arrange half: without it the exfiltration test proves nothing."""
+        assert self._resolved(migrated)["password"] == "hunter2"
+
+    def test_repointing_the_url_and_disabling_tls_drops_the_password(
+        self, plugin: CalibreWebPlugin, migrated: StorageManager
+    ) -> None:
+        update_source_config_values(
+            "calibre_web",
+            plugin,
+            migrated,
+            {"url": "https://attacker.example", "verify_ssl": False},
+        )
+
+        resolved = self._resolved(migrated)
+        assert resolved["password"] == ""
+        assert migrated.get_credential(1, "calibre_web", "password") is None
+        assert resolved["url"] == "https://attacker.example"
+        assert plugin.validate_config(resolved, storage=migrated) == [
+            "'password' is required"
+        ]
+
+    def test_disabling_tls_verification_alone_drops_the_password(
+        self, plugin: CalibreWebPlugin, migrated: StorageManager
+    ) -> None:
+        """The password was entrusted under a verified connection.
+
+        Leaving it would let an attacker with API access and a network position
+        intercept it without touching the url at all.
+        """
+        update_source_config_values(
+            "calibre_web", plugin, migrated, {"verify_ssl": False}
+        )
+
+        assert migrated.get_credential(1, "calibre_web", "password") is None
+
+    def test_an_unrelated_field_leaves_the_password_alone(
+        self, plugin: CalibreWebPlugin, migrated: StorageManager
+    ) -> None:
+        update_source_config_values(
+            "calibre_web", plugin, migrated, {"username": "someone-else"}
+        )
+
+        assert self._resolved(migrated)["password"] == "hunter2"
+
+    def test_rewriting_the_url_to_the_same_value_leaves_the_password_alone(
+        self, plugin: CalibreWebPlugin, migrated: StorageManager
+    ) -> None:
+        update_source_config_values(
+            "calibre_web", plugin, migrated, {"url": "http://localhost:8083"}
+        )
+
+        assert self._resolved(migrated)["password"] == "hunter2"
+
+
+class TestCalibreWebUrlValidation:
+    """A base URL that would read local files or carry the password inline."""
+
+    @pytest.mark.parametrize(
+        ("url", "expected"),
+        [
+            ("file:///etc/passwd", "'url' must start with http:// or https://"),
+            ("ftp://host/books", "'url' must start with http:// or https://"),
+            ("http:///books", "'url' must name a host"),
+            (
+                "http://user:pw@attacker.example",
+                "'url' must not embed a username or password",
+            ),
+        ],
+    )
+    def test_validate_rejects_an_unusable_url(
+        self, plugin: CalibreWebPlugin, url: str, expected: str
+    ) -> None:
+        errors = plugin.validate_config({"url": url, "username": "u", "password": "p"})
+        assert errors == [expected]
+
+    def test_fetch_refuses_before_any_request(self, plugin: CalibreWebPlugin) -> None:
+        """A sync of every source never calls validate_config."""
+        with patch("requests.get") as get:
+            with pytest.raises(SourceError, match="http:// or https://"):
+                list(
+                    plugin.fetch(
+                        {
+                            "url": "file:///etc/passwd",
+                            "username": "u",
+                            "password": "p",
+                        }
+                    )
+                )
+        get.assert_not_called()

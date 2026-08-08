@@ -5,12 +5,32 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from src.ingestion.plugin_base import SourcePlugin
 from src.ingestion.registry import get_registry
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
 
 logger = logging.getLogger(__name__)
+
+
+def _discard_file_secrets(
+    entry: dict[str, Any], plugin: SourcePlugin, source_id: str
+) -> None:
+    """Drop *entry*'s plaintext secrets without writing any of them back."""
+    for field in plugin.get_config_schema():
+        if not field.sensitive:
+            continue
+        if entry.pop(field.name, None):
+            logger.warning(
+                "DEPRECATED: '%s.%s' is set in config.yaml and is IGNORED — "
+                "this source is managed in the database. Change it with "
+                "'source set-secret %s %s', then delete it from config.yaml.",
+                source_id,
+                field.name,
+                source_id,
+                field.name,
+            )
 
 
 def migrate_config_credentials(
@@ -27,6 +47,13 @@ def migrate_config_credentials(
     Also purges stale credentials that exist in the DB but can't be
     decrypted (e.g., after an encryption key change), then re-encrypts
     from the config value if available.
+
+    **A source with a ``source_configs`` row is skipped**, its file-held
+    secrets discarded rather than read. Otherwise repointing a
+    ``credential_bound`` field — which clears the source's credentials — would
+    be undone by the next reload re-seeding them from the file, handing the
+    secret to whatever host the caller named. Deleting one through
+    ``DELETE /api/sync/sources/{id}/secret/{key}`` was as short-lived.
 
     Reading secrets from ``config.yaml`` is a **deprecated** legacy path kept so
     existing installs keep working: a ``sensitive=True`` field found in the file
@@ -64,6 +91,10 @@ def migrate_config_credentials(
 
         plugin = registry.get_plugin(plugin_name)
         if plugin is None:
+            continue
+
+        if storage.get_source_config(user_id, source_id) is not None:
+            _discard_file_secrets(entry, plugin, source_id)
             continue
 
         for field in plugin.get_config_schema():

@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypeGuard
 
 from src.ingestion.plugin_base import SourcePlugin
 from src.ingestion.registry import get_registry
+from src.models.config_field import ConfigField
 from src.utils.text import humanize_source_id
 
 if TYPE_CHECKING:
@@ -30,6 +31,7 @@ SourceConfigErrorKind = Literal[
     "not_found",
     "not_migrated",
     "invalid_field",
+    "invalid_values",
     "not_sensitive",
     "sensitive_in_config",
     "conflict",
@@ -153,28 +155,46 @@ def resolve_inputs(
             )
             continue
 
-        plugin_config = dict(raw_fields)
-        plugin_config["_source_id"] = source_id
-
-        # Apply plugin-specific config transformation
-        transformed = type(plugin).transform_config(plugin_config)
-
-        # Merge DB credentials (override config-file values for sensitive fields)
-        if storage is not None:
-            db_creds = storage.get_credentials_for_source(user_id, source_id)
-            for cred_key, cred_value in db_creds.items():
-                if cred_value:
-                    transformed[cred_key] = cred_value
-
         resolved.append(
             ResolvedInput(
                 source_id=source_id,
                 plugin=plugin,
-                config=transformed,
+                config=assemble_plugin_config(
+                    source_id, plugin, raw_fields, storage, user_id
+                ),
             )
         )
 
     return resolved
+
+
+def _plugin_config_without_credentials(
+    source_id: str, plugin: SourcePlugin, fields: dict[str, Any]
+) -> dict[str, Any]:
+    """The plugin's own view of *fields*, with no stored secret layered on."""
+    return type(plugin).transform_config({**fields, "_source_id": source_id})
+
+
+def assemble_plugin_config(
+    source_id: str,
+    plugin: SourcePlugin,
+    fields: dict[str, Any],
+    storage: StorageManager | None,
+    user_id: int = 1,
+) -> dict[str, Any]:
+    """Build the config a sync validates and then fetches with.
+
+    Stored credentials go on last, overriding the field values, so validation
+    judges the config the sync would really run.
+    """
+    assembled = _plugin_config_without_credentials(source_id, plugin, fields)
+    if storage is not None:
+        for key, value in storage.get_credentials_for_source(
+            user_id, source_id
+        ).items():
+            if value:
+                assembled[key] = value
+    return assembled
 
 
 def get_available_sync_sources(
@@ -301,6 +321,7 @@ class SourceConfigError(Exception):
     * ``not_found``       — source or field does not exist (404)
     * ``not_migrated``    — operation requires the source to be migrated (404)
     * ``invalid_field``   — payload references an unknown field (400)
+    * ``invalid_values``  — the plugin refused the values written (400)
     * ``not_sensitive``   — secret operation targeted a non-sensitive field (400)
     * ``sensitive_in_config`` — bulk update attempted to set a secret (400)
     * ``conflict``        — create attempted on an existing source id (409)
@@ -551,6 +572,59 @@ def migrate_source(
     }
 
 
+def _moves_credential_binding(
+    schema: dict[str, ConfigField],
+    stored: dict[str, Any],
+    values: dict[str, Any],
+) -> bool:
+    """True when *values* changes a field the stored credentials are bound to.
+
+    Compared verbatim, so a cosmetic rewrite counts too: over-clearing costs
+    one re-entry, under-clearing sends the secret somewhere new.
+    """
+    return any(
+        schema[key].credential_bound and value != stored.get(key)
+        for key, value in values.items()
+    )
+
+
+def _refuse_values_that_break_the_source(
+    source_id: str,
+    plugin: SourcePlugin,
+    storage: StorageManager,
+    before: dict[str, Any],
+    after: dict[str, Any],
+    user_id: int,
+) -> None:
+    """Raise ``invalid_values`` for a validation error *after* introduces.
+
+    Only what this write broke: a source whose secret is not entered yet is
+    incomplete by design, and refusing to edit one would deadlock it.
+    """
+    # Neither config carries the decrypted secrets: these messages reach the
+    # wire, and a plugin quoting a value it was handed would answer with one.
+    # ``storage`` still answers the is-it-stored question for the plugins
+    # that ask.
+    was = set(
+        plugin.validate_config(
+            _plugin_config_without_credentials(source_id, plugin, before),
+            storage=storage,
+            user_id=user_id,
+        )
+    )
+    introduced = [
+        error
+        for error in plugin.validate_config(
+            _plugin_config_without_credentials(source_id, plugin, after),
+            storage=storage,
+            user_id=user_id,
+        )
+        if error not in was
+    ]
+    if introduced:
+        raise SourceConfigError("invalid_values", " ".join(introduced))
+
+
 def update_source_config_values(
     source_id: str,
     plugin: SourcePlugin,
@@ -560,8 +634,12 @@ def update_source_config_values(
 ) -> None:
     """Apply non-sensitive field updates to a migrated source.
 
-    Raises ``SourceConfigError`` for missing migration, unknown fields, or
-    attempts to set a sensitive field through this path.
+    Moving a ``credential_bound`` field first clears the source's stored
+    credentials, so repointing one cannot make the next sync hand its secret
+    to the new host.
+
+    Raises ``SourceConfigError`` — ``not_migrated``, ``invalid_field``,
+    ``invalid_values``, ``sensitive_in_config``.
     """
     db_row = storage.get_source_config(user_id, source_id)
     if db_row is None:
@@ -582,6 +660,17 @@ def update_source_config_values(
             )
 
     new_config = {**db_row["config"], **values}
+    # Before the clear: validating afterwards would judge a config whose
+    # secret this call has just removed.
+    _refuse_values_that_break_the_source(
+        source_id, plugin, storage, db_row["config"], new_config, user_id
+    )
+
+    # Before the write, never after: a failure between the two must leave the
+    # secret gone rather than the source repointed with the secret intact.
+    if _moves_credential_binding(schema, db_row["config"], values):
+        storage.delete_credentials_for_source(user_id, source_id)
+
     storage.upsert_source_config(
         user_id, source_id, plugin.name, new_config, enabled=db_row["enabled"]
     )
@@ -718,6 +807,7 @@ def create_source(
         - ``conflict`` — the source_id is already in use
         - ``unknown_plugin`` — plugin_name is not registered
         - ``invalid_field`` — values has a key not in the plugin schema
+        - ``invalid_values`` — the plugin refused one of the values
         - ``sensitive_in_config`` — values has a sensitive-flagged field
     """
     if not _SOURCE_ID_RE.fullmatch(source_id):
@@ -755,6 +845,16 @@ def create_source(
                 "after creating the source",
             )
 
+    # Diffed against an empty config, so the fields left for the secret
+    # endpoint and a later edit are not required here — only the values this
+    # call actually names have to hold up.
+    _refuse_values_that_break_the_source(
+        source_id, plugin, storage, {}, dict(values), user_id
+    )
+
+    # A new source must not inherit a secret an older one left under this id:
+    # that secret would go to whatever host these values name.
+    storage.delete_credentials_for_source(user_id, source_id)
     storage.upsert_source_config(
         user_id, source_id, plugin.name, dict(values), enabled=enabled
     )
@@ -766,14 +866,12 @@ def delete_source(
     storage: StorageManager,
     user_id: int = 1,
 ) -> None:
-    """Remove a DB-backed source and any associated credentials.
+    """Remove a DB-backed source and every credential stored for it.
 
-    Mirrors ``DELETE /api/sync/sources/{id}``. Drops the row from
-    ``source_configs`` and clears every credential the plugin schema
-    declared as sensitive (so a re-created source starts clean).
+    Keyed by source id, not by the plugin's current schema: an unregistered
+    plugin or a no-longer-sensitive field must not leave a row behind.
 
-    Raises ``SourceConfigError("invalid_id", …)`` for a malformed source
-    id, or ``SourceConfigError("not_migrated", …)`` if no DB row exists.
+    Raises ``SourceConfigError`` — ``invalid_id`` or ``not_migrated``.
     """
     if not _SOURCE_ID_RE.fullmatch(source_id):
         raise SourceConfigError(
@@ -789,15 +887,5 @@ def delete_source(
             f"Source '{source_id}' is not migrated to the database",
         )
 
-    # Best-effort credential cleanup — clear every field the plugin
-    # marks as sensitive. If the plugin has been removed since
-    # migration, the row is still removed and stale credentials get
-    # left in place; user-facing impact is nil because resolve_inputs
-    # skips unknown plugins.
-    plugin = get_registry().get_plugin(db_row["plugin"])
-    if plugin is not None:
-        for field in plugin.get_config_schema():
-            if field.sensitive:
-                storage.delete_credential(user_id, source_id, field.name)
-
+    storage.delete_credentials_for_source(user_id, source_id)
     storage.delete_source_config(user_id, source_id)

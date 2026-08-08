@@ -125,6 +125,58 @@ class TestRadarrPluginValidation:
         assert any("url" in error for error in errors)
 
 
+class TestRadarrUrlValidation:
+    """The url is rewritable over the API and the api key rides on every request."""
+
+    @pytest.mark.parametrize(
+        ("url", "expected"),
+        [
+            ("file:///etc/passwd", "'url' must start with http:// or https://"),
+            ("ftp://host", "'url' must start with http:// or https://"),
+            ("http:///movies", "'url' must name a host"),
+            (
+                "http://user:pw@attacker.example",
+                "'url' must not embed a username or password",
+            ),
+        ],
+    )
+    def test_validate_rejects_an_unusable_url(
+        self, plugin: RadarrPlugin, url: str, expected: str
+    ) -> None:
+        errors = plugin.validate_config({"url": url, "api_key": "abc123"})
+        assert errors == [expected]
+
+    @pytest.mark.parametrize(
+        "url", ["http://[foo]", "http://[1.2.3.4]", "http://sonarr]"]
+    )
+    def test_an_unparseable_netloc_is_reported_not_raised(
+        self, plugin: RadarrPlugin, url: str
+    ) -> None:
+        """``urlsplit`` raises ``ValueError`` on these.
+
+        The url is HTTP-writable, and ``_config_error_to_http`` catches
+        ``SourceConfigError`` alone, so one escaping here is a 500 carrying a
+        traceback. Same defect the settings validator had.
+        """
+        errors = plugin.validate_config({"url": url, "api_key": "abc123"})
+
+        assert errors == [f"'url' is not a valid URL: {url}"]
+
+    def test_fetch_refuses_before_any_request(self, plugin: RadarrPlugin) -> None:
+        """A sync of every source never calls validate_config."""
+        with patch("src.ingestion.sources.arr_base.requests.get") as get:
+            with pytest.raises(SourceError, match="http:// or https://"):
+                list(plugin.fetch({"url": "file:///etc/passwd", "api_key": "abc123"}))
+        get.assert_not_called()
+
+    def test_the_url_field_is_credential_bound(self, plugin: RadarrPlugin) -> None:
+        """Repointing it must clear the api key, not carry it to a new host."""
+        url_field = next(
+            field for field in plugin.get_config_schema() if field.name == "url"
+        )
+        assert url_field.credential_bound is True
+
+
 class TestRadarrPluginFetch:
     """Tests for RadarrPlugin fetch functionality."""
 
