@@ -47,14 +47,27 @@ Every field in a source's config schema is then editable inline or through
 `python3.11 -m src.cli source`. Run `source schema <id>` to see which fields a
 given plugin exposes.
 
-**Remove** drops a DB-backed source and clears the credentials its plugin
-currently declares sensitive. A secret is left behind when the plugin is no
-longer installed or the field is no longer marked sensitive. Remove deletes no
-library items, and the app cannot delete one at all, so the rows a removed
-source wrote stay put and a re-added source syncs straight back into them.
+**Remove** drops a DB-backed source and every credential stored under its id,
+whether or not its plugin is still installed. Remove deletes no library items,
+and the app cannot delete one at all, so the rows a removed source wrote stay
+put and a re-added source syncs straight back into them.
 
 Sensitive values are never returned by the API. The UI shows a "set" / "unset"
 badge with **Replace** and **Clear** actions.
+
+Two edits cost you a secret, on purpose. **Changing a source's `url`, or turning
+off Calibre-Web's `verify_ssl`, clears that source's stored credentials**: they
+were entrusted to one host over one kind of connection, and carrying them to
+another is how a rewritable URL becomes credential theft. Re-enter the secret
+after the move. The badge flips to "unset" in the same response, so the UI shows
+it immediately.
+
+**A file-based source may only read under `security.allowed_source_roots`**
+(`inputs/` unless `config.yaml` says otherwise). A path outside it fails
+validation with the key to add it to — a one-time `config.yaml` edit,
+deliberately not something the API can change.
+[SECURITY.md](SECURITY.md#where-file-imports-may-read) lists which plugins that
+covers.
 
 Full CLI reference: [CLI.md](CLI.md#source-management).
 

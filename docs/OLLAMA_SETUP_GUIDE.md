@@ -36,7 +36,13 @@ python3.11 -m src.cli settings set ollama.model qwen2.5:14b
 python3.11 -m src.cli settings set ollama.embedding_model nomic-embed-text
 ```
 
-The three feature flags only take effect after a restart.
+The three feature flags only take effect after a restart. The `ollama.*`
+settings reach the next call without one.
+
+`base_url` is accepted only for a host on your own machine or network — a
+loopback or private address, a single-label name such as `ollama`, or a
+`.local`/`.internal` name. A remote Ollama has to be set in `config.yaml`, and
+[SECURITY.md](SECURITY.md#network) says why that path is the harder one.
 
 ## Setup steps
 
