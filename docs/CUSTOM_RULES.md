@@ -16,6 +16,12 @@ python3.11 -m src.cli preferences custom-rules clear --yes
 In the web UI: **Preferences** tab, **Rules** section, **Custom rules**. Type
 the rule, click **Add Rule**, then **Save Preferences**.
 
+Both surfaces keep at most 50 rules of 500 characters each
+(`UserPreferenceConfig.MAX_CUSTOM_RULES` and
+`UserPreferenceConfig.MAX_CUSTOM_RULE_LENGTH`).
+Every rule is read back into the interpreter's prompt on each request, so the
+bound is prompt size as much as storage.
+
 ## Supported patterns
 
 | Kind | Phrasings |

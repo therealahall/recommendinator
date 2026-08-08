@@ -54,6 +54,11 @@ The Preferences page and the `preferences` CLI (see [CLI.md](CLI.md#preferences)
 set weights for one user. That map is **sparse**: it overrides only the keys you
 touch, and every other weight falls back to the global value.
 
+Both surfaces take only the eleven keys in the table above, and only finite
+numbers. Anything else is refused where it is written rather than stored: the
+engine ignores a weight it has no scorer for, so one saved would sit in your
+settings weighting nothing.
+
 ## Series filtering
 
 With **"Recommend series in order"** on, the default, a book 3 you cannot yet

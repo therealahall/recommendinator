@@ -120,6 +120,13 @@ Under Docker `host` and `port` are inert, because the image passes `--host` and
 different port with `APP_PORT` instead, and let the entrypoint mint the token.
 See [docs/DOCKER.md](docs/DOCKER.md).
 
+One optional third section belongs here rather than in the database:
+`security.allowed_source_roots` lists the directories a file-based source
+(CSV/JSON/Markdown import, ROM scan) may read, defaulting to `inputs/`. It is
+deliberately unreachable from the Settings API, because a caller who could widen
+it could make the server read any file. See
+[docs/SECURITY.md](docs/SECURITY.md#where-file-imports-may-read).
+
 Everything else lives in the database and is set from the app. Data sources come
 from the **Data** tab or the `source` CLI. Global settings, from AI toggles to
 scorer weights to logging, come from the **Settings** page or the `settings` CLI.

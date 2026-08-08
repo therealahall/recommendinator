@@ -69,10 +69,12 @@ for the patterns it names.
 4. **For test changes, read `tests/<area>/conftest.py` first.** Use its shared
    fixtures (`cli_runner`, `_invoke_with_mocks`, `_cli_patches`) rather than
    redefining one locally. The root `conftest.py` already redirects the credential
-   key, neutralises production logging and pins the timezone to UTC for every test
-   in every tree, plugin-local ones included, so no test arranges those itself. A
-   test needing another zone requests `host_timezone` and calls it. The zone is
-   restored either way.
+   key, neutralises production logging, pins the timezone to UTC and narrows the
+   file-import allowlist to the test's own `tmp_path`, for every test in every
+   tree, plugin-local ones included, so no test arranges those itself. A test
+   needing another zone requests `host_timezone` and calls it; one reading a
+   repository directory requests `allowed_source_roots` and adds that root. Both
+   are restored either way.
 
 ### Imports
 

@@ -41,6 +41,9 @@ python3.11 -m src.cli settings set conversation.llm.temperature 0.7
 python3.11 -m src.cli settings list --section conversation   # current values
 ```
 
+None of them need a restart: each chat turn reads the values in force when it
+starts, so a save lands on the next message.
+
 ### Compact mode (small models)
 
 On a 3B model such as `qwen2.5:3b`, compact mode cuts prompt size by 60-70%:
@@ -81,9 +84,11 @@ and `library edit` do.
 Chat is the only surface that can put a completion date on an item. The date you
 name is written exactly as given, **including one earlier than the date already
 stored**, which is how you fix a completion an import dated wrongly. It has to
-resolve to a real calendar day, and a completion that does not is refused and
-reported rather than stored as a guess. Everywhere else the date is decided for
-you, see [ARCHITECTURE.md](../ARCHITECTURE.md#user-owned-fields).
+resolve to a real calendar day that has happened — a date past tomorrow is
+refused and reported rather than stored, so no surface can park an item at the
+top of the [variety ladder](SCORING.md#variety-after-completion). Everywhere
+else the date is decided for you, see
+[ARCHITECTURE.md](../ARCHITECTURE.md#user-owned-fields).
 
 The system assembles context from your library, memories and preferences, sends
 it to the local LLM with your message, lets the LLM call tools (mark completed,

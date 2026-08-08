@@ -32,6 +32,13 @@ Parses and normalizes data from external sources.
   on its own thread (`sync.max_workers`, default 4) and results keep input
   order. Rate limits are per source, so cross-source parallelism is safe.
 - The web `SyncManager` aggregates progress callbacks into a `sources` map.
+- Source config is writable over HTTP, so two field kinds are constrained rather
+  than trusted. `paths.py` contains a file-based plugin's path inside
+  `security.allowed_source_roots` — a config.yaml key the settings API cannot
+  reach. `urls.py` checks a base URL's shape, and a `ConfigField` marked
+  `credential_bound` (a plugin's `url`, Calibre-Web's `verify_ssl`) clears the
+  source's stored secrets when it changes, so repointing a source never carries
+  its credential to the new host.
 
 ### 2. Storage (`src/storage/`)
 
@@ -104,7 +111,10 @@ column, and `complete --review`, `POST /api/complete` and
 `PATCH /api/items/{id}` all refuse one outright.
 
 **`date_completed` is never replaced silently.** A completion carrying no date
-fills an empty column with today and keeps an existing date.
+fills an empty column with today and keeps an existing date. A named date is
+written as given, but only as far ahead as `MAX_COMPLETION_DATE_SKEW` — one day,
+for a caller in a zone ahead of the server. Chat is the only surface that names
+one, and the check is at the door so no surface can skip it.
 `update_item_from_ui` stamps a date only on a transition *into* `completed` on an
 undated row, so an unrelated edit cannot date a years-old import as finished
 today. Dates are the host's local calendar day rather than UTC (`local_today`,
@@ -495,10 +505,18 @@ SSE streams chat responses and recommendation blurbs. Internal network only.
   nothing to await, and on the event loop one of them stalled every other
   request for its whole duration. That threadpool is anyio's, capped at **40
   tokens**, and a streaming endpoint holds a token for the duration of each
-  generator step — so roughly 40 concurrent long streams is where the API stops
+  generator step — so enough concurrent long streams is where the API stops
   answering, and it is the first thing to check when it does. The config
   watcher is not a handler and hands its reload to a worker thread for the same
   reason.
+- The two SSE endpoints (`GET /api/recommendations/stream` and `POST /api/chat`)
+  share one budget of `MAX_CONCURRENT_STREAMS` slots in
+  `src/web/stream_limit.py`, and answer **503** past it. The slot is taken in
+  the handler, before the response starts, and given back when the generator
+  finishes or the client disconnects. Without it a handful of forgotten tabs
+  spends the 40 tokens and `GET /api/status` stops answering too; with
+  authentication in front, the number is set for a stuck browser rather than a
+  hostile caller.
 - Writing the running config is serialised by one lock in `src/web/state.py`,
   not by the event loop. Four paths write it — `PUT /api/settings`,
   `DELETE /api/settings/{key}`, `POST /api/config/reload` and the config

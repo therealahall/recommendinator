@@ -132,6 +132,14 @@ curl -H "Authorization: Bearer $(yq '.web.api_token' config/config.yaml)" \
 
 A `401` means the token is wrong; the UI clears a rejected one and asks again.
 
+### `503 Too many streams in progress`
+
+Chat and recommendation streams share a budget of 8 concurrent streams, because
+each one holds a threadpool slot for as long as it runs and an uncapped set of
+them stops the server answering anything. Several tabs left open on a streaming
+view is the usual cause. Close the ones you are not watching and retry — a slot
+comes back as soon as a stream ends or its tab disconnects.
+
 ## CLI
 
 ### `No such command`
@@ -208,7 +216,9 @@ Turn AI off if you are not using it, and pre-pull the Ollama models.
 ### High memory use
 
 Ollama holds the model in memory. Pick a smaller one, or run it on another
-machine and point `ollama.base_url` there. See
+machine on your network and point `ollama.base_url` there — a host beyond your
+network is only settable in `config.yaml`, see
+[SECURITY.md](SECURITY.md#network). Models:
 [MODEL_RECOMMENDATIONS.md](MODEL_RECOMMENDATIONS.md).
 
 ## Still stuck
