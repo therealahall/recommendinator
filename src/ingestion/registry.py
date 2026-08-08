@@ -7,6 +7,7 @@ import inspect
 import logging
 import pkgutil
 import sys
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -16,6 +17,12 @@ if TYPE_CHECKING:
     from src.models.content import ContentType
 
 logger = logging.getLogger(__name__)
+
+# Serialises the singleton build and the publish ending a discovery pass.
+# Threadpool handlers hit a cold registry together, and rebuilding ``_plugins``
+# in place let one pass wipe the other's work, then flag the registry
+# discovered over a permanently partial map.
+_registry_lock = threading.Lock()
 
 
 class PluginRegistry:
@@ -60,9 +67,10 @@ class PluginRegistry:
         Returns:
             The global PluginRegistry instance
         """
-        if cls._instance is None:
-            cls._instance = PluginRegistry()
-        return cls._instance
+        with _registry_lock:
+            if cls._instance is None:
+                cls._instance = PluginRegistry()
+            return cls._instance
 
     @classmethod
     def reset_instance(cls) -> None:
@@ -76,26 +84,35 @@ class PluginRegistry:
         """Discover and register all available plugins.
 
         Scans built-in and private plugin directories for SourcePlugin
-        subclasses and registers them.
+        subclasses and registers them. A pass accumulates into a registry of its
+        own and swaps the finished map in, so ``self._plugins`` never holds a
+        half-built one.
+
+        The scan is deliberately not held under ``_registry_lock``: importing a
+        module and constructing a plugin both run arbitrary code from
+        ``private/plugins/``, and a plugin reaching back into ``get_registry()``
+        would block on a lock its own caller holds, wedging the process with no
+        exception to catch. Such a plugin now gets its registry back rather than
+        blocking. The cost is that two cold passes each do the work; both
+        publish a complete map and the later swap wins.
 
         Args:
             force: If True, re-discover even if already done
         """
-        if self._discovered and not force:
-            return
+        with _registry_lock:
+            if self._discovered and not force:
+                return
 
-        self._plugins.clear()
+        staging = PluginRegistry()
+        staging._discover_builtin_plugins()
+        staging._discover_private_plugins()
+        plugins = staging._plugins
 
-        # 1. Discover built-in plugins
-        self._discover_builtin_plugins()
+        with _registry_lock:
+            self._plugins = plugins
+            self._discovered = True
 
-        # 2. Discover private plugins (if directory exists)
-        self._discover_private_plugins()
-
-        self._discovered = True
-        logger.info(
-            "Discovered %d plugins: %s", len(self._plugins), list(self._plugins.keys())
-        )
+        logger.info("Discovered %d plugins: %s", len(plugins), list(plugins.keys()))
 
     def _discover_builtin_plugins(self) -> None:
         """Discover built-in plugins from src/ingestion/sources/."""

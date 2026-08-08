@@ -2,16 +2,19 @@
 
 import logging
 import pkgutil
+import threading
 import types
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
 from src.ingestion import sources
 from src.ingestion.plugin_base import ConfigField, SourcePlugin
-from src.ingestion.registry import PluginRegistry
+from src.ingestion.registry import PluginRegistry, _registry_lock, get_registry
 from src.ingestion.sources.arr_base import ArrPlugin
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 
@@ -358,6 +361,183 @@ class TestPluginRegistrySingleton:
 
         # Cleanup
         PluginRegistry.reset_instance()
+
+
+# Bounded so a thread nothing releases fails the test instead of hanging the
+# suite; nothing waits this long on the passing path.
+_STALL_TIMEOUT_SECONDS = 5.0
+
+# How long the second discovery is given to prove it cannot get in. Only spent
+# on the passing path.
+_BLOCKED_GRACE_SECONDS = 0.5
+
+
+class TestConcurrentDiscoveryRegression:
+    """A discovery pass must not be visible half-built.
+
+    Bug: ``discover_plugins`` cleared ``_plugins`` and refilled it in place, so
+    a concurrent reader saw the cleared middle: 404 for a source that exists.
+    Fix: fill a private map, swap it in.
+    """
+
+    def test_a_rebuild_is_invisible_until_it_has_finished(self) -> None:
+        """Forced interleaving: the rebuild is parked mid-scan throughout.
+
+        Pins the half-built map. The cleared middle is closed by the publish
+        being one rebind, and a reader cannot be parked inside a publish
+        deterministically, so nothing here pins that half.
+        """
+        registry = PluginRegistry()
+        first_pass_done = threading.Event()
+        parked = threading.Event()
+        release = threading.Event()
+
+        def register_one_builtin(self: PluginRegistry) -> None:
+            # A different plugin per pass, so which map the reader got is
+            # readable off its contents rather than inferred from timing.
+            if not first_pass_done.is_set():
+                self.register(FakeBookPlugin())
+                first_pass_done.set()
+                return
+            self.register(FakeGamePlugin())
+            parked.set()
+            assert release.wait(timeout=_STALL_TIMEOUT_SECONDS)
+
+        with (
+            patch.object(
+                PluginRegistry, "_discover_builtin_plugins", register_one_builtin
+            ),
+            patch.object(
+                PluginRegistry, "_discover_private_plugins", lambda self: None
+            ),
+            ThreadPoolExecutor(max_workers=2) as pool,
+        ):
+            registry.discover_plugins()
+            rebuild = pool.submit(registry.discover_plugins, force=True)
+            assert parked.wait(timeout=_STALL_TIMEOUT_SECONDS)
+
+            try:
+                # Read from a worker: with the scan under the lock this read
+                # never returns, and a wedged main thread takes the suite too.
+                during_rebuild = pool.submit(registry.get_all_plugins).result(
+                    timeout=_BLOCKED_GRACE_SECONDS
+                )
+            finally:
+                release.set()
+            rebuild.result(timeout=_STALL_TIMEOUT_SECONDS)
+
+        # The parked pass has already registered fake_games into a map of its
+        # own, so getting the previous pass's plugin is the swap being
+        # invisible. Rebuilt in place, this read lands on the half-built map.
+        assert set(during_rebuild) == {"fake_books"}
+        assert set(registry.get_all_plugins()) == {"fake_games"}
+
+
+class TestPluginConstructedOutsideTheLockRegression:
+    """A plugin that calls the registry while loading must not hang.
+
+    Bug: the lock spanned ``import_module`` and every plugin ``__init__``, so a
+    plugin calling ``get_registry()`` blocked on its caller's own lock,
+    silently.
+    Fix: only the publish is locked.
+    """
+
+    def test_a_plugin_whose_init_asks_for_the_registry_still_loads(self) -> None:
+        """Bounded: a regression fails here rather than hanging the suite.
+
+        ``private/plugins/`` is a documented extension point, so a plugin's
+        ``__init__`` is code this repository does not control.
+        """
+
+        class ReentrantPlugin(FakeBookPlugin):
+            def __init__(self) -> None:
+                super().__init__()
+                get_registry()
+
+        fake_module = types.ModuleType("fake_module")
+        fake_module.ReentrantPlugin = ReentrantPlugin  # type: ignore[attr-defined]
+        registry = PluginRegistry()
+
+        def register_the_reentrant_module(self: PluginRegistry) -> None:
+            self._register_plugins_from_module(fake_module, "test")
+
+        PluginRegistry.reset_instance()
+        try:
+            with (
+                patch.object(
+                    PluginRegistry,
+                    "_discover_builtin_plugins",
+                    register_the_reentrant_module,
+                ),
+                patch.object(
+                    PluginRegistry, "_discover_private_plugins", lambda self: None
+                ),
+            ):
+                # Daemon, because a thread deadlocked on the module lock is
+                # never joinable and pytest would never exit.
+                discovery = threading.Thread(
+                    target=registry.discover_plugins, daemon=True
+                )
+                discovery.start()
+                discovery.join(timeout=_STALL_TIMEOUT_SECONDS)
+
+                assert (
+                    not discovery.is_alive()
+                ), "discovery deadlocked on a plugin that called get_registry()"
+                assert set(registry.get_all_plugins()) == {"fake_books"}
+        finally:
+            PluginRegistry.reset_instance()
+
+
+class TestRegistrySingletonIsBuiltOnceRegression:
+    """A cold process must not hand two callers two registries.
+
+    Bug: ``get_instance`` is a check-then-set and its callers run in threadpool
+    workers, so two on a cold process each keep a registry of their own.
+    Fix: build under ``_registry_lock``.
+    """
+
+    def test_two_cold_callers_share_one_registry(self) -> None:
+        """Forced interleaving, not a race: the build cannot finish unreleased.
+
+        The constructor asserts the lock is held rather than the test asserting
+        the second caller has not finished: "not done yet" is also what a
+        descheduled thread looks like.
+        """
+        building = threading.Event()
+        release = threading.Event()
+        built: list[PluginRegistry] = []
+        real_init = PluginRegistry.__init__
+
+        def stalling_init(self: PluginRegistry) -> None:
+            assert _registry_lock.locked(), "the lazy build is not serialised"
+            building.set()
+            assert release.wait(timeout=_STALL_TIMEOUT_SECONDS)
+            real_init(self)
+            built.append(self)
+
+        PluginRegistry.reset_instance()
+        try:
+            with (
+                patch.object(PluginRegistry, "__init__", stalling_init),
+                ThreadPoolExecutor(max_workers=2) as pool,
+            ):
+                first = pool.submit(PluginRegistry.get_instance)
+                assert building.wait(timeout=_STALL_TIMEOUT_SECONDS)
+
+                second = pool.submit(PluginRegistry.get_instance)
+                # Unlocked, the second caller passes the ``is None`` check and
+                # builds a registry of its own while the first is parked, so it
+                # finishes here rather than waiting for the release.
+                with pytest.raises(TimeoutError):
+                    second.result(timeout=_BLOCKED_GRACE_SECONDS)
+
+                release.set()
+                registry = first.result(timeout=_STALL_TIMEOUT_SECONDS)
+                assert second.result(timeout=_STALL_TIMEOUT_SECONDS) is registry
+            assert built == [registry]
+        finally:
+            PluginRegistry.reset_instance()
 
 
 class TestPluginRegistryModuleDiscovery:

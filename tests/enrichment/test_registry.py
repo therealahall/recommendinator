@@ -1,6 +1,10 @@
 """Tests for the enrichment provider registry."""
 
+import threading
+import types
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -9,8 +13,20 @@ from src.enrichment.provider_base import (
     EnrichmentProvider,
     EnrichmentResult,
 )
-from src.enrichment.registry import EnrichmentRegistry, get_enrichment_registry
+from src.enrichment.registry import (
+    EnrichmentRegistry,
+    _registry_lock,
+    get_enrichment_registry,
+)
 from src.models.content import ContentItem, ContentType
+
+# Bounded so a thread nothing releases fails the test instead of hanging the
+# suite; nothing waits this long on the passing path.
+_STALL_TIMEOUT_SECONDS = 5.0
+
+# How long the second discovery is given to prove it cannot get in. Only spent
+# on the passing path.
+_BLOCKED_GRACE_SECONDS = 0.5
 
 
 class MockMovieProvider(EnrichmentProvider):
@@ -307,6 +323,171 @@ class TestEnrichmentRegistry:
         # Unless it was in the discovery path
         # For testing, we just check that force works
         assert registry._discovered is True
+
+
+class TestConcurrentDiscoveryRegression:
+    """A discovery pass must not be visible half-built.
+
+    The twin of ``tests/test_registry.py``'s case, same shape:
+    ``discover_providers`` cleared ``_providers`` and refilled it in place,
+    with every reader in a threadpool worker.
+    Fix: fill a private map, swap it in.
+    """
+
+    def test_a_rebuild_is_invisible_until_it_has_finished(self) -> None:
+        """Forced interleaving: the rebuild is parked mid-scan throughout.
+
+        Pins the half-built map. The cleared middle is closed by the publish
+        being one rebind, and a reader cannot be parked inside a publish
+        deterministically, so nothing here pins that half.
+        """
+        registry = EnrichmentRegistry()
+        first_pass_done = threading.Event()
+        parked = threading.Event()
+        release = threading.Event()
+
+        def register_one_builtin(self: EnrichmentRegistry) -> None:
+            # A different provider per pass, so which map the reader got is
+            # readable off its contents rather than inferred from timing.
+            if not first_pass_done.is_set():
+                self.register(MockMovieProvider())
+                first_pass_done.set()
+                return
+            self.register(MockBookProvider())
+            parked.set()
+            assert release.wait(timeout=_STALL_TIMEOUT_SECONDS)
+
+        with (
+            patch.object(
+                EnrichmentRegistry, "_discover_builtin_providers", register_one_builtin
+            ),
+            patch.object(
+                EnrichmentRegistry, "_discover_private_providers", lambda self: None
+            ),
+            ThreadPoolExecutor(max_workers=2) as pool,
+        ):
+            registry.discover_providers()
+            rebuild = pool.submit(registry.discover_providers, force=True)
+            assert parked.wait(timeout=_STALL_TIMEOUT_SECONDS)
+
+            try:
+                # Read from a worker: with the scan under the lock this read
+                # never returns, and a wedged main thread takes the suite too.
+                during_rebuild = pool.submit(registry.get_all_providers).result(
+                    timeout=_BLOCKED_GRACE_SECONDS
+                )
+            finally:
+                release.set()
+            rebuild.result(timeout=_STALL_TIMEOUT_SECONDS)
+
+        # The parked pass has already registered mock_book into a map of its
+        # own, so getting the previous pass's provider is the swap being
+        # invisible. Rebuilt in place, this read lands on the half-built map.
+        assert set(during_rebuild) == {"mock_movie"}
+        assert set(registry.get_all_providers()) == {"mock_book"}
+
+
+class TestProviderConstructedOutsideTheLockRegression:
+    """A provider that calls the registry while loading must not hang.
+
+    Bug: the lock spanned ``import_module`` and every provider ``__init__``, so
+    a provider calling ``get_enrichment_registry()`` blocked on its caller's
+    own lock, silently.
+    Fix: only the publish is locked.
+    """
+
+    def test_a_provider_whose_init_asks_for_the_registry_still_loads(self) -> None:
+        """Bounded: a regression fails here rather than hanging the suite."""
+
+        class ReentrantProvider(MockMovieProvider):
+            def __init__(self) -> None:
+                super().__init__()
+                get_enrichment_registry()
+
+        fake_module = types.ModuleType("fake_module")
+        fake_module.ReentrantProvider = ReentrantProvider  # type: ignore[attr-defined]
+        registry = EnrichmentRegistry()
+
+        def register_the_reentrant_module(self: EnrichmentRegistry) -> None:
+            self._register_providers_from_module(fake_module, "test")
+
+        EnrichmentRegistry.reset_instance()
+        try:
+            with (
+                patch.object(
+                    EnrichmentRegistry,
+                    "_discover_builtin_providers",
+                    register_the_reentrant_module,
+                ),
+                patch.object(
+                    EnrichmentRegistry, "_discover_private_providers", lambda self: None
+                ),
+            ):
+                # Daemon, because a thread deadlocked on the module lock is
+                # never joinable and pytest would never exit.
+                discovery = threading.Thread(
+                    target=registry.discover_providers, daemon=True
+                )
+                discovery.start()
+                discovery.join(timeout=_STALL_TIMEOUT_SECONDS)
+
+                assert (
+                    not discovery.is_alive()
+                ), "discovery deadlocked on a provider that called the registry"
+                assert set(registry.get_all_providers()) == {"mock_movie"}
+        finally:
+            EnrichmentRegistry.reset_instance()
+
+
+class TestRegistrySingletonIsBuiltOnceRegression:
+    """A cold process must not hand two callers two registries.
+
+    Bug: ``get_instance`` is a check-then-set and its callers run in threadpool
+    workers, so two on a cold process each keep a registry of their own.
+    Fix: build under ``_registry_lock``.
+    """
+
+    def test_two_cold_callers_share_one_registry(self) -> None:
+        """Forced interleaving, not a race: the build cannot finish unreleased.
+
+        The constructor asserts the lock is held rather than the test asserting
+        the second caller has not finished: "not done yet" is also what a
+        descheduled thread looks like.
+        """
+        building = threading.Event()
+        release = threading.Event()
+        built: list[EnrichmentRegistry] = []
+        real_init = EnrichmentRegistry.__init__
+
+        def stalling_init(self: EnrichmentRegistry) -> None:
+            assert _registry_lock.locked(), "the lazy build is not serialised"
+            building.set()
+            assert release.wait(timeout=_STALL_TIMEOUT_SECONDS)
+            real_init(self)
+            built.append(self)
+
+        EnrichmentRegistry.reset_instance()
+        try:
+            with (
+                patch.object(EnrichmentRegistry, "__init__", stalling_init),
+                ThreadPoolExecutor(max_workers=2) as pool,
+            ):
+                first = pool.submit(EnrichmentRegistry.get_instance)
+                assert building.wait(timeout=_STALL_TIMEOUT_SECONDS)
+
+                second = pool.submit(EnrichmentRegistry.get_instance)
+                # Unlocked, the second caller passes the ``is None`` check and
+                # builds a registry of its own while the first is parked, so it
+                # finishes here rather than waiting for the release.
+                with pytest.raises(TimeoutError):
+                    second.result(timeout=_BLOCKED_GRACE_SECONDS)
+
+                release.set()
+                registry = first.result(timeout=_STALL_TIMEOUT_SECONDS)
+                assert second.result(timeout=_STALL_TIMEOUT_SECONDS) is registry
+            assert built == [registry]
+        finally:
+            EnrichmentRegistry.reset_instance()
 
 
 class TestEnrichmentRegistryIntegration:
