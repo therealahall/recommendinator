@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import fields
 from pathlib import Path
 from typing import Any
@@ -284,12 +284,26 @@ class TestGetOllamaClient:
 # ---------------------------------------------------------------------------
 
 
-async def _fake_awatch_one_event(
-    path: Path,
-) -> AsyncIterator[set[tuple[str, str]]]:
-    """Yield one synthetic change event, then block until cancelled."""
-    yield {("modified", str(path))}
-    await asyncio.Event().wait()
+_HANDLED_TIMEOUT_SECONDS = 5.0
+
+
+def _awatch_one_event(
+    handled: asyncio.Event,
+) -> Callable[[Path], AsyncIterator[set[tuple[str, str]]]]:
+    """Build an ``awatch`` stand-in that yields one change, then flags *handled*.
+
+    The watcher hands the reload to a worker thread, so "reload_config ran" and
+    "the watcher is done with the event" are two different moments. The
+    generator is resumed only at the second one, which is the one a test can
+    assert the watcher's own logging against.
+    """
+
+    async def awatch(path: Path) -> AsyncIterator[set[tuple[str, str]]]:
+        yield {("modified", str(path))}
+        handled.set()
+        await asyncio.Event().wait()
+
+    return awatch
 
 
 async def _fake_awatch_no_events(
@@ -325,19 +339,17 @@ class TestConfigWatcher:
         """
 
         async def _run() -> None:
+            handled = asyncio.Event()
             with (
-                patch(
-                    _AWATCH_PATCH_TARGET,
-                    side_effect=_fake_awatch_one_event,
-                ),
+                patch(_AWATCH_PATCH_TARGET, side_effect=_awatch_one_event(handled)),
                 patch("src.web.state.reload_config", return_value=True) as mock_reload,
             ):
                 watcher = ConfigWatcher()
                 await watcher.start(Path("/fake/config.yaml"))
                 try:
-                    # Yield control to let the task process the event
-                    await asyncio.sleep(0)
-                    await asyncio.sleep(0)
+                    await asyncio.wait_for(
+                        handled.wait(), timeout=_HANDLED_TIMEOUT_SECONDS
+                    )
                 finally:
                     await watcher.stop()
 
@@ -351,19 +363,18 @@ class TestConfigWatcher:
         """ConfigWatcher logs a warning when reload_config returns False."""
 
         async def _run() -> None:
+            handled = asyncio.Event()
             with (
                 caplog.at_level(logging.WARNING, logger="src.web.state"),
-                patch(
-                    _AWATCH_PATCH_TARGET,
-                    side_effect=_fake_awatch_one_event,
-                ),
+                patch(_AWATCH_PATCH_TARGET, side_effect=_awatch_one_event(handled)),
                 patch("src.web.state.reload_config", return_value=False),
             ):
                 watcher = ConfigWatcher()
                 await watcher.start(Path("/fake/config.yaml"))
                 try:
-                    await asyncio.sleep(0)
-                    await asyncio.sleep(0)
+                    await asyncio.wait_for(
+                        handled.wait(), timeout=_HANDLED_TIMEOUT_SECONDS
+                    )
                 finally:
                     await watcher.stop()
 

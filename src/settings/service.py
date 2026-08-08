@@ -378,10 +378,10 @@ def _effective_value(config: dict[str, Any], entry: SettingMetadata) -> Any:
 def _apply_live(config: dict[str, Any], updates: Sequence[tuple[str, Any]]) -> None:
     """Publish *updates* into the running *config* at their dotted paths.
 
-    All of them together, because the engine reads the running config from a
-    threadpool worker while this runs on the event loop. Writing them one at a
-    time would leave a window where a request reads the first key of a save and
-    the baseline for the rest, and writing any of them in place would break the
+    All of them together, because the engine reads the running config from
+    another threadpool worker while this runs. Writing them one at a time would
+    leave a window where a request reads the first key of a save and the
+    baseline for the rest, and writing any of them in place would break the
     engine's iteration of ``recommendations.scorer_weights`` outright, since
     inserting a key into a dict under an iterator raises.
     """
