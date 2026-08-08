@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { useApi } from '@/composables/useApi'
+import { errorFromResponse, useApi } from '@/composables/useApi'
 import { useAppStore } from '@/stores/app'
 import { readSseStream } from '@/composables/useSse'
 import type { ContentItemResponse, ItemEditRequest, RecommendationResponse } from '@/types/api'
@@ -71,7 +71,7 @@ export const useRecommendationsStore = defineStore('recommendations', () => {
       })
 
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`)
+        throw await errorFromResponse(response)
       }
 
       await readSseStream<RecStreamEvent>(response, (event) => {

@@ -67,7 +67,7 @@ async function onSave(dbId: number, data: ItemEditRequest) {
 
     <RecControls />
 
-    <div v-if="recs.error" class="status-bar error" style="display: block">
+    <div v-if="recs.error" class="status-bar error" role="alert" style="display: block">
       Failed to load recommendations: {{ recs.error }}
     </div>
 

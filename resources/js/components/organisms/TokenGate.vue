@@ -1,6 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { useAuthStore } from '@/stores/auth'
+import { useAuthStore, type AuthStatus } from '@/stores/auth'
+
+const MESSAGES: Partial<Record<AuthStatus, string>> = {
+  verifying: 'Checking token…',
+  rejected: 'That token was not accepted. Check it and try again.',
+  // Covers both causes of 'unreachable': a 500 reached the server, so wording
+  // that asserts it could not be reached describes a failure that did not happen.
+  unreachable: 'The server did not confirm the token. Check that it is running, then try again.',
+}
 
 const auth = useAuthStore()
 
@@ -9,15 +17,16 @@ const tokenInput = ref<HTMLInputElement | null>(null)
 
 // Mounted persistently and bound to a computed, because a live region inserted
 // with v-if once it has content is read as page content and skipped.
-const announcement = computed(() =>
-  auth.rejected ? 'That token was not accepted. Check it and try again.' : '',
-)
+const announcement = computed(() => MESSAGES[auth.status] ?? '')
 
-function submit(): void {
-  const value = draft.value.trim()
-  if (!value) return
-  auth.setToken(value)
-  draft.value = ''
+const verifying = computed(() => auth.status === 'verifying')
+const refused = computed(() => auth.status === 'rejected')
+const failed = computed(() => refused.value || auth.status === 'unreachable')
+
+// The draft survives a refusal: re-pasting a long secret into a masked field
+// nobody can proofread is the whole cost of getting one character wrong.
+async function submit(): Promise<void> {
+  if (await auth.submitToken(draft.value)) draft.value = ''
 }
 
 onMounted(() => tokenInput.value?.focus())
@@ -40,16 +49,26 @@ onMounted(() => tokenInput.value?.focus())
         v-model="draft"
         type="password"
         autocomplete="current-password"
-        :aria-describedby="auth.rejected ? 'token-gate-error' : undefined"
-        :aria-invalid="auth.rejected ? 'true' : undefined"
+        :aria-describedby="announcement ? 'token-gate-status' : undefined"
+        :aria-invalid="refused ? 'true' : undefined"
       />
 
       <!-- One region, mounted whether or not it has anything to say, and
            carrying the live role itself rather than duplicating into an
            sr-only twin that would announce the same words twice. -->
-      <p id="token-gate-error" class="token-gate-error" role="status">{{ announcement }}</p>
+      <p
+        id="token-gate-status"
+        class="token-gate-status"
+        :class="{ failed }"
+        role="status"
+      >{{ announcement }}</p>
 
-      <button type="submit" class="btn btn-primary" :disabled="draft.trim() === ''">
+      <button
+        type="submit"
+        class="btn btn-primary"
+        :disabled="draft.trim() === ''"
+        :aria-disabled="verifying ? 'true' : undefined"
+      >
         Unlock
       </button>
     </form>
@@ -72,10 +91,13 @@ onMounted(() => tokenInput.value?.focus())
   max-width: 30rem;
 }
 
+/* --border-default is only 1.36:1 on the card, so the field has no visible
+   edge until it is focused. --text-muted clears the 3:1 a control boundary
+   needs (4.26:1 on Nord, 3.58:1 on Snowstorm). */
 .token-gate-card input {
   padding: var(--space-2) var(--space-3);
   background: var(--bg-input);
-  border: 1px solid var(--border-default);
+  border: 1px solid var(--text-muted);
   border-radius: var(--radius-sm);
   color: var(--text-primary);
   font: inherit;
@@ -90,8 +112,12 @@ onMounted(() => tokenInput.value?.focus())
 /* Zero-height when it has nothing to say, rather than removed: display:none
    takes it out of the accessibility tree, which is the bug the persistent
    mount exists to avoid. */
-.token-gate-error {
+.token-gate-status {
   margin: 0;
-  color: var(--color-error);
+  color: var(--text-secondary);
+}
+
+.token-gate-status.failed {
+  color: var(--color-error-text);
 }
 </style>

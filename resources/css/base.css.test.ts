@@ -56,6 +56,23 @@ describe('inactive button styling', () => {
   })
 })
 
+describe('error text token', () => {
+  it('derives error text from the active palette, not the fill colour', () => {
+    // --color-error is sized for fills: as text on --bg-card it is 2.46:1 in
+    // the default theme, under the 4.5:1 body copy needs. A literal hex would
+    // have to be re-picked per theme, so the token mixes theme colours.
+    //
+    // Which mix function and which order it takes its arguments in are free to
+    // change; deriving from both theme tokens rather than a literal is not.
+    const source = readBase()
+    const match = source.match(/--color-error-text:([^;]*);/)
+    if (!match) throw new Error('--color-error-text declaration not found in base.css')
+
+    expect(match[1]).toContain('var(--color-error)')
+    expect(match[1]).toContain('var(--text-primary)')
+  })
+})
+
 describe('.sr-only utility', () => {
   it('disables text selection so hidden labels never enter a copy', () => {
     // Browsers pull visually-clipped text into a selection, so copying an

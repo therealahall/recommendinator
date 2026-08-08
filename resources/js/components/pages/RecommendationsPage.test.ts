@@ -246,6 +246,21 @@ describe('RecommendationsPage', () => {
     expect(errorBar.text()).toBe('Failed to load recommendations: Not found')
   })
 
+  it('announces the error bar, which is the only report a failure gets', async () => {
+    // Without a live role the bar is inserted silently, so a screen-reader user
+    // gets nothing where a sighted one reads why the request failed. Matches the
+    // library page's error bar.
+    const { wrapper } = await mountWithItems()
+
+    mockGet.mockRejectedValue(new Error('Too many streams in progress. Try again in a moment.'))
+    await wrapper.find('.btn-complete').trigger('click')
+    await flushPromises()
+
+    const errorBar = wrapper.find('.status-bar.error')
+    expect(errorBar.attributes('role')).toBe('alert')
+    expect(errorBar.text()).toContain('Too many streams in progress.')
+  })
+
   it('renders the page error bar when a save fails and clears it on a successful retry', async () => {
     // End-to-end check of the reworked error contract through the page, not just
     // the store: a rejected PATCH surfaces the error bar (modal still open, card

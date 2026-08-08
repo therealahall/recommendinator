@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { useChatStore } from './chat'
+import { jsonResponse } from '@/testing/http'
 
 const mockGet = vi.fn()
 const mockPost = vi.fn()
@@ -8,7 +9,10 @@ const mockPut = vi.fn()
 const mockDelete = vi.fn()
 const mockRaw = vi.fn()
 
-vi.mock('@/composables/useApi', () => ({
+// Only useApi is replaced: the store's error path runs the real body parse, so
+// a stubbed one cannot make it pass.
+vi.mock('@/composables/useApi', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/composables/useApi')>()),
   useApi: () => ({
     get: (...args: unknown[]) => mockGet(...args),
     post: (...args: unknown[]) => mockPost(...args),
@@ -101,6 +105,36 @@ describe('useChatStore', () => {
     await store.deleteMemory(1)
 
     expect(mockDelete).toHaveBeenCalledWith('/memories/1')
+  })
+
+  it('shows what the server said when it refuses the stream', async () => {
+    // Regression: every failed /chat became "Sorry, I encountered an error",
+    // so the stream cap's 503 — the one refusal that tells the user how to get
+    // unstuck — was discarded before anything could render it.
+    mockRaw.mockResolvedValue(
+      jsonResponse(503, { detail: 'Too many streams in progress. Try again in a moment.' }),
+    )
+
+    const store = useChatStore()
+    await store.send('recommend me something')
+
+    expect(store.messages[1]).toMatchObject({
+      role: 'assistant',
+      content: 'Too many streams in progress. Try again in a moment.',
+    })
+    expect(store.isStreaming).toBe(false)
+  })
+
+  it('keeps the generic apology when the request never reached the server', async () => {
+    mockRaw.mockRejectedValue(new TypeError('Failed to fetch'))
+
+    const store = useChatStore()
+    await store.send('recommend me something')
+
+    expect(store.messages[1]).toMatchObject({
+      role: 'assistant',
+      content: 'Sorry, I encountered an error. Please try again.',
+    })
   })
 
   it('reset clears messages and shows welcome', async () => {

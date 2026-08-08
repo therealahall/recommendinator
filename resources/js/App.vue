@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { nextTick, onMounted, ref, watch } from 'vue'
 import { RouterView } from 'vue-router'
 import AppSidebar from '@/components/organisms/AppSidebar.vue'
 import StatusBar from '@/components/organisms/StatusBar.vue'
@@ -14,28 +14,36 @@ const auth = useAuthStore()
 const theme = useThemeStore()
 
 const sidebarOpen = ref(false)
+const mainContent = ref<HTMLElement | null>(null)
 
 function closeSidebar() {
   sidebarOpen.value = false
 }
 
 function load() {
-  theme.applyStoredTheme()
   app.fetchStatus()
   app.fetchUsers()
   theme.fetchThemes()
 }
 
-// Every /api call 401s without a token, so nothing is fetched until the gate
-// has one, and the first accepted token is what starts the app.
 onMounted(() => {
+  // Themes are static files behind no token, and the gate is the one screen a
+  // user who cannot read light-on-dark has no way to skip.
+  theme.applyStoredTheme()
+  // Every /api call 401s without a token, so nothing is fetched until the gate
+  // has one, and the first accepted token is what starts the app.
   if (auth.isAuthenticated) load()
 })
 
 watch(
   () => auth.isAuthenticated,
-  (authenticated) => {
-    if (authenticated) load()
+  async (authenticated) => {
+    if (!authenticated) return
+    load()
+    // The gate took the focused input with it, so focus would sit on <body>
+    // and the next Tab would restart from the sidebar.
+    await nextTick()
+    mainContent.value?.focus()
   },
 )
 </script>
@@ -60,7 +68,7 @@ watch(
 
     <div class="app-layout" :class="{ 'sidebar-open': sidebarOpen }">
       <AppSidebar @navigate="closeSidebar" />
-      <main id="main-content" class="main-content" tabindex="-1">
+      <main id="main-content" ref="mainContent" class="main-content" tabindex="-1">
         <UpdateBanner />
         <StatusBar />
         <RouterView />
