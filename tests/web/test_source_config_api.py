@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Iterator
-from dataclasses import fields
 from pathlib import Path
 from typing import Any
 from unittest.mock import Mock, patch
@@ -24,8 +23,7 @@ from src.llm.embeddings import EmbeddingGenerator
 from src.llm.recommendations import RecommendationGenerator
 from src.recommendations.engine import RecommendationEngine
 from src.storage.manager import StorageManager
-from src.web.app import create_app
-from src.web.state import AppState, app_state
+from tests.factories import booted_web_app
 
 
 @pytest.fixture()
@@ -67,42 +65,25 @@ def client(
 ) -> Iterator[TestClient]:
     """TestClient with a real StorageManager and an in-memory test config.
 
-    Patches ``create_app`` boot dependencies so the suite never touches the
-    real config file or LLM stack — only ``app_state.config`` (mutated below)
-    drives behaviour.
+    ``booted_web_app`` patches the boot's I/O boundaries so the suite never
+    touches the real config file or LLM stack — only ``app_state.config``
+    drives behaviour, and tests may mutate it (e.g. to assert the YAML purge
+    after a migrate).
     """
-    fresh = AppState()
-    for f in fields(fresh):
-        setattr(app_state, f.name, getattr(fresh, f.name))
+    engine = Mock(spec=RecommendationEngine)
+    engine.storage = storage
+    llm_components = (
+        Mock(spec=OllamaClient),
+        Mock(spec=EmbeddingGenerator),
+        Mock(spec=RecommendationGenerator),
+    )
 
     with (
-        patch("src.web.app.load_config", return_value=base_config),
-        patch("src.web.app.create_storage_manager", return_value=storage),
-        patch("src.web.app.create_llm_components") as mock_llm,
-        patch("src.web.app.create_recommendation_engine") as mock_engine,
-        patch("src.web.app.migrate_config_credentials"),
         patch("src.web.app.migrate_source_labels"),
         patch("src.web.app.migrate_source_config_plugins"),
+        booted_web_app(storage, base_config, llm_components, engine=engine) as app,
     ):
-        mock_llm.return_value = (
-            Mock(spec=OllamaClient),
-            Mock(spec=EmbeddingGenerator),
-            Mock(spec=RecommendationGenerator),
-        )
-        engine_instance = Mock(spec=RecommendationEngine)
-        engine_instance.storage = storage
-        mock_engine.return_value = engine_instance
-
-        app = create_app()
-        # ``create_app`` resets ``app_state.config`` to the patched dict; tests
-        # may further mutate it (e.g. assert YAML purge after migrate).
-        app_state.config = base_config
-        app_state.storage = storage
         yield TestClient(app)
-
-    fresh = AppState()
-    for f in fields(fresh):
-        setattr(app_state, f.name, getattr(fresh, f.name))
 
 
 class TestSchemaEndpoint:
