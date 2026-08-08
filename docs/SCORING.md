@@ -94,12 +94,12 @@ the genre you just finished. `0.0` turns it off. The value is divided by its
 genre's same-type candidates outright. There is **no score floor**.
 
 Your five most recently finished genre clusters sit on a ladder that decays by
-recency. Only rated, non-ignored completions count, the same taste signal the
-scorers read. At `5.0` the rungs are 100%, 80%, 60%, 40%, 20%, then nothing,
-and a lower setting scales the whole ladder down: `2.0` gives 40%, 32%, 24%,
-16%, 8%.
-A candidate takes the penalty of its freshest matching cluster, multiplied into
-its final score.
+recency. Every completion counts, rated or not — finishing six fantasy novels
+tires you of fantasy whether or not you scored them. Ignored items do not, since
+ignoring something asks for less of it. At `5.0` the rungs are 100%, 80%, 60%,
+40%, 20%, then nothing, and a lower setting scales the whole ladder down: `2.0`
+gives 40%, 32%, 24%, 16%, 8%. A candidate takes the penalty of its freshest
+matching cluster, multiplied into its final score.
 
 The penalty is **per content type**. Finishing a fantasy *book* varies your book
 recommendations and leaves fantasy *movies* and *games* alone. Every
@@ -130,11 +130,13 @@ of two dates and a corrected local date is the earlier one.
 
 ## Ignored items
 
-An ignored item stays in your library and is excluded from **all** recommendation
-processing. It never feeds preference analysis, scoring, similarity search or
-the "since you enjoyed X" references, and is never offered as a candidate.
-Ignore it from the web Library or Recommendations page, from
-`library ignore --id <id>`, or with `ignored: true` in a CSV or JSON import.
+An ignored item stays in your library and shapes nothing you are recommended. It
+never feeds preference analysis, scoring, similarity search or the "since you
+enjoyed X" references, is never offered as a candidate, and claims no variety
+rung. It still counts as consumed for series ordering, one of the two
+consumption facts spelled out at the end of this page. Ignore it from the web
+Library or Recommendations page, from `library ignore --id <id>`, or with
+`ignored: true` in a CSV or JSON import.
 
 A re-import leaves the flag alone unless the file states it. A stated
 `ignored: false` un-ignores, which is what makes the export-edit-re-import round
@@ -148,6 +150,8 @@ still appear as candidates, a backlog being unrated by nature. The filtering
 lives in the storage layer's signal-set accessor, so the ranking engine, chat
 and the web's streaming blurbs all respect it.
 
-Series *ordering* is the deliberate exception. Whether you have consumed an
-earlier entry is a consumption fact, independent of rating and ignore state, so
-an ignored or unrated earlier entry still counts for "book #1 before book #3".
+The two deliberate exceptions are the consumption facts. Series *ordering* asks
+whether you have consumed an earlier entry, which is independent of rating and
+ignore state, so an ignored or unrated earlier entry still counts for "book #1
+before book #3". The variety ladder above asks what you recently finished, which
+is independent of rating but not of ignoring.
