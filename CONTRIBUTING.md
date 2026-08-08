@@ -29,7 +29,9 @@ Run the frontend on the host, where Vite's HMR works best:
 pnpm dev
 ```
 
-Vite serves on 5173 and proxies API calls to the container on 18473. Override
+Vite serves on 5173 and proxies API calls to the container on 18473. The API
+requires a bearer token, so the app asks for `web.api_token` once and keeps it in
+the browser — the entrypoint prints the one it minted on first start. Override
 either end from your shell or a gitignored root `.env`, which is what a dev
 server behind a reverse proxy needs:
 
@@ -233,6 +235,11 @@ python-semantic-release owns the version. Never edit it by hand.
 
 **Never reference `config/config.yaml`** in code, tests or documentation. It
 holds secrets and is git-ignored. Use `config/example.yaml` or a mock config.
+
+Every `/api` route requires the bearer token from `web.api_token`, applied to
+the routers so a new endpoint is authenticated by being registered. Tests reach
+the API through `tests.factories.authenticated_client`; a bare `TestClient`
+gets 401s. See [docs/SECURITY.md](docs/SECURITY.md#api-authentication).
 
 ## Adding a data source
 

@@ -25,10 +25,13 @@
 #   IMAGE_TAG               — image tag to pull (default: latest)
 #   APP_PORT                — host port to expose the web UI on (default: 18473)
 #   APP_BIND_PREFIX         — host interface to publish that port on, written
-#                             WITH a trailing colon, e.g. "127.0.0.1:" (default:
-#                             unset, meaning every interface). Set it when
-#                             something else on the host — a reverse proxy
-#                             terminating TLS, say — is what should be reachable.
+#                             WITH a trailing colon (default: "127.0.0.1:", so
+#                             the app is reachable from this host only). Set it
+#                             empty to publish on every interface, or to an
+#                             address to pick one. The app never serves TLS and
+#                             a bearer token over plain HTTP crosses the network
+#                             in cleartext, so anything beyond loopback belongs
+#                             behind a reverse proxy that terminates HTTPS.
 #   OLLAMA_MODEL            — model the sidecar pulls (default: mistral:7b)
 #   OLLAMA_EMBEDDING_MODEL  — embedding model to pull (default: nomic-embed-text)
 #   OLLAMA_CONVERSATION_MODEL — separate chat model to pull (default: reuse OLLAMA_MODEL)
@@ -45,13 +48,13 @@ x-app-common: &app-common
     # before; the app dates completions by this zone's calendar day.
     - TZ=${TZ:-}
   ports:
-    # APP_BIND_PREFIX is a prefix, not an address, so that unset renders the
-    # bare "18473:8000" this has always been — which publishes on every
-    # interface, IPv4 and IPv6 alike. Spelling a default address here instead
-    # (0.0.0.0) would silently drop the IPv6 binding, and the long `host_ip:`
-    # form cannot express "absent" at all: compose rejects an empty one with
-    # "invalid ip address". Hence the trailing colon in the value.
-    - "${APP_BIND_PREFIX:-}${APP_PORT:-18473}:8000"
+    # A prefix, not an address, because the every-interface publish is the
+    # ABSENCE of a host part: the long `host_ip:` form cannot express that at
+    # all (compose rejects an empty one with "invalid ip address"), and
+    # spelling 0.0.0.0 silently drops the IPv6 binding. Hence the trailing
+    # colon in the value. `-` and not `:-`, so `APP_BIND_PREFIX=` is honoured
+    # as the opt-in to every interface rather than read as unset.
+    - "${APP_BIND_PREFIX-127.0.0.1:}${APP_PORT:-18473}:8000"
   volumes:
     # config is mounted read-write so the entrypoint can copy example.yaml to
     # config.yaml on first run. Under Docker it holds only the storage paths

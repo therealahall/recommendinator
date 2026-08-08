@@ -13,7 +13,6 @@ from unittest.mock import MagicMock
 
 import pytest
 from click.testing import CliRunner
-from fastapi.testclient import TestClient
 from pydantic import BaseModel, ValidationError
 
 from src.models.content import (
@@ -36,7 +35,7 @@ from src.web.api import (
 )
 from src.web.state import app_state
 from tests.cli.conftest import _invoke_with_mocks
-from tests.factories import booted_web_app
+from tests.factories import authenticated_client, booted_web_app
 
 # parents[1] resolves /tests/test_interface_parity.py -> repo root.
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -461,7 +460,9 @@ class TestRecommendationJsonIsTheSameOnBothSurfaces:
 
         with booted_web_app(storage, {}) as app:
             app_state.engine = engine
-            response = TestClient(app).get("/api/recommendations?type=book&count=1")
+            response = authenticated_client(app).get(
+                "/api/recommendations?type=book&count=1"
+            )
 
         assert response.status_code == 200
         return response.text

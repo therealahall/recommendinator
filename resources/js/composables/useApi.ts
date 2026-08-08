@@ -1,6 +1,11 @@
+import { useAuthStore } from '@/stores/auth'
+
 const API_BASE = '/api'
 
-interface ApiOptions extends RequestInit {
+// `headers` is narrowed from HeadersInit: every caller passes a plain object,
+// and the array and Headers forms cannot be spread into one.
+interface ApiOptions extends Omit<RequestInit, 'headers'> {
+  headers?: Record<string, string>
   params?: Record<string, string | number | boolean | undefined>
 }
 
@@ -35,18 +40,33 @@ function buildUrl(
   return url
 }
 
+/** Every /api route requires the token, so nothing here goes out without it. */
+function withAuth(headers: Record<string, string> | undefined): Record<string, string> {
+  const auth = useAuthStore()
+  const merged: Record<string, string> = { ...headers }
+  if (auth.token) {
+    merged['Authorization'] = `Bearer ${auth.token}`
+  }
+  return merged
+}
+
 async function request<T>(path: string, options: ApiOptions = {}): Promise<T> {
   const { params, ...fetchOptions } = options
   const url = buildUrl(path, params)
 
-  const headers: HeadersInit = { ...fetchOptions.headers }
+  const headers = withAuth(fetchOptions.headers)
   if (fetchOptions.body !== undefined) {
-    ;(headers as Record<string, string>)['Content-Type'] = 'application/json'
+    headers['Content-Type'] = 'application/json'
   }
 
   const response = await fetch(url, { ...fetchOptions, headers })
 
   if (!response.ok) {
+    // A stored token the server refuses is worse than none: every caller
+    // swallows its own errors, so the app would sit half-empty saying nothing.
+    if (response.status === 401) {
+      useAuthStore().reject()
+    }
     let body: unknown
     try {
       body = await response.json()
@@ -98,7 +118,10 @@ export function useApi() {
     /** Return raw Response for SSE / streaming endpoints */
     raw(path: string, options: ApiOptions = {}) {
       const { params, ...fetchOptions } = options
-      return fetch(buildUrl(path, params), fetchOptions)
+      return fetch(buildUrl(path, params), {
+        ...fetchOptions,
+        headers: withAuth(fetchOptions.headers),
+      })
     },
   }
 }

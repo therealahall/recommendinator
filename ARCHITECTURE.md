@@ -565,9 +565,11 @@ Enrichment (background)           Recommendation Engine
 
 ## Configuration
 
-`config/config.yaml` (git-ignored) holds the bootstrap: the `web` bind settings
-and the `storage` paths, both read before the database opens.
-`config/example.yaml` is that template and nothing more. Everything else resolves
+`config/config.yaml` (git-ignored) holds the bootstrap: the `web` bind settings,
+`web.api_token`, and the `storage` paths, all read before the database opens. The
+token is deliberately not a settings leaf — it guards the API the Settings page
+is served over, and boot fails without it. `config/example.yaml` is that template
+and nothing more. Everything else resolves
 through [global configuration precedence](#global-configuration-precedence), and
 sources through
 [source configuration precedence](#source-configuration-precedence).

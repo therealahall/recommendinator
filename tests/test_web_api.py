@@ -10,17 +10,18 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, fields, replace
 from datetime import UTC, date, datetime
 from pathlib import Path
+from secrets import compare_digest
 from typing import Any
 from unittest.mock import MagicMock, Mock, patch
 
 import anyio.from_thread
 import pytest
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
-from src.cli.config import load_config
+from src.cli.config import MissingApiTokenError, load_config
 from src.conversation.engine import ConversationEngine
 from src.ingestion.sync import SyncResult
 from src.llm.client import OllamaClient
@@ -40,6 +41,7 @@ from src.utils.series import MAX_SEASONS
 from src.utils.sorting import MAX_SEARCH_LENGTH
 from src.web.api import APP_VERSION, _item_to_response
 from src.web.app import _LOG_BASE_DIR, _safe_log_path
+from src.web.auth import UNAUTHORIZED_DETAIL, require_api_token
 from src.web.enrichment_manager import (
     WebEnrichmentManager,
     _enrichment_manager_lock,
@@ -76,7 +78,7 @@ from src.web.sync_manager import (
     reset_sync_manager,
 )
 from src.web.trakt_auth import DevicePollResult, DevicePollStatus, TraktAuthError
-from tests.factories import booted_web_app
+from tests.factories import API_TOKEN, authenticated_client, booted_web_app
 
 
 @pytest.fixture
@@ -157,6 +159,12 @@ def mock_components(mock_config):
 @pytest.fixture
 def client(mock_components):
     """Create test client."""
+    return authenticated_client(mock_components["app"])
+
+
+@pytest.fixture
+def anonymous_client(mock_components):
+    """Create a test client carrying no API token."""
     return TestClient(mock_components["app"])
 
 
@@ -4369,7 +4377,7 @@ class TestSettingsEndpoints:
             "web": {"host": "127.0.0.1", "port": 18473},
         }
         with booted_web_app(storage, config) as app:
-            yield TestClient(app), storage, config
+            yield authenticated_client(app), storage, config
         reset_sync_manager()
 
     def _find(self, body: dict, key: str) -> dict:
@@ -5147,6 +5155,211 @@ class TestClassificationIsDerivedFromTheSignatures:
         assert derived == {"/guarded": {"storage"}, "/unguarded": set()}
 
 
+# Every route the app serves, in one list, so the auth cases below cannot
+# sample: ``test_every_api_route_is_classified`` pins this against the app.
+_ALL_ENDPOINTS = _GUARDED_ENDPOINTS + _DEPENDENCY_FREE_ENDPOINTS
+
+_WRONG_TOKEN = "wrong-api-token-0f0e0d0c0b0a09080706050403020100"
+
+
+def _authenticates(route: APIRoute) -> bool:
+    """Whether ``require_api_token`` is anywhere in *route*'s dependency tree."""
+    pending = list(route.dependant.dependencies)
+    while pending:
+        dependency = pending.pop()
+        if dependency.call is require_api_token:
+            return True
+        pending.extend(dependency.dependencies)
+    return False
+
+
+def _exempt_api_routes(app: FastAPI) -> set[tuple[str, str]]:
+    """Every ``/api`` route the app serves without demanding the token."""
+    return {
+        (method, route.path)
+        for route in app.routes
+        if isinstance(route, APIRoute) and route.path.startswith("/api")
+        for method in route.methods
+        if not _authenticates(route)
+    }
+
+
+class TestEveryApiRouteRequiresTheToken:
+    """The token is the price of admission to ``/api``.
+
+    Attached to the routers, so a route is authenticated by being registered.
+    Nothing is exempt: ``GET /api/status`` publishes a version and feature
+    fingerprint, and nothing here probes it unauthenticated.
+    """
+
+    @pytest.mark.parametrize("endpoint", _ALL_ENDPOINTS, ids=_endpoint_id)
+    def test_a_request_with_no_token_is_401(self, anonymous_client, endpoint) -> None:
+        """Every component is up, so a 401 is authentication and nothing else."""
+        response = anonymous_client.request(
+            endpoint.method, endpoint.target, json=endpoint.body
+        )
+
+        assert response.status_code == 401
+        assert response.json()["detail"] == UNAUTHORIZED_DETAIL
+        # Without the challenge a caller cannot tell this from a 401 that no
+        # credential would fix.
+        assert response.headers["WWW-Authenticate"] == "Bearer"
+
+    @pytest.mark.parametrize("endpoint", _ALL_ENDPOINTS, ids=_endpoint_id)
+    def test_a_request_with_the_wrong_token_is_401(
+        self, mock_components, endpoint
+    ) -> None:
+        """A presented-but-wrong token is refused exactly like an absent one."""
+        client = TestClient(
+            mock_components["app"],
+            headers={"Authorization": f"Bearer {_WRONG_TOKEN}"},
+        )
+
+        response = client.request(endpoint.method, endpoint.target, json=endpoint.body)
+
+        assert response.status_code == 401
+
+    def test_the_right_token_gets_past_authentication(self, client) -> None:
+        """The negative control: the cases above must not pass on a dead app."""
+        assert client.get("/api/status").status_code == 200
+
+    def test_the_spa_shell_is_served_without_one(self, anonymous_client) -> None:
+        """It is what asks for the token, so it cannot require one.
+
+        A browser sends no Authorization header on a top-level navigation, and
+        the shell carries no library data — only the form collecting the token.
+        """
+        assert anonymous_client.get("/").status_code == 200
+
+    def test_no_served_route_is_exempt(self, mock_components) -> None:
+        """Read off the dependency tree, so an exemption has to be deliberate.
+
+        The cases above cover the routes that exist today; this is what a new
+        router included without the dependency trips.
+        """
+        assert _exempt_api_routes(mock_components["app"]) == set()
+
+    def test_the_deriver_reads_the_dependency_tree(self) -> None:
+        """Without this, the assertion above could hold on a deriver that lies."""
+        probe = FastAPI()
+
+        @probe.get("/api/open")
+        def _open() -> dict[str, str]:
+            return {}
+
+        @probe.get("/api/closed", dependencies=[Depends(require_api_token)])
+        def _closed() -> dict[str, str]:
+            return {}
+
+        assert _exempt_api_routes(probe) == {("GET", "/api/open")}
+
+
+class TestTokenComparisonIsConstantTime:
+    """A property no response can show, so it is pinned at the call.
+
+    ``==`` returns at the first differing byte, which times how much of a
+    guess was right, and swapping it back changes no status code anywhere.
+    """
+
+    def test_the_check_goes_through_compare_digest(self, mock_components) -> None:
+        """And it is the presented token that goes through it, not a stand-in."""
+        client = TestClient(
+            mock_components["app"],
+            headers={"Authorization": f"Bearer {_WRONG_TOKEN}"},
+        )
+
+        with patch("src.web.auth.compare_digest", wraps=compare_digest) as compared:
+            assert client.get("/api/status").status_code == 401
+
+        compared.assert_called_once_with(_WRONG_TOKEN.encode(), API_TOKEN.encode())
+
+
+class TestTheTokenStaysOutOfEverythingObservable:
+    """Boot reads it, then nothing a caller or an operator can read has it."""
+
+    @pytest.fixture()
+    def real_boot(self, mock_config, tmp_path, caplog):
+        """Boot for real off ``web.api_token``, capturing everything logged."""
+        reset_sync_manager()
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+        config = {**mock_config, "web": {**mock_config["web"], "api_token": API_TOKEN}}
+        with caplog.at_level(logging.DEBUG):
+            with booted_web_app(storage, config, api_token=None) as app:
+                yield app
+        reset_sync_manager()
+
+    def test_the_running_config_no_longer_carries_it(self, real_boot) -> None:
+        """Popped at boot, so no component is handed the credential."""
+        assert app_state.api_token == API_TOKEN
+        assert "api_token" not in app_state.config["web"]
+
+    def test_nothing_logged_during_boot_contains_it(self, real_boot, caplog) -> None:
+        assert API_TOKEN not in caplog.text
+
+    def test_the_settings_view_never_lists_it(self, real_boot) -> None:
+        """``GET /api/settings`` renders registry leaves, and this is not one."""
+        response = authenticated_client(real_boot).get("/api/settings")
+
+        assert response.status_code == 200
+        assert API_TOKEN not in response.text
+        assert "api_token" not in response.text
+
+    @pytest.mark.parametrize(
+        ("method", "url", "body", "refusal"),
+        [
+            ("PUT", "/api/settings", {"updates": {"web.api_token": "x" * 40}}, 422),
+            ("DELETE", "/api/settings/web.api_token", None, 404),
+            (
+                "PUT",
+                "/api/settings/secret",
+                {"key": "web.api_token", "value": "x" * 40},
+                400,
+            ),
+        ],
+    )
+    def test_the_settings_write_surface_cannot_reach_it(
+        self, real_boot, method, url, body, refusal
+    ) -> None:
+        """Not a registry leaf, which is what makes every writer miss it.
+
+        Otherwise a caller could change the credential they authenticated with,
+        and lock everybody else out of a shared instance.
+        """
+        response = authenticated_client(real_boot).request(method, url, json=body)
+
+        assert response.status_code == refusal
+        assert app_state.api_token == API_TOKEN
+
+    def test_a_refusal_does_not_echo_what_was_presented(self, anonymous_client) -> None:
+        """A 401 quoting the guess would put it in the caller's own logs."""
+        response = anonymous_client.get(
+            "/api/status", headers={"Authorization": f"Bearer {_WRONG_TOKEN}"}
+        )
+
+        assert response.status_code == 401
+        assert _WRONG_TOKEN not in response.text
+        assert API_TOKEN not in response.text
+
+
+class TestBootRefusesWithoutAToken:
+    """Auth is required, so an unconfigured deployment must not start at all."""
+
+    def test_create_app_raises_naming_the_key_and_the_remedy(
+        self, mock_config, tmp_path
+    ) -> None:
+        """The message is the whole of the operator's instruction."""
+        reset_sync_manager()
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+
+        with pytest.raises(MissingApiTokenError) as raised:
+            with booted_web_app(storage, mock_config, api_token=None):
+                pytest.fail("booted with no API token configured")
+
+        assert "web.api_token" in str(raised.value)
+        assert "openssl rand -hex 32" in str(raised.value)
+        reset_sync_manager()
+
+
 # The methods whose callers have never sent a body, so one appearing on them
 # is a break rather than an addition.
 _BODYLESS_METHODS = {"GET", "DELETE"}
@@ -5594,7 +5807,9 @@ class TestGuardsResolveOncePerRequest:
             "config": {},
             "migrated_at": "2026-01-01T00:00:00",
         }
-        client = TestClient(mock_components["app"], raise_server_exceptions=False)
+        client = authenticated_client(
+            mock_components["app"], raise_server_exceptions=False
+        )
 
         with (
             patch("src.web.api.get_sync_manager"),
@@ -5694,7 +5909,7 @@ class TestSlowRequestsDoNotStallTheServerRegression:
         app_state.config_path = None
 
         with (
-            TestClient(mock_components["app"]) as client,
+            authenticated_client(mock_components["app"]) as client,
             ThreadPoolExecutor(max_workers=1) as pool,
         ):
             slow = pool.submit(client.get, "/api/recommendations?type=book")
@@ -5770,7 +5985,7 @@ class TestTheConfigWatcherDoesNotStallTheServerRegression:
             patch("src.web.state.reload_config", announce_then_reload),
             # The context-manager form is what starts the lifespan, and so the
             # watcher, on the same loop the requests are served from.
-            TestClient(mock_components["app"]) as client,
+            authenticated_client(mock_components["app"]) as client,
             ThreadPoolExecutor(max_workers=1) as pool,
         ):
             holder = pool.submit(hold_the_config_lock)
@@ -5805,7 +6020,10 @@ def _asgi_request(
     observable, which is why this drives the app rather than the client.
     """
     path, _, query = target.partition("?")
-    headers = [(b"host", b"testserver")]
+    headers = [
+        (b"host", b"testserver"),
+        (b"authorization", f"Bearer {API_TOKEN}".encode()),
+    ]
     if request_body:
         headers += [
             (b"content-type", b"application/json"),
@@ -5983,7 +6201,7 @@ def settings_app(tmp_path: Path):
         "recommendations": {"default_count": 5, "max_count": 20},
     }
     with booted_web_app(storage, config) as app:
-        yield TestClient(app), storage
+        yield authenticated_client(app), storage
     reset_sync_manager()
 
 

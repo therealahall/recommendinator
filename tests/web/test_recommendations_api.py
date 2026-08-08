@@ -2,12 +2,10 @@
 
 from unittest.mock import MagicMock
 
-from fastapi.testclient import TestClient
-
 from src.recommendations.engine import RecommendationEngine
 from src.storage.manager import StorageManager
 from src.web.state import app_state
-from tests.factories import booted_web_app
+from tests.factories import authenticated_client, booted_web_app
 
 
 class TestEmptyRecommendationsRegression:
@@ -27,7 +25,7 @@ class TestEmptyRecommendationsRegression:
 
         with booted_web_app(mock_storage, {}) as app:
             app_state.engine = mock_engine
-            response = TestClient(app).get(
+            response = authenticated_client(app).get(
                 "/api/recommendations?type=video_game&count=5"
             )
 

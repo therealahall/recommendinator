@@ -102,9 +102,9 @@ class SyncManager:
     """
 
     # Cap on retained completed/failed jobs. Running jobs are never
-    # evicted (see ``_evict_history_locked``). Prevents an unauthenticated
-    # /api/update caller from growing ``_jobs`` without bound by
-    # triggering syncs with arbitrary source labels.
+    # evicted (see ``_evict_history_locked``). Prevents an /api/update caller
+    # from growing ``_jobs`` without bound by triggering syncs with arbitrary
+    # source labels.
     _MAX_TERMINAL_HISTORY = 50
 
     def __init__(self) -> None:

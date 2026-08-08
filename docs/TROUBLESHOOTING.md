@@ -122,11 +122,15 @@ Is the server running (`python3.11 -m src.web`), on the port you are asking for
 
 ### Preferences reset after a refresh
 
-Click **Save Preferences**, check the network tab, and confirm the API answers:
+Click **Save Preferences**, check the network tab, and confirm the API answers.
+Every `/api` route needs the bearer token from `web.api_token`:
 
 ```bash
-curl http://localhost:18473/api/status
+curl -H "Authorization: Bearer $(yq '.web.api_token' config/config.yaml)" \
+  http://localhost:18473/api/status
 ```
+
+A `401` means the token is wrong; the UI clears a rejected one and asks again.
 
 ## CLI
 
@@ -142,6 +146,15 @@ python3.11 -m src.cli preferences --help    # it may be a subcommand
 ```bash
 cp config/example.yaml config/config.yaml
 python3.11 -m src.cli --config path/to/config.yaml status
+```
+
+### The web server exits with `No API token configured`
+
+`web.api_token` is empty in `config.yaml`. The API requires it and there is no
+open mode, so set one and start again:
+
+```bash
+openssl rand -hex 32
 ```
 
 ## Docker

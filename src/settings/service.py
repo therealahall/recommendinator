@@ -252,8 +252,8 @@ def _validated_cors_origins(entry: SettingMetadata, origins: list[str]) -> list[
     silently inert allowance the operator believes is working. ``"null"`` is the
     dangerous one: a sandboxed iframe and a ``data:``/``file:`` document both
     send ``Origin: null``, and because ``"null"`` is not ``"*"`` the app keeps
-    ``allow_credentials`` on, so allowing it hands any page the user visits full
-    read/write of a library that ships no authentication.
+    ``allow_credentials`` on, so allowing it lets any page the user visits read
+    and write the library on the strength of the browser's own credentials.
 
     Items are trimmed before checking, and the trimmed list is what gets
     persisted: a pasted origin with a stray space would otherwise validate on

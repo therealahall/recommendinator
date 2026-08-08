@@ -17,10 +17,15 @@ from src.cli.config import (
     BOOTSTRAP_WEB_DEBUG,
     BOOTSTRAP_WEB_HOST,
     BOOTSTRAP_WEB_PORT,
+    MIN_API_TOKEN_LENGTH,
+    NO_API_TOKEN_MESSAGE,
+    SHORT_API_TOKEN_MESSAGE,
+    MissingApiTokenError,
     build_scorers_from_config,
     create_llm_components,
     load_config,
     resolve_bootstrap_web,
+    take_api_token,
 )
 from src.recommendations.scorers import SCORER_NAME_MAP, Scorer
 from src.settings.metadata import default_config, flat_defaults
@@ -265,6 +270,81 @@ class TestResolveBootstrapWeb:
 
     def test_boolean_true_enables_debug(self) -> None:
         assert resolve_bootstrap_web({"web": {"debug": True}}).debug is True
+
+
+_GOOD_TOKEN = "a" * MIN_API_TOKEN_LENGTH
+
+
+class TestTakeApiToken:
+    """The one credential read straight from ``config.yaml``.
+
+    Every unusable shape raises rather than degrading, because the alternative
+    to a token is not a weaker server, it is an open one.
+    """
+
+    def test_a_usable_token_is_returned_and_removed(self) -> None:
+        """Popped, so nothing downstream is handed the plaintext credential."""
+        config = {"web": {"host": "127.0.0.1", "api_token": _GOOD_TOKEN}}
+
+        assert take_api_token(config) == _GOOD_TOKEN
+        assert config["web"] == {"host": "127.0.0.1"}
+
+    def test_surrounding_whitespace_is_trimmed(self) -> None:
+        """A YAML edit that leaves a trailing newline is still the same token."""
+        assert take_api_token({"web": {"api_token": f"  {_GOOD_TOKEN}\n"}}) == (
+            _GOOD_TOKEN
+        )
+
+    @pytest.mark.parametrize(
+        "web",
+        [
+            pytest.param({}, id="no-key"),
+            pytest.param({"api_token": None}, id="blank-value"),
+            pytest.param({"api_token": ""}, id="empty-string"),
+            pytest.param({"api_token": "   "}, id="whitespace-only"),
+            pytest.param({"api_token": 12345678901234567890123456789012}, id="number"),
+        ],
+    )
+    def test_an_absent_or_unusable_token_raises(self, web: dict[str, Any]) -> None:
+        """Including the shapes YAML produces for a key someone meant to fill in."""
+        with pytest.raises(MissingApiTokenError) as raised:
+            take_api_token({"web": web})
+
+        assert str(raised.value) == NO_API_TOKEN_MESSAGE
+
+    @pytest.mark.parametrize(
+        "section",
+        [pytest.param(None, id="bare-header"), pytest.param("x", id="scalar")],
+    )
+    def test_a_non_dict_web_section_raises_rather_than_crashing(
+        self, section: Any
+    ) -> None:
+        """``web:`` with no children parses to None, which has no ``pop``."""
+        with pytest.raises(MissingApiTokenError):
+            take_api_token({"web": section})
+
+    def test_a_short_token_raises_and_is_still_removed(self) -> None:
+        """A guessable token is refused, and does not linger in the config."""
+        config = {"web": {"api_token": "short"}}
+
+        with pytest.raises(MissingApiTokenError) as raised:
+            take_api_token(config)
+
+        assert str(raised.value) == SHORT_API_TOKEN_MESSAGE
+        assert config["web"] == {}
+
+    def test_the_boundary_length_is_accepted(self) -> None:
+        """Off-by-one on the bound would refuse exactly what the docs tell you."""
+        assert take_api_token({"web": {"api_token": _GOOD_TOKEN}}) == _GOOD_TOKEN
+
+    def test_neither_message_quotes_the_value_it_refused(self) -> None:
+        """A message echoing the token would copy it into the operator's logs."""
+        secret = "s" * (MIN_API_TOKEN_LENGTH - 1)
+
+        with pytest.raises(MissingApiTokenError) as raised:
+            take_api_token({"web": {"api_token": secret}})
+
+        assert secret not in str(raised.value)
 
 
 class TestScorerConfigMap:

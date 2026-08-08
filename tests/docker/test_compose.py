@@ -46,13 +46,17 @@ APP_SERVICES = ["app", "app-ai"]
 
 # The mapping compose renders when nothing is set. Container port 8000 is fixed
 # by the image's CMD; the host side is the part operators change.
-DEFAULT_MAPPING = "18473:8000"
+DEFAULT_MAPPING = "127.0.0.1:18473:8000"
 
-# `${NAME:-default}`, the only interpolation form this file uses. Compose also
-# understands `${NAME}` and `${NAME:?err}`; if either ever appears here the
-# substitution below leaves it untouched and the assertions fail loudly, rather
-# than quietly rendering something that never occurs in practice.
-_INTERPOLATION = re.compile(r"\$\{([A-Z][A-Z0-9_]*):-([^}]*)\}")
+# The host part of that mapping: what an operator overrides to publish any
+# further than this machine.
+LOOPBACK_PREFIX = "127.0.0.1:"
+
+# The two forms this file uses, which differ on an empty value —
+# APP_BIND_PREFIX relies on that. `${NAME}` and `${NAME:?err}` would be left
+# untouched here and fail the assertions loudly rather than render something
+# nobody gets.
+_INTERPOLATION = re.compile(r"\$\{([A-Z][A-Z0-9_]*):?-([^}]*)\}")
 
 # Every variable named in the "Environment overrides" comment block at the top,
 # written as `#   NAME — description`.
@@ -133,36 +137,47 @@ class TestComposeDefaultPortMapping:
     """What a clone with no `.env` and no exported variables publishes."""
 
     @pytest.mark.parametrize("service", APP_SERVICES)
-    def test_renders_the_bare_short_form(self, service: str) -> None:
-        """Regression: parameterising the bind address broke `docker compose up`
-        for everyone who had not set it.
+    def test_renders_the_short_form_bound_to_loopback(self, service: str) -> None:
+        """Regression: `docker compose up -d` published the app to the whole LAN.
 
-        The mapping was briefly the long form with ``host_ip: "${APP_HOST_IP:-}"``,
-        on the assumption that an empty host_ip means the same as an absent one.
-        It does not — compose validates it and rejects the whole file with
-        ``services.app-ai.ports.[]: invalid ip address:``, so a contributor
-        cloning the repo could not start the stack at all.
-
-        That bug survived a test asserting the YAML said ``host_ip: ""``, because
-        reading the expression proves nothing about what compose makes of it. So
-        assert the rendered result instead: with nothing set it must be the bare
-        short form with no host component. That is also what preserves the IPv6
-        binding a bare mapping gets and a spelled-out 0.0.0.0 would lose.
+        The short form defaulted to no host part, which publishes on every
+        interface. Rendered rather than read: the expression says nothing about
+        what compose makes of it.
         """
         (spec,) = _port_specs(service)
         rendered = _render(spec)
 
         assert isinstance(spec, str), "must be the short form, not a long-form mapping"
         assert rendered == DEFAULT_MAPPING
-        # Spelled out separately from the equality above so the failure names the
-        # defect class: a host component that should not be there.
-        assert rendered.count(":") == 1, f"{rendered} carries a host part by default"
+        # Spelled out separately from the equality above so the failure names
+        # the defect class: a mapping reachable from another machine.
+        assert rendered.startswith(
+            LOOPBACK_PREFIX
+        ), f"{rendered} is published beyond this host by default"
+
+    def test_no_service_publishes_beyond_loopback_by_default(self) -> None:
+        """Every mapping in the file, not only the two app services.
+
+        A port added to another service later is published on the same terms
+        or not at all, and this is what says so before it ships.
+        """
+        compose = yaml.safe_load(_compose_text())
+        published = {
+            (name, _render(spec))
+            for name, service in compose["services"].items()
+            for spec in service.get("ports") or []
+        }
+
+        assert published, "no published ports found — the parse went wrong"
+        assert {
+            entry for entry in published if not entry[1].startswith(LOOPBACK_PREFIX)
+        } == set()
 
     @pytest.mark.parametrize("service", APP_SERVICES)
     def test_publishes_18473_to_the_fixed_container_port(self, service: str) -> None:
         (spec,) = _port_specs(service)
 
-        published, target = _render(spec).split(":")
+        _host, published, target = _render(spec).split(":")
 
         assert published == "18473"
         # The image's CMD hardcodes --port 8000, so only the host side is
@@ -177,22 +192,35 @@ class TestComposePortOverrides:
     def test_app_port_moves_the_host_port_only(self, service: str) -> None:
         (spec,) = _port_specs(service)
 
-        assert _render(spec, APP_PORT="8080") == "8080:8000"
+        assert _render(spec, APP_PORT="8080") == "127.0.0.1:8080:8000"
 
     @pytest.mark.parametrize("service", APP_SERVICES)
-    def test_bind_prefix_restricts_the_interface(self, service: str) -> None:
+    def test_bind_prefix_picks_another_interface(self, service: str) -> None:
         """The prefix carries its own trailing colon, which is what lets the
-        default be empty. A value without one renders a nonsense host:port that
-        compose rejects — loud, which is the acceptable failure mode here."""
+        every-interface value be empty. A value without one renders a nonsense
+        host:port that compose rejects — loud, which is acceptable here."""
         (spec,) = _port_specs(service)
 
         assert (
-            _render(spec, APP_BIND_PREFIX="127.0.0.1:", APP_PORT="9000")
-            == "127.0.0.1:9000:8000"
+            _render(spec, APP_BIND_PREFIX="192.168.1.10:", APP_PORT="9000")
+            == "192.168.1.10:9000:8000"
         )
-        # Independent of APP_PORT: restricting the interface must not disturb the
+        # Independent of APP_PORT: moving the interface must not disturb the
         # port default.
-        assert _render(spec, APP_BIND_PREFIX="127.0.0.1:") == "127.0.0.1:18473:8000"
+        assert (
+            _render(spec, APP_BIND_PREFIX="192.168.1.10:") == "192.168.1.10:18473:8000"
+        )
+
+    @pytest.mark.parametrize("service", APP_SERVICES)
+    def test_an_empty_prefix_publishes_on_every_interface(self, service: str) -> None:
+        """The documented opt-in, and the reason the default uses ``-``.
+
+        With ``:-`` compose reads an empty value as unset and hands back the
+        loopback default, so the escape hatch would silently do nothing.
+        """
+        (spec,) = _port_specs(service)
+
+        assert _render(spec, APP_BIND_PREFIX="") == "18473:8000"
 
 
 class TestComposeOverridesAreDocumented:

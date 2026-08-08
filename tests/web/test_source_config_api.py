@@ -23,7 +23,7 @@ from src.llm.embeddings import EmbeddingGenerator
 from src.llm.recommendations import RecommendationGenerator
 from src.recommendations.engine import RecommendationEngine
 from src.storage.manager import StorageManager
-from tests.factories import booted_web_app
+from tests.factories import authenticated_client, booted_web_app
 
 
 @pytest.fixture()
@@ -83,7 +83,7 @@ def client(
         patch("src.web.app.migrate_source_config_plugins"),
         booted_web_app(storage, base_config, llm_components, engine=engine) as app,
     ):
-        yield TestClient(app)
+        yield authenticated_client(app)
 
 
 class TestSchemaEndpoint:

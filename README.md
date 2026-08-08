@@ -21,7 +21,7 @@ mkdir -p recommendinator/{config,data,inputs} && cd recommendinator
 
 docker run -d \
   --name recommendinator \
-  -p 18473:8000 \
+  -p 127.0.0.1:18473:8000 \
   -v "$(pwd)/config:/app/config" \
   -v "$(pwd)/data:/app/data" \
   -v "$(pwd)/inputs:/app/inputs:ro" \
@@ -29,8 +29,10 @@ docker run -d \
   ghcr.io/therealahall/recommendinator:latest
 ```
 
-The container writes a starter `config/config.yaml` you do not need to edit. Open
-**http://localhost:18473** and set everything up from the app. Then, in order:
+The container writes a starter `config/config.yaml` you do not need to edit, and
+mints an API token into it. Read the token out of the first-run log
+(`docker logs recommendinator`), open **http://localhost:18473**, and paste it
+when the UI asks. Then, in order:
 
 1. **[Set up enrichment](docs/ENRICHMENT_SETUP.md) first.** It fills in the
    genres, tags, and descriptions the scoring pipeline depends on. Skipping it
@@ -45,10 +47,14 @@ The container writes a starter `config/config.yaml` you do not need to edit. Ope
 
 ## Security notice
 
-This is a **personal, single-user tool** with **no authentication on any
-endpoint**. It binds to `127.0.0.1` by default. Change the host to `0.0.0.0` for
-LAN access and **anyone on your network can view and modify your data**. Do not
-expose it to the public internet. See [docs/SECURITY.md](docs/SECURITY.md).
+Every API request needs a bearer token, and the server refuses to start without
+one. Docker mints it on first run and prints it once; from source, put
+`openssl rand -hex 32` into `web.api_token`.
+
+It binds to `127.0.0.1` by default, and Docker publishes on `127.0.0.1` too. The
+app **never serves TLS**, so reaching it from another machine means a reverse
+proxy terminating HTTPS — otherwise the token crosses your network in cleartext.
+See [docs/SECURITY.md](docs/SECURITY.md).
 
 ## Data sources
 
@@ -96,11 +102,12 @@ See [Enabling AI features](#enabling-ai-features) below.
 ## Configuration
 
 Copy `config/example.yaml` to `config/config.yaml`. It holds only what is needed
-to stand the app up, which is where the server binds and where the database
-lives:
+to stand the app up: the API token, where the server binds, and where the
+database lives.
 
 ```yaml
 web:
+  api_token: "…"        # openssl rand -hex 32; the server will not start without it
   host: "127.0.0.1"
   port: 18473
 
@@ -108,9 +115,10 @@ storage:
   database_path: "data/recommendations.db"
 ```
 
-Under Docker those two are inert, because the image passes `--host` and `--port`
-on the command line and CLI flags beat `config.yaml`. Publish a different port
-with `APP_PORT` instead. See [docs/DOCKER.md](docs/DOCKER.md).
+Under Docker `host` and `port` are inert, because the image passes `--host` and
+`--port` on the command line and CLI flags beat `config.yaml`. Publish a
+different port with `APP_PORT` instead, and let the entrypoint mint the token.
+See [docs/DOCKER.md](docs/DOCKER.md).
 
 Everything else lives in the database and is set from the app. Data sources come
 from the **Data** tab or the `source` CLI. Global settings, from AI toggles to
