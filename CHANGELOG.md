@@ -1,6 +1,27 @@
 # CHANGELOG
 
 
+## v0.26.1 (2026-08-08)
+
+### Bug Fixes
+
+- **recommendations**: Tire of a genre you finished, even unrated
+  ([`5f7e620`](https://github.com/therealahall/recommendinator/commit/5f7e620a3e1e2b0f859c8f4c4cd0c2d2fcdd8514))
+
+### Documentation
+
+- Name both facts that outlive a rating
+  ([`8766761`](https://github.com/therealahall/recommendinator/commit/8766761a50e24df275d7439e536f4ab8e9a93492))
+
+### Testing
+
+- **recommendations**: Cover the paths the widening opened
+  ([`6e395d2`](https://github.com/therealahall/recommendinator/commit/6e395d2f79c6a6d3b7467137aae95ce980741d96))
+
+- **storage**: Pin the two item sets apart
+  ([`b1199bb`](https://github.com/therealahall/recommendinator/commit/b1199bb0193388cc20ff994b0e939f01843f2adf))
+
+
 ## v0.26.0 (2026-08-07)
 
 ### Bug Fixes
