@@ -1,6 +1,38 @@
 # CHANGELOG
 
 
+## v0.28.0 (2026-08-08)
+
+### Bug Fixes
+
+- **ingestion,enrichment**: Publish a discovered registry in one swap
+  ([`d4b259e`](https://github.com/therealahall/recommendinator/commit/d4b259ec237450a21fbb313ea833f9582376b35b))
+
+- **storage**: Make a preference merge one operation
+  ([`9465095`](https://github.com/therealahall/recommendinator/commit/9465095c2c176d3592e964cffccfbf38d30b8211))
+
+- **web**: Build each lazy manager once, and start one enrichment job
+  ([`1e152a0`](https://github.com/therealahall/recommendinator/commit/1e152a0dd0cdbfc001d39d3153271da314529099))
+
+- **web**: Give the running config one serialiser instead of the event loop
+  ([`60acadd`](https://github.com/therealahall/recommendinator/commit/60acadd80b43746645adb7fcbed89f93e310d86b))
+
+### Documentation
+
+- Name the threadpool rule and the four locks it made necessary
+  ([`292631d`](https://github.com/therealahall/recommendinator/commit/292631dc8f313c74156556adfbd0abad9fdc1695))
+
+### Refactoring
+
+- **web**: Run every API handler in a threadpool behind declared guards
+  ([`a395561`](https://github.com/therealahall/recommendinator/commit/a3955612394582478bdae3e71c9435d558ff2bf0))
+
+### Breaking Changes
+
+- **web**: Dependencies resolve before validation, so a down component answers 503 not 422, an
+  unknown source with a bad body 404.
+
+
 ## v0.27.0 (2026-08-08)
 
 ### Bug Fixes
