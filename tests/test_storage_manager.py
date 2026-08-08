@@ -784,6 +784,149 @@ class TestGetSignalItemsRegression:
         assert captured["include_ignored"] is False
 
 
+class TestGetConsumptionItemsRegression:
+    """Bug reported: finishing six books without rating them caused no fatigue.
+
+    Bug reported: the genre-fatigue variety ladder is documented as reacting to
+    what the user recently completed, but a user who finished six fantasy
+    novels and rated none of them got no fantasy fatigue at all — the slider
+    moved and nothing happened.
+    Root cause: the ladder was fed ``get_signal_items``, the taste-learning set
+    (completed AND rated AND not ignored), so an unrated completion never
+    claimed a rung.
+    Fix: ``get_consumption_items`` returns what the user has consumed (not
+    ignored, rating irrelevant) and feeds the ladder, while ``get_signal_items``
+    keeps its rating filter for preference learning. It inherits
+    ``get_completed_items``' status set, so in-progress items come with it and
+    the ladder does its own completion-event narrowing.
+    """
+
+    @staticmethod
+    def _book(item_id, title, status, rating):
+        return ContentItem(
+            id=item_id,
+            title=title,
+            content_type=ContentType.BOOK,
+            status=status,
+            rating=rating,
+        )
+
+    @classmethod
+    def _seed_library(cls, manager: StorageManager) -> None:
+        manager.save_content_item(
+            cls._book("rated", "Rated Book", ConsumptionStatus.COMPLETED, rating=5)
+        )
+        manager.save_content_item(
+            cls._book("unrated", "Unrated Book", ConsumptionStatus.COMPLETED, None)
+        )
+        manager.save_content_item(
+            cls._book(
+                "reading", "In Progress", ConsumptionStatus.CURRENTLY_CONSUMING, None
+            )
+        )
+        manager.save_content_item(
+            cls._book("unread", "Backlog Book", ConsumptionStatus.UNREAD, None)
+        )
+        ignored_db_id = manager.save_content_item(
+            cls._book("ignored", "Ignored Book", ConsumptionStatus.COMPLETED, rating=5)
+        )
+        manager.set_item_ignored(ignored_db_id, True)
+
+    def test_consumption_items_keep_unrated_and_in_progress_items_regression(
+        self, temp_storage_manager: StorageManager
+    ) -> None:
+        """Unrated and in-progress items count; ignored and unread do not.
+
+        In-progress items ride along from ``get_completed_items``, which is the
+        accessor's status set. The ladder narrows them itself, so a caller that
+        wants finished-only must not read this one as if it already had.
+        """
+        self._seed_library(temp_storage_manager)
+
+        titles = {item.title for item in temp_storage_manager.get_consumption_items()}
+        assert titles == {"Rated Book", "Unrated Book", "In Progress"}
+
+    def test_consumption_items_exclude_ignored_unrated_completion_regression(
+        self, temp_storage_manager: StorageManager
+    ) -> None:
+        """Ignoring something keeps it off the ladder even though it was finished."""
+        db_id = temp_storage_manager.save_content_item(
+            self._book("combo", "Ignored Unrated", ConsumptionStatus.COMPLETED, None)
+        )
+        temp_storage_manager.set_item_ignored(db_id, True)
+
+        assert temp_storage_manager.get_consumption_items() == []
+
+    def test_consumption_items_keep_an_unrated_show_mid_run_regression(
+        self, temp_storage_manager: StorageManager
+    ) -> None:
+        """An unrated show with a finished season survives the accessor.
+
+        A finished season of an ongoing show is a completion event for the
+        variety ladder, so the show has to reach the ladder before its seasons
+        can be read. Under the signal set an unrated one never did.
+        """
+        temp_storage_manager.save_content_item(
+            ContentItem(
+                id="show",
+                title="Ongoing Show",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.CURRENTLY_CONSUMING,
+                rating=None,
+                metadata={"genre": "Drama", "seasons_watched": [1]},
+            )
+        )
+
+        consumption = temp_storage_manager.get_consumption_items()
+        assert [item.title for item in consumption] == ["Ongoing Show"]
+        assert consumption[0].metadata["seasons_watched"] == [1]
+        assert temp_storage_manager.get_signal_items() == []
+
+    def test_consumption_set_is_wider_than_the_signal_set_regression(
+        self, temp_storage_manager: StorageManager
+    ) -> None:
+        """The two collections are provably distinct: only rating separates them.
+
+        Preference learning still excludes unrated completions — widening the
+        signal accessor instead of adding this one would have corrupted it.
+        """
+        self._seed_library(temp_storage_manager)
+
+        consumption = {
+            item.title for item in temp_storage_manager.get_consumption_items()
+        }
+        signal = {item.title for item in temp_storage_manager.get_signal_items()}
+
+        assert signal == {"Rated Book"}
+        # Proper subset: widening must add to the signal set, never trade an
+        # item away, which "signal == {...} and consumption - signal == {...}"
+        # alone would not catch.
+        assert signal < consumption
+        assert consumption - signal == {"Unrated Book", "In Progress"}
+
+    def test_consumption_items_forward_params_to_get_completed_items_regression(
+        self, temp_storage_manager: StorageManager
+    ) -> None:
+        """user_id, content_type and limit are forwarded, ignored items excluded."""
+        captured: dict[str, object] = {}
+
+        def fake_completed(**kwargs: object) -> list[ContentItem]:
+            captured.update(kwargs)
+            return []
+
+        temp_storage_manager.get_completed_items = fake_completed  # type: ignore[method-assign]
+
+        result = temp_storage_manager.get_consumption_items(
+            user_id=7, content_type=ContentType.MOVIE, limit=3
+        )
+
+        assert result == []
+        assert captured["user_id"] == 7
+        assert captured["content_type"] == ContentType.MOVIE
+        assert captured["limit"] == 3
+        assert captured["include_ignored"] is False
+
+
 class TestGetItemsByEmbeddingKeys:
     """Resolving vector-DB keys back to the items they were stored for."""
 
