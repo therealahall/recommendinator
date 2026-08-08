@@ -1,5 +1,7 @@
 """Tests for web API enrichment endpoints."""
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -8,6 +10,7 @@ from fastapi.testclient import TestClient
 from src.enrichment.manager import EnrichmentManager
 from src.storage.manager import StorageManager
 from src.web.enrichment_manager import reset_enrichment_manager
+from tests.factories import booted_web_app
 
 
 @pytest.fixture
@@ -34,21 +37,23 @@ def mock_config_disabled() -> dict:
     }
 
 
-@pytest.fixture
-def client(mock_config: dict) -> TestClient:
-    """Create test client with mocked dependencies."""
+@contextmanager
+def _client(storage: MagicMock, config: dict) -> Iterator[TestClient]:
+    """Serve the app with ``storage`` and ``config`` bound into ``app_state``.
+
+    Binding the state rather than patching whichever module imported
+    ``get_storage``: the endpoints reach their components through the shared
+    guards, and app_state is the one place both routers agree on.
+
+    The enrichment manager is a module-level singleton of its own, so it is
+    reset on both sides of the boot.
+    """
     reset_enrichment_manager()
-
-    with patch("src.web.api.get_storage") as mock_storage:
-        with patch("src.web.api.get_config") as mock_get_config:
-            mock_storage.return_value = MagicMock(spec=StorageManager)
-            mock_get_config.return_value = mock_config
-
-            from src.web.app import app
-
+    try:
+        with booted_web_app(storage, config) as app:
             yield TestClient(app)
-
-    reset_enrichment_manager()
+    finally:
+        reset_enrichment_manager()
 
 
 class TestEnrichmentStart:
@@ -56,100 +61,56 @@ class TestEnrichmentStart:
 
     def test_start_enrichment_success(self, mock_config: dict) -> None:
         """Test successful enrichment start."""
-        reset_enrichment_manager()
+        with (
+            _client(MagicMock(spec=StorageManager), mock_config) as client,
+            patch("src.web.enrichment_manager.EnrichmentManager") as mock_manager_cls,
+        ):
+            mock_manager = MagicMock(spec=EnrichmentManager)
+            mock_manager.start_enrichment.return_value = True
+            mock_manager_cls.return_value = mock_manager
 
-        with patch("src.web.api.get_storage") as mock_storage:
-            with patch("src.web.api.get_config") as mock_get_config:
-                mock_storage.return_value = MagicMock(spec=StorageManager)
-                mock_get_config.return_value = mock_config
-
-                with patch(
-                    "src.web.enrichment_manager.EnrichmentManager"
-                ) as mock_manager_cls:
-                    mock_manager = MagicMock(spec=EnrichmentManager)
-                    mock_manager.start_enrichment.return_value = True
-                    mock_manager_cls.return_value = mock_manager
-
-                    from src.web.app import app
-
-                    client = TestClient(app)
-                    response = client.post("/api/enrichment/start", json={})
+            response = client.post("/api/enrichment/start", json={})
 
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "started"
 
-        reset_enrichment_manager()
-
     def test_start_enrichment_disabled(self, mock_config_disabled: dict) -> None:
         """Test error when enrichment is disabled."""
-        reset_enrichment_manager()
-
-        with patch("src.web.api.get_storage") as mock_storage:
-            with patch("src.web.api.get_config") as mock_get_config:
-                mock_storage.return_value = MagicMock(spec=StorageManager)
-                mock_get_config.return_value = mock_config_disabled
-
-                from src.web.app import app
-
-                client = TestClient(app)
-                response = client.post("/api/enrichment/start", json={})
+        with _client(MagicMock(spec=StorageManager), mock_config_disabled) as client:
+            response = client.post("/api/enrichment/start", json={})
 
         assert response.status_code == 400
         assert "disabled" in response.json()["detail"].lower()
 
-        reset_enrichment_manager()
-
     def test_start_enrichment_with_content_type(self, mock_config: dict) -> None:
         """Test starting enrichment with content type filter."""
-        reset_enrichment_manager()
+        with (
+            _client(MagicMock(spec=StorageManager), mock_config) as client,
+            patch("src.web.enrichment_manager.EnrichmentManager") as mock_manager_cls,
+        ):
+            mock_manager = MagicMock(spec=EnrichmentManager)
+            mock_manager.start_enrichment.return_value = True
+            mock_manager_cls.return_value = mock_manager
 
-        with patch("src.web.api.get_storage") as mock_storage:
-            with patch("src.web.api.get_config") as mock_get_config:
-                mock_storage.return_value = MagicMock(spec=StorageManager)
-                mock_get_config.return_value = mock_config
-
-                with patch(
-                    "src.web.enrichment_manager.EnrichmentManager"
-                ) as mock_manager_cls:
-                    mock_manager = MagicMock(spec=EnrichmentManager)
-                    mock_manager.start_enrichment.return_value = True
-                    mock_manager_cls.return_value = mock_manager
-
-                    from src.web.app import app
-
-                    client = TestClient(app)
-                    response = client.post(
-                        "/api/enrichment/start",
-                        json={"content_type": "movie"},
-                    )
+            response = client.post(
+                "/api/enrichment/start",
+                json={"content_type": "movie"},
+            )
 
         assert response.status_code == 200
         assert "movie" in response.json()["message"].lower()
 
-        reset_enrichment_manager()
-
     def test_start_enrichment_invalid_content_type(self, mock_config: dict) -> None:
         """Test error with invalid content type."""
-        reset_enrichment_manager()
-
-        with patch("src.web.api.get_storage") as mock_storage:
-            with patch("src.web.api.get_config") as mock_get_config:
-                mock_storage.return_value = MagicMock(spec=StorageManager)
-                mock_get_config.return_value = mock_config
-
-                from src.web.app import app
-
-                client = TestClient(app)
-                response = client.post(
-                    "/api/enrichment/start",
-                    json={"content_type": "invalid"},
-                )
+        with _client(MagicMock(spec=StorageManager), mock_config) as client:
+            response = client.post(
+                "/api/enrichment/start",
+                json={"content_type": "invalid"},
+            )
 
         assert response.status_code == 400
         assert "invalid" in response.json()["detail"].lower()
-
-        reset_enrichment_manager()
 
 
 class TestEnrichmentStatus:
@@ -157,23 +118,12 @@ class TestEnrichmentStatus:
 
     def test_get_status_no_job(self) -> None:
         """Test status when no job exists."""
-        reset_enrichment_manager()
-
-        with patch("src.web.api.get_storage") as mock_storage:
-            with patch("src.web.api.get_config") as mock_get_config:
-                mock_storage.return_value = MagicMock(spec=StorageManager)
-                mock_get_config.return_value = {}
-
-                from src.web.app import app
-
-                client = TestClient(app)
-                response = client.get("/api/enrichment/status")
+        with _client(MagicMock(spec=StorageManager), {}) as client:
+            response = client.get("/api/enrichment/status")
 
         assert response.status_code == 200
         data = response.json()
         assert data["running"] is False
-
-        reset_enrichment_manager()
 
 
 class TestEnrichmentStats:
@@ -181,7 +131,8 @@ class TestEnrichmentStats:
 
     def test_get_stats(self) -> None:
         """Test getting enrichment statistics."""
-        mock_stats = {
+        storage = MagicMock(spec=StorageManager)
+        storage.get_enrichment_stats.return_value = {
             "total": 100,
             "enriched": 80,
             "pending": 15,
@@ -191,19 +142,8 @@ class TestEnrichmentStats:
             "by_quality": {"high": 60, "medium": 20},
         }
 
-        reset_enrichment_manager()
-
-        with patch("src.web.api.get_storage") as mock_storage:
-            with patch("src.web.api.get_config") as mock_get_config:
-                mock_storage_instance = MagicMock(spec=StorageManager)
-                mock_storage_instance.get_enrichment_stats.return_value = mock_stats
-                mock_storage.return_value = mock_storage_instance
-                mock_get_config.return_value = {}
-
-                from src.web.app import app
-
-                client = TestClient(app)
-                response = client.get("/api/enrichment/stats")
+        with _client(storage, {}) as client:
+            response = client.get("/api/enrichment/stats")
 
         assert response.status_code == 200
         data = response.json()
@@ -213,11 +153,10 @@ class TestEnrichmentStats:
         assert data["pending"] == 15
         assert data["by_provider"]["tmdb"] == 50
 
-        reset_enrichment_manager()
-
     def test_get_stats_with_enrichment_enabled(self) -> None:
         """Test that enabled field is True when enrichment is enabled in config."""
-        mock_stats = {
+        storage = MagicMock(spec=StorageManager)
+        storage.get_enrichment_stats.return_value = {
             "total": 10,
             "enriched": 5,
             "pending": 5,
@@ -227,25 +166,11 @@ class TestEnrichmentStats:
             "by_quality": {},
         }
 
-        reset_enrichment_manager()
-
-        with patch("src.web.api.get_storage") as mock_storage:
-            with patch("src.web.api.get_config") as mock_get_config:
-                mock_storage_instance = MagicMock(spec=StorageManager)
-                mock_storage_instance.get_enrichment_stats.return_value = mock_stats
-                mock_storage.return_value = mock_storage_instance
-                mock_get_config.return_value = {"enrichment": {"enabled": True}}
-
-                from src.web.app import app
-
-                client = TestClient(app)
-                response = client.get("/api/enrichment/stats")
+        with _client(storage, {"enrichment": {"enabled": True}}) as client:
+            response = client.get("/api/enrichment/stats")
 
         assert response.status_code == 200
-        data = response.json()
-        assert data["enabled"] is True
-
-        reset_enrichment_manager()
+        assert response.json()["enabled"] is True
 
 
 class TestEnrichmentReset:
@@ -253,98 +178,53 @@ class TestEnrichmentReset:
 
     def test_reset_all(self) -> None:
         """Test resetting all enrichment status."""
-        reset_enrichment_manager()
+        storage = MagicMock(spec=StorageManager)
+        storage.reset_enrichment_status.return_value = 50
 
-        with patch("src.web.api.get_storage") as mock_storage:
-            with patch("src.web.api.get_config") as mock_get_config:
-                mock_storage_instance = MagicMock(spec=StorageManager)
-                mock_storage_instance.reset_enrichment_status.return_value = 50
-                mock_storage.return_value = mock_storage_instance
-                mock_get_config.return_value = {}
-
-                from src.web.app import app
-
-                client = TestClient(app)
-                response = client.post("/api/enrichment/reset", json={})
+        with _client(storage, {}) as client:
+            response = client.post("/api/enrichment/reset", json={})
 
         assert response.status_code == 200
         data = response.json()
         assert data["count"] == 50
         assert "50" in data["message"]
 
-        reset_enrichment_manager()
-
     def test_reset_by_provider(self) -> None:
         """Test resetting enrichment by provider."""
-        reset_enrichment_manager()
+        storage = MagicMock(spec=StorageManager)
+        storage.reset_enrichment_status.return_value = 20
 
-        with patch("src.web.api.get_storage") as mock_storage:
-            with patch("src.web.api.get_config") as mock_get_config:
-                mock_storage_instance = MagicMock(spec=StorageManager)
-                mock_storage_instance.reset_enrichment_status.return_value = 20
-                mock_storage.return_value = mock_storage_instance
-                mock_get_config.return_value = {}
-
-                from src.web.app import app
-
-                client = TestClient(app)
-                response = client.post(
-                    "/api/enrichment/reset",
-                    json={"provider": "tmdb"},
-                )
+        with _client(storage, {}) as client:
+            response = client.post(
+                "/api/enrichment/reset",
+                json={"provider": "tmdb"},
+            )
 
         assert response.status_code == 200
-        data = response.json()
-        assert data["count"] == 20
-
-        # Verify the storage method was called with correct params
-        mock_storage_instance.reset_enrichment_status.assert_called_once()
-
-        reset_enrichment_manager()
+        assert response.json()["count"] == 20
+        storage.reset_enrichment_status.assert_called_once()
 
     def test_reset_by_content_type(self) -> None:
         """Test resetting enrichment by content type."""
-        reset_enrichment_manager()
+        storage = MagicMock(spec=StorageManager)
+        storage.reset_enrichment_status.return_value = 15
 
-        with patch("src.web.api.get_storage") as mock_storage:
-            with patch("src.web.api.get_config") as mock_get_config:
-                mock_storage_instance = MagicMock(spec=StorageManager)
-                mock_storage_instance.reset_enrichment_status.return_value = 15
-                mock_storage.return_value = mock_storage_instance
-                mock_get_config.return_value = {}
-
-                from src.web.app import app
-
-                client = TestClient(app)
-                response = client.post(
-                    "/api/enrichment/reset",
-                    json={"content_type": "book"},
-                )
+        with _client(storage, {}) as client:
+            response = client.post(
+                "/api/enrichment/reset",
+                json={"content_type": "book"},
+            )
 
         assert response.status_code == 200
-        data = response.json()
-        assert data["count"] == 15
-
-        reset_enrichment_manager()
+        assert response.json()["count"] == 15
 
     def test_reset_invalid_content_type(self) -> None:
         """Test error with invalid content type."""
-        reset_enrichment_manager()
-
-        with patch("src.web.api.get_storage") as mock_storage:
-            with patch("src.web.api.get_config") as mock_get_config:
-                mock_storage.return_value = MagicMock(spec=StorageManager)
-                mock_get_config.return_value = {}
-
-                from src.web.app import app
-
-                client = TestClient(app)
-                response = client.post(
-                    "/api/enrichment/reset",
-                    json={"content_type": "invalid"},
-                )
+        with _client(MagicMock(spec=StorageManager), {}) as client:
+            response = client.post(
+                "/api/enrichment/reset",
+                json={"content_type": "invalid"},
+            )
 
         assert response.status_code == 400
         assert "invalid" in response.json()["detail"].lower()
-
-        reset_enrichment_manager()
