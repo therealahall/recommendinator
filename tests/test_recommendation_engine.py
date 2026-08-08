@@ -32,6 +32,7 @@ from src.recommendations.scoring_pipeline import ScoredCandidate
 from src.recommendations.variety import (
     VARIETY_LADDER_STEPS,
     VARIETY_SERIES_CONTINUATION_FACTOR,
+    VARIETY_TOP_PENALTY,
 )
 from src.storage.manager import StorageManager
 from src.storage.vector_db import VectorDB
@@ -43,24 +44,42 @@ from tests.factories import make_item
 def mock_storage():
     """Create a mock storage manager.
 
-    ``get_signal_items`` mirrors the real accessor (completed, rated, not
-    ignored) by filtering whatever ``get_completed_items`` a test sets up, so
+    ``get_signal_items`` (completed, rated, not ignored) and
+    ``get_consumption_items`` (not ignored, rating irrelevant) both mirror the
+    real accessors by filtering whatever ``get_completed_items`` a test sets up, so
     existing tests only need to stub ``get_completed_items``. The real
-    accessor's own filtering is covered in ``tests/test_storage_manager.py``.
+    accessors' own filtering is covered in ``tests/test_storage_manager.py``.
     """
     storage = Mock(spec=StorageManager)
     storage.vector_db = Mock(spec=VectorDB)
     storage.vector_db.has_embedding = Mock(return_value=False)
     storage.vector_db.get_embedding = Mock(return_value=None)
-    storage.get_signal_items = Mock(
-        side_effect=lambda user_id=None, content_type=None, limit=None, **kwargs: [
+
+    # Each fake narrows get_completed_items itself, the way the real accessors
+    # do, so a call recorded on one is a call the engine made and not one its
+    # sibling fake made on its behalf. Ignored items are dropped in Python
+    # rather than by ``include_ignored``, which a stubbed return value cannot
+    # honour.
+    def consumption(user_id=None, content_type=None, limit=None, **kwargs):
+        return [
             item
             for item in storage.get_completed_items(
                 user_id=user_id, content_type=content_type, limit=limit, **kwargs
             )
-            if item.rating is not None and not item.ignored
+            if not item.ignored
         ]
-    )
+
+    def signal(user_id=None, content_type=None, limit=None, **kwargs):
+        return [
+            item
+            for item in storage.get_completed_items(
+                user_id=user_id, content_type=content_type, limit=limit, **kwargs
+            )
+            if not item.ignored and item.rating is not None
+        ]
+
+    storage.get_consumption_items = Mock(side_effect=consumption)
+    storage.get_signal_items = Mock(side_effect=signal)
     return storage
 
 
@@ -170,6 +189,7 @@ def _save_book(
     rating=None,
     ignored=False,
     genre="Science Fiction",
+    date_completed=None,
 ):
     """Persist a book, optionally marking it ignored; return its db_id."""
     db_id = storage.save_content_item(
@@ -180,6 +200,7 @@ def _save_book(
             status=status,
             rating=rating,
             metadata={"genre": genre},
+            date_completed=date_completed,
         )
     )
     if ignored:
@@ -4542,21 +4563,26 @@ class TestIgnoredAndUnratedItemsDoNotShapeRankingRegression:
         )
 
 
-class TestVarietyPenaltySignalRegression:
-    """Bug reported: ignored/unrated items leaked into the variety penalty.
+class TestVarietyLadderConsumptionRegression:
+    """Bug reported: unrated completions caused no genre fatigue at all.
 
-    Bug reported: with a non-zero ``variety_penalty`` the genre-fatigue ladder
-    was built from the full same-type completed set, so an ignored or
-    completed-but-unrated book still marked its genre "recently finished" and
-    demoted an otherwise-unpenalised candidate sharing that genre.
-    Root cause: ``_apply_variety_penalty`` received the unfiltered
-    ``consumed_items_of_type`` set.
-    Fix: the engine passes the signal subset (``get_signal_items(content_type)``)
-    to the variety penalty, so only rated, non-ignored completions build the
-    ladder. Exercised end-to-end against real storage with a ``variety_penalty``
-    config, the path the signal-set regression above does not cover. A
-    positive control confirms the ladder is genuinely live for these genres so
-    the "penalty stays zero" assertions are meaningful, not vacuous.
+    Bug reported: a user who rates the occasional book, but tore through six
+    fantasy novels without rating any of them, saw no fantasy fatigue — the
+    variety slider moved and the fantasy shelf kept topping the list. With the
+    ranker's diversity bonus gone the ladder is the only genre-spreading
+    mechanism left, so the unrated majority of a library spread nothing.
+    Root cause: ``_apply_variety_penalty`` was fed ``get_signal_items``, the
+    taste-learning set, which is completed AND rated AND not ignored.
+    Fix: the ladder is fed ``get_consumption_items`` (not ignored, rating
+    irrelevant). Rating is what the user thought of it; finishing it is what
+    causes fatigue. Ignoring stays disqualifying: it says the user wants less
+    of that, so letting it claim a rung would invert the intent. Exercised
+    end-to-end against real storage with a ``variety_penalty`` config.
+
+    A user who rates *nothing* is deliberately still helped by none of this:
+    the engine returns [] on an empty taste signal long before the ladder is
+    built, which ``test_a_library_with_no_rating_at_all_still_returns_nothing``
+    pins. Every other test here seeds one rated completion to clear that guard.
     """
 
     # variety_penalty == MAX gives a top-rung penalty fraction of 1.0, which
@@ -4565,11 +4591,16 @@ class TestVarietyPenaltySignalRegression:
         variety_penalty=UserPreferenceConfig.MAX_VARIETY_PENALTY
     )
 
-    @staticmethod
-    def _seed_baseline(storage):
+    _SEED_COMPLETED_ON = date(2026, 1, 1)
+    _FANTASY_COMPLETED_ON = date(2026, 2, 1)
+
+    @classmethod
+    def _seed_baseline(cls, storage):
         # A rated, non-ignored Mystery signal item makes recommendations exist
         # and seeds the ladder with Mystery (a cluster none of the candidates
-        # share, so baseline candidate penalties are zero).
+        # share, so baseline candidate penalties are zero). It is dated, so
+        # every Fantasy completion below outranks it on the ladder unless it
+        # carries no date of its own.
         _save_book(
             storage,
             item_id="sig",
@@ -4577,6 +4608,7 @@ class TestVarietyPenaltySignalRegression:
             status=ConsumptionStatus.COMPLETED,
             rating=5,
             genre="Mystery",
+            date_completed=cls._SEED_COMPLETED_ON,
         )
         _save_book(
             storage,
@@ -4593,17 +4625,74 @@ class TestVarietyPenaltySignalRegression:
             genre="Science Fiction",
         )
 
-    def _fantasy_penalty(self, engine):
+    # After _SEED_COMPLETED_ON, so the show's finished season outranks the
+    # Mystery completion on the ladder.
+    _SEASON_WATCHED_AT = "2026-02-01T12:00:00Z"
+
+    @classmethod
+    def _seed_tv_baseline(cls, storage):
+        """A dated rated Mystery show, plus one candidate show of each genre.
+
+        The Mystery completion clears the empty-signal guard and holds a rung
+        of its own, so an ignored show's zero can be measured against a ladder
+        the same request proves is live.
+        """
+        storage.save_content_item(
+            ContentItem(
+                id="tv-seed",
+                title="Rated Mystery Show",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+                metadata={"genre": "Mystery"},
+                date_completed=cls._SEED_COMPLETED_ON,
+            )
+        )
+        for genre in ("Fantasy", "Mystery"):
+            storage.save_content_item(
+                ContentItem(
+                    id=f"tv-cand-{genre.lower()}",
+                    title=f"{genre} Show Candidate",
+                    content_type=ContentType.TV_SHOW,
+                    status=ConsumptionStatus.UNREAD,
+                    metadata={"genre": genre},
+                )
+            )
+
+    @classmethod
+    def _save_ongoing_fantasy_show(cls, storage, *, ignored):
+        """An unrated show mid-run, dated only by its watched season."""
+        db_id = storage.save_content_item(
+            ContentItem(
+                id="tv-ongoing",
+                title="Ongoing Fantasy Show",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.CURRENTLY_CONSUMING,
+                rating=None,
+                metadata={
+                    "genre": "Fantasy",
+                    "seasons_watched": [1],
+                    "seasons_watched_dates": {"1": cls._SEASON_WATCHED_AT},
+                },
+            )
+        )
+        if ignored:
+            storage.set_item_ignored(db_id, True)
+
+    def _penalty_for(self, engine, title, content_type=ContentType.BOOK):
         recs = engine.generate_recommendations(
-            content_type=ContentType.BOOK,
+            content_type=content_type,
             count=5,
             user_preference_config=self._CONFIG,
         )
-        fantasy = next(rec for rec in recs if rec.item.title == "Fantasy Candidate")
-        return fantasy.variety_penalty
+        candidate = next(rec for rec in recs if rec.item.title == title)
+        return candidate.variety_penalty
+
+    def _fantasy_penalty(self, engine):
+        return self._penalty_for(engine, "Fantasy Candidate")
 
     def test_baseline_fantasy_candidate_unpenalised(self, real_engine, real_storage):
-        """With only a Mystery signal item, the Fantasy candidate has no penalty."""
+        """With only a Mystery completion, the Fantasy candidate has no penalty."""
         self._seed_baseline(real_storage)
         assert self._fantasy_penalty(real_engine) == 0.0
 
@@ -4612,8 +4701,8 @@ class TestVarietyPenaltySignalRegression:
     ):
         """Positive control: a rated, non-ignored Fantasy completion penalises it.
 
-        Proves the ladder recognises the Fantasy cluster and applies a penalty,
-        so the ignored/unrated "stays zero" assertions below are meaningful.
+        Proves the ladder recognises the Fantasy cluster and applies its top
+        rung, so the assertions below measure against a live ladder.
         """
         self._seed_baseline(real_storage)
         _save_book(
@@ -4623,8 +4712,106 @@ class TestVarietyPenaltySignalRegression:
             status=ConsumptionStatus.COMPLETED,
             rating=5,
             genre="Fantasy",
+            date_completed=self._FANTASY_COMPLETED_ON,
         )
-        assert self._fantasy_penalty(real_engine) > 0.0
+        assert self._fantasy_penalty(real_engine) == pytest.approx(1.0)
+
+    def test_unrated_completed_fantasy_penalises_regression(
+        self, real_engine, real_storage
+    ):
+        """Fantasy books finished without a rating must fatigue the genre."""
+        self._seed_baseline(real_storage)
+        for index in range(3):
+            _save_book(
+                real_storage,
+                item_id=f"unrated{index}",
+                title=f"Unrated Fantasy {index}",
+                status=ConsumptionStatus.COMPLETED,
+                rating=None,
+                genre="Fantasy",
+                date_completed=self._FANTASY_COMPLETED_ON,
+            )
+
+        assert self._fantasy_penalty(real_engine) == pytest.approx(1.0), (
+            "Completed-but-unrated books did not fatigue their genre — the "
+            "variety ladder is doing nothing for a user who does not rate"
+        )
+
+    def test_unrated_first_book_softens_the_penalty_on_book_two_regression(
+        self, real_engine, real_storage
+    ):
+        """Finishing #1 unrated fatigues the genre but does not bury #2.
+
+        The reported library — six fantasy novels torn through unrated — is
+        likely a series, and the widening makes that pair reachable: an unrated
+        #1 used to put nothing on the ladder, so #2 took no penalty at all.
+        Series tracking still reads the full completed set, so #1 marks the
+        series started and #2 takes the softened continuation penalty. The
+        unrelated Fantasy candidate in the same request takes the full top rung,
+        which at the maximum slider zeroes it.
+        """
+        self._seed_baseline(real_storage)
+        _save_book(
+            real_storage,
+            item_id="saga1",
+            title="Unrated Beginnings (Saga, #1)",
+            status=ConsumptionStatus.COMPLETED,
+            rating=None,
+            genre="Fantasy",
+            date_completed=self._FANTASY_COMPLETED_ON,
+        )
+        _save_book(
+            real_storage,
+            item_id="saga2",
+            title="Unrated Middles (Saga, #2)",
+            status=ConsumptionStatus.UNREAD,
+            genre="Fantasy",
+        )
+
+        assert self._penalty_for(
+            real_engine, "Unrated Middles (Saga, #2)"
+        ) == pytest.approx(VARIETY_TOP_PENALTY * VARIETY_SERIES_CONTINUATION_FACTOR), (
+            "The next book in the series the user is mid-way through took the "
+            "full genre-fatigue rung — an unrated #1 must soften it, not bury #2"
+        )
+        assert self._fantasy_penalty(real_engine) == pytest.approx(
+            VARIETY_TOP_PENALTY
+        ), "The softening leaked onto a Fantasy candidate that continues nothing"
+
+    def test_undated_unrated_completion_sorts_behind_every_dated_completion_regression(
+        self, real_engine, real_storage
+    ):
+        """An unrated completion with no completion date still claims a rung.
+
+        Unrated completions frequently arrive without a ``date_completed``, so
+        the ladder must place them behind *everything* dated rather than drop
+        them. Two dated completions straddle the ladder, because with only one
+        an ordering that interleaved undated items among dated ones would land
+        on the same rung and pass.
+        """
+        self._seed_baseline(real_storage)
+        _save_book(
+            real_storage,
+            item_id="scifi",
+            title="Newer Dated SciFi",
+            status=ConsumptionStatus.COMPLETED,
+            rating=None,
+            genre="Science Fiction",
+            date_completed=date(2026, 3, 1),
+        )
+        _save_book(
+            real_storage,
+            item_id="fan",
+            title="Undated Unrated Fantasy",
+            status=ConsumptionStatus.COMPLETED,
+            rating=None,
+            genre="Fantasy",
+        )
+
+        # Rung 2, behind the 2026-03 Science Fiction and 2026-01 Mystery rungs.
+        assert self._fantasy_penalty(real_engine) == pytest.approx(
+            (VARIETY_LADDER_STEPS - 2) / VARIETY_LADDER_STEPS
+        )
 
     def test_ignored_completed_fantasy_does_not_penalise_regression(
         self, real_engine, real_storage
@@ -4639,28 +4826,288 @@ class TestVarietyPenaltySignalRegression:
             rating=5,
             ignored=True,
             genre="Fantasy",
+            date_completed=self._FANTASY_COMPLETED_ON,
         )
         assert self._fantasy_penalty(real_engine) == 0.0, (
             "An ignored completed item entered the variety ladder and "
-            "penalised a same-genre candidate — issue #99 leak in variety penalty"
+            "penalised a same-genre candidate — ignoring means less of it"
         )
 
-    def test_unrated_completed_fantasy_does_not_penalise_regression(
+    def test_ignored_unrated_completed_fantasy_does_not_penalise_regression(
         self, real_engine, real_storage
     ):
-        """A completed-but-unrated Fantasy book must not enter the ladder."""
+        """Widening the ladder must not let an ignored unrated completion in."""
         self._seed_baseline(real_storage)
         _save_book(
             real_storage,
             item_id="fan",
+            title="Ignored Unrated Fantasy",
+            status=ConsumptionStatus.COMPLETED,
+            rating=None,
+            ignored=True,
+            genre="Fantasy",
+            date_completed=self._FANTASY_COMPLETED_ON,
+        )
+        assert self._fantasy_penalty(real_engine) == 0.0, (
+            "An ignored, unrated completion entered the variety ladder — "
+            "dropping the rating filter must not drop the ignore filter"
+        )
+
+    def test_unrated_completions_take_rungs_by_recency_not_after_rated_ones(
+        self, real_engine, real_storage
+    ):
+        """Rung order is pure recency once rating stops gating entry.
+
+        The newest completion is unrated Science Fiction, the next is unrated
+        Fantasy and the oldest is the rated Mystery seed, so the three rungs
+        run 100%, 80%, 60% in that order. Appending unrated completions below
+        the rated ones instead would hand Fantasy the top rung.
+        """
+        self._seed_baseline(real_storage)
+        _save_book(
+            real_storage,
+            item_id="unrated-fantasy",
             title="Unrated Fantasy",
             status=ConsumptionStatus.COMPLETED,
             rating=None,
             genre="Fantasy",
+            date_completed=self._FANTASY_COMPLETED_ON,
         )
+        _save_book(
+            real_storage,
+            item_id="unrated-scifi",
+            title="Unrated SciFi",
+            status=ConsumptionStatus.COMPLETED,
+            rating=None,
+            genre="Science Fiction",
+            date_completed=date(2026, 3, 1),
+        )
+
+        assert self._penalty_for(real_engine, "SciFi Candidate") == pytest.approx(1.0)
+        assert self._fantasy_penalty(real_engine) == pytest.approx(
+            (VARIETY_LADDER_STEPS - 1) / VARIETY_LADDER_STEPS
+        )
+
+    def test_unrated_book_completion_leaves_the_same_genre_movie_alone(
+        self, real_engine, real_storage
+    ):
+        """Fatigue stays per content type when the completion is unrated.
+
+        The widened accessor is still called with the requested content type,
+        so unrated Fantasy books tire out Fantasy books and nothing else. Both
+        candidates are scored from the same library, so the movie's zero is
+        measured against a ladder that is demonstrably live.
+        """
+        self._seed_baseline(real_storage)
+        _save_book(
+            real_storage,
+            item_id="unrated-fantasy",
+            title="Unrated Fantasy",
+            status=ConsumptionStatus.COMPLETED,
+            rating=None,
+            genre="Fantasy",
+            date_completed=self._FANTASY_COMPLETED_ON,
+        )
+        real_storage.save_content_item(
+            ContentItem(
+                id="mf",
+                title="Fantasy Movie",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.UNREAD,
+                metadata={"genre": "Fantasy"},
+            )
+        )
+
+        assert self._fantasy_penalty(real_engine) == pytest.approx(1.0)
+        assert (
+            self._penalty_for(real_engine, "Fantasy Movie", ContentType.MOVIE) == 0.0
+        ), "An unrated book completion fatigued the same genre in movies"
+
+    def test_unrated_completion_moves_only_the_penalty_not_the_scores(
+        self, real_engine, real_storage
+    ):
+        """An unrated completion feeds the ladder and nothing else.
+
+        The widened set is the ladder's alone: every scorer and the "because
+        you enjoyed" references still read the rated signal set, so the only
+        number an unrated completion may move is the variety penalty.
+        """
+        self._seed_baseline(real_storage)
+        recs = real_engine.generate_recommendations(
+            content_type=ContentType.BOOK, count=5, user_preference_config=self._CONFIG
+        )
+        before = next(rec for rec in recs if rec.item.title == "Fantasy Candidate")
+        breakdown_before = dict(before.score_breakdown)
+        references_before = {item.title for item in before.contributing_items}
+
+        _save_book(
+            real_storage,
+            item_id="unrated-fantasy",
+            title="Unrated Fantasy",
+            status=ConsumptionStatus.COMPLETED,
+            rating=None,
+            genre="Fantasy",
+            date_completed=self._FANTASY_COMPLETED_ON,
+        )
+        recs = real_engine.generate_recommendations(
+            content_type=ContentType.BOOK, count=5, user_preference_config=self._CONFIG
+        )
+        after = next(rec for rec in recs if rec.item.title == "Fantasy Candidate")
+
+        assert before.variety_penalty == 0.0
+        assert after.variety_penalty == pytest.approx(1.0)
+        assert after.score_breakdown == breakdown_before, (
+            "An unrated completion moved a scorer — the taste signal must stay "
+            "rated-only even though the ladder no longer is"
+        )
+        assert {
+            item.title for item in after.contributing_items
+        } == references_before, "An unrated completion became a reference item"
+
+    def test_unrated_completion_without_a_genre_claims_no_rung(
+        self, real_engine, real_storage
+    ):
+        """A completion carrying no genre must not consume the top rung.
+
+        Unrated completions are exactly the ones likely to arrive with no
+        metadata at all. Such an item reaches the ladder now, and a rung
+        counter that advanced for it would push the Fantasy completion behind
+        it and weaken every rung below.
+        """
+        self._seed_baseline(real_storage)
+        _save_book(
+            real_storage,
+            item_id="unrated-fantasy",
+            title="Unrated Fantasy",
+            status=ConsumptionStatus.COMPLETED,
+            rating=None,
+            genre="Fantasy",
+            date_completed=self._FANTASY_COMPLETED_ON,
+        )
+        _save_book(
+            real_storage,
+            item_id="nogenre",
+            title="Genre-less Completion",
+            status=ConsumptionStatus.COMPLETED,
+            rating=None,
+            genre=None,
+            date_completed=date(2026, 3, 1),
+        )
+
+        assert self._fantasy_penalty(real_engine) == pytest.approx(1.0)
+
+    def test_an_in_progress_unrated_book_claims_no_rung(
+        self, real_engine, real_storage
+    ):
+        """Starting a fantasy novel is not finishing one.
+
+        In-progress items ride into the ladder's feed from
+        ``get_completed_items``, and before the widening one needed a rating to
+        get that far — so the ladder's own completion-event filter is newly
+        load-bearing at engine level. The Mystery candidate takes the seed's
+        top rung in the same request, so the Fantasy zero is measured against a
+        live ladder rather than an empty one.
+        """
+        self._seed_baseline(real_storage)
+        _save_book(
+            real_storage,
+            item_id="reading",
+            title="Fantasy In Progress",
+            status=ConsumptionStatus.CURRENTLY_CONSUMING,
+            rating=None,
+            genre="Fantasy",
+        )
+        _save_book(
+            real_storage,
+            item_id="cm",
+            title="Mystery Candidate",
+            status=ConsumptionStatus.UNREAD,
+            genre="Mystery",
+        )
+
+        assert self._penalty_for(real_engine, "Mystery Candidate") == pytest.approx(1.0)
         assert self._fantasy_penalty(real_engine) == 0.0, (
-            "A completed-but-unrated item entered the variety ladder and "
-            "penalised a same-genre candidate — issue #99 leak in variety penalty"
+            "A book the user is halfway through fatigued its genre — only a "
+            "finished one may claim a rung"
+        )
+
+    def test_unrated_ongoing_show_with_a_watched_season_penalises_regression(
+        self, real_engine, real_storage
+    ):
+        """A season finished on an unrated show fatigues that show's genre.
+
+        The one genuinely new code path: ``_completion_recency`` dates a
+        mid-run show by ``latest_season_watched_date``, and an unrated show
+        never reached it through the engine before. Exercised end-to-end so the
+        season-tracking injection and season expansion that run in the same
+        request are in the path too. The watched season is
+        newer than the Mystery completion, so Fantasy takes the top rung.
+        """
+        self._seed_tv_baseline(real_storage)
+        self._save_ongoing_fantasy_show(real_storage, ignored=False)
+
+        assert self._penalty_for(
+            real_engine, "Fantasy Show Candidate", ContentType.TV_SHOW
+        ) == pytest.approx(1.0), (
+            "An unrated show mid-run claimed no rung — its finished season is "
+            "a completion event the ladder must see"
+        )
+
+    def test_ignored_ongoing_show_claims_no_rung_regression(
+        self, real_engine, real_storage
+    ):
+        """Ignoring the show keeps its finished season off the ladder.
+
+        The Mystery candidate takes the top rung in the same library, so the
+        Fantasy zero is a live ladder declining to place an ignored show.
+        """
+        self._seed_tv_baseline(real_storage)
+        self._save_ongoing_fantasy_show(real_storage, ignored=True)
+
+        assert self._penalty_for(
+            real_engine, "Mystery Show Candidate", ContentType.TV_SHOW
+        ) == pytest.approx(1.0)
+        assert (
+            self._penalty_for(
+                real_engine, "Fantasy Show Candidate", ContentType.TV_SHOW
+            )
+            == 0.0
+        ), "An ignored ongoing show's watched season fatigued its genre"
+
+    def test_a_library_with_no_rating_at_all_still_returns_nothing(
+        self, real_engine, real_storage
+    ):
+        """The residual boundary the widening deliberately does not move.
+
+        The engine returns [] on an empty taste signal, before a ladder is ever
+        built, so a user who rates *nothing* has no recommendations to spread.
+        That is why every test above seeds one rated completion. What the fix
+        buys is the user who rates some of what they finish and not the rest.
+        """
+        _save_book(
+            real_storage,
+            item_id="unrated",
+            title="Unrated Fantasy",
+            status=ConsumptionStatus.COMPLETED,
+            rating=None,
+            genre="Fantasy",
+            date_completed=self._FANTASY_COMPLETED_ON,
+        )
+        _save_book(
+            real_storage,
+            item_id="cf",
+            title="Fantasy Candidate",
+            status=ConsumptionStatus.UNREAD,
+            genre="Fantasy",
+        )
+
+        assert (
+            real_engine.generate_recommendations(
+                content_type=ContentType.BOOK,
+                count=5,
+                user_preference_config=self._CONFIG,
+            )
+            == []
         )
 
 
