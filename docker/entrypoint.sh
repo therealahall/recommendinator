@@ -29,6 +29,10 @@ EXAMPLE_PATH="$CONFIG_DIR/example.yaml"
 if [ ! -f "$CONFIG_PATH" ]; then
     if [ -f "$EXAMPLE_PATH" ]; then
         cp "$EXAMPLE_PATH" "$CONFIG_PATH"
+        # Before the token lands, not after: cp inherits example.yaml's 0644 and
+        # sed -i preserves it, so on the bind-mounted ./config every user on the
+        # host could read the credential. data/.credential_key is 0600 already.
+        chmod 600 "$CONFIG_PATH"
         # The app refuses to start without web.api_token, so a first run has to
         # mint one or the container never serves. Hex only, which is why it can
         # be substituted in without escaping anything.

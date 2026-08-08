@@ -10,6 +10,7 @@ import sys
 import threading
 import time
 import webbrowser
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, NoReturn, cast
 
@@ -34,7 +35,10 @@ from src.models.content import (
     get_enum_value,
 )
 from src.models.detail_fields import DETAIL_FIELDS
-from src.models.user_preferences import UserPreferenceConfig
+from src.models.user_preferences import (
+    PreferenceValidationError,
+    UserPreferenceConfig,
+)
 from src.recommendations.preference_interpreter import (
     LLMPreferenceInterpreter,
     PatternBasedInterpreter,
@@ -51,7 +55,7 @@ from src.settings.service import (
     setting_view,
 )
 from src.storage.credential_migration import migrate_config_credentials
-from src.storage.manager import StorageManager, unset_if_none
+from src.storage.manager import StorageManager, UnknownUserError, unset_if_none
 from src.utils.item_serialization import item_to_dict
 from src.utils.series import MAX_SEASONS
 from src.utils.sorting import MAX_SEARCH_LENGTH
@@ -568,6 +572,24 @@ def preferences() -> None:
     """Manage user preference settings."""
 
 
+def _edit_preferences(
+    ctx: click.Context,
+    user_id: int,
+    apply: Callable[[UserPreferenceConfig], None],
+) -> UserPreferenceConfig:
+    """Apply *apply* to a user's preferences under storage's write lock.
+
+    An unlocked read-mutate-save loses whatever a concurrent write stored, and
+    the write is an UPDATE keyed on the id, so an unknown user used to print
+    success and persist nothing.
+    """
+    storage: StorageManager = ctx.obj["storage"]
+    try:
+        return storage.merge_user_preference_config(user_id, apply)
+    except (PreferenceValidationError, UnknownUserError) as error:
+        _abort_with(str(error))
+
+
 @preferences.command("get")
 @click.option(
     "--user",
@@ -627,10 +649,10 @@ def preferences_set_weight(
         )
         raise click.Abort()
 
-    storage = ctx.obj["storage"]
-    preference_config = storage.get_user_preference_config(user_id)
-    preference_config.scorer_weights[scorer_name] = weight
-    storage.save_user_preference_config(user_id, preference_config)
+    def set_weight(preference_config: UserPreferenceConfig) -> None:
+        preference_config.scorer_weights[scorer_name] = weight
+
+    _edit_preferences(ctx, user_id, set_weight)
     click.echo(f"Set {scorer_name} weight to {weight} for user {user_id}")
 
 
@@ -659,13 +681,14 @@ def preferences_set_toggle(
     'off'.
     """
     enabled = value.lower() == "on"
-    storage = ctx.obj["storage"]
-    preference_config = storage.get_user_preference_config(user_id)
     # Guard against the allowlist drifting away from the model's bool fields.
-    if not isinstance(getattr(preference_config, toggle_name, None), bool):
+    if not isinstance(getattr(UserPreferenceConfig(), toggle_name, None), bool):
         raise click.ClickException(f"'{toggle_name}' is not a boolean preference")
-    setattr(preference_config, toggle_name, enabled)
-    storage.save_user_preference_config(user_id, preference_config)
+
+    def set_toggle(preference_config: UserPreferenceConfig) -> None:
+        setattr(preference_config, toggle_name, enabled)
+
+    _edit_preferences(ctx, user_id, set_toggle)
     state = "on" if enabled else "off"
     click.echo(f"Set {toggle_name} {state} for user {user_id}")
 
@@ -692,10 +715,11 @@ def preferences_set_variety(ctx: click.Context, penalty: float, user_id: int) ->
     marching through the next entry in a just-completed series, up to 5.0 which
     fully zeroes a just-finished genre. The penalty decays as you finish more.
     """
-    storage = ctx.obj["storage"]
-    preference_config = storage.get_user_preference_config(user_id)
-    preference_config.variety_penalty = penalty
-    storage.save_user_preference_config(user_id, preference_config)
+
+    def set_variety(preference_config: UserPreferenceConfig) -> None:
+        preference_config.variety_penalty = penalty
+
+    _edit_preferences(ctx, user_id, set_variety)
     click.echo(f"Set variety_penalty to {penalty} for user {user_id}")
 
 
@@ -711,7 +735,10 @@ def preferences_set_variety(ctx: click.Context, penalty: float, user_id: int) ->
 def preferences_reset(ctx: click.Context, user_id: int) -> None:
     """Reset user preferences to defaults."""
     storage = ctx.obj["storage"]
-    storage.save_user_preference_config(user_id, UserPreferenceConfig())
+    try:
+        storage.save_user_preference_config(user_id, UserPreferenceConfig())
+    except UnknownUserError as error:
+        _abort_with(str(error))
     click.echo(f"Reset preferences to defaults for user {user_id}")
 
 
@@ -740,12 +767,13 @@ def preferences_set_length(
     CONTENT_TYPE is the type (book, movie, tv_show, video_game).
     LENGTH_PREFERENCE is the preferred length (any, short, medium, long).
     """
-    storage = ctx.obj["storage"]
-    preference_config = storage.get_user_preference_config(user_id)
-    preference_config.content_length_preferences[content_type.lower()] = (
-        length_preference.lower()
-    )
-    storage.save_user_preference_config(user_id, preference_config)
+
+    def set_length(preference_config: UserPreferenceConfig) -> None:
+        preference_config.content_length_preferences[content_type.lower()] = (
+            length_preference.lower()
+        )
+
+    _edit_preferences(ctx, user_id, set_length)
     click.echo(
         f"Set {content_type} length preference to '{length_preference}' for user {user_id}"
     )
@@ -799,13 +827,31 @@ def custom_rules_add(ctx: click.Context, rule_text: str, user_id: int) -> None:
     """Add a custom preference rule.
 
     RULE_TEXT is the natural language rule (e.g., "avoid horror", "prefer sci-fi").
+
+    Bounded as PUT /api/users/{id}/preferences is: a list this appends past
+    the bound is one the Preferences page can then no longer save back.
     """
-    storage = ctx.obj["storage"]
-    preference_config = storage.get_user_preference_config(user_id)
-    preference_config.custom_rules.append(rule_text)
-    storage.save_user_preference_config(user_id, preference_config)
+    if len(rule_text) > UserPreferenceConfig.MAX_CUSTOM_RULE_LENGTH:
+        click.echo(
+            "Error: A rule may be at most "
+            f"{UserPreferenceConfig.MAX_CUSTOM_RULE_LENGTH} characters.",
+            err=True,
+        )
+        raise click.Abort()
+
+    def add_rule(preference_config: UserPreferenceConfig) -> None:
+        # Under the lock, so the list it counts is the list it appends to.
+        if len(preference_config.custom_rules) >= UserPreferenceConfig.MAX_CUSTOM_RULES:
+            _abort_with(
+                "At most "
+                f"{UserPreferenceConfig.MAX_CUSTOM_RULES} rules are kept. "
+                "Remove one first."
+            )
+        preference_config.custom_rules.append(rule_text)
+
+    saved = _edit_preferences(ctx, user_id, add_rule)
     click.echo(f"Added rule: '{rule_text}' for user {user_id}")
-    click.echo(f"Total rules: {len(preference_config.custom_rules)}")
+    click.echo(f"Total rules: {len(saved.custom_rules)}")
 
 
 @custom_rules.command("remove")
@@ -823,21 +869,20 @@ def custom_rules_remove(ctx: click.Context, index: int, user_id: int) -> None:
 
     INDEX is the rule number (use 'list' to see indices).
     """
-    storage = ctx.obj["storage"]
-    preference_config = storage.get_user_preference_config(user_id)
+    removed = ""
 
-    if index < 0 or index >= len(preference_config.custom_rules):
-        click.echo(
-            f"Error: Invalid index {index}. "
-            f"Valid range: 0-{len(preference_config.custom_rules) - 1}",
-            err=True,
-        )
-        raise click.Abort()
+    def remove_rule(preference_config: UserPreferenceConfig) -> None:
+        nonlocal removed
+        if index < 0 or index >= len(preference_config.custom_rules):
+            _abort_with(
+                f"Invalid index {index}. "
+                f"Valid range: 0-{len(preference_config.custom_rules) - 1}"
+            )
+        removed = preference_config.custom_rules.pop(index)
 
-    removed = preference_config.custom_rules.pop(index)
-    storage.save_user_preference_config(user_id, preference_config)
+    saved = _edit_preferences(ctx, user_id, remove_rule)
     click.echo(f"Removed rule: '{removed}'")
-    click.echo(f"Remaining rules: {len(preference_config.custom_rules)}")
+    click.echo(f"Remaining rules: {len(saved.custom_rules)}")
 
 
 @custom_rules.command("clear")
@@ -857,22 +902,28 @@ def custom_rules_remove(ctx: click.Context, index: int, user_id: int) -> None:
 def custom_rules_clear(ctx: click.Context, user_id: int, yes: bool) -> None:
     """Clear all custom rules for a user."""
     storage = ctx.obj["storage"]
-    preference_config = storage.get_user_preference_config(user_id)
+    count = len(storage.get_user_preference_config(user_id).custom_rules)
 
-    if not preference_config.custom_rules:
-        click.echo(f"No custom rules to clear for user {user_id}")
-        return
-
-    if not yes:
-        count = len(preference_config.custom_rules)
+    if count and not yes:
         if not click.confirm(f"Clear {count} custom rule(s) for user {user_id}?"):
             click.echo("Aborted.")
             return
 
-    cleared_count = len(preference_config.custom_rules)
-    preference_config.custom_rules = []
-    storage.save_user_preference_config(user_id, preference_config)
-    click.echo(f"Cleared {cleared_count} custom rule(s) for user {user_id}")
+    cleared_count = 0
+
+    def clear_rules(preference_config: UserPreferenceConfig) -> None:
+        nonlocal cleared_count
+        cleared_count = len(preference_config.custom_rules)
+        preference_config.custom_rules = []
+
+    # No early return on an empty list: the write is what proves the user
+    # exists, and skipping it reported success for an id no user carries. The
+    # count above only sizes the prompt; this one is read under the lock.
+    _edit_preferences(ctx, user_id, clear_rules)
+    if cleared_count:
+        click.echo(f"Cleared {cleared_count} custom rule(s) for user {user_id}")
+    else:
+        click.echo(f"No custom rules to clear for user {user_id}")
 
 
 @custom_rules.command("interpret")
@@ -2205,7 +2256,12 @@ def _require_ai(ctx: click.Context) -> None:
 
 
 def _create_conversation_engine(ctx: click.Context) -> ConversationEngine:
-    """Create a ConversationEngine from CLI context."""
+    """Create a ConversationEngine from CLI context.
+
+    Through the provider rather than a section snapshot, so the engine reads
+    the ``conversation`` section it was previously blind to — it ran on the
+    hardcoded defaults whatever the database and config.yaml said.
+    """
     storage = ctx.obj["storage"]
     ollama_client = ctx.obj["llm_client"]
     engine = ctx.obj["engine"]
@@ -2213,6 +2269,7 @@ def _create_conversation_engine(ctx: click.Context) -> ConversationEngine:
         storage_manager=storage,
         ollama_client=ollama_client,
         recommendation_engine=engine,
+        config_provider=lambda: ctx.obj["config"],
     )
 
 

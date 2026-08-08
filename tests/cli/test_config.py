@@ -19,6 +19,7 @@ from src.cli.config import (
     BOOTSTRAP_WEB_PORT,
     MIN_API_TOKEN_LENGTH,
     NO_API_TOKEN_MESSAGE,
+    NON_ASCII_API_TOKEN_MESSAGE,
     SHORT_API_TOKEN_MESSAGE,
     MissingApiTokenError,
     build_scorers_from_config,
@@ -26,6 +27,7 @@ from src.cli.config import (
     load_config,
     resolve_bootstrap_web,
     take_api_token,
+    warn_if_config_is_shared,
 )
 from src.recommendations.scorers import SCORER_NAME_MAP, Scorer
 from src.settings.metadata import default_config, flat_defaults
@@ -333,9 +335,26 @@ class TestTakeApiToken:
         assert str(raised.value) == SHORT_API_TOKEN_MESSAGE
         assert config["web"] == {}
 
-    def test_the_boundary_length_is_accepted(self) -> None:
-        """Off-by-one on the bound would refuse exactly what the docs tell you."""
+    def test_a_non_ascii_token_raises_rather_than_booting_unusable(self) -> None:
+        """Starlette decodes headers as latin-1 and the guard re-encodes UTF-8.
+
+        A token carrying one of these booted cleanly and then answered 401 to
+        every request, with nothing anywhere naming the reason.
+        """
+        config = {"web": {"api_token": "π" * MIN_API_TOKEN_LENGTH}}
+
+        with pytest.raises(MissingApiTokenError) as raised:
+            take_api_token(config)
+
+        assert str(raised.value) == NON_ASCII_API_TOKEN_MESSAGE
+
+    def test_the_length_bound_is_exact_at_both_ends(self) -> None:
+        """Off-by-one either way refuses what the docs promise, or accepts one
+        character less than every message names as the minimum.
+        """
         assert take_api_token({"web": {"api_token": _GOOD_TOKEN}}) == _GOOD_TOKEN
+        with pytest.raises(MissingApiTokenError):
+            take_api_token({"web": {"api_token": _GOOD_TOKEN[:-1]}})
 
     def test_neither_message_quotes_the_value_it_refused(self) -> None:
         """A message echoing the token would copy it into the operator's logs."""
@@ -345,6 +364,51 @@ class TestTakeApiToken:
             take_api_token({"web": {"api_token": secret}})
 
         assert secret not in str(raised.value)
+
+
+class TestWarnIfConfigIsShared:
+    """``config.yaml`` holds the API token, and only the Docker entrypoint
+    chmods it — a clone-and-run install leaves it at whatever umask produced.
+    """
+
+    @pytest.fixture()
+    def config_file(self, tmp_path: Path) -> Path:
+        path = tmp_path / "config.yaml"
+        path.write_text("web:\n")
+        return path
+
+    @pytest.mark.parametrize("mode", [0o640, 0o604, 0o644, 0o660])
+    def test_a_mode_others_can_reach_is_named_with_its_remedy(
+        self, config_file: Path, mode: int, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Group and world, read and write: any of the four is a leak."""
+        config_file.chmod(mode)
+
+        with caplog.at_level(logging.WARNING, logger="src.cli.config"):
+            warn_if_config_is_shared(config_file)
+
+        assert oct(mode) in caplog.text
+        assert f"chmod 600 {config_file}" in caplog.text
+
+    def test_an_owner_only_mode_says_nothing(
+        self, config_file: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Otherwise it fires on every correctly installed boot and is ignored."""
+        config_file.chmod(0o600)
+
+        with caplog.at_level(logging.WARNING, logger="src.cli.config"):
+            warn_if_config_is_shared(config_file)
+
+        assert caplog.text == ""
+
+    def test_a_path_that_is_not_there_is_not_a_boot_failure(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A warning that raised would be worse than the mode it reports on."""
+        with caplog.at_level(logging.WARNING, logger="src.cli.config"):
+            warn_if_config_is_shared(tmp_path / "absent.yaml")
+
+        assert caplog.text == ""
 
 
 class TestScorerConfigMap:

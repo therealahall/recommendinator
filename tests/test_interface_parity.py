@@ -8,13 +8,16 @@ such a boundary keeps passing while the other side drifts away from it.
 
 import json
 import re
+from enum import Enum
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import click
 import pytest
 from click.testing import CliRunner
 from pydantic import BaseModel, ValidationError
 
+from src.cli.commands import preferences_set_length
 from src.models.content import (
     MAX_REVIEW_LENGTH,
     ConsumptionStatus,
@@ -22,6 +25,7 @@ from src.models.content import (
     ContentType,
 )
 from src.models.user_preferences import UserPreferenceConfig
+from src.recommendations.content_length import LengthPreference
 from src.recommendations.engine import RecommendationEngine
 from src.recommendations.record import Recommendation, RecommendationPayload
 from src.recommendations.scorers import SCORER_NAME_MAP
@@ -306,6 +310,28 @@ class TestPreferenceJsonKeysAgree:
         assert set(UserPreferenceConfig().to_dict()) == set(
             UserPreferenceResponse.model_fields
         )
+
+
+class TestSetLengthChoicesAreTheEnums:
+    """``preferences set-length`` spells its two choice lists as literals while
+    the request model derives both from the enums. They agree today, so this
+    guards drift: a member added to ``ContentType`` reaches only the web.
+    """
+
+    @pytest.mark.parametrize(
+        ("argument", "members"),
+        [
+            pytest.param("content_type", ContentType, id="content-type"),
+            pytest.param("length_preference", LengthPreference, id="length"),
+        ],
+    )
+    def test_the_click_choices_are_exactly_the_enum_members(
+        self, argument: str, members: type[Enum]
+    ) -> None:
+        param = next(p for p in preferences_set_length.params if p.name == argument)
+
+        assert isinstance(param.type, click.Choice)
+        assert set(param.type.choices) == {member.value for member in members}
 
 
 class TestScorerKeysMatchTheFrontendList:
