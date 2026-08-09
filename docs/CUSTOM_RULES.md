@@ -18,9 +18,8 @@ the rule, click **Add Rule**, then **Save Preferences**.
 
 Both surfaces keep at most 50 rules of 500 characters each
 (`UserPreferenceConfig.MAX_CUSTOM_RULES` and
-`UserPreferenceConfig.MAX_CUSTOM_RULE_LENGTH`).
-Every rule is read back into the interpreter's prompt on each request, so the
-bound is prompt size as much as storage.
+`UserPreferenceConfig.MAX_CUSTOM_RULE_LENGTH`), because every rule goes into the
+interpreter's prompt on each request.
 
 ## Supported patterns
 

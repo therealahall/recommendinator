@@ -24,9 +24,7 @@ so you can run several CSV sources over different files.
 | `path` | str | yes | Path to the CSV file, under an allowed source root. |
 | `content_type` | str | yes | One of `book`, `movie`, `tv_show`, `video_game`. |
 
-`path` must resolve under `security.allowed_source_roots` in `config.yaml`,
-which defaults to `inputs/`. Keeping the file elsewhere means adding that
-directory to the list — see
+Allowed roots default to `inputs/` and are set in `config.yaml` — see
 [SECURITY.md](../../../../docs/SECURITY.md#where-file-imports-may-read).
 
 ## Recognized columns

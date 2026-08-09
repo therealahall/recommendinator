@@ -41,8 +41,8 @@ settings reach the next call without one.
 
 `base_url` is accepted only for a host on your own machine or network — a
 loopback or private address, a single-label name such as `ollama`, or a
-`.local`/`.internal` name. A remote Ollama has to be set in `config.yaml`, and
-[SECURITY.md](SECURITY.md#network) says why that path is the harder one.
+`.local`/`.internal` name. A remote Ollama has to be set in `config.yaml`, see
+[SECURITY.md](SECURITY.md#network).
 
 ## Setup steps
 

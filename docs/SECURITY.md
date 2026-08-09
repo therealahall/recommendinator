@@ -33,8 +33,7 @@ completion history sit in the database as plaintext, and so do the embeddings.
   reserved `settings:` namespace, so they cannot collide with a real source.
 - **Once a source has a database row it is the only authority for that
   source's secrets**, and a value left in `config.yaml` is discarded on every
-  startup rather than read. Otherwise the next reload would undo the
-  `credential_bound` clear below, and resurrect a secret you revoked.
+  startup rather than read.
 - If the encryption key changes, stale credentials for a source still defined
   in `config.yaml` alone are re-encrypted from it, or purged when there is no
   config fallback.
@@ -48,86 +47,44 @@ completion history sit in the database as plaintext, and so do the embeddings.
 Copy `data/.credential_key` when you move the database to another host. Without
 it, stored credentials cannot be decrypted and have to be re-entered.
 
-**Removing a source deletes every credential row stored under its id**, whether
-or not its plugin is still installed and whether or not the field is still
-marked sensitive. Removal deletes no library items.
+**Removing a source deletes every credential row stored under its id**, plugin
+installed or not, field still marked sensitive or not. Removal deletes no
+library items.
 
-**A stored credential is bound to the host it was issued for.** Fields marked
-`credential_bound` in a plugin's schema — `url` on Sonarr, Radarr and
-Calibre-Web, plus Calibre-Web's `verify_ssl` — clear the source's stored
-secrets when they change. Repointing a source at another host, or turning TLS
-verification off, therefore costs you a re-entry through
-`source set-secret` / the **Data** tab, and buys an attacker with API access
-nothing: the next sync has no secret to send. Creating a source clears anything
-left under that id for the same reason.
+**Changing a `credential_bound` field clears that source's stored secrets** —
+`url` on Sonarr, Radarr and Calibre-Web, plus Calibre-Web's `verify_ssl`. A
+credential is bound to where it was issued, so re-enter it through
+`source set-secret` or the **Data** tab after the move. Creating a source clears
+anything left under that id.
 
 A source `url` must be `http` or `https`, must name a host, and must not embed
-`user:password@`. Anything else is refused when it is saved, and again before
-the request is made.
-
-**Source config is validated where it is written**, not only at sync: a value
-whose plugin refuses it — a path outside the allowed roots, a `file://` url —
-answers 400 with the plugin's own message. Only errors the write introduces are
-refused, so a source whose secret has not been entered yet is still editable.
-
-Starting a sync answers the same messages, because the write door cannot cover
-a source that broke afterwards — its file deleted, `allowed_source_roots`
-narrowed. Both doors sit behind the same token, and both report the operator's
-own configuration back to them. Containment is checked before existence in
-every file plugin, so a "not found" can only name a path already inside the
-allowed roots. The source id the caller asked about stays out of the response
-either way: unlike the configured values, it is unbounded caller input.
+`user:password@`. Source config is validated when it is written and again at
+sync, so a value a plugin refuses answers 400 with the plugin's own message.
 
 ## API authentication
 
-**Every `/api` route requires a bearer token, and the server refuses to start
-without one.** There is no unauthenticated mode.
+**Every `/api` route requires `Authorization: Bearer <token>`, and the server
+refuses to start without one.** You choose it: set `web.api_token` in
+`config/config.yaml` to at least 32 ASCII characters, from
+`openssl rand -hex 32`, and `chmod 600` the file. Nothing generates one for you.
+A group- or world-readable `config.yaml` warns at boot and on reload rather than
+refusing, because a wide mode there only widens who can read a token the app
+still works with.
 
-```yaml
-# config/config.yaml
-web:
-  api_token: "…"   # openssl rand -hex 32
-```
+The web UI asks for the token once and keeps it in browser local storage. The
+CLI needs none: it works directly against the database.
 
-```
-Authorization: Bearer <token>
-```
-
-Under Docker the entrypoint mints a token into `config.yaml` on first run,
-`chmod 600`s the file before writing it, and prints it once, so a fresh
-`docker compose up` is authenticated with nothing to set. From source, generate
-one yourself — boot fails with the same instruction if you do not, and
-`chmod 600 config/config.yaml` is yours to run. Minimum 32 characters.
-
-**A group- or world-readable `config.yaml` warns at boot and on reload**,
-naming the mode and the `chmod`. A warning, not the refusal `data/.credential_key`
-answers with: a wrong mode there makes stored credentials unreadable, while
-here it only widens who can read a token the app still works with, and failing
-boot over it would strand every install predating the token.
-
-The web UI asks for the token once and keeps it in the browser's local storage.
-The CLI needs nothing: it works directly against the database and never calls
-the API.
-
-- **No `/api` route is exempt**, including `GET /api/status`. It reports which
-  components are up, which is a version and feature fingerprint and not
-  something an unauthenticated caller needs.
-- **The SPA shell (`/`, `/static/*`) is not gated**, because it is what asks
-  for the token: a browser sends no `Authorization` header on a top-level
-  navigation. Those responses are the application's own JavaScript, CSS and
-  themes, and hold none of your data.
-- **The token is not a setting.** It lives in `config.yaml`, is read once at
-  boot and removed from the in-memory config, and is not in the settings
-  registry — so `GET /api/settings` cannot list it and `PUT /api/settings`
-  cannot change it.
-- Comparison is constant-time. The token is never logged, never echoed in an
-  error, and a 401 body carries neither the configured token nor the guess.
-- Editing `web.api_token` and saving is picked up by the config watcher, so a
-  rotation takes effect without a restart. Removing the key leaves the running
-  token in place and warns; the next start then fails.
-- **The app never serves TLS.** A bearer token over plain HTTP crosses the
-  network in cleartext, so anything beyond loopback belongs behind a reverse
-  proxy terminating HTTPS. See [docs/DOCKER.md](DOCKER.md#reverse-proxy).
+- **No `/api` route is exempt**, including `GET /api/status`.
+- **The SPA shell (`/`, `/static/*`) is not gated**, because it is what asks for
+  the token: a browser sends no `Authorization` header on a top-level
+  navigation. It carries the app's own assets, none of your data.
+- **The token is not a setting**: read once at boot, removed from the in-memory
+  config, absent from the settings registry, so `GET /api/settings` cannot list
+  it and `PUT /api/settings` cannot change it.
+- Comparison is constant-time, and the token is never logged or echoed, a 401
+  included. Rotating it in `config.yaml` takes effect without a restart.
+- **The app never serves TLS**, so anything beyond loopback belongs behind a
+  reverse proxy terminating HTTPS. See [docs/DOCKER.md](DOCKER.md#reverse-proxy).
 
 ## Entering keys
 
@@ -150,36 +107,27 @@ access to your Steam library. Rotate it by re-running `source set-secret`.
 | Sonarr, Radarr | Media library sync | Configured |
 | TMDB, OpenLibrary, RAWG | Metadata enrichment | Enrichment enabled |
 
-**`ollama.base_url` only accepts a host on your own machine or network.** Every
-prompt carries library titles, ratings, reviews and memories, so one settings
-write pointing it elsewhere would ship all of that to whoever owns that host.
-The Settings page and `settings set` take a bare `scheme://host[:port]` whose
-host is a loopback, private, link-local or `100.64.0.0/10` address, a
-single-label name (`ollama`), or a `.local`/`.internal` name — nothing else. A
-genuinely remote Ollama goes in `config.yaml`, which takes a file on the host
-rather than one request, and the first call to a non-local URL logs a warning
-so a redirected instance is visible.
+**`ollama.base_url` only accepts a host on your own machine or network**, since
+every prompt carries library titles, ratings, reviews and memories. The Settings
+page and `settings set` take a bare `scheme://host[:port]` whose host is a
+loopback, private, link-local or `100.64.0.0/10` address, a single-label name
+(`ollama`), or a `.local`/`.internal` name — nothing else. A genuinely remote
+Ollama has to go in `config.yaml`, and the first call to a non-local URL logs a
+warning.
 
 The web interface binds `127.0.0.1` by default, and Docker publishes its port on
-`127.0.0.1` too (`APP_BIND_PREFIX`). Both are deliberate: the API token is the
-only thing standing between the network and your library, and the app serves it
-over plain HTTP.
-
-Reaching it from another machine means either a reverse proxy terminating TLS
-(the supported path) or accepting that the token crosses your network in
-cleartext. Do not expose it to the public internet without the proxy. Under
-Docker, services talk over an internal network isolated from the host by
-default.
+`127.0.0.1` too (`APP_BIND_PREFIX`). Reaching it from another machine means a
+reverse proxy terminating TLS, or accepting that the token crosses your network
+in cleartext — the app never serves TLS itself. Do not expose it to the public
+internet without the proxy. Under Docker, services talk over an internal network
+isolated from the host by default.
 
 ## Where file imports may read
 
 Source config is writable over the API, so every plugin whose config names a
 filesystem path (`csv_import`, `json_import`, `markdown_import`, `roms`,
-`goodreads_csv`, `storygraph_csv`) refuses any path that resolves outside
-`security.allowed_source_roots`. Both `validate_config` and `fetch` check, so a
-path that slipped into the database is still never read. A path the operating
-system cannot resolve at all, such as one carrying a NUL byte, is refused the
-same way.
+`goodreads_csv`, `storygraph_csv`) refuses any path resolving outside
+`security.allowed_source_roots`. Both `validate_config` and `fetch` check.
 
 ```yaml
 # config/config.yaml — defaults to ["inputs"] when absent.
@@ -189,14 +137,11 @@ security:
     - "/srv/roms"
 ```
 
-The list is **read from `config.yaml` at load and is not a settings-registry
-leaf**, so `PUT /api/settings` cannot reach it. That is the point: a caller who
-could widen it could point a source at `/home` and import the filesystem.
-Pointing a source somewhere new is a `config.yaml` edit, which the config
-watcher picks up without a restart.
-
-Both sides are resolved before comparison, so a symlink planted under an allowed
-root cannot reach out of it. An empty list allows nothing.
+The list is **read from `config.yaml` and is not a settings-registry leaf**, so
+`PUT /api/settings` cannot widen it and point a source at `/home`; adding a root
+is a `config.yaml` edit the watcher picks up without a restart. Both sides are
+resolved before comparison, so a symlink under an allowed root cannot escape it,
+and an empty list allows nothing.
 
 ## Input handling
 
@@ -221,17 +166,15 @@ uv pip list --outdated
 uv sync --locked --extra ai
 ```
 
-ChromaDB stores embeddings locally, and Ollama is reachable on localhost only.
+ChromaDB stores embeddings locally, and Ollama defaults to localhost.
 
 ## Deployment checklist
 
 - [ ] `config/config.yaml` is git-ignored
-- [ ] `web.api_token` is a value you generated, not one you copied from a doc
-- [ ] `config/config.yaml` is `0600` — it holds that token
+- [ ] `config/config.yaml` is `0600` and holds a token you generated yourself
 - [ ] API keys are not in code or logs
 - [ ] Database file has restricted permissions
-- [ ] Web interface bound to localhost (and `APP_BIND_PREFIX` left at
-      `127.0.0.1:` under Docker), or behind a reverse proxy terminating TLS
+- [ ] Web interface on localhost (Docker's default), or behind a TLS proxy
 - [ ] Docker containers run as a non-root user
 - [ ] Ollama only reachable internally
 

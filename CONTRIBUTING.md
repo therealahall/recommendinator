@@ -30,10 +30,10 @@ pnpm dev
 ```
 
 Vite serves on 5173 and proxies API calls to the container on 18473. The API
-requires a bearer token, so the app asks for `web.api_token` once and keeps it in
-the browser — the entrypoint prints the one it minted on first start. Override
-either end from your shell or a gitignored root `.env`, which is what a dev
-server behind a reverse proxy needs:
+requires a bearer token, so the app asks once for the `web.api_token` you set in
+`config/config.yaml` and keeps it in the browser. Override either end from your
+shell or a gitignored root `.env`, which is what a dev server behind a reverse
+proxy needs:
 
 | Variable | Default | Effect |
 |----------|---------|--------|
@@ -238,8 +238,8 @@ holds secrets and is git-ignored. Use `config/example.yaml` or a mock config.
 
 Every `/api` route requires the bearer token from `web.api_token`, applied to
 the routers so a new endpoint is authenticated by being registered. Tests reach
-the API through `tests.factories.authenticated_client`; a bare `TestClient`
-gets 401s. See [docs/SECURITY.md](docs/SECURITY.md#api-authentication).
+the API through `tests.factories.authenticated_client`; a bare `TestClient` gets
+401s.
 
 ## Adding a data source
 

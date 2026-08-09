@@ -231,10 +231,8 @@ python3.11 -m src.cli preferences set-variety 4.0      # 0.0 off to 5.0 full str
 python3.11 -m src.cli preferences reset
 ```
 
-Every one of these takes `--user`, and a `--user` naming nobody is refused. The
-write is an `UPDATE` keyed on that id, so an unknown one used to report success
-and store nothing — `PUT /api/users/{id}/preferences` answers 404 for the same
-reason.
+Every one of these takes `--user`, and a `--user` naming nobody is refused
+rather than reporting a write it did not make.
 
 Custom rules are natural-language preferences interpreted by the LLM:
 
@@ -246,8 +244,7 @@ python3.11 -m src.cli preferences custom-rules remove 0
 python3.11 -m src.cli preferences custom-rules clear --yes
 ```
 
-At most 50 rules of 500 characters each, the same bound the web API applies,
-so a list added here is one the Preferences page can still save back.
+At most 50 rules of 500 characters each, the same bound the web API applies.
 
 ## Enrichment
 

@@ -55,19 +55,14 @@ put and a re-added source syncs straight back into them.
 Sensitive values are never returned by the API. The UI shows a "set" / "unset"
 badge with **Replace** and **Clear** actions.
 
-Two edits cost you a secret, on purpose. **Changing a source's `url`, or turning
-off Calibre-Web's `verify_ssl`, clears that source's stored credentials**: they
-were entrusted to one host over one kind of connection, and carrying them to
-another is how a rewritable URL becomes credential theft. Re-enter the secret
-after the move. The badge flips to "unset" in the same response, so the UI shows
-it immediately.
+**Changing a source's `url`, or turning off Calibre-Web's `verify_ssl`, clears
+that source's stored credentials**, so re-enter the secret after the move. The
+badge flips to "unset" in the same response.
 
 **A file-based source may only read under `security.allowed_source_roots`**
-(`inputs/` unless `config.yaml` says otherwise). A path outside it fails
-validation with the key to add it to — a one-time `config.yaml` edit,
-deliberately not something the API can change.
-[SECURITY.md](SECURITY.md#where-file-imports-may-read) lists which plugins that
-covers.
+(`inputs/` by default). A path outside it fails validation naming the key to add
+it to, in `config.yaml` — see
+[SECURITY.md](SECURITY.md#where-file-imports-may-read).
 
 Full CLI reference: [CLI.md](CLI.md#source-management).
 

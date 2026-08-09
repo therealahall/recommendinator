@@ -72,9 +72,8 @@ for the patterns it names.
    key, neutralises production logging, pins the timezone to UTC and narrows the
    file-import allowlist to the test's own `tmp_path`, for every test in every
    tree, plugin-local ones included, so no test arranges those itself. A test
-   needing another zone requests `host_timezone` and calls it; one reading a
-   repository directory requests `allowed_source_roots` and adds that root. Both
-   are restored either way.
+   needing another zone requests `host_timezone`; one reading a repository
+   directory requests `allowed_source_roots`. Both are restored either way.
 
 ### Imports
 

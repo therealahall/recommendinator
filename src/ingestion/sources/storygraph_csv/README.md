@@ -23,9 +23,7 @@ Or add it from the **Data** tab with **+ Add source**.
 |-------|------|----------|-------------|
 | `path` | str | yes | Path to The StoryGraph library CSV export file, under an allowed source root. |
 
-`path` must resolve under `security.allowed_source_roots` in `config.yaml`,
-which defaults to `inputs/`. Keeping the file elsewhere means adding that
-directory to the list — see
+Allowed roots default to `inputs/` and are set in `config.yaml` — see
 [SECURITY.md](../../../../docs/SECURITY.md#where-file-imports-may-read).
 
 ## Notes
