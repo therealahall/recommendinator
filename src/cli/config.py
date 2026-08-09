@@ -58,8 +58,10 @@ _HOW_TO_MINT = (
 
 NO_API_TOKEN_MESSAGE = (
     f"No API token configured. Set web.api_token in config.yaml to {_HOW_TO_MINT}, "
-    "then start again. The API answers 401 without it, so there is no "
-    "unauthenticated mode to fall back to. Docker mints one on first run."
+    "then start again. Under Docker that file is ./config/config.yaml beside your "
+    "compose file, and the container writes a copy there on first start for you to "
+    "edit. Nothing generates a token for you: the API answers 401 without one, so "
+    "there is no unauthenticated mode to fall back to."
 )
 
 SHORT_API_TOKEN_MESSAGE = (

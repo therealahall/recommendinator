@@ -32,6 +32,10 @@ _EXAMPLE_WITH_PLACEHOLDER = (
     'web:\n  api_token: ""\n  host: "127.0.0.1"\n  port: 18473\n  debug: false\n'
 )
 
+# A run of hex as long as the token this script used to generate. Nothing the
+# entrypoint writes or prints may look like one.
+_MINTED_SECRET = re.compile(rf"[0-9a-f]{{{_MIN_TOKEN_LENGTH},}}")
+
 
 def _api_token(config: Path) -> str:
     """Read ``web.api_token`` back out of a written config file."""
@@ -106,84 +110,53 @@ class TestEntrypointFirstRun:
         assert "exec-target-ran" in result.stdout
 
 
-class TestEntrypointMintsTheApiToken:
-    """The container's answer to auth being required rather than optional.
+class TestEntrypointInventsNoToken:
+    """Regression test: the container invented the operator's token.
 
-    A fresh `docker compose up` has to reach a working, authenticated app, and
-    the operator has to be told the token exactly once.
+    Bug reported: the docs named `config.yaml`, where a from-source install had
+    never written one.
+    Root cause: only this script minted.
+    Fix: nobody does. Boot fails until the operator sets it.
     """
 
-    def test_the_placeholder_is_replaced_with_a_random_token(
+    def test_the_copied_config_keeps_the_empty_placeholder(
         self, config_dir: Path
     ) -> None:
-        """Both halves matter: a token is written, and it is not a constant."""
-        (config_dir / "example.yaml").write_text(_EXAMPLE_WITH_PLACEHOLDER)
-
-        first = _run(config_dir, "echo", "ok")
-        written = _api_token(config_dir / "config.yaml")
-
-        (config_dir / "config.yaml").unlink()
-        _run(config_dir, "echo", "ok")
-
-        assert first.returncode == 0
-        assert len(written) >= _MIN_TOKEN_LENGTH
-        assert written != _api_token(config_dir / "config.yaml")
-
-    def test_the_token_is_printed_once_with_the_bearer_instruction(
-        self, config_dir: Path
-    ) -> None:
-        """Nothing else tells the operator what to paste into the UI."""
+        """What the operator replaces, left exactly as example.yaml ships it."""
         (config_dir / "example.yaml").write_text(_EXAMPLE_WITH_PLACEHOLDER)
 
         result = _run(config_dir, "echo", "ok")
 
-        token = _api_token(config_dir / "config.yaml")
-        assert result.stdout.count(token) == 1
-        assert "Minted an API token" in result.stdout
+        assert result.returncode == 0
+        assert _api_token(config_dir / "config.yaml") == ""
 
-    def test_the_rest_of_the_web_section_survives(self, config_dir: Path) -> None:
-        """Substituted in place, so host, port and debug are not rewritten."""
+    def test_no_generated_secret_reaches_the_config_or_the_log(
+        self, config_dir: Path
+    ) -> None:
+        """A token this script chose is one the operator never saw go by."""
         (config_dir / "example.yaml").write_text(_EXAMPLE_WITH_PLACEHOLDER)
 
-        _run(config_dir, "echo", "ok")
+        result = _run(config_dir, "echo", "ok")
 
         written = (config_dir / "config.yaml").read_text()
-        assert yaml.safe_load(written)["web"]["port"] == 18473
-        assert written.count("web:") == 1
+        for text in (written, result.stdout, result.stderr):
+            assert _MINTED_SECRET.search(text) is None
 
-    def test_a_second_start_neither_remints_nor_reprints(
-        self, config_dir: Path
-    ) -> None:
-        """The token is a credential, so a steady-state restart must not log it."""
+    def test_the_operator_is_told_what_to_set_and_how(self, config_dir: Path) -> None:
+        """The app's refusal to start is the next thing they hit."""
         (config_dir / "example.yaml").write_text(_EXAMPLE_WITH_PLACEHOLDER)
-        _run(config_dir, "echo", "ok")
-        token = _api_token(config_dir / "config.yaml")
 
-        second = _run(config_dir, "echo", "ok")
+        result = _run(config_dir, "echo", "ok")
 
-        assert _api_token(config_dir / "config.yaml") == token
-        assert token not in second.stdout
-        assert token not in second.stderr
-
-    def test_an_example_with_no_placeholder_warns_instead_of_failing_silently(
-        self, config_dir: Path
-    ) -> None:
-        """Otherwise the app dies at boot and nothing says why."""
-        (config_dir / "example.yaml").write_text("web:\n  port: 18473\n")
-
-        result = _run(config_dir, "echo", "still-ran")
-
-        assert result.returncode == 0
-        assert "could not write web.api_token" in result.stderr
-        assert "still-ran" in result.stdout
+        assert "web.api_token" in result.stdout
+        assert "openssl rand -hex 32" in result.stdout
 
     def test_the_written_config_is_readable_only_by_its_owner(
         self, config_dir: Path
     ) -> None:
-        """``cp`` inherits example.yaml's 0644 and ``sed -i`` preserves it.
-
-        ``./config`` is bind-mounted, so that put the API token in a file every
-        user on the host could read.
+        """``cp`` inherits example.yaml's 0644, and ``./config`` is bind-mounted,
+        so the file the operator writes their token into is one every user on
+        the host could otherwise read.
         """
         (config_dir / "example.yaml").write_text(_EXAMPLE_WITH_PLACEHOLDER)
 
@@ -192,12 +165,8 @@ class TestEntrypointMintsTheApiToken:
         mode = (config_dir / "config.yaml").stat().st_mode & 0o777
         assert mode == 0o600
 
-    def test_the_shipped_example_carries_the_placeholder_the_script_looks_for(
-        self,
-    ) -> None:
-        """The substitution and the file it edits are in two repositories' worth
-        of distance from each other, and nothing else pairs them. Matched on the
-        script's own pattern, which takes any indentation."""
+    def test_the_shipped_example_carries_the_placeholder_to_fill_in(self) -> None:
+        """An example that had lost the key leaves nowhere to write a token."""
         example = (_REPO_ROOT / "config" / "example.yaml").read_text()
 
         assert re.search(r'^ *api_token: ""', example, re.MULTILINE) is not None

@@ -30,10 +30,10 @@
 # BOOTSTRAP: read to open the listening socket before the database exists, so
 # these cannot be managed from the Settings page.
 web:
-  # REQUIRED. Every /api request must carry `Authorization: Bearer <token>`,
-  # and the server refuses to start until this is set. Generate one with
-  # `openssl rand -hex 32`; at least 32 characters. Under Docker the
-  # entrypoint fills this in on first run and prints it once.
+  # REQUIRED, and yours to set — nothing generates one for you, under Docker or
+  # from source. Every /api request must carry `Authorization: Bearer <token>`,
+  # and the server refuses to start while this is empty. Generate one with
+  # `openssl rand -hex 32`; at least 32 ASCII characters.
   api_token: ""
   # "127.0.0.1" binds to localhost only (recommended). "0.0.0.0" allows LAN
   # access — the token is then crossing your network in cleartext, because
