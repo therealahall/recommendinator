@@ -1230,7 +1230,11 @@ def test_update_endpoint(client, mock_components):
 
 
 def test_update_endpoint_steam(client, mock_components):
-    """Test update endpoint starts background sync for Steam."""
+    """Test update endpoint starts background sync for Steam.
+
+    The sync manager is stubbed because the real one spawns a thread that
+    outlives the test calling the live Steam API.
+    """
     # Update app_state config to include Steam
     app_state.config["inputs"]["steam"] = {
         "plugin": "steam",
@@ -1238,8 +1242,11 @@ def test_update_endpoint_steam(client, mock_components):
         "steam_id": "76561198000000000",
         "enabled": True,
     }
+    sync_manager = Mock(spec=SyncManager)
+    sync_manager.start_sync.return_value = (True, "Started sync for Steam")
 
-    response = client.post("/api/update", json={"source": "steam"})
+    with patch("src.web.api.get_sync_manager", return_value=sync_manager):
+        response = client.post("/api/update", json={"source": "steam"})
 
     assert response.status_code == 200
     data = response.json()
@@ -1309,8 +1316,9 @@ def test_update_endpoint_steam_missing_id(client, mock_components, caplog):
 def test_update_endpoint_steam_api_error(client, mock_components):
     """Test update endpoint handles Steam API error during validation.
 
-    Note: With background sync, API errors during the actual sync are handled
-    asynchronously. This test verifies the sync can be started when config is valid.
+    A started sync answers 200 and reports its errors through the status
+    endpoint. The sync manager is stubbed because the real one spawns a
+    thread that outlives the test calling the live Steam API.
     """
     app_state.config["inputs"]["steam"] = {
         "plugin": "steam",
@@ -1318,10 +1326,11 @@ def test_update_endpoint_steam_api_error(client, mock_components):
         "steam_id": "76561198000000000",
         "enabled": True,
     }
+    sync_manager = Mock(spec=SyncManager)
+    sync_manager.start_sync.return_value = (True, "Started sync for Steam")
 
-    # With background sync, the endpoint returns 200 to start the sync
-    # API errors are reported via the sync status endpoint
-    response = client.post("/api/update", json={"source": "steam"})
+    with patch("src.web.api.get_sync_manager", return_value=sync_manager):
+        response = client.post("/api/update", json={"source": "steam"})
 
     assert response.status_code == 200
     data = response.json()
