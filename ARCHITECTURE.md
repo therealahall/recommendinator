@@ -33,12 +33,11 @@ Parses and normalizes data from external sources.
   order. Rate limits are per source, so cross-source parallelism is safe.
 - The web `SyncManager` aggregates progress callbacks into a `sources` map.
 - Source config is writable over HTTP, so two field kinds are constrained rather
-  than trusted. `paths.py` contains a file-based plugin's path inside
-  `security.allowed_source_roots` — a config.yaml key the settings API cannot
-  reach. `urls.py` checks a base URL's shape, and a `ConfigField` marked
-  `credential_bound` (a plugin's `url`, Calibre-Web's `verify_ssl`) clears the
-  source's stored secrets when it changes, so repointing a source never carries
-  its credential to the new host.
+  than trusted. `paths.py` contains a file plugin's path inside
+  `security.allowed_source_roots`, a config.yaml key the settings API cannot
+  reach; `urls.py` checks a base URL's shape. A `credential_bound` `ConfigField`
+  (a plugin's `url`, Calibre-Web's `verify_ssl`) clears the source's stored
+  secrets when it changes.
 
 ### 2. Storage (`src/storage/`)
 
@@ -112,9 +111,9 @@ column, and `complete --review`, `POST /api/complete` and
 
 **`date_completed` is never replaced silently.** A completion carrying no date
 fills an empty column with today and keeps an existing date. A named date is
-written as given, but only as far ahead as `MAX_COMPLETION_DATE_SKEW` — one day,
-for a caller in a zone ahead of the server. Chat is the only surface that names
-one, and the check is at the door so no surface can skip it.
+written as given, but no further ahead than `MAX_COMPLETION_DATE_SKEW` — one
+day, for a caller in a zone ahead of the server — and the check is at the door,
+so no surface can skip it.
 `update_item_from_ui` stamps a date only on a transition *into* `completed` on an
 undated row, so an unrelated edit cannot date a years-old import as finished
 today. Dates are the host's local calendar day rather than UTC (`local_today`,
@@ -511,12 +510,10 @@ SSE streams chat responses and recommendation blurbs. Internal network only.
   reason.
 - The two SSE endpoints (`GET /api/recommendations/stream` and `POST /api/chat`)
   share one budget of `MAX_CONCURRENT_STREAMS` slots in
-  `src/web/stream_limit.py`, and answer **503** past it. The slot is taken in
-  the handler, before the response starts, and given back when the generator
-  finishes or the client disconnects. Without it a handful of forgotten tabs
-  spends the 40 tokens and `GET /api/status` stops answering too; with
-  authentication in front, the number is set for a stuck browser rather than a
-  hostile caller.
+  `src/web/stream_limit.py` and answer **503** past it, or a handful of forgotten
+  tabs spends those 40 tokens. The slot is taken in the handler, before the
+  response starts, and released when the generator finishes or the client
+  disconnects.
 - Writing the running config is serialised by one lock in `src/web/state.py`,
   not by the event loop. Four paths write it — `PUT /api/settings`,
   `DELETE /api/settings/{key}`, `POST /api/config/reload` and the config
@@ -586,11 +583,10 @@ Enrichment (background)           Recommendation Engine
 `config/config.yaml` (git-ignored) holds the bootstrap: the `web` bind settings,
 `web.api_token`, and the `storage` paths, all read before the database opens. The
 token is deliberately not a settings leaf — it guards the API the Settings page
-is served over, and boot fails without it. `config/example.yaml` is that template
-and nothing more. Everything else resolves
-through [global configuration precedence](#global-configuration-precedence), and
-sources through
-[source configuration precedence](#source-configuration-precedence).
+is served over — and boot fails without it. `config/example.yaml` is that
+template and nothing more. Everything else resolves through
+[global configuration precedence](#global-configuration-precedence), and sources
+through [source configuration precedence](#source-configuration-precedence).
 
 A legacy file may still carry `inputs` sources and secrets. Both migrate into the
 database on boot, and a secret found there logs a deprecation warning. The legacy
@@ -678,14 +674,17 @@ especially, is too thin there.
    application source, frontend dist and the entrypoint script.
 4. **default** / **ai**, copying the right venv, setting `ENTRYPOINT` to
    `/app/docker/entrypoint.sh` (which bootstraps `config.yaml` from
-   `example.yaml` on first run), starting uvicorn through `CMD`.
+   `example.yaml` on first run), starting uvicorn through `CMD`, and setting
+   `HEALTHCHECK` to `python -m src.web.healthcheck`, which reads no token and
+   counts an unauthenticated 401 as healthy.
 
 `docker/Dockerfile.ollama` is a thin extension of `ollama/ollama` adding the
 model-pull entrypoint.
 
 `.github/workflows/docker.yml` builds all three on `linux/amd64` for a
-`pull_request`, without pushing, and smoke-tests the default variant against
-`/api/status`. On a `v*` tag it builds multi-arch, generates semver tags
+`pull_request`, without pushing, and smoke-tests the default variant: it seeds
+a token into a mounted config, polls the authenticated `/api/status`, then runs
+the image's own `HEALTHCHECK` inside it. On a `v*` tag it builds multi-arch, generates semver tags
 (`X.Y.Z`, `X.Y`, `X`, `latest`), attaches provenance and SBOM attestations, and
 pushes to GHCR. `.github/workflows/release.yml` creates that tag by running
 python-semantic-release on every push to `main`, and uploads

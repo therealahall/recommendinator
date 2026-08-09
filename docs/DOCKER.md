@@ -27,10 +27,10 @@ docker run -d \
   ghcr.io/therealahall/recommendinator:latest
 ```
 
-Open <http://localhost:18473>. The container copies the bundled `example.yaml` to
-`config/config.yaml` on first run and mints an API token into it, printing it
-once — `docker logs recommendinator` if you miss it. The UI asks for it the first
-time you open it.
+The container copies the bundled `example.yaml` to `config/config.yaml` on first
+run and then exits, because `web.api_token` is unset. Put an
+`openssl rand -hex 32` value there, `docker restart recommendinator`, and open
+<http://localhost:18473> — the UI asks for that token once.
 
 Under Docker that file matters for the `storage` paths, `web.api_token` and
 `web.debug`, because the image passes `--host` and `--port` on its command line
@@ -51,6 +51,9 @@ curl -L https://github.com/therealahall/recommendinator/releases/latest/download
   -o docker-compose.yml
 docker compose up -d
 ```
+
+**That first `up` writes `./config/config.yaml` and exits.** Set
+`web.api_token` to an `openssl rand -hex 32` value and run it again.
 
 Pin a version with `IMAGE_TAG`, in your shell or a `.env` file beside the compose
 file:
@@ -92,18 +95,9 @@ With no private plugins, leave `./private` empty or drop that volume.
 ### Ports
 
 The app listens on `8000` inside the container, published on `127.0.0.1:18473` —
-**this host only**. Change the port with `APP_PORT`, and the interface with
-`APP_BIND_PREFIX`:
-
-```bash
-APP_BIND_PREFIX=            docker compose up -d   # every interface
-APP_BIND_PREFIX=192.168.1.5: docker compose up -d  # one address
-```
-
-Both open the app to the network, and **the app never serves TLS** — the bearer
-token then crosses the network in cleartext. Put a
-[reverse proxy](#reverse-proxy) in front of it instead and leave the published
-port on loopback.
+**this host only**. Change the port with `APP_PORT` and the interface with
+`APP_BIND_PREFIX`, though anything wider than loopback puts a cleartext bearer
+token on your network: prefer a [reverse proxy](#reverse-proxy).
 
 The Ollama sidecar listens on `11434` inside the network and is not published to
 the host at all.
@@ -115,7 +109,7 @@ the host at all.
 | `TZ` | unset, so UTC | Timezone both app containers run in. Any IANA name resolves, the image carries `tzdata`. Completions are dated by the calendar day in this zone, so west of UTC an evening watch is dated a day forward until you set it. |
 | `IMAGE_TAG` | `latest` | Tag the compose file pulls. The `-ai` suffix is appended for the AI service. |
 | `APP_PORT` | `18473` | Host port for the web UI. |
-| `APP_BIND_PREFIX` | `127.0.0.1:`, so this host only | Host interface to publish on, written **with a trailing colon**: `APP_BIND_PREFIX=192.168.1.5:`. Set it empty for every interface. Anything but the default puts a cleartext bearer token on your network — use a reverse proxy. |
+| `APP_BIND_PREFIX` | `127.0.0.1:`, so this host only | Host interface to publish on, written **with a trailing colon**: `APP_BIND_PREFIX=192.168.1.5:`. Set it empty for every interface. See [Ports](#ports). |
 | `COMPOSE_PROFILES` | unset | Alternative to `--profile ai`. You still have to name `app-ai` on the up command. |
 | `OLLAMA_BASE_URL` | `http://ollama:11434` | Set for you inside the AI service. Override only for a remote Ollama. |
 | `OLLAMA_MODEL` | `mistral:7b` | Generation model the sidecar pulls. Must match the app's `ollama.model`. |
@@ -128,13 +122,10 @@ of two dates. Only new completions get the right day.
 
 ## First run
 
-The entrypoint copies `example.yaml` to `config.yaml` when none exists, mints a
-random `web.api_token` into it, prints that token once, and starts the app. It
-never overwrites an existing file, so restarts are safe — and never reprints the
-token, so it is not repeated into your logs on every start.
-
-Rotating it is an edit to `config.yaml`: the config watcher picks the new value
-up without a restart, and every browser is asked for it again.
+The entrypoint copies `example.yaml` to `config.yaml` when none exists and never
+overwrites an existing file, so restarts are safe. It does not fill in
+`web.api_token`: the app exits until you do. Rotating it later is an edit to the
+same file, which the config watcher picks up without a restart.
 
 The UI comes up with no sources, so ingestion does nothing until you add them
 from the **Data** tab or `source create`, with API keys from the **Settings**
@@ -218,10 +209,9 @@ To pin, set `IMAGE_TAG=X.Y.Z` and run the same two commands.
 
 ## Reverse proxy
 
-**The app never serves TLS**, and it never will — HTTPS terminates in front of
-it. That is not optional for anything beyond loopback: the API is authenticated
-with a bearer token, and plain HTTP puts that token on the wire in cleartext.
-With [Caddy](https://caddyserver.com/):
+The app speaks plain HTTP and expects TLS to terminate in front of it, which
+beyond loopback is not optional: the bearer token is on the wire. With
+[Caddy](https://caddyserver.com/):
 
 ```caddyfile
 recommendinator.example.com {
@@ -235,11 +225,10 @@ With the proxy on the same host, leave `APP_BIND_PREFIX` at its default so the
 published port stays on loopback. The proxy still reaches it, nothing else on
 the network does.
 
-The token authenticates the API; the proxy is welcome to add its own layer
-(forward auth, an IP allowlist, a VPN) and several deployments will want one.
-The app does not trust `X-Forwarded-*` headers, so the links it emits use the
-host and port the request arrived on. That is correct wherever the proxy
-preserves `Host`.
+The token authenticates the API, and the proxy can add its own layer on top
+(forward auth, an IP allowlist, a VPN). The app does not trust `X-Forwarded-*`
+headers, so the links it emits use the host and port the request arrived on.
+That is correct wherever the proxy preserves `Host`.
 
 ## Architectures
 
@@ -257,21 +246,15 @@ Settings badged "restart required" need `docker compose restart`. Everything els
 on the **Settings** page applies immediately. `config.yaml` is only written on
 first run, so edit it on the host and restart.
 
-### The container exits saying "No API token configured"
+### The container exits with `No API token configured`, or the API answers 401
 
-`config.yaml` exists but has no `web.api_token`, so the entrypoint's first-run
-mint was skipped. Add one and restart:
-
-```bash
-openssl rand -hex 32   # paste into web.api_token in ./config/config.yaml
-docker compose restart
-```
+`web.api_token` in `./config/config.yaml` is unset or wrong. Put an
+`openssl rand -hex 32` value there and `docker compose restart`.
 
 ### The app is unreachable from another machine
 
-That is the default: the port is published on `127.0.0.1` only. Put a reverse
-proxy in front of it, or set `APP_BIND_PREFIX` and accept a cleartext token on
-your network. See [Ports](#ports).
+That is the default: the port is published on `127.0.0.1` only. See
+[Ports](#ports).
 
 ### Port 18473 is taken
 

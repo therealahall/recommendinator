@@ -29,10 +29,10 @@ docker run -d \
   ghcr.io/therealahall/recommendinator:latest
 ```
 
-The container writes a starter `config/config.yaml` you do not need to edit, and
-mints an API token into it. Read the token out of the first-run log
-(`docker logs recommendinator`), open **http://localhost:18473**, and paste it
-when the UI asks. Then, in order:
+The container writes a starter `config/config.yaml`, then exits until you set
+`web.api_token` in it to an `openssl rand -hex 32` value. Restart, open
+**http://localhost:18473**, and paste that token when the UI asks. Then, in
+order:
 
 1. **[Set up enrichment](docs/ENRICHMENT_SETUP.md) first.** It fills in the
    genres, tags, and descriptions the scoring pipeline depends on. Skipping it
@@ -47,14 +47,12 @@ when the UI asks. Then, in order:
 
 ## Security notice
 
-Every API request needs a bearer token, and the server refuses to start without
-one. Docker mints it on first run and prints it once; from source, put
-`openssl rand -hex 32` into `web.api_token`.
-
-It binds to `127.0.0.1` by default, and Docker publishes on `127.0.0.1` too. The
-app **never serves TLS**, so reaching it from another machine means a reverse
-proxy terminating HTTPS — otherwise the token crosses your network in cleartext.
-See [docs/SECURITY.md](docs/SECURITY.md).
+Every API request needs a bearer token you set yourself: `web.api_token` in
+`config/config.yaml`, an `openssl rand -hex 32` value. The server refuses to
+start without one. It binds to `127.0.0.1` by default, and Docker publishes on
+`127.0.0.1` too — the app **never serves TLS**, so reaching it from another
+machine means a reverse proxy terminating HTTPS. See
+[docs/SECURITY.md](docs/SECURITY.md).
 
 ## Data sources
 
@@ -117,14 +115,11 @@ storage:
 
 Under Docker `host` and `port` are inert, because the image passes `--host` and
 `--port` on the command line and CLI flags beat `config.yaml`. Publish a
-different port with `APP_PORT` instead, and let the entrypoint mint the token.
-See [docs/DOCKER.md](docs/DOCKER.md).
+different port with `APP_PORT` instead. See [docs/DOCKER.md](docs/DOCKER.md).
 
-One optional third section belongs here rather than in the database:
-`security.allowed_source_roots` lists the directories a file-based source
-(CSV/JSON/Markdown import, ROM scan) may read, defaulting to `inputs/`. It is
-deliberately unreachable from the Settings API, because a caller who could widen
-it could make the server read any file. See
+`security.allowed_source_roots` optionally belongs here too — the directories a
+file-based source may read, `inputs/` by default, and deliberately unreachable
+from the Settings API. See
 [docs/SECURITY.md](docs/SECURITY.md#where-file-imports-may-read).
 
 Everything else lives in the database and is set from the app. Data sources come

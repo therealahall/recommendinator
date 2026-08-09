@@ -120,25 +120,32 @@ re-normalize every title and merge whatever that exposes.
 Is the server running (`python3.11 -m src.web`), on the port you are asking for
 (18473 by default)? Then check the browser console.
 
+### The server will not start: `No API token configured`
+
+Nothing generates a token for you. Set `web.api_token` in `config/config.yaml`
+to an `openssl rand -hex 32` value and start again.
+
+### 401 Unauthorized, or the UI keeps asking for a token
+
+The token is whatever you set `web.api_token` to in `config/config.yaml`; paste
+that value when the UI asks. A rejected token is cleared and re-prompted, so a
+prompt that keeps coming back means the value is wrong.
+
 ### Preferences reset after a refresh
 
 Click **Save Preferences**, check the network tab, and confirm the API answers.
-Every `/api` route needs the bearer token from `web.api_token`:
+Every `/api` route needs the bearer token:
 
 ```bash
 curl -H "Authorization: Bearer $(yq '.web.api_token' config/config.yaml)" \
   http://localhost:18473/api/status
 ```
 
-A `401` means the token is wrong; the UI clears a rejected one and asks again.
-
 ### `503 Too many streams in progress`
 
-Chat and recommendation streams share a budget of 8 concurrent streams, because
-each one holds a threadpool slot for as long as it runs and an uncapped set of
-them stops the server answering anything. Several tabs left open on a streaming
-view is the usual cause. Close the ones you are not watching and retry — a slot
-comes back as soon as a stream ends or its tab disconnects.
+Chat and recommendation streams share a budget of 8. Several tabs left open on a
+streaming view is the usual cause — close the ones you are not watching and
+retry. A slot comes back as soon as a stream ends or its tab disconnects.
 
 ## CLI
 
@@ -154,15 +161,6 @@ python3.11 -m src.cli preferences --help    # it may be a subcommand
 ```bash
 cp config/example.yaml config/config.yaml
 python3.11 -m src.cli --config path/to/config.yaml status
-```
-
-### The web server exits with `No API token configured`
-
-`web.api_token` is empty in `config.yaml`. The API requires it and there is no
-open mode, so set one and start again:
-
-```bash
-openssl rand -hex 32
 ```
 
 ## Docker
@@ -217,7 +215,7 @@ Turn AI off if you are not using it, and pre-pull the Ollama models.
 
 Ollama holds the model in memory. Pick a smaller one, or run it on another
 machine on your network and point `ollama.base_url` there — a host beyond your
-network is only settable in `config.yaml`, see
+own network is only settable in `config.yaml`, see
 [SECURITY.md](SECURITY.md#network). Models:
 [MODEL_RECOMMENDATIONS.md](MODEL_RECOMMENDATIONS.md).
 

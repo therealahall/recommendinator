@@ -28,9 +28,7 @@ see the table below for what each one does.
 | `exclude_names` | list[str] | no | Glob patterns matched against file or folder names to skip. Hidden dotfiles are always skipped. |
 | `extra_strip_patterns` | list[str] | no | Extra Python regex patterns appended to the title cleaner. Avoid unbounded repetition that could backtrack catastrophically. |
 
-Every entry in `paths` must resolve under `security.allowed_source_roots` in
-`config.yaml`, which defaults to `inputs/`. A ROM stash living anywhere else
-needs its directory added to that list — see
+Allowed roots default to `inputs/` and are set in `config.yaml` — see
 [SECURITY.md](../../../../docs/SECURITY.md#where-file-imports-may-read).
 
 ## Notes

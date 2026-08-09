@@ -26,16 +26,10 @@ docker run -d \
   ghcr.io/therealahall/recommendinator:latest
 ```
 
-The container writes a starter `config/config.yaml` on first run and mints an API
-token into it, which it prints once:
-
-```
-[entrypoint] Minted an API token. Every API request must carry it, and the web UI asks for it once:
-[entrypoint]   3f9c…
-```
-
-`docker logs recommendinator` gets it back, or read `web.api_token` out of
-`config/config.yaml`. Paste it into the UI the first time you open it.
+**The container writes a starter `config/config.yaml` and then exits**, because
+`web.api_token` is unset and the app is never served unauthenticated. Put an
+`openssl rand -hex 32` value in that key, `docker restart recommendinator`, and
+the UI will ask you for it the first time you open it.
 
 Nothing else in that file needs editing. Under Docker the bind comes from the
 image's `--host` and `--port`, which beat `config.yaml`, so **publish a different
@@ -54,6 +48,9 @@ docker compose --profile ai up -d app-ai
 
 **Naming `app-ai` is required.** The default `app` service has no profile, so
 otherwise it starts too and both fight over the same host port.
+
+It exits on the first run for the same missing `web.api_token`, not for
+anything to do with the sidecar.
 
 [docs/DOCKER.md](docs/DOCKER.md) covers parameters, GPU setup and reverse
 proxies.
@@ -74,12 +71,8 @@ pnpm build
 cp config/example.yaml config/config.yaml
 ```
 
-Then set `web.api_token` in `config/config.yaml`. Every API request needs it and
-the server will not start without it:
-
-```bash
-openssl rand -hex 32
-```
+Then set `web.api_token` in `config/config.yaml` to an `openssl rand -hex 32`
+value. The server will not start without one.
 
 Node.js is only needed to build the web UI. CLI-only users can skip those three
 lines, and the CLI needs no token — it works directly against the database.
@@ -221,11 +214,10 @@ python3.11 -m src.cli profile regenerate
 python3.11 -m src.web
 ```
 
-Open <http://localhost:18473>. It asks for the API token once and remembers it in
-the browser. Browsing, syncing, recommendations, a **Settings** page for feature
-flags, enrichment, scorer defaults, provider secrets and the advanced
-infrastructure options, and chat when AI is on. The sidebar shows the running
-version and banners a reload when a newer one appears.
+Open <http://localhost:18473>. Browsing, syncing, recommendations, a **Settings**
+page for feature flags, enrichment, scorer defaults, provider secrets and the
+advanced infrastructure options, and chat when AI is on. The sidebar shows the
+running version and banners a reload when a newer one appears.
 
 Each recommendation card has two actions. **Ignore** drops the item out of future
 recommendations. **Mark complete** opens an edit dialog for status, rating and

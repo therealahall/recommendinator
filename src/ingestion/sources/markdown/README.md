@@ -24,9 +24,7 @@ yours to choose, so you can have several Markdown sources for different files.
 | `path` | str | yes | Path to the Markdown file, under an allowed source root. |
 | `content_type` | str | yes | One of: `book`, `movie`, `tv_show`, `video_game`. |
 
-`path` must resolve under `security.allowed_source_roots` in `config.yaml`,
-which defaults to `inputs/`. Keeping the file elsewhere means adding that
-directory to the list — see
+Allowed roots default to `inputs/` and are set in `config.yaml` — see
 [SECURITY.md](../../../../docs/SECURITY.md#where-file-imports-may-read).
 
 ## File format

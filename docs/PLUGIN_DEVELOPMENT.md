@@ -83,9 +83,7 @@ this schema, so `field_type`, `required`, `description` and `sensitive` are the
 user-facing UI.
 
 **Never quote a credential into a `validate_config` message.** Those messages
-answer the caller, so a value named in one leaves the machine. A write is
-validated against a config carrying no stored secret, but a plugin looking one
-up itself holds the real thing.
+are returned to the caller.
 
 `requires_network` defaults to `requires_api_key`. Override it for a file-based
 source that needs neither.
@@ -96,48 +94,27 @@ operations, with `total_items=None` when the total is unknown.
 ## Fields that reach outside the app
 
 Non-sensitive fields are writable over `PUT /api/sync/sources/<id>/config`, so
-two of them need declaring rather than trusting.
+two kinds need declaring.
 
-**A field naming a filesystem path** takes `reads_path=True` and must go
-through `src.ingestion.paths.resolve_source_path`, in `validate_config` *and*
-in `fetch`, so the plugin cannot be pointed outside
-`security.allowed_source_roots` (see
-[SECURITY.md](SECURITY.md#where-file-imports-may-read)). It raises
-`PathNotAllowed`; report it as a validation error, and re-raise it as a
-`SourceError` from `fetch`.
-
-The flag is what `tests/test_source_paths.py` sweeps, so an undeclared path
-field is exempt from every containment case. Name it before anything else — the
-containment check itself is only as complete as the declaration. Forgetting it
-on a plugin whose `requires_network` is `False` fails that sweep, which reads
-"needs no network" as "reads off disk".
+**A field naming a filesystem path** takes `reads_path=True`. The flag is
+declarative — it is what `tests/test_source_paths.py` sweeps, and nothing more —
+so the plugin must itself call `src.ingestion.paths.resolve_source_path`, in
+`validate_config` *and* in `fetch`, or the path is never contained (see
+[SECURITY.md](SECURITY.md#where-file-imports-may-read)):
 
 ```python
-ConfigField(name="path", field_type=str, required=True, reads_path=True, ...)
-
 try:
     path = resolve_source_path(str(config["path"]))
 except PathNotAllowed as error:
-    errors.append(str(error))
+    errors.append(str(error))     # and re-raise as SourceError from fetch
 ```
 
-**A field the stored credentials are bound to** — a base `url`, or a switch
-like Calibre-Web's `verify_ssl` that decides how the credential travels — takes
-`credential_bound=True`. Changing it clears the source's stored secrets, so
-repointing a source cannot make the next sync hand its API key to a host the
-user never entered it for. Validate the URL's shape with
-`src.ingestion.urls.source_url_error`, again in both `validate_config` and
-`fetch`: a sync of *every* source never calls `validate_config`.
-
-```python
-ConfigField(
-    name="url",
-    field_type=str,
-    required=True,
-    credential_bound=True,
-    description="Base URL",
-)
-```
+**A field the stored credentials are bound to** — a base `url`, or a switch like
+Calibre-Web's `verify_ssl` that decides how the credential travels — takes
+`credential_bound=True`, which clears the source's stored secrets when it
+changes. Validate the URL's shape with `src.ingestion.urls.source_url_error` in
+both `validate_config` and `fetch`: a sync of *every* source never calls
+`validate_config`.
 
 ## ContentItem
 
