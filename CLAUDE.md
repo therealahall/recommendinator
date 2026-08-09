@@ -64,12 +64,14 @@ index.html            # Vite SPA entry point
 vite.config.ts        # Vite build configuration
 tests/                # Cross-cutting tests (CLI, web, storage, recommendations, conversation).
                       # Plugin-local tests live next to the plugin: src/.../<plugin>/test_<plugin>.py.
-conftest.py           # Four autouse fixtures, function-scoped, applying to every test in
+conftest.py           # Five autouse fixtures, function-scoped, applying to every test in
                       # every tree: each test is kept off the real credential key and the
                       # production log file, runs with the process timezone pinned to UTC
-                      # (request `host_timezone` and call it to exercise another zone), and
+                      # (request `host_timezone` and call it to exercise another zone),
                       # may read only under its own tmp_path (request `allowed_source_roots`
-                      # to add a root)
+                      # to add a root), and cannot reach any host but loopback — a lookup
+                      # or connect elsewhere raises rather than dialling out (request
+                      # `outbound_network` for a test that genuinely must)
 scripts/              # Developer tooling (check_review_agents.py — review-gate preflight)
 config/               # Configuration files (example.yaml for tests)
 docker/               # Container helpers

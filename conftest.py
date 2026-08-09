@@ -9,14 +9,87 @@ explicitly. Fixtures defined here are the only ones all three get.
 
 import logging
 import os
+import socket
 import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import Any, NoReturn
 from unittest.mock import patch
 
 import pytest
 
 from src.ingestion.paths import get_allowed_source_roots, set_allowed_source_roots
+
+_LOOPBACK = {"127.0.0.1", "::1", "localhost", ""}
+
+#: Captured at import, before any fixture can wrap them. The escape hatch
+#: needs the real ones, and reading them back off the module would return
+#: whatever the guard installed.
+_REAL_SOCKET_CALLS: tuple[tuple[Any, str, Any], ...] = (
+    (socket.socket, "connect", socket.socket.connect),
+    (socket.socket, "connect_ex", socket.socket.connect_ex),
+    (socket, "getaddrinfo", socket.getaddrinfo),
+    (socket, "gethostbyname", socket.gethostbyname),
+)
+
+
+class NetworkAccessDenied(RuntimeError):
+    pass
+
+
+def _is_loopback(host: object) -> bool:
+    return host is None or (isinstance(host, str) and host in _LOOPBACK)
+
+
+def _refuse(host: object) -> NoReturn:
+    raise NetworkAccessDenied(
+        f"This test tried to reach {host!r}. Patch the transport, or request "
+        "the `outbound_network` fixture if it truly must dial out."
+    )
+
+
+def _guard_socket(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Refuse a lookup or connection to anywhere but loopback.
+
+    The lookup is guarded too, so a resolve alone cannot leak the host and
+    the refusal can name it rather than whatever it resolved to.
+    """
+
+    def address_guard(real: Any) -> Any:
+        def guarded(
+            self: socket.socket, address: Any, *args: Any, **kwargs: Any
+        ) -> Any | NoReturn:
+            host = address[0] if isinstance(address, tuple) else address
+            if _is_loopback(host):
+                return real(self, address, *args, **kwargs)
+            _refuse(host)
+
+        return guarded
+
+    def host_guard(real: Any) -> Any:
+        def guarded(host: Any, *args: Any, **kwargs: Any) -> Any | NoReturn:
+            if _is_loopback(host):
+                return real(host, *args, **kwargs)
+            _refuse(host)
+
+        return guarded
+
+    for target, name, real in _REAL_SOCKET_CALLS:
+        wrap = address_guard if name.startswith("connect") else host_guard
+        monkeypatch.setattr(target, name, wrap(real))
+
+
+@pytest.fixture(autouse=True)
+def _no_outbound_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two tests called the live Steam API on every run and nothing failed."""
+    _guard_socket(monkeypatch)
+
+
+@pytest.fixture()
+def outbound_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Let one test dial a real host, against the refusal above."""
+    for target, name, real in _REAL_SOCKET_CALLS:
+        monkeypatch.setattr(target, name, real)
 
 
 def _remove_production_log_handlers() -> None:
