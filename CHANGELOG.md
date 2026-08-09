@@ -1,6 +1,63 @@
 # CHANGELOG
 
 
+## v0.29.0 (2026-08-09)
+
+### Bug Fixes
+
+- **cli**: Say when a preference write was refused
+  ([`c0e9c16`](https://github.com/therealahall/recommendinator/commit/c0e9c16164a9b8487d0731af54f1c6207dc10641))
+
+- **docker**: Stop the healthcheck failing on its own auth
+  ([`2fbbcbc`](https://github.com/therealahall/recommendinator/commit/2fbbcbc4fcdeb47e556997cc39c7b94a5ce2f5ce))
+
+- **llm,conversation**: Read the LLM settings per call, not per boot
+  ([`bbf9eab`](https://github.com/therealahall/recommendinator/commit/bbf9eab5eebe63cafe7c82522fcfa4fd39b8f09d))
+
+- **settings**: Refuse an ollama host that only looks local
+  ([`46920fa`](https://github.com/therealahall/recommendinator/commit/46920faeca78538a48483ee3043427a1722b9184))
+
+- **sources**: Bind a stored secret to the host it was issued for
+  ([`82f7995`](https://github.com/therealahall/recommendinator/commit/82f79954d5ea3c0194bc2343fb62383041a8008d))
+
+- **web**: Bound what one request can ask the server to hold
+  ([`4047242`](https://github.com/therealahall/recommendinator/commit/40472429f541285740043f4fd8c37225eceea327))
+
+### Documentation
+
+- Cut a third of what four review rounds added
+  ([`23f90b9`](https://github.com/therealahall/recommendinator/commit/23f90b964d8eac66f3edc1d7be3c43c36029cc89))
+
+- Describe the surface auth and containment left behind
+  ([`4ed0fd1`](https://github.com/therealahall/recommendinator/commit/4ed0fd1c6db70220fa708237d185cb093355fd4b))
+
+### Features
+
+- **docker**: Let the operator choose the API token
+  ([`ea79e2c`](https://github.com/therealahall/recommendinator/commit/ea79e2c3bfe79a30ef7cca0c5f6e01948c2d329f))
+
+- **security**: Keep a file import inside the roots the operator named
+  ([`302f453`](https://github.com/therealahall/recommendinator/commit/302f453591c04f625674ca8553cf50c58f296533))
+
+- **web**: Ask for the token before unlocking the app
+  ([`32733fa`](https://github.com/therealahall/recommendinator/commit/32733fa7c2067d0070a772e93eae0491543ea87e))
+
+- **web**: Require a bearer token on every API route
+  ([`82faaff`](https://github.com/therealahall/recommendinator/commit/82faaff2094d29332cf78c2073813d535644aaa8))
+
+### Testing
+
+- Refuse a connection to anywhere but loopback
+  ([`6a4bf36`](https://github.com/therealahall/recommendinator/commit/6a4bf36ca2283537d1124a27220de22c234bfa5f))
+
+- **web**: Read the annotation rather than a FastAPI internal
+  ([`2fd55c9`](https://github.com/therealahall/recommendinator/commit/2fd55c94f9bb28894d803098e7e9d673d1ae8049))
+
+### Breaking Changes
+
+- **docker**: A fresh container exits until web.api_token is set.
+
+
 ## v0.28.0 (2026-08-08)
 
 ### Bug Fixes
