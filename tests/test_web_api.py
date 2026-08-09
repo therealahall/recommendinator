@@ -5933,7 +5933,10 @@ def _user_id_fields(dependant: Dependant) -> Iterator[Any]:
         if param.name == "user_id":
             yield param.field_info
     for body_param in dependant.body_params:
-        model = body_param.type_
+        # Not ``ModelField.type_``: that is FastAPI's own compatibility shim and
+        # a newer release drops it, so the sweep went red on a dependency bump
+        # rather than on anything about this app.
+        model = body_param.field_info.annotation
         if isinstance(model, type) and issubclass(model, BaseModel):
             for name, field in model.model_fields.items():
                 if name == "user_id":
