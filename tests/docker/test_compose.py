@@ -10,12 +10,16 @@ or daemon needed.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from typing import NamedTuple
+from urllib.parse import urlparse
 
 import pytest
 import yaml
+
+from src.web import healthcheck
 
 # parents[2] resolves /tests/docker/test_compose.py -> repo root.
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -38,6 +42,14 @@ _STAGE_HEADER = re.compile(
 # the following lines. Anything after the shell's `&&` belongs to the next
 # command, not to the install, so the caller cuts there.
 _APT_INSTALL = re.compile(r"apt-get install\b(?P<arguments>(?:[^\n\\]|\\\n)*)")
+
+# A `HEALTHCHECK`/`CMD` instruction's arguments, following backslash
+# continuations onto the following lines.
+_INSTRUCTION = r"^{name}\b(?P<arguments>(?:[^\n\\]|\\\n)*)"
+
+# Built from the module's own name so a rename cannot leave the image invoking
+# a path that no longer imports.
+HEALTHCHECK_COMMAND = f'CMD ["python", "-m", "{healthcheck.__name__}"]'
 
 # Services that publish the web UI. Both inherit the mapping from the
 # x-app-common anchor, so both must be checked — a mapping moved onto one
@@ -92,16 +104,33 @@ def _stages() -> dict[str, _Stage]:
     return stages
 
 
+def _instructions(stage: _Stage) -> str:
+    """Return *stage*'s body with its comment lines dropped.
+
+    Prose explaining an install or a healthcheck names the same words it does,
+    and must not be able to stand in for it.
+    """
+    return "\n".join(
+        line for line in stage.body.splitlines() if not line.lstrip().startswith("#")
+    )
+
+
+def _instruction(stage: _Stage, name: str) -> str:
+    """Return *name*'s arguments in *stage*, collapsed onto one line."""
+    match = re.search(
+        _INSTRUCTION.format(name=name), _instructions(stage), re.MULTILINE
+    )
+    assert match is not None, f"no {name} instruction in this stage"
+    return " ".join(match.group("arguments").split())
+
+
 def _apt_packages(stage: _Stage) -> set[str]:
     """Return the packages ``apt-get install`` asks for in *stage*.
 
-    Comment lines are dropped before matching and only the install's own
-    arguments are read, so a package named in the prose explaining why it is
-    installed cannot stand in for installing it.
+    Only the install's own arguments are read, so a flag or a following
+    command cannot be mistaken for a package.
     """
-    instructions = "\n".join(
-        line for line in stage.body.splitlines() if not line.lstrip().startswith("#")
-    )
+    instructions = _instructions(stage)
     packages: set[str] = set()
     for match in _APT_INSTALL.finditer(instructions):
         arguments = match.group("arguments").replace("\\\n", " ").split("&&")[0]
@@ -334,3 +363,40 @@ class TestRuntimeImageCarriesTheZoneDatabase:
         the test above kept passing.
         """
         assert _stages()[target].parent == RUNTIME_BASE_STAGE
+
+
+class TestEveryShippedTargetRunsTheLivenessProbe:
+    """A probe is only worth writing if the images actually invoke it.
+
+    ``test_healthcheck.py`` holds what it answers; these hold that both targets
+    ask it, identically, about the port the image serves.
+    """
+
+    @pytest.mark.parametrize("target", APP_TARGETS)
+    def test_the_healthcheck_runs_the_probe(self, target: str) -> None:
+        """Regression: the healthcheck called ``urlopen`` on ``/api/status``.
+
+        Bearer auth made 401 the only answer and ``urlopen`` raises on it, so
+        both images went permanently unhealthy.
+        """
+        assert _instruction(_stages()[target], "HEALTHCHECK").endswith(
+            HEALTHCHECK_COMMAND
+        )
+
+    def test_both_targets_carry_the_same_healthcheck(self) -> None:
+        """One line duplicated per target is how one defect shipped twice."""
+        assert (
+            len({_instruction(_stages()[name], "HEALTHCHECK") for name in APP_TARGETS})
+            == 1
+        )
+
+    @pytest.mark.parametrize("target", APP_TARGETS)
+    def test_the_probe_asks_the_port_the_image_serves(self, target: str) -> None:
+        """Nothing else ties the two, and a probe aimed past the server would
+        report an outage that is entirely its own."""
+        command = json.loads(_instruction(_stages()[target], "CMD"))
+
+        assert "--port" in command
+        assert urlparse(healthcheck.STATUS_URL).port == int(
+            command[command.index("--port") + 1]
+        )
