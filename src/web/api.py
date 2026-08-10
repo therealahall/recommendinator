@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 from collections.abc import Callable, Iterable, Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -44,7 +45,7 @@ from src.storage.manager import UNSET, VALID_SORT_OPTIONS, UnknownUserError
 from src.utils.item_serialization import item_to_dict
 from src.utils.series import MAX_SEASONS
 from src.utils.sorting import MAX_SEARCH_LENGTH
-from src.utils.text import humanize_source_id
+from src.utils.text import exception_for_log, humanize_source_id, sanitize_for_log
 from src.web.enrichment_manager import get_enrichment_manager
 from src.web.epic_auth import (
     EpicAuthError,
@@ -91,6 +92,7 @@ from src.web.sync_sources import (
     get_available_sync_sources,
     list_available_plugins,
     migrate_source,
+    redact_credentials,
     resolve_inputs,
     resolve_source_plugin,
     set_source_enabled_state,
@@ -110,6 +112,15 @@ from src.web.trakt_auth import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["api"])
+
+
+def _json_safe(value: str) -> str:
+    """Render a stored string so ``JSONResponse`` can encode it.
+
+    Nothing validates a title read back from storage, and a lone surrogate
+    there costs the whole response. So it gets the log file's rendering.
+    """
+    return value.encode("utf-8", "backslashreplace").decode("utf-8")
 
 
 def _blank_review_validator(remedy: str) -> Callable[[str], str]:
@@ -710,7 +721,11 @@ def discover_themes(themes_dir: Path) -> list[ThemeResponse]:
                 )
             )
         except (json.JSONDecodeError, KeyError, OSError):
-            logger.warning("Skipping invalid theme directory: %s", entry.name)
+            # A directory name may hold anything but "/" and NUL, and this one
+            # arrived with whatever theme the operator unpacked.
+            logger.warning(
+                "Skipping invalid theme directory: %s", sanitize_for_log(entry.name)
+            )
             continue
 
     return themes
@@ -790,7 +805,8 @@ def get_recommendations(
         ]
 
     except Exception as error:
-        logger.error("Error generating recommendations: %s", error)
+        # The engine walks the library, so its errors quote item titles.
+        logger.error("Error generating recommendations: %s", exception_for_log(error))
         raise HTTPException(
             status_code=500, detail="Failed to generate recommendations"
         ) from error
@@ -905,7 +921,7 @@ def stream_recommendations(
                         logger.warning(
                             "Streaming blurb failed for index %d: %s",
                             idx,
-                            exc,
+                            exception_for_log(exc),
                         )
                         blurb = None
                     if blurb:
@@ -918,8 +934,9 @@ def stream_recommendations(
 
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
-        except Exception:
-            logger.error("Streaming recommendation error", exc_info=True)
+        except Exception as error:
+            # Same engine call as the two sinks above, so the same item titles.
+            logger.error("Streaming recommendation error: %s", exception_for_log(error))
             error_event = {
                 "type": "error",
                 "message": "Failed to generate recommendations",
@@ -1141,12 +1158,14 @@ def set_item_ignored(
     if not success:
         raise HTTPException(status_code=500, detail="Failed to update item")
 
-    safe_title = item.title.replace("\n", " ").replace("\r", " ")
+    # Not ``sanitize_for_log``: JSON carries a line break as an escape of its
+    # own, and the client is not a single-line log file.
+    title = _json_safe(item.title)
     return {
         "db_id": db_id,
-        "title": safe_title,
+        "title": title,
         "ignored": request.ignored,
-        "message": f"Item '{safe_title}' {'ignored' if request.ignored else 'unignored'}",
+        "message": f"Item '{title}' {'ignored' if request.ignored else 'unignored'}",
     }
 
 
@@ -1344,13 +1363,39 @@ def mark_complete(
             embedding = embedding_gen.generate_content_embedding(item)
         db_id = storage.complete_content_item(item, embedding=embedding)
     except Exception as error:
-        logger.error("Error marking content as completed: %s", error)
+        # The failing write is this request's title, author and review.
+        logger.error("Error marking content as completed: %s", exception_for_log(error))
         raise HTTPException(
             status_code=500, detail="Failed to mark content as completed"
         ) from error
 
-    safe_title = request.title.replace("\n", " ").replace("\r", " ")
-    return {"message": f"Marked '{safe_title}' as completed", "id": db_id}
+    return {"message": f"Marked '{request.title}' as completed", "id": db_id}
+
+
+# The plugin's own words say which path it looked for and whether it was
+# there, so the wire gets this instead and the log gets the reason.
+SOURCE_MISCONFIGURED_DETAIL = "Source is not properly configured — check its settings."
+
+
+def _misconfigured_detail(plugin: SourcePlugin, errors: list[str]) -> str:
+    """Name the settings a refusal is about, not the plugin's own words.
+
+    Plugins quote the field they dislike, so the names come from the schema
+    and none of the text survives. Prose naming no field gets the unqualified
+    refusal.
+    """
+    reason = " ".join(errors).lower()
+    named = [
+        field.name
+        for field in plugin.get_config_schema()
+        if re.search(rf"\b{re.escape(field.name.lower())}\b", reason)
+    ]
+    if not named:
+        return SOURCE_MISCONFIGURED_DETAIL
+    quoted = ", ".join(f"'{name}'" for name in named)
+    if len(named) == 1:
+        return f"Source is not properly configured — check its {quoted} setting."
+    return f"Source is not properly configured — check these: {quoted}."
 
 
 @router.post("/update")
@@ -1401,7 +1446,7 @@ def update_data(
             # clears the optimistic "syncing" flag; a 200 leaves the Sync button
             # stuck because no SyncJob is ever created to end the polling.
             logger.info(
-                "Sync requested for unavailable source_id=%s", _sanitize_for_log(source)
+                "Sync requested for unavailable source_id=%s", sanitize_for_log(source)
             )
             raise HTTPException(
                 status_code=400,
@@ -1417,12 +1462,19 @@ def update_data(
         if validation_errors:
             logger.warning(
                 "Sync config validation failed for %s: %s",
-                _sanitize_for_log(source),
-                _sanitize_for_log("; ".join(validation_errors)),
+                sanitize_for_log(source),
+                sanitize_for_log(
+                    redact_credentials(
+                        "; ".join(validation_errors),
+                        source_entry.plugin,
+                        source_entry.config,
+                    )
+                ),
             )
-            # The messages the write door already returns. A source broken
-            # before this write is refused by nothing else that can say why.
-            raise HTTPException(status_code=400, detail=" ".join(validation_errors))
+            raise HTTPException(
+                status_code=400,
+                detail=_misconfigured_detail(source_entry.plugin, validation_errors),
+            )
 
     if not resolved:
         return {"message": "No sources enabled or configured for sync", "count": 0}
@@ -1478,15 +1530,18 @@ def update_data(
     # Otherwise (multiple sources or "all"), enrich all types
     enrichment_content_type: ContentType | None = None
     if len(resolved) == 1:
-        content_type_str = resolved[0].config.get("content_type")
+        # str() at the read, not at the log call: config.yaml can put anything
+        # here, and ContentType refuses a non-member either way.
+        raw_content_type = resolved[0].config.get("content_type")
+        content_type_str = str(raw_content_type) if raw_content_type else ""
         if content_type_str:
             try:
                 enrichment_content_type = ContentType(content_type_str)
             except ValueError:
                 logger.warning(
                     "Invalid content_type '%s' for source %s, enriching all types",
-                    content_type_str,
-                    resolved[0].source_id,
+                    sanitize_for_log(content_type_str),
+                    sanitize_for_log(resolved[0].source_id),
                 )
 
     # Create completion callback for auto-enrichment
@@ -1499,9 +1554,14 @@ def update_data(
                 content_type=enrichment_content_type,
             )
             if started:
-                logger.info("[ENRICHMENT] Auto-started after sync: %s", message)
+                logger.info(
+                    "[ENRICHMENT] Auto-started after sync: %s",
+                    sanitize_for_log(message),
+                )
             else:
-                logger.info("[ENRICHMENT] Auto-start skipped: %s", message)
+                logger.info(
+                    "[ENRICHMENT] Auto-start skipped: %s", sanitize_for_log(message)
+                )
 
     # Start background sync
     success, message = sync_manager.start_sync(
@@ -1511,7 +1571,11 @@ def update_data(
     if not success:
         raise HTTPException(status_code=409, detail=message)
 
-    logger.info("[SYNC] Started background sync for: %s", source_label)
+    # humanize_source_id title-cases but strips nothing, so the request's own
+    # source id reaches here with its newlines intact.
+    logger.info(
+        "[SYNC] Started background sync for: %s", sanitize_for_log(source_label)
+    )
     return {
         "message": f"Sync started for {source_label}. Use GET /api/sync/status to monitor progress.",
         "sources": sources_to_sync,
@@ -1689,15 +1753,6 @@ _ERROR_KIND_TO_DETAIL: dict[str, str] = {
 }
 
 
-def _sanitize_for_log(value: str) -> str:
-    """Strip CR/LF/NUL from a string before logging.
-
-    Path parameters are user-controlled. Without sanitization an attacker
-    could inject newlines and forge structured log lines (CWE-117).
-    """
-    return value.replace("\n", "\\n").replace("\r", "\\r").replace("\0", "\\0")
-
-
 def require_plugin(
     source_id: str, storage: RequiredStorage, config: RequiredConfig
 ) -> SourcePlugin:
@@ -1713,7 +1768,7 @@ def require_plugin(
     plugin = resolve_source_plugin(source_id, config, storage)
     if plugin is None:
         # Server-side log carries the identifier; the wire response stays generic.
-        logger.info("Source lookup miss for source_id=%s", _sanitize_for_log(source_id))
+        logger.info("Source lookup miss for source_id=%s", sanitize_for_log(source_id))
         raise HTTPException(status_code=404, detail="Source not found.")
     return plugin
 
@@ -1722,13 +1777,12 @@ ResolvedPlugin = Annotated[SourcePlugin, Depends(require_plugin)]
 
 
 def _config_error_to_http(error: SourceConfigError) -> HTTPException:
-    # error.kind is controlled internally; error.message embeds caller-supplied
-    # values so it stays out of the log to prevent log injection.
-    logger.info("Source config error kind=%s", error.kind)
+    # error.message embeds caller-supplied values, so only the kind is logged.
+    logger.info("Source config error kind=%s", sanitize_for_log(error.kind))
     if error.kind == "invalid_values":
-        # The one kind whose message is returned. The fixed strings keep
-        # caller-supplied *identifiers* off the wire; this is the operator's
-        # own configuration, and nothing else would say why it was refused.
+        # The one kind whose message is returned, because nothing else can say
+        # which field to fix. ``sync_sources`` builds it from the field name
+        # and the containment guard alone — never from a plugin's own words.
         return HTTPException(status_code=400, detail=error.message)
     return HTTPException(
         status_code=_ERROR_KIND_TO_STATUS.get(error.kind, 400),
@@ -1896,7 +1950,7 @@ def reset_setting_endpoint(key: str, storage: RequiredStorage) -> SettingsRespon
     writes the running config the same way.
     """
     if get_entry(key) is None:
-        logger.info("Settings reset miss for key=%s", _sanitize_for_log(key))
+        logger.info("Settings reset miss for key=%s", sanitize_for_log(key))
         raise HTTPException(status_code=404, detail="Unknown setting.")
     try:
         with writable_config() as config:
@@ -2216,12 +2270,14 @@ def exchange_gog_token(
         }
 
     except GogAuthError as error:
-        logger.warning("GOG auth error: %s", error)
+        logger.warning("GOG auth error: %s", exception_for_log(error))
         raise HTTPException(
             status_code=400, detail="GOG authentication failed"
         ) from error
     except Exception as error:
-        logger.error("Unexpected error during GOG token exchange", exc_info=True)
+        logger.error(
+            "Unexpected error during GOG token exchange: %s", exception_for_log(error)
+        )
         raise HTTPException(
             status_code=500, detail="Unexpected error during GOG authentication"
         ) from error
@@ -2261,8 +2317,10 @@ def get_epic_status(config: RequiredConfig, storage: RequiredStorage) -> dict[st
     if enabled:
         try:
             auth_url = get_epic_auth_url()
-        except Exception:
-            logger.warning("Failed to generate Epic auth URL", exc_info=True)
+        except Exception as error:
+            logger.warning(
+                "Failed to generate Epic auth URL: %s", exception_for_log(error)
+            )
 
     return {
         "enabled": enabled,
@@ -2310,12 +2368,15 @@ def exchange_epic_token(
         }
 
     except EpicAuthError as error:
-        logger.warning("Epic Games auth error: %s", error)
+        logger.warning("Epic Games auth error: %s", exception_for_log(error))
         raise HTTPException(
             status_code=400, detail="Epic Games authentication failed"
         ) from error
     except Exception as error:
-        logger.error("Unexpected error during Epic Games token exchange", exc_info=True)
+        logger.error(
+            "Unexpected error during Epic Games token exchange: %s",
+            exception_for_log(error),
+        )
         raise HTTPException(
             status_code=500,
             detail="Unexpected error during Epic Games authentication",
@@ -2395,7 +2456,7 @@ def start_trakt_device_flow(
         )
         flow = start_device_auth_flow(client_id)
     except TraktAuthError as error:
-        logger.warning("Trakt device-flow start failed: %s", error)
+        logger.warning("Trakt device-flow start failed: %s", exception_for_log(error))
         raise HTTPException(
             status_code=400, detail="Trakt authentication failed"
         ) from error
@@ -2429,7 +2490,9 @@ def poll_trakt_device_approval(
         )
         result = poll_device_token(request.device_code, client_id, client_secret)
     except TraktAuthError as error:
-        logger.warning("Trakt device-approval poll failed: %s", error)
+        logger.warning(
+            "Trakt device-approval poll failed: %s", exception_for_log(error)
+        )
         raise HTTPException(
             status_code=400, detail="Trakt authentication failed"
         ) from error

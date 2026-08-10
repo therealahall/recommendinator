@@ -1,10 +1,14 @@
 """Tests for web API endpoints."""
 
+import ast
 import asyncio
+import csv
 import gc
 import inspect
+import io
 import json
 import logging
+import os
 import threading
 from collections.abc import AsyncIterator, Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
@@ -23,8 +27,10 @@ from fastapi.dependencies.models import Dependant
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
+import src.web.api
+import src.web.sync_sources
 from src.cli.config import MissingApiTokenError, load_config
 from src.conversation.engine import ConversationEngine
 from src.ingestion.paths import get_allowed_source_roots
@@ -47,7 +53,12 @@ from src.storage.settings_migration import migrate_config_settings
 from src.utils.dotted_path import get_leaf
 from src.utils.series import MAX_SEASONS
 from src.utils.sorting import MAX_SEARCH_LENGTH
-from src.web.api import APP_VERSION, _item_to_response
+from src.utils.text import LINE_BREAKS
+from src.web.api import (
+    APP_VERSION,
+    SOURCE_MISCONFIGURED_DETAIL,
+    _item_to_response,
+)
 from src.web.app import _LOG_BASE_DIR, _safe_log_path
 from src.web.auth import UNAUTHORIZED_DETAIL, require_api_token
 from src.web.enrichment_manager import (
@@ -154,6 +165,7 @@ def mock_components(mock_config):
     with (
         patch("src.web.app.migrate_source_labels") as mock_migrate_labels,
         patch("src.web.app.migrate_source_config_plugins") as mock_migrate_plugins,
+        patch("src.web.app.migrate_source_attribution") as mock_migrate_attribution,
         booted_web_app(
             mock_storage_manager,
             mock_config,
@@ -170,6 +182,7 @@ def mock_components(mock_config):
             "engine": mock_engine_instance,
             "migrate_source_labels": mock_migrate_labels,
             "migrate_source_config_plugins": mock_migrate_plugins,
+            "migrate_source_attribution": mock_migrate_attribution,
         }
 
     # Clean up sync manager after test
@@ -188,15 +201,19 @@ def anonymous_client(mock_components):
     return TestClient(mock_components["app"])
 
 
-def test_create_app_runs_both_source_migrations(mock_components):
-    """create_app runs both source migrations with the real storage instance.
+def test_create_app_runs_every_source_migration(mock_components, mock_config):
+    """create_app runs all three source migrations with the real storage.
 
-    Proves the migrations are wired into web startup, not merely unit-tested:
-    a rename must relabel stored items and DB source configs on first boot.
+    Proves they are wired into web startup, not merely unit-tested: a rename
+    must relabel items and configs on boot, and items stored under a plugin
+    name must find their source.
     """
     storage = mock_components["storage"]
     mock_components["migrate_source_labels"].assert_called_once_with(storage)
     mock_components["migrate_source_config_plugins"].assert_called_once_with(storage)
+    mock_components["migrate_source_attribution"].assert_called_once_with(
+        mock_config, storage
+    )
 
 
 def _cors_kwargs(app) -> dict:
@@ -1290,7 +1307,9 @@ def test_update_endpoint_steam_missing_api_key(client, mock_components, caplog):
         response = client.post("/api/update", json={"source": "steam"})
 
     assert response.status_code == 400
-    assert "api_key" in response.json()["detail"]
+    assert response.json()["detail"] == (
+        "Source is not properly configured — check its 'api_key' setting."
+    )
     assert "api_key" in caplog.text
 
 
@@ -1308,8 +1327,9 @@ def test_update_endpoint_steam_missing_id(client, mock_components, caplog):
         response = client.post("/api/update", json={"source": "steam"})
 
     assert response.status_code == 400
-    detail = response.json()["detail"]
-    assert "steam_id" in detail or "vanity_url" in detail
+    assert response.json()["detail"] == (
+        "Source is not properly configured — check these: 'steam_id', 'vanity_url'."
+    )
     assert "steam_id" in caplog.text or "vanity_url" in caplog.text
 
 
@@ -1399,10 +1419,10 @@ def test_update_endpoint_all_sources(client, mock_components):
 
 
 class TestUpdateDetailKeepsCallerInputOffTheWireRegression:
-    """Reported: ``POST /api/update`` echoed the caller's source id, which is
-    unbounded caller input. It goes to the log alone now, as ``require_plugin``
-    already did. The plugin's own validation text is a separate question and
-    the opposite answer — see ``TestSyncNamesTheReasonItRefused``.
+    """Reported: ``POST /api/update`` echoed the caller's source id and the
+    plugin's validation text. The id is unbounded caller input and the text
+    names configured paths, so both go to the log alone now, as
+    ``require_plugin`` already did — see ``TestSyncLogsTheReasonItRefused``.
     """
 
     def test_an_unknown_source_id_is_logged_not_echoed(self, client, caplog):
@@ -1418,7 +1438,7 @@ class TestUpdateDetailKeepsCallerInputOffTheWireRegression:
     def test_the_source_id_stays_off_a_validation_refusal_too(
         self, client, mock_components, caplog
     ):
-        """The plugin's reason is returned; the id it was asked about is not.
+        """The id and the plugin's prose stay off the wire; field names go on.
 
         Named distinctly because the steam plugin's own messages say "steam",
         which would pass this assertion without the endpoint keeping quiet.
@@ -1435,9 +1455,80 @@ class TestUpdateDetailKeepsCallerInputOffTheWireRegression:
             response = client.post("/api/update", json={"source": "probe_me_42"})
 
         assert response.status_code == 400
-        assert "api_key" in response.json()["detail"]
+        assert response.json()["detail"] == (
+            "Source is not properly configured — check these: "
+            "'api_key', 'steam_id', 'vanity_url'."
+        )
+        # The plugin's own sentence — and the signup URL inside it — is logged.
+        assert "steamcommunity.com" not in response.text
         assert "probe_me_42" not in response.text
         assert "probe_me_42" in caplog.text
+        assert "api_key" in caplog.text
+
+    def test_prose_naming_no_field_falls_back_to_the_generic_refusal(
+        self, client, mock_components
+    ):
+        """A "not found" names no field, so the answer says nothing about it.
+
+        Keeps the oracle closed: whether the file is there must not change the
+        wording, only the status code the caller already had.
+        """
+        app_state.config["inputs"]["books"] = {
+            "plugin": "goodreads_csv",
+            "path": "/srv/private/library.csv",
+            "enabled": True,
+        }
+
+        with patch(
+            "src.ingestion.sources.goodreads_csv.GoodreadsCsvPlugin.validate_config",
+            return_value=["CSV file not found: /srv/private/library.csv"],
+        ):
+            response = client.post("/api/update", json={"source": "books"})
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == SOURCE_MISCONFIGURED_DETAIL
+        assert "/srv/private" not in response.text
+
+    def test_a_containment_refusal_names_the_field_and_nothing_else(self, client):
+        """Unmocked: the real refusal quotes the path and the config key.
+
+        Only the schema's own field name survives onto the wire, so neither
+        the operator's path nor the allowlist setting is disclosed.
+        """
+        app_state.config["inputs"]["books"] = {
+            "plugin": "goodreads_csv",
+            "path": "/etc/shadow",
+            "enabled": True,
+        }
+
+        response = client.post("/api/update", json={"source": "books"})
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == (
+            "Source is not properly configured — check its 'path' setting."
+        )
+        assert "/etc/shadow" not in response.text
+        assert "allowed_source_roots" not in response.text
+
+    def test_a_real_missing_file_reveals_neither_the_path_nor_the_field(
+        self, client, tmp_path
+    ):
+        """Unmocked twin of the fabricated "not found" above.
+
+        An allowed-but-absent file is the case a caller would probe, and its
+        answer carries no path.
+        """
+        app_state.config["inputs"]["books"] = {
+            "plugin": "goodreads_csv",
+            "path": str(tmp_path / "library.csv"),
+            "enabled": True,
+        }
+
+        response = client.post("/api/update", json={"source": "books"})
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == SOURCE_MISCONFIGURED_DETAIL
+        assert "library.csv" not in response.text
 
     def test_a_newline_in_the_source_id_cannot_forge_a_log_line(self, client, caplog):
         """CR/LF is escaped before the id reaches the log (CWE-117)."""
@@ -1511,6 +1602,97 @@ class TestUpdateResolvesTheSourceOnceRegression:
         assert response.status_code == 200
         assert response.json()["sources"] == ["probe_me_42"]
         second_lookup.assert_not_called()
+
+
+def _sync_a_source_typed(client, content_type):
+    """Sync one source carrying *content_type* and run its completion hook.
+
+    Returns the response and the content type auto-enrichment was started
+    with, which is the only place the endpoint's reading of the config value
+    is observable.
+    """
+    app_state.config["enrichment"] = {"enabled": True, "auto_enrich_on_sync": True}
+    app_state.config["inputs"]["typed"] = {
+        "plugin": "goodreads_csv",
+        "path": "inputs/books.csv",
+        "content_type": content_type,
+        "enabled": True,
+    }
+    sync_manager = Mock(spec=SyncManager)
+    sync_manager.start_sync.return_value = (True, "Started sync for Typed")
+    enrichment_manager = Mock(spec=WebEnrichmentManager)
+    enrichment_manager.start_enrichment.return_value = (True, "started")
+
+    with (
+        patch("src.web.api.get_sync_manager", return_value=sync_manager),
+        patch("src.web.api.get_enrichment_manager", return_value=enrichment_manager),
+        patch(
+            "src.ingestion.sources.goodreads_csv.GoodreadsCsvPlugin.validate_config",
+            return_value=[],
+        ),
+    ):
+        response = client.post("/api/update", json={"source": "typed"})
+        sync_manager.start_sync.call_args.kwargs["on_complete"]()
+
+    started_with = enrichment_manager.start_enrichment.call_args.kwargs["content_type"]
+    return response, started_with
+
+
+class TestUpdateEnrichmentContentType:
+    """What ``inputs.<id>.content_type`` does to the enrichment auto-start."""
+
+    def test_a_valid_content_type_narrows_the_enrichment(self, client, mock_components):
+        """Only the synced type is enriched when the source declares one."""
+        response, started_with = _sync_a_source_typed(client, "book")
+
+        assert response.status_code == 200
+        assert started_with is ContentType.BOOK
+
+    def test_an_unknown_content_type_enriches_every_type(
+        self, client, mock_components, caplog
+    ):
+        """A value no ``ContentType`` member matches is a warning, not a refusal.
+
+        The sync still starts and enrichment falls back to every type, so a
+        typo in the config file cannot strand the source.
+        """
+        with caplog.at_level(logging.WARNING, logger="src.web.api"):
+            response, started_with = _sync_a_source_typed(client, "paperback")
+
+        assert response.status_code == 200
+        assert started_with is None
+        assert "Invalid content_type 'paperback'" in caplog.text
+
+    def test_a_falsy_content_type_is_read_as_unset(
+        self, client, mock_components, caplog
+    ):
+        """``content_type: false`` is a missing value, not a wrong one.
+
+        Coercing ahead of the emptiness check would make it the string
+        "False" and warn about a source nobody misconfigured.
+        """
+        with caplog.at_level(logging.WARNING, logger="src.web.api"):
+            response, started_with = _sync_a_source_typed(client, False)
+
+        assert response.status_code == 200
+        assert started_with is None
+        assert "Invalid content_type" not in caplog.text
+
+
+class TestNonStringContentTypeRegression:
+    """Reported: ``content_type: 2024`` in YAML reached ``sanitize_for_log`` as
+    an ``int``, which raised ``TypeError`` out of the handler — a 500 and no
+    sync — because ``config`` is ``dict[str, Any]`` and nothing coerced it.
+    """
+
+    def test_a_yaml_integer_content_type_still_starts_the_sync(
+        self, client, mock_components
+    ):
+        """The value is coerced at the read, so the warning path survives it."""
+        response, started_with = _sync_a_source_typed(client, 2024)
+
+        assert response.status_code == 200
+        assert started_with is None
 
 
 # ---------------------------------------------------------------------------
@@ -3448,6 +3630,31 @@ class TestExportEndpoint:
         data = response.json()
         assert len(data) == 1
         assert data[0]["title"] == "Test Movie"
+
+    def test_csv_download_neutralises_a_formula_cell_regression(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """Bug: the download body carried a title verbatim, so a spreadsheet
+        evaluated it. Root cause: the CSV writer emitted every cell as stored.
+        Fix: an apostrophe guards a leading formula character.
+        """
+        mock_components["storage"].get_content_items = Mock(
+            return_value=[
+                ContentItem(
+                    id="1",
+                    title='=HYPERLINK("http://evil","x")',
+                    content_type=ContentType.BOOK,
+                    status=ConsumptionStatus.UNREAD,
+                    metadata={},
+                )
+            ]
+        )
+
+        response = client.get("/api/items/export?type=book&format=csv")
+
+        rows = list(csv.DictReader(io.StringIO(response.text)))
+        assert response.status_code == 200
+        assert rows[0]["title"] == '\'=HYPERLINK("http://evil","x")'
 
     def test_invalid_format_returns_400(
         self, client: TestClient, mock_components: dict
@@ -5956,6 +6163,16 @@ def _unbounded_user_id_params(app: FastAPI) -> set[tuple[str, str]]:
     return found
 
 
+def _user_id_carrying_routes(app: FastAPI) -> set[tuple[str, str]]:
+    """Every ``/api`` route the sweep above has anything at all to judge."""
+    return {
+        (next(iter(route.methods)), route.path)
+        for route in app.routes
+        if isinstance(route, APIRoute) and route.path.startswith("/api")
+        if next(_user_id_fields(route.dependant), None) is not None
+    }
+
+
 class TestEveryUserIdParamIsBounded:
     """``UserIdPath``'s comment claims every sibling carries ``ge=1``, and the
     chat router's did not. A non-positive id matches no row, so it reads as an
@@ -5964,6 +6181,17 @@ class TestEveryUserIdParamIsBounded:
 
     def test_no_route_accepts_a_non_positive_user_id(self, mock_components) -> None:
         assert _unbounded_user_id_params(mock_components["app"]) == set()
+
+    def test_the_sweep_still_finds_ids_to_judge(self, mock_components) -> None:
+        """The assertion above also holds over no ``user_id`` params at all.
+
+        ``_user_id_fields`` reads one level deep and keys on the name, so a
+        rename or a nested model empties it with nothing going red.
+        """
+        carrying = _user_id_carrying_routes(mock_components["app"])
+
+        assert ("GET", "/api/users/{user_id}/preferences") in carrying
+        assert len(carrying) > 1
 
     def test_the_deriver_finds_an_unbounded_one(self) -> None:
         """Without this the sweep could hold on a deriver that never matches."""
@@ -7217,3 +7445,848 @@ class TestLazySingletonsAreBuiltOnceRegression:
             assert built == [manager]
         finally:
             reset()
+
+
+_API_TREE = ast.parse(Path(src.web.api.__file__).read_text(encoding="utf-8"))
+
+_LOG_METHODS = {"debug", "info", "warning", "error", "critical"}
+
+# The two calls that render a value fit to be interpolated into a log line.
+_LOG_SANITIZERS = {"sanitize_for_log", "exception_for_log"}
+
+# The arguments that are not text, each with the reason it cannot forge a line.
+# Anything else must go through a sanitizer.
+_NON_TEXT_LOG_ARGUMENTS = {
+    "idx": "enumerate counter, rendered with %d",
+    "user_id": "int query parameter",
+}
+
+
+def _log_calls(tree: ast.AST) -> list[ast.Call]:
+    """Every ``logger.<level>(...)`` call in a parsed module."""
+    return [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "logger"
+    ]
+
+
+def _unsanitized_log_arguments(tree: ast.AST) -> set[str]:
+    return {
+        f"{ast.unparse(argument)} (line {argument.lineno})"
+        for call in _log_calls(tree)
+        for argument in call.args[1:]
+        if ast.unparse(argument) not in _NON_TEXT_LOG_ARGUMENTS
+        and not (
+            isinstance(argument, ast.Call)
+            and isinstance(argument.func, ast.Name)
+            and argument.func.id in _LOG_SANITIZERS
+        )
+    }
+
+
+def _sanitizers_reached_by_the_sweep(tree: ast.AST) -> set[str]:
+    """The sanitizer names the sweep finds interpolated into a log line.
+
+    Empty is the shape every ``== set()`` assertion below also has, so this is
+    what tells a swept module from an unswept one.
+    """
+    return {
+        argument.func.id
+        for call in _log_calls(tree)
+        for argument in call.args[1:]
+        if isinstance(argument, ast.Call)
+        and isinstance(argument.func, ast.Name)
+        and argument.func.id in _LOG_SANITIZERS
+    }
+
+
+def _renders_a_value_as_text(node: ast.expr) -> bool:
+    """Python's four ways of interpolating a value into a string.
+
+    Pinning ``str(...)`` alone left ``f"{error}"`` and ``"%s" % error`` reaching
+    the same sanitizer with the class name already gone.
+    """
+    if isinstance(node, ast.JoinedStr):
+        return True
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod):
+        return True
+    if not isinstance(node, ast.Call):
+        return False
+    if isinstance(node.func, ast.Attribute):
+        return node.func.attr == "format"
+    return isinstance(node.func, ast.Name) and node.func.id == "str"
+
+
+def _stringified_exception_log_arguments(tree: ast.AST) -> set[str]:
+    """Sanitized log arguments stringified before they got there.
+
+    Every one so far sat in a catch-all ``except Exception``, where the class
+    is the diagnostic: a bare ``TimeoutError()`` renders as nothing at all.
+    ``exception_for_log`` is the spelling that keeps the name.
+    """
+    return {
+        f"{ast.unparse(argument)} (line {argument.lineno})"
+        for call in _log_calls(tree)
+        for argument in call.args[1:]
+        if isinstance(argument, ast.Call)
+        and isinstance(argument.func, ast.Name)
+        and argument.func.id == "sanitize_for_log"
+        and argument.args
+        and _renders_a_value_as_text(argument.args[0])
+    }
+
+
+def _non_literal_log_messages(tree: ast.AST) -> set[str]:
+    return {
+        f"{ast.unparse(call)} (line {call.lineno})"
+        for call in _log_calls(tree)
+        if not call.args or not isinstance(call.args[0], ast.Constant)
+    }
+
+
+def _traceback_log_calls(tree: ast.AST) -> set[str]:
+    return {
+        f"{call.func.attr} (line {call.lineno})"
+        for call in _log_calls(tree)
+        if isinstance(call.func, ast.Attribute)
+        and (
+            call.func.attr not in _LOG_METHODS
+            or any(keyword.arg == "exc_info" for keyword in call.keywords)
+        )
+    }
+
+
+def _hand_rolled_break_escapes(tree: ast.AST) -> set[str]:
+    return {
+        f"{ast.unparse(node)} (line {node.lineno})"
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "replace"
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and set(str(node.args[0].value)) & set(LINE_BREAKS + "\0")
+    }
+
+
+def _sanitizer_calls_outside_a_log_call(tree: ast.AST) -> set[str]:
+    """Sanitizer calls that are not an argument to a ``logger`` call.
+
+    Escapes cut for a single-line file reach an API consumer as the literal
+    backslashes they are. Only a sanitizer's own body composes one elsewhere.
+    """
+    logged = {id(argument) for call in _log_calls(tree) for argument in call.args[1:]}
+    composed = {
+        id(node)
+        for definition in ast.walk(tree)
+        if isinstance(definition, ast.FunctionDef)
+        and definition.name in _LOG_SANITIZERS
+        for node in ast.walk(definition)
+    }
+    return {
+        f"{ast.unparse(node)} (line {node.lineno})"
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in _LOG_SANITIZERS
+        and id(node) not in logged | composed
+    }
+
+
+def _log_sinks_the_sweep_cannot_see(tree: ast.AST) -> set[str]:
+    """Writes that reach a log or console without going through ``logger``.
+
+    The four sweeps above key on the name ``logger``; anything that emits
+    under another name is invisible to them, so it is banned outright.
+    """
+    return {
+        f"{ast.unparse(node)} (line {node.lineno})"
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and (
+            (isinstance(node.func, ast.Name) and node.func.id == "print")
+            or (
+                isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "logging"
+                and node.func.attr in _LOG_METHODS | {"exception", "log"}
+            )
+        )
+    }
+
+
+def _is_logger_expression(value: ast.expr) -> bool:
+    """A ``getLogger`` result, the module logger, or a method bound off it.
+
+    ``from logging import getLogger`` spells the call as a bare name, and
+    ``warn = logger.warning`` needs no call at all.
+    """
+    if isinstance(value, ast.Call):
+        if isinstance(value.func, ast.Attribute):
+            return value.func.attr == "getLogger"
+        return isinstance(value.func, ast.Name) and value.func.id == "getLogger"
+    root = value.value if isinstance(value, ast.Attribute) else value
+    return isinstance(root, ast.Name) and root.id == "logger"
+
+
+def _logger_binding_names(tree: ast.AST) -> set[str]:
+    """The names a logger, or anything reached through one, is bound to."""
+    return {
+        target.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign) and _is_logger_expression(node.value)
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    }
+
+
+class TestNoApiLogCallCanBeForgedRegression:
+    """Reported three times: a log sink here escapes nothing.
+
+    Bug: each round fixed the sinks it was shown and left their siblings.
+    Fix: sweep the syntax tree, so a new raw sink fails here rather than in
+    review.
+    """
+
+    def test_every_interpolated_value_is_sanitized(self) -> None:
+        """A log argument is a sanitizer call or a listed non-text value."""
+        assert _unsanitized_log_arguments(_API_TREE) == set()
+
+    def test_no_argument_stringifies_an_exception_by_hand(self) -> None:
+        """The spelling that drops the class name off a catch-all handler."""
+        assert _stringified_exception_log_arguments(_API_TREE) == set()
+
+    def test_every_log_message_is_a_literal(self) -> None:
+        """An f-string message would carry its values past the check above."""
+        assert _non_literal_log_messages(_API_TREE) == set()
+
+    def test_no_log_call_attaches_a_traceback(self) -> None:
+        """A traceback writes absolute source paths whatever the message says."""
+        assert _traceback_log_calls(_API_TREE) == set()
+
+    def test_no_line_break_is_escaped_by_hand(self) -> None:
+        """A local copy of the escape rule is how the two definitions drifted."""
+        assert _hand_rolled_break_escapes(_API_TREE) == set()
+
+    def test_no_sink_emits_under_another_name(self) -> None:
+        """``logging.error`` and ``print`` write the same file, unswept."""
+        assert _log_sinks_the_sweep_cannot_see(_API_TREE) == set()
+
+    def test_the_only_logger_binding_is_the_one_swept(self) -> None:
+        """A second logger under another name would be swept by nothing."""
+        assert _logger_binding_names(_API_TREE) == {"logger"}
+
+    def test_the_sweep_still_reaches_the_calls_it_exists_for(self) -> None:
+        """Six of the assertions above hold over an empty population.
+
+        A binding outlives its call sites unflagged, so the test above is not
+        this anchor: logging moved into a helper empties the sweep.
+        """
+        assert _sanitizers_reached_by_the_sweep(_API_TREE) == _LOG_SANITIZERS
+
+
+class TestTheApiLogSweepFailsOnANewRawSink:
+    """The sweep above passes; these prove it is not passing vacuously.
+
+    Each feeds the offending source to the predicate api.py's test calls, and
+    asserts the whole report: ``!= set()`` holds for one reporting the wrong
+    node.
+    """
+
+    @pytest.mark.parametrize(
+        ("source", "reported"),
+        [
+            ("logger.info('title=%s', item.title)", "item.title"),
+            ("logger.warning('%s', str(error))", "str(error)"),
+            ("logger.error('%s %s', sanitize_for_log(a), b)", "b"),
+            ("logger.info('%s', f'{title}')", "f'{title}'"),
+            ("logger.info('%s', 'a' + title)", "'a' + title"),
+            ("logger.info('%s', *values)", "*values"),
+        ],
+    )
+    def test_an_unsanitized_argument_is_reported(
+        self, source: str, reported: str
+    ) -> None:
+        assert _unsanitized_log_arguments(ast.parse(source)) == {f"{reported} (line 1)"}
+
+    @pytest.mark.parametrize(
+        "argument",
+        [
+            "sanitize_for_log(str(error))",
+            "sanitize_for_log(f'{error}')",
+            "sanitize_for_log('%s' % error)",
+            "sanitize_for_log('{}'.format(error))",
+        ],
+    )
+    def test_a_stringified_exception_is_reported(self, argument: str) -> None:
+        """All four interpolations, each dropping the class name identically."""
+        tree = ast.parse(f"logger.warning('%d: %s', idx, {argument})")
+
+        assert _stringified_exception_log_arguments(tree) == {f"{argument} (line 1)"}
+
+    def test_the_report_names_the_line_the_argument_is_on(self) -> None:
+        """Every case above sits on line 1, which a hardcoded 1 also satisfies."""
+        tree = ast.parse(
+            "x = 1\ny = 2\nlogger.warning('%s', sanitize_for_log(f'{error}'))"
+        )
+
+        assert _stringified_exception_log_arguments(tree) == {
+            "sanitize_for_log(f'{error}') (line 3)"
+        }
+
+    def test_both_stringified_arguments_of_one_call_are_reported(self) -> None:
+        """A first-match predicate would leave the second spelling in place."""
+        tree = ast.parse(
+            "logger.warning('%s %s', sanitize_for_log(str(a)), sanitize_for_log(f'{b}'))"
+        )
+
+        assert _stringified_exception_log_arguments(tree) == {
+            "sanitize_for_log(str(a)) (line 1)",
+            "sanitize_for_log(f'{b}') (line 1)",
+        }
+
+    def test_the_body_of_a_sanitizer_is_not_reported(self) -> None:
+        """``exception_for_log``'s own body is a sanctioned f-string.
+
+        Broadening the predicate to f-strings put the one legitimate site in
+        range; it stays out only because it is not a ``logger`` argument.
+        """
+        tree = ast.parse(
+            "def exception_for_log(error):\n"
+            "    return sanitize_for_log(f'{type(error).__name__}: {error}')"
+        )
+
+        assert _stringified_exception_log_arguments(tree) == set()
+        assert _sanitizer_calls_outside_a_log_call(tree) == set()
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            "logger.info(f'title={title}')",
+            "logger.info('title=%s' % title)",
+            "logger.info()",
+        ],
+    )
+    def test_a_message_that_is_not_a_literal_is_reported(self, source: str) -> None:
+        assert _non_literal_log_messages(ast.parse(source)) == {f"{source} (line 1)"}
+
+    @pytest.mark.parametrize(
+        ("source", "reported"),
+        [
+            ("logger.error('boom', exc_info=True)", "error"),
+            ("logger.error('boom', exc_info=error)", "error"),
+            ("logger.exception('boom')", "exception"),
+        ],
+    )
+    def test_a_traceback_is_reported(self, source: str, reported: str) -> None:
+        assert _traceback_log_calls(ast.parse(source)) == {f"{reported} (line 1)"}
+
+    @pytest.mark.parametrize("breaker", [*LINE_BREAKS, "\0"])
+    def test_a_hand_rolled_escape_is_reported(self, breaker: str) -> None:
+        escape = f"title.replace({breaker!r}, ' ')"
+
+        assert _hand_rolled_break_escapes(ast.parse(f"safe = {escape}")) == {
+            f"{escape} (line 1)"
+        }
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            "logging.error('title=%s', title)",
+            "logging.exception('boom')",
+            "print(title)",
+        ],
+    )
+    def test_a_sink_under_another_name_is_reported(self, source: str) -> None:
+        assert _log_sinks_the_sweep_cannot_see(ast.parse(source)) == {
+            f"{source} (line 1)"
+        }
+
+    @pytest.mark.parametrize(
+        ("source", "reported"),
+        [
+            (
+                "safe_title = sanitize_for_log(item.title)",
+                "sanitize_for_log(item.title)",
+            ),
+            (
+                "body = {'title': sanitize_for_log(item.title)}",
+                "sanitize_for_log(item.title)",
+            ),
+            ("detail = exception_for_log(error)", "exception_for_log(error)"),
+        ],
+    )
+    def test_a_sanitizer_outside_a_log_call_is_reported(
+        self, source: str, reported: str
+    ) -> None:
+        assert _sanitizer_calls_outside_a_log_call(ast.parse(source)) == {
+            f"{reported} (line 1)"
+        }
+
+    def test_a_sanitizer_composing_another_is_not_reported(self) -> None:
+        """``exception_for_log`` is built from ``sanitize_for_log``."""
+        source = (
+            "def exception_for_log(error):\n    return sanitize_for_log(str(error))"
+        )
+
+        assert _sanitizer_calls_outside_a_log_call(ast.parse(source)) == set()
+
+    @pytest.mark.parametrize(
+        ("source", "bound"),
+        [
+            ("audit = logging.getLogger('audit')", "audit"),
+            ("audit = getLogger('audit')", "audit"),
+            ("_LOG = logger", "_LOG"),
+            ("warn = logger.warning", "warn"),
+        ],
+    )
+    def test_a_second_logger_binding_is_reported(self, source: str, bound: str) -> None:
+        """The alias is named, and the module's own binding is still found.
+
+        A bare ``!= {'logger'}`` on the offending line alone passes on a
+        predicate that recognises nothing, because the empty set is not
+        ``{'logger'}`` either.
+        """
+        tree = ast.parse(f"logger = logging.getLogger(__name__)\n{source}")
+
+        assert _logger_binding_names(tree) == {"logger", bound}
+
+    def test_the_clean_shape_is_not_reported(self) -> None:
+        """The predicates accept what api.py actually writes."""
+        tree = ast.parse(
+            "logger.warning('e=%s: %s', sanitize_for_log(a), exception_for_log(b))"
+        )
+
+        assert _unsanitized_log_arguments(tree) == set()
+        assert _stringified_exception_log_arguments(tree) == set()
+        assert _non_literal_log_messages(tree) == set()
+        assert _traceback_log_calls(tree) == set()
+        assert _sanitizer_calls_outside_a_log_call(tree) == set()
+        assert _sanitizers_reached_by_the_sweep(tree) == _LOG_SANITIZERS
+
+    def test_a_module_that_logs_nothing_reaches_no_sanitizer(self) -> None:
+        """The state the anchor asserts against: api.py with its sinks moved."""
+        assert (
+            _sanitizers_reached_by_the_sweep(ast.parse("x = helper(payload)")) == set()
+        )
+
+    def test_a_sink_under_a_bound_name_reaches_no_sanitizer(self) -> None:
+        """``self.logger`` is the rebinding ``_logger_binding_names`` misses."""
+        tree = ast.parse("self.logger.info('%s', sanitize_for_log(title))")
+
+        assert _sanitizers_reached_by_the_sweep(tree) == set()
+
+    def test_the_anchor_is_the_only_assertion_an_emptied_module_moves(self) -> None:
+        """api.py with every sink behind a helper, put to all eight predicates.
+
+        The anchor's docstring claims the other seven survive that; asserting
+        the claim is what stops the anchor being dropped as redundant.
+        """
+        tree = ast.parse("logger = logging.getLogger(__name__)\nlog_it(payload)")
+
+        assert _unsanitized_log_arguments(tree) == set()
+        assert _stringified_exception_log_arguments(tree) == set()
+        assert _non_literal_log_messages(tree) == set()
+        assert _traceback_log_calls(tree) == set()
+        assert _hand_rolled_break_escapes(tree) == set()
+        assert _log_sinks_the_sweep_cannot_see(tree) == set()
+        assert _logger_binding_names(tree) == {"logger"}
+        assert _sanitizers_reached_by_the_sweep(tree) != _LOG_SANITIZERS
+
+    def test_the_anchor_moves_when_one_sanitizer_stops_being_reached(self) -> None:
+        """Half the sinks moved is a half-empty sweep, and a silent one.
+
+        Equality with the whole set, rather than a non-empty check: the
+        exception sinks can go while the plain ones stay.
+        """
+        tree = ast.parse("logger.error('e=%s', sanitize_for_log(title))")
+
+        assert _unsanitized_log_arguments(tree) == set()
+        assert _LOG_SANITIZERS - _sanitizers_reached_by_the_sweep(tree) == {
+            "exception_for_log"
+        }
+
+
+def _api_log_messages(caplog: pytest.LogCaptureFixture) -> list[str]:
+    """Only the api.py records: booting the app logs from four other modules."""
+    return [
+        record.getMessage() for record in caplog.records if record.name == "src.web.api"
+    ]
+
+
+class TestExoticBreaksCannotForgeAnApiLogLine:
+    """The syntax sweep proves the shape; these run the sinks.
+
+    ``\\u2028`` is the case a reviewer misses and ``str.splitlines`` does not,
+    so each sink is driven with every break the shared constant names.
+    """
+
+    @pytest.mark.parametrize("breaker", LINE_BREAKS)
+    def test_a_stream_failure_stays_on_one_line(
+        self, breaker: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        engine = MagicMock(spec=RecommendationEngine)
+        engine.generate_recommendations.side_effect = ValueError(
+            f"no candidate for Real Title{breaker}ERROR forged"
+        )
+        storage = MagicMock(spec=StorageManager)
+        storage.get_user_preference_config.return_value = None
+
+        with (
+            booted_web_app(storage, {}) as app,
+            caplog.at_level(logging.ERROR, logger="src.web.api"),
+        ):
+            app_state.engine = engine
+            authenticated_client(app).get(
+                "/api/recommendations/stream?type=video_game&count=5"
+            )
+
+        messages = _api_log_messages(caplog)
+        assert len(messages) == 1
+        assert len(messages[0].splitlines()) == 1
+        assert breaker not in messages[0]
+        assert "ValueError" in messages[0]
+
+    @pytest.mark.parametrize("breaker", LINE_BREAKS)
+    def test_a_theme_directory_name_stays_on_one_line(
+        self, breaker: str, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        theme_dir = tmp_path / f"solar{breaker}WARNING forged"
+        theme_dir.mkdir()
+        (theme_dir / "theme.json").write_text("{not json", encoding="utf-8")
+
+        with caplog.at_level(logging.WARNING, logger="src.web.api"):
+            assert src.web.api.discover_themes(tmp_path) == []
+
+        messages = _api_log_messages(caplog)
+        assert len(messages) == 1
+        assert len(messages[0].splitlines()) == 1
+        assert breaker not in messages[0]
+
+
+class TestATerminalControlCannotRewriteAnApiLogLine:
+    """The console handler writes to what ``docker logs`` renders.
+
+    ``ESC[2K\\r`` erases the line an operator just read, which is the CWE-117
+    outcome without a line break anywhere in the value.
+    """
+
+    @pytest.mark.parametrize("control", ["\x1b", "\x08", "\x7f", "\t"])
+    def test_a_control_character_never_reaches_the_message(
+        self, control: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        engine = MagicMock(spec=RecommendationEngine)
+        engine.generate_recommendations.side_effect = ValueError(
+            f"no candidate for Real Title{control}[2KERROR forged"
+        )
+        storage = MagicMock(spec=StorageManager)
+        storage.get_user_preference_config.return_value = None
+
+        with (
+            booted_web_app(storage, {}) as app,
+            caplog.at_level(logging.ERROR, logger="src.web.api"),
+        ):
+            app_state.engine = engine
+            authenticated_client(app).get(
+                "/api/recommendations/stream?type=video_game&count=5"
+            )
+
+        messages = _api_log_messages(caplog)
+        assert len(messages) == 1
+        assert control not in messages[0]
+        assert f"\\u{ord(control):04x}" in messages[0]
+
+
+class TestACatchAllHandlerStillNamesItsExceptionClassRegression:
+    """Reported: two spellings of exception logging, and one drops the class.
+
+    Bug: ``sanitize_for_log(str(exc))`` in a catch-all ``except Exception``
+    logs a trailing colon and nothing else for a bare ``TimeoutError()``.
+    Fix: every one of the three goes through ``exception_for_log``.
+    """
+
+    def test_the_recommendations_sink_names_it(
+        self,
+        client: TestClient,
+        mock_components: dict,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        mock_components["engine"].generate_recommendations.side_effect = TimeoutError()
+
+        with caplog.at_level(logging.ERROR, logger="src.web.api"):
+            response = client.get("/api/recommendations?type=book&count=1")
+
+        assert response.status_code == 500
+        # The whole rendering, so the sink is named too: a class name found
+        # anywhere in the joined records could have come from another one.
+        assert "Error generating recommendations: TimeoutError: " in _api_log_messages(
+            caplog
+        )
+
+    def test_the_blurb_sink_names_it(
+        self,
+        client: TestClient,
+        mock_components: dict,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        item = ContentItem(
+            id="1",
+            db_id=1,
+            title="Test Book",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        )
+        mock_components["engine"].generate_recommendations.return_value = [
+            _rec_record(item)
+        ]
+        mock_components["engine"].generate_blurb_for_item.side_effect = TimeoutError()
+        mock_components["storage"].get_user_preference_config.return_value = None
+
+        with (
+            caplog.at_level(logging.WARNING, logger="src.web.api"),
+            client.stream(
+                "GET", "/api/recommendations/stream?type=book&count=1"
+            ) as response,
+        ):
+            response.read()
+
+        # The inner sink, not the outer one wrapping the whole generator.
+        assert (
+            "Streaming blurb failed for index 0: TimeoutError: "
+            in _api_log_messages(caplog)
+        )
+
+    def test_the_completion_sink_names_it(
+        self,
+        client: TestClient,
+        mock_components: dict,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        mock_components["storage"].complete_content_item.side_effect = TimeoutError()
+
+        with caplog.at_level(logging.ERROR, logger="src.web.api"):
+            response = client.post(
+                "/api/complete", json={"content_type": "book", "title": "Dune"}
+            )
+
+        assert response.status_code == 500
+        assert (
+            "Error marking content as completed: TimeoutError: "
+            in _api_log_messages(caplog)
+        )
+
+
+class TestANonUtf8ThemeNameStillWritesItsWarningRegression:
+    """Reported by QA: the warning for a bad theme directory disappeared.
+
+    Bug: ``os.listdir`` surrogate-escapes a name that is not valid UTF-8, the
+    encoder raised on it, and the only content of the warning deleted the
+    warning.
+    Fix: ``sanitize_for_log`` escapes surrogates.
+    """
+
+    def test_the_warning_reaches_the_log_file(self, tmp_path: Path) -> None:
+        theme_dir = tmp_path / os.fsdecode(b"solar\xff")
+        theme_dir.mkdir()
+        (theme_dir / "theme.json").write_text("{not json", encoding="utf-8")
+        log_file = tmp_path / "app.log"
+        handler = logging.FileHandler(log_file, encoding="utf-8")
+        handler.setFormatter(logging.Formatter("%(levelname)s | %(message)s"))
+        api_logger = logging.getLogger("src.web.api")
+        api_logger.addHandler(handler)
+        try:
+            assert src.web.api.discover_themes(tmp_path) == []
+        finally:
+            api_logger.removeHandler(handler)
+            handler.close()
+
+        written = log_file.read_text(encoding="utf-8")
+        assert "Skipping invalid theme directory: solar\\udcff" in written
+        assert len(written.splitlines()) == 1
+
+
+class TestNoLogEscapeReachesAResponseBodyRegression:
+    """Reported: a title came back holding a literal ``\\n`` where one was.
+
+    Bug: both title-echoing endpoints were routed through
+    ``sanitize_for_log``, which shapes a value for a log file, not a client.
+    Fix: the body carries the stored title.
+    """
+
+    def test_ignore_echoes_the_stored_title(self, client, mock_components) -> None:
+        mock_components["storage"].get_content_item = Mock(
+            return_value=ContentItem(
+                id="ext_1",
+                db_id=42,
+                title="Dune\nWARNING forged",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            )
+        )
+        mock_components["storage"].set_item_ignored = Mock(return_value=True)
+
+        response = client.patch(
+            "/api/items/42/ignore?user_id=1", json={"ignored": True}
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json() == {
+            "db_id": 42,
+            "title": "Dune\nWARNING forged",
+            "ignored": True,
+            "message": "Item 'Dune\nWARNING forged' ignored",
+        }
+
+    def test_complete_echoes_the_requested_title(self, client, mock_components) -> None:
+        mock_components["storage"].complete_content_item.return_value = 7
+
+        response = client.post(
+            "/api/complete",
+            json={"content_type": "book", "title": "Dune\nWARNING forged"},
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json() == {
+            "message": "Marked 'Dune\nWARNING forged' as completed",
+            "id": 7,
+        }
+
+    def test_no_sanitizer_call_sits_outside_a_log_call(self) -> None:
+        """The sibling endpoints too: an escaped value only ever gets logged."""
+        assert _sanitizer_calls_outside_a_log_call(_API_TREE) == set()
+
+    def test_the_other_web_module_logging_titles_is_clean_too(self) -> None:
+        """``api`` is not the only module the web layer answers from."""
+        tree = ast.parse(
+            Path(src.web.sync_sources.__file__).read_text(encoding="utf-8")
+        )
+
+        assert _sanitizer_calls_outside_a_log_call(tree) == set()
+
+    @pytest.mark.parametrize("surrogate", ["\ud800", "\udcff", "\udfff"])
+    def test_the_echoed_title_can_never_hold_a_lone_surrogate(
+        self, surrogate: str
+    ) -> None:
+        """What makes echoing the raw title safe: the model refuses one first.
+
+        ``json.loads`` accepts an unpaired ``\\ud800`` escape, and a response
+        body is rendered with ``ensure_ascii=False``, so a title carrying one
+        would raise where the sanitizer used to stand.
+        """
+        with pytest.raises(ValidationError):
+            src.web.api.CompletionRequest(content_type="book", title=f"Dune{surrogate}")
+
+    @pytest.mark.parametrize("surrogate", ["\ud800", "\udcff", "\udfff"])
+    def test_the_refusal_itself_renders(self, surrogate: str, mock_components) -> None:
+        """Regression: the refusal above answered 500.
+
+        Bug: the 422 quotes the rejected input back, and ``json.loads``
+        accepts an unpaired ``\\ud800`` escape, so the refusal could not
+        render. Sent as raw ASCII bytes: ``json=`` declines to encode one.
+        """
+        tolerant = authenticated_client(
+            mock_components["app"], raise_server_exceptions=False
+        )
+        body = json.dumps(
+            {"content_type": "book", "title": f"Dune{surrogate}"}, ensure_ascii=True
+        ).encode("ascii")
+
+        response = tolerant.post(
+            "/api/complete", content=body, headers={"Content-Type": "application/json"}
+        )
+
+        assert response.status_code == 422, response.text
+        assert response.json()["detail"][0]["input"] == repr(f"Dune{surrogate}")
+        mock_components["storage"].complete_content_item.assert_not_called()
+
+    def test_an_ordinary_refusal_still_quotes_its_input_verbatim(self, client) -> None:
+        """``repr`` is the unencodable branch, not the shape of every 422."""
+        over_long = "D" * 501
+
+        response = client.post(
+            "/api/complete", json={"content_type": "book", "title": over_long}
+        )
+
+        assert response.status_code == 422, response.text
+        assert response.json()["detail"][0]["input"] == over_long
+
+    @pytest.mark.parametrize("surrogate", ["\ud800", "\udcff", "\udfff"])
+    def test_a_stored_title_holding_a_lone_surrogate_still_answers(
+        self, surrogate: str, mock_components
+    ) -> None:
+        """Regression: no request model stands between storage and this body.
+
+        Bug: ``JSONResponse`` encodes strictly, so the ignore succeeded and
+        the caller got a 500.
+        Fix: render the code unit as its escape, as the log handler does.
+        """
+        mock_components["storage"].get_content_item = Mock(
+            return_value=ContentItem(
+                id="ext_1",
+                db_id=42,
+                title=f"Dune{surrogate}",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            )
+        )
+        mock_components["storage"].set_item_ignored = Mock(return_value=True)
+        tolerant = authenticated_client(
+            mock_components["app"], raise_server_exceptions=False
+        )
+
+        response = tolerant.patch(
+            "/api/items/42/ignore?user_id=1", json={"ignored": True}
+        )
+
+        assert response.status_code == 200, response.text
+        rendered = f"Dune\\u{ord(surrogate):04x}"
+        body = response.json()
+        assert body["title"] == rendered
+        # The body interpolates the title twice; the first fix missed one.
+        assert body["message"] == f"Item '{rendered}' ignored"
+
+    @pytest.mark.parametrize("astral", ["\U0001f600", "\U0010ffff", "￿", "Café"])
+    def test_the_ignore_body_keeps_a_title_that_encodes(
+        self, astral: str, mock_components
+    ) -> None:
+        """The escape is for what UTF-8 refuses, never for what it accepts.
+
+        Rendering runs on every title now, so a legible one must survive it
+        byte for byte.
+        """
+        mock_components["storage"].get_content_item = Mock(
+            return_value=ContentItem(
+                id="ext_1",
+                db_id=42,
+                title=f"Dune{astral}",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            )
+        )
+        mock_components["storage"].set_item_ignored = Mock(return_value=True)
+
+        response = authenticated_client(mock_components["app"]).patch(
+            "/api/items/42/ignore?user_id=1", json={"ignored": False}
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["title"] == f"Dune{astral}"
+        assert response.json()["message"] == f"Item 'Dune{astral}' unignored"
+
+    @pytest.mark.parametrize("astral", ["\U0001f600", "\U0010ffff", "￿"])
+    def test_a_body_keeps_a_character_above_the_bmp(
+        self, astral: str, client, mock_components
+    ) -> None:
+        """The surrogate range is a code unit, never a real emoji's codepoint."""
+        mock_components["storage"].complete_content_item.return_value = 7
+
+        response = client.post(
+            "/api/complete",
+            json={"content_type": "book", "title": f"Dune{astral}"},
+        )
+
+        assert response.json()["message"] == f"Marked 'Dune{astral}' as completed"

@@ -24,6 +24,7 @@ from src.llm.embeddings import EmbeddingGenerator
 from src.llm.recommendations import RecommendationGenerator
 from src.recommendations.engine import RecommendationEngine
 from src.storage.manager import StorageManager
+from src.web.api import SOURCE_MISCONFIGURED_DETAIL
 from tests.factories import authenticated_client, booted_web_app
 
 
@@ -652,10 +653,10 @@ class TestCreateSourceEndpoint:
 
 
 class TestTheWriteBoundaryRefusesWhatTheSyncWouldReject:
-    """Reported: a web operator never learns why a sync fails.
+    """Reported: the reason quoted the plugin, which says if a path exists.
 
-    ``PUT .../config`` stored ``path: /etc/passwd`` with a 200, and the sync
-    that then failed answers a fixed string naming no reason.
+    The write door now blames a *field*; the plugin's sentence goes to the
+    log. Containment still answers, reading no disk.
     """
 
     @pytest.fixture()
@@ -713,7 +714,36 @@ class TestTheWriteBoundaryRefusesWhatTheSyncWouldReject:
         assert row is not None
         assert row["config"]["path"] == str(readable)
 
-    def test_a_file_url_is_refused_with_the_reason(self, client: TestClient) -> None:
+    def test_a_missing_file_is_refused_without_saying_it_is_missing(
+        self, client: TestClient, storage: StorageManager, tmp_path: Path
+    ) -> None:
+        """The oracle left open after the sync door closed.
+
+        Inside the allowed roots, only a stat separates this path from a real
+        one, so the plugin's "not found" makes the endpoint a disk probe.
+        """
+        missing = tmp_path / "no-such-library.csv"
+
+        response = client.post(
+            "/api/sync/sources",
+            json={
+                "id": "ghost",
+                "plugin": "csv_import",
+                "values": {"path": str(missing), "content_type": "book"},
+            },
+        )
+
+        assert response.status_code == 400
+        detail = response.json()["detail"]
+        assert "'path'" in detail
+        assert "not found" not in detail.lower()
+        assert str(missing) not in detail
+        assert missing.name not in detail
+        assert storage.get_source_config(1, "ghost") is None
+
+    def test_the_refused_field_is_named_rather_than_the_plugins_reason(
+        self, client: TestClient
+    ) -> None:
         """``source_url_error`` was reachable from sync alone until now."""
         response = client.post(
             "/api/sync/sources",
@@ -725,7 +755,144 @@ class TestTheWriteBoundaryRefusesWhatTheSyncWouldReject:
         )
 
         assert response.status_code == 400
-        assert "http:// or https://" in response.json()["detail"]
+        detail = response.json()["detail"]
+        assert "'url'" in detail
+        assert "http" not in detail
+
+    def test_only_the_field_the_write_broke_is_named(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        """A create writes every field, so blaming all of them says nothing."""
+        readable = tmp_path / "books.csv"
+        readable.write_text("title\n")
+
+        response = client.post(
+            "/api/sync/sources",
+            json={
+                "id": "mixed",
+                "plugin": "csv_import",
+                "values": {"path": str(readable), "content_type": "not_a_type"},
+            },
+        )
+
+        assert response.status_code == 400
+        detail = response.json()["detail"]
+        assert "'content_type'" in detail
+        assert "'path'" not in detail
+
+    def test_an_edit_naming_a_missing_file_names_the_field_too(
+        self, client: TestClient, storage: StorageManager, tmp_path: Path
+    ) -> None:
+        """The second write door, which the create cases cannot reach.
+
+        ``PUT .../config`` is the one a migrated source is edited through, so
+        an oracle left open here is the same probe on a different verb.
+        """
+        readable = tmp_path / "books.csv"
+        readable.write_text("title\n")
+        client.post(
+            "/api/sync/sources",
+            json={
+                "id": "books",
+                "plugin": "csv_import",
+                "values": {"path": str(readable), "content_type": "book"},
+            },
+        )
+        missing = tmp_path / "no-such-library.csv"
+
+        response = client.put(
+            "/api/sync/sources/books/config",
+            json={"values": {"path": str(missing)}},
+        )
+
+        assert response.status_code == 400
+        detail = response.json()["detail"]
+        assert "'path'" in detail
+        assert "not found" not in detail.lower()
+        assert str(missing) not in detail
+        assert missing.name not in detail
+        row = storage.get_source_config(1, "books")
+        assert row is not None
+        assert row["config"]["path"] == str(readable)
+
+    def test_two_jointly_bad_values_name_both_rather_than_neither(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        """Reverting either one alone still leaves the write refused.
+
+        Nothing is individually to blame, so the fallback answers with the
+        whole write — silence here would refuse without saying anything.
+        """
+        missing = tmp_path / "no-such-library.csv"
+
+        response = client.post(
+            "/api/sync/sources",
+            json={
+                "id": "doubly",
+                "plugin": "csv_import",
+                "values": {"path": str(missing), "content_type": "not_a_type"},
+            },
+        )
+
+        assert response.status_code == 400
+        detail = response.json()["detail"]
+        assert "'path'" in detail
+        assert "'content_type'" in detail
+        assert str(missing) not in detail
+        assert "not_a_type" not in detail
+
+    def test_a_path_field_holding_a_list_is_contained_entry_by_entry(
+        self, client: TestClient, storage: StorageManager
+    ) -> None:
+        """``roms`` declares ``paths``, so containment reads a list here.
+
+        A guard that only understood a string field would wave this through
+        to the plugin, and the caller would get a field name instead of the
+        setting to widen.
+        """
+        response = client.post(
+            "/api/sync/sources",
+            json={"id": "roms", "plugin": "roms", "values": {"paths": ["/etc"]}},
+        )
+
+        assert response.status_code == 400
+        assert "outside the allowed source roots" in response.json()["detail"]
+        assert storage.get_source_config(1, "roms") is None
+
+    def test_a_list_mixing_a_non_string_is_still_contained_entry_by_entry(
+        self, client: TestClient, storage: StorageManager
+    ) -> None:
+        """The guard speaks first, so it cannot lean on the plugin's typing.
+
+        ``validate_config`` would reject the ``123`` afterwards and answer
+        with a field name — the wrong refusal for an escaping path.
+        """
+        response = client.post(
+            "/api/sync/sources",
+            json={"id": "roms", "plugin": "roms", "values": {"paths": [123, "/etc"]}},
+        )
+
+        assert response.status_code == 400
+        assert "outside the allowed source roots" in response.json()["detail"]
+        assert storage.get_source_config(1, "roms") is None
+
+    def test_the_operator_reads_the_plugins_reason_in_the_log(
+        self, client: TestClient, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Refusing with the reason nowhere at all would be unusable."""
+        missing = tmp_path / "no-such-library.csv"
+
+        with caplog.at_level(logging.WARNING, logger="src.web.sync_sources"):
+            client.post(
+                "/api/sync/sources",
+                json={
+                    "id": "ghost",
+                    "plugin": "csv_import",
+                    "values": {"path": str(missing), "content_type": "book"},
+                },
+            )
+
+        assert str(missing) in caplog.text
 
     def test_an_unparseable_url_answers_400_rather_than_500(
         self, client: TestClient
@@ -745,7 +912,7 @@ class TestTheWriteBoundaryRefusesWhatTheSyncWouldReject:
         )
 
         assert response.status_code == 400
-        assert "is not a valid URL" in response.json()["detail"]
+        assert "'url'" in response.json()["detail"]
 
     def test_a_source_whose_secret_is_not_entered_yet_stays_editable(
         self, client: TestClient
@@ -773,11 +940,10 @@ class TestTheWriteBoundaryRefusesWhatTheSyncWouldReject:
         assert moved.json()["field_values"]["url"] == "http://sonarr.internal:9999"
 
 
-class TestSyncNamesTheReasonItRefused:
-    """Reported: a web operator is told to check settings reporting nothing
-    wrong. The write boundary refuses only what a write introduces, so a
-    source broken since edits clean while sync named no reason. Sync returns
-    the plugin's messages now.
+class TestSyncLogsTheReasonItRefused:
+    """Reported: the 400 quoted the plugin, which names the path it looked
+    for — a file-existence oracle, one probe per request. The operator reads
+    the reason in the log now; the wire gets a fixed string.
     """
 
     @pytest.fixture()
@@ -794,7 +960,7 @@ class TestSyncNamesTheReasonItRefused:
         ):
             yield authenticated_client(app)
 
-    def test_a_source_broken_after_it_was_written_still_says_why(
+    def test_a_missing_path_is_named_in_the_log_and_not_on_the_wire(
         self, client: TestClient, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         """The write was valid, so no edit will ever refuse this one.
@@ -819,8 +985,125 @@ class TestSyncNamesTheReasonItRefused:
 
         assert created.status_code == 201
         assert sync.status_code == 400
-        assert "CSV file not found" in sync.json()["detail"]
-        assert "CSV file not found" in caplog.text
+        assert sync.json()["detail"] == SOURCE_MISCONFIGURED_DETAIL
+        assert str(readable) not in sync.text
+        assert "not found" not in sync.text
+        assert "books" in caplog.text
+        assert f"CSV file not found: {readable}" in caplog.text
+
+    def _steam_source_with_a_stored_key(self, client: TestClient) -> None:
+        """A steam source whose api_key exists only in the credential store."""
+        created = client.post(
+            "/api/sync/sources",
+            json={
+                "id": "games",
+                "plugin": "steam",
+                "values": {"steam_id": "76561198000000000"},
+            },
+        )
+        stored = client.put(
+            "/api/sync/sources/games/secret/api_key",
+            json={"value": "super-secret-key"},
+        )
+        assert (created.status_code, stored.status_code) == (201, 204)
+
+    def test_a_plugin_quoting_a_credential_has_it_redacted_in_the_log(
+        self, client: TestClient, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The sync door validates the config with the secret layered on.
+
+        The write door strips credentials before validating instead, which
+        steam cannot survive: it reads ``api_key`` from the config alone.
+        """
+        self._steam_source_with_a_stored_key(client)
+
+        with (
+            patch(
+                "src.ingestion.sources.steam.SteamPlugin.validate_config",
+                return_value=["'api_key' super-secret-key was rejected"],
+            ),
+            caplog.at_level(logging.WARNING, logger="src.web.api"),
+        ):
+            sync = client.post("/api/update", json={"source": "games"})
+
+        assert sync.status_code == 400
+        assert "super-secret-key" not in caplog.text
+        assert "'api_key' [redacted] was rejected" in caplog.text
+
+    def test_a_source_whose_secret_is_only_stored_still_syncs(
+        self, client: TestClient
+    ) -> None:
+        """Validating without credentials would refuse this one outright.
+
+        ``steam.validate_config`` never consults storage, so the sync door
+        has to judge the config the sync would really run.
+        """
+        self._steam_source_with_a_stored_key(client)
+
+        done = threading.Event()
+
+        def fake_execute(*, sources: list[Any], **_: Any) -> list[SyncResult]:
+            done.set()
+            return [SyncResult(source_name=plugin.name) for plugin, _cfg in sources]
+
+        with patch("src.web.api.execute_multi_source_sync", fake_execute):
+            sync = client.post("/api/update", json={"source": "games"})
+            assert done.wait(timeout=5)
+
+        assert sync.status_code == 200
+        assert sync.json()["sources"] == ["games"]
+
+    _MULTILINE_SECRET = "-----KEY-----\nabc\n-----END-----"
+
+    def test_a_multiline_secret_is_redacted_before_the_line_is_escaped(
+        self, client: TestClient, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The reverse order would rewrite the secret out of its own match."""
+        created = client.post(
+            "/api/sync/sources",
+            json={
+                "id": "games",
+                "plugin": "steam",
+                "values": {"steam_id": "76561198000000000"},
+            },
+        )
+        stored = client.put(
+            "/api/sync/sources/games/secret/api_key",
+            json={"value": self._MULTILINE_SECRET},
+        )
+        assert (created.status_code, stored.status_code) == (201, 204)
+
+        with (
+            patch(
+                "src.ingestion.sources.steam.SteamPlugin.validate_config",
+                return_value=[f"'api_key' {self._MULTILINE_SECRET} was rejected"],
+            ),
+            caplog.at_level(logging.WARNING, logger="src.web.api"),
+        ):
+            sync = client.post("/api/update", json={"source": "games"})
+
+        assert sync.status_code == 400
+        assert "-----KEY-----" not in caplog.text
+        assert "'api_key' [redacted] was rejected" in caplog.text
+
+    def test_a_newline_the_plugin_wrote_cannot_forge_a_log_line(
+        self, client: TestClient, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A path is a plugin's to quote, and a path may hold a newline."""
+        self._steam_source_with_a_stored_key(client)
+
+        with (
+            patch(
+                "src.ingestion.sources.steam.SteamPlugin.validate_config",
+                return_value=["not found: /srv/a\nWARNING  | forged | line"],
+            ),
+            caplog.at_level(logging.WARNING, logger="src.web.api"),
+        ):
+            sync = client.post("/api/update", json={"source": "games"})
+
+        assert sync.status_code == 400
+        assert "/srv/a\\nWARNING" in caplog.text
+        assert "/srv/a\nWARNING" not in caplog.text
 
 
 class TestDeleteSourceEndpoint:
@@ -1040,6 +1323,8 @@ class TestSourceCredentialExfiltrationRegression:
             sync = client.post("/api/update", json={"source": "calibre"})
 
         assert sync.status_code == 400
-        assert "'password' is required" in sync.json()["detail"]
+        assert sync.json()["detail"] == (
+            "Source is not properly configured — check its 'password' setting."
+        )
         assert "'password' is required" in caplog.text
         requested.assert_not_called()
