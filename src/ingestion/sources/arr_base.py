@@ -64,16 +64,16 @@ class ArrPlugin(SourcePlugin):
 
     @classmethod
     def _get_default_url(cls) -> str:
-        """Get default URL. Needed for classmethod transform_config."""
+        """Get default URL. Needed for classmethod ``transform_fields``."""
         # Subclasses should override if needed; fallback for the class
         return "http://localhost"
 
     @classmethod
-    def transform_config(cls, raw_config: dict[str, Any]) -> dict[str, Any]:
-        """Strip and normalise *arr YAML config."""
+    def transform_fields(cls, raw_fields: dict[str, Any]) -> dict[str, Any]:
+        """Strip and normalise *arr config fields."""
         return {
-            "url": (raw_config.get("url", cls._get_default_url()) or "").rstrip("/"),
-            "api_key": (raw_config.get("api_key") or "").strip(),
+            "url": (raw_fields.get("url", cls._get_default_url()) or "").rstrip("/"),
+            "api_key": (raw_fields.get("api_key") or "").strip(),
         }
 
     def get_config_schema(self) -> list[ConfigField]:

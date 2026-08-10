@@ -3,18 +3,22 @@
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
+from unittest.mock import Mock, patch
 
 import pytest
 
 from src.ingestion.plugin_base import ConfigField, SourcePlugin
 from src.ingestion.registry import PluginRegistry
+from src.ingestion.sync import execute_sync
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.manager import StorageManager
 from src.web.sync_sources import (
+    SourceConfigError,
     create_source,
     delete_source,
     get_available_sync_sources,
     get_sync_handler,
+    redact_credentials,
     resolve_inputs,
     update_source_config_values,
     validate_source_config,
@@ -156,9 +160,9 @@ class FakeCredentialPlugin(SourcePlugin):
         return errors
 
     @classmethod
-    def transform_config(cls, raw_config: dict[str, Any]) -> dict[str, Any]:
+    def transform_fields(cls, raw_fields: dict[str, Any]) -> dict[str, Any]:
         return {
-            "refresh_token": raw_config.get("refresh_token", "").strip(),
+            "refresh_token": raw_fields.get("refresh_token", "").strip(),
         }
 
     def fetch(self, config: dict[str, Any]) -> Iterator[ContentItem]:
@@ -1041,3 +1045,539 @@ class TestWriteValidationNeverSeesTheDecryptedSecretRegression:
         assert len(plugin.validated) == 2
         assert all(config.get("api_key") is None for config, _ in plugin.validated)
         assert all(seen is storage for _, seen in plugin.validated)
+
+
+ROTATING_PLUGINS = ("gog", "epic_games", "trakt")
+ROTATED_TOKEN = "rotated-during-this-sync"
+
+
+def _rotates_on_fetch(real_plugin: SourcePlugin) -> SourcePlugin:
+    """The real plugin class with only ``fetch`` replaced.
+
+    Subclassed rather than stubbed so the config under test is built by the
+    plugin's own ``transform_fields``, the step the source id was lost in.
+    """
+
+    class RotatesOnFetch(type(real_plugin)):  # type: ignore[misc,valid-type]
+        def fetch(
+            self, config: dict[str, Any], progress_callback: Any = None
+        ) -> Iterator[ContentItem]:
+            config["_on_credential_rotated"]("refresh_token", ROTATED_TOKEN)
+            return iter(())
+
+    return RotatesOnFetch()
+
+
+@pytest.fixture()
+def _real_registry() -> Iterator[None]:
+    """The real plugins, whatever fakes an earlier test left registered."""
+    PluginRegistry.reset_instance()
+    PluginRegistry.get_instance().discover_plugins()
+    yield
+    PluginRegistry.reset_instance()
+
+
+def _discovered_plugins() -> dict[str, SourcePlugin]:
+    """Every plugin ``_real_registry`` discovered, never an empty mapping.
+
+    A sweep over an undiscovered registry iterates nothing and passes, so the
+    guard belongs here rather than in each caller that keeps forgetting it.
+    """
+    plugins = PluginRegistry.get_instance().get_all_plugins()
+    assert plugins, "discovery found nothing, so the sweep proves nothing"
+    return plugins
+
+
+class TestTheSweepHelperRefusesAnEmptyRegistry:
+    """Nothing else here tells a working guard from a missing one.
+
+    Every sweep reading the helper passes on an empty mapping, which is the
+    hole the guard closes.
+    """
+
+    def test_discovery_finding_nothing_raises_instead_of_sweeping_nothing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Patched rather than emptied: ``get_all_plugins`` runs discovery
+        # itself, so a fresh registry cannot be left holding nothing.
+        monkeypatch.setattr(PluginRegistry, "get_all_plugins", lambda self: {})
+
+        with pytest.raises(AssertionError, match="discovery found nothing"):
+            _discovered_plugins()
+
+
+@pytest.fixture()
+def _registry_with_rotating_doubles(_real_registry: None) -> Iterator[None]:
+    """The real token-rotating plugins, with fetching stubbed out."""
+    registry = PluginRegistry.get_instance()
+    for plugin_name in ROTATING_PLUGINS:
+        real_plugin = registry.get_plugin(plugin_name)
+        assert real_plugin is not None
+        registry.unregister(plugin_name)
+        registry.register(_rotates_on_fetch(real_plugin))
+    yield
+
+
+@pytest.mark.usefixtures("_real_registry")
+class TestCreateSourceRefusesUncontainedPaths:
+    """``roms`` scans a list of directories, and every entry must be contained.
+
+    Its multi-entry ``paths`` was checked at plugin level only, never through
+    the boundary an HTTP caller reaches it by.
+    """
+
+    @pytest.fixture()
+    def storage(self, tmp_path: Path) -> StorageManager:
+        return StorageManager(sqlite_path=tmp_path / "test.db")
+
+    def test_a_path_outside_the_allowed_roots_is_refused(
+        self, storage: StorageManager
+    ) -> None:
+        with pytest.raises(SourceConfigError) as raised:
+            create_source("leaky", "roms", {"paths": ["/etc"]}, storage)
+
+        assert raised.value.kind == "invalid_values"
+        assert "outside the allowed source roots" in raised.value.message
+        assert storage.get_source_config(1, "leaky") is None
+
+    def test_a_path_under_an_allowed_root_is_accepted(
+        self, storage: StorageManager, tmp_path: Path
+    ) -> None:
+        games = tmp_path / "games"
+        games.mkdir()
+
+        create_source("my_roms", "roms", {"paths": [str(games)]}, storage)
+
+        row = storage.get_source_config(1, "my_roms")
+        assert row is not None
+        assert row["config"]["paths"] == [str(games)]
+
+    def test_one_escaping_entry_refuses_the_whole_list(
+        self, storage: StorageManager, tmp_path: Path
+    ) -> None:
+        games = tmp_path / "games"
+        games.mkdir()
+
+        with pytest.raises(SourceConfigError):
+            create_source("mixed", "roms", {"paths": [str(games), "/etc"]}, storage)
+
+        assert storage.get_source_config(1, "mixed") is None
+
+    def test_a_symlink_planted_in_the_root_cannot_reach_out_of_it(
+        self, storage: StorageManager, tmp_path: Path
+    ) -> None:
+        escape = tmp_path / "games"
+        escape.symlink_to("/etc")
+
+        with pytest.raises(SourceConfigError) as raised:
+            create_source("linked", "roms", {"paths": [str(escape)]}, storage)
+
+        assert "outside the allowed source roots" in raised.value.message
+
+    def test_a_traversal_is_refused_before_the_path_is_probed_for_existence(
+        self, storage: StorageManager, tmp_path: Path
+    ) -> None:
+        """The "not found" message is an oracle for anything the caller names."""
+        with pytest.raises(SourceConfigError) as raised:
+            create_source(
+                "traversing", "roms", {"paths": [f"{tmp_path}/../secrets"]}, storage
+            )
+
+        assert "outside the allowed source roots" in raised.value.message
+        assert "not found" not in raised.value.message
+
+    def test_an_empty_path_list_is_refused(self, storage: StorageManager) -> None:
+        with pytest.raises(SourceConfigError) as raised:
+            create_source("empty", "roms", {"paths": []}, storage)
+
+        assert raised.value.kind == "invalid_values"
+        assert storage.get_source_config(1, "empty") is None
+
+    def test_a_non_ascii_directory_under_the_root_is_accepted(
+        self, storage: StorageManager, tmp_path: Path
+    ) -> None:
+        games = tmp_path / "ポケモン Émulé"
+        games.mkdir()
+
+        create_source("unicode_roms", "roms", {"paths": [str(games)]}, storage)
+
+        row = storage.get_source_config(1, "unicode_roms")
+        assert row is not None
+        assert row["config"]["paths"] == [str(games)]
+
+
+class TwoSecretGamePlugin(FakeGamePlugin):
+    """``fake_games`` plus a second sensitive field."""
+
+    def get_config_schema(self) -> list[ConfigField]:
+        return [
+            *super().get_config_schema(),
+            ConfigField(
+                name="password", field_type=str, required=False, sensitive=True
+            ),
+        ]
+
+
+class TestRedactCredentials:
+    """Edge cases for the redaction the sync door's 400 log line depends on.
+
+    That door validates with the secret layered on, so scrubbing the plugin's
+    message is the only thing between a stored key and the log file.
+    """
+
+    def test_every_occurrence_of_every_secret_goes(self) -> None:
+        """One pass has to cover both fields and repeated mentions."""
+        redacted = redact_credentials(
+            "GET ?key=abc123 rejected; retry with abc123 or pw-9",
+            TwoSecretGamePlugin(),
+            {"api_key": "abc123", "password": "pw-9", "label": "Games"},
+        )
+
+        assert redacted == (
+            "GET ?key=[redacted] rejected; retry with [redacted] or [redacted]"
+        )
+
+    def test_an_empty_secret_is_not_a_match(self) -> None:
+        """``str.replace("", ...)`` would splice the marker between every char."""
+        message = "'api_key' is required"
+
+        assert redact_credentials(message, FakeGamePlugin(), {"api_key": ""}) == message
+
+    def test_an_absent_or_non_string_secret_is_skipped(self) -> None:
+        """A YAML source can type its fields however it likes."""
+        message = "'api_key' is required"
+
+        assert redact_credentials(message, FakeGamePlugin(), {}) == message
+        assert (
+            redact_credentials(message, FakeGamePlugin(), {"api_key": 1234}) == message
+        )
+
+    def test_a_credential_bound_field_is_left_alone(self) -> None:
+        """``url`` is bound to the credential, not one — the log wants it."""
+        redacted = redact_credentials(
+            "host http://sonarr.internal:9999 refused",
+            FakeGamePlugin(),
+            {"url": "http://sonarr.internal:9999"},
+        )
+
+        assert "http://sonarr.internal:9999" in redacted
+
+    def test_a_multiline_secret_is_redacted_before_anything_escapes_it(self) -> None:
+        """A pasted PEM-shaped value survives no reordering with the escaper."""
+        redacted = redact_credentials(
+            "rejected: -----KEY-----\nabc\n-----END-----",
+            FakeGamePlugin(),
+            {"api_key": "-----KEY-----\nabc\n-----END-----"},
+        )
+
+        assert redacted == "rejected: [redacted]"
+
+
+@pytest.mark.usefixtures("_registry_with_rotating_doubles")
+class TestRotatedCredentialSurvivesTheRealConfigAssemblyRegression:
+    """Reported: a sync saved a rotated OAuth token under the plugin name.
+
+    Bug: each rotating plugin's ``transform_config`` returned a fresh dict,
+    dropping the injected ``_source_id``. The orphan survived deleting the
+    source. Fix: ``transform_config`` is framework owned and restores it.
+    """
+
+    @pytest.fixture()
+    def storage(self, tmp_path: Path) -> StorageManager:
+        return StorageManager(sqlite_path=tmp_path / "test.db")
+
+    def _sync_a_rotating_source(
+        self, plugin_name: str, storage: StorageManager
+    ) -> None:
+        """Sync a DB-backed source through the production resolution path."""
+        storage.upsert_source_config(1, "work_games", plugin_name, {}, enabled=True)
+        resolved = get_sync_handler("work_games", {}, storage)
+        assert resolved is not None
+
+        execute_sync(
+            plugin=resolved.plugin,
+            plugin_config=resolved.config,
+            storage_manager=storage,
+        )
+
+    @pytest.mark.parametrize("plugin_name", ROTATING_PLUGINS)
+    def test_the_token_lands_under_the_source_id(
+        self, plugin_name: str, storage: StorageManager
+    ) -> None:
+        self._sync_a_rotating_source(plugin_name, storage)
+
+        assert storage.get_credential(1, "work_games", "refresh_token") == ROTATED_TOKEN
+        assert storage.get_credential(1, plugin_name, "refresh_token") is None
+
+    @pytest.mark.parametrize("plugin_name", ROTATING_PLUGINS)
+    def test_deleting_the_source_takes_the_token_with_it(
+        self, plugin_name: str, storage: StorageManager
+    ) -> None:
+        self._sync_a_rotating_source(plugin_name, storage)
+
+        delete_source("work_games", storage)
+
+        assert storage.get_credentials_for_source(1, "work_games") == {}
+        assert storage.get_credential(1, plugin_name, "refresh_token") is None
+
+    @pytest.mark.parametrize("plugin_name", ROTATING_PLUGINS)
+    def test_the_next_sync_resolves_the_rotated_token(
+        self, plugin_name: str, storage: StorageManager
+    ) -> None:
+        """SECURITY.md's promise: the operator never reconnects by hand."""
+        self._sync_a_rotating_source(plugin_name, storage)
+
+        resolved = get_sync_handler("work_games", {}, storage)
+
+        assert resolved is not None
+        assert resolved.config["refresh_token"] == ROTATED_TOKEN
+
+    def test_a_token_an_earlier_release_orphaned_stays_where_it_is(
+        self, storage: StorageManager
+    ) -> None:
+        """Nothing migrates them, which is what SECURITY.md promises."""
+        storage.save_credential(1, "gog", "refresh_token", "orphaned-by-an-old-sync")
+
+        self._sync_a_rotating_source("gog", storage)
+
+        assert storage.get_credential(1, "gog", "refresh_token") == (
+            "orphaned-by-an-old-sync"
+        )
+
+
+class TestAPluginCannotDropAFrameworkConfigKey:
+    """The guarantee the seven rotating plugins each broke independently."""
+
+    def test_overriding_transform_config_is_refused_at_class_creation(self) -> None:
+        with pytest.raises(TypeError, match="transform_fields"):
+
+            class EighthPlugin(FakeBookPlugin):
+                @classmethod
+                def transform_config(cls, raw_config: dict[str, Any]) -> dict[str, Any]:
+                    return {"path": raw_config.get("path")}
+
+    @pytest.mark.usefixtures("_real_registry")
+    def test_every_registered_plugin_keeps_the_source_id(self) -> None:
+        for plugin in _discovered_plugins().values():
+            transformed = type(plugin).transform_config({"_source_id": "my_source"})
+            assert transformed["_source_id"] == "my_source"
+
+    def test_the_plugins_own_fields_never_see_a_framework_key(self) -> None:
+        """``transform_fields`` is handed the source's fields and nothing else."""
+        seen: list[dict[str, Any]] = []
+
+        class RecordingPlugin(FakeBookPlugin):
+            @classmethod
+            def transform_fields(cls, raw_fields: dict[str, Any]) -> dict[str, Any]:
+                seen.append(dict(raw_fields))
+                return dict(raw_fields)
+
+        RecordingPlugin.transform_config({"path": "/data/books.csv", "_source_id": "x"})
+
+        assert seen == [{"path": "/data/books.csv"}]
+
+    def test_a_deeper_subclass_is_refused_the_same_way(self) -> None:
+        """*arr plugins subclass an intermediate, so the guard must inherit."""
+
+        class Intermediate(FakeBookPlugin):
+            pass
+
+        with pytest.raises(TypeError, match="transform_fields"):
+
+            class Grandchild(Intermediate):
+                @classmethod
+                def transform_config(cls, raw_config: dict[str, Any]) -> dict[str, Any]:
+                    return {}
+
+    def test_transform_fields_cannot_forge_a_framework_key(self) -> None:
+        """The framework's value wins, so a plugin cannot rename its source."""
+
+        class ForgingPlugin(FakeBookPlugin):
+            @classmethod
+            def transform_fields(cls, raw_fields: dict[str, Any]) -> dict[str, Any]:
+                return {**raw_fields, "_source_id": "hijacked"}
+
+        transformed = ForgingPlugin.transform_config(
+            {"path": "/data/books.csv", "_source_id": "my_books"}
+        )
+
+        assert transformed["_source_id"] == "my_books"
+
+    def test_no_framework_key_appears_when_none_was_given(self) -> None:
+        assert FakeCredentialPlugin.transform_config({"refresh_token": "  t  "}) == {
+            "refresh_token": "t"
+        }
+
+    @pytest.mark.usefixtures("_real_registry")
+    def test_every_registered_plugin_keeps_the_rotation_callback(self) -> None:
+        """Steam re-transforms mid-``fetch``, so callables must survive too."""
+
+        def callback(key: str, value: str) -> None:
+            raise AssertionError("only identity is under test")
+
+        for plugin in _discovered_plugins().values():
+            transformed = type(plugin).transform_config(
+                {"_on_credential_rotated": callback}
+            )
+            assert transformed["_on_credential_rotated"] is callback
+
+
+def _somebody_elses_source(
+    plugin: SourcePlugin, config: dict[str, Any] | None = None
+) -> str:
+    """A hijacking implementation bound by assignment rather than by ``def``."""
+    return "somebody_elses_source"
+
+
+class TestAPluginCannotRenameItsOwnSource:
+    """The same guarantee on the other method that answers "what is this?"."""
+
+    def test_overriding_get_source_identifier_is_refused_at_class_creation(
+        self,
+    ) -> None:
+        with pytest.raises(TypeError, match="name property"):
+
+            class RenamingPlugin(FakeBookPlugin):
+                def get_source_identifier(
+                    self, config: dict[str, Any] | None = None
+                ) -> str:
+                    return "somebody_elses_source"
+
+    def test_a_deeper_subclass_is_refused_the_same_way(self) -> None:
+        """*arr plugins subclass an intermediate, so the guard must inherit."""
+
+        class Intermediate(FakeBookPlugin):
+            pass
+
+        with pytest.raises(TypeError, match="name property"):
+
+            class Grandchild(Intermediate):
+                def get_source_identifier(
+                    self, config: dict[str, Any] | None = None
+                ) -> str:
+                    return "somebody_elses_source"
+
+    def test_an_assigned_attribute_is_refused_like_a_def(self) -> None:
+        """A guard keyed on ``def`` would miss the one-line assignment dodge."""
+        with pytest.raises(TypeError, match="name property"):
+
+            class AssigningPlugin(FakeBookPlugin):
+                get_source_identifier = _somebody_elses_source
+
+    def test_overriding_both_guarded_methods_is_still_refused(self) -> None:
+        """One refusal per class creation, so the second must not mask the first."""
+        with pytest.raises(TypeError):
+
+            class GreedyPlugin(FakeBookPlugin):
+                @classmethod
+                def transform_config(cls, raw_config: dict[str, Any]) -> dict[str, Any]:
+                    return {}
+
+                def get_source_identifier(
+                    self, config: dict[str, Any] | None = None
+                ) -> str:
+                    return "somebody_elses_source"
+
+    def test_both_guarded_methods_are_final_for_a_plugin_authors_mypy(self) -> None:
+        """A private plugin is not in this repo's mypy run; its author's is all."""
+        assert SourcePlugin.get_source_identifier.__final__ is True
+        assert SourcePlugin.__dict__["transform_config"].__final__ is True
+
+    @pytest.mark.usefixtures("_real_registry")
+    def test_every_registered_plugin_answers_with_the_source_id(self) -> None:
+        for plugin in _discovered_plugins().values():
+            assert plugin.get_source_identifier({"_source_id": "my_source"}) == (
+                "my_source"
+            )
+
+
+@pytest.mark.usefixtures("_real_registry")
+class TestARealPluginsItemsCarryTheSourceIdRegression:
+    """Reported: a renamed Steam source's items were attributed to "steam".
+
+    Bug: ``SteamPlugin.fetch`` re-transforms the config it was handed, and the
+    plugin's transform dropped the injected ``_source_id``. Fix:
+    ``transform_config`` is framework owned and restores it.
+    """
+
+    @pytest.fixture()
+    def storage(self, tmp_path: Path) -> StorageManager:
+        return StorageManager(sqlite_path=tmp_path / "test.db")
+
+    @patch("src.ingestion.sources.steam.steam.get_owned_games")
+    def test_items_are_attributed_to_the_source_not_the_plugin(
+        self, owned_games: Mock, storage: StorageManager
+    ) -> None:
+        owned_games.return_value = [
+            {"appid": 7, "name": "A Game", "playtime_forever": 120}
+        ]
+        storage.upsert_source_config(
+            1,
+            "work_games",
+            "steam",
+            {"api_key": "key", "steam_id": "76561198000000000"},
+            enabled=True,
+        )
+        resolved = get_sync_handler("work_games", {}, storage)
+        assert resolved is not None
+
+        execute_sync(
+            plugin=resolved.plugin,
+            plugin_config=resolved.config,
+            storage_manager=storage,
+        )
+
+        assert {item.source for item in storage.get_content_items()} == {"work_games"}
+
+
+@pytest.mark.usefixtures("_registry_with_rotating_doubles")
+class TestTheCredentialOwnerIsWhateverTheSourceIsCalled:
+    """Source ids from YAML skip the create-source charset check."""
+
+    @pytest.fixture()
+    def storage(self, tmp_path: Path) -> StorageManager:
+        return StorageManager(sqlite_path=tmp_path / "test.db")
+
+    @staticmethod
+    def _sync_yaml_source(source_id: str, storage: StorageManager) -> None:
+        config = {"inputs": {source_id: {"plugin": "gog", "enabled": True}}}
+        resolved = get_sync_handler(source_id, config, storage)
+        assert resolved is not None
+
+        execute_sync(
+            plugin=resolved.plugin,
+            plugin_config=resolved.config,
+            storage_manager=storage,
+        )
+
+    @pytest.mark.parametrize(
+        "source_id", ["my-gog", "Wörk Games 📚", "gog_2", "x" * 200]
+    )
+    def test_the_token_lands_under_the_id_verbatim(
+        self, source_id: str, storage: StorageManager
+    ) -> None:
+        self._sync_yaml_source(source_id, storage)
+
+        assert storage.get_credential(1, source_id, "refresh_token") == ROTATED_TOKEN
+        assert storage.get_credential(1, "gog", "refresh_token") is None
+
+    def test_ids_differing_only_in_case_do_not_share_a_token(
+        self, storage: StorageManager
+    ) -> None:
+        """A NOCASE collation here would hand one source another's secret."""
+        self._sync_yaml_source("Work_Games", storage)
+
+        assert storage.get_credential(1, "work_games", "refresh_token") is None
+
+    def test_an_empty_yaml_id_still_owns_its_token(
+        self, storage: StorageManager
+    ) -> None:
+        """The one id whose owner and reported name part company.
+
+        ``execute_sync`` reports progress under the display name for a falsy
+        id, and a token following it there is orphaned.
+        """
+        self._sync_yaml_source("", storage)
+
+        assert storage.get_credential(1, "", "refresh_token") == ROTATED_TOKEN
+        assert storage.get_credential(1, "gog", "refresh_token") is None

@@ -90,13 +90,13 @@ class CalibreWebPlugin(SourcePlugin):
         return True
 
     @classmethod
-    def transform_config(cls, raw_config: dict[str, Any]) -> dict[str, Any]:
-        """Strip and normalise Calibre-Web YAML config."""
+    def transform_fields(cls, raw_fields: dict[str, Any]) -> dict[str, Any]:
+        """Strip and normalise Calibre-Web config fields."""
         return {
-            "url": (raw_config.get("url") or "").strip().rstrip("/"),
-            "username": (raw_config.get("username") or "").strip(),
-            "password": (raw_config.get("password") or "").strip(),
-            "verify_ssl": raw_config.get("verify_ssl", True),
+            "url": (raw_fields.get("url") or "").strip().rstrip("/"),
+            "username": (raw_fields.get("username") or "").strip(),
+            "password": (raw_fields.get("password") or "").strip(),
+            "verify_ssl": raw_fields.get("verify_ssl", True),
         }
 
     def get_config_schema(self) -> list[ConfigField]:

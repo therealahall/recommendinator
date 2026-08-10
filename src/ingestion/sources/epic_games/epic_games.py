@@ -222,10 +222,10 @@ class EpicGamesPlugin(SourcePlugin):
         return True
 
     @classmethod
-    def transform_config(cls, raw_config: dict[str, Any]) -> dict[str, Any]:
-        """Normalise Epic Games YAML config (strip whitespace)."""
+    def transform_fields(cls, raw_fields: dict[str, Any]) -> dict[str, Any]:
+        """Normalise Epic Games config fields (strip whitespace)."""
         return {
-            "refresh_token": raw_config.get("refresh_token", "").strip(),
+            "refresh_token": raw_fields.get("refresh_token", "").strip(),
         }
 
     def get_config_schema(self) -> list[ConfigField]:

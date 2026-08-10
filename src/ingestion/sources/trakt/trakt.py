@@ -376,13 +376,13 @@ class TraktPlugin(SourcePlugin):
         return True
 
     @classmethod
-    def transform_config(cls, raw_config: dict[str, Any]) -> dict[str, Any]:
-        """Normalise Trakt YAML config (strip credentials, apply defaults)."""
+    def transform_fields(cls, raw_fields: dict[str, Any]) -> dict[str, Any]:
+        """Normalise Trakt config fields (strip credentials, apply defaults)."""
         return {
-            "client_id": (raw_config.get("client_id") or "").strip(),
-            "client_secret": (raw_config.get("client_secret") or "").strip(),
-            "refresh_token": (raw_config.get("refresh_token") or "").strip(),
-            "include_watchlist": raw_config.get("include_watchlist", True),
+            "client_id": (raw_fields.get("client_id") or "").strip(),
+            "client_secret": (raw_fields.get("client_secret") or "").strip(),
+            "refresh_token": (raw_fields.get("refresh_token") or "").strip(),
+            "include_watchlist": raw_fields.get("include_watchlist", True),
         }
 
     def get_config_schema(self) -> list[ConfigField]:
