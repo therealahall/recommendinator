@@ -1,23 +1,25 @@
-"""Tests that configure_logging contains the log file under the logs/ directory.
+"""What ``src.web.app`` writes to the log file, and where.
 
-``logging.file`` is settable over the network Settings API and is opened as a
-``FileHandler`` (arbitrary file create/append). ``configure_logging`` must keep
-the resolved path inside ``logs/`` and fall back to the registry default for any
-path that escapes it, so a hostile value can never write outside ``logs/``.
+``logging.file`` is network-settable, so a path escaping ``logs/`` falls back
+to the registry default. The encoding must not be the locale's, and a boot
+failure must not forge an entry.
 """
 
 from __future__ import annotations
 
+import codecs
 import logging
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
 from src.storage.manager import StorageManager
 from src.storage.settings_migration import migrate_config_settings
-from src.web.app import configure_logging
+from src.web.app import configure_logging, create_app
+from tests.factories import API_TOKEN
 
 
 @pytest.fixture()
@@ -39,13 +41,81 @@ def restore_root_logging() -> Iterator[None]:
         root.setLevel(saved_level)
 
 
-def _file_handler_path() -> Path:
-    """Return the absolute path of the root logger's single FileHandler."""
+def _file_handler() -> logging.FileHandler:
+    """Return the root logger's single FileHandler."""
     handlers = [
         h for h in logging.getLogger().handlers if isinstance(h, logging.FileHandler)
     ]
     assert len(handlers) == 1
-    return Path(handlers[0].baseFilename)
+    return handlers[0]
+
+
+def _file_handler_path() -> Path:
+    """Return the absolute path of the root logger's single FileHandler."""
+    return Path(_file_handler().baseFilename)
+
+
+class TestTheLogFileTakesUtf8RatherThanTheLocaleRegression:
+    """Reported by review: the log file inherited the process locale.
+
+    Bug: the handler named no encoding, so under a non-UTF-8 locale an
+    accented title deleted its own entry.
+    Fix: open it UTF-8, and backslash-escape what UTF-8 cannot carry.
+
+    The encoding half is pinned on the handler rather than by logging an
+    accented title: under this suite's UTF-8 locale the unfixed handler wrote
+    that title correctly too, so such a test passes against the bug.
+    """
+
+    def test_the_handler_names_utf8_rather_than_taking_the_locale(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        restore_root_logging: None,
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        configure_logging({"logging": {"level": "INFO", "file": "logs/app.log"}})
+
+        handler = _file_handler()
+
+        assert (handler.encoding, handler.errors) == ("utf-8", "backslashreplace")
+
+    def test_the_opened_file_took_utf8_rather_than_the_locales(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        restore_root_logging: None,
+    ) -> None:
+        """What the constructor was handed is not what the file was opened as.
+
+        Normalised through ``codecs.lookup`` so this turns on the codec rather
+        than on whichever alias spelling the stream echoes back.
+        """
+        monkeypatch.chdir(tmp_path)
+        configure_logging({"logging": {"level": "INFO", "file": "logs/app.log"}})
+
+        stream = _file_handler().stream
+
+        assert codecs.lookup(stream.encoding).name == "utf-8"
+        assert stream.errors == "backslashreplace"
+
+    def test_an_unsanitized_surrogate_still_writes_its_entry(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        restore_root_logging: None,
+    ) -> None:
+        """``sanitize_for_log`` protects the sinks that remember to call it.
+
+        This is the one that forgot: UTF-8 cannot encode a lone surrogate
+        either, and strict errors make the encoder delete the whole entry.
+        """
+        monkeypatch.chdir(tmp_path)
+        configure_logging({"logging": {"level": "INFO", "file": "logs/app.log"}})
+
+        logging.getLogger("tests.log_encoding").info("title=%s", "Dune\udcff")
+
+        assert b"title=Dune\\udcff" in _file_handler_path().read_bytes()
 
 
 class TestConfigureLoggingContainment:
@@ -235,3 +305,48 @@ class TestConfigureLoggingContainment:
             == (tmp_path / "logs" / "recommendations.log").resolve()
         )
         assert not (tmp_path.parent / "evil.log").exists()
+
+
+class TestBootFailureLoggingRegression:
+    """Regression: both boot handlers interpolated the caught exception raw.
+
+    Bug: ``%s`` on it let a line break in the message forge an entry, and a
+    message-less exception logged a bare trailing colon.
+    Fix: both render it through ``exception_for_log``.
+    """
+
+    _FORGED = "config/nope.yaml\nERROR    | forged | line"
+    _RENDERED = "FileNotFoundError: config/nope.yaml\\nERROR    | forged | line"
+
+    def test_a_missing_config_file_cannot_forge_a_second_entry(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The loader's message is the path it was handed."""
+        fault = FileNotFoundError(self._FORGED)
+        with patch("src.web.app.load_config", side_effect=fault):
+            with caplog.at_level(logging.ERROR, logger="src.web.app"):
+                with pytest.raises(FileNotFoundError):
+                    create_app()
+
+        assert [record.getMessage() for record in caplog.records] == [
+            f"Config file not found: {self._RENDERED}"
+        ]
+        assert not any(record.exc_info for record in caplog.records)
+
+    def test_a_message_less_boot_fault_still_names_its_class(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """``%s`` on a bare ``RuntimeError()`` logged the colon and nothing else."""
+        config: dict[str, Any] = {"web": {"api_token": API_TOKEN}}
+        with (
+            patch("src.web.app.load_config", return_value=config),
+            patch("src.web.app.create_storage_manager", side_effect=RuntimeError()),
+        ):
+            with caplog.at_level(logging.ERROR, logger="src.web.app"):
+                with pytest.raises(RuntimeError):
+                    create_app()
+
+        assert [record.getMessage() for record in caplog.records] == [
+            "Failed to initialize components: RuntimeError: "
+        ]
+        assert not any(record.exc_info for record in caplog.records)
