@@ -1,5 +1,6 @@
 """Tests for the shared sync executor."""
 
+import ast
 import json
 import logging
 import threading
@@ -10,7 +11,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.ingestion.plugin_base import SourceError, SourcePlugin
+from src.ingestion import sync as sync_module
+from src.ingestion.plugin_base import ConfigField, SourceError, SourcePlugin
 from src.ingestion.sources.generic_csv import CsvImportPlugin
 from src.ingestion.sources.generic_json import JsonImportPlugin
 from src.ingestion.sync import (
@@ -21,8 +23,9 @@ from src.ingestion.sync import (
     resolve_max_workers,
 )
 from src.llm.embeddings import EmbeddingGenerator
-from src.models.content import ConsumptionStatus, ContentItem
+from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.manager import StorageManager
+from src.utils.text import LINE_BREAKS
 from tests.factories import make_item
 
 
@@ -632,6 +635,9 @@ class TestCredentialRotationCallback:
         plugin = MagicMock(spec=SourcePlugin)
         plugin.name = "gog"
         plugin.display_name = "GOG"
+        # The owner is whatever the plugin says the source is called, so a
+        # mocked plugin has to answer that question like a real one would.
+        plugin.get_source_identifier.return_value = "gog"
 
         # Capture the callback by intercepting fetch
         captured_callback = None
@@ -666,6 +672,7 @@ class TestCredentialRotationCallback:
         plugin = MagicMock(spec=SourcePlugin)
         plugin.name = "gog"
         plugin.display_name = "GOG"
+        plugin.get_source_identifier.return_value = "gog"
 
         def capture_fetch(
             config: dict[str, Any], **kwargs: object
@@ -695,6 +702,7 @@ class TestCredentialRotationCallback:
         plugin = MagicMock(spec=SourcePlugin)
         plugin.name = "epic_games"
         plugin.display_name = "Epic Games"
+        plugin.get_source_identifier.return_value = "epic_games"
 
         def capture_fetch(
             config: dict[str, Any], **kwargs: object
@@ -759,6 +767,7 @@ class TestCredentialRotationCallback:
         plugin = MagicMock(spec=SourcePlugin)
         plugin.name = "gog"
         plugin.display_name = "GOG"
+        plugin.get_source_identifier.return_value = "gog"
 
         def capture_fetch(
             config: dict[str, Any], **kwargs: object
@@ -781,6 +790,167 @@ class TestCredentialRotationCallback:
         storage.save_credential.assert_called_once_with(
             7, "gog", "refresh_token", "rotated_value"
         )
+
+
+_ROTATED_TOKEN = "rotated-mid-sync"
+
+
+class RotatingAttributingPlugin(SourcePlugin):
+    """Rotates a token and attributes an item off the same method.
+
+    The rotating doubles in ``tests/test_sync_sources.py`` yield nothing, so
+    none of them can compare the owner against the id an item carries.
+    """
+
+    @property
+    def name(self) -> str:
+        return "rotating"
+
+    @property
+    def display_name(self) -> str:
+        return "Rotating"
+
+    @property
+    def content_types(self) -> list[ContentType]:
+        return [ContentType.VIDEO_GAME]
+
+    @property
+    def requires_api_key(self) -> bool:
+        return True
+
+    def get_config_schema(self) -> list[ConfigField]:
+        return [
+            ConfigField(
+                name="refresh_token", field_type=str, required=True, sensitive=True
+            )
+        ]
+
+    def validate_config(self, config: dict[str, Any], **kwargs: Any) -> list[str]:
+        return []
+
+    def fetch(
+        self, config: dict[str, Any], progress_callback: Any = None
+    ) -> Iterator[ContentItem]:
+        config["_on_credential_rotated"]("refresh_token", _ROTATED_TOKEN)
+        yield ContentItem(
+            id="game_1",
+            title="A Game",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+            source=self.get_source_identifier(config),
+        )
+
+
+class TestTheTokenOwnerIsTheIdTheItemsCarry:
+    """Reported: a rotated token stored under an id no later lookup uses.
+
+    Cause: ``execute_sync`` re-derived the owner as ``source_id or
+    plugin.name``, so a falsy id diverged from attribution. Fix: it asks
+    ``get_source_identifier``.
+    """
+
+    @pytest.fixture()
+    def storage(self, tmp_path: Path) -> StorageManager:
+        return StorageManager(sqlite_path=tmp_path / "test.db")
+
+    @staticmethod
+    def _sync(config: dict[str, Any], storage: StorageManager) -> None:
+        execute_sync(
+            plugin=RotatingAttributingPlugin(),
+            plugin_config=config,
+            storage_manager=storage,
+        )
+
+    @pytest.mark.parametrize("source_id", ["my-gog", "", "Wörk Games 📚", "x" * 200])
+    def test_the_token_and_the_item_carry_the_same_id(
+        self, source_id: str, storage: StorageManager
+    ) -> None:
+        self._sync({"_source_id": source_id, "refresh_token": "old"}, storage)
+
+        assert storage.get_credential(1, source_id, "refresh_token") == _ROTATED_TOKEN
+        assert [item.source for item in storage.get_content_items(user_id=1)] == [
+            source_id
+        ]
+
+    @pytest.mark.parametrize("source_id", ["", "0"])
+    def test_a_falsy_id_does_not_fall_back_to_the_plugin_name(
+        self, source_id: str, storage: StorageManager
+    ) -> None:
+        """The orphan the ``or`` produced: a token under ``rotating``."""
+        self._sync({"_source_id": source_id, "refresh_token": "old"}, storage)
+
+        assert storage.get_credential(1, "rotating", "refresh_token") is None
+
+    def test_a_config_with_no_source_id_still_owns_its_token(
+        self, storage: StorageManager
+    ) -> None:
+        """The surviving fallback, reached only without a ``_source_id`` key.
+
+        A caller assembling its own config gets the plugin name, and the item
+        agrees, because one method answers both.
+        """
+        self._sync({"refresh_token": "old"}, storage)
+
+        assert storage.get_credential(1, "rotating", "refresh_token") == _ROTATED_TOKEN
+        assert [item.source for item in storage.get_content_items(user_id=1)] == [
+            "rotating"
+        ]
+
+    def test_an_explicit_none_source_id_is_the_same_as_no_key(
+        self, storage: StorageManager
+    ) -> None:
+        """``get`` cannot tell the two apart, so nor may the stored owner."""
+        self._sync({"_source_id": None, "refresh_token": "old"}, storage)
+
+        assert storage.get_credential(1, "rotating", "refresh_token") == _ROTATED_TOKEN
+        assert [item.source for item in storage.get_content_items(user_id=1)] == [
+            "rotating"
+        ]
+
+    def test_two_ids_differing_only_in_case_keep_separate_tokens(
+        self, storage: StorageManager
+    ) -> None:
+        """A NOCASE collation would hand one source the other's secret."""
+        self._sync({"_source_id": "Work_Games", "refresh_token": "old"}, storage)
+
+        assert storage.get_credential(1, "Work_Games", "refresh_token") == (
+            _ROTATED_TOKEN
+        )
+        assert storage.get_credential(1, "work_games", "refresh_token") is None
+
+
+class TestAPluginCannotRedirectARotatedTokenRegression:
+    """Reported: a plugin could write its token under another source's id.
+
+    Bug: ``execute_sync`` takes the credential owner from
+    ``get_source_identifier``, and a three-line override returning another
+    source's id redirected the write. Fix: the override is refused outright.
+    """
+
+    @pytest.fixture()
+    def storage(self, tmp_path: Path) -> StorageManager:
+        return StorageManager(sqlite_path=tmp_path / "test.db")
+
+    def test_the_hijacking_subclass_never_gets_as_far_as_a_sync(self) -> None:
+        with pytest.raises(TypeError, match="name property"):
+
+            class HijackingPlugin(RotatingAttributingPlugin):
+                def get_source_identifier(
+                    self, config: dict[str, Any] | None = None
+                ) -> str:
+                    return "other_source"
+
+    def test_the_token_lands_only_under_the_source_that_rotated_it(
+        self, storage: StorageManager
+    ) -> None:
+        execute_sync(
+            plugin=RotatingAttributingPlugin(),
+            plugin_config={"_source_id": "my_source", "refresh_token": "old"},
+            storage_manager=storage,
+        )
+
+        assert storage.get_credential(1, "my_source", "refresh_token") == _ROTATED_TOKEN
+        assert storage.get_credential(1, "other_source", "refresh_token") is None
 
 
 class TestAutoEnrichmentHook:
@@ -1011,6 +1181,576 @@ class TestSyncEmbeddingLogging:
         assert "Embeddings" not in completed_messages[0]
 
 
+_FORGED_TITLE = "Dune\nERROR    | src.ingestion.sync | forged"
+_ESCAPED_TITLE = "Dune\\nERROR    | src.ingestion.sync | forged"
+
+
+def _sync_one_forged_title(
+    *,
+    title: str = _FORGED_TITLE,
+    use_embeddings: bool = False,
+    embedding_exists: bool = False,
+    save_error: Exception | None = None,
+    enrich_error: Exception | None = None,
+) -> SyncResult:
+    """Sync one item whose title carries a whole second log entry."""
+    plugin = MagicMock(spec=SourcePlugin)
+    plugin.display_name = "CSV Import"
+    plugin.fetch.return_value = iter([make_item(title, item_id="ext_1")])
+
+    storage = MagicMock(spec=StorageManager)
+    storage.has_embedding.return_value = embedding_exists
+    storage.save_content_item.side_effect = save_error
+    storage.mark_item_needs_enrichment.side_effect = enrich_error
+
+    embedding_generator = MagicMock(spec=EmbeddingGenerator)
+    embedding_generator.generate_content_embedding.return_value = [0.1, 0.2]
+
+    return execute_sync(
+        plugin=plugin,
+        plugin_config={},
+        storage_manager=storage,
+        embedding_generator=embedding_generator,
+        use_embeddings=use_embeddings,
+        mark_for_enrichment=enrich_error is not None,
+    )
+
+
+_TITLE_SINKS = [
+    pytest.param({}, "Syncing", id="syncing-the-item"),
+    pytest.param(
+        {"use_embeddings": True},
+        "Generating embedding",
+        id="generating-an-embedding",
+    ),
+    pytest.param(
+        {"use_embeddings": True, "embedding_exists": True},
+        "Embedding exists, skipping",
+        id="skipping-an-embedding",
+    ),
+    pytest.param(
+        {"enrich_error": RuntimeError("enrichment queue is down")},
+        "for enrichment",
+        id="marking-for-enrichment",
+    ),
+    pytest.param(
+        {"save_error": ValueError("db error")},
+        "Failed to process",
+        id="saving-the-item",
+    ),
+]
+
+
+class TestAnImportedTitleCannotForgeALogLine:
+    """Reported: every sink in the item loop interpolated a raw title.
+
+    Bug: one CSV row forged three extra log entries a sync.
+    Fix: a single escaped copy per item, shared by all five sinks.
+    """
+
+    @pytest.mark.parametrize(("options", "wording"), _TITLE_SINKS)
+    def test_the_sink_escapes_the_title_it_names(
+        self,
+        options: dict[str, Any],
+        wording: str,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        with caplog.at_level(logging.DEBUG, logger="src.ingestion.sync"):
+            _sync_one_forged_title(**options)
+
+        sink_lines = [message for message in caplog.messages if wording in message]
+        assert len(sink_lines) == 1
+        assert _ESCAPED_TITLE in sink_lines[0]
+        assert _FORGED_TITLE not in caplog.text
+        assert all(len(message.splitlines()) == 1 for message in caplog.messages)
+
+    def test_the_client_facing_error_keeps_the_title_raw(self) -> None:
+        """``result.errors`` is a JSON body ``/api/sync/status`` serves.
+
+        An escape would reach the UI as the literal backslashes it is.
+        """
+        result = _sync_one_forged_title(save_error=ValueError("db error"))
+
+        assert result.errors == [f"Failed to process '{_FORGED_TITLE}'"]
+
+    def test_a_message_less_save_fault_still_names_its_class(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """``str(TimeoutError())`` is empty, so the sink diagnosed nothing."""
+        with caplog.at_level(logging.WARNING, logger="src.ingestion.sync"):
+            _sync_one_forged_title(save_error=TimeoutError())
+
+        assert [
+            message for message in caplog.messages if "Failed to process" in message
+        ] == [
+            f"[SYNC] CSV Import: Failed to process '{_ESCAPED_TITLE}': TimeoutError: "
+        ]
+
+    def test_a_message_less_enrichment_fault_still_names_its_class(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level(logging.WARNING, logger="src.ingestion.sync"):
+            _sync_one_forged_title(enrich_error=TimeoutError())
+
+        assert [
+            message for message in caplog.messages if "for enrichment" in message
+        ] == [
+            f"[SYNC] Failed to mark '{_ESCAPED_TITLE}' for enrichment: TimeoutError: "
+        ]
+
+
+class TestTheOtherSyncSinksEscapeTheirValuesToo:
+    """A title is not the only value this module logs from outside it.
+
+    A source id is typed into ``config.yaml`` or the web source form, a
+    plugin names itself, and a plugin picks the credential key it rotates.
+    """
+
+    def test_a_forged_source_id_cannot_forge_a_line(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        plugin = MagicMock(spec=SourcePlugin)
+        plugin.display_name = "CSV Import"
+        plugin.fetch.return_value = iter([])
+        storage = MagicMock(spec=StorageManager)
+
+        with caplog.at_level(logging.INFO, logger="src.ingestion.sync"):
+            result = execute_sync(
+                plugin=plugin,
+                plugin_config={"_source_id": "books\nERROR | forged"},
+                storage_manager=storage,
+            )
+
+        assert result.source_name == "Books\nerror | forged"
+        assert (
+            "[SYNC] Books\\nerror | forged: Found 0 items, saving..." in caplog.messages
+        )
+        assert all(len(message.splitlines()) == 1 for message in caplog.messages)
+
+    def test_a_forged_credential_key_cannot_forge_a_line(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        plugin = MagicMock(spec=SourcePlugin)
+        plugin.display_name = "GOG"
+        plugin.get_source_identifier.return_value = "gog"
+
+        def rotate(config: dict[str, Any], **kwargs: object) -> Iterator[ContentItem]:
+            config["_on_credential_rotated"]("refresh_token\nERROR | forged", "new")
+            return iter([])
+
+        plugin.fetch.side_effect = rotate
+        storage = MagicMock(spec=StorageManager)
+
+        with caplog.at_level(logging.INFO, logger="src.ingestion.sync"):
+            execute_sync(plugin=plugin, plugin_config={}, storage_manager=storage)
+
+        assert [
+            message for message in caplog.messages if "rotated credential" in message
+        ] == [
+            "[SYNC] GOG: Persisted rotated credential 'refresh_token\\nERROR | forged'"
+        ]
+
+    def test_a_failing_source_escapes_its_name_and_keeps_the_fault_class(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The multi-source wrapper logs the plugin's own name twice."""
+        plugin = MagicMock(spec=SourcePlugin)
+        plugin.name = "csv\nERROR | forged"
+        plugin.display_name = "CSV Import"
+        plugin.fetch.side_effect = TimeoutError()
+        storage = MagicMock(spec=StorageManager)
+
+        with caplog.at_level(logging.INFO, logger="src.ingestion.sync"):
+            results = execute_multi_source_sync(
+                sources=[(plugin, {})], storage_manager=storage
+            )
+
+        assert [message for message in caplog.messages if "forged" in message] == [
+            "[SYNC] === Starting sync for source: csv\\nERROR | forged ===",
+            "[SYNC] Sync failed for csv\\nERROR | forged: TimeoutError: ",
+        ]
+        assert results[0].errors == ["Sync failed for csv\nERROR | forged"]
+
+
+# ESC[2K erases the line an operator just read, so it rewrites an entry
+# without breaking one.
+_ANSI_ERASE_LINE = "\x1b[2K"
+
+
+class TestEveryCharacterThatEndsAnEntryIsEscapedByTheSinks:
+    """``\\n`` is what a forged title reaches for, not all that works.
+
+    A reader ends an entry at any of ``LINE_BREAKS``, stops at NUL, and obeys
+    a terminal control.
+    """
+
+    @pytest.mark.parametrize("breaker", [*LINE_BREAKS, "\0", _ANSI_ERASE_LINE])
+    def test_a_title_carrying_it_still_reaches_the_sinks_as_one_entry(
+        self, breaker: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level(logging.DEBUG, logger="src.ingestion.sync"):
+            _sync_one_forged_title(
+                title=f"Dune{breaker}ERROR | forged",
+                save_error=ValueError("db error"),
+            )
+
+        assert caplog.messages
+        assert all(len(message.splitlines()) == 1 for message in caplog.messages)
+        assert not any(breaker in message for message in caplog.messages)
+        # Escaped, not stripped: an operator still has to be able to read it.
+        assert all(
+            "Dune" in message for message in caplog.messages if "forged" in message
+        )
+
+
+_SYNC_TREE = ast.parse(Path(sync_module.__file__).read_text(encoding="utf-8"))
+
+_LOG_SANITIZERS = {"sanitize_for_log", "exception_for_log"}
+
+_LOG_METHODS = {"debug", "info", "warning", "error", "critical"}
+
+#: Logged values no imported text reaches, each with the reason it cannot end
+#: an entry. Anything else the sweep finds has to go through a sanitizer.
+_NON_TEXT_LOG_ARGUMENTS = {
+    "item_num": "enumerate counter, rendered with %d",
+    "result.items_synced": "int, rendered with %d",
+    "result.total_items": "int, rendered with %d",
+    "total_synced": "sum of ints, rendered with %d",
+    "embedding_summary": "built in this module from two ints",
+    "content_type": "one of ContentType's four values; pydantic refuses the rest",
+    "type(error).__name__": "an identifier holds no break",
+}
+
+
+def _log_calls(tree: ast.AST) -> list[ast.Call]:
+    """Every ``logger.<level>(...)`` call in a parsed module."""
+    return [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "logger"
+    ]
+
+
+def _names_bound_to_a_sanitizer(tree: ast.AST) -> set[str]:
+    """Locals holding a sanitized copy, so one escape can serve several sinks."""
+    return {
+        target.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Name)
+        and node.value.func.id in _LOG_SANITIZERS
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    }
+
+
+def _unsanitized_log_arguments(tree: ast.AST) -> set[str]:
+    sanitized_names = _names_bound_to_a_sanitizer(tree)
+    return {
+        f"{ast.unparse(argument)} (line {argument.lineno})"
+        for call in _log_calls(tree)
+        for argument in call.args[1:]
+        if ast.unparse(argument) not in _NON_TEXT_LOG_ARGUMENTS
+        and not (isinstance(argument, ast.Name) and argument.id in sanitized_names)
+        and not (
+            isinstance(argument, ast.Call)
+            and isinstance(argument.func, ast.Name)
+            and argument.func.id in _LOG_SANITIZERS
+        )
+    }
+
+
+def _renders_a_value_as_text(node: ast.expr) -> bool:
+    """Python's four ways of interpolating a value into a string."""
+    if isinstance(node, ast.JoinedStr):
+        return True
+    if isinstance(node, ast.BinOp):
+        return isinstance(node.op, ast.Mod)
+    if not isinstance(node, ast.Call):
+        return False
+    if isinstance(node.func, ast.Attribute):
+        return node.func.attr == "format"
+    return isinstance(node.func, ast.Name) and node.func.id == "str"
+
+
+def _hand_rendered_sanitizer_inputs(tree: ast.AST) -> set[str]:
+    """Sanitizer calls handed a value someone rendered as text first.
+
+    ``sanitize_for_log(str(error))`` logs a trailing colon for a bare
+    ``TimeoutError()``. Swept over the module, not the log call: the escaped
+    copy here is bound to a local first.
+    """
+    return {
+        f"{ast.unparse(call)} (line {call.lineno})"
+        for call in ast.walk(tree)
+        if isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Name)
+        and call.func.id in _LOG_SANITIZERS
+        and call.args
+        and _renders_a_value_as_text(call.args[0])
+    }
+
+
+def _non_literal_log_messages(tree: ast.AST) -> set[str]:
+    """Messages built before the call, where no ``%s`` argument is swept."""
+    return {
+        f"{ast.unparse(call)} (line {call.lineno})"
+        for call in _log_calls(tree)
+        if not call.args or not isinstance(call.args[0], ast.Constant)
+    }
+
+
+def _attaches_a_traceback(keyword: ast.keyword) -> bool:
+    """``exc_info=False`` is the default written out, so it renders nothing."""
+    return keyword.arg == "exc_info" and not (
+        isinstance(keyword.value, ast.Constant) and not keyword.value.value
+    )
+
+
+def _traceback_log_calls(tree: ast.AST) -> set[str]:
+    """Calls that put the exception's own unescaped words back in the file."""
+    return {
+        f"{call.func.attr} (line {call.lineno})"
+        for call in _log_calls(tree)
+        if isinstance(call.func, ast.Attribute)
+        and (
+            call.func.attr not in _LOG_METHODS
+            or any(_attaches_a_traceback(keyword) for keyword in call.keywords)
+        )
+    }
+
+
+def _hand_rolled_break_escapes(tree: ast.AST) -> set[str]:
+    """A local escape rule is how the two definitions drifted apart before."""
+    return {
+        f"{ast.unparse(node)} (line {node.lineno})"
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "replace"
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and set(str(node.args[0].value)) & set(LINE_BREAKS + "\0")
+    }
+
+
+def _log_sinks_the_sweep_cannot_see(tree: ast.AST) -> set[str]:
+    """Writes reaching a log or console without going through ``logger``.
+
+    Every sweep above keys on the name ``logger``, so anything emitting
+    under another name is invisible to them and banned outright.
+    """
+    return {
+        f"{ast.unparse(node)} (line {node.lineno})"
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and (
+            (isinstance(node.func, ast.Name) and node.func.id == "print")
+            or (
+                isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "logging"
+                and node.func.attr in _LOG_METHODS | {"exception", "log"}
+            )
+        )
+    }
+
+
+def _is_logger_expression(value: ast.expr) -> bool:
+    """A ``getLogger`` result, the module logger, or a method bound off it.
+
+    ``from logging import getLogger`` spells the call as a bare name, and
+    ``warn = logger.warning`` needs no call at all.
+    """
+    if isinstance(value, ast.Call):
+        if isinstance(value.func, ast.Attribute):
+            return value.func.attr == "getLogger"
+        return isinstance(value.func, ast.Name) and value.func.id == "getLogger"
+    root = value.value if isinstance(value, ast.Attribute) else value
+    return isinstance(root, ast.Name) and root.id == "logger"
+
+
+def _logger_binding_names(tree: ast.AST) -> set[str]:
+    """The names a logger, or anything reached through one, is bound to."""
+    return {
+        target.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign) and _is_logger_expression(node.value)
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    }
+
+
+class TestNoSinkInTheModuleInterpolatesAValueRaw:
+    """The tests above cover the sinks they name; a sixth would go unswept.
+
+    Every sink here was raw at once, so the guard is the module. The
+    predicates are ``tests/test_web_api.py``'s, which swept a sibling first.
+    """
+
+    def test_every_logged_value_is_sanitized_or_is_not_text(self) -> None:
+        assert _unsanitized_log_arguments(_SYNC_TREE) == set()
+
+    def test_no_value_is_rendered_before_the_sanitizer_sees_it(self) -> None:
+        """The spelling that drops the class name off a catch-all handler."""
+        assert _hand_rendered_sanitizer_inputs(_SYNC_TREE) == set()
+
+    def test_every_log_message_is_a_literal(self) -> None:
+        """An f-string message carries its values past the check above."""
+        assert _non_literal_log_messages(_SYNC_TREE) == set()
+
+    def test_no_log_call_attaches_a_traceback(self) -> None:
+        """A traceback puts the exception's own words back, unescaped."""
+        assert _traceback_log_calls(_SYNC_TREE) == set()
+
+    def test_no_line_break_is_escaped_by_hand(self) -> None:
+        """A local escape rule covers ``\\n`` and none of the other nine."""
+        assert _hand_rolled_break_escapes(_SYNC_TREE) == set()
+
+    def test_no_sink_emits_under_another_name(self) -> None:
+        """``logging.warning`` and ``print`` write the same file, unswept."""
+        assert _log_sinks_the_sweep_cannot_see(_SYNC_TREE) == set()
+
+    def test_the_only_logger_binding_is_the_one_swept(self) -> None:
+        """A second logger under another name would be swept by nothing."""
+        assert _logger_binding_names(_SYNC_TREE) == {"logger"}
+
+    def test_the_sweep_reaches_this_module(self) -> None:
+        """``set()`` is also what a module with no sinks at all returns."""
+        assert _names_bound_to_a_sanitizer(_SYNC_TREE) == {
+            "safe_source_name",
+            "safe_title",
+            "safe_key",
+            "safe_plugin_name",
+        }
+
+
+class TestTheSyncLogSweepFailsOnANewRawSink:
+    """The sweep above passes; these prove it is not passing vacuously.
+
+    Each feeds the offending source to the predicate the test above calls and
+    asserts the whole report: ``!= set()`` holds for one reporting the wrong
+    node.
+    """
+
+    @pytest.mark.parametrize(
+        ("source", "reported"),
+        [
+            ("logger.warning('Failed to process %s', item.title)", "item.title"),
+            ("logger.warning('failed: %s', str(error))", "str(error)"),
+            ("logger.info('%s %s', sanitize_for_log(a), b)", "b"),
+        ],
+    )
+    def test_an_unsanitized_argument_is_reported(
+        self, source: str, reported: str
+    ) -> None:
+        assert _unsanitized_log_arguments(ast.parse(source)) == {f"{reported} (line 1)"}
+
+    @pytest.mark.parametrize(
+        "argument",
+        [
+            "sanitize_for_log(str(error))",
+            "sanitize_for_log(f'{error}')",
+            "sanitize_for_log('%s' % error)",
+            "sanitize_for_log('{}'.format(error))",
+        ],
+    )
+    def test_a_hand_rendered_sanitizer_input_is_reported(self, argument: str) -> None:
+        """All four interpolations, each dropping the class name identically."""
+        tree = ast.parse(f"safe_title = {argument}")
+
+        assert _hand_rendered_sanitizer_inputs(tree) == {f"{argument} (line 1)"}
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            "logger.info(f'[SYNC] {item.title}')",
+            "logger.info('[SYNC] %s' % item.title)",
+            "logger.info()",
+        ],
+    )
+    def test_a_message_that_is_not_a_literal_is_reported(self, source: str) -> None:
+        assert _non_literal_log_messages(ast.parse(source)) == {f"{source} (line 1)"}
+
+    @pytest.mark.parametrize(
+        ("source", "reported"),
+        [
+            ("logger.error('boom', exc_info=True)", "error"),
+            ("logger.error('boom', exc_info=error)", "error"),
+            ("logger.exception('boom')", "exception"),
+        ],
+    )
+    def test_a_traceback_is_reported(self, source: str, reported: str) -> None:
+        assert _traceback_log_calls(ast.parse(source)) == {f"{reported} (line 1)"}
+
+    def test_the_default_written_out_is_not_a_traceback(self) -> None:
+        """``exc_info=False`` attaches nothing, so a report is a false alarm."""
+        tree = ast.parse("logger.error('boom', exc_info=False)")
+
+        assert _traceback_log_calls(tree) == set()
+
+    @pytest.mark.parametrize("breaker", [*LINE_BREAKS, "\0"])
+    def test_a_hand_rolled_escape_is_reported(self, breaker: str) -> None:
+        escape = f"title.replace({breaker!r}, ' ')"
+
+        assert _hand_rolled_break_escapes(ast.parse(f"safe = {escape}")) == {
+            f"{escape} (line 1)"
+        }
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            "logging.warning('%s', item.title)",
+            "logging.exception('boom')",
+            "print(item.title)",
+        ],
+    )
+    def test_a_sink_under_another_name_is_reported(self, source: str) -> None:
+        assert _log_sinks_the_sweep_cannot_see(ast.parse(source)) == {
+            f"{source} (line 1)"
+        }
+
+    @pytest.mark.parametrize(
+        ("source", "bound"),
+        [
+            ("audit = logging.getLogger('audit')", "audit"),
+            ("audit = getLogger('audit')", "audit"),
+            ("_LOG = logger", "_LOG"),
+            ("warn = logger.warning", "warn"),
+        ],
+    )
+    def test_a_second_logger_binding_is_reported(self, source: str, bound: str) -> None:
+        """The alias is named, and the module's own binding is still found.
+
+        A bare ``!= {'logger'}`` on the offending line alone passes on a
+        predicate that recognises nothing, because the empty set is not
+        ``{'logger'}`` either.
+        """
+        tree = ast.parse(f"logger = logging.getLogger(__name__)\n{source}")
+
+        assert _logger_binding_names(tree) == {"logger", bound}
+
+    def test_the_clean_shape_is_not_reported(self) -> None:
+        """The predicates accept what sync.py actually writes."""
+        tree = ast.parse(
+            "logger = logging.getLogger(__name__)\n"
+            "safe_title = sanitize_for_log(item.title)\n"
+            "logger.warning('[SYNC] %s: %s', safe_title, exception_for_log(error))"
+        )
+
+        assert _unsanitized_log_arguments(tree) == set()
+        assert _hand_rendered_sanitizer_inputs(tree) == set()
+        assert _non_literal_log_messages(tree) == set()
+        assert _traceback_log_calls(tree) == set()
+        assert _hand_rolled_break_escapes(tree) == set()
+        assert _log_sinks_the_sweep_cannot_see(tree) == set()
+        assert _logger_binding_names(tree) == {"logger"}
+
+
 class TestARefusedTextValueCostsOneRow:
     """A value no text column can hold fails its own row and nothing else.
 
@@ -1099,7 +1839,7 @@ class TestARefusedTextValueCostsOneRow:
         assert result.errors == ["Failed to process 'Neuromancer'"]
         assert [message for message in caplog.messages if "Neuromancer" in message] == [
             f"[SYNC] {JsonImportPlugin().display_name}: Failed to process"
-            " 'Neuromancer': 'isbn': a text column cannot hold a dict"
+            " 'Neuromancer': TypeError: 'isbn': a text column cannot hold a dict"
         ]
 
 

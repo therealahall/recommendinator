@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from src.ingestion.plugin_base import SourcePlugin
 from src.models.content import ContentItem, get_enum_value
-from src.utils.text import humanize_source_id
+from src.utils.text import exception_for_log, humanize_source_id, sanitize_for_log
 
 if TYPE_CHECKING:
     from src.llm.embeddings import EmbeddingGenerator
@@ -101,21 +101,38 @@ def execute_sync(
     source_name = humanize_source_id(source_id) if source_id else plugin.display_name
     result = SyncResult(source_name=source_name)
 
+    # ``_source_id`` is typed into config.yaml and the web source form, so the
+    # logged copy is escaped while ``SyncResult`` keeps the raw name for the
+    # JSON body /api/sync/status serves.
+    safe_source_name = sanitize_for_log(source_name)
+
     if progress_callback:
         progress_callback(0, None, "Fetching...", source_name)
 
+    # One function decides what a source is called, so the token owner, the
+    # attribution and the delete key agree for every id. That includes the
+    # empty one a YAML ``inputs`` key can produce, which ``source_name`` reads
+    # as absent.
+    credential_owner = plugin.get_source_identifier(plugin_config)
+
     # Inject credential rotation callback so plugins can persist rotated tokens
     def on_credential_rotated(key: str, value: str) -> None:
+        safe_key = sanitize_for_log(key)
         try:
-            storage_manager.save_credential(user_id, plugin.name, key, value)
+            storage_manager.save_credential(user_id, credential_owner, key, value)
             logger.info(
-                "[SYNC] %s: Persisted rotated credential '%s'", source_name, key
+                "[SYNC] %s: Persisted rotated credential '%s'",
+                safe_source_name,
+                safe_key,
             )
         except Exception as error:
+            # A storage fault can quote the parameters it was handed, and one
+            # of them is the rotated secret, so ``exception_for_log`` is too
+            # much detail here.
             logger.warning(
                 "[SYNC] %s: Failed to persist rotated credential '%s': %s",
-                source_name,
-                key,
+                safe_source_name,
+                safe_key,
                 type(error).__name__,
             )
 
@@ -136,7 +153,9 @@ def execute_sync(
     if progress_callback:
         progress_callback(0, result.total_items, None, source_name)
 
-    logger.info("[SYNC] %s: Found %d items, saving...", source_name, result.total_items)
+    logger.info(
+        "[SYNC] %s: Found %d items, saving...", safe_source_name, result.total_items
+    )
 
     # Save each item
     embeddings_generated = 0
@@ -144,6 +163,10 @@ def execute_sync(
     for index, item in enumerate(items):
         item_num = index + 1
         content_type = get_enum_value(item.content_type)
+        # Titles come from imported files and POST /api/complete, neither of
+        # which restricts characters, so all five sinks below share one
+        # escaped copy.
+        safe_title = sanitize_for_log(item.title)
         try:
             if progress_callback:
                 # Report ``item_num`` (1-based) so the UI shows the current
@@ -153,11 +176,11 @@ def execute_sync(
 
             logger.debug(
                 "[SYNC] %s: Syncing %s %d/%d - %s",
-                source_name,
+                safe_source_name,
                 content_type,
                 item_num,
                 result.total_items,
-                item.title,
+                safe_title,
             )
 
             embedding = None
@@ -166,20 +189,20 @@ def execute_sync(
                 if not item.id or not storage_manager.has_embedding(item.id):
                     logger.info(
                         "[SYNC] %s: Generating embedding %d/%d - %s",
-                        source_name,
+                        safe_source_name,
                         item_num,
                         result.total_items,
-                        item.title,
+                        safe_title,
                     )
                     embedding = embedding_generator.generate_content_embedding(item)
                     embeddings_generated += 1
                 else:
                     logger.debug(
                         "[SYNC] %s: Embedding exists, skipping %d/%d - %s",
-                        source_name,
+                        safe_source_name,
                         item_num,
                         result.total_items,
-                        item.title,
+                        safe_title,
                     )
                     embeddings_skipped += 1
 
@@ -193,8 +216,8 @@ def execute_sync(
                 except Exception as enrich_error:
                     logger.warning(
                         "[SYNC] Failed to mark '%s' for enrichment: %s",
-                        item.title,
-                        enrich_error,
+                        safe_title,
+                        exception_for_log(enrich_error),
                     )
 
         except Exception as error:
@@ -205,9 +228,9 @@ def execute_sync(
             # return only the safe item-identifying summary to clients.
             logger.warning(
                 "[SYNC] %s: Failed to process '%s': %s",
-                source_name,
-                item.title,
-                error,
+                safe_source_name,
+                safe_title,
+                exception_for_log(error),
             )
             result.errors.append(f"Failed to process '{item.title}'")
 
@@ -219,7 +242,7 @@ def execute_sync(
         )
     logger.info(
         "[SYNC] %s: Completed. %d/%d items saved.%s",
-        source_name,
+        safe_source_name,
         result.items_synced,
         result.total_items,
         embedding_summary,
@@ -271,7 +294,8 @@ def execute_multi_source_sync(
     """
 
     def _run_one(plugin: SourcePlugin, plugin_config: dict[str, Any]) -> SyncResult:
-        logger.info("[SYNC] === Starting sync for source: %s ===", plugin.name)
+        safe_plugin_name = sanitize_for_log(plugin.name)
+        logger.info("[SYNC] === Starting sync for source: %s ===", safe_plugin_name)
         try:
             return execute_sync(
                 plugin=plugin,
@@ -287,7 +311,11 @@ def execute_multi_source_sync(
             # See sibling note in execute_sync: keep raw exception text
             # out of result.errors. Plugin failures can include
             # credential bytes in their messages.
-            logger.error("[SYNC] Sync failed for %s: %s", plugin.name, error)
+            logger.error(
+                "[SYNC] Sync failed for %s: %s",
+                safe_plugin_name,
+                exception_for_log(error),
+            )
             source_id = plugin_config.get("_source_id")
             error_source_name = (
                 humanize_source_id(source_id) if source_id else plugin.display_name
