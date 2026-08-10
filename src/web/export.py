@@ -11,6 +11,7 @@ from src.ingestion.sources.generic_csv import (
     CREATOR_FIELD,
     LIST_VALUED_COLUMNS,
     STATUS_DISPLAY,
+    guard_csv_formula,
 )
 from src.models.content import ContentItem, ContentType, get_enum_value
 
@@ -103,9 +104,13 @@ def export_items_csv(items: list[ContentItem], content_type: ContentType) -> str
     writer = csv.DictWriter(output, fieldnames=columns, extrasaction="ignore")
     writer.writeheader()
 
+    # Guarding here rather than per field covers every column a future
+    # content type adds, and the JSON export stays byte-for-byte raw.
     for item in items:
         row = _item_to_export_dict(item, content_type, for_csv=True)
-        writer.writerow(row)
+        writer.writerow(
+            {column: guard_csv_formula(value) for column, value in row.items()}
+        )
 
     return output.getvalue()
 
