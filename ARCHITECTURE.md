@@ -150,12 +150,9 @@ library in two. `migrate_source_attribution` (`src/storage/source_migration.py`)
 moves those rows onto the single source running that plugin, and refuses when
 two do, because nothing records which one they came from.
 
-It runs on every boot and hot-reload until nothing is left for a later run,
-recording itself in `completed_migrations` only then — the first run, for a
-library with nothing stranded. Two of its three refusals name a config change
-that resolves them, so those hold that record open; only a source running the
-plugin it is named after is terminal. Each refusal is logged once per plugin,
-under its own record, and a run with no sources configured records nothing.
+It reruns every boot until nothing is left for a later run to do, then records
+itself in `completed_migrations`. Two of its three refusals name a config change
+that resolves them, so those hold the record open. Each is logged once.
 Messages:
 [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md#source-attribution-at-startup).
 
