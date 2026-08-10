@@ -13,10 +13,11 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypeGuard
 
+from src.ingestion.paths import PathNotAllowed, resolve_source_path
 from src.ingestion.plugin_base import SourcePlugin
 from src.ingestion.registry import get_registry
 from src.models.config_field import ConfigField
-from src.utils.text import humanize_source_id
+from src.utils.text import humanize_source_id, sanitize_for_log
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
@@ -175,6 +176,21 @@ def _plugin_config_without_credentials(
     return type(plugin).transform_config({**fields, "_source_id": source_id})
 
 
+def redact_credentials(text: str, plugin: SourcePlugin, config: dict[str, Any]) -> str:
+    """Replace every secret in *config* wherever it appears verbatim in *text*.
+
+    A derived form (truncated, masked, encoded) still gets through. The rule
+    plugins are held to is the guarantee; this backstops the obvious breach.
+    """
+    for field in plugin.get_config_schema():
+        if not field.sensitive:
+            continue
+        secret = config.get(field.name)
+        if isinstance(secret, str) and secret:
+            text = text.replace(secret, "[redacted]")
+    return text
+
+
 def assemble_plugin_config(
     source_id: str,
     plugin: SourcePlugin,
@@ -321,7 +337,9 @@ class SourceConfigError(Exception):
     * ``not_found``       — source or field does not exist (404)
     * ``not_migrated``    — operation requires the source to be migrated (404)
     * ``invalid_field``   — payload references an unknown field (400)
-    * ``invalid_values``  — the plugin refused the values written (400)
+    * ``invalid_values``  — the plugin refused the values written (400).
+      The message names the offending field, or repeats a containment
+      refusal; it never carries the plugin's own words.
     * ``not_sensitive``   — secret operation targeted a non-sensitive field (400)
     * ``sensitive_in_config`` — bulk update attempted to set a secret (400)
     * ``conflict``        — create attempted on an existing source id (409)
@@ -588,6 +606,83 @@ def _moves_credential_binding(
     )
 
 
+def _invalid_values_detail(fields: list[str]) -> str:
+    """The refusal the caller gets: which field, never the plugin's reason."""
+    named = ", ".join(f"'{name}'" for name in fields)
+    if len(fields) == 1:
+        return f"The value for {named} was refused — check it and try again."
+    return f"One of these values was refused — check them and try again: {named}."
+
+
+def _log_refusal(
+    source_id: str,
+    plugin: SourcePlugin,
+    storage: StorageManager,
+    errors: list[str],
+    user_id: int,
+) -> None:
+    """Put the reason where only the operator reads it, as the sync door does."""
+    logger.warning(
+        "Source config write refused for %s: %s",
+        sanitize_for_log(source_id),
+        sanitize_for_log(
+            redact_credentials(
+                " ".join(errors),
+                plugin,
+                storage.get_credentials_for_source(user_id, source_id),
+            )
+        ),
+    )
+
+
+def _changed_fields(before: dict[str, Any], after: dict[str, Any]) -> list[str]:
+    """The keys this write gave a new value, in a stable order."""
+    return sorted(
+        key for key in set(before) | set(after) if before.get(key) != after.get(key)
+    )
+
+
+def _with_field_reverted(
+    before: dict[str, Any], after: dict[str, Any], key: str
+) -> dict[str, Any]:
+    """*after* as it would be had this write left *key* alone."""
+    reverted = dict(after)
+    if key in before:
+        reverted[key] = before[key]
+    else:
+        reverted.pop(key, None)
+    return reverted
+
+
+def _submitted_paths(value: Any) -> list[str]:
+    """The path strings in a ``reads_path`` field, which may hold a list."""
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        return [entry for entry in value if isinstance(entry, str)]
+    return []
+
+
+def _refuse_paths_outside_the_allowed_roots(
+    plugin: SourcePlugin, before: dict[str, Any], after: dict[str, Any]
+) -> None:
+    """Refuse a containment breach here, before any plugin has spoken.
+
+    Containment reads no disk, so its reason repeats only what was submitted.
+    Past this point the caller gets a field name instead.
+    """
+    schema = {field.name: field for field in plugin.get_config_schema()}
+    for key in _changed_fields(before, after):
+        field = schema.get(key)
+        if field is None or not field.reads_path:
+            continue
+        for path in _submitted_paths(after.get(key)):
+            try:
+                resolve_source_path(path)
+            except PathNotAllowed as error:
+                raise SourceConfigError("invalid_values", str(error)) from error
+
+
 def _refuse_values_that_break_the_source(
     source_id: str,
     plugin: SourcePlugin,
@@ -596,33 +691,42 @@ def _refuse_values_that_break_the_source(
     after: dict[str, Any],
     user_id: int,
 ) -> None:
-    """Raise ``invalid_values`` for a validation error *after* introduces.
+    """Raise ``invalid_values`` naming the field a validation error blames.
 
     Only what this write broke: a source whose secret is not entered yet is
     incomplete by design, and refusing to edit one would deadlock it.
     """
-    # Neither config carries the decrypted secrets: these messages reach the
-    # wire, and a plugin quoting a value it was handed would answer with one.
-    # ``storage`` still answers the is-it-stored question for the plugins
-    # that ask.
-    was = set(
-        plugin.validate_config(
-            _plugin_config_without_credentials(source_id, plugin, before),
+    _refuse_paths_outside_the_allowed_roots(plugin, before, after)
+
+    # Neither config carries the decrypted secrets: a plugin quoting a value
+    # it was handed would answer with one. ``storage`` still answers the
+    # is-it-stored question for the plugins that ask.
+    def errors_in(fields: dict[str, Any]) -> list[str]:
+        return plugin.validate_config(
+            _plugin_config_without_credentials(source_id, plugin, fields),
             storage=storage,
             user_id=user_id,
         )
-    )
-    introduced = [
-        error
-        for error in plugin.validate_config(
-            _plugin_config_without_credentials(source_id, plugin, after),
-            storage=storage,
-            user_id=user_id,
-        )
-        if error not in was
+
+    was = set(errors_in(before))
+
+    def introduced(candidate: dict[str, Any]) -> list[str]:
+        return [error for error in errors_in(candidate) if error not in was]
+
+    errors = introduced(after)
+    if not errors:
+        return
+
+    # Reverting one field at a time asks which edit broke it. Nothing is
+    # blamed when two are jointly bad, so the whole write answers for it.
+    changed = _changed_fields(before, after)
+    blamed = [
+        key
+        for key in changed
+        if not introduced(_with_field_reverted(before, after, key))
     ]
-    if introduced:
-        raise SourceConfigError("invalid_values", " ".join(introduced))
+    _log_refusal(source_id, plugin, storage, errors, user_id)
+    raise SourceConfigError("invalid_values", _invalid_values_detail(blamed or changed))
 
 
 def update_source_config_values(
