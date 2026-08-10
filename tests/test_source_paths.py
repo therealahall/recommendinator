@@ -50,6 +50,50 @@ def _reads_a_configured_path(plugin: SourcePlugin) -> bool:
     return bool(_declared_path_fields(plugin))
 
 
+_PATH_SHAPED_NAME_TOKENS = frozenset(
+    {
+        "path",
+        "paths",
+        "dir",
+        "dirs",
+        "directory",
+        "directories",
+        "file",
+        "files",
+        "folder",
+        "folders",
+    }
+)
+
+
+def _undeclared_path_fields(plugin: SourcePlugin) -> list[str]:
+    """Names reading as a path that no ``reads_path=True`` declares.
+
+    Whole tokens, so ``profile`` is not read as naming a file.
+    """
+    return [
+        field.name
+        for field in plugin.get_config_schema()
+        if not field.reads_path
+        and _PATH_SHAPED_NAME_TOKENS & set(field.name.lower().split("_"))
+    ]
+
+
+def _plugins_leaving_a_path_undeclared(
+    plugins: dict[str, SourcePlugin],
+) -> dict[str, list[str]]:
+    """Keyed on the field name, not ``requires_network``.
+
+    That key read "needs no network" as "reads off disk", excluding the shape
+    worth checking most: a plugin that talks to the network *and* reads a path.
+    """
+    return {
+        name: undeclared
+        for name, plugin in plugins.items()
+        if (undeclared := _undeclared_path_fields(plugin))
+    }
+
+
 def _params(plugins: list[SourcePlugin]) -> list[Any]:
     """Identify each case by registry name, which the sweeps compare against."""
     return [pytest.param(plugin, id=plugin.name) for plugin in plugins]
@@ -77,11 +121,15 @@ def _builtin_plugins() -> dict[str, SourcePlugin]:
     """
     registry = PluginRegistry()
     registry.discover_plugins()
-    return {
+    built_in = {
         name: plugin
         for name, plugin in registry.get_all_plugins().items()
         if type(plugin).__module__.startswith("src.ingestion.sources.")
     }
+    # The sweeps below assert an absence, so discovery finding nothing would
+    # pass every one of them while proving nothing.
+    assert built_in, "discovery found no built-in plugins"
+    return built_in
 
 
 def _escaping_config(plugin: SourcePlugin, target: Path) -> dict[str, Any]:
@@ -258,6 +306,87 @@ class TestEveryFileReadingPluginIsContained:
 
         assert offline & undeclared == set()
 
+    def test_no_plugin_names_a_path_it_leaves_undeclared(self) -> None:
+        """Covers the shape the offline sweep above cannot: a plugin that reads
+        a configured path *and* talks to the network.
+        """
+        assert _plugins_leaving_a_path_undeclared(_builtin_plugins()) == {}
+
+    def test_a_name_merely_containing_a_token_is_not_read_as_a_path(self) -> None:
+        """``profile`` holds ``file`` without naming one."""
+        plugin = Mock(spec=SourcePlugin)
+        plugin.get_config_schema.return_value = [
+            ConfigField(name="profile", field_type=str)
+        ]
+
+        assert _undeclared_path_fields(plugin) == []
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "library_path",
+            "library_paths",
+            "cover_dir",
+            "cover_dirs",
+            "media_directory",
+            "media_directories",
+            "cache_file",
+            "cache_files",
+            "art_folder",
+            "art_folders",
+        ],
+    )
+    def test_each_name_shape_the_sweep_claims_is_one_it_acts_on(
+        self, name: str
+    ) -> None:
+        """Spelled out rather than derived from the token set.
+
+        Only ``folder`` reaches the sweeps above, and a case built off the set
+        would disappear along with any token dropped from it.
+        """
+        plugin = Mock(spec=SourcePlugin)
+        plugin.get_config_schema.return_value = [ConfigField(name=name, field_type=str)]
+
+        assert _undeclared_path_fields(plugin) == [name]
+
+    def test_the_match_is_case_insensitive(self) -> None:
+        """Schema names are the plugin author's, not a validated format."""
+        plugin = Mock(spec=SourcePlugin)
+        plugin.get_config_schema.return_value = [
+            ConfigField(name="Library_PATH", field_type=str)
+        ]
+
+        assert _undeclared_path_fields(plugin) == ["Library_PATH"]
+
+    @pytest.mark.parametrize("name", ["filepath", "csvfile", "libraryPath"])
+    def test_a_name_not_separated_by_underscores_is_where_the_sweep_stops(
+        self, name: str
+    ) -> None:
+        """The boundary docs/PLUGIN_DEVELOPMENT.md has to state accurately.
+
+        Whole-token matching is what keeps ``profile`` out, and it costs these:
+        an author naming a path field this way is not swept.
+        """
+        plugin = Mock(spec=SourcePlugin)
+        plugin.get_config_schema.return_value = [ConfigField(name=name, field_type=str)]
+
+        assert _undeclared_path_fields(plugin) == []
+
+    def test_a_declared_field_does_not_cover_an_undeclared_sibling(self) -> None:
+        """Every undeclared field is reported, not just the first.
+
+        A plugin growing a second path field is the shape the containment
+        cases cannot reach, so the sweep is all that sees it.
+        """
+        plugin = Mock(spec=SourcePlugin)
+        plugin.get_config_schema.return_value = [
+            ConfigField(name="library_path", field_type=str, reads_path=True),
+            ConfigField(name="cover_dir", field_type=str),
+            ConfigField(name="cache_file", field_type=str),
+        ]
+
+        assert _undeclared_path_fields(plugin) == ["cover_dir", "cache_file"]
+
     def test_the_deriver_answers_the_flag_rather_than_the_field_name(self) -> None:
         """Otherwise the sweep holds on a deriver that matches nothing.
 
@@ -320,6 +449,47 @@ class TestEveryFileReadingPluginIsContained:
 
         with pytest.raises(SourceError, match="outside the allowed source roots"):
             list(plugin.fetch(_escaping_config(plugin, link)))
+
+
+class TestUndeclaredPathSweepRegression:
+    """Symptom: a plugin could read a configured path with ``reads_path``
+    undeclared and pass the sweep. Cause: it was keyed on
+    ``not requires_network``. Fix: key it on the field's name.
+    """
+
+    def test_needing_the_network_no_longer_hides_an_undeclared_path(self) -> None:
+        undeclared = Mock(spec=SourcePlugin)
+        undeclared.requires_network = True
+        undeclared.get_config_schema.return_value = [
+            ConfigField(name="library_folder", field_type=str)
+        ]
+        declared = Mock(spec=SourcePlugin)
+        declared.requires_network = True
+        declared.get_config_schema.return_value = [
+            ConfigField(name="library_folder", field_type=str, reads_path=True)
+        ]
+
+        assert _plugins_leaving_a_path_undeclared(
+            {"undeclared": undeclared, "declared": declared}
+        ) == {"undeclared": ["library_folder"]}
+
+
+class TestTheBuiltInSweepRefusesAnEmptyRegistry:
+    """Two sweeps above assert an absence, which no plugins satisfies.
+
+    A discovery that silently found nothing would leave both green with
+    containment gone, so the shared deriver refuses it.
+    """
+
+    def test_discovery_finding_nothing_raises_instead_of_sweeping_nothing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Patched rather than emptied: ``get_all_plugins`` runs discovery
+        # itself, so a fresh registry cannot be left holding nothing.
+        monkeypatch.setattr(PluginRegistry, "get_all_plugins", lambda self: {})
+
+        with pytest.raises(AssertionError, match="no built-in plugins"):
+            _builtin_plugins()
 
 
 class TestEveryNetworkPluginGuardsItsSecret:

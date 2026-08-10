@@ -5,7 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, final
 
 from src.models.config_field import ConfigField
 from src.models.content import ContentItem, ContentType
@@ -23,6 +23,26 @@ ProgressCallback = Callable[[int, int | None, str | None], None]
 # Called by plugins when an OAuth token is rotated during a sync operation.
 # Injected into plugin config as "_on_credential_rotated" by execute_sync.
 CredentialUpdateCallback = Callable[[str, str], None]
+
+# Framework-owned config keys are underscore-prefixed so they never collide
+# with a plugin's own fields: "_source_id" from config assembly,
+# "_on_credential_rotated" from execute_sync.
+FRAMEWORK_CONFIG_PREFIX = "_"
+
+# Both decide what a source is called, and execute_sync stores a rotated
+# credential under that answer, so an override would let one source overwrite
+# another's secret. Each entry names what to override instead.
+_FRAMEWORK_OWNED_METHODS = {
+    "transform_config": (
+        "must override transform_fields, not transform_config, which carries "
+        "the framework's own config keys across the plugin's transform."
+    ),
+    "get_source_identifier": (
+        "must override the name property, not get_source_identifier, which "
+        "answers with the id the user gave the source and decides both item "
+        "attribution and which source owns a rotated credential."
+    ),
+}
 
 
 @dataclass
@@ -286,22 +306,44 @@ class SourcePlugin(ABC):
         except (ValueError, TypeError):
             return None
 
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        # @final only reaches code mypy checks, and private plugins are neither
+        # checked nor in this repository. Refusing the override at class
+        # creation makes the mistake impossible rather than merely flagged.
+        super().__init_subclass__(**kwargs)
+        for method, guidance in _FRAMEWORK_OWNED_METHODS.items():
+            if method in cls.__dict__:
+                raise TypeError(f"{cls.__name__} {guidance}")
+
+    @final
     @classmethod
     def transform_config(cls, raw_config: dict[str, Any]) -> dict[str, Any]:
-        """Transform raw YAML config into the dict expected by fetch/validate.
+        """Build the config ``fetch`` receives, framework keys intact.
 
-        Override in subclasses when the YAML keys differ from the keys
-        that ``fetch()`` and ``validate_config()`` expect.  The default
-        implementation returns *raw_config* unchanged.
-
-        Args:
-            raw_config: The ``inputs.<source>`` section from the YAML config.
-
-        Returns:
-            Transformed config dict ready for ``validate_config`` / ``fetch``.
+        A plugin's :meth:`transform_fields` may return a fresh dict, so the
+        keys go back on afterwards: a lost ``_source_id`` reattributes the
+        source's items and rotated tokens to the plugin name.
         """
-        return dict(raw_config)
+        framework = {
+            key: value
+            for key, value in raw_config.items()
+            if key.startswith(FRAMEWORK_CONFIG_PREFIX)
+        }
+        fields = {
+            key: value for key, value in raw_config.items() if key not in framework
+        }
+        return {**cls.transform_fields(fields), **framework}
 
+    @classmethod
+    def transform_fields(cls, raw_fields: dict[str, Any]) -> dict[str, Any]:
+        """Transform the stored source fields into the keys this plugin reads.
+
+        Override when the stored keys differ from what ``fetch`` expects, or to
+        normalise values. Framework keys are not passed in and must not be added.
+        """
+        return dict(raw_fields)
+
+    @final
     def get_source_identifier(self, config: dict[str, Any] | None = None) -> str:
         """Get the source identifier to store in ContentItem.source.
 
