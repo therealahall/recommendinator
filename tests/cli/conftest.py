@@ -36,6 +36,7 @@ def _cli_patches():
         patch("src.cli.main.create_recommendation_engine"),
         patch("src.cli.main.migrate_source_labels"),
         patch("src.cli.main.migrate_source_config_plugins"),
+        patch("src.cli.main.migrate_source_attribution"),
     )
 
 
@@ -61,7 +62,15 @@ def _invoke_with_mocks(
         engine: Pre-configured engine mock, for a command whose output is
             built from what the engine returns (default: a bare mock)
     """
-    p_config, p_storage, p_llm, p_engine, p_labels, p_plugins = _cli_patches()
+    (
+        p_config,
+        p_storage,
+        p_llm,
+        p_engine,
+        p_labels,
+        p_plugins,
+        p_attribution,
+    ) = _cli_patches()
     with (
         p_config as mock_load,
         p_storage as mock_storage_fn,
@@ -69,6 +78,7 @@ def _invoke_with_mocks(
         p_engine as mock_engine_fn,
         p_labels,
         p_plugins,
+        p_attribution,
     ):
         mock_load.return_value = config or {}
         back_mock_settings_store(mock_storage)

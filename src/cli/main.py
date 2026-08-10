@@ -29,6 +29,7 @@ from src.cli.config import (
 from src.storage.global_secrets import migrate_config_secrets
 from src.storage.settings_migration import migrate_config_settings
 from src.storage.source_migration import (
+    migrate_source_attribution,
     migrate_source_config_plugins,
     migrate_source_labels,
 )
@@ -80,6 +81,9 @@ def cli(ctx: click.Context, config: Path | None) -> None:
     # they never run ``update`` (the web app runs both on startup/reload).
     migrate_source_labels(ctx.obj["storage"])
     migrate_source_config_plugins(ctx.obj["storage"])
+    # After the plugin relabel, so a source config that still said
+    # ``goodreads`` is matched under the name the registry now serves.
+    migrate_source_attribution(ctx.obj["config"], ctx.obj["storage"])
 
 
 # Register commands

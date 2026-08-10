@@ -23,6 +23,7 @@ from src.storage.credential_migration import migrate_config_credentials
 from src.storage.global_secrets import migrate_config_secrets
 from src.storage.settings_migration import migrate_config_settings
 from src.storage.source_migration import (
+    migrate_source_attribution,
     migrate_source_config_plugins,
     migrate_source_labels,
 )
@@ -227,6 +228,10 @@ def reload_config() -> bool:
                 # the plugin rename
                 migrate_source_labels(app_state.storage)
                 migrate_source_config_plugins(app_state.storage)
+                # A reload is how a renamed or removed source arrives, and the
+                # pass keeps rerunning until one of those lands, so it belongs
+                # here as much as at boot.
+                migrate_source_attribution(config, app_state.storage)
                 migrate_config_secrets(config, app_state.storage)
             app_state.config = config
         logger.info("Reloaded config from %s", config_path)

@@ -33,16 +33,17 @@ def test_cli_help_via_runner() -> None:
     assert "Recommendinator CLI" in result.output
 
 
-def test_non_update_command_runs_both_source_migrations() -> None:
-    """Both source migrations run on a non-update command (``status``).
+def test_non_update_command_runs_every_source_migration() -> None:
+    """All three source migrations run on a non-update command (``status``).
 
-    The rename migrations live on the top-level ``cli`` callback, so a CLI-only
-    user is migrated even when they never run ``update``. Each migration must
-    fire exactly once with the real storage instance.
+    They live on the top-level ``cli`` callback, so a CLI-only user is migrated
+    even without ``update``. Attribution's completion record hides a deleted
+    call from any later side effect.
     """
     mock_storage = MagicMock(spec=StorageManager)
+    config: dict[str, Any] = {}
     with (
-        patch("src.cli.main.load_config", return_value={}),
+        patch("src.cli.main.load_config", return_value=config),
         patch("src.cli.main.create_storage_manager", return_value=mock_storage),
         patch(
             "src.cli.main.create_llm_components",
@@ -58,6 +59,7 @@ def test_non_update_command_runs_both_source_migrations() -> None:
         ),
         patch("src.cli.main.migrate_source_labels") as spy_labels,
         patch("src.cli.main.migrate_source_config_plugins") as spy_plugins,
+        patch("src.cli.main.migrate_source_attribution") as spy_attribution,
         patch(
             "src.cli.commands.importlib.metadata.version",
             return_value="0.6.0",
@@ -68,6 +70,7 @@ def test_non_update_command_runs_both_source_migrations() -> None:
     assert result.exit_code == 0, result.output
     spy_labels.assert_called_once_with(mock_storage)
     spy_plugins.assert_called_once_with(mock_storage)
+    spy_attribution.assert_called_once_with(config, mock_storage)
 
 
 def test_update_does_not_double_invoke_source_migrations(
