@@ -1,5 +1,7 @@
 """Tests for CLI library commands."""
 
+import csv
+import io
 import json
 from datetime import date
 from pathlib import Path
@@ -1487,3 +1489,29 @@ class TestLibraryExport:
         mock_storage.get_content_items.assert_called_once()
         call_kwargs = mock_storage.get_content_items.call_args[1]
         assert call_kwargs["include_ignored"] is True
+
+    def test_export_guards_a_formula_title_regression(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """The CLI writes the same neutralised cell the web export does.
+
+        Every other test here mocks the exporter out, so nothing else proves
+        the CLI reaches the guarded writer.
+        """
+        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage.get_content_items.return_value = [
+            _make_item(db_id=1, title='=HYPERLINK("http://evil","x")')
+        ]
+        output_path = tmp_path / "books.csv"
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["library", "export", "--type", "book", "--output", str(output_path)],
+            mock_storage,
+        )
+
+        rows = list(
+            csv.DictReader(io.StringIO(output_path.read_text(encoding="utf-8")))
+        )
+        assert result.exit_code == 0
+        assert rows[0]["title"] == '\'=HYPERLINK("http://evil","x")'

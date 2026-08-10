@@ -82,6 +82,21 @@ anything ignored since. That is the bulk un-ignore path, and it makes an export 
 snapshot rather than a patch. Never leave a one-off export configured as a
 standing source, or every later sync re-applies the same stale snapshot.
 
+### A cell opening with `=`, `+`, `-` or `@`
+
+A spreadsheet reads one as a formula, and a title or genre can be text a
+metadata provider supplied, so the export writes the cell behind an apostrophe:
+`=1+1` becomes `'=1+1`. A tab or a carriage return is guarded the same way.
+
+The import strips that apostrophe off any cell with a formula character right
+behind it, whoever wrote the file. The round trip is therefore not quite
+lossless: a title that really is `'=1+1` exports unchanged and comes back as
+`=1+1`, and a genre of `'-ish` in a CSV from elsewhere is stored as `-ish`. The
+two are the same bytes, so nothing can tell them apart. No spreadsheet sees
+either unguarded, because the next export puts the apostrophe back.
+
+An apostrophe with anything else behind it is left alone.
+
 ## Development
 
 - Implementation: [`generic_csv.py`](generic_csv.py)

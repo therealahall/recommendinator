@@ -1091,6 +1091,373 @@ class TestShippedTemplatesCarryTheExportColumns:
         assert sorted(header) == sorted(_exported_header(content_type))
 
 
+class TestCsvFormulaGuard:
+    """Bug: the CSV writer emitted every cell verbatim, so a title from TMDB
+    or RAWG opened in a spreadsheet as a live formula. Fix: an apostrophe
+    guards a leading formula character, and the CSV import strips it.
+    """
+
+    @pytest.mark.parametrize(
+        "payload",
+        ['=HYPERLINK("http://evil","x")', "+1+1", "-1+1", "@SUM(A1)", "\tA1"],
+        ids=["equals", "plus", "minus", "at", "tab"],
+    )
+    def test_a_formula_title_is_written_behind_an_apostrophe_regression(
+        self, payload: str
+    ) -> None:
+        """Every character a spreadsheet reads as "formula follows"."""
+        item = ContentItem(
+            id="formula",
+            title=payload,
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        )
+
+        rows = list(
+            csv.DictReader(io.StringIO(export_items_csv([item], ContentType.BOOK)))
+        )
+
+        assert rows[0]["title"] == f"'{payload}"
+
+    def test_every_text_column_is_guarded_not_just_the_title_regression(self) -> None:
+        """The guard sits at the write site, so no column can be missed.
+
+        The creator column is the one PR-1b widened: a game's ``developer``
+        cell was blank before it and could carry nothing.
+        """
+        item = ContentItem(
+            id="formula-columns",
+            title="=1+1",
+            author="+2+2",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+            review="@SUM(A1)",
+            metadata={
+                "notes": "-1+1",
+                "genres": ['=WEBSERVICE("http://evil")'],
+                "platforms": ["@PC"],
+            },
+        )
+
+        rows = list(
+            csv.DictReader(
+                io.StringIO(export_items_csv([item], ContentType.VIDEO_GAME))
+            )
+        )
+
+        assert rows[0]["title"] == "'=1+1"
+        assert rows[0]["developer"] == "'+2+2"
+        assert rows[0]["review"] == "'@SUM(A1)"
+        assert rows[0]["notes"] == "'-1+1"
+        assert rows[0]["genre"] == '\'=WEBSERVICE("http://evil")'
+        assert rows[0]["platform"] == "'@PC"
+
+    def test_an_ordinary_row_is_written_exactly_as_before(self) -> None:
+        """Only a leading formula character is touched."""
+        item = ContentItem(
+            id="ordinary",
+            title="Mission: Impossible",
+            author="Brian De Palma",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.COMPLETED,
+            rating=4,
+            review="Best-in-class stunt work",
+        )
+
+        rows = list(
+            csv.DictReader(io.StringIO(export_items_csv([item], ContentType.MOVIE)))
+        )
+
+        assert rows[0]["title"] == "Mission: Impossible"
+        assert rows[0]["director"] == "Brian De Palma"
+        assert rows[0]["review"] == "Best-in-class stunt work"
+        assert rows[0]["rating"] == "4"
+
+    def test_the_json_export_carries_the_payload_raw(self) -> None:
+        """Nothing evaluates JSON, and the JSON importer strips nothing."""
+        item = ContentItem(
+            id="formula-json",
+            title='=HYPERLINK("http://evil","x")',
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        )
+
+        entries = json.loads(export_items_json([item], ContentType.BOOK))
+
+        assert entries[0]["title"] == '=HYPERLINK("http://evil","x")'
+
+    def test_a_guarded_row_re_imports_as_the_original_values_regression(
+        self, tmp_path: Path
+    ) -> None:
+        """The export/edit/re-import loop returns the text it started with."""
+        item = ContentItem(
+            id="formula-roundtrip",
+            title="=1+1",
+            author="+2+2",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+            review="@SUM(A1)",
+            metadata={"notes": "-1+1", "genres": ["=Action"], "platforms": ["@PC"]},
+        )
+        exported = tmp_path / "games.csv"
+        exported.write_text(
+            export_items_csv([item], ContentType.VIDEO_GAME), encoding="utf-8"
+        )
+
+        reimported = next(
+            CsvImportPlugin().fetch(
+                {"path": str(exported), "content_type": "video_game"}
+            )
+        )
+
+        assert reimported.title == "=1+1"
+        assert reimported.author == "+2+2"
+        assert reimported.review == "@SUM(A1)"
+        assert reimported.metadata["notes"] == "-1+1"
+        assert reimported.metadata["genres"] == ["=Action"]
+        assert reimported.metadata["platforms"] == ["@PC"]
+
+    def test_a_title_that_really_opens_with_a_quote_survives_the_round_trip(
+        self, tmp_path: Path
+    ) -> None:
+        """Only a quote with a formula character behind it is a guard."""
+        item = ContentItem(
+            id="apostrophe",
+            title="'Tis the Season",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        )
+        exported = tmp_path / "books.csv"
+        exported.write_text(
+            export_items_csv([item], ContentType.BOOK), encoding="utf-8"
+        )
+
+        rows = list(csv.DictReader(io.StringIO(exported.read_text(encoding="utf-8"))))
+        reimported = next(
+            CsvImportPlugin().fetch({"path": str(exported), "content_type": "book"})
+        )
+
+        assert rows[0]["title"] == "'Tis the Season"
+        assert reimported.title == "'Tis the Season"
+
+    def test_a_hand_written_csv_keeps_its_leading_formula_character(
+        self, tmp_path: Path
+    ) -> None:
+        """The strip undoes a guard; it never invents one."""
+        source = tmp_path / "books.csv"
+        source.write_text("title,status\n=1+1,unread\n", encoding="utf-8")
+
+        reimported = next(
+            CsvImportPlugin().fetch({"path": str(source), "content_type": "book"})
+        )
+
+        assert reimported.title == "=1+1"
+
+    @pytest.mark.parametrize("content_type", list(ContentType))
+    def test_each_content_type_round_trips_a_formula_in_every_text_column_regression(
+        self, content_type: ContentType, tmp_path: Path
+    ) -> None:
+        """The creator column is the one that differs per type.
+
+        A guard applied to a hardcoded column list would neutralise three
+        types and miss the fourth.
+        """
+        creator_column = CREATOR_FIELD[content_type.value]
+        item = ContentItem(
+            id=f"formula-{content_type.value}",
+            title="=1+1",
+            author="+2+2",
+            content_type=content_type,
+            status=ConsumptionStatus.UNREAD,
+            review="@SUM(A1)",
+            metadata={"notes": "-1+1", "genres": ["=Action"]},
+        )
+        exported = tmp_path / f"{content_type.value}.csv"
+        exported.write_text(export_items_csv([item], content_type), encoding="utf-8")
+
+        rows = list(csv.DictReader(io.StringIO(exported.read_text(encoding="utf-8"))))
+        reimported = next(
+            CsvImportPlugin().fetch(
+                {"path": str(exported), "content_type": content_type.value}
+            )
+        )
+
+        assert rows[0]["title"] == "'=1+1"
+        assert rows[0][creator_column] == "'+2+2"
+        assert rows[0]["review"] == "'@SUM(A1)"
+        assert rows[0]["notes"] == "'-1+1"
+        assert rows[0]["genre"] == "'=Action"
+        assert reimported.title == "=1+1"
+        assert reimported.author == "+2+2"
+        assert reimported.review == "@SUM(A1)"
+        assert reimported.metadata["notes"] == "-1+1"
+        assert reimported.metadata["genres"] == ["=Action"]
+
+    def test_a_second_export_of_a_re_imported_row_is_byte_identical(
+        self, tmp_path: Path
+    ) -> None:
+        """A strip that missed a case would leave the second file carrying
+        ``''=1+1``, and every later cycle would add another apostrophe.
+        """
+        item = ContentItem(
+            id="formula-stable",
+            title="=1+1",
+            author="-2-2",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        )
+        first = export_items_csv([item], ContentType.BOOK)
+        exported = tmp_path / "first.csv"
+        exported.write_text(first, encoding="utf-8")
+
+        reimported = next(
+            CsvImportPlugin().fetch({"path": str(exported), "content_type": "book"})
+        )
+
+        assert export_items_csv([reimported], ContentType.BOOK) == first
+
+    @pytest.mark.parametrize(
+        "title",
+        ["'", "''", "'42", "'Tis", "'—dash", "’=1+1", "a=1+1"],
+        ids=[
+            "bare-quote",
+            "double-quote",
+            "quote-digit",
+            "quote-letter",
+            "quote-em-dash",
+            "curly-quote-formula",
+            "formula-mid-string",
+        ],
+    )
+    def test_a_value_the_guard_does_not_own_is_written_and_read_verbatim(
+        self, title: str, tmp_path: Path
+    ) -> None:
+        """A curly apostrophe is the near miss: a spreadsheet evaluates
+        nothing behind it, so widening the check would rewrite ordinary text.
+        """
+        item = ContentItem(
+            id="not-a-guard",
+            title=title,
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        )
+        exported = tmp_path / "books.csv"
+        exported.write_text(
+            export_items_csv([item], ContentType.BOOK), encoding="utf-8"
+        )
+
+        rows = list(csv.DictReader(io.StringIO(exported.read_text(encoding="utf-8"))))
+        reimported = next(
+            CsvImportPlugin().fetch({"path": str(exported), "content_type": "book"})
+        )
+
+        assert rows[0]["title"] == title
+        assert reimported.title == title
+
+    def test_only_the_offending_row_of_a_mixed_export_is_guarded(self) -> None:
+        """One poisoned row must not change how its neighbours are written."""
+        items = [
+            ContentItem(
+                id="clean",
+                title="Dune",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            ),
+            ContentItem(
+                id="poisoned",
+                title="=1+1",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            ),
+        ]
+
+        rows = list(
+            csv.DictReader(io.StringIO(export_items_csv(items, ContentType.BOOK)))
+        )
+
+        assert [row["title"] for row in rows] == ["Dune", "'=1+1"]
+
+    def test_a_numeric_cell_is_left_as_a_number(self) -> None:
+        """Guarding a rating would make the column unsortable in a sheet."""
+        item = ContentItem(
+            id="numeric",
+            title="Dune",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=4,
+            metadata={"pages": 412, "year_published": 1965},
+        )
+
+        rows = list(
+            csv.DictReader(io.StringIO(export_items_csv([item], ContentType.BOOK)))
+        )
+
+        assert rows[0]["rating"] == "4"
+        assert rows[0]["pages"] == "412"
+        assert rows[0]["year_published"] == "1965"
+
+    def test_a_hand_written_csv_keeps_a_quote_the_guard_would_not_have_written(
+        self, tmp_path: Path
+    ) -> None:
+        """Import strips a guard, never an apostrophe that means something."""
+        source = tmp_path / "books.csv"
+        source.write_text("title,status\n'Salem's Lot,unread\n", encoding="utf-8")
+
+        reimported = next(
+            CsvImportPlugin().fetch({"path": str(source), "content_type": "book"})
+        )
+
+        assert reimported.title == "'Salem's Lot"
+
+    def test_a_quote_then_a_formula_character_is_read_back_as_a_guard(
+        self, tmp_path: Path
+    ) -> None:
+        """The one value the apostrophe scheme cannot tell apart.
+
+        Documented in the plugin README: the export leaves it alone and the
+        import takes it for a guard, so the leading quote is lost.
+        """
+        item = ContentItem(
+            id="quoted-formula",
+            title="'=1+1",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        )
+        exported = tmp_path / "books.csv"
+        exported.write_text(
+            export_items_csv([item], ContentType.BOOK), encoding="utf-8"
+        )
+
+        rows = list(csv.DictReader(io.StringIO(exported.read_text(encoding="utf-8"))))
+        reimported = next(
+            CsvImportPlugin().fetch({"path": str(exported), "content_type": "book"})
+        )
+
+        assert rows[0]["title"] == "'=1+1"
+        assert reimported.title == "=1+1"
+
+    def test_a_tab_led_title_comes_back_without_its_tab(self, tmp_path: Path) -> None:
+        """The import strips whitespace off every cell, guard or no guard."""
+        item = ContentItem(
+            id="tab-led",
+            title="\tAlpha",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        )
+        exported = tmp_path / "books.csv"
+        exported.write_text(
+            export_items_csv([item], ContentType.BOOK), encoding="utf-8"
+        )
+
+        rows = list(csv.DictReader(io.StringIO(exported.read_text(encoding="utf-8"))))
+        reimported = next(
+            CsvImportPlugin().fetch({"path": str(exported), "content_type": "book"})
+        )
+
+        assert rows[0]["title"] == "'\tAlpha"
+        assert reimported.title == "Alpha"
+
+
 class TestExportRoundtrip:
     """Tests that exported data can be re-imported identically."""
 
