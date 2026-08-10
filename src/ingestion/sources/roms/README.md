@@ -26,7 +26,7 @@ see the table below for what each one does.
 | `include_extensions` | list[str] | no | Extensions added to the built-in ROM extension list. Leading dot optional; case-insensitive. |
 | `exclude_extensions` | list[str] | no | Extensions removed from the built-in list. |
 | `exclude_names` | list[str] | no | Glob patterns matched against file or folder names to skip. Hidden dotfiles are always skipped. |
-| `extra_strip_patterns` | list[str] | no | Extra Python regex patterns appended to the title cleaner. Avoid unbounded repetition that could backtrack catastrophically. |
+| `extra_strip_patterns` | list[str] | no | Extra Python regex patterns appended to the title cleaner. At most 32 patterns of 200 characters each. Run time is not capped, so avoid unbounded repetition that could backtrack catastrophically. |
 
 Allowed roots default to `inputs/` and are set in `config.yaml` — see
 [SECURITY.md](../../../../docs/SECURITY.md#where-file-imports-may-read).

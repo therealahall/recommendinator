@@ -1,5 +1,6 @@
 """Tests for the RAWG enrichment provider."""
 
+import logging
 from typing import Any
 from unittest.mock import MagicMock, Mock, patch
 
@@ -851,3 +852,79 @@ class TestRAWGApiKeyScrubbingRegression:
         assert self._API_KEY not in message
         assert "key=" not in message
         assert "ConnectionError" in message
+
+
+class TestSearchTitleCannotForgeALogLineRegression:
+    """Reported: the search log writes ``item.title`` unescaped.
+
+    A title restricts no characters and the file formatter is single-line, so
+    a newline writes its own entry (CWE-117). Fix: ``log_search_title``.
+    """
+
+    _FORGED = "Real Game\nWARNING  | forged | line - GOTY Edition"
+
+    def test_a_newline_in_a_title_is_escaped_before_the_search_log(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Reached whenever cleaning changes the title, so every edition."""
+        provider = RAWGProvider()
+        item = ContentItem(
+            id="game1",
+            title=self._FORGED,
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+        )
+
+        with (
+            patch("src.enrichment.providers.rawg.rawg.requests.get") as mock_get,
+            caplog.at_level(logging.DEBUG, logger="src.enrichment.providers.rawg.rawg"),
+        ):
+            mock_get.return_value.json.return_value = {"results": []}
+            assert provider._search_game(item, "test-key") is None
+
+        assert "Real Game\\nWARNING" in caplog.text
+        assert self._FORGED not in caplog.text
+
+    def test_a_carriage_return_is_escaped_as_well_as_a_newline(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A lone CR ends a line for the readers that split on it."""
+        provider = RAWGProvider()
+        forged = "Real Game\rWARNING  | forged | line (Deluxe)"
+        item = ContentItem(
+            id="game1",
+            title=forged,
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+        )
+
+        with (
+            patch("src.enrichment.providers.rawg.rawg.requests.get") as mock_get,
+            caplog.at_level(logging.DEBUG, logger="src.enrichment.providers.rawg.rawg"),
+        ):
+            mock_get.return_value.json.return_value = {"results": []}
+            assert provider._search_game(item, "test-key") is None
+
+        assert "Real Game\\rWARNING" in caplog.text
+        assert forged not in caplog.text
+
+    def test_a_title_needing_no_cleaning_writes_no_line_to_escape(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The sink's early return, which the escaping cases never reach."""
+        provider = RAWGProvider()
+        item = ContentItem(
+            id="game1",
+            title="Hades",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+        )
+
+        with (
+            patch("src.enrichment.providers.rawg.rawg.requests.get") as mock_get,
+            caplog.at_level(logging.DEBUG, logger="src.enrichment.providers.rawg.rawg"),
+        ):
+            mock_get.return_value.json.return_value = {"results": []}
+            assert provider._search_game(item, "test-key") is None
+
+        assert "Cleaned title" not in caplog.text

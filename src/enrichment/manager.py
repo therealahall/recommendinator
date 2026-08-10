@@ -10,43 +10,25 @@ import json
 import logging
 import threading
 import time
+import traceback
 from dataclasses import dataclass, field
+from pathlib import PurePath
 from typing import TYPE_CHECKING, Any
 
 import requests
 
-from src.enrichment.provider_base import EnrichmentResult, ProviderError
+from src.enrichment.provider_base import EnrichmentResult
 from src.enrichment.rate_limiter import RateLimiter
 from src.enrichment.registry import EnrichmentRegistry, get_enrichment_registry
 from src.models.content import ContentItem, ContentType, get_enum_value
 from src.storage.global_secrets import read_secret
 from src.utils.request_errors import scrub_request_error
+from src.utils.text import sanitize_for_log
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
 
 logger = logging.getLogger(__name__)
-
-
-def _render_error(error: Exception) -> str:
-    """Render an exception for the user-facing status without leaking secrets.
-
-    ``requests`` exceptions can embed a request URL carrying an API key in its
-    query string. If a provider ever lets one escape unwrapped, stringifying it
-    here would leak that key into ``status.errors`` (surfaced by the web API and
-    CLI). Scrub those; keep the full message for all other exception types,
-    which carry no credential and whose detail aids debugging.
-
-    Args:
-        error: The caught exception to render.
-
-    Returns:
-        The scrubbed ``HTTP <status>`` / class name for request exceptions,
-        otherwise ``str(error)``.
-    """
-    if isinstance(error, requests.RequestException):
-        return scrub_request_error(error)
-    return str(error)
 
 
 # HTTP statuses that mean "ask again later" rather than "your request is
@@ -116,6 +98,21 @@ def _classify_failure(provider_name: str, error: Exception) -> _ProviderFailure:
         scrub_request_error(request_error),
         retryable=_is_retryable(request_error),
     )
+
+
+def _failure_site(error: BaseException) -> str:
+    """Name the code that raised *error*, without a path or a local.
+
+    A traceback cannot be logged here: its frames carry item titles and this
+    machine's absolute source paths. The innermost frame alone locates the
+    code and carries neither.
+    """
+    frames = traceback.extract_tb(error.__traceback__)
+    if not frames:
+        return "no traceback"
+    innermost = frames[-1]
+    file_name = sanitize_for_log(PurePath(innermost.filename).name)
+    return f"{file_name}:{innermost.lineno} in {innermost.name}"
 
 
 def _is_retryable(error: requests.RequestException) -> bool:
@@ -462,8 +459,15 @@ class EnrichmentManager:
             )
 
         except Exception as error:
-            rendered = _render_error(error)
-            logger.exception("Enrichment job failed with error: %s", rendered)
+            # No exc_info and no message: a traceback or a stringified error
+            # carries item titles, and ``status.errors`` is served to clients.
+            # The site is logged instead, so a bug is still locatable.
+            rendered = type(error).__name__
+            logger.error(
+                "Enrichment job failed with error: %s (%s)",
+                rendered,
+                _failure_site(error),
+            )
             with self._lock:
                 self._status.running = False
                 self._status.errors.append(f"Job error: {rendered}")
@@ -499,12 +503,16 @@ class EnrichmentManager:
         )
         content_type_str = get_enum_value(content_type)
 
+        # Titles come from imported files and POST /api/complete, neither of
+        # which restricts characters, so every one of them is escaped here.
+        safe_title = sanitize_for_log(item.title)
+
         logger.debug(
             "[ENRICHMENT] Processing %s %d/%d - %s",
             content_type_str,
             item_num,
             total,
-            item.title,
+            safe_title,
         )
 
         # Find providers for this content type
@@ -518,7 +526,7 @@ class EnrichmentManager:
         if not matching_providers:
             # No providers available for this content type
             logger.debug(
-                "[ENRICHMENT] No providers for %s: %s", content_type_str, item.title
+                "[ENRICHMENT] No providers for %s: %s", content_type_str, safe_title
             )
             self.storage_manager.mark_enrichment_complete(db_id, "none", "not_found")
             with self._lock:
@@ -543,7 +551,7 @@ class EnrichmentManager:
                     "[ENRICHMENT] Trying %s for %s: %s",
                     provider.name,
                     content_type_str,
-                    item.title,
+                    safe_title,
                 )
 
                 # Enrich
@@ -560,7 +568,7 @@ class EnrichmentManager:
                         content_type_str,
                         provider.name,
                         result.match_quality,
-                        item.title,
+                        safe_title,
                     )
                     with self._lock:
                         self._status.items_processed += 1
@@ -570,27 +578,20 @@ class EnrichmentManager:
                     logger.debug(
                         "[ENRICHMENT] %s returned not_found: %s",
                         provider.name,
-                        item.title,
+                        safe_title,
                     )
 
-            except ProviderError as error:
-                logger.warning(
-                    "[ENRICHMENT] Provider %s failed: %s", provider.name, error
-                )
-                failures.append(_classify_failure(provider.name, error))
-                with self._lock:
-                    self._status.errors.append(f"{provider.name}: {error.message}")
-
             except Exception as error:
-                rendered = _render_error(error)
+                # One branch for every exception, because a bare ValueError
+                # quoting the item's title leaked through the catch-all that
+                # used to sit beside the ProviderError one.
+                failure = _classify_failure(provider.name, error)
                 logger.warning(
-                    "[ENRICHMENT] Unexpected error from %s: %s",
-                    provider.name,
-                    rendered,
+                    "[ENRICHMENT] Provider %s failed: %s", provider.name, failure.reason
                 )
-                failures.append(_classify_failure(provider.name, error))
+                failures.append(failure)
                 with self._lock:
-                    self._status.errors.append(f"{provider.name}: {rendered}")
+                    self._status.errors.append(str(failure))
 
         if failures:
             reported = "; ".join(str(failure) for failure in failures)
@@ -603,7 +604,7 @@ class EnrichmentManager:
                 logger.info(
                     "[ENRICHMENT] Enrichment of %s failed, will retry: %s",
                     content_type_str,
-                    item.title,
+                    safe_title,
                 )
                 self.storage_manager.mark_enrichment_failed(db_id, reported)
                 with self._lock:
@@ -616,13 +617,13 @@ class EnrichmentManager:
             # whole library against a provider that answers none of it.
             logger.warning(
                 "[ENRICHMENT] Every provider rejected %s, not retrying: %s",
-                item.title,
+                safe_title,
                 reported,
             )
         else:
             # Every provider answered and none of them has this item
             logger.debug(
-                "[ENRICHMENT] No match found for %s: %s", content_type_str, item.title
+                "[ENRICHMENT] No match found for %s: %s", content_type_str, safe_title
             )
 
         self.storage_manager.mark_enrichment_complete(db_id, "none", "not_found")

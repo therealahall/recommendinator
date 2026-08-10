@@ -25,6 +25,7 @@ from src.llm.preference_prompts import (
     PREFERENCE_INTERPRETATION_SYSTEM_PROMPT,
     build_batch_interpretation_prompt,
 )
+from src.utils.text import sanitize_rule_text
 
 if TYPE_CHECKING:
     from src.llm.client import OllamaClient
@@ -347,13 +348,16 @@ class PatternBasedInterpreter:
     def interpret(self, rule: str) -> InterpretedPreference:
         """Interpret a single natural language rule.
 
+        Sanitized first: the keys below are cut from this string, and a
+        surrogate breaks whoever encodes it.
+
         Args:
             rule: The rule text to interpret.
 
         Returns:
             InterpretedPreference with extracted preferences.
         """
-        rule = rule.strip()
+        rule = sanitize_rule_text(rule)
         if not rule:
             return InterpretedPreference(
                 confidence=PatternConfidence.NONE,
@@ -578,7 +582,8 @@ class LLMPreferenceInterpreter:
         """Compute a cache key for a set of rules.
 
         Args:
-            rules: List of rule strings.
+            rules: Sanitized rule strings. A lone surrogate raises here: the
+                encode below cannot represent one.
 
         Returns:
             SHA256 hash of the sorted, joined rules.
@@ -721,16 +726,21 @@ class LLMPreferenceInterpreter:
                 interpretation_notes="No rules provided",
             )
 
+        # Sanitizing here rather than per consumer keeps the cache key, the
+        # prompt and the fallback reading one text. The key is computed
+        # outside the try below, so a raw surrogate raised past the fallback.
+        safe_rules = [sanitize_rule_text(rule) for rule in rules]
+
         # Check cache first
-        cache_key = self._compute_cache_key(rules)
+        cache_key = self._compute_cache_key(safe_rules)
         cached = self._get_cached(cache_key)
         if cached is not None:
-            logger.debug("Using cached interpretation for %d rules", len(rules))
+            logger.debug("Using cached interpretation for %d rules", len(safe_rules))
             return cached
 
         # Try LLM interpretation
         try:
-            prompt = build_batch_interpretation_prompt(rules)
+            prompt = build_batch_interpretation_prompt(safe_rules)
             response = self.client.generate_text(
                 prompt=prompt,
                 system_prompt=PREFERENCE_INTERPRETATION_SYSTEM_PROMPT,
@@ -740,9 +750,9 @@ class LLMPreferenceInterpreter:
 
             llm_result = self._parse_llm_response(response)
             if llm_result is not None and not llm_result.is_empty():
-                llm_result.original_rule = "; ".join(rules)
+                llm_result.original_rule = "; ".join(safe_rules)
                 self._save_to_cache(cache_key, llm_result)
-                logger.info("LLM interpreted %d custom rules", len(rules))
+                logger.info("LLM interpreted %d custom rules", len(safe_rules))
                 return llm_result
 
         except Exception as error:
@@ -751,7 +761,7 @@ class LLMPreferenceInterpreter:
             )
 
         # Fall back to pattern-based interpretation
-        pattern_result = self.pattern_interpreter.interpret_all(rules)
+        pattern_result = self.pattern_interpreter.interpret_all(safe_rules)
         if not pattern_result.is_empty():
             self._save_to_cache(cache_key, pattern_result)
         return pattern_result

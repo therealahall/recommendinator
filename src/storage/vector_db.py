@@ -9,6 +9,8 @@ import chromadb
 import numpy as np
 from chromadb.config import Settings
 
+from src.utils.text import exception_for_log, sanitize_for_log
+
 logger = logging.getLogger(__name__)
 
 
@@ -88,8 +90,15 @@ class VectorDB:
                     return result
                 return list(raw_embedding) if raw_embedding else None
             return None
-        except Exception:
-            logger.exception("Failed to get embedding for %s", content_id)
+        except Exception as error:
+            # A content id is a column of an imported file, and a traceback
+            # quoting it back is multi-line and unbounded. The rendered
+            # exception tells an unreachable server from a full disk.
+            logger.error(
+                "Failed to get embedding for %s: %s",
+                sanitize_for_log(content_id),
+                exception_for_log(error),
+            )
             return None
 
     def search_similar(
@@ -155,8 +164,8 @@ class VectorDB:
                         break
 
             return formatted_results
-        except Exception:
-            logger.exception("Vector search failed")
+        except Exception as error:
+            logger.error("Vector search failed: %s", exception_for_log(error))
             return []
 
     def delete_embedding(self, content_id: str) -> bool:
@@ -171,8 +180,12 @@ class VectorDB:
         try:
             self.collection.delete(ids=[content_id])
             return True
-        except Exception:
-            logger.exception("Failed to delete embedding for %s", content_id)
+        except Exception as error:
+            logger.error(
+                "Failed to delete embedding for %s: %s",
+                sanitize_for_log(content_id),
+                exception_for_log(error),
+            )
             return False
 
     def has_embedding(self, content_id: str) -> bool:
@@ -187,8 +200,12 @@ class VectorDB:
         try:
             results = self.collection.get(ids=[content_id])
             return len(results["ids"]) > 0
-        except Exception:
-            logger.exception("Failed to check embedding for %s", content_id)
+        except Exception as error:
+            logger.error(
+                "Failed to check embedding for %s: %s",
+                sanitize_for_log(content_id),
+                exception_for_log(error),
+            )
             return False
 
     def count_embeddings(self) -> int:
@@ -199,6 +216,6 @@ class VectorDB:
         """
         try:
             return self.collection.count()
-        except Exception:
-            logger.exception("Failed to count embeddings")
+        except Exception as error:
+            logger.error("Failed to count embeddings: %s", exception_for_log(error))
             return 0

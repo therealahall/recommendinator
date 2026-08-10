@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
 from src.ingestion.plugin_base import SourceError, SourcePlugin
+from src.ingestion.sources.roms._rom_title import (
+    _MAX_PATTERN_COUNT,
+    _MAX_PATTERN_LENGTH,
+)
 from src.ingestion.sources.roms.roms import (
     DEFAULT_EXTENSIONS,
     RomScannerPlugin,
@@ -123,6 +128,41 @@ class TestRomScannerValidation:
         )
         assert any("extra_strip_patterns" in error for error in errors)
 
+    def test_too_many_extra_strip_patterns(
+        self, plugin: RomScannerPlugin, rom_dir: Path
+    ) -> None:
+        errors = plugin.validate_config(
+            {"paths": [str(rom_dir)], "extra_strip_patterns": ["x"] * 33}
+        )
+        assert any("extra_strip_patterns" in error for error in errors)
+
+    def test_extra_strip_patterns_at_count_cap_accepted(
+        self, plugin: RomScannerPlugin, rom_dir: Path
+    ) -> None:
+        """A cap that rejected its own limit would be a cap of 31."""
+        errors = plugin.validate_config(
+            {"paths": [str(rom_dir)], "extra_strip_patterns": ["x"] * 32}
+        )
+        assert errors == []
+
+    def test_count_rejection_reads_like_the_length_rejection(
+        self, plugin: RomScannerPlugin, rom_dir: Path
+    ) -> None:
+        """Both caps reach the user through one message shape, so both are fixable.
+
+        A count error phrased differently would be a second thing to recognise
+        in the source-config form for no gain.
+        """
+        prefix = "Invalid 'extra_strip_patterns' entry: "
+        by_count = plugin.validate_config(
+            {"paths": [str(rom_dir)], "extra_strip_patterns": ["x"] * 33}
+        )
+        by_length = plugin.validate_config(
+            {"paths": [str(rom_dir)], "extra_strip_patterns": ["a" * 201]}
+        )
+        assert by_count == [f"{prefix}Pattern list exceeds 32 entries (33)"]
+        assert by_length[0].startswith(prefix)
+
     def test_include_extensions_must_be_list(
         self, plugin: RomScannerPlugin, rom_dir: Path
     ) -> None:
@@ -194,6 +234,57 @@ class TestRomScannerValidation:
             }
         )
         assert any("extra_strip_patterns" in error for error in errors)
+
+
+# Any plausible rewording of the disclaimer, since only its claim is
+# load bearing.
+_UNCAPPED_RUN_TIME = re.compile(
+    r"run ?time is (not (capped|bounded|limited)|unbounded|uncapped)",
+    re.IGNORECASE,
+)
+
+
+class TestExtraStripPatternLimitsAreDocumented:
+    """A cap a user cannot see is a rejection they cannot plan around.
+
+    Both surfaces are pinned to the constants, so raising one cap cannot leave
+    the other number behind as a lie.
+    """
+
+    def _readme_row(self) -> str:
+        readme = (Path(__file__).parent / "README.md").read_text(encoding="utf-8")
+        return next(
+            line
+            for line in readme.splitlines()
+            if line.startswith("| `extra_strip_patterns`")
+        )
+
+    def _schema_description(self, plugin: RomScannerPlugin) -> str:
+        field = next(
+            f for f in plugin.get_config_schema() if f.name == "extra_strip_patterns"
+        )
+        return field.description
+
+    def test_config_schema_states_both_caps(self, plugin: RomScannerPlugin) -> None:
+        description = self._schema_description(plugin)
+        assert str(_MAX_PATTERN_COUNT) in description
+        assert str(_MAX_PATTERN_LENGTH) in description
+
+    def test_readme_states_both_caps(self) -> None:
+        row = self._readme_row()
+        assert str(_MAX_PATTERN_COUNT) in row
+        assert str(_MAX_PATTERN_LENGTH) in row
+
+    def test_neither_surface_claims_run_time_is_bounded(
+        self, plugin: RomScannerPlugin
+    ) -> None:
+        """Python's ``re`` takes no timeout, so a time bound would be a false promise.
+
+        A rewrite that drops the disclaimer while listing two caps reads as
+        ReDoS solved here, and it is not.
+        """
+        for text in (self._schema_description(plugin), self._readme_row()):
+            assert _UNCAPPED_RUN_TIME.search(text), text
 
 
 class TestRomScannerFetchExtensionFiltering:
@@ -317,6 +408,17 @@ class TestRomScannerFetchTitleCleaning:
                         "paths": [str(rom_dir)],
                         "extra_strip_patterns": ["[unclosed"],
                     }
+                )
+            )
+
+    def test_too_many_extra_strip_patterns_raises_in_fetch(
+        self, plugin: RomScannerPlugin, rom_dir: Path
+    ) -> None:
+        """A stored config predating the cap must not scan with it exceeded."""
+        with pytest.raises(SourceError, match="exceeds 32 entries"):
+            list(
+                plugin.fetch(
+                    {"paths": [str(rom_dir)], "extra_strip_patterns": ["x"] * 33}
                 )
             )
 

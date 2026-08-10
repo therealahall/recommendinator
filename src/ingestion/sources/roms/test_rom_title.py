@@ -217,6 +217,28 @@ class TestCompileExtraPatterns:
         with pytest.raises(ValueError, match="exceeds 200 chars"):
             compile_extra_patterns(["a" * 201])
 
+    def test_accepts_pattern_at_length_cap(self) -> None:
+        """The README promises 200 characters are usable, not that 200 is too many."""
+        assert len(compile_extra_patterns(["a" * 200])) == 1
+
+    def test_rejects_list_exceeding_count_cap(self) -> None:
+        """Per-title regex work is bounded by capping how many may be supplied."""
+        with pytest.raises(ValueError, match="exceeds 32 entries"):
+            compile_extra_patterns(["x"] * 33)
+
+    def test_accepts_list_at_count_cap(self) -> None:
+        """The cap is a ceiling, not an off-by-one rejection."""
+        assert len(compile_extra_patterns(["x"] * 32)) == 32
+
+    def test_count_is_checked_before_any_pattern_is_compiled(self) -> None:
+        """The cheap gate has to run first, or the cap bounds nothing it claims to."""
+        with pytest.raises(ValueError, match="exceeds 32 entries"):
+            compile_extra_patterns(["[unclosed"] * 33)
+
+    def test_counts_a_generator_without_losing_its_entries(self) -> None:
+        """The signature takes any iterable, and counting one can consume it."""
+        assert len(compile_extra_patterns(str(n) for n in range(32))) == 32
+
 
 class TestNormalizeTitleKey:
     def test_lowercases(self) -> None:

@@ -352,6 +352,22 @@ class TestPatternBasedInterpreter:
         assert "comedy" in result.original_rule
 
 
+class TestNothingCutFromARuleCarriesItsRawTextRegression:
+    """Reported: the engine's log line for interpreted rules went missing.
+
+    Bug: a control character in a rule reached the genre keys.
+    Cause: ``interpret`` only stripped whitespace.
+    Fix: it sanitizes, so everything cut from a rule is encodable.
+    """
+
+    @pytest.mark.parametrize("raw", ["\udc80", "\x1b", "\x00", '"'])
+    def test_a_penalised_genre_holds_none_of_it(self, raw: str) -> None:
+        result = PatternBasedInterpreter().interpret(f"avoid {raw}horror")
+
+        assert result.genre_penalties == {"horror": 1.0}
+        assert result.original_rule == "avoid horror"
+
+
 class TestGenreAliasesCoverage:
     """Tests to ensure genre aliases are reasonable."""
 

@@ -2,14 +2,22 @@
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
 from src.enrichment.manager import EnrichmentManager
+from src.enrichment.registry import EnrichmentRegistry
+from src.models.content import ContentType
 from src.storage.manager import StorageManager
 from src.web.enrichment_manager import reset_enrichment_manager
+from tests.enrichment.test_enrichment_manager import (
+    WrappedRequestErrorProvider,
+    http_error,
+    save_movie,
+)
 from tests.factories import authenticated_client, booted_web_app
 
 
@@ -124,6 +132,42 @@ class TestEnrichmentStatus:
         assert response.status_code == 200
         data = response.json()
         assert data["running"] is False
+
+    def test_a_wrapped_provider_error_reaches_the_wire_derived(
+        self, tmp_path: Path
+    ) -> None:
+        """Closes the chain from the manager's scrub to the body an operator reads.
+
+        ``TestEnrichmentStatusApiKeyScrubbingRegression`` pins the manager end.
+        """
+        storage = StorageManager(sqlite_path=tmp_path / "test.db", ai_enabled=False)
+        save_movie(storage)
+        registry = EnrichmentRegistry()
+        registry._discovered = True
+        registry.register(
+            WrappedRequestErrorProvider(
+                http_error(401), message="GET ?api_key=SECRET_KEY_123 failed"
+            )
+        )
+        config = {
+            "enrichment": {
+                "batch_size": 10,
+                "providers": {"wrapped_request": {"enabled": True}},
+            }
+        }
+        manager = EnrichmentManager(storage, config, registry)
+        manager.start_enrichment(content_type=ContentType.MOVIE)
+        assert manager._wait_for_completion()
+
+        with (
+            _client(MagicMock(spec=StorageManager), config) as client,
+            patch("src.web.api.get_enrichment_manager", return_value=manager),
+        ):
+            response = client.get("/api/enrichment/status")
+
+        assert response.status_code == 200
+        assert response.json()["errors"] == ["wrapped_request: HTTP 401"]
+        assert "SECRET_KEY_123" not in response.text
 
 
 class TestEnrichmentStats:

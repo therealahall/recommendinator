@@ -37,11 +37,13 @@ _INLINE_NOISE = [
 # "Some Game (USA) (Beta)" and the trailing-paren regex can match.
 _UNDERSCORE_RUN = re.compile(r"_+")
 
-# Cap on user-supplied regex string length. A bound on the input regex is the
-# pragmatic mitigation for ReDoS in a single-user tool: Python's re engine
-# has no timeout, but pathological backtracking patterns are typically much
-# longer than legitimate ones. Tested filenames are also NAME_MAX-bounded.
+# Caps on user-supplied regex: length here, count below. Execution time stays
+# unbounded — Python's re takes no timeout — so these make catastrophic
+# backtracking harder to reach, not impossible.
 _MAX_PATTERN_LENGTH = 200
+
+# A stash spanning every console still needs only a handful of extra patterns.
+_MAX_PATTERN_COUNT = 32
 
 # Real-world chains rarely exceed 6 tail groups; the cap also bounds work
 # on adversarial input.
@@ -110,11 +112,17 @@ def _strip_trailing_groups(title: str) -> str:
 def compile_extra_patterns(patterns: Iterable[str]) -> list[re.Pattern[str]]:
     """Compile user-supplied regex strings.
 
-    Raises ``ValueError`` on the first invalid pattern (syntax error or
-    excessive length).
+    Raises ``ValueError`` if there are too many patterns, or on the first
+    invalid one (syntax error or excessive length).
     """
+    raw_patterns = list(patterns)
+    if len(raw_patterns) > _MAX_PATTERN_COUNT:
+        raise ValueError(
+            f"Pattern list exceeds {_MAX_PATTERN_COUNT} entries "
+            f"({len(raw_patterns)})"
+        )
     compiled: list[re.Pattern[str]] = []
-    for raw_pattern in patterns:
+    for raw_pattern in raw_patterns:
         if len(raw_pattern) > _MAX_PATTERN_LENGTH:
             raise ValueError(
                 f"Pattern exceeds {_MAX_PATTERN_LENGTH} chars "

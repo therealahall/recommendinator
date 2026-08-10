@@ -15,6 +15,7 @@ from urllib.parse import parse_qs, urlparse
 import requests
 
 from src.ingestion.sources.gog import GOG_CLIENT_ID, GOG_CLIENT_SECRET
+from src.utils.request_errors import scrub_request_error
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
@@ -125,8 +126,13 @@ def exchange_code_for_tokens(code: str) -> dict[str, Any]:
         return data
 
     except requests.RequestException as error:
-        logger.error("GOG token exchange request failed", exc_info=True)
-        raise GogAuthError("Failed to connect to GOG servers") from error
+        # The authorization code and client secret are query parameters here, so
+        # the URL inside ``error`` is a secret — it may reach neither the log nor
+        # the ``__cause__`` chain the CLI renders with ``exc_info=True``.
+        logger.error(
+            "GOG token exchange request failed: %s", scrub_request_error(error)
+        )
+        raise GogAuthError("Failed to connect to GOG servers") from None
 
 
 def save_gog_token(
@@ -146,7 +152,7 @@ def save_gog_token(
         storage.save_credential(user_id, "gog", "refresh_token", refresh_token)
         logger.info("Saved GOG refresh token to database")
     except Exception as error:
-        logger.error("Failed to save GOG token to database", exc_info=True)
+        logger.error("Failed to save GOG token to database: %s", type(error).__name__)
         raise GogAuthError("Failed to save GOG token") from error
 
 

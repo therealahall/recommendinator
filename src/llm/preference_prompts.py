@@ -1,5 +1,8 @@
 """Prompt templates for LLM-based preference interpretation."""
 
+from src.models.user_preferences import UserPreferenceConfig
+from src.utils.text import sanitize_rule_text
+
 PREFERENCE_INTERPRETATION_SYSTEM_PROMPT = """You are a preference interpretation assistant for a media recommendation system.
 Your task is to parse natural language preference rules into structured scoring adjustments.
 
@@ -25,6 +28,11 @@ Examples of valid genres: horror, science fiction, fantasy, romance, mystery, th
 For video games: rpg, fps, strategy, simulation, puzzle, platformer, roguelike, survival, etc."""
 
 
+def _sanitize_rule(rule: str) -> str:
+    """Cap a sanitized rule at the length its storage accepts."""
+    return sanitize_rule_text(rule)[: UserPreferenceConfig.MAX_CUSTOM_RULE_LENGTH]
+
+
 def build_preference_interpretation_prompt(rule: str) -> str:
     """Build a prompt for interpreting a natural language preference rule.
 
@@ -32,11 +40,11 @@ def build_preference_interpretation_prompt(rule: str) -> str:
         rule: The natural language rule to interpret.
 
     Returns:
-        Formatted prompt string.
+        Formatted prompt string with the rule sanitized.
     """
     return f"""Parse this preference rule into structured adjustments:
 
-"{rule}"
+"{_sanitize_rule(rule)}"
 
 Return a JSON object with exactly these fields:
 {{
@@ -60,9 +68,11 @@ def build_batch_interpretation_prompt(rules: list[str]) -> str:
         rules: List of natural language rules to interpret.
 
     Returns:
-        Formatted prompt string.
+        Formatted prompt string with every rule sanitized.
     """
-    rules_text = "\n".join(f'{i+1}. "{rule}"' for i, rule in enumerate(rules))
+    rules_text = "\n".join(
+        f'{index + 1}. "{_sanitize_rule(rule)}"' for index, rule in enumerate(rules)
+    )
 
     return f"""Parse these preference rules into a single combined result:
 

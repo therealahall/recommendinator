@@ -15,6 +15,7 @@ from src.enrichment.provider_base import (
     EnrichmentProvider,
     EnrichmentResult,
     ProviderError,
+    log_search_title,
 )
 from src.models.content import ContentItem, ContentType
 from src.utils.request_errors import scrub_request_error
@@ -258,10 +259,7 @@ class TMDBProvider(EnrichmentProvider):
             TMDB ID if found, None otherwise.
         """
         search_title = clean_media_title_for_search(item.title)
-        if search_title != item.title:
-            logger.debug(
-                "Cleaned title for search: '%s' -> '%s'", item.title, search_title
-            )
+        log_search_title(logger, item.title, search_title)
 
         params = {
             "api_key": api_key,
