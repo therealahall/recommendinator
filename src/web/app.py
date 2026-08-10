@@ -34,9 +34,11 @@ from src.storage.credential_migration import migrate_config_credentials
 from src.storage.global_secrets import migrate_config_secrets
 from src.storage.settings_migration import migrate_config_settings
 from src.storage.source_migration import (
+    migrate_source_attribution,
     migrate_source_config_plugins,
     migrate_source_labels,
 )
+from src.utils.text import exception_for_log
 from src.web.api import APP_VERSION
 from src.web.api import router as api_router
 from src.web.auth import require_api_token
@@ -65,19 +67,32 @@ def _quotable(value: float) -> float | str:
     return value if isfinite(value) else repr(value)
 
 
+def _renderable(value: str) -> str:
+    """``_quotable``'s sibling for text: a lone surrogate will not encode."""
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return repr(value)
+    return value
+
+
 async def _refusal_json_can_carry(_request: Request, exc: Exception) -> JSONResponse:
     """Answer 422 with a body ``JSONResponse`` can actually render.
 
-    ``json.loads`` accepts the ``Infinity`` and ``NaN`` literals and the
-    default handler quotes the rejected input back, so refusing a non-finite
-    number rendered as a 500 instead.
+    ``json.loads`` accepts ``Infinity``, ``NaN`` and an unpaired ``\\ud800``
+    escape, and the default handler quotes the rejected input back — so
+    refusing any of them rendered as a 500 instead.
     """
     # Starlette types every handler against bare Exception and dispatches this
     # one on the registered class alone.
     errors = cast(RequestValidationError, exc).errors()
     return JSONResponse(
         status_code=422,
-        content={"detail": jsonable_encoder(errors, custom_encoder={float: _quotable})},
+        content={
+            "detail": jsonable_encoder(
+                errors, custom_encoder={float: _quotable, str: _renderable}
+            )
+        },
     )
 
 
@@ -170,8 +185,12 @@ def configure_logging(config: dict) -> None:
     for handler in root_logger.handlers[:]:
         root_logger.removeHandler(handler)
 
-    # File handler with detailed format
-    file_handler = logging.FileHandler(log_path)
+    # UTF-8 by name, not by locale: a non-UTF-8 one silently drops every
+    # accented title. ``backslashreplace`` covers a sink that skipped
+    # ``sanitize_for_log`` — strict deletes the entry, not the character.
+    file_handler = logging.FileHandler(
+        log_path, encoding="utf-8", errors="backslashreplace"
+    )
     file_handler.setLevel(log_level)
     file_format = logging.Formatter(
         "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
@@ -180,7 +199,10 @@ def configure_logging(config: dict) -> None:
     file_handler.setFormatter(file_format)
     root_logger.addHandler(file_handler)
 
-    # Console handler with simpler format (for Docker logs)
+    # Simpler format: this stream is what `docker logs` shows. Its encoding
+    # stays the process's — PYTHONUTF8 is the operator's lever for stdout, and
+    # rewrapping it here would close the real stdout when the wrapper is
+    # collected.
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(log_level)
     console_format = logging.Formatter("%(levelname)s | %(name)s | %(message)s")
@@ -226,7 +248,7 @@ def create_app(config_path: Path | None = None) -> FastAPI:
     try:
         config = load_config(config_path)
     except FileNotFoundError as error:
-        logger.error("Config file not found: %s", error)
+        logger.error("Config file not found: %s", exception_for_log(error))
         raise
 
     # Outside the try below, so a missing token fails by name rather than as
@@ -281,6 +303,9 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         # plugin rename
         migrate_source_labels(storage)
         migrate_source_config_plugins(storage)
+        # After the plugin relabel, so a source config that still said
+        # ``goodreads`` is matched under the name the registry now serves.
+        migrate_source_attribution(config, storage)
 
         # Relocate global provider secrets (api keys) into encrypted storage,
         # stripping them from the in-memory plaintext config.
@@ -313,7 +338,7 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         # Cache a shared MemoryManager instance
         app_state.memory_manager = MemoryManager(storage)
     except Exception as error:
-        logger.error("Failed to initialize components: %s", error)
+        logger.error("Failed to initialize components: %s", exception_for_log(error))
         raise
 
     # Configure web settings. Guarded independently of migrate_config_settings:
@@ -425,7 +450,9 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         the SPA has not been built, returns a plain API-running message.
         """
         if dist_index.exists():
-            return HTMLResponse(content=dist_index.read_text())
+            # Vite writes UTF-8 and the response declares it; reading it in the
+            # locale's encoding answered 500 on the first accented byte.
+            return HTMLResponse(content=dist_index.read_text(encoding="utf-8"))
         # Only advertise /docs when it actually exists. docs_url/redoc_url/
         # openapi_url are all left unset unless debug_mode, so on a default
         # install this sentence pointed at a 404 — the sibling of the same fix
