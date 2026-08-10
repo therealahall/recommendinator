@@ -107,6 +107,29 @@ python3.11 -m src.cli source set my_books path inputs/goodreads_library_export.c
 Get a key at <https://steamcommunity.com/dev/apikey> and set your numeric Steam
 ID. **Make the profile public**, or the API returns nothing.
 
+### Source attribution at startup
+
+Six plugins once stored their items under the plugin name instead of the source
+id, splitting a library in two. Every startup and config reload tries to move
+those rows onto the source that owns them, and logs one of four lines. Each is
+said once per reason, so an edit that trades one obstacle for another says the
+new line. No row is ever deleted or merged, whichever line you get.
+
+- `Re-attributed 5 content item(s) from plugin name 'gog' to source 'my_gog'` —
+  it worked, nothing to do.
+- `Leaving 5 ... under plugin 'gog': a source is named after it but runs
+  'steam'` — your source called `gog` runs a different plugin, so its own rows
+  are spelled `gog` too. Rename it and the next startup hands all five rows to
+  the source that does run `gog` — the renamed source's own rows included, since
+  a rename relabels nothing. Its next sync takes back the ones still upstream.
+- `Leaving 5 ... under plugin 'gog': 2 sources share it ('gog_home',
+  'gog_work')` — nothing records which of them each row came from, and guessing
+  would mis-attribute real data. Remove one and the next startup moves the rows
+  onto the other.
+- `Leaving 5 ... under plugin 'gog': the source named after it runs it` — the
+  `gog` source spells its own rows `gog` by design, so nothing tells them from a
+  sibling's. There is no fix, and nothing is wrong.
+
 ### Duplicate items
 
 Items deduplicate by normalized title, so this is rare. When it happens the
