@@ -19,6 +19,7 @@ from src.ingestion.plugin_base import (
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.detail_fields import text_names
 from src.utils.progress import log_progress
+from src.utils.request_errors import scrub_request_error
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
@@ -72,10 +73,12 @@ def refresh_access_token(refresh_token: str) -> dict[str, str]:
             "refresh_token": str(data.get("refresh_token", refresh_token)),
         }
     except requests.RequestException as error:
-        logger.error("Error refreshing GOG access token: %s", error)
-        raise GogAPIError(
-            f"Failed to refresh access token: {type(error).__name__}"
-        ) from error
+        scrubbed = scrub_request_error(error)
+        logger.error("Error refreshing GOG access token: %s", scrubbed)
+        # The refresh token and client secret are query parameters here, so the
+        # URL inside ``error`` is a secret. Keeping it as ``__cause__`` would put
+        # it in every caller's ``exc_info=True`` traceback.
+        raise GogAPIError(f"Failed to refresh access token: {scrubbed}") from None
 
 
 def get_owned_games(
@@ -125,10 +128,13 @@ def get_owned_games(
                 time.sleep(rate_limit_seconds)
 
         except requests.RequestException as error:
-            logger.error("Error fetching GOG owned games (page %d): %s", page, error)
-            raise GogAPIError(
-                f"Failed to fetch owned games: {type(error).__name__}"
-            ) from error
+            scrubbed = scrub_request_error(error)
+            logger.error("Error fetching GOG owned games (page %d): %s", page, scrubbed)
+            # The access token rides in a header here, so the URL on ``error``
+            # holds no secret and the chain is kept for a caller logging
+            # ``exc_info=True``. The token refresh above breaks it instead,
+            # because its credentials are query parameters.
+            raise GogAPIError(f"Failed to fetch owned games: {scrubbed}") from error
 
     return all_products
 
@@ -155,10 +161,11 @@ def get_wishlist_product_ids(access_token: str) -> list[int]:
         wishlist = data.get("wishlist", {})
         return [int(product_id) for product_id in wishlist.keys()]
     except requests.RequestException as error:
-        logger.error("Error fetching GOG wishlist: %s", error)
-        raise GogAPIError(
-            f"Failed to fetch wishlist: {type(error).__name__}"
-        ) from error
+        scrubbed = scrub_request_error(error)
+        logger.error("Error fetching GOG wishlist: %s", scrubbed)
+        # Header-authenticated like the library call above, so the URL on
+        # ``error`` holds no secret and the chain is kept deliberately.
+        raise GogAPIError(f"Failed to fetch wishlist: {scrubbed}") from error
 
 
 def get_product_details(product_id: int) -> dict[str, Any] | None:
@@ -184,9 +191,12 @@ def get_product_details(product_id: int) -> dict[str, Any] | None:
         response.raise_for_status()
         return dict(response.json())
     except requests.RequestException as error:
-        logger.error("Error fetching GOG product %d: %s", product_id, error)
+        scrubbed = scrub_request_error(error)
+        logger.error("Error fetching GOG product %d: %s", product_id, scrubbed)
+        # Unauthenticated public endpoint, so nothing in the URL is a secret
+        # and the chain is kept deliberately.
         raise GogAPIError(
-            f"Failed to fetch product details for {product_id}: {type(error).__name__}"
+            f"Failed to fetch product details for {product_id}: {scrubbed}"
         ) from error
 
 
@@ -278,12 +288,12 @@ class GogPlugin(SourcePlugin):
         return True
 
     @classmethod
-    def transform_config(cls, raw_config: dict[str, Any]) -> dict[str, Any]:
-        """Normalise GOG YAML config (strip whitespace, apply defaults)."""
+    def transform_fields(cls, raw_fields: dict[str, Any]) -> dict[str, Any]:
+        """Normalise GOG config fields (strip whitespace, apply defaults)."""
         return {
-            "refresh_token": raw_config.get("refresh_token", "").strip(),
-            "include_wishlist": raw_config.get("include_wishlist", True),
-            "enrich_wishlist": raw_config.get("enrich_wishlist", True),
+            "refresh_token": raw_fields.get("refresh_token", "").strip(),
+            "include_wishlist": raw_fields.get("include_wishlist", True),
+            "enrich_wishlist": raw_fields.get("enrich_wishlist", True),
         }
 
     def get_config_schema(self) -> list[ConfigField]:

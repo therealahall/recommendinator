@@ -1,11 +1,30 @@
 """Abstract base class for enrichment providers."""
 
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
 from src.models.config_field import ConfigField
 from src.models.content import ContentItem, ContentType
+from src.utils.text import sanitize_for_log
+
+
+def log_search_title(
+    provider_logger: logging.Logger, original: str, cleaned: str
+) -> None:
+    """Record that a title was rewritten before searching, escaped.
+
+    Titles restrict no characters, and twice now a provider has grown its own
+    unescaped copy of this log (CWE-117). The sink lives here and nowhere else.
+    """
+    if cleaned == original:
+        return
+    provider_logger.debug(
+        "Cleaned title for search: '%s' -> '%s'",
+        sanitize_for_log(original),
+        sanitize_for_log(cleaned),
+    )
 
 
 @dataclass

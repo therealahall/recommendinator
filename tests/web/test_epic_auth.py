@@ -1,10 +1,13 @@
 """Tests for Epic Games OAuth authentication."""
 
 import logging
+import traceback
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
+from click.testing import CliRunner
 from legendary.models.exceptions import InvalidCredentialsError
 
 from src.storage.manager import StorageManager
@@ -17,6 +20,9 @@ from src.web.epic_auth import (
     is_epic_enabled,
     save_epic_token,
 )
+from tests.cli.conftest import _invoke_with_mocks
+
+EPIC_LOGGER = "src.web.epic_auth"
 
 
 class TestGetEpicAuthUrl:
@@ -134,7 +140,7 @@ class TestExchangeCodeForTokens:
         mock_api.start_session.side_effect = InvalidCredentialsError("bad_code")
         mock_epcapi_cls.return_value = mock_api
 
-        with caplog.at_level(logging.ERROR, logger="src.web.epic_auth"):
+        with caplog.at_level(logging.ERROR, logger=EPIC_LOGGER):
             with pytest.raises(EpicAuthError, match="Token exchange failed"):
                 exchange_code_for_tokens("bad_code")
 
@@ -204,6 +210,23 @@ class TestSaveEpicToken:
                 EpicAuthError, match="^Failed to save Epic Games token$"
             ):
                 save_epic_token(storage, "some_token")
+
+    def test_db_failure_logs_the_class_not_a_traceback(
+        self, storage: StorageManager, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Regression: this sink logged a traceback naming absolute source paths."""
+        with caplog.at_level(logging.ERROR, logger=EPIC_LOGGER):
+            with patch.object(
+                storage, "save_credential", side_effect=OSError("disk full")
+            ):
+                with pytest.raises(EpicAuthError):
+                    save_epic_token(storage, "some_token")
+
+        records = [record for record in caplog.records if record.name == EPIC_LOGGER]
+        assert [record.getMessage() for record in records] == [
+            "Failed to save Epic Games token to database: OSError"
+        ]
+        assert not any(record.exc_info for record in records)
 
 
 class TestIsEpicEnabled:
@@ -278,3 +301,102 @@ class TestHasEpicToken:
         config = {"inputs": {"epic_games": {"refresh_token": "config_token"}}}
 
         assert has_epic_token(config, storage=None) is True
+
+
+class TestEpicAuthTracebackRegression:
+    """Regression: both token-exchange sinks logged ``exc_info=True``.
+
+    A traceback of a ``legendary`` failure names absolute source paths and adds
+    nothing the exception class does not, so each sink logs the class instead.
+    """
+
+    @patch("src.web.epic_auth.EPCAPI")
+    def test_transport_failure_logs_the_class_not_a_traceback(
+        self, mock_epcapi_cls: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The broad handler catches whatever ``legendary``'s transport raises."""
+        mock_api = MagicMock()
+        mock_api.start_session.side_effect = ConnectionError("Connection refused")
+        mock_epcapi_cls.return_value = mock_api
+
+        with caplog.at_level(logging.ERROR, logger=EPIC_LOGGER):
+            with pytest.raises(EpicAuthError, match="Failed to connect"):
+                exchange_code_for_tokens("epic-auth-code-3f8a1c04d2")
+
+        records = [record for record in caplog.records if record.name == EPIC_LOGGER]
+        assert [record.getMessage() for record in records] == [
+            "Epic token exchange request failed: ConnectionError"
+        ]
+        assert not any(record.exc_info for record in records)
+
+    @patch("src.web.epic_auth.EPCAPI")
+    def test_invalid_credentials_logs_the_class_not_a_traceback(
+        self, mock_epcapi_cls: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A rejected code is the routine branch, and the least worth tracing."""
+        mock_api = MagicMock()
+        mock_api.start_session.side_effect = InvalidCredentialsError(
+            "errors.com.epicgames.account.oauth.authorization_code_not_found"
+        )
+        mock_epcapi_cls.return_value = mock_api
+
+        with caplog.at_level(logging.ERROR, logger=EPIC_LOGGER):
+            with pytest.raises(EpicAuthError, match="Token exchange failed"):
+                exchange_code_for_tokens("epic-auth-code-9b2e75f110")
+
+        records = [record for record in caplog.records if record.name == EPIC_LOGGER]
+        assert [record.getMessage() for record in records] == [
+            "Epic token exchange failed (InvalidCredentialsError)"
+        ]
+        assert not any(record.exc_info for record in records)
+
+
+class TestEpicAuthCredentialChain:
+    """Epic keeps ``from error`` where GOG needed ``from None``.
+
+    ``legendary`` posts the authorization code in the request body, so its
+    exceptions carry Epic's error code or the endpoint URL, never the code.
+    The CLI renders that whole chain.
+    """
+
+    @patch("src.cli.commands.is_epic_enabled", return_value=True)
+    @patch("requests.sessions.Session.post")
+    def test_cli_connect_logs_no_code_with_its_traceback(
+        self,
+        mock_post: MagicMock,
+        _mock_enabled: MagicMock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Only the transport is stubbed, so ``legendary`` raises its real error."""
+        code = "epic-auth-code-4d70c9b8e1"
+        response = MagicMock(spec=requests.Response)
+        response.status_code = 400
+        response.json.return_value = {
+            "errorCode": "errors.com.epicgames.account.oauth.authorization_code_not_found",
+            # An Epic that echoes the code back is what makes the assertions bite.
+            "errorMessage": f"Sorry, the authorization code {code} was not found",
+        }
+        mock_post.return_value = response
+
+        with caplog.at_level(logging.ERROR):
+            result = _invoke_with_mocks(
+                CliRunner(),
+                ["auth", "connect", "--source", "epic", "--no-browser"],
+                MagicMock(spec=StorageManager),
+                input_text=f"{code}\n",
+            )
+
+        assert mock_post.call_args.kwargs["data"]["code"] == code
+        assert code not in mock_post.call_args.args[0]
+        chained = [record for record in caplog.records if record.exc_info]
+        assert chained, "the CLI no longer logs a traceback, so this proves nothing"
+        rendered = "".join(
+            "".join(traceback.format_exception(*record.exc_info))
+            for record in chained
+            if record.exc_info
+        )
+        assert "InvalidCredentialsError" in rendered
+        assert "EpicAuthError: Token exchange failed" in rendered
+        assert code not in rendered
+        assert code not in caplog.text
+        assert result.exit_code != 0

@@ -15,7 +15,11 @@ from pathlib import Path
 
 import pytest
 
-from src.storage.merge import merge_detail_tables, merge_scalar_columns
+from src.storage.merge import (
+    _merge_detail_metadata,
+    merge_detail_tables,
+    merge_scalar_columns,
+)
 from src.storage.schema import create_schema
 
 
@@ -106,6 +110,29 @@ class TestVanishedRowGuard:
         row = cursor.fetchone()
         assert row["rating"] == 5
         assert row["updated_at"] == "2020-01-01 00:00:00"
+
+
+class TestMissingDetailRowGuard:
+    """A missing detail row skips the metadata merge instead of raising.
+
+    The helper is called directly because ``merge_detail_tables`` guards both
+    rows. The guard must be a branch: an ``assert`` vanishes under ``python
+    -O`` and the merge runs on None.
+    """
+
+    def test_missing_kept_detail_row_skips_merge(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        dup_id = _insert_show(conn, "dup", metadata=json.dumps({"award": "GOTY"}))
+
+        assert _merge_detail_metadata(None, _detail_row(conn, dup_id)) is None
+
+    def test_missing_duplicate_detail_row_skips_merge(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        keep_id = _insert_show(conn, "keep", metadata=json.dumps({"playtime": 40}))
+
+        assert _merge_detail_metadata(_detail_row(conn, keep_id), None) is None
 
 
 class TestNonDictKeptMetadataGuard:

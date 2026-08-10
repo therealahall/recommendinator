@@ -1,5 +1,6 @@
 """Tests for the OpenLibrary enrichment provider."""
 
+import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -366,3 +367,72 @@ class TestOpenLibraryProviderUnsupportedTypes:
 
         result = provider.enrich(item, {})
         assert result is None
+
+
+class TestSearchTitleCannotForgeALogLineRegression:
+    """Reported: the search log writes ``item.title`` unescaped.
+
+    A title restricts no characters and the file formatter is single-line, so
+    a newline writes its own entry (CWE-117). Fix: ``log_search_title``.
+    """
+
+    _FORGED = "Real Book\nWARNING  | forged | line (Bobiverse, #2)"
+
+    def test_a_newline_in_a_title_is_escaped_before_the_search_log(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Reached whenever cleaning changes the title, so every series."""
+        provider = OpenLibraryProvider()
+        item = ContentItem(
+            id="book1",
+            title=self._FORGED,
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        )
+
+        with (
+            patch(
+                "src.enrichment.providers.openlibrary.openlibrary.requests.get"
+            ) as mock_get,
+            caplog.at_level(
+                logging.DEBUG,
+                logger="src.enrichment.providers.openlibrary.openlibrary",
+            ),
+        ):
+            mock_get.return_value.json.return_value = {"docs": []}
+            assert provider._search_book(item).match_quality == "not_found"
+
+        assert "Real Book\\nWARNING" in caplog.text
+        assert self._FORGED not in caplog.text
+
+
+class TestIsbnLookupCannotForgeALogLineRegression:
+    """Same sink, second route: ``isbn`` is an imported metadata column.
+
+    The ``requests`` error it logs beside also embeds the URL built from it.
+    """
+
+    _FORGED = "978\nWARNING  | forged | line"
+
+    def test_a_newline_in_an_isbn_is_escaped_before_the_failure_log(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        provider = OpenLibraryProvider()
+
+        with (
+            patch(
+                "src.enrichment.providers.openlibrary.openlibrary.requests.get"
+            ) as mock_get,
+            caplog.at_level(
+                logging.WARNING,
+                logger="src.enrichment.providers.openlibrary.openlibrary",
+            ),
+        ):
+            mock_get.side_effect = requests.ConnectionError(
+                f"Failed to connect to /isbn/{self._FORGED}.json"
+            )
+            assert provider._lookup_by_isbn(self._FORGED) is None
+
+        assert "978\\nWARNING" in caplog.text
+        assert self._FORGED not in caplog.text
+        assert "ConnectionError" in caplog.text

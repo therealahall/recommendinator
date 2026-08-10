@@ -46,6 +46,8 @@ from src.ingestion.plugin_base import (
     SourcePlugin,
 )
 from src.ingestion.sources.roms._rom_title import (
+    _MAX_PATTERN_COUNT,
+    _MAX_PATTERN_LENGTH,
     clean_display_title,
     compile_extra_patterns,
     normalize_title_key,
@@ -291,8 +293,10 @@ class RomScannerPlugin(SourcePlugin):
                     "Optional Python regex patterns appended to the "
                     "built-in title cleaner via re.sub. Useful for "
                     "stripping site-specific tags the defaults miss. "
-                    "Avoid unbounded repetition that could backtrack "
-                    "catastrophically on long titles."
+                    f"At most {_MAX_PATTERN_COUNT} patterns of "
+                    f"{_MAX_PATTERN_LENGTH} characters each. Run time is "
+                    "not capped, so avoid unbounded repetition that could "
+                    "backtrack catastrophically on long titles."
                 ),
             ),
         ]

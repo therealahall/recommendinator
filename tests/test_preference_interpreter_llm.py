@@ -227,6 +227,48 @@ This captures the user's preference for mystery content."""
         assert "horror" in result.genre_boosts
 
 
+class TestARuleCannotRaiseOnTheWayToTheLLMRegression:
+    """Reported: a lone surrogate in a rule tracebacks the CLI.
+
+    Bug: ``UnicodeEncodeError`` escapes ``interpret_all``.
+    Cause: ``_compute_cache_key`` encodes raw rules, outside the fallback
+    ``try``; only the prompt builder sanitizes.
+    Fix: key the cache off sanitized rule text.
+    """
+
+    @pytest.mark.parametrize("raw", ["\udc80", "\ud800", "\udfff"])
+    def test_a_surrogate_rule_still_interprets(
+        self, llm_interpreter: LLMPreferenceInterpreter, raw: str
+    ) -> None:
+        llm_interpreter.client.generate_text.side_effect = Exception("LLM unavailable")
+
+        result = llm_interpreter.interpret_all([f"avoid {raw}horror"])
+
+        assert "horror" in result.genre_penalties
+
+
+class TestOnePromptGetsOneCacheEntryRegression:
+    """Reported: a cached rule was interpreted again.
+
+    Bug: two rules building one prompt miss each other's cache entry.
+    Cause: the key was cut from the raw rule, the prompt from the sanitized.
+    Fix: both come from the sanitized rule.
+    """
+
+    def test_rules_with_one_prompt_share_one_cache_key(
+        self,
+        llm_interpreter: LLMPreferenceInterpreter,
+        mock_storage_manager: MagicMock,
+    ) -> None:
+        llm_interpreter.client.generate_text.side_effect = Exception("LLM unavailable")
+        lookup = mock_storage_manager.get_cached_preference_interpretation
+
+        llm_interpreter.interpret_all(['avoid "horror"'])
+        llm_interpreter.interpret_all(["avoid \t horror"])
+
+        assert len({call.args[0] for call in lookup.call_args_list}) == 1
+
+
 class TestCacheSerialization:
     """Tests for cache serialization/deserialization."""
 

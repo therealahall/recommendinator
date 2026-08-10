@@ -16,6 +16,7 @@ from src.enrichment.provider_base import (
     EnrichmentProvider,
     EnrichmentResult,
     ProviderError,
+    log_search_title,
 )
 from src.models.content import ContentItem, ContentType
 from src.utils.request_errors import scrub_request_error
@@ -296,10 +297,7 @@ class RAWGProvider(EnrichmentProvider):
         """
         # Clean title to remove edition suffixes and trademark symbols
         search_title = clean_game_title_for_search(item.title)
-        if search_title != item.title:
-            logger.debug(
-                "Cleaned title for search: '%s' -> '%s'", item.title, search_title
-            )
+        log_search_title(logger, item.title, search_title)
 
         params: dict[str, str | int] = {
             "key": api_key,

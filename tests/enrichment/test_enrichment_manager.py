@@ -1,6 +1,7 @@
 """Tests for the enrichment manager."""
 
 import logging
+import re
 import threading
 import time
 from pathlib import Path
@@ -13,6 +14,7 @@ import requests
 from src.enrichment.manager import (
     EnrichmentJobStatus,
     EnrichmentManager,
+    _failure_site,
     merge_enrichment,
 )
 from src.enrichment.provider_base import (
@@ -701,19 +703,11 @@ class TestEnrichmentManager:
 
 
 class TestEnrichmentStatusApiKeyScrubbingRegression:
-    """Regression tests for an api_key leaking through status.errors.
+    """Regression: a provider's api_key reached ``status.errors``.
 
-    The provider raise sites already scrub ``requests`` exceptions, but the
-    manager's broad ``except Exception`` catch-alls stringify the raw error
-    into ``status.errors`` — which the web ``/enrichment/status`` endpoint and
-    CLI surface to users and logs. If a future provider ever lets a raw
-    ``requests.RequestException`` escape unwrapped (i.e. not inside
-    ``ProviderError``), the request URL — and the ``?api_key=<secret>`` it
-    carries — would leak there.
-
-    Fix: the catch-all sites render ``requests`` exceptions through
-    ``scrub_request_error`` (via ``_render_error``) while leaving genuine
-    non-request errors untouched, so they keep their useful detail.
+    ``GET /api/enrichment/status`` and the CLI surface that list. Both failure
+    branches fed it text a provider wrote. Fix: one branch, reporting the
+    description ``_classify_failure`` derives.
     """
 
     _API_KEY = "SECRET_MANAGER_KEY_123"
@@ -736,7 +730,10 @@ class TestEnrichmentStatusApiKeyScrubbingRegression:
         return {
             "enrichment": {
                 "batch_size": 10,
-                "providers": {"raw_request": {"enabled": True}},
+                "providers": {
+                    "raw_request": {"enabled": True},
+                    "wrapped_request": {"enabled": True},
+                },
             }
         }
 
@@ -786,6 +783,179 @@ class TestEnrichmentStatusApiKeyScrubbingRegression:
         assert "raw_request" in caplog.text, "expected the error to be logged"
         assert self._API_KEY not in caplog.text
         assert "api_key=" not in caplog.text
+
+    def test_a_wrapped_provider_message_does_not_leak_api_key_in_status(
+        self,
+        mock_storage: MagicMock,
+        mock_registry: EnrichmentRegistry,
+        config: dict[str, Any],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """The key a provider wrote into its own message reaches neither sink."""
+        item = ContentItem(
+            id="movie1",
+            title="The Matrix",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+        )
+        mock_storage.get_items_needing_enrichment.side_effect = [[(1, item)], []]
+        mock_storage.count_items_needing_enrichment.return_value = 1
+
+        mock_registry.register(WrappedRequestErrorProvider(self._http_error()))
+
+        manager = EnrichmentManager(mock_storage, config, mock_registry)
+        with caplog.at_level(logging.WARNING, logger="src.enrichment.manager"):
+            manager.start_enrichment()
+            manager._wait_for_completion()
+
+        status = manager.get_status()
+        assert status.errors, "expected the wrapped provider error to be recorded"
+        joined = " ".join(status.errors)
+        assert self._API_KEY not in joined
+        assert "api_key=" not in joined
+        assert "wrapped_request: HTTP 401" in joined
+
+        assert "wrapped_request" in caplog.text, "expected the error to be logged"
+        assert self._API_KEY not in caplog.text
+        assert "api_key=" not in caplog.text
+
+
+class TestAFailureCannotCarryTheItemsTitleRegression:
+    """Reported: scrubbing covered ``requests`` errors and nothing else.
+
+    A provider raising a plain exception put ``str(error)`` — the item's own
+    title, newlines and all — into the log and into ``status.errors``.
+    """
+
+    _FORGED = "Real Title\nWARNING  | forged | line"
+
+    @pytest.fixture
+    def mock_storage(self) -> MagicMock:
+        storage = MagicMock(spec=StorageManager)
+        storage.get_items_needing_enrichment.return_value = []
+        storage.count_items_needing_enrichment.return_value = 0
+        return storage
+
+    @pytest.fixture
+    def mock_registry(self) -> EnrichmentRegistry:
+        registry = EnrichmentRegistry()
+        registry._discovered = True
+        return registry
+
+    @pytest.fixture
+    def config(self) -> dict[str, Any]:
+        return {
+            "enrichment": {
+                "batch_size": 10,
+                "providers": {"raw_request": {"enabled": True}},
+            }
+        }
+
+    def test_a_non_request_exception_reports_its_type_not_its_message(
+        self,
+        mock_storage: MagicMock,
+        mock_registry: EnrichmentRegistry,
+        config: dict[str, Any],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        item = ContentItem(
+            id="movie1",
+            title=self._FORGED,
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+        )
+        mock_storage.get_items_needing_enrichment.side_effect = [[(1, item)], []]
+        mock_storage.count_items_needing_enrichment.return_value = 1
+        mock_registry.register(
+            RawRequestErrorProvider(ValueError(f"bad response for {self._FORGED}"))
+        )
+
+        manager = EnrichmentManager(mock_storage, config, mock_registry)
+        with caplog.at_level(logging.WARNING, logger="src.enrichment.manager"):
+            manager.start_enrichment()
+            manager._wait_for_completion()
+
+        joined = " ".join(manager.get_status().errors)
+        assert joined == "raw_request: ValueError"
+        assert "bad response" not in caplog.text
+        assert self._FORGED not in caplog.text
+
+    def test_a_job_level_failure_attaches_neither_traceback_nor_message(
+        self,
+        mock_storage: MagicMock,
+        mock_registry: EnrichmentRegistry,
+        config: dict[str, Any],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """``logger.exception`` here quoted every frame's locals' repr."""
+        mock_storage.count_items_needing_enrichment.side_effect = ValueError(
+            f"query failed for {self._FORGED}"
+        )
+
+        manager = EnrichmentManager(mock_storage, config, mock_registry)
+        with caplog.at_level(logging.ERROR, logger="src.enrichment.manager"):
+            manager.start_enrichment()
+            manager._wait_for_completion()
+
+        assert manager.get_status().errors == ["Job error: ValueError"]
+        assert "query failed" not in caplog.text
+        assert self._FORGED not in caplog.text
+        assert "Traceback" not in caplog.text
+
+    def test_a_job_level_failure_says_where_it_failed(
+        self,
+        mock_storage: MagicMock,
+        mock_registry: EnrichmentRegistry,
+        config: dict[str, Any],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Withholding the message left a bare class name nobody could act on."""
+
+        def _raise_inside_the_job(*_args: object, **_kwargs: object) -> int:
+            raise ValueError(f"query failed for {self._FORGED}")
+
+        mock_storage.count_items_needing_enrichment.side_effect = _raise_inside_the_job
+
+        manager = EnrichmentManager(mock_storage, config, mock_registry)
+        with caplog.at_level(logging.ERROR, logger="src.enrichment.manager"):
+            manager.start_enrichment()
+            manager._wait_for_completion()
+
+        assert re.search(
+            r"test_enrichment_manager\.py:\d+ in _raise_inside_the_job", caplog.text
+        ), "expected the log to locate the frame that raised"
+        assert str(Path(__file__).parent) not in caplog.text
+        assert self._FORGED not in caplog.text
+
+    def test_an_exception_carrying_no_traceback_still_renders(self) -> None:
+        """The site helper runs inside a handler, so it cannot raise itself."""
+        assert _failure_site(ValueError("never raised")) == "no traceback"
+
+    def test_the_site_names_the_frame_that_raised_not_its_caller(self) -> None:
+        """The outermost frame names the loop, which is never the bug."""
+
+        def _raised_here() -> None:
+            raise ValueError("boom")
+
+        def _called_it() -> None:
+            _raised_here()
+
+        with pytest.raises(ValueError) as caught:
+            _called_it()
+
+        site = _failure_site(caught.value)
+        assert site.endswith(" in _raised_here")
+        assert "_called_it" not in site
+
+    def test_the_site_carries_no_directory_component(self) -> None:
+        """A frame's filename is this machine's absolute path to the source."""
+        with pytest.raises(ValueError) as caught:
+            raise ValueError("boom")
+
+        site = _failure_site(caught.value)
+        assert site.startswith(f"{Path(__file__).name}:")
+        assert "/" not in site
+        assert str(Path(__file__).parent) not in site
 
 
 class TestEnrichmentProgressRegression:
@@ -1566,13 +1736,9 @@ class TestPersistedEnrichmentErrorIsDerived:
     derives — the provider name plus the HTTP status or transport error class
     ``requests`` reported — so it is bounded no matter what a provider writes.
 
-    Scope: the database is the sink under test here. The in-memory
-    ``status.errors`` list is a second, user-facing sink with a contract of its
-    own — it is returned verbatim by ``GET /api/enrichment/status`` and printed
-    by the CLI, and ``TestEnrichmentStatusApiKeyScrubbingRegression`` is what
-    pins it. So this test asserts only that the failure is still attributed
-    there, never the text of it: a provider's own words are not something this
-    class gets to declare safe.
+    Scope: the database is the sink under test. ``status.errors`` is a second
+    sink, pinned by ``TestEnrichmentStatusApiKeyScrubbingRegression``; asserted
+    here only for the secret's absence, since both now carry one description.
     """
 
     @pytest.fixture
@@ -1621,9 +1787,79 @@ class TestPersistedEnrichmentErrorIsDerived:
         assert status["enrichment_error"] == "wrapped_request: HTTP 503"
 
         job_status = manager.get_status()
-        assert any(
-            error.startswith("wrapped_request: ") for error in job_status.errors
-        ), "the failing provider must still be named in the job status"
+        joined = " ".join(job_status.errors)
+        assert "wrapped_request: HTTP 503" in joined
+        assert "super-secret-key" not in joined
+        assert "api_key=" not in joined
+
+
+class TestEnrichmentTitleCannotForgeALogLineRegression:
+    """Regression: an item title went to the log unescaped.
+
+    Titles come from imported files and ``POST /api/complete``, which restrict
+    no characters, and the file log formatter is single-line — so a newline
+    wrote what reads as its own entry (CWE-117).
+    """
+
+    _FORGED = "Real Title\nWARNING  | forged | line"
+
+    @pytest.fixture
+    def storage_manager(self, tmp_path: Path) -> StorageManager:
+        return StorageManager(sqlite_path=tmp_path / "test.db", ai_enabled=False)
+
+    @pytest.fixture
+    def registry(self) -> EnrichmentRegistry:
+        registry = EnrichmentRegistry()
+        registry._discovered = True
+        return registry
+
+    @pytest.fixture
+    def config(self) -> dict[str, Any]:
+        return {
+            "enrichment": {
+                "batch_size": 10,
+                "providers": {"mock": {"enabled": True}},
+            }
+        }
+
+    def test_a_newline_in_a_title_is_escaped_on_the_success_path(
+        self,
+        storage_manager: StorageManager,
+        registry: EnrichmentRegistry,
+        config: dict[str, Any],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """The enriched-item INFO line runs at the default level."""
+        save_movie(storage_manager, self._FORGED)
+        registry.register(MockProvider())
+
+        manager = EnrichmentManager(storage_manager, config, registry)
+        with caplog.at_level(logging.INFO, logger="src.enrichment.manager"):
+            manager.start_enrichment(content_type=ContentType.MOVIE)
+            assert manager._wait_for_completion()
+
+        assert "Real Title\\nWARNING" in caplog.text
+        assert self._FORGED not in caplog.text
+
+    def test_a_newline_in_a_title_is_escaped_on_the_rejected_path(
+        self,
+        storage_manager: StorageManager,
+        registry: EnrichmentRegistry,
+        config: dict[str, Any],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Every provider refusing the request logs the title at WARNING."""
+        config["enrichment"]["providers"]["wrapped_request"] = {"enabled": True}
+        save_movie(storage_manager, self._FORGED)
+        registry.register(WrappedRequestErrorProvider(http_error(404)))
+
+        manager = EnrichmentManager(storage_manager, config, registry)
+        with caplog.at_level(logging.WARNING, logger="src.enrichment.manager"):
+            manager.start_enrichment(content_type=ContentType.MOVIE)
+            assert manager._wait_for_completion()
+
+        assert "Real Title\\nWARNING" in caplog.text
+        assert self._FORGED not in caplog.text
 
 
 class TestEnrichmentFetchWindowRegression:

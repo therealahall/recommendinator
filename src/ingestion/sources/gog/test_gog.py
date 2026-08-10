@@ -1,5 +1,7 @@
 """Tests for GOG.com API integration."""
 
+import logging
+import traceback
 from unittest.mock import Mock, patch
 
 import pytest
@@ -7,6 +9,9 @@ import requests
 
 from src.ingestion.plugin_base import SourceError, SourcePlugin
 from src.ingestion.sources.gog.gog import (
+    GOG_AUTH_URL,
+    GOG_CLIENT_ID,
+    GOG_CLIENT_SECRET,
     GogAPIError,
     GogPlugin,
     get_multiple_product_details,
@@ -944,3 +949,128 @@ class TestGogPluginFetch:
             plugin.fetch({"refresh_token": "old_token", "include_wishlist": False})
         )
         assert len(items) == 1
+
+
+_EXPIRED_TOKEN = "gog-refresh-token-4f2c9a"
+
+
+def _expired_token_response() -> Mock:
+    """A GOG token-endpoint 401 whose text is the credential-bearing URL."""
+    response = Mock(spec=requests.Response)
+    response.status_code = 401
+    response.raise_for_status = Mock(
+        side_effect=requests.HTTPError(
+            "401 Client Error: Unauthorized for url: "
+            f"{GOG_AUTH_URL}?client_id={GOG_CLIENT_ID}"
+            f"&client_secret={GOG_CLIENT_SECRET}"
+            f"&grant_type=refresh_token&refresh_token={_EXPIRED_TOKEN}",
+            response=response,
+        )
+    )
+    return response
+
+
+def _unavailable_response(url: str) -> Mock:
+    """A 503 quoting its request URL, the way ``requests`` words one."""
+    response = Mock(spec=requests.Response)
+    response.status_code = 503
+    response.raise_for_status = Mock(
+        side_effect=requests.HTTPError(
+            f"503 Server Error: Service Unavailable for url: {url}",
+            response=response,
+        )
+    )
+    return response
+
+
+class TestGogRefreshTokenChainRegression:
+    """Regression: the refresh token reached the log via ``__cause__``.
+
+    A scrubbed message still left ``raise ... from error``, whose cause renders
+    the token URL under a caller's ``exc_info=True``. Fix: ``from None`` here,
+    chain kept where the cause is clean.
+    """
+
+    @patch("src.ingestion.sources.gog.gog.requests.get")
+    def test_refresh_traceback_omits_the_refresh_token(
+        self, mock_get: Mock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Nothing a caller can render off the raised error names the token."""
+        mock_get.return_value = _expired_token_response()
+
+        with caplog.at_level(logging.ERROR, logger="src.ingestion.sources.gog.gog"):
+            with pytest.raises(GogAPIError) as raised:
+                refresh_access_token(_EXPIRED_TOKEN)
+
+        rendered = "".join(traceback.format_exception(raised.value))
+        assert _EXPIRED_TOKEN not in rendered
+        assert GOG_CLIENT_SECRET not in rendered
+        assert str(raised.value) == "Failed to refresh access token: HTTP 401"
+        assert _EXPIRED_TOKEN not in caplog.text
+        assert "Error refreshing GOG access token: HTTP 401" in caplog.text
+
+    @patch("src.ingestion.sources.gog.gog.requests.get")
+    def test_fetch_traceback_omits_the_refresh_token(self, mock_get: Mock) -> None:
+        """The ``SourceError`` sync_manager logs carries a clean chain."""
+        mock_get.return_value = _expired_token_response()
+
+        with pytest.raises(SourceError) as raised:
+            list(GogPlugin().fetch({"refresh_token": _EXPIRED_TOKEN}))
+
+        rendered = "".join(traceback.format_exception(raised.value))
+        assert _EXPIRED_TOKEN not in rendered
+        assert GOG_CLIENT_SECRET not in rendered
+        assert str(raised.value) == "gog: Failed to refresh access token: HTTP 401"
+
+    @patch("src.ingestion.sources.gog.gog.requests.get")
+    def test_owned_games_keeps_its_clean_cause(self, mock_get: Mock) -> None:
+        """The library call authenticates by header, so the chain is diagnostic."""
+        mock_get.return_value = _unavailable_response(
+            "https://embed.gog.com/account/getFilteredProducts?mediaType=1&page=1"
+        )
+
+        with pytest.raises(GogAPIError) as raised:
+            get_owned_games("access-token")
+
+        assert isinstance(raised.value.__cause__, requests.HTTPError)
+        assert str(raised.value) == "Failed to fetch owned games: HTTP 503"
+
+    @patch("src.ingestion.sources.gog.gog.requests.get")
+    def test_wishlist_scrubs_its_fault_and_keeps_the_cause(
+        self, mock_get: Mock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Header-authenticated too, so the words go and the chain stays.
+
+        An HTTP fault, because a transport one scrubs to the class name it
+        already rendered: nothing failed while this handler logged whole.
+        """
+        mock_get.return_value = _unavailable_response(
+            "https://embed.gog.com/user/wishlist.json"
+        )
+
+        with caplog.at_level(logging.ERROR, logger="src.ingestion.sources.gog.gog"):
+            with pytest.raises(GogAPIError) as raised:
+                get_wishlist_product_ids("access-token")
+
+        assert isinstance(raised.value.__cause__, requests.HTTPError)
+        assert str(raised.value) == "Failed to fetch wishlist: HTTP 503"
+        assert "Error fetching GOG wishlist: HTTP 503" in caplog.messages
+
+    @patch("src.ingestion.sources.gog.gog.requests.get")
+    def test_product_details_scrubs_its_fault_and_keeps_the_cause(
+        self, mock_get: Mock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Nobody's secret rides in this URL: the products API takes no auth."""
+        mock_get.return_value = _unavailable_response(
+            "https://api.gog.com/products/1207658924?expand=description"
+        )
+
+        with caplog.at_level(logging.ERROR, logger="src.ingestion.sources.gog.gog"):
+            with pytest.raises(GogAPIError) as raised:
+                get_product_details(1207658924)
+
+        assert isinstance(raised.value.__cause__, requests.HTTPError)
+        assert str(raised.value) == (
+            "Failed to fetch product details for 1207658924: HTTP 503"
+        )
+        assert "Error fetching GOG product 1207658924: HTTP 503" in caplog.messages

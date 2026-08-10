@@ -395,22 +395,20 @@ def merge_scalar_columns(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -
 
 
 def _merge_detail_metadata(
-    keep_detail: sqlite3.Row, dup_detail: sqlite3.Row
+    keep_detail: sqlite3.Row | None, dup_detail: sqlite3.Row | None
 ) -> str | None:
-    """Merge metadata JSON from duplicate into kept detail row.
+    """Merge metadata JSON from the duplicate into the kept detail row.
 
-    Returns the merged JSON string, or None if the merge should be skipped
-    (e.g. duplicate has no metadata, or either side has unparseable/non-dict
-    metadata — in which case we preserve the kept row's data as-is).
-
-    Precondition: both arguments must be non-None sqlite3.Row objects.
-    The caller (merge_detail_tables) guards against None before calling.
-
-    Merge rule: existing keys take precedence; incoming fills gaps — except
-    ``seasons_watched_dates``, which merges per season keeping the later
-    watch date (see below).
+    Returns None when the merge must be skipped, leaving the kept row as-is.
+    Existing keys win, incoming fills gaps. ``seasons_watched_dates`` instead
+    keeps the later watch date per season.
     """
-    assert keep_detail is not None and dup_detail is not None
+    # merge_detail_tables already guards both rows, so this only fires if that
+    # guard regresses. Skipping matches every other degenerate case here: dedup
+    # leaves the kept row alone rather than aborting the whole merge.
+    if keep_detail is None or dup_detail is None:
+        return None
+
     dup_meta_raw = dup_detail["metadata"]
     if dup_meta_raw is None:
         return None

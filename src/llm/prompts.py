@@ -55,6 +55,18 @@ def _format_context_item(
     return f"- **{safe_title}**{series_tag}{author_text}{genre_tag}{review_text}\n"
 
 
+def _format_reference_titles(references: list[ContentItem]) -> str:
+    """Format reference items as the value of one ``Related:`` line.
+
+    Genre tags come along so the LLM knows each reference's actual genre
+    and doesn't invent settings or themes.
+    """
+    return ", ".join(
+        f"{sanitize_prompt_text(ref.title)}{format_genre_tag(ref)}"
+        for ref in references
+    )
+
+
 def _shuffle_items_by_rating_tier(items: list[ContentItem]) -> list[ContentItem]:
     """Sort by rating DESC and shuffle within same-rating groups for variety."""
     by_rating: dict[int, list[ContentItem]] = {}
@@ -494,8 +506,7 @@ def build_blurb_prompt(
         if per_item_references and ref_index < len(per_item_references):
             refs = per_item_references[ref_index]
             if refs:
-                ref_parts = [f"{ref.title}{format_genre_tag(ref)}" for ref in refs]
-                items_text += f"   Related: {', '.join(ref_parts)}\n"
+                items_text += f"   Related: {_format_reference_titles(refs)}\n"
 
     return f"""Write a 2-3 sentence blurb for each of these {content_type_name.lower()} picks explaining WHY it fits this person's taste.
 
@@ -558,12 +569,9 @@ def build_single_blurb_prompt(
     genre_tag = format_genre_tag(item)
     item_line = f"{safe_title}{author_text}{genre_tag}"
 
-    # Optional reference line (with genre tags so the LLM knows each
-    # reference's actual genre and doesn't invent settings or themes).
     ref_line = ""
     if references:
-        ref_parts = [f"{ref.title}{format_genre_tag(ref)}" for ref in references]
-        ref_line = f"\nRelated: {', '.join(ref_parts)}"
+        ref_line = f"\nRelated: {_format_reference_titles(references)}"
 
     return f"""Write a 2-3 sentence blurb explaining WHY this {content_type_name.lower()} pick fits this person's taste.
 
@@ -612,6 +620,9 @@ def build_content_description(item: ContentItem) -> str:
     if item.metadata:
         content_type_str = get_enum_value(item.content_type)
         if "pages" in item.metadata and content_type_str == "book":
-            parts.append(f"Pages: {item.metadata['pages']}")
+            # Nothing validates the page count on the way in, so a CSV import
+            # can put arbitrary text here.
+            safe_pages = sanitize_prompt_text(str(item.metadata["pages"]))
+            parts.append(f"Pages: {safe_pages}")
 
     return " | ".join(parts)

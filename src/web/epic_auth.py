@@ -109,9 +109,7 @@ def exchange_code_for_tokens(code: str) -> dict[str, Any]:
         return session_data
 
     except InvalidCredentialsError as error:
-        logger.error(
-            "Epic token exchange failed (InvalidCredentialsError)", exc_info=True
-        )
+        logger.error("Epic token exchange failed (InvalidCredentialsError)")
         raise EpicAuthError(
             "Token exchange failed. The authorization code may be expired or invalid. "
             "Please try again."
@@ -119,7 +117,7 @@ def exchange_code_for_tokens(code: str) -> dict[str, Any]:
     except EpicAuthError:
         raise  # Don't let the broad Exception handler below swallow our own errors
     except Exception as error:
-        logger.error("Epic token exchange request failed", exc_info=True)
+        logger.error("Epic token exchange request failed: %s", type(error).__name__)
         raise EpicAuthError("Failed to connect to Epic Games servers") from error
 
 
@@ -140,7 +138,9 @@ def save_epic_token(
         storage.save_credential(user_id, "epic_games", "refresh_token", refresh_token)
         logger.info("Saved Epic Games refresh token to database")
     except Exception as error:
-        logger.error("Failed to save Epic Games token to database", exc_info=True)
+        logger.error(
+            "Failed to save Epic Games token to database: %s", type(error).__name__
+        )
         raise EpicAuthError("Failed to save Epic Games token") from error
 
 

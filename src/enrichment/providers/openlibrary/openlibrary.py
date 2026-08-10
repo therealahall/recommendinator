@@ -15,8 +15,11 @@ from src.enrichment.provider_base import (
     EnrichmentProvider,
     EnrichmentResult,
     ProviderError,
+    log_search_title,
 )
 from src.models.content import ContentItem, ContentType
+from src.utils.request_errors import scrub_request_error
+from src.utils.text import sanitize_for_log
 
 logger = logging.getLogger(__name__)
 
@@ -174,7 +177,13 @@ class OpenLibraryProvider(EnrichmentProvider):
             return self._build_result_from_edition(edition)
 
         except requests.RequestException as error:
-            logger.warning("ISBN lookup failed for %s: %s", isbn, error)
+            # The isbn is an imported metadata column, and the error embeds the
+            # URL built from it, so neither reaches the log as written.
+            logger.warning(
+                "ISBN lookup failed for %s: %s",
+                sanitize_for_log(isbn),
+                scrub_request_error(error),
+            )
             return None
 
     def _search_book(self, item: ContentItem) -> EnrichmentResult:
@@ -188,10 +197,7 @@ class OpenLibraryProvider(EnrichmentProvider):
         """
         # Clean title to remove series info like "(Bobiverse, #2)"
         search_title = clean_title_for_search(item.title)
-        if search_title != item.title:
-            logger.debug(
-                "Cleaned title for search: '%s' -> '%s'", item.title, search_title
-            )
+        log_search_title(logger, item.title, search_title)
 
         params: dict[str, Any] = {
             "title": search_title,

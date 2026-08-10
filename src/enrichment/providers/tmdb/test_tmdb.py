@@ -1,5 +1,6 @@
 """Tests for the TMDB enrichment provider."""
 
+import logging
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -1158,3 +1159,36 @@ class TestTMDBApiKeyScrubbingRegression:
         assert self._API_KEY not in message
         assert "api_key=" not in message
         assert "ConnectionError" in message
+
+
+class TestSearchTitleCannotForgeALogLineRegression:
+    """Reported: the search log writes ``item.title`` unescaped.
+
+    A title restricts no characters and the file formatter is single-line, so
+    a newline writes its own entry (CWE-117). Fix: ``sanitize_for_log``, as
+    ``EnrichmentManager._process_item`` already does.
+    """
+
+    _FORGED = "Real Title\nWARNING  | forged | line (1999)"
+
+    def test_a_newline_in_a_title_is_escaped_before_the_search_log(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Reached whenever cleaning changes the title, so every year suffix."""
+        provider = TMDBProvider()
+        item = ContentItem(
+            id="movie1",
+            title=self._FORGED,
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+        )
+
+        with (
+            patch("src.enrichment.providers.tmdb.tmdb.requests.get") as mock_get,
+            caplog.at_level(logging.DEBUG, logger="src.enrichment.providers.tmdb.tmdb"),
+        ):
+            mock_get.return_value.json.return_value = {"results": []}
+            assert provider._search_movie(item, "test-key", "en-US") is None
+
+        assert "Real Title\\nWARNING" in caplog.text
+        assert self._FORGED not in caplog.text
