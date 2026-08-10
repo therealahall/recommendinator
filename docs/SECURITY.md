@@ -189,22 +189,14 @@ in the request URL — Steam, TMDB, RAWG and GOG — render a request failure as
 status code or error class, and every OAuth connect flow logs only an error type
 name or a status code. None of them attaches a traceback.
 
-Rendering the message is only half of it. A traceback walks `__cause__`, so an
+Rendering the message is only half of it: a traceback walks `__cause__`, so an
 exception chained from a request error prints that request's URL. `auth connect`
-logs with `exc_info=True` and the GOG code exchange reaches it, so that exchange
-raises `from None` — GOG puts the authorization code, refresh token and client
-secret in the query string. GOG's token refresh breaks the chain for the same
-reason.
+logs with `exc_info=True`, so GOG's token refresh and code exchange raise
+`from None` — GOG puts the code, refresh token and client secret in the query
+string. Steam, TMDB and RAWG still chain such a URL; no sink prints it today.
 
-**The other traceback sink is latent, not live.** `sync_manager` logs with
-`exc_info=True` too, but `execute_multi_source_sync` turns every per-source
-failure into a result, so only a framework-level error reaches it, and
-enrichment logs no traceback at all. Steam, TMDB and RAWG do still chain a URL
-carrying their API key, which is what the next traceback sink would print.
-
-A refused config write is redacted before it is logged — but redaction matches
-the stored secret exactly, so a truncated or encoded form survives it, and log
-calls outside those paths are unswept.
+A refused config write is redacted before logging, but the match is exact, so a
+truncated or encoded form of the secret survives it.
 
 ## Automated security review
 

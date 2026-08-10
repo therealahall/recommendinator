@@ -61,24 +61,15 @@ python3.11 -m src.cli preferences custom-rules interpret \
 
 Results are cached, so a repeated rule costs no further LLM calls.
 
-Rules are sanitised before either interpreter sees them, and narrowly: only
-what would break the prompt, the request carrying it, or a reader of whatever
-the interpreter cuts from the rule. Runs of whitespace collapse to one space
-and the ends are trimmed — a tab, a doubled space, U+00A0, and every character
-`str.splitlines` treats as a break, U+2028 and U+0085 included. So a rule
-occupies exactly one prompt line and cannot forge another to smuggle
-instructions past the interpreter.
+Rules are sanitised before either interpreter sees them, narrowly. Whitespace
+runs collapse to one space and the ends are trimmed, so a rule occupies exactly
+one prompt line and cannot forge a second to smuggle instructions past the
+interpreter. Quotes and braces go because the rule sits in a quoted slot beside
+a JSON template; control characters and lone surrogates go because a rule is
+prose, and one would break the request or the terminal reading it back.
 
-Double quotes and braces are dropped, because the rule sits in a quoted slot
-beside a JSON template. Lone surrogates go because they fail the UTF-8 encode
-of the request body and cost you the whole interpretation. NUL and the other
-control characters encode fine. They go because a rule is prose, and one that
-survived into a genre name would rewrite the terminal printing it back, or
-truncate the log entry it landed in.
-
-Everything else you type reaches the model as you typed it: `prefer 4+ star
-ratings`, `no more than 20% horror`, `rating >= 4`, accents, CJK, emoji and
-all.
+Everything else reaches the model as you typed it — `prefer 4+ star ratings`,
+`no more than 20% horror`, `rating >= 4`, accents, CJK and emoji.
 
 ## If a rule is not working
 
