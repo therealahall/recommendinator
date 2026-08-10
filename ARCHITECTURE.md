@@ -144,6 +144,21 @@ touching `config.yaml`).
   and is idempotent. `POST /api/sync/sources` writes only non-sensitive values,
   and secrets follow through `PUT /api/sync/sources/<id>/secret/<key>`.
 
+**Item attribution.** `content_items.source` holds a source id. Six plugins once
+dropped theirs, labelling rows with the plugin name, so a later sync split a
+library in two. `migrate_source_attribution` (`src/storage/source_migration.py`)
+moves those rows onto the single source running that plugin, and refuses when
+two do, because nothing records which one they came from.
+
+It runs on every boot and hot-reload until nothing is left for a later run,
+recording itself in `completed_migrations` only then — the first run, for a
+library with nothing stranded. Two of its three refusals name a config change
+that resolves them, so those hold that record open; only a source running the
+plugin it is named after is terminal. Each refusal is logged once per plugin,
+under its own record, and a run with no sources configured records nothing.
+Messages:
+[TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md#source-attribution-at-startup).
+
 #### Global configuration precedence
 
 **const default < YAML < database**, for `features`, `ollama`,

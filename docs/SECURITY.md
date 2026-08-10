@@ -37,8 +37,9 @@ completion history sit in the database as plaintext, and so do the embeddings.
 - If the encryption key changes, stale credentials for a source still defined
   in `config.yaml` alone are re-encrypted from it, or purged when there is no
   config fallback.
-- A rotated OAuth refresh token from GOG or Epic Games is persisted during sync,
-  so you never reconnect by hand.
+- A rotated OAuth refresh token from GOG, Epic Games or Trakt is persisted under
+  its source's id during sync, so you never reconnect by hand. Tokens an earlier
+  release rotated under the plugin's name are not moved by an upgrade.
 - **No endpoint returns a credential value.** They are write-only from the API.
 - The test suite never touches the real key. An autouse fixture in the
   repository-root `conftest.py` points `RECOMMENDINATOR_KEY_PATH` at a per-test
@@ -59,7 +60,9 @@ anything left under that id.
 
 A source `url` must be `http` or `https`, must name a host, and must not embed
 `user:password@`. Source config is validated when it is written and again at
-sync, so a value a plugin refuses answers 400 with the plugin's own message.
+sync, and neither 400 carries the plugin's own message: a write names the field
+it blames, or repeats a path-containment refusal verbatim, and a sync answers a
+fixed string. The reason goes to the log instead.
 
 ## API authentication
 
@@ -146,8 +149,10 @@ and an empty list allows nothing.
 ## Input handling
 
 Imported CSV and JSON are parsed with standard libraries, and invalid rows are
-skipped rather than executed. Custom rules are parsed by pattern matching or the
-LLM and sanitized before storage. Neither path executes anything from user data.
+skipped rather than executed. Custom rules are stored as typed, and collapsed to
+a single line when a prompt is built, so a rule cannot forge a second one. See
+[CUSTOM_RULES.md](CUSTOM_RULES.md#llm-interpretation). Neither path executes
+anything from user data.
 
 ## Database and backups
 
@@ -172,11 +177,34 @@ ChromaDB stores embeddings locally, and Ollama defaults to localhost.
 
 - [ ] `config/config.yaml` is git-ignored
 - [ ] `config/config.yaml` is `0600` and holds a token you generated yourself
-- [ ] API keys are not in code or logs
+- [ ] API keys are not in code
+- [ ] `logs/` is treated as sensitive and not shipped anywhere
 - [ ] Database file has restricted permissions
 - [ ] Web interface on localhost (Docker's default), or behind a TLS proxy
 - [ ] Docker containers run as a non-root user
 - [ ] Ollama only reachable internally
+
+**The logs are not guaranteed key-free.** The integrations that put a credential
+in the request URL — Steam, TMDB, RAWG and GOG — render a request failure as its
+status code or error class, and every OAuth connect flow logs only an error type
+name or a status code. None of them attaches a traceback.
+
+Rendering the message is only half of it. A traceback walks `__cause__`, so an
+exception chained from a request error prints that request's URL. `auth connect`
+logs with `exc_info=True` and the GOG code exchange reaches it, so that exchange
+raises `from None` — GOG puts the authorization code, refresh token and client
+secret in the query string. GOG's token refresh breaks the chain for the same
+reason.
+
+**The other traceback sink is latent, not live.** `sync_manager` logs with
+`exc_info=True` too, but `execute_multi_source_sync` turns every per-source
+failure into a result, so only a framework-level error reaches it, and
+enrichment logs no traceback at all. Steam, TMDB and RAWG do still chain a URL
+carrying their API key, which is what the next traceback sink would print.
+
+A refused config write is redacted before it is logged — but redaction matches
+the stored secret exactly, so a truncated or encoded form survives it, and log
+calls outside those paths are unswept.
 
 ## Automated security review
 

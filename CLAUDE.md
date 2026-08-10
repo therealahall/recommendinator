@@ -43,7 +43,8 @@ src/
 │                     # plugin-local tests get the root conftest's isolation, and its leading
 │                     # underscore is what keeps the plugin registry from importing it.
 ├── llm/              # Ollama interaction
-├── storage/          # SQLite + ChromaDB (settings table, global_secrets, settings_migration)
+├── storage/          # SQLite + ChromaDB (settings table, global_secrets, settings_migration,
+│                     # completed_migrations for one-shot startup passes)
 ├── settings/         # Global-config registry (metadata.py) + service (list/get/set/reset/secrets)
 ├── recommendations/  # Recommendation engine (scorers, scoring_pipeline, variety, genre_clusters,
 │                     # identity.py for candidate keys, record.py for the emitted Recommendation)

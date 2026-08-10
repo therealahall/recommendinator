@@ -82,8 +82,16 @@ responses. The Add-source modal and the `source` CLI generate their forms from
 this schema, so `field_type`, `required`, `description` and `sensitive` are the
 user-facing UI.
 
-**Never quote a credential into a `validate_config` message.** Those messages
-are returned to the caller.
+**Never quote a credential into a `validate_config` message.** Neither door
+returns your message to the caller now — a write answers with the field name it
+blames, a sync with a fixed string — but both write it to the log. Redaction
+there is exact-substring, so a truncated, masked or encoded form of the secret
+survives it. This rule is the guarantee; redaction only backstops it.
+
+**A write door refusal names the field, not your reason.** Say which value is
+wrong by returning one error per field, since the field name is all the caller
+sees. The exception is `resolve_source_path`: its containment message is
+returned verbatim, because it reads no disk and names the setting to widen.
 
 `requires_network` defaults to `requires_api_key`. Override it for a file-based
 source that needs neither.
@@ -96,10 +104,16 @@ operations, with `total_items=None` when the total is unknown.
 Non-sensitive fields are writable over `PUT /api/sync/sources/<id>/config`, so
 two kinds need declaring.
 
-**A field naming a filesystem path** takes `reads_path=True`. The flag is
-declarative — it is what `tests/test_source_paths.py` sweeps, and nothing more —
-so the plugin must itself call `src.ingestion.paths.resolve_source_path`, in
-`validate_config` *and* in `fetch`, or the path is never contained (see
+**A field naming a filesystem path** takes `reads_path=True`.
+`tests/test_source_paths.py` fails any built-in plugin carrying a field without
+the flag whose name has `path`, `dir`, `directory`, `file`, `folder` or one of
+their plurals as a whole underscore-separated part. It sweeps `csv_path` and
+`data_dir`, but not `filepath`, `csvfile` or `libraryPath` — a run-together
+name is one token — and deliberately not `profile`. A path field named
+anything else is on you, whether or not the plugin also uses the network.
+The flag is declarative, so the plugin must itself call
+`src.ingestion.paths.resolve_source_path`, in `validate_config` *and* in
+`fetch`, or the path is never contained (see
 [SECURITY.md](SECURITY.md#where-file-imports-may-read)):
 
 ```python
@@ -307,6 +321,10 @@ def fetch(
 `SourceError` and `scrub_request_error` come from `src.ingestion.plugin_base` and
 `src.utils.request_errors`.
 
+That example sends its key in a header, so the URL inside `error` carries no
+secret and `from error` is right. A key in the query string wants `from None`
+instead — see [Scrub `requests` errors](#best-practices) below.
+
 ## Registration
 
 `PluginRegistry` auto-discovers plugins from `src/ingestion/sources/`. Each lives
@@ -357,6 +375,15 @@ File-based plugins use `path`, never `csv_path`, `json_path` or `markdown_path`.
 `fetch()` receives a `_source_id` key holding the user-defined name.
 `get_source_identifier(config)` returns it, and it is what lands in
 `ContentItem.source`, so items are tracked by source id rather than plugin name.
+`execute_sync` asks the same method for the id it stores a rotated credential
+under, so attribution and credential ownership cannot drift apart.
+
+**Source identity is framework owned.** `get_source_identifier` and
+`transform_config` are both `@final`, and overriding either raises `TypeError`
+at class creation — a plugin that renamed its source could overwrite another
+source's stored credentials. Override the `name` property to change the plugin's
+fallback id, and `transform_fields` to reshape the source's own fields. The user
+names the source itself; a plugin never does.
 
 ## Testing
 
@@ -433,6 +460,13 @@ embeds the full request URL and leaks that credential into raised errors and
 logs. Pass it through `scrub_request_error()` from `src.utils.request_errors`,
 which returns only `HTTP <status>` or the bare exception class name. The TMDB and
 RAWG enrichment providers and the Steam source all do this.
+
+**A URL-borne secret also needs `from None`.** Scrubbing the message leaves the
+original exception on `__cause__`, and a caller logging `exc_info=True` prints
+its URL out of the traceback. Break the chain when the credential is in the URL
+or query string, as GOG's token refresh does. Keep `from error` when it travels
+in a header, as GOG's library calls do — the URL is clean and the chain aids
+debugging.
 
 Beyond those: raise `SourceError` for recoverable failures, validate every
 required config field, skip items missing required fields rather than yielding
