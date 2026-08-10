@@ -92,11 +92,11 @@ class TestReloadConfig:
         assert app_state.config["ollama"]["model"] == "test-model"
         assert "old" not in app_state.config
 
-    def test_reload_config_runs_both_source_migrations(self, tmp_path: Path) -> None:
-        """reload_config runs both source migrations with the stored storage.
+    def test_reload_config_runs_every_source_migration(self, tmp_path: Path) -> None:
+        """reload_config runs all three source migrations with stored storage.
 
-        When storage is present, a hot-reload must relabel stored items and DB
-        source configs, mirroring the migrations that run on web startup.
+        A hot-reload is how a renamed source arrives, so it must mirror every
+        migration web startup runs.
         """
         config_file = tmp_path / "config.yaml"
         config_file.write_text("ollama:\n  model: test-model\n")
@@ -112,12 +112,14 @@ class TestReloadConfig:
             patch("src.web.state.migrate_config_credentials"),
             patch("src.web.state.migrate_source_labels") as mock_labels,
             patch("src.web.state.migrate_source_config_plugins") as mock_plugins,
+            patch("src.web.state.migrate_source_attribution") as mock_attribution,
         ):
             result = reload_config()
 
         assert result is True
         mock_labels.assert_called_once_with(storage)
         mock_plugins.assert_called_once_with(storage)
+        mock_attribution.assert_called_once_with(app_state.config, storage)
 
     def test_reload_config_no_config_path(self) -> None:
         """reload_config returns False when no config_path is stored."""
@@ -260,6 +262,32 @@ class TestReloadConfig:
             reload_config()
 
         assert "Failed to reload config" in caplog.text
+
+
+class TestBootRunsEverySourceMigration:
+    """Boot is the other half of the pair ``TestReloadConfig`` covers.
+
+    Attribution's completion record hides a deleted call from any later
+    observation of its side effect, so the wiring is spied on directly.
+    """
+
+    def test_create_app_runs_all_three(self, tmp_path: Path) -> None:
+        """Each fires exactly once, against the storage boot just built."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(_config_yaml(tmp_path, "mistral:7b"))
+
+        with (
+            patch("src.web.app.migrate_source_labels") as mock_labels,
+            patch("src.web.app.migrate_source_config_plugins") as mock_plugins,
+            patch("src.web.app.migrate_source_attribution") as mock_attribution,
+        ):
+            create_app(config_path)
+
+        storage = get_storage()
+        assert storage is not None
+        mock_labels.assert_called_once_with(storage)
+        mock_plugins.assert_called_once_with(storage)
+        mock_attribution.assert_called_once_with(get_config(), storage)
 
 
 _ROTATED_TOKEN = "rotated-api-token-1122334455667788990011"

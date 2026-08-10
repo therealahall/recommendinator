@@ -59,6 +59,7 @@ def mock_components(mock_config):
         patch("src.cli.commands.migrate_config_credentials"),
         patch("src.cli.main.migrate_source_labels") as mock_migrate_labels,
         patch("src.cli.main.migrate_source_config_plugins") as mock_migrate_plugins,
+        patch("src.cli.main.migrate_source_attribution") as mock_migrate_attribution,
     ):
         # Setup mocks
         mock_storage_manager = Mock(spec=StorageManager)
@@ -86,6 +87,7 @@ def mock_components(mock_config):
             "engine": mock_engine_instance,
             "migrate_source_labels": mock_migrate_labels,
             "migrate_source_config_plugins": mock_migrate_plugins,
+            "migrate_source_attribution": mock_migrate_attribution,
         }
 
 
@@ -101,12 +103,12 @@ def test_cli_help():
     assert "complete" in result.output
 
 
-def test_migrations_run_on_cli_startup(mock_components):
-    """Both source migrations run in the top-level cli() callback.
+def test_migrations_run_on_cli_startup(mock_components, mock_config):
+    """All three source migrations run in the top-level cli() callback.
 
-    A CLI-only user who never runs ``update`` must still be migrated, so the
-    label and plugin migrations are invoked once per command with the real
-    storage instance — proving the wiring, not just the migration units.
+    A CLI-only user who never runs ``update`` must still be migrated, so each
+    is invoked once per command with the real storage — proving the wiring,
+    not the units.
     """
     runner = CliRunner()
     result = runner.invoke(cli, ["status"])
@@ -115,6 +117,9 @@ def test_migrations_run_on_cli_startup(mock_components):
     storage = mock_components["storage"]
     mock_components["migrate_source_labels"].assert_called_once_with(storage)
     mock_components["migrate_source_config_plugins"].assert_called_once_with(storage)
+    mock_components["migrate_source_attribution"].assert_called_once_with(
+        mock_config, storage
+    )
 
 
 def test_recommend_command_help(mock_components):
