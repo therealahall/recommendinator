@@ -63,6 +63,11 @@ Vitest, in that order, installing the frontend dependencies first when
 install`. When you run one of those tools directly, spell the interpreter
 `python3.11`, never bare `python` or `python3`.
 
+CI runs the same command and reports it as one status, `check / check`. That
+name is new — the gate moved into a reusable workflow — so branch protection
+has to be repointed at it in the repository settings. Until a maintainer does
+that, every pull request waits on a status nothing reports.
+
 ## Code standards
 
 Black for formatting, MyPy strict for types, Ruff for linting. Google-style

@@ -690,17 +690,26 @@ especially, is too thin there.
    `HEALTHCHECK` to `python -m src.web.healthcheck`, which reads no token and
    counts an unauthenticated 401 as healthy.
 
-`docker/Dockerfile.ollama` is a thin extension of `ollama/ollama` adding the
-model-pull entrypoint.
+`docker/Dockerfile.ollama` extends `ollama/ollama` with the model-pull
+entrypoint, a non-root `ollama` user whose home and model store are
+`/var/lib/ollama`, and a `HEALTHCHECK` that holds `app-ai` back until the first
+pull lands.
 
 `.github/workflows/docker.yml` builds all three on `linux/amd64` for a
 `pull_request`, without pushing, and smoke-tests the default variant: it seeds
 a token into a mounted config, polls the authenticated `/api/status`, then runs
-the image's own `HEALTHCHECK` inside it. On a `v*` tag it builds multi-arch, generates semver tags
-(`X.Y.Z`, `X.Y`, `X`, `latest`), attaches provenance and SBOM attestations, and
-pushes to GHCR. `.github/workflows/release.yml` creates that tag by running
-python-semantic-release on every push to `main`, and uploads
-`docker-compose.yml` as a release asset.
+the image's own `HEALTHCHECK` inside it.
+
+On a `v*` tag, `guard` refuses any tag that is not `vMAJOR.MINOR.PATCH` on a
+commit main descends from, then decides which of `latest`, `X` and `X.Y` may
+move: an alias stays put unless this release is the newest its scope names and
+descends from every other release there. `verify` reruns the gate on the tagged
+tree, and only then does `publish` build multi-arch, push `X.Y.Z` plus the
+aliases the guard allowed, and attach provenance and SBOM attestations.
+
+`.github/workflows/release.yml` cuts that tag, on `workflow_run` after CI
+succeeds: only for a push to this repository, and only while the validated
+commit is still main's tip. It uploads `docker-compose.yml` as a release asset.
 
 ## Security and Privacy
 

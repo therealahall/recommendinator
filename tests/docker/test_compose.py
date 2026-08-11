@@ -21,6 +21,7 @@ import pytest
 import yaml
 
 from src.web import healthcheck
+from tests.image_layout import shipped_seed_path
 
 # parents[2] resolves /tests/docker/test_compose.py -> repo root.
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -31,10 +32,6 @@ OLLAMA_DOCKERFILE = _REPO_ROOT / "docker" / "Dockerfile.ollama"
 DOCKERIGNORE = _REPO_ROOT / ".dockerignore"
 ENTRYPOINT = _REPO_ROOT / "docker" / "entrypoint.sh"
 DOCKER_WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "docker.yml"
-
-# The build-context path of the first-run seed. Where the image puts it is the
-# Dockerfile's decision; this is the only end of it that never moves.
-SEED_SOURCE = "config/example.yaml"
 
 # The stage both shipped targets build on, and the targets themselves. Anything
 # installed in the shared stage reaches both; anything installed in one target
@@ -375,19 +372,6 @@ def _shipped_paths() -> set[str]:
             ]
             paths.add(posixpath.normpath(posixpath.join(_runtime_workdir(), words[-1])))
     return paths
-
-
-def _shipped_seed_path() -> str:
-    """The container path the image copies the first-run seed to."""
-    for match in _COPY.finditer(_instructions(_stages()[RUNTIME_BASE_STAGE])):
-        words = [
-            word
-            for word in match.group("arguments").split()
-            if not word.startswith("--")
-        ]
-        if words[0] == SEED_SOURCE:
-            return posixpath.normpath(posixpath.join(_runtime_workdir(), words[-1]))
-    raise AssertionError(f"the {RUNTIME_BASE_STAGE} stage copies no {SEED_SOURCE}")
 
 
 def _mount_targets(compose: Path) -> set[str]:
@@ -881,7 +865,13 @@ class TestTheEntrypointReadsTheSeedWhereTheImagePutsIt:
         default = _SEED_DEFAULT.search(ENTRYPOINT.read_text())
 
         assert default is not None, "the entrypoint sets no SEED_CONFIG default"
-        assert default.group("path") == _shipped_seed_path()
+        assert default.group("path") == shipped_seed_path()
+
+    def test_the_path_it_agrees_on_is_one_a_shipped_stage_copies_to(self) -> None:
+        """`shipped_seed_path` reads the whole Dockerfile, and `builder-base`
+        holds the same `WORKDIR /app`. Moved there the seed reaches no image,
+        while the entrypoint and the smoke test still agree with it."""
+        assert shipped_seed_path() in _shipped_paths()
 
 
 class TestEveryImageOwnedMountPointExistsInItsImage:
@@ -1037,6 +1027,8 @@ class TestTheSidecarImageStandsOnItsOwn:
         runs = _run_bodies(OLLAMA_DOCKERFILE)
 
         assert runs, "no RUN parsed out of the sidecar Dockerfile"
-        assert any(
-            _run_gives_directory_to(run, store, user) for run in runs
-        ), f"no RUN creates {store} for {user}; the model volume mounts root-owned"
+        assert any(_run_gives_directory_to(run, store, user) for run in runs), (
+            f"no single RUN both creates {store} and gives it to {user}, so the "
+            "model volume mounts root-owned — splitting the mkdir and the chown "
+            "across two RUNs fails here too, by design"
+        )

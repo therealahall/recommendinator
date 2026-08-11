@@ -6,8 +6,12 @@ on:
   push:
     tags: ["v*"]
 
+# One group for every tag: two releases in flight decide their aliases before
+# either builds, and the slower one takes `latest`. Serialising costs a
+# cancelled middle run when three are queued: a missing image, louder than a
+# stale alias.
 concurrency:
-  group: docker-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  group: docker-${{ github.event_name == 'pull_request' && github.ref || 'publish' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -95,9 +99,10 @@ jobs:
           docker rm -f smoke
           exit 1
 
-  # A tag can be pushed onto any commit on any branch by anyone with write
-  # access, or by a stolen token. Establish what the tag is entitled to before
-  # anything is built, and hand the answers to publish.
+  # Binds the tag the release job pushes: what it may publish, decided before
+  # anything is built. Not anyone else's — a push runs the workflow at the
+  # pushed ref, so an edited docker.yml runs itself, guard job and all. The
+  # ruleset the alias decision names is what keeps that tag from existing.
   guard:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
@@ -148,14 +153,23 @@ jobs:
             | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V || true)
           MAJOR_PREFIX="${TAG%%.*}."
           MINOR_PREFIX="${TAG%.*}."
+          # A refusal message is the only artefact a refusal leaves, so it names
+          # the registry alias that did not move — `0.29`, not the tag `v0.29.0`.
+          VERSION="${TAG#v}"
 
           # Version order compares tag *names*, and a tag is pushable onto any
           # commit that reached main. So an alias moves only to a release that
           # is the newest its scope names and descends from every other release
           # there — the top-named one is not the holder once a refusal happened.
 
-          # Left open: publishing is not serialised across tags, so a backport
-          # build that finishes later still overwrites the alias in the registry.
+          # Left open: every answer here reads tag history, which a creation on
+          # an unguarded commit, a force-push or a deletion rewrites. Only one
+          # ruleset closes all three — refs/tags/v* restricting creations,
+          # updates and deletions, bypassed by the release identity alone.
+          #
+          # Deciding the aliases after the build instead, with a post-build
+          # `imagetools create`, is the more correct design: it would read the
+          # tag set once every image exists. Too large a change for this one.
           may_move() {
             # `$1` is a literal prefix: unescaped, `v0.29.` matches `v0129.` too.
             SCOPE=$(printf '%s\n' "$RELEASES" | grep -E "^${1//./\\.}" || true)
@@ -176,8 +190,8 @@ jobs:
 
           {
             echo "highest_overall=$(may_move '' latest)"
-            echo "highest_in_major=$(may_move "$MAJOR_PREFIX" "${TAG%%.*}")"
-            echo "highest_in_minor=$(may_move "$MINOR_PREFIX" "${TAG%.*}")"
+            echo "highest_in_major=$(may_move "$MAJOR_PREFIX" "${VERSION%%.*}")"
+            echo "highest_in_minor=$(may_move "$MINOR_PREFIX" "${VERSION%.*}")"
           } >> "$GITHUB_OUTPUT"
 
   # The gate CI runs, run again on the tagged tree. Nothing else establishes
