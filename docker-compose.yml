@@ -35,6 +35,11 @@
 #   OLLAMA_MODEL            — model the sidecar pulls (default: mistral:7b)
 #   OLLAMA_EMBEDDING_MODEL  — embedding model to pull (default: nomic-embed-text)
 #   OLLAMA_CONVERSATION_MODEL — separate chat model to pull (default: reuse OLLAMA_MODEL)
+#   OLLAMA_MEMORY_LIMIT     — memory ceiling for the sidecar (default: 12g, which
+#                             holds every model docs/MODEL_RECOMMENDATIONS.md
+#                             names). Raise it for a larger model: past the
+#                             ceiling the kernel kills the model load, which on a
+#                             NAS or a Pi is still better than killing the host.
 #
 # For local development with hot reload, layer docker-compose.dev.yml on top:
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
@@ -73,6 +78,14 @@ x-app-common: &app-common
     # optional private plugin directory; leave empty if you don't have any
     - ./private:/app/private:ro
   restart: unless-stopped
+  # The image already runs as an unprivileged user and binds a high port, so it
+  # needs no capability and nothing in it should be able to acquire one. There
+  # is no authentication in front of the app (docs/SECURITY.md), which is what
+  # makes the blast radius of a compromised dependency worth shrinking here.
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
   networks:
     - recommendinator-net
 
@@ -115,14 +128,17 @@ services:
       # model; empty means the sidecar reuses OLLAMA_MODEL, matching the app.
       - OLLAMA_CONVERSATION_MODEL=${OLLAMA_CONVERSATION_MODEL:-}
     volumes:
-      - ollama-data:/root/.ollama
-    healthcheck:
-      test: ["CMD-SHELL", "ollama list > /dev/null 2>&1 && test -f /tmp/models-ready"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 600s
+      # The image runs as the `ollama` user, and this is that user's model
+      # store. See docs/DOCKER.md for the one-time chown when upgrading from a
+      # sidecar that ran as root.
+      - ollama-data:/var/lib/ollama/.ollama
+    # The liveness check ships in the image, so `docker run` gets it too.
     restart: unless-stopped
+    mem_limit: ${OLLAMA_MEMORY_LIMIT:-12g}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     networks:
       - recommendinator-net
     # Uncomment for GPU support (NVIDIA)

@@ -13,7 +13,9 @@
 #     to dependencies, the Dockerfile, or the frontend build are reflected).
 #   - Bind-mounts ./src and ./templates into the container so Python edits
 #     are visible immediately. Combined with --reload, uvicorn restarts in
-#     ~1s on file save — no rebuild needed.
+#     ~1s on file save — no rebuild needed. The built frontend under
+#     src/web/static/dist is exempted from that mount, so the container serves
+#     the UI it built even on a fresh clone that has never run pnpm.
 #   - Bind-mounts pyproject.toml so the runtime __version__ reflects the
 #     host's current value after semantic-release bumps it (without
 #     rebuilding the image). See src/__init__.py:_read_source_version.
@@ -29,6 +31,11 @@
 x-dev-common: &dev-common
   volumes:
     - ./src:/app/src
+    # The image builds the Vue bundle into this path and the host's copy is
+    # gitignored, so the mount above would otherwise serve a blank page. An
+    # anonymous volume keeps the image's copy; it outlives a rebuild, so pass
+    # --renew-anon-volumes when the frontend has changed.
+    - /app/src/web/static/dist
     - ./templates:/app/templates
     - ./pyproject.toml:/app/pyproject.toml:ro
   command:

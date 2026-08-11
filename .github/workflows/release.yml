@@ -14,14 +14,36 @@ jobs:
   release:
     if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
+    # Every write here — the branch push, the tag push and the release creation —
+    # goes through the GH_TOKEN PAT, which is also what carries the branch
+    # protection bypass. The job's own token needs nothing beyond read.
     permissions:
-      contents: write
+      contents: read
 
     steps:
+      # A workflow_run job with no ref checks out whatever main tips at when it
+      # starts, which is not necessarily the commit whose CI passed. Pin it.
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
+          ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0
           token: ${{ secrets.GH_TOKEN }}
+
+      - name: Release only the commit CI validated
+        env:
+          VALIDATED_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          MAIN_TIP=$(git rev-parse refs/remotes/origin/main)
+          if [ "$MAIN_TIP" != "$VALIDATED_SHA" ]; then
+            echo "CI validated $VALIDATED_SHA but main is now at $MAIN_TIP."
+            echo "Releasing would tag code no CI run has passed; the newer commit's own run releases it."
+            exit 1
+          fi
+          # The pinned checkout left HEAD detached, and semantic-release commits
+          # and pushes the branch it is standing on.
+          git switch -C main "$VALIDATED_SHA"
+          git branch --set-upstream-to=origin/main main
 
       - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4.2.0
         with:
@@ -39,40 +61,65 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      # Bumps version, regenerates CHANGELOG.md and uv.lock, commits, tags,
-      # and pushes — but does NOT create the GitHub release. Release creation
-      # is done in the next step so docker-compose.yml can be attached at
-      # creation time (required: the repo has immutable releases enabled,
-      # which forbids adding assets to an existing release).
+      # Bumps the version and regenerates CHANGELOG.md and uv.lock, then commits
+      # and tags locally. Nothing is pushed here: the bumped tree has been
+      # through no check at all yet, and an unpushed tag is still recoverable.
+      # psr also does not create the GitHub release (--no-vcs-release), so the
+      # step below can attach docker-compose.yml at creation time — the repo has
+      # immutable releases enabled, which forbids adding assets afterwards.
       - name: Run semantic-release
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
-        run: uv run python -m semantic_release version --push --commit --tag --no-vcs-release
+        run: >-
+          uv run --frozen --extra dev python -m semantic_release version
+          --no-push --commit --tag --no-vcs-release
+
+      # Empty output when no commit since the last tag was releasable, which is
+      # an ordinary push rather than a failure. Every step after this one is
+      # conditioned on it, so "nothing to release" stays declarative instead of
+      # being a shell exit code somebody has to get right.
+      - name: Identify the release tag
+        id: released
+        run: |
+          TAGS=$(git tag --points-at HEAD | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true)
+          TAG=""
+          if [ -n "$TAGS" ]; then
+            TAG=$(printf '%s\n' "$TAGS" | head -1)
+            OTHERS=$(printf '%s\n' "$TAGS" | tail -n +2)
+            if [ -n "$OTHERS" ]; then
+              echo "WARNING: HEAD carries more than one semver tag ($TAGS); releasing $TAG."
+            fi
+          fi
+          echo "Release tag at HEAD: ${TAG:-none}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      # The build_command rewrote uv.lock. If that left the lock disagreeing with
+      # pyproject.toml, every `uv sync --locked` downstream fails — the image
+      # build included — and the tag would already be public by then.
+      - name: Verify the bumped tree
+        if: steps.released.outputs.tag != ''
+        run: uv sync --locked --extra dev
+
+      - name: Push the version commit and tag
+        if: steps.released.outputs.tag != ''
+        env:
+          NEW_TAG: ${{ steps.released.outputs.tag }}
+        run: |
+          git push origin main
+          git push origin "refs/tags/$NEW_TAG"
 
       - name: Create GitHub release with docker-compose.yml asset
+        if: steps.released.outputs.tag != ''
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          NEW_TAG: ${{ steps.released.outputs.tag }}
         run: |
-          # Defense-in-depth: only proceed when HEAD is at a real semver tag,
-          # and validate the tag name before passing it to gh.
-          TAGS=$(git tag --points-at HEAD | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true)
-          TAG_COUNT=$(printf '%s\n' "$TAGS" | grep -c .)
-          if [ -z "$TAGS" ]; then
-            echo "No semver tag at HEAD; skipping release creation."
-            exit 0
-          fi
-          if [ "$TAG_COUNT" -gt 1 ]; then
-            echo "WARNING: multiple semver tags at HEAD: $TAGS — creating release for the first."
-          fi
-          NEW_TAG=$(printf '%s\n' "$TAGS" | head -1)
           VERSION="${NEW_TAG#v}"
 
-          # Recovery path: if a prior partial run already created the release
-          # (e.g. before --no-vcs-release was wired up, or a future psr default
-          # change), delete it so we can recreate it with the asset bundled at
-          # creation. Tag is preserved (--cleanup-tag=false). This is safe for
-          # immutable releases too — deletion is allowed; only post-creation
-          # mutation is forbidden.
+          # Recovery path: if a prior partial run already created the release,
+          # delete it so we can recreate it with the asset bundled at creation.
+          # Tag is preserved (--cleanup-tag=false). Safe for immutable releases
+          # too — deletion is allowed; only post-creation mutation is forbidden.
           if gh release view "$NEW_TAG" >/dev/null 2>&1; then
             echo "Release $NEW_TAG already exists; deleting so it can be recreated with asset."
             gh release delete "$NEW_TAG" --yes --cleanup-tag=false

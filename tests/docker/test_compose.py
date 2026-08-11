@@ -11,6 +11,7 @@ or daemon needed.
 from __future__ import annotations
 
 import json
+import posixpath
 import re
 from pathlib import Path
 from typing import NamedTuple
@@ -24,7 +25,10 @@ from src.web import healthcheck
 # parents[2] resolves /tests/docker/test_compose.py -> repo root.
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPOSE = _REPO_ROOT / "docker-compose.yml"
+DEV_COMPOSE = _REPO_ROOT / "docker-compose.dev.yml"
 DOCKERFILE = _REPO_ROOT / "Dockerfile"
+OLLAMA_DOCKERFILE = _REPO_ROOT / "docker" / "Dockerfile.ollama"
+DOCKERIGNORE = _REPO_ROOT / ".dockerignore"
 
 # The stage both shipped targets build on, and the targets themselves. Anything
 # installed in the shared stage reaches both; anything installed in one target
@@ -73,6 +77,44 @@ _INTERPOLATION = re.compile(r"\$\{([A-Z][A-Z0-9_]*):?-([^}]*)\}")
 # Every variable named in the "Environment overrides" comment block at the top,
 # written as `#   NAME — description`.
 _DOCUMENTED = re.compile(r"^#\s{3}([A-Z][A-Z0-9_]*)\s+—", re.MULTILINE)
+
+# Every service in the deployment. Named here rather than derived so that adding
+# one without deciding how it is confined fails a test.
+ALL_SERVICES = ["app", "app-ai", "ollama"]
+
+# The services the dev override reshapes; the sidecar it only rebuilds.
+DEV_SERVICES = ["app", "app-ai"]
+
+# Paths that must never reach a builder. Some are gitignored secrets, the rest
+# are simply nobody's business on the far side of a `docker build`.
+UNSHIPPABLE = [
+    "private",
+    "private/plugins/personal_site_games.py",
+    ".env",
+    ".env.local",
+    "config/config.yaml",
+    "data/recommendinator.db",
+    "data/.credential_key",
+    ".git/config",
+    ".claude/settings.local.json",
+    "docker-compose.override.yml",
+]
+
+# A `COPY` instruction's arguments, whether or not it carries flags.
+_COPY = re.compile(r"^COPY\s+(?P<arguments>\S.*)$", re.MULTILINE)
+
+# `COPY --from=<image or stage>`.
+_COPY_FROM = re.compile(r"^COPY\s+(?:--\S+\s+)*--from=(?P<source>\S+)", re.MULTILINE)
+
+# An image reference pinned the way this repository requires: the tag stays for
+# legibility, the digest is what actually resolves.
+_PINNED_IMAGE = re.compile(r"^[^\s@]+:[^\s@:]+@sha256:[0-9a-f]{64}$")
+
+# Where the sidecar's model store lives, which follows the user's home.
+_OLLAMA_HOME = re.compile(r"^ENV\s+HOME=(?P<path>\S+)\s*$", re.MULTILINE)
+
+# A `RUN`'s shell command, following backslash continuations onto the next line.
+_RUN = re.compile(r"^RUN\s+(?P<body>(?:[^\n\\]|\\\n)*)", re.MULTILINE)
 
 
 def _compose_text() -> str:
@@ -138,16 +180,19 @@ def _apt_packages(stage: _Stage) -> set[str]:
     return packages
 
 
+def _services(compose: Path = COMPOSE) -> dict[str, dict]:
+    """Return every service in *compose*, with its ``<<:`` merges flattened."""
+    return yaml.safe_load(compose.read_text())["services"]
+
+
 def _port_specs(service: str) -> list[str]:
     """Return the raw ``ports`` entries of ``service``, un-interpolated."""
-    compose = yaml.safe_load(_compose_text())
-    return compose["services"][service]["ports"]
+    return _services()[service]["ports"]
 
 
 def _environment(service: str) -> list[str]:
     """Return the raw ``environment`` entries of ``service``, un-interpolated."""
-    compose = yaml.safe_load(_compose_text())
-    return list(compose["services"][service].get("environment") or [])
+    return list(_services()[service].get("environment") or [])
 
 
 def _render(spec: str, **env: str) -> str:
@@ -159,6 +204,97 @@ def _render(spec: str, **env: str) -> str:
     """
     return _INTERPOLATION.sub(
         lambda match: env.get(match.group(1), match.group(2)), spec
+    )
+
+
+def _ignore_rules() -> list[str]:
+    """Return .dockerignore's patterns in file order, comments dropped."""
+    return [
+        line.strip()
+        for line in DOCKERIGNORE.read_text().splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+
+
+def _allowlist() -> set[str]:
+    """Return the paths .dockerignore puts back into the context."""
+    return {rule[1:] for rule in _ignore_rules() if rule.startswith("!")}
+
+
+def _copied_from_context() -> set[str]:
+    """Return the paths ``Dockerfile`` copies out of the build context.
+
+    ``COPY --from=`` reads another stage or another image, never the context, so
+    those are not part of what the context has to carry.
+    """
+    sources: set[str] = set()
+    for match in _COPY.finditer(DOCKERFILE.read_text()):
+        words = match.group("arguments").split()
+        if any(word.startswith("--from=") for word in words):
+            continue
+        paths = [word for word in words if not word.startswith("--")]
+        # The last argument is the destination inside the image.
+        sources.update(path.rstrip("/") for path in paths[:-1])
+    return sources
+
+
+def _reaches_the_builder(path: str) -> bool:
+    """Whether *path* survives .dockerignore's allowlist.
+
+    An over-approximation: the narrowing rules that follow the allowlist are not
+    modelled, so a path this calls reachable may still be dropped. That is the
+    safe direction — nothing it calls unreachable can arrive.
+    """
+    return any(
+        path == allowed or path.startswith(f"{allowed}/") for allowed in _allowlist()
+    )
+
+
+def _image_references(dockerfile: Path) -> list[str]:
+    """Return the registry images *dockerfile* pulls, stage names excluded."""
+    source = dockerfile.read_text()
+    headers = list(_STAGE_HEADER.finditer(source))
+    stages = {header.group("name") for header in headers}
+    referenced = [header.group("parent") for header in headers]
+    referenced += _COPY_FROM.findall(source)
+    return [reference for reference in referenced if reference not in stages]
+
+
+def _run_bodies(dockerfile: Path) -> list[str]:
+    """Return each ``RUN``'s shell command in *dockerfile*, on one line each."""
+    source = "\n".join(
+        line
+        for line in dockerfile.read_text().splitlines()
+        if not line.lstrip().startswith("#")
+    )
+    return [
+        " ".join(match.group("body").replace("\\\n", " ").split())
+        for match in _RUN.finditer(source)
+    ]
+
+
+def _ollama_model_store() -> str:
+    """The directory the sidecar keeps models and its signing key in."""
+    home = _OLLAMA_HOME.search(OLLAMA_DOCKERFILE.read_text())
+    assert home is not None, "the sidecar image does not set HOME"
+    return f"{home.group('path')}/.ollama"
+
+
+def _ollama_image() -> _Stage:
+    """The sidecar image as one stage: it has a single ``FROM`` and no ``AS``."""
+    return _Stage(parent="", body=OLLAMA_DOCKERFILE.read_text())
+
+
+def _built_frontend_path() -> str:
+    """The container path the image copies the built Vue bundle to."""
+    runtime = _instructions(_stages()[RUNTIME_BASE_STAGE])
+    workdir = re.search(r"^WORKDIR\s+(?P<path>\S+)", runtime, re.MULTILINE)
+    bundle = re.search(
+        r"^COPY --from=frontend-builder.*\s(?P<target>\S+)\s*$", runtime, re.MULTILINE
+    )
+    assert workdir is not None and bundle is not None
+    return posixpath.normpath(
+        posixpath.join(workdir.group("path"), bundle.group("target"))
     )
 
 
@@ -400,3 +536,212 @@ class TestEveryShippedTargetRunsTheLivenessProbe:
         assert urlparse(healthcheck.STATUS_URL).port == int(
             command[command.index("--port") + 1]
         )
+
+
+class TestTheBuildContextIsAnAllowlist:
+    """Denying by default makes an unreviewed path a build failure rather than a
+    disclosure: the narrow COPYs keep secrets out of the image, but everything
+    nobody excluded still crosses to the builder."""
+
+    def test_nothing_is_in_the_context_until_a_rule_names_it(self) -> None:
+        """Regression: the file listed what to leave out, so ``private/`` and
+        ``.env`` — which nobody had thought of — were in by default."""
+        assert _ignore_rules()[0] == "*"
+
+    def test_the_exceptions_are_exactly_what_the_dockerfile_copies(self) -> None:
+        """A COPY with no exception fails the build; an exception with no COPY is
+        context nobody asked for, and only this notices that one."""
+        copied = _copied_from_context()
+
+        # Named so a COPY parse that silently stops matching fails here rather
+        # than making the comparison true over two empty sets.
+        assert {"src", "pyproject.toml", "resources"} <= copied
+        assert _allowlist() == copied
+
+    def test_every_exception_is_a_literal_path(self) -> None:
+        """A glob would decide more than it appears to, and "not listed" would
+        stop meaning "not in the context"."""
+        assert {
+            allowed for allowed in _allowlist() if set("*?[]") & set(allowed)
+        } == set()
+
+    def test_the_narrowing_rules_follow_the_exceptions_they_cut_into(self) -> None:
+        """Last match wins. ``src/web/static/dist`` written above ``!src`` would
+        put the host's stale bundle back in the context, where it is invisible
+        until someone who has run ``pnpm`` builds an image and ships it."""
+        rules = _ignore_rules()
+        last_exception = max(
+            index for index, rule in enumerate(rules) if rule.startswith("!")
+        )
+        narrowing = [
+            index for index, rule in enumerate(rules) if index and rule[0] != "!"
+        ]
+
+        assert narrowing, "no narrowing rules found — the parse went wrong"
+        assert min(narrowing) > last_exception
+
+    @pytest.mark.parametrize("path", UNSHIPPABLE)
+    def test_sensitive_paths_cannot_reach_the_builder(self, path: str) -> None:
+        assert not _reaches_the_builder(path)
+
+    def test_the_application_source_does_reach_the_builder(self) -> None:
+        """The model has to be able to say yes, or the exclusions above pass
+        against a parse that found no exceptions at all."""
+        assert _reaches_the_builder("src/web/app.py")
+
+
+class TestBaseImagesArePinnedByDigest:
+    """``node:20-slim`` and ``python:3.11-slim`` are republished continuously, so
+    on tags alone a PR build and the release build a week later are different
+    artifacts, with nothing in the repository to say so."""
+
+    @pytest.mark.parametrize("dockerfile", [DOCKERFILE, OLLAMA_DOCKERFILE])
+    def test_every_pulled_image_carries_a_tag_and_a_digest(
+        self, dockerfile: Path
+    ) -> None:
+        """The tag is for whoever reads it; the digest is what resolves."""
+        references = _image_references(dockerfile)
+
+        assert references, f"no image references parsed out of {dockerfile.name}"
+        assert [
+            reference for reference in references if not _PINNED_IMAGE.match(reference)
+        ] == []
+
+    def test_the_two_python_stages_share_one_digest(self) -> None:
+        """The runtime stage receives a venv the builder stage produced, so they
+        are one interpreter and one set of shared libraries, or neither."""
+        python = [
+            reference
+            for reference in _image_references(DOCKERFILE)
+            if reference.startswith("python:")
+        ]
+
+        assert len(python) == 2
+        assert len(set(python)) == 1
+
+
+class TestTheDevOverrideKeepsTheBuiltFrontend:
+    """The bind mount that makes hot reload work must not eat the bundle."""
+
+    @pytest.mark.parametrize("service", DEV_SERVICES)
+    def test_the_bundle_directory_is_exempt_from_the_source_mount(
+        self, service: str
+    ) -> None:
+        """Regression: the dev container served a blank page on a fresh clone.
+
+        ``./src:/app/src`` mounts the host tree over the image's, and the built
+        bundle underneath it is gitignored. A volume at that path survives it.
+        """
+        volumes = _services(DEV_COMPOSE)[service]["volumes"]
+
+        assert "./src:/app/src" in volumes
+        assert _built_frontend_path() in volumes
+
+    def test_those_are_every_service_that_mounts_the_source_tree(self) -> None:
+        """``DEV_SERVICES`` is a constant; this is the population it claims to
+        be. A third dev service added later keeps the bundle or fails here."""
+        mounting = {
+            name
+            for name, service in _services(DEV_COMPOSE).items()
+            if "./src:/app/src" in (service.get("volumes") or [])
+        }
+
+        assert mounting == set(DEV_SERVICES)
+
+    @pytest.mark.parametrize("service", DEV_SERVICES)
+    def test_python_edits_still_restart_uvicorn(self, service: str) -> None:
+        """The exemption is worthless if it costs the reason the file exists."""
+        service_definition = _services(DEV_COMPOSE)[service]
+
+        assert "--reload" in service_definition["command"]
+        assert "./src:/app/src" in service_definition["volumes"]
+
+
+class TestEveryServiceIsConfined:
+    """The app has no authentication of its own and the docs recommend hardware
+    where one runaway container is the whole machine, so this is applied to every
+    service or it is decoration."""
+
+    def test_the_hardened_list_covers_the_whole_file(self) -> None:
+        """A service added later is confined too, or this fails."""
+        assert set(_services()) == set(ALL_SERVICES)
+
+    @pytest.mark.parametrize("service", ALL_SERVICES)
+    def test_privileges_cannot_be_escalated(self, service: str) -> None:
+        assert "no-new-privileges:true" in _services()[service]["security_opt"]
+
+    @pytest.mark.parametrize("service", ALL_SERVICES)
+    def test_all_capabilities_are_dropped(self, service: str) -> None:
+        assert _services()[service]["cap_drop"] == ["ALL"]
+
+    @pytest.mark.parametrize("compose", [COMPOSE, DEV_COMPOSE])
+    def test_nothing_hands_a_capability_back(self, compose: Path) -> None:
+        """Compose merges these lists, so an override can only add. The dev file
+        is the likeliest to grow a "just for local" line that then ships."""
+        services = _services(compose)
+
+        assert services, f"no services parsed out of {compose.name}"
+        assert {
+            name
+            for name, service in services.items()
+            if service.get("cap_add") or service.get("privileged")
+        } == set()
+
+    def test_the_sidecar_has_a_memory_ceiling(self) -> None:
+        """Loading a model is the one operation here measured in gigabytes, and
+        an unbounded OOM on a NAS kills the host rather than the container."""
+        assert _render(_services()["ollama"]["mem_limit"]) == "12g"
+
+
+class TestTheSidecarImageStandsOnItsOwn:
+    """The published image is a supported way to run this, so what keeps the
+    sidecar honest belongs in it rather than in a compose file the person running
+    it may never have read."""
+
+    def test_it_does_not_run_as_root(self) -> None:
+        """The base image runs as root and keeps its model store under /root."""
+        assert _instruction(_ollama_image(), "USER") not in ("root", "0")
+
+    def test_the_liveness_check_travels_with_the_image(self) -> None:
+        """Regression: the check existed only in docker-compose.yml.
+
+        ``ollama list`` answers minutes before the first model lands, so the
+        models-ready file is the half that keeps ``app-ai`` from starting early.
+        """
+        healthcheck_command = _instruction(_ollama_image(), "HEALTHCHECK")
+
+        assert "ollama list" in healthcheck_command
+        assert "/tmp/models-ready" in healthcheck_command
+
+    def test_compose_does_not_define_a_second_one(self) -> None:
+        """Two copies drift, and the image's is the one a ``docker run`` sees."""
+        assert "healthcheck" not in _services()["ollama"]
+
+    def test_the_ai_app_waits_for_that_signal(self) -> None:
+        """What makes the image's healthcheck load-bearing rather than advisory:
+        without it this dependency never resolves."""
+        assert (
+            _services()["app-ai"]["depends_on"]["ollama"]["condition"]
+            == "service_healthy"
+        )
+
+    def test_the_model_volume_is_mounted_where_the_image_stores_models(self) -> None:
+        """Ollama's store follows ``HOME``, and nothing else ties the two. A
+        volume mounted elsewhere works perfectly and vanishes on recreate."""
+        assert (
+            f"ollama-data:{_ollama_model_store()}" in _services()["ollama"]["volumes"]
+        )
+
+    def test_the_image_owns_the_directory_the_model_volume_mounts_over(self) -> None:
+        """Regression: a clean ``--profile ai`` start pulled no model.
+
+        Docker takes a fresh volume's ownership from the image's directory at
+        the mount point. With none there the daemon creates it root-owned,
+        where the ``ollama`` user cannot write.
+        """
+        store = _ollama_model_store()
+        user = _instruction(_ollama_image(), "USER")
+
+        assert any(
+            store in run and user in run for run in _run_bodies(OLLAMA_DOCKERFILE)
+        ), f"no RUN gives {store} to {user}; the model volume mounts root-owned"

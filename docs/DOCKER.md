@@ -81,6 +81,12 @@ services:
 
 With no private plugins, leave `./private` empty or drop that volume.
 
+Every service also carries `cap_drop: [ALL]` and
+`security_opt: [no-new-privileges:true]`. The app has no authentication of its
+own, so the confinement is what limits a compromised dependency to the
+container. Nothing here needs a capability: the images run as an unprivileged
+user and bind ports above 1024.
+
 ## Parameters
 
 ### Volume mounts
@@ -115,6 +121,7 @@ the host at all.
 | `OLLAMA_MODEL` | `mistral:7b` | Generation model the sidecar pulls. Must match the app's `ollama.model`. |
 | `OLLAMA_EMBEDDING_MODEL` | `nomic-embed-text` | Embedding model the sidecar pulls. Must match `ollama.embedding_model`. |
 | `OLLAMA_CONVERSATION_MODEL` | unset, so reuses `OLLAMA_MODEL` | Set only when `ollama.conversation_model` names a separate chat model. |
+| `OLLAMA_MEMORY_LIMIT` | `12g` | Memory ceiling for the sidecar. Fits every model in [MODEL_RECOMMENDATIONS.md](MODEL_RECOMMENDATIONS.md); raise it for anything larger, or the kernel kills the model load instead of the host. |
 
 **Setting `TZ` does not correct dates already stored, and a re-sync will not
 either.** The corrected local date is the earlier one, and a sync keeps the later
@@ -191,12 +198,26 @@ on the host.
 
 ### Model storage
 
-Models persist in the `recommendinator-ollama-data` named volume, so they survive
-restarts and updates.
+Models persist in the `recommendinator-ollama-data` named volume, mounted at
+`/var/lib/ollama/.ollama`, so they survive restarts and updates.
 
 ```bash
 docker volume inspect recommendinator-ollama-data
 ```
+
+**Upgrading over a volume the old sidecar filled:** earlier images ran as root
+and kept their models under `/root/.ollama`. The current one runs as the
+unprivileged `ollama` user, which cannot read what root wrote. Chown the volume
+once, with the stack down:
+
+```bash
+docker run --rm --user root --entrypoint chown \
+  -v recommendinator-ollama-data:/models \
+  ghcr.io/therealahall/recommendinator-ollama:latest -R ollama:ollama /models
+```
+
+Skip it and the sidecar cannot read the models already in there. Nothing is
+lost — the chown works just as well after the fact.
 
 ## Updates
 
@@ -278,6 +299,13 @@ resolved. Confirm one by hand:
 docker compose exec ollama ollama pull mistral:7b
 ```
 
+### The sidecar dies partway through loading a model
+
+The model is bigger than `OLLAMA_MEMORY_LIMIT` and the kernel killed it. Raise
+the limit past the model's size — `docker compose logs ollama` shows the load
+stopping with no error of its own, which is what an OOM kill looks like from
+inside.
+
 ### `permission denied` writing to `/app/data`
 
 The container runs as non-root. On hosts with a restrictive umask or SELinux,
@@ -311,3 +339,9 @@ The dev override builds locally instead of pulling, bind-mounts `./src`,
 bumps without a rebuild. For frontend hot reload, run `pnpm dev` on the host:
 Vite serves on 5173 and proxies API calls to the container. See
 [CONTRIBUTING.md](../CONTRIBUTING.md).
+
+The container serves the frontend bundle it built itself, so port 18473 works on
+a fresh clone that has never run `pnpm`. That bundle sits in a volume, which is
+what stops the `./src` mount hiding it — and a volume outlives the container, so
+rebuild with `--build --renew-anon-volumes` after a frontend change or the old
+bundle comes back.
