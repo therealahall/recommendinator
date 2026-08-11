@@ -97,13 +97,20 @@ jobs:
         id: released
         if: steps.validated.outputs.current == 'true'
         run: |
-          TAGS=$(git tag --points-at HEAD | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true)
+          TAGS=$(git tag --points-at HEAD \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V || true)
           TAG=""
           if [ -n "$TAGS" ]; then
-            TAG=$(printf '%s\n' "$TAGS" | head -1)
-            OTHERS=$(printf '%s\n' "$TAGS" | tail -n +2)
+            # Version order, which is neither the refname order `git tag` hands
+            # back nor plain text order: with v0.9.0 and v0.10.0 both here,
+            # those two answer v0.9.0, the one already released, and leave
+            # v0.10.0 with no release and no images at all.
+            TAG=$(printf '%s\n' "$TAGS" | tail -1)
+            OTHERS=$(printf '%s\n' "$TAGS" | grep -vxF "$TAG" || true)
             if [ -n "$OTHERS" ]; then
-              echo "WARNING: HEAD carries more than one semver tag ($TAGS); releasing $TAG."
+              # Onto one line: $TAGS is newline-separated, and only the first
+              # of the lines it renders as would carry the WARNING prefix.
+              echo "WARNING: HEAD carries more than one semver tag; releasing $TAG and not $(printf '%s' "$OTHERS" | tr '\n' ' ')."
             fi
           fi
           echo "Release tag at HEAD: ${TAG:-none}"

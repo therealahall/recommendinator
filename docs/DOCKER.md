@@ -240,7 +240,9 @@ the sidecar image. A cached sidecar from before that check carries none, and
 compose fails the `service_healthy` dependency outright rather than waiting — a
 container with no health check can never report healthy.
 
-To pin, set `IMAGE_TAG=X.Y.Z` and run the same two commands.
+To pin, set `IMAGE_TAG=X.Y.Z` and run the same two commands. A pin outranks the
+`pull`, which then re-fetches the release you named rather than a newer one, so
+moving forward means raising the pin.
 
 ## Reverse proxy
 
@@ -316,7 +318,9 @@ docker compose exec ollama ollama pull mistral:7b
 ### `app-ai` will not start: `has no healthcheck configured`
 
 The sidecar image in your local cache predates the health check `depends_on`
-waits on. `docker compose pull`, then bring the stack up again.
+waits on. `docker compose pull`, then bring the stack up again. With `IMAGE_TAG`
+pinned to a release older than the check, `pull` re-fetches that same image and
+nothing changes — raise the pin to a release carrying the check first.
 
 ### The sidecar dies partway through loading a model
 
