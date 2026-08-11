@@ -71,9 +71,15 @@ function submitCode() {
 
 <template>
   <div>
+    <!--
+      aria-disabled, not disabled: a natively disabled button leaves the tab
+      order, so the hint describing it is never announced to the screen-reader
+      or Voice Control user it was written for. openAuth already refuses the
+      activation this leaves reachable.
+    -->
     <button
       class="btn btn-primary"
-      :disabled="!canConnect"
+      :aria-disabled="!canConnect || undefined"
       :aria-label="connectLabel"
       :aria-describedby="canConnect ? undefined : hintId"
       @click="openAuth"

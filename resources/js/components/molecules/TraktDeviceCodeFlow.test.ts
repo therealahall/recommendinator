@@ -116,7 +116,7 @@ describe('TraktDeviceCodeFlow', () => {
   it('enables the connect button and omits the hint when credentials resolve', () => {
     const wrapper = mountFlow(makeTimer())
     const button = wrapper.get('[data-testid="trakt-connect-btn"]')
-    expect((button.element as HTMLButtonElement).disabled).toBe(false)
+    expect(button.attributes('aria-disabled')).toBeUndefined()
     expect(button.attributes('aria-describedby')).toBeUndefined()
     expect(wrapper.find('[data-testid="trakt-connect-hint"]').exists()).toBe(
       false,
@@ -128,7 +128,10 @@ describe('TraktDeviceCodeFlow', () => {
     const wrapper = mountFlow(makeTimer())
 
     const button = wrapper.get('[data-testid="trakt-connect-btn"]')
-    expect((button.element as HTMLButtonElement).disabled).toBe(true)
+    expect(button.attributes('aria-disabled')).toBe('true')
+    // Not the native attribute: that takes the button out of the tab order,
+    // and the hint below is only announced to someone who can land on it.
+    expect((button.element as HTMLButtonElement).disabled).toBe(false)
 
     const hint = wrapper.get('[data-testid="trakt-connect-hint"]')
     // A literal here told a disabled source to add credentials it already has.
@@ -138,6 +141,9 @@ describe('TraktDeviceCodeFlow', () => {
     // screen reader announces "why" alongside the control.
     expect(hint.attributes('id')).toBe('trakt-connect-hint-trakt_work')
     expect(button.attributes('aria-describedby')).toBe(hint.attributes('id'))
+    // base.css greys `.btn[aria-disabled='true']`; off that class the button
+    // renders pixel-identically to a working one (WCAG 1.3.1).
+    expect(button.classes()).toContain('btn')
   })
 
   it('gives each source its own hint id', () => {
@@ -201,6 +207,8 @@ describe('TraktDeviceCodeFlow', () => {
     setTraktEnabled(false)
     const wrapper = mountFlow(makeTimer())
 
+    // aria-disabled leaves the button activatable, so this guard is the only
+    // thing between the click and a 400 the user never asked for.
     await wrapper.get('[data-testid="trakt-connect-btn"]').trigger('click')
     await flushPromises()
 

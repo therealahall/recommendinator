@@ -26,6 +26,7 @@ const expanded = ref(false)
 const detailsLoaded = ref(false)
 const detailsLoading = ref(false)
 const oauthStatusFailed = ref(false)
+const gateRefreshing = ref(false)
 const migrating = ref(false)
 const savingConfig = ref(false)
 const togglingEnabled = ref(false)
@@ -33,6 +34,11 @@ type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
 const saveStatus = ref<SaveStatus>('idle')
 const saveError = ref('')
 let saveStatusTimer: ReturnType<typeof setTimeout> | null = null
+
+/** Retry and a gate-changing write run the same re-read, so they say the same
+ *  words for it. */
+const RECHECKING_STATUS = 'Rechecking the connection status…'
+const STATUS_UPDATED = 'Connection status updated.'
 
 const schema = computed(() => data.sourceSchemas[props.source.id])
 const config = computed(() => data.sourceConfigs[props.source.id])
@@ -112,14 +118,40 @@ async function onSaveConfig(values: Record<string, unknown>): Promise<void> {
   } finally {
     savingConfig.value = false
   }
+  // Trakt's client ID is an ordinary field, so this form moves the connect
+  // gate as surely as the secret verbs do. Out here rather than in the try:
+  // the recheck's own await would hold "Saving…" on a button whose status
+  // pill already reads "Saved ✓".
+  if (saveStatus.value === 'saved') await refreshConnectGate()
+}
+
+// The Connect button reads the OAuth status; the hint under it reads the
+// source's own settings. Only the settings half of that pair moves when the
+// user enables the source or stores a client credential, so without this the
+// button stays dead under a hint that has moved on to naming a different
+// remedy — and nothing on screen changes to say so.
+async function refreshConnectGate(): Promise<void> {
+  if (!isOAuthSource.value) return
+  gateRefreshing.value = true
+  data.setOAuthMessage(props.source.id, RECHECKING_STATUS)
+  await loadOAuthState()
+  gateRefreshing.value = false
+  data.setOAuthMessage(
+    props.source.id,
+    oauthStatusFailed.value
+      ? 'Could not read the connection status. Try again in a moment.'
+      : STATUS_UPDATED,
+  )
 }
 
 async function onSetSecret(name: string, value: string): Promise<void> {
   await data.setSourceSecret(props.source.id, name, value)
+  await refreshConnectGate()
 }
 
 async function onClearSecret(name: string): Promise<void> {
   await data.clearSourceSecret(props.source.id, name)
+  await refreshConnectGate()
 }
 
 async function onEnabledChange(value: boolean): Promise<void> {
@@ -127,6 +159,7 @@ async function onEnabledChange(value: boolean): Promise<void> {
   togglingEnabled.value = true
   try {
     await data.setSourceEnabled(props.source.id, value)
+    await refreshConnectGate()
   } finally {
     togglingEnabled.value = false
   }
@@ -198,6 +231,10 @@ const showTraktConnect = computed(
 // with "no client credentials", and Epic nulls the auth URL when its builder
 // throws while enabled. Only the enable flag tells those apart.
 const connectHint = computed(() => {
+  // Mid-refresh the two halves disagree, the settings one having moved first.
+  // Naming a remedy from it alone is how a Trakt source one click from
+  // connectable was told to add the credentials it already had.
+  if (gateRefreshing.value) return RECHECKING_STATUS
   if (!config.value?.enabled) {
     return 'Enable this source in the settings below before you can connect.'
   }
@@ -267,7 +304,7 @@ async function onSubmitCode(code: string): Promise<void> {
 async function onRetryStatus(): Promise<void> {
   if (oauthRetrying.value) return
   oauthRetrying.value = true
-  data.setOAuthMessage(props.source.id, 'Rechecking the connection status…')
+  data.setOAuthMessage(props.source.id, RECHECKING_STATUS)
   await loadOAuthState()
   oauthRetrying.value = false
   // A second failure changes nothing else on screen, so without a word here
@@ -276,7 +313,7 @@ async function onRetryStatus(): Promise<void> {
     props.source.id,
     oauthStatusFailed.value
       ? 'Still could not read the connection status. Try again in a moment.'
-      : 'Connection status updated.',
+      : STATUS_UPDATED,
   )
 }
 

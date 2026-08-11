@@ -60,6 +60,13 @@ const yamlConfig: SourceConfigResponse = {
   migrated_at: null,
 }
 
+/** What the server answers for a source it will not connect. */
+const UNCONNECTABLE: OAuthStatus = {
+  enabled: false,
+  connected: false,
+  authUrl: null,
+}
+
 describe('SyncSourceAccordion', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
@@ -260,6 +267,26 @@ describe('SyncSourceAccordion', () => {
       .trigger('click')
 
     expect(setEnabled).toHaveBeenCalledWith('steam', true)
+  })
+
+  it('does not announce a connection status for a source that has none', async () => {
+    const wrapper = mount(SyncSourceAccordion, {
+      props: { source: baseSource, syncing: false },
+    })
+    const store = useDataStore()
+    const { loadOAuthStatus } = primeStore(store, migratedConfig)
+    vi.spyOn(store, 'setSourceEnabled').mockResolvedValue(undefined)
+
+    await wrapper.find('button.accordion-trigger').trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-testid="form-toggle-enabled"]').trigger('click')
+    await flushPromises()
+
+    // Steam has no gate for the re-read to move and no OAuth panel, so the
+    // region a message would go to is not on screen to carry it. Still the
+    // empty string expanding the panel cleared it to.
+    expect(loadOAuthStatus).not.toHaveBeenCalled()
+    expect(store.oauthMessages[baseSource.id]).toBe('')
   })
 
   it('saving the form forwards the values to store.updateSourceConfig', async () => {
@@ -923,7 +950,7 @@ describe('SyncSourceAccordion', () => {
       const { wrapper } = await expandGog(false, null)
 
       const connect = wrapper.findComponent(OAuthConnectFlow).get('button')
-      expect((connect.element as HTMLButtonElement).disabled).toBe(true)
+      expect(connect.attributes('aria-disabled')).toBe('true')
       const hint = wrapper.get('[data-testid="oauth-connect-hint"]')
       expect(hint.text()).toContain('sign-in link')
       expect(connect.attributes('aria-describedby')).toBe(hint.attributes('id'))
@@ -1079,27 +1106,31 @@ describe('SyncSourceAccordion', () => {
           syncing: false,
         },
       })
-      primeStore(
-        useDataStore(),
+      const store = useDataStore()
+      const { loadOAuthStatus } = primeStore(
+        store,
         { ...migratedConfig, source_id: id, plugin, enabled: sourceEnabled },
         oauth,
       )
 
       await wrapper.find('button.accordion-trigger').trigger('click')
       await flushPromises()
-      return wrapper
+      return { wrapper, store, loadOAuthStatus }
     }
 
-    const UNCONNECTABLE: OAuthStatus = {
-      enabled: false,
-      connected: false,
-      authUrl: null,
+    /** Make ``setSourceEnabled`` land on the config the way the store does. */
+    function stubEnableToggle(store: ReturnType<typeof useDataStore>) {
+      return vi
+        .spyOn(store, 'setSourceEnabled')
+        .mockImplementation(async (id: string, enabled: boolean) => {
+          store.sourceConfigs[id] = { ...store.sourceConfigs[id], enabled }
+        })
     }
 
     it('tells a disabled Trakt source to enable itself', async () => {
       // One click from connectable, and it was being told to add the client
       // credentials it already has.
-      const wrapper = await expand('trakt', false, UNCONNECTABLE)
+      const { wrapper } = await expand('trakt', false, UNCONNECTABLE)
 
       expect(wrapper.get('[data-testid="trakt-connect-hint"]').text()).toBe(
         'Enable this source in the settings below before you can connect.',
@@ -1107,7 +1138,7 @@ describe('SyncSourceAccordion', () => {
     })
 
     it('tells an enabled Trakt source to add its client credentials', async () => {
-      const wrapper = await expand('trakt', true, UNCONNECTABLE)
+      const { wrapper } = await expand('trakt', true, UNCONNECTABLE)
 
       expect(wrapper.get('[data-testid="trakt-connect-hint"]').text()).toBe(
         'Add the Trakt client ID and client secret in the settings below ' +
@@ -1116,7 +1147,7 @@ describe('SyncSourceAccordion', () => {
     })
 
     it('does not tell an enabled Epic source to enable itself', async () => {
-      const wrapper = await expand('epic_games', true, {
+      const { wrapper } = await expand('epic_games', true, {
         ...UNCONNECTABLE,
         enabled: true,
       })
@@ -1127,10 +1158,153 @@ describe('SyncSourceAccordion', () => {
     })
 
     it('tells a disabled GOG source to enable itself', async () => {
-      const wrapper = await expand('gog', false, UNCONNECTABLE)
+      const { wrapper } = await expand('gog', false, UNCONNECTABLE)
 
       expect(wrapper.get('[data-testid="oauth-connect-hint"]').text()).toBe(
         'Enable this source in the settings below before you can connect.',
+      )
+    })
+
+    it('does not name the credentials remedy while the status is stale after an enable', async () => {
+      const { wrapper, store, loadOAuthStatus } = await expand(
+        'trakt',
+        false,
+        UNCONNECTABLE,
+      )
+      stubEnableToggle(store)
+      loadOAuthStatus.mockClear()
+      // Held open so the window where only the config half has moved is
+      // observable — the window the hint used to be read in.
+      let releaseStatus: () => void = () => {}
+      loadOAuthStatus.mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            releaseStatus = () => {
+              store.oauthStatus['trakt_work'] = {
+                ...UNCONNECTABLE,
+                enabled: true,
+              }
+              resolve()
+            }
+          }),
+      )
+
+      await wrapper.get('[data-testid="form-toggle-enabled"]').trigger('click')
+      await flushPromises()
+
+      // config.enabled is true here and the status is still the disabled read,
+      // so the hint landed on "add the Trakt client ID and client secret" —
+      // told to a source that has them, beside a button nothing would revive.
+      expect(wrapper.get('[data-testid="trakt-connect-hint"]').text()).toBe(
+        'Rechecking the connection status…',
+      )
+
+      releaseStatus()
+      await flushPromises()
+
+      expect(loadOAuthStatus).toHaveBeenCalledWith('trakt_work', 'trakt')
+      expect(wrapper.find('[data-testid="trakt-connect-hint"]').exists()).toBe(
+        false,
+      )
+      expect(
+        wrapper
+          .get('[data-testid="trakt-connect-btn"]')
+          .attributes('aria-disabled'),
+      ).toBeUndefined()
+      // The toggle blurs to <body> while it is busy, so the region is the only
+      // thing that can report what the recheck found.
+      expect(wrapper.get('[data-testid="oauth-message"]').text()).toContain(
+        'Connection status updated.',
+      )
+    })
+
+    it('rechecks the gate after either secret verb', async () => {
+      const { wrapper, store, loadOAuthStatus } = await expand(
+        'trakt',
+        true,
+        UNCONNECTABLE,
+      )
+      vi.spyOn(store, 'setSourceSecret').mockResolvedValue(undefined)
+      vi.spyOn(store, 'clearSourceSecret').mockResolvedValue(undefined)
+      loadOAuthStatus.mockClear()
+
+      // Trakt's `enabled` folds in whether the client credentials resolve, so
+      // storing one moves the gate exactly as the enable toggle does.
+      await wrapper.get('[data-testid="secret-replace-api_key"]').trigger('click')
+      await wrapper.get('#secret-input-api_key').setValue('fresh')
+      await wrapper.get('[data-testid="secret-save-api_key"]').trigger('click')
+      await flushPromises()
+
+      expect(loadOAuthStatus).toHaveBeenCalledTimes(1)
+
+      await wrapper.get('[data-testid="secret-clear-api_key"]').trigger('click')
+      await flushPromises()
+
+      expect(loadOAuthStatus).toHaveBeenCalledTimes(2)
+    })
+
+    it('rechecks the gate after a settings save', async () => {
+      const { wrapper, store, loadOAuthStatus } = await expand(
+        'trakt',
+        true,
+        UNCONNECTABLE,
+      )
+      vi.spyOn(store, 'updateSourceConfig').mockResolvedValue(undefined)
+      loadOAuthStatus.mockClear()
+
+      // Trakt's client ID is an ordinary field on this form, so a save moves
+      // the same gate the secret verbs do.
+      await wrapper.get('input[name="vanity_url"]').setValue('cid')
+      await wrapper.get('[data-testid="form-save"]').trigger('click')
+      await flushPromises()
+
+      expect(loadOAuthStatus).toHaveBeenCalledTimes(1)
+      expect(wrapper.get('[data-testid="oauth-message"]').text()).toContain(
+        'Connection status updated.',
+      )
+    })
+
+    it('leaves the gate unread when the save was refused', async () => {
+      const { wrapper, store, loadOAuthStatus } = await expand(
+        'trakt',
+        true,
+        UNCONNECTABLE,
+      )
+      vi.spyOn(store, 'updateSourceConfig').mockRejectedValue(
+        new Error('save blew up'),
+      )
+      loadOAuthStatus.mockClear()
+
+      await wrapper.get('[data-testid="form-save"]').trigger('click')
+      await flushPromises()
+
+      // Nothing was written, so announcing a fresh status would report a
+      // recheck of a gate that never moved, over the error the user needs.
+      expect(loadOAuthStatus).not.toHaveBeenCalled()
+      expect(wrapper.get('[data-testid="form-save-status"]').text()).toContain(
+        'save blew up',
+      )
+    })
+
+    it('says so when the recheck after a write cannot be read', async () => {
+      const { wrapper, store, loadOAuthStatus } = await expand(
+        'trakt',
+        false,
+        UNCONNECTABLE,
+      )
+      stubEnableToggle(store)
+      loadOAuthStatus.mockRejectedValueOnce(new Error('status read failed'))
+
+      await wrapper.get('[data-testid="form-toggle-enabled"]').trigger('click')
+      await flushPromises()
+
+      // The connect flow is swapped for the error and its Retry, and neither
+      // announces: without the region the write's outcome reaches nobody.
+      expect(wrapper.get('[data-testid="oauth-message"]').text()).toContain(
+        'Could not read the connection status. Try again in a moment.',
+      )
+      expect(wrapper.find('[data-testid="oauth-status-retry"]').exists()).toBe(
+        true,
       )
     })
   })
