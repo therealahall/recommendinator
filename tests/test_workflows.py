@@ -8,8 +8,10 @@ decision — is instead executed under `bash -e`, the shell a `run:` step gets.
 from __future__ import annotations
 
 import os
+import posixpath
 import re
 import subprocess
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +34,28 @@ GATE_REFERENCE = "./.github/workflows/quality-gate.yml"
 # id-token:write mints an OIDC token identifying this repository. Buildkit's
 # provenance and sbom travel under packages:write and want neither.
 UNUSED_SCOPES = ("attestations", "id-token")
+
+# Each floating tag and the one guard output entitled to enable it. The three
+# are interchangeable to every other assertion here, and a swapped pair is
+# indistinguishable from the bug they exist to prevent.
+FLOATING_TAG_GUARDS = {
+    ("raw", "latest"): "highest_overall",
+    ("semver", "{{major}}"): "highest_in_major",
+    ("semver", "{{major}}.{{minor}}"): "highest_in_minor",
+}
+
+DOCKERFILE = _REPO_ROOT / "Dockerfile"
+
+# `COPY [flags] config/example.yaml <destination>` — the first-run seed, whose
+# container path the PR smoke test has to name to read it back out of the image.
+_SEED_COPY = re.compile(
+    r"^COPY\s+(?:--\S+\s+)*config/example\.yaml\s+(?P<destination>\S+)\s*$",
+    re.MULTILINE,
+)
+_WORKDIR = re.compile(r"^WORKDIR\s+(?P<path>\S+)\s*$", re.MULTILINE)
+
+# Any absolute path naming the seed, however the Dockerfile spells it today.
+_SEED_REFERENCE = re.compile(r"/app/\S*example\.yaml")
 
 
 def _workflow(path: Path) -> dict[str, Any]:
@@ -77,6 +101,41 @@ def _every_run_command() -> list[tuple[str, str, str]]:
     ]
     assert commands, "no run steps found; the sweeps below would prove nothing"
     return commands
+
+
+def _tag_entries(path: Path, job: str) -> dict[tuple[str, str], dict[str, str]]:
+    """Return the metadata-action `tags` block keyed by (type, pattern or value)."""
+    entries = {}
+    for line in str(
+        _step_named(path, job, "Generate image metadata")["with"]["tags"]
+    ).splitlines():
+        if not line.strip():
+            continue
+        attributes = dict(
+            field.split("=", 1) for field in line.strip().split(",") if "=" in field
+        )
+        key = (attributes["type"], attributes.get("pattern") or attributes["value"])
+        entries[key] = attributes
+    assert entries, f"{path.name} job {job} generates no tags at all"
+    return entries
+
+
+def _shipped_seed_path() -> str:
+    """The container path `Dockerfile` copies the first-run seed to.
+
+    Resolved against the WORKDIR in force at that COPY, since the destination
+    is written relative.
+    """
+    source = DOCKERFILE.read_text(encoding="utf-8")
+    copied = _SEED_COPY.search(source)
+    assert copied is not None, "the Dockerfile copies no config/example.yaml"
+    preceding = [
+        match for match in _WORKDIR.finditer(source) if match.start() < copied.start()
+    ]
+    assert preceding, "no WORKDIR precedes the seed COPY"
+    return posixpath.normpath(
+        posixpath.join(preceding[-1].group("path"), copied.group("destination"))
+    )
 
 
 def _git(repository: Path, *arguments: str) -> str:
@@ -275,6 +334,23 @@ class TestComposeValidationCoverage:
         assert profiled == {"ai"}, profiled
 
 
+class TestTheSmokeTestReadsTheImageItJustBuilt:
+    """Regression: the smoke test cats the seed out of the image by absolute
+    path, and the image moved it out of `/app/config` so the deployment's bind
+    mount could not hide it. Nothing tied the two.
+    """
+
+    def test_the_seed_is_read_from_where_the_dockerfile_ships_it(self) -> None:
+        """The step runs under `bash -e` without `pipefail`, so a `cat` of the
+        wrong path writes an empty config and the job dies two lines later on a
+        grep that says nothing about the rename that caused it."""
+        smoke = _step_named(DOCKER, "build-pr", "Smoke test (default variant only)")
+        referenced = set(_SEED_REFERENCE.findall(str(smoke["run"])))
+
+        assert referenced, "the smoke test reads no seed out of the image"
+        assert referenced == {_shipped_seed_path()}
+
+
 class TestReleaseIntegrity:
     """What ships is the commit CI validated, and no floating tag walks backwards."""
 
@@ -303,6 +379,26 @@ class TestReleaseIntegrity:
         assert _step_index(RELEASE, "release", "Verify the bumped tree") < _step_index(
             RELEASE, "release", "Push the version commit and tag"
         )
+
+    def test_the_regenerated_lockfile_rides_in_the_version_commit(self) -> None:
+        """Unstaged, the tagged tree carries a lock every `uv sync --locked` rejects.
+
+        CONTRIBUTING.md and CLAUDE.md both describe one commit carrying the
+        bump, the changelog and the lock; a second commit would not be tagged.
+        """
+        semantic_release = tomllib.loads(
+            (_REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        )["tool"]["semantic_release"]
+        build_command = semantic_release["build_command"]
+        assert "uv lock" in build_command, build_command
+        assert "git add uv.lock" in build_command, build_command
+
+        committing = [
+            (workflow, job)
+            for workflow, job, command in _every_run_command()
+            if "git commit" in command
+        ]
+        assert not committing, f"a commit outside semantic-release: {committing}"
 
     def test_publish_waits_for_the_guard_and_the_gate(self) -> None:
         """Either one skipped and a tag on any commit at all reaches GHCR."""
@@ -344,6 +440,39 @@ class TestReleaseIntegrity:
             "metadata-action applies `latest` to every semver tag unless the "
             f"flavor forbids it, so the guard decides nothing: {fields}"
         )
+
+    def test_each_floating_tag_is_enabled_by_the_guard_output_for_its_own_scope(
+        self,
+    ) -> None:
+        """Reading `highest_in_minor`, `latest` would follow the 0.22.1 backport.
+
+        Every alias being conditional is not enough: the three conditions are
+        the same shape, and nothing else notices two of them changing places.
+        """
+        conditional = {
+            key: attributes
+            for key, attributes in _tag_entries(DOCKER, "publish").items()
+            if "enable" in attributes
+        }
+        assert set(conditional) == set(FLOATING_TAG_GUARDS), conditional
+        for key, output in FLOATING_TAG_GUARDS.items():
+            expected = "${{ needs.guard.outputs." + output + " == 'true' }}"
+            assert conditional[key]["enable"] == expected, (key, conditional[key])
+
+    def test_the_version_tag_is_published_whatever_the_guard_decided(self) -> None:
+        """Guarded too, a backport would reach GHCR under no tag of its own."""
+        version = _tag_entries(DOCKER, "publish")[("semver", "{{version}}")]
+        assert "enable" not in version, version
+
+    def test_each_published_variant_tags_a_namespace_of_its_own(self) -> None:
+        """Sharing one, the AI variant's `latest` would overwrite the default's."""
+        variants = _jobs(DOCKER)["publish"]["strategy"]["matrix"]["include"]
+        assert len(variants) > 1, "one variant collides with nothing"
+        namespaces = [(variant["image"], variant["tag_suffix"]) for variant in variants]
+        assert len(set(namespaces)) == len(namespaces), namespaces
+
+        metadata = _step_named(DOCKER, "publish", "Generate image metadata")
+        assert "suffix=${{ matrix.tag_suffix }}" in str(metadata["with"]["flavor"])
 
     def test_publish_reads_only_outputs_the_guard_declares(self) -> None:
         """A misspelt output resolves to the empty string, which enables nothing."""

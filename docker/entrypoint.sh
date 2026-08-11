@@ -11,24 +11,31 @@
 set -eu
 
 : "${CONFIG_DIR:=/app/config}"
+# Outside CONFIG_DIR on purpose — the host's ./config is bind-mounted over it,
+# which hides anything the image ships there.
+: "${SEED_CONFIG:=/app/example.yaml}"
 
-# Defense-in-depth: refuse CONFIG_DIR values outside the application tree.
-# Inside Docker this is always /app/config; the env override exists only for
-# unit tests, which run against pytest's tmp_path. Anything else is a misuse.
-case "$CONFIG_DIR" in
-    /app/* | /tmp/*) ;;
-    *)
-        echo "[entrypoint] FATAL: CONFIG_DIR must be under /app or /tmp; got: $CONFIG_DIR" >&2
-        exit 1
-        ;;
-esac
+# Defense-in-depth: refuse paths outside the application tree. Inside Docker
+# both are under /app; the env overrides exist only for unit tests, which run
+# against pytest's tmp_path. Anything else is a misuse.
+require_in_tree() {
+    case "$2" in
+        /app/* | /tmp/*) ;;
+        *)
+            echo "[entrypoint] FATAL: $1 must be under /app or /tmp; got: $2" >&2
+            exit 1
+            ;;
+    esac
+}
+
+require_in_tree CONFIG_DIR "$CONFIG_DIR"
+require_in_tree SEED_CONFIG "$SEED_CONFIG"
 
 CONFIG_PATH="$CONFIG_DIR/config.yaml"
-EXAMPLE_PATH="$CONFIG_DIR/example.yaml"
 
 if [ ! -f "$CONFIG_PATH" ]; then
-    if [ -f "$EXAMPLE_PATH" ]; then
-        cp "$EXAMPLE_PATH" "$CONFIG_PATH"
+    if [ -f "$SEED_CONFIG" ]; then
+        cp "$SEED_CONFIG" "$CONFIG_PATH"
         # Before the operator's token lands, not after: cp inherits
         # example.yaml's 0644, so on the bind-mounted ./config every user on
         # the host could read it. data/.credential_key is 0600 already.
@@ -45,7 +52,7 @@ if [ ! -f "$CONFIG_PATH" ]; then
         echo "[entrypoint] Under Docker it carries only the storage paths, web.api_token and web.debug; the bind comes from --host/--port (set the published port with APP_PORT)."
         echo "[entrypoint] Data sources, settings, and API keys are managed in the app."
     else
-        echo "[entrypoint] WARNING: neither config.yaml nor example.yaml present in $CONFIG_DIR." >&2
+        echo "[entrypoint] WARNING: no config.yaml in $CONFIG_DIR and no seed at $SEED_CONFIG." >&2
         echo "[entrypoint] The application may fail to start. Mount a config directory or rebuild the image." >&2
     fi
 fi

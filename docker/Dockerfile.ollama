@@ -16,6 +16,12 @@ FROM ollama/ollama:0.22.0@sha256:05ab093b257a54318fba39293f1640d53b507d1edec8fa6
 RUN useradd --create-home --home-dir /var/lib/ollama --shell /bin/bash ollama
 ENV HOME=/var/lib/ollama
 
+# Docker copies a fresh named volume's ownership from the image's directory at
+# the mount point. With nothing there the daemon creates it root-owned, the
+# ollama user cannot write the model or its signing key, and the container
+# restart-loops with app-ai waiting on a health check that never passes.
+RUN mkdir -p /var/lib/ollama/.ollama && chown ollama:ollama /var/lib/ollama/.ollama
+
 COPY --chown=ollama:ollama ollama-entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
@@ -24,6 +30,7 @@ USER ollama
 # start_period is a placeholder, not a measurement: a first pull is documented
 # at 5–15 minutes and nobody has timed one on a throttled link. 900s is the top
 # of that range, erring long because a short one restarts a healthy download.
+# qs5i.9.3 is the bead that times one.
 HEALTHCHECK --interval=10s --timeout=5s --start-period=900s --retries=3 \
     CMD ollama list > /dev/null 2>&1 && test -f /tmp/models-ready
 

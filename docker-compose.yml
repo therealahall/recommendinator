@@ -37,9 +37,11 @@
 #   OLLAMA_CONVERSATION_MODEL — separate chat model to pull (default: reuse OLLAMA_MODEL)
 #   OLLAMA_MEMORY_LIMIT     — memory ceiling for the sidecar (default: 12g, which
 #                             holds every model docs/MODEL_RECOMMENDATIONS.md
-#                             names). Raise it for a larger model: past the
-#                             ceiling the kernel kills the model load, which on a
-#                             NAS or a Pi is still better than killing the host.
+#                             names). Raise it for a larger model. A ceiling
+#                             above the host's own RAM never binds, so on an
+#                             8 GB NAS or Pi lower it: the kernel then kills the
+#                             model load instead of choosing a victim from every
+#                             process on the machine.
 #
 # For local development with hot reload, layer docker-compose.dev.yml on top:
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
@@ -79,9 +81,9 @@ x-app-common: &app-common
     - ./private:/app/private:ro
   restart: unless-stopped
   # The image already runs as an unprivileged user and binds a high port, so it
-  # needs no capability and nothing in it should be able to acquire one. There
-  # is no authentication in front of the app (docs/SECURITY.md), which is what
-  # makes the blast radius of a compromised dependency worth shrinking here.
+  # needs no capability and nothing in it should be able to acquire one. Every
+  # /api route already requires a bearer token (docs/SECURITY.md); this is the
+  # other half — what a compromised dependency can reach once it is inside.
   security_opt:
     - no-new-privileges:true
   cap_drop:
@@ -132,8 +134,14 @@ services:
       # store. See docs/DOCKER.md for the one-time chown when upgrading from a
       # sidecar that ran as root.
       - ollama-data:/var/lib/ollama/.ollama
-    # The liveness check ships in the image, so `docker run` gets it too.
+    # The liveness check ships in the image, so `docker run` gets it too — which
+    # makes `docker compose pull` before an upgrade mandatory: a cached sidecar
+    # from before it has none, and app-ai's service_healthy dependency on a
+    # container with no health check fails outright.
     restart: unless-stopped
+    # The only capped service. Loading a model is the one operation here
+    # measured in gigabytes; a ceiling guessed for the app services would turn a
+    # long but healthy sync into an OOM kill.
     mem_limit: ${OLLAMA_MEMORY_LIMIT:-12g}
     security_opt:
       - no-new-privileges:true

@@ -65,8 +65,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh   # if you do not have uv
 uv sync --locked                                  # add --extra ai for AI features
 
 corepack enable                                   # pnpm, needs Node.js 18+
-pnpm install --frozen-lockfile
-pnpm build
+make build-frontend                               # installs pnpm deps, builds the UI
 
 cp config/example.yaml config/config.yaml
 ```
@@ -74,7 +73,7 @@ cp config/example.yaml config/config.yaml
 Then set `web.api_token` in `config/config.yaml` to an `openssl rand -hex 32`
 value. The server will not start without one.
 
-Node.js is only needed to build the web UI. CLI-only users can skip those three
+Node.js is only needed to build the web UI. CLI-only users can skip those two
 lines, and the CLI needs no token — it works directly against the database.
 Start the server with `python3.11 -m src.web`, open <http://localhost:18473>, and
 paste the token when the UI asks.

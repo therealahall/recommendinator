@@ -1,13 +1,10 @@
 """Behavioural tests for docker/entrypoint.sh.
 
-Exercises the script as a subprocess against a temp directory; no Docker
-daemon is required. The entrypoint reads CONFIG_DIR from the environment
-(defaulting to /app/config), so we redirect it to tmp_path for isolation.
-
-The default value (/app/config) is intentionally not tested here — that path
-only exists inside the container, and verifying the default would require a
-Docker daemon. The runtime behavior is exercised end-to-end by the docker.yml
-PR build's smoke test.
+Run as a subprocess against a temp directory; no Docker daemon needed.
+CONFIG_DIR and SEED_CONFIG are redirected under tmp_path — the seed outside the
+config directory, as it is in the image. Their defaults exist only inside the
+container; that the seed's default escapes the bind mount is held statically in
+``test_compose.py``.
 """
 
 from __future__ import annotations
@@ -44,18 +41,23 @@ def _api_token(config: Path) -> str:
     return token
 
 
-def _run(config_dir: Path, *cmd: str) -> subprocess.CompletedProcess[str]:
-    """Invoke the entrypoint with CONFIG_DIR overridden to ``config_dir``.
+def _seed_for(config_dir: Path) -> Path:
+    """Where the seed lives: beside the config directory, never in it. Inside
+    it is the arrangement that shipped broken."""
+    return config_dir.parent / "example.yaml"
 
-    The entrypoint exec's ``cmd`` after handling config bootstrap, so passing
-    a benign command like ``echo`` lets us verify the exec path completed.
-    HOME is set to /tmp to keep /bin/sh from sourcing developer-specific
-    profile files on hosts with exotic shell configs.
+
+def _run(config_dir: Path, *cmd: str) -> subprocess.CompletedProcess[str]:
+    """Invoke the entrypoint against ``config_dir`` and its adjacent seed.
+
+    A benign ``cmd`` like ``echo`` is how the exec path proves it completed.
+    HOME is /tmp so /bin/sh sources no developer profile.
     """
     return subprocess.run(
         [str(ENTRYPOINT), *cmd],
         env={
             "CONFIG_DIR": str(config_dir),
+            "SEED_CONFIG": str(_seed_for(config_dir)),
             "PATH": "/usr/bin:/bin",
             "HOME": "/tmp",
         },
@@ -91,7 +93,7 @@ class TestEntrypointFirstRun:
         recognisable, and conclude the app was broken.
         """
         example_content = "features:\n  ai_enabled: false\n"
-        (config_dir / "example.yaml").write_text(example_content)
+        _seed_for(config_dir).write_text(example_content)
 
         result = _run(config_dir, "echo", "exec-target-ran")
 
@@ -110,6 +112,29 @@ class TestEntrypointFirstRun:
         assert "exec-target-ran" in result.stdout
 
 
+class TestTheSeedSurvivesTheConfigMount:
+    """Regression: a fresh compose install wrote no config.yaml.
+
+    Root cause: the seed shipped at /app/config/example.yaml, which the host's
+    ./config bind mount hides. Fix: it lives at /app/example.yaml, outside the
+    mount.
+    """
+
+    def test_the_seed_is_read_from_outside_the_mounted_directory(
+        self, config_dir: Path
+    ) -> None:
+        """Both locations are populated, so a script reading the old one fails
+        here rather than passing."""
+        seeded = 'web:\n  api_token: ""\n'
+        _seed_for(config_dir).write_text(seeded)
+        (config_dir / "example.yaml").write_text("hidden-by-the-mount: true\n")
+
+        result = _run(config_dir, "echo", "ok")
+
+        assert result.returncode == 0
+        assert (config_dir / "config.yaml").read_text() == seeded
+
+
 class TestEntrypointInventsNoToken:
     """Regression test: the container invented the operator's token.
 
@@ -123,7 +148,7 @@ class TestEntrypointInventsNoToken:
         self, config_dir: Path
     ) -> None:
         """What the operator replaces, left exactly as example.yaml ships it."""
-        (config_dir / "example.yaml").write_text(_EXAMPLE_WITH_PLACEHOLDER)
+        _seed_for(config_dir).write_text(_EXAMPLE_WITH_PLACEHOLDER)
 
         result = _run(config_dir, "echo", "ok")
 
@@ -134,7 +159,7 @@ class TestEntrypointInventsNoToken:
         self, config_dir: Path
     ) -> None:
         """A token this script chose is one the operator never saw go by."""
-        (config_dir / "example.yaml").write_text(_EXAMPLE_WITH_PLACEHOLDER)
+        _seed_for(config_dir).write_text(_EXAMPLE_WITH_PLACEHOLDER)
 
         result = _run(config_dir, "echo", "ok")
 
@@ -144,7 +169,7 @@ class TestEntrypointInventsNoToken:
 
     def test_the_operator_is_told_what_to_set_and_how(self, config_dir: Path) -> None:
         """The app's refusal to start is the next thing they hit."""
-        (config_dir / "example.yaml").write_text(_EXAMPLE_WITH_PLACEHOLDER)
+        _seed_for(config_dir).write_text(_EXAMPLE_WITH_PLACEHOLDER)
 
         result = _run(config_dir, "echo", "ok")
 
@@ -158,7 +183,7 @@ class TestEntrypointInventsNoToken:
         so the file the operator writes their token into is one every user on
         the host could otherwise read.
         """
-        (config_dir / "example.yaml").write_text(_EXAMPLE_WITH_PLACEHOLDER)
+        _seed_for(config_dir).write_text(_EXAMPLE_WITH_PLACEHOLDER)
 
         _run(config_dir, "echo", "ok")
 
@@ -183,7 +208,7 @@ class TestEntrypointIdempotency:
         """
         user_config = "features:\n  ai_enabled: true\n  custom: value\n"
         (config_dir / "config.yaml").write_text(user_config)
-        (config_dir / "example.yaml").write_text("features:\n  ai_enabled: false\n")
+        _seed_for(config_dir).write_text("features:\n  ai_enabled: false\n")
 
         result = _run(config_dir, "echo", "ok")
 
@@ -195,19 +220,19 @@ class TestEntrypointIdempotency:
 
 
 class TestEntrypointMissingExample:
-    """No example.yaml available — script warns but still execs."""
+    """No seed available — script warns but still execs."""
 
     def test_warns_with_specific_message_and_continues(self, config_dir: Path) -> None:
-        """Requirement: an empty config dir with no example.yaml is not an
-        abort condition — the application should still get a chance to start
-        and surface a clearer error. The warning message must name both files
-        so operators know what went wrong.
+        """Requirement: a missing seed is not an abort condition — the app
+        still gets its chance to surface a clearer error. The warning names
+        both paths, because which one is wrong decides what to do about it.
         """
         result = _run(config_dir, "echo", "still-ran")
 
         assert result.returncode == 0
         assert "still-ran" in result.stdout
-        assert "neither config.yaml nor example.yaml present" in result.stderr
+        assert "no config.yaml in" in result.stderr
+        assert str(_seed_for(config_dir)) in result.stderr
         assert not (config_dir / "config.yaml").exists()
 
 
@@ -219,7 +244,7 @@ class TestEntrypointFailurePropagation:
         code must reach the container runtime. A non-zero exit from /bin/false
         must produce a non-zero exit from the entrypoint as a whole.
         """
-        (config_dir / "example.yaml").write_text("placeholder: true\n")
+        _seed_for(config_dir).write_text("placeholder: true\n")
 
         result = _run(config_dir, "/bin/false")
 
@@ -233,7 +258,7 @@ class TestEntrypointFailurePropagation:
         read-only config dir would cause cp to fail; the script must abort
         before exec'ing the command.
         """
-        (config_dir / "example.yaml").write_text("placeholder: true\n")
+        _seed_for(config_dir).write_text("placeholder: true\n")
         # Drop write permission so cp will fail.
         config_dir.chmod(0o555)
         try:
@@ -248,10 +273,11 @@ class TestEntrypointFailurePropagation:
 
 
 class TestEntrypointBoundsCheck:
-    """CONFIG_DIR override is restricted to /app/* and /tmp/* paths."""
+    """Both path overrides are restricted to /app/* and /tmp/*."""
 
+    @pytest.mark.parametrize("variable", ["CONFIG_DIR", "SEED_CONFIG"])
     @pytest.mark.parametrize(
-        "bad_dir",
+        "bad_path",
         [
             "/etc/recommendinator",
             "/home/attacker/config",  # self-contained: allow hostile input under test
@@ -262,16 +288,17 @@ class TestEntrypointBoundsCheck:
             "relative/config",
         ],
     )
-    def test_rejects_config_dir_outside_allowed_paths(self, bad_dir: str) -> None:
-        """Requirement: defense-in-depth against accidental misconfiguration —
-        a CONFIG_DIR pointing outside /app/* or /tmp/* would let the entrypoint
-        write outside the application tree. The script must refuse and exit
-        with a clear error before running cp.
+    def test_rejects_paths_outside_the_application_tree(
+        self, variable: str, bad_path: str
+    ) -> None:
+        """Requirement: defense-in-depth against accidental misconfiguration.
+        One override decides where the script writes, the other what it copies
+        in; either outside the tree is a misuse. Refuse before running cp.
         """
         result = subprocess.run(
             [str(ENTRYPOINT), "echo", "should-not-run"],
             env={
-                "CONFIG_DIR": bad_dir,
+                variable: bad_path,
                 "PATH": "/usr/bin:/bin",
                 "HOME": "/tmp",
             },
@@ -281,7 +308,7 @@ class TestEntrypointBoundsCheck:
         )
 
         assert result.returncode != 0
-        assert "CONFIG_DIR must be under" in result.stderr
+        assert f"{variable} must be under" in result.stderr
         assert "should-not-run" not in result.stdout
 
 

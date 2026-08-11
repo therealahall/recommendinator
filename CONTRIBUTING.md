@@ -51,20 +51,17 @@ compose with one command.
 
 ## Quality checks
 
-Every one must pass before a PR:
+One command, and it must pass before a PR:
 
 ```bash
-python3.11 scripts/check_review_agents.py                     # Review agents are loadable
-python3.11 -m black --check src/ tests/ scripts/ conftest.py  # Formatting
-python3.11 -m ruff check src/ tests/ scripts/ conftest.py     # Linting
-python3.11 -m mypy src/ scripts/ conftest.py                  # Type checking (strict)
-python3.11 -m pytest                                          # All tests pass
-pnpm vue-tsc --noEmit                                         # Frontend type checking
-pnpm vitest run                                               # Frontend tests
+make check
 ```
 
-`make check` runs exactly those, in that order. Always use `python3.11`
-explicitly, never bare `python` or `python3`.
+It runs the review-agent preflight, Black, Ruff, MyPy, pytest, `vue-tsc` and
+Vitest, in that order, installing the frontend dependencies first when
+`node_modules` is missing — a fresh clone or worktree needs no separate `pnpm
+install`. Running one of those tools directly, spell the interpreter
+`python3.11`, never bare `python` or `python3`.
 
 ## Code standards
 
@@ -227,9 +224,9 @@ python-semantic-release owns the version. Never edit it by hand.
   without a reinstall. Never hardcode a version.
 - **CHANGELOG.md**: generated from commit messages. Manual edits are overwritten
   on the next release.
-- **Release**: a workflow on push to `main` analyzes commits, bumps the version,
-  updates the changelog, and creates the version commit and tag. A follow-up step
-  regenerates `uv.lock` and commits it separately.
+- **Release**: once CI passes on `main`, a workflow analyzes the commits, bumps
+  the version, updates the changelog and regenerates `uv.lock`, then puts all
+  three in one version commit and tags it.
 
 ## Security
 

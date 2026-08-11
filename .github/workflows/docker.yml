@@ -66,7 +66,7 @@ jobs:
           TOKEN=$(openssl rand -hex 32)
           echo "::add-mask::$TOKEN"
           mkdir -p smoke-config
-          docker run --rm --entrypoint cat "$IMAGE" /app/config/example.yaml \
+          docker run --rm --entrypoint cat "$IMAGE" /app/example.yaml \
             | sed "s|^\( *api_token: \)\"\"|\1\"$TOKEN\"|" > smoke-config/config.yaml
           # The placeholder is in the image and the substitution is here, so a
           # rename would otherwise show up as a start-up timeout.
@@ -216,8 +216,13 @@ jobs:
         uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v5.7.0
         with:
           images: ${{ matrix.image }}
+          # `latest=auto`, the default, appends `latest` to any non-prerelease
+          # semver tag on its own — the guard's decision to make. Off, the
+          # guarded entry below is the only source, and the global suffix is
+          # what makes it `latest-ai`.
           flavor: |
-            suffix=${{ matrix.tag_suffix }},onlatest=true
+            latest=false
+            suffix=${{ matrix.tag_suffix }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}},enable=${{ needs.guard.outputs.highest_in_minor == 'true' }}
