@@ -30,6 +30,34 @@ RELEASE = WORKFLOWS / "release.yml"
 # The reusable workflow both entry points call, spelled the way a caller must.
 GATE_REFERENCE = "./.github/workflows/quality-gate.yml"
 
+# PyYAML follows YAML 1.1, where the bare `on:` key is the boolean true.
+_ON = True
+
+# `branches: [main]` filters workflow_run.head_branch, which for a fork pull
+# request is the fork's own branch name. A fresh fork's default is `main`, so
+# these two keep the release PAT away from a fork's tree.
+RELEASE_CONDITIONS = {
+    "github.event.workflow_run.conclusion == 'success'",
+    "github.event.workflow_run.event == 'push'",
+    "github.event.workflow_run.head_repository.full_name == github.repository",
+}
+
+# publish holds `packages: write` and inherits its event gate through `needs`
+# alone, so loosening these two would let a pull request push `latest`.
+TAG_BUILD_CONDITIONS = {
+    "github.event_name == 'push'",
+    "startsWith(github.ref, 'refs/tags/v')",
+}
+
+# Every argument `semantic_release version` is invoked with. Drop `--tag` and
+# the tag detection finds nothing, so the release silently never happens.
+SEMANTIC_RELEASE_FLAGS = {"--no-push", "--commit", "--tag", "--no-vcs-release"}
+
+# The output every step after the tag detection is conditioned on, and the one
+# the merge-race guard writes.
+RELEASED_TAG_CONDITION = "steps.released.outputs.tag != ''"
+STILL_MAIN_CONDITION = "steps.validated.outputs.current == 'true'"
+
 # Scopes nothing here consumes: attestations:write needs an attest-* action, and
 # id-token:write mints an OIDC token identifying this repository. Buildkit's
 # provenance and sbom travel under packages:write and want neither.
@@ -88,6 +116,15 @@ def _step_index(path: Path, job: str, name: str) -> int:
 
 def _step_named(path: Path, job: str, name: str) -> dict[str, Any]:
     return _steps(path, job)[_step_index(path, job, name)]
+
+
+def _conditions(expression: str) -> set[str]:
+    """Return an `if:` expression's `&&`-joined clauses, whitespace normalised.
+
+    A folded scalar arrives with its line breaks already collapsed, but the
+    clauses keep whatever indentation the author wrapped them at.
+    """
+    return {" ".join(clause.split()) for clause in expression.split("&&")}
 
 
 def _every_run_command() -> list[tuple[str, str, str]]:
@@ -257,7 +294,11 @@ class TestWorkflowSupplyChain:
     """A workflow installs what the lockfile pins, and holds the scopes it uses."""
 
     def test_every_uv_run_is_frozen(self) -> None:
-        """Without --frozen, uv re-resolves from the branch's own pyproject.toml."""
+        """Without --frozen, uv re-resolves from the branch's own pyproject.toml.
+
+        It governs the parent environment only. semantic-release's build_command
+        re-locks on purpose, because the version bump changes what uv.lock pins.
+        """
         invocations = [
             (workflow, job, command)
             for workflow, job, command in _every_run_command()
@@ -280,13 +321,16 @@ class TestWorkflowSupplyChain:
 
     def test_every_job_that_runs_steps_declares_its_permissions(self) -> None:
         """A job with no block inherits the repository default, which may be write-all."""
+        examined = []
         for path in _workflow_files():
             for job_name, job in _jobs(path).items():
                 if "steps" not in job:
                     continue
+                examined.append(f"{path.name}:{job_name}")
                 assert isinstance(
                     job.get("permissions"), dict
                 ), f"{path.name} job {job_name} does not declare its permissions"
+        assert examined, "no job with steps found; this sweep examined nothing"
 
     @pytest.mark.parametrize("scope", UNUSED_SCOPES)
     def test_no_job_holds_a_scope_nothing_consumes(self, scope: str) -> None:
@@ -303,6 +347,12 @@ class TestWorkflowSupplyChain:
             "contents": "read",
             "packages": "write",
         }
+
+    def test_the_release_job_writes_nothing_with_its_own_token(self) -> None:
+        """Every write it makes goes through the PAT, so `contents: write` here
+        would be a second, unaudited way to push. UNUSED_SCOPES above covers
+        only the scopes nothing consumes, which this is not."""
+        assert _jobs(RELEASE)["release"]["permissions"] == {"contents": "read"}
 
 
 class TestComposeValidationCoverage:
@@ -359,18 +409,55 @@ class TestReleaseIntegrity:
         assert _jobs(CI)["check"]["uses"] == GATE_REFERENCE
         assert _jobs(DOCKER)["verify"]["uses"] == GATE_REFERENCE
 
+    def test_the_gate_they_both_name_is_a_workflow_they_may_call(self) -> None:
+        """A `uses:` reference resolves at run time, so dropping `workflow_call`
+        breaks CI and the tag build with the whole suite still green."""
+        assert _REPO_ROOT / GATE_REFERENCE.removeprefix("./") == GATE
+        assert "workflow_call" in _workflow(GATE)[_ON], _workflow(GATE)[_ON]
+
+    def test_release_runs_only_for_a_push_to_this_repository(self) -> None:
+        """Regression test: a fork's CI run could reach the release job.
+
+        Bug reported: found by audit, not exploited.
+        Root cause: `branches: [main]` matches the fork's branch name.
+        Fix: gate on the upstream event and repository.
+        """
+        assert _conditions(_jobs(RELEASE)["release"]["if"]) == RELEASE_CONDITIONS
+        assert _workflow(RELEASE)[_ON] == {
+            "workflow_run": {
+                "workflows": ["CI"],
+                "types": ["completed"],
+                "branches": ["main"],
+            }
+        }
+
+    def test_the_tag_build_is_gated_on_a_pushed_tag_and_nothing_re_opens_it(
+        self,
+    ) -> None:
+        """publish dropped its own event condition for `needs: [guard, verify]`,
+        so the guard's is the only one left — and a job holding `packages: write`
+        would build and push `latest` from a pull request without it."""
+        assert _conditions(_jobs(DOCKER)["guard"]["if"]) == TAG_BUILD_CONDITIONS
+        assert "if" not in _jobs(DOCKER)["publish"]
+        assert "if" not in _jobs(DOCKER)["verify"]
+
     def test_release_checks_out_the_commit_ci_validated(self) -> None:
         """With no ref, a workflow_run job gets main's tip, which may be a later commit."""
         checkout = _steps(RELEASE, "release")[0]
         assert checkout["with"]["ref"] == "${{ github.event.workflow_run.head_sha }}"
 
-    def test_release_aborts_when_the_validated_commit_is_no_longer_main(self) -> None:
-        """Otherwise semantic-release tags whatever overtook it."""
+    def test_nothing_releases_unless_the_validated_commit_is_still_main(self) -> None:
+        """Otherwise semantic-release tags whatever overtook it, and the push
+        step runs against the detached HEAD the checkout left behind."""
         guard = _step_named(RELEASE, "release", "Release only the commit CI validated")
         assert (
             guard["env"]["VALIDATED_SHA"] == "${{ github.event.workflow_run.head_sha }}"
         )
-        assert "exit 1" in guard["run"]
+        assert guard["id"] == "validated"
+        for name in ("Run semantic-release", "Identify the release tag"):
+            assert (
+                _step_named(RELEASE, "release", name)["if"] == STILL_MAIN_CONDITION
+            ), name
 
     def test_the_bumped_tree_is_verified_before_anything_is_pushed(self) -> None:
         """The version commit rewrites uv.lock, and a pushed tag cannot be taken back."""
@@ -379,6 +466,36 @@ class TestReleaseIntegrity:
         assert _step_index(RELEASE, "release", "Verify the bumped tree") < _step_index(
             RELEASE, "release", "Push the version commit and tag"
         )
+
+    def test_semantic_release_is_given_every_flag_the_job_reads_back(self) -> None:
+        """`--no-push` alone is checked above, and it is not the only load-bearing
+        one: without `--tag` the detection below finds nothing to publish and the
+        release silently never happens."""
+        command = str(_step_named(RELEASE, "release", "Run semantic-release")["run"])
+        _before, _, arguments = command.partition("semantic_release version")
+
+        assert arguments.strip(), f"no semantic-release invocation parsed: {command}"
+        assert {
+            word for word in arguments.split() if word.startswith("--")
+        } == SEMANTIC_RELEASE_FLAGS
+
+    def test_every_step_after_the_tag_is_identified_is_conditioned_on_it(self) -> None:
+        """Regression test: a push with nothing to release went red.
+
+        Bug reported: `git push origin "refs/tags/"`.
+        Root cause: the publishing steps ran whether or not a tag was cut.
+        Fix: each is conditioned on the detected tag.
+        """
+        steps = _steps(RELEASE, "release")
+        following = steps[
+            _step_index(RELEASE, "release", "Identify the release tag") + 1 :
+        ]
+
+        assert following, "nothing follows the tag detection; this sweep is empty"
+        for step in following:
+            assert (
+                step.get("if") == RELEASED_TAG_CONDITION
+            ), f"{step.get('name')} runs with no tag to release"
 
     def test_the_regenerated_lockfile_rides_in_the_version_commit(self) -> None:
         """Unstaged, the tagged tree carries a lock every `uv sync --locked` rejects.
@@ -540,7 +657,7 @@ class TestReleaseIsCutFromTheValidatedCommit:
         head = _git(published_repository, "rev-parse", "HEAD")
         _git(published_repository, "checkout", "--quiet", "--detach", head)
 
-        code, output, _ = _run_step(
+        code, output, step_output = _run_step(
             RELEASE,
             "release",
             "Release only the commit CI validated",
@@ -550,19 +667,25 @@ class TestReleaseIsCutFromTheValidatedCommit:
         )
 
         assert code == 0, output
+        assert "current=true\n" in step_output
         assert _git(published_repository, "rev-parse", "HEAD") == head
         assert _git(published_repository, "rev-parse", "--abbrev-ref", "HEAD") == "main"
 
     def test_a_commit_that_has_been_overtaken_is_not_released(
         self, published_repository: Path, tmp_path: Path
     ) -> None:
-        """Otherwise semantic-release tags the commit whose CI is still in flight."""
+        """Regression test: a merge race failed the release workflow.
+
+        Bug reported: a red workflow with nothing wrong.
+        Root cause: the overtaken run exited 1, though the newer one releases both.
+        Fix: it reports the skip as a step output.
+        """
         superseded = _git(published_repository, "rev-parse", "HEAD")
         overtaking = _commit(published_repository, "landed while CI ran")
         _git(published_repository, "push", "--quiet", "origin", "main")
         _git(published_repository, "checkout", "--quiet", "--detach", superseded)
 
-        code, output, _ = _run_step(
+        code, output, step_output = _run_step(
             RELEASE,
             "release",
             "Release only the commit CI validated",
@@ -571,7 +694,8 @@ class TestReleaseIsCutFromTheValidatedCommit:
             environment={"VALIDATED_SHA": superseded},
         )
 
-        assert code == 1, output
+        assert code == 0, output
+        assert "current=false\n" in step_output
         assert superseded in output and overtaking in output
 
 
@@ -727,6 +851,61 @@ class TestFloatingTagsOnlyMoveForward:
         decided = _decide_aliases(repository, tmp_path, "v1.0.0")
         assert decided["highest_overall"] == "false"
         assert decided["highest_in_major"] == "true"
+        assert decided["highest_in_minor"] == "true"
+
+    def test_the_newest_release_moves_every_alias_across_commits_too(
+        self, repository: Path, tmp_path: Path
+    ) -> None:
+        """Every other case here tags one commit repeatedly, where descendancy is
+        trivially satisfied. The ordinary release is a commit ahead of the last
+        one, and must still take all three."""
+        _git(repository, "tag", "v0.28.0")
+        _commit(repository, "the release after")
+        _git(repository, "tag", "v0.29.0")
+
+        assert _decide_aliases(repository, tmp_path, "v0.29.0") == {
+            "highest_overall": "true",
+            "highest_in_major": "true",
+            "highest_in_minor": "true",
+        }
+
+    def test_an_alias_never_moves_to_a_commit_its_holder_never_reached(
+        self, repository: Path, tmp_path: Path
+    ) -> None:
+        """Regression test: a tag on an old commit could take `latest`.
+
+        Bug reported: found by audit, not exploited.
+        Root cause: the guard ordered releases by tag name alone.
+        Fix: the release must also descend from the alias's current holder.
+        """
+        stale = _git(repository, "rev-parse", "HEAD")
+        _commit(repository, "everything since")
+        _git(repository, "tag", "v0.29.0")
+        _git(repository, "tag", "v9.0.0", stale)
+
+        decided = _decide_aliases(repository, tmp_path, "v9.0.0")
+
+        assert decided["highest_overall"] == "false"
+        # `9` and `9.0` name no earlier release, so nothing is behind them to
+        # walk back from and the new build is where they belong.
+        assert decided["highest_in_major"] == "true"
+        assert decided["highest_in_minor"] == "true"
+
+    def test_a_major_alias_does_not_follow_a_tag_cut_off_the_line(
+        self, repository: Path, tmp_path: Path
+    ) -> None:
+        """The same defect one scope down: `v1.2.0` cut from v1.0.0's commit
+        outranks v1.1.0 by name and would drag `1` back onto a build missing it."""
+        first = _git(repository, "rev-parse", "HEAD")
+        _git(repository, "tag", "v1.0.0")
+        _commit(repository, "the minor release")
+        _git(repository, "tag", "v1.1.0")
+        _git(repository, "tag", "v1.2.0", first)
+
+        decided = _decide_aliases(repository, tmp_path, "v1.2.0")
+
+        assert decided["highest_overall"] == "false"
+        assert decided["highest_in_major"] == "false"
         assert decided["highest_in_minor"] == "true"
 
     def test_tags_that_are_not_releases_do_not_hold_an_alias_back(

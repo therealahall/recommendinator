@@ -30,6 +30,7 @@ DOCKERFILE = _REPO_ROOT / "Dockerfile"
 OLLAMA_DOCKERFILE = _REPO_ROOT / "docker" / "Dockerfile.ollama"
 DOCKERIGNORE = _REPO_ROOT / ".dockerignore"
 ENTRYPOINT = _REPO_ROOT / "docker" / "entrypoint.sh"
+DOCKER_WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "docker.yml"
 
 # The build-context path of the first-run seed. Where the image puts it is the
 # Dockerfile's decision; this is the only end of it that never moves.
@@ -120,6 +121,13 @@ _OLLAMA_HOME = re.compile(r"^ENV\s+HOME=(?P<path>\S+)\s*$", re.MULTILINE)
 
 # A `RUN`'s shell command, following backslash continuations onto the next line.
 _RUN = re.compile(r"^RUN\s+(?P<body>(?:[^\n\\]|\\\n)*)", re.MULTILINE)
+
+# `chown [-R] <owner>[:<group>] <path>...`, stopping at the next shell operator
+# so a following command cannot be mistaken for an operand. `COPY --chown=` is
+# not this form and does not match.
+_CHOWN = re.compile(
+    r"\bchown\s+(?P<recursive>-R\s+)?(?P<owner>\S+)(?P<paths>(?:\s+[^\s&|;]+)+)"
+)
 
 # The entrypoint's fallback for the seed it copies on first run, as `sh`'s
 # assign-if-unset form spells it.
@@ -216,28 +224,49 @@ def _render(spec: str, **env: str) -> str:
     )
 
 
-def _ignore_rules() -> list[str]:
-    """Return .dockerignore's patterns in file order, comments dropped."""
+def _build_contexts() -> dict[str, set[Path]]:
+    """Map each build context ``docker.yml`` names to the Dockerfiles built in it.
+
+    BuildKit resolves ``.dockerignore`` against the context root, so the
+    repository's own file governs only the builds rooted at the repository.
+    """
+    workflow = yaml.safe_load(DOCKER_WORKFLOW.read_text())
+    contexts: dict[str, set[Path]] = {}
+    for job in workflow["jobs"].values():
+        for variant in job.get("strategy", {}).get("matrix", {}).get("include", []):
+            contexts.setdefault(variant["context"], set()).add(
+                _REPO_ROOT / variant["dockerfile"]
+            )
+    assert contexts, "docker.yml builds nothing; every sweep below would be empty"
+    return contexts
+
+
+def _dockerignore(context: str) -> Path:
+    return (_REPO_ROOT / context).resolve() / ".dockerignore"
+
+
+def _ignore_rules(dockerignore: Path = DOCKERIGNORE) -> list[str]:
+    """Return a .dockerignore's patterns in file order, comments dropped."""
     return [
         line.strip()
-        for line in DOCKERIGNORE.read_text().splitlines()
+        for line in dockerignore.read_text().splitlines()
         if line.strip() and not line.lstrip().startswith("#")
     ]
 
 
-def _allowlist() -> set[str]:
-    """Return the paths .dockerignore puts back into the context."""
-    return {rule[1:] for rule in _ignore_rules() if rule.startswith("!")}
+def _allowlist(dockerignore: Path = DOCKERIGNORE) -> set[str]:
+    """Return the paths a .dockerignore puts back into its context."""
+    return {rule[1:] for rule in _ignore_rules(dockerignore) if rule.startswith("!")}
 
 
-def _copied_from_context() -> set[str]:
-    """Return the paths ``Dockerfile`` copies out of the build context.
+def _copied_from_context(dockerfile: Path = DOCKERFILE) -> set[str]:
+    """Return the paths *dockerfile* copies out of its build context.
 
     ``COPY --from=`` reads another stage or another image, never the context, so
     those are not part of what the context has to carry.
     """
     sources: set[str] = set()
-    for match in _COPY.finditer(DOCKERFILE.read_text()):
+    for match in _COPY.finditer(dockerfile.read_text()):
         words = match.group("arguments").split()
         if any(word.startswith("--from=") for word in words):
             continue
@@ -380,6 +409,24 @@ def _image_owned_mounts(compose: Path) -> set[str]:
 def _chowned_to(user: str) -> re.Pattern[str]:
     """A ``chown`` or a ``COPY --chown=`` that names *user* as the new owner."""
     return re.compile(rf"chown=?\s*(?:-R\s+)?{re.escape(user)}[:\s]")
+
+
+def _run_gives_directory_to(run: str, directory: str, user: str) -> bool:
+    """Whether *run* leaves *directory* itself owned by *user*.
+
+    ``mkdir -p <directory> && chown <user> <parent>`` satisfies two independent
+    searches over one RUN while leaving the directory root-owned, so the
+    chown's operands are read rather than its presence noted.
+    """
+    for chown in _CHOWN.finditer(run):
+        if chown.group("owner").split(":")[0] != user:
+            continue
+        for path in chown.group("paths").split():
+            if path == directory or (
+                chown.group("recursive") and directory.startswith(f"{path}/")
+            ):
+                return True
+    return False
 
 
 class TestComposeDefaultPortMapping:
@@ -624,30 +671,50 @@ class TestEveryShippedTargetRunsTheLivenessProbe:
 
 class TestTheBuildContextIsAnAllowlist:
     """Denying by default makes an unreviewed path a build failure rather than a
-    disclosure: the narrow COPYs keep secrets out of the image, but everything
-    nobody excluded still crosses to the builder."""
+    disclosure: the narrow COPYs keep secrets out of the image, everything else
+    still crosses to the builder. One file per context root, where BuildKit
+    reads it."""
 
-    def test_nothing_is_in_the_context_until_a_rule_names_it(self) -> None:
+    def test_every_context_the_workflow_builds_carries_a_dockerignore(self) -> None:
+        """``docker/`` had none, so that build denied nothing while the root
+        build was a strict allowlist and the difference was invisible."""
+        assert [
+            context
+            for context in _build_contexts()
+            if not _dockerignore(context).is_file()
+        ] == []
+
+    @pytest.mark.parametrize("context", sorted(_build_contexts()))
+    def test_nothing_is_in_the_context_until_a_rule_names_it(
+        self, context: str
+    ) -> None:
         """Regression: the file listed what to leave out, so ``private/`` and
         ``.env`` — which nobody had thought of — were in by default."""
-        assert _ignore_rules()[0] == "*"
+        assert _ignore_rules(_dockerignore(context))[0] == "*"
 
-    def test_the_exceptions_are_exactly_what_the_dockerfile_copies(self) -> None:
+    @pytest.mark.parametrize("context", sorted(_build_contexts()))
+    def test_the_exceptions_are_exactly_what_the_dockerfiles_copy(
+        self, context: str
+    ) -> None:
         """A COPY with no exception fails the build; an exception with no COPY is
         context nobody asked for, and only this notices that one."""
-        copied = _copied_from_context()
+        copied: set[str] = set()
+        for dockerfile in _build_contexts()[context]:
+            copied |= _copied_from_context(dockerfile)
 
         # Named so a COPY parse that silently stops matching fails here rather
         # than making the comparison true over two empty sets.
-        assert {"src", "pyproject.toml", "resources"} <= copied
-        assert _allowlist() == copied
+        assert copied, f"nothing is copied out of {context}; the parse went wrong"
+        assert _allowlist(_dockerignore(context)) == copied
 
-    def test_every_exception_is_a_literal_path(self) -> None:
+    @pytest.mark.parametrize("context", sorted(_build_contexts()))
+    def test_every_exception_is_a_literal_path(self, context: str) -> None:
         """A glob would decide more than it appears to, and "not listed" would
         stop meaning "not in the context"."""
-        assert {
-            allowed for allowed in _allowlist() if set("*?[]") & set(allowed)
-        } == set()
+        allowed = _allowlist(_dockerignore(context))
+
+        assert allowed, f"{context} puts nothing back; the parse found no exceptions"
+        assert {rule for rule in allowed if set("*?[]") & set(rule)} == set()
 
     def test_the_narrowing_rules_follow_the_exceptions_they_cut_into(self) -> None:
         """Last match wins. ``src/web/static/dist`` written above ``!src`` would
@@ -905,10 +972,9 @@ class TestTheSidecarImageStandsOnItsOwn:
         """
         store = _ollama_model_store()
         user = _instruction(_ollama_image(), "USER")
-        # The user's name is a substring of the store path, so the chown has to
-        # be matched as a chown or this asserts nothing.
-        chown = _chowned_to(user)
+        runs = _run_bodies(OLLAMA_DOCKERFILE)
 
+        assert runs, "no RUN parsed out of the sidecar Dockerfile"
         assert any(
-            store in run and chown.search(run) for run in _run_bodies(OLLAMA_DOCKERFILE)
+            _run_gives_directory_to(run, store, user) for run in runs
         ), f"no RUN gives {store} to {user}; the model volume mounts root-owned"

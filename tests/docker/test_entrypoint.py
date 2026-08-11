@@ -286,6 +286,11 @@ class TestEntrypointBoundsCheck:
             "/app-evil",
             "/tmpevil",
             "relative/config",
+            # A string prefix test passes both of these while they name /etc
+            # and /root: CONFIG_DIR decides where config.yaml is written, and
+            # SEED_CONFIG what gets copied there and chmod 600'd.
+            "/app/../etc/recommendinator",
+            "/tmp/../root",
         ],
     )
     def test_rejects_paths_outside_the_application_tree(

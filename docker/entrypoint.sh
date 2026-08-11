@@ -15,17 +15,22 @@ set -eu
 # which hides anything the image ships there.
 : "${SEED_CONFIG:=/app/example.yaml}"
 
-# Defense-in-depth: refuse paths outside the application tree. Inside Docker
-# both are under /app; the env overrides exist only for unit tests, which run
-# against pytest's tmp_path. Anything else is a misuse.
+# Defense-in-depth: refuse paths outside the application tree. The env
+# overrides exist only for unit tests, against pytest's tmp_path; anything else
+# is a misuse. A prefix test alone accepts /app/../etc, which names /etc, so a
+# `..` component disqualifies too.
 require_in_tree() {
+    in_tree=false
     case "$2" in
-        /app/* | /tmp/*) ;;
-        *)
-            echo "[entrypoint] FATAL: $1 must be under /app or /tmp; got: $2" >&2
-            exit 1
-            ;;
+        /app/* | /tmp/*) in_tree=true ;;
     esac
+    case "/$2/" in
+        *"/../"*) in_tree=false ;;
+    esac
+    if [ "$in_tree" != true ]; then
+        echo "[entrypoint] FATAL: $1 must be under /app or /tmp, with no '..'; got: $2" >&2
+        exit 1
+    fi
 }
 
 require_in_tree CONFIG_DIR "$CONFIG_DIR"
