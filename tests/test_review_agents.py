@@ -69,6 +69,10 @@ _CHECK_PREREQUISITES = (
 # The tools whose invocations must cover scripts/ wherever they appear.
 _SCRIPTS_AWARE_TOOLS = ("black", "ruff", "mypy")
 
+# `make [VAR=value ...] [-flag ...] <target> ...`, so the targets can be read
+# off rather than matched as a substring of the line.
+_MAKE_INVOCATION = re.compile(r"^\s*make\b(?P<arguments>.*)$", re.MULTILINE)
+
 # Exactly what tracked settings grant. Both keys are ambient authority: an entry
 # in `permissions.allow` is pre-approved without a prompt for anyone who checks
 # out the branch carrying it, and an enabled plugin is code. Pinning cannot stop
@@ -268,6 +272,21 @@ def _gate_commands() -> list[str]:
     commands = [str(step["run"]) for step in _gate_steps() if "run" in step]
     assert commands, "the gate runs no commands; every sweep over it would be empty"
     return commands
+
+
+def _make_targets(command: str) -> list[str]:
+    """Return every target the `make` invocations in *command* ask for.
+
+    Read as targets rather than searched for as text: `"make check" in command`
+    is satisfied by `make check-frontend`, which runs neither the review-agent
+    preflight nor the test suite.
+    """
+    return [
+        word
+        for match in _MAKE_INVOCATION.finditer(command)
+        for word in match.group("arguments").split()
+        if "=" not in word and not word.startswith("-")
+    ]
 
 
 class TestFindAgentProblems:
@@ -1033,10 +1052,14 @@ class TestQualityGateWiring:
             workflow["jobs"]["check"]["uses"] == "./.github/workflows/quality-gate.yml"
         )
 
-        steps = [step for step in _gate_steps() if "make check" in str(step.get("run"))]
+        steps = [
+            step
+            for step in _gate_steps()
+            if _make_targets(str(step.get("run", ""))) == ["check"]
+        ]
         assert len(steps) == 1, (
-            "CI must run `make check` in exactly one step, or a branch could "
-            f"delete a mandated agent and still go green: {steps}"
+            "CI must run `make check` — that target and no other — in exactly one "
+            f"step, or a branch could delete a mandated agent and go green: {steps}"
         )
         assert (
             steps[0].get("continue-on-error") is not True

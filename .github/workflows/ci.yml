@@ -11,5 +11,9 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Branch protection requires `check / check` — this job's name, then the job
+  # name inside the reusable workflow. Renaming either leaves the rule waiting
+  # on a status nothing reports, which blocks every merge until someone edits
+  # the repository settings.
   check:
     uses: ./.github/workflows/quality-gate.yml

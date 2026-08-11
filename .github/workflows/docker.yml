@@ -146,18 +146,31 @@ jobs:
           # is a pattern that also matches `v0129.`.
           MAJOR_PREFIX="${TAG%%.*}."
           MINOR_PREFIX="${TAG%.*}."
-          HIGHEST_OVERALL=$(printf '%s\n' "$RELEASES" | tail -1)
-          HIGHEST_IN_MAJOR=$(printf '%s\n' "$RELEASES" | grep -E "^${MAJOR_PREFIX//./\\.}" | tail -1 || true)
-          HIGHEST_IN_MINOR=$(printf '%s\n' "$RELEASES" | grep -E "^${MINOR_PREFIX//./\\.}" | tail -1 || true)
 
-          is_tag() {
-            if [ "$1" = "$TAG" ]; then echo true; else echo false; fi
+          # Two conditions, because version order is a comparison of tag *names*
+          # and a tag is pushable onto any commit that ever reached main: this
+          # release must be the newest in the alias's scope, and its commit must
+          # descend from the release holding the alias today. On name alone,
+          # `v9.0.0` pushed onto a year-old commit takes `latest` back to it —
+          # and a slow multi-arch backport build wins the same write by racing.
+          may_move() {
+            SCOPE=$(printf '%s\n' "$RELEASES" | grep -E "^$1" || true)
+            HELD_BY=$(printf '%s\n' "$SCOPE" | grep -vxF "$TAG" | tail -1 || true)
+            if [ "$(printf '%s\n' "$SCOPE" | tail -1)" != "$TAG" ]; then
+              echo "$2 stays put: $TAG is not the newest release it names." >&2
+            elif [ -n "$HELD_BY" ] && ! git merge-base --is-ancestor "$HELD_BY^{commit}" "$TAG^{commit}"; then
+              echo "$2 stays on $HELD_BY: $TAG does not descend from it." >&2
+            else
+              echo true
+              return
+            fi
+            echo false
           }
-          echo "Newest release overall $HIGHEST_OVERALL, under $MAJOR_PREFIX $HIGHEST_IN_MAJOR, under $MINOR_PREFIX $HIGHEST_IN_MINOR"
+
           {
-            echo "highest_overall=$(is_tag "$HIGHEST_OVERALL")"
-            echo "highest_in_major=$(is_tag "$HIGHEST_IN_MAJOR")"
-            echo "highest_in_minor=$(is_tag "$HIGHEST_IN_MINOR")"
+            echo "highest_overall=$(may_move '' latest)"
+            echo "highest_in_major=$(may_move "${MAJOR_PREFIX//./\\.}" "${TAG%%.*}")"
+            echo "highest_in_minor=$(may_move "${MINOR_PREFIX//./\\.}" "${TAG%.*}")"
           } >> "$GITHUB_OUTPUT"
 
   # The gate CI runs, run again on the tagged tree. Nothing else establishes

@@ -120,6 +120,10 @@ services:
   # from config.yaml — keep them in sync with the ollama.model /
   # ollama.embedding_model settings on the Settings page.
   ollama:
+    # The liveness check ships in the image, so `docker run` gets it too — which
+    # makes `docker compose pull` before an upgrade mandatory: a cached sidecar
+    # from before it has none, and app-ai's service_healthy dependency on a
+    # container with no health check fails outright.
     image: ghcr.io/therealahall/recommendinator-ollama:${IMAGE_TAG:-latest}
     container_name: recommendinator-ollama
     profiles: ["ai"]
@@ -134,10 +138,6 @@ services:
       # store. See docs/DOCKER.md for the one-time chown when upgrading from a
       # sidecar that ran as root.
       - ollama-data:/var/lib/ollama/.ollama
-    # The liveness check ships in the image, so `docker run` gets it too — which
-    # makes `docker compose pull` before an upgrade mandatory: a cached sidecar
-    # from before it has none, and app-ai's service_healthy dependency on a
-    # container with no health check fails outright.
     restart: unless-stopped
     # The only capped service. Loading a model is the one operation here
     # measured in gigabytes; a ceiling guessed for the app services would turn a

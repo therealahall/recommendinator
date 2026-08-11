@@ -60,7 +60,7 @@ make check
 It runs the review-agent preflight, Black, Ruff, MyPy, pytest, `vue-tsc` and
 Vitest, in that order, installing the frontend dependencies first when
 `node_modules` is missing — a fresh clone or worktree needs no separate `pnpm
-install`. Running one of those tools directly, spell the interpreter
+install`. When you run one of those tools directly, spell the interpreter
 `python3.11`, never bare `python` or `python3`.
 
 ## Code standards
@@ -270,8 +270,9 @@ src/
 ├── models/           # Data models
 └── utils/            # Utility functions
 tests/                # Cross-cutting tests. Plugin tests live next to the plugin.
-conftest.py           # Three autouse fixtures for every test in every tree: real
-                      # logs and credentials isolated, timezone pinned to UTC
+conftest.py           # Five autouse fixtures for every test in every tree: real
+                      # logs and credentials isolated, timezone pinned to UTC,
+                      # reads confined to tmp_path, network limited to loopback
 scripts/              # Developer tooling (check_review_agents.py)
 config/               # Configuration files
 templates/            # Import file templates (CSV, JSON, Markdown)

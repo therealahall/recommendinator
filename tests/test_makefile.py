@@ -22,7 +22,8 @@ CONTRIBUTOR_DOCUMENTS = ("CONTRIBUTING.md", "QUICKSTART.md")
 
 # The one rule whose target is a path on disk rather than a name. Everything
 # else must be phony, or a file appearing under that name silently satisfies it.
-FILE_TARGETS = {"node_modules"}
+FILE_TARGETS = {"node_modules/.make-install"}
+(FRONTEND_STAMP,) = FILE_TARGETS
 
 _TARGET = re.compile(r"^([A-Za-z0-9_][A-Za-z0-9_./-]*):(?!=)(?P<prerequisites>.*)$")
 _PHONY = re.compile(r"^\.PHONY:(?P<targets>.*)$")
@@ -55,9 +56,18 @@ def _dry_run(*targets: str, working_directory: Path) -> str:
 
 
 def _frontend_tree(working_directory: Path) -> None:
-    """The two files `node_modules` is rebuilt from, and nothing else."""
+    """The two files the install stamp is rebuilt from, and nothing else."""
     (working_directory / "package.json").write_text("{}\n", encoding="utf-8")
     (working_directory / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n")
+
+
+def _installed_tree(working_directory: Path, *, age: float = 0.0) -> None:
+    """Add the stamp a finished install leaves, *age* seconds older than now."""
+    stamp = working_directory / FRONTEND_STAMP
+    stamp.parent.mkdir(parents=True, exist_ok=True)
+    stamp.touch()
+    when = stamp.stat().st_mtime - age
+    os.utime(stamp, (when, when))
 
 
 def _targets() -> dict[str, list[str]]:
@@ -88,24 +98,24 @@ class TestPhonyDeclaration:
         assert set(_targets()) - FILE_TARGETS == _phony_targets()
 
     def test_the_file_targets_are_not_declared_phony(self) -> None:
-        """Phony node_modules would reinstall the frontend on every check."""
+        """A phony install stamp would reinstall the frontend on every check."""
         assert not FILE_TARGETS & _phony_targets()
 
 
 class TestFrontendBootstrap:
     """The frontend checks install their own dependencies when a tree has none."""
 
-    def test_the_frontend_targets_wait_on_node_modules(self) -> None:
+    def test_the_frontend_targets_wait_on_the_install(self) -> None:
         """node_modules is gitignored, so a fresh worktree starts without one."""
         targets = _targets()
         for target in ("check-frontend", "build-frontend", "install-frontend"):
             assert (
-                "node_modules" in targets[target]
+                FRONTEND_STAMP in targets[target]
             ), f"`make {target}` assumes an install"
 
-    def test_node_modules_is_rebuilt_from_the_lockfile_alone(self) -> None:
+    def test_the_install_is_rebuilt_from_the_lockfile_alone(self) -> None:
         """Both prerequisites, so a dependency change reinstalls and nothing else does."""
-        assert _targets()["node_modules"] == ["package.json", "pnpm-lock.yaml"]
+        assert _targets()[FRONTEND_STAMP] == ["package.json", "pnpm-lock.yaml"]
 
     def test_the_install_command_is_written_once(self) -> None:
         """A second copy is one `make install-frontend` can drift from what check runs."""
@@ -187,8 +197,8 @@ class TestTheGateRunsWhateverTheTreeLooksLike:
     def test_a_warm_tree_does_not_reinstall(self, tmp_path: Path) -> None:
         """The bootstrap has to cost nothing on every run after the first."""
         _frontend_tree(tmp_path)
-        (tmp_path / "node_modules").mkdir()
-        stale = (tmp_path / "node_modules").stat().st_mtime - 60
+        _installed_tree(tmp_path)
+        stale = (tmp_path / FRONTEND_STAMP).stat().st_mtime - 60
         for name in ("package.json", "pnpm-lock.yaml"):
             os.utime(tmp_path / name, (stale, stale))
 
@@ -200,9 +210,22 @@ class TestTheGateRunsWhateverTheTreeLooksLike:
     def test_a_changed_lockfile_reinstalls(self, tmp_path: Path) -> None:
         """A dependency bump has to reach the tree the checks then run against."""
         _frontend_tree(tmp_path)
+        _installed_tree(tmp_path, age=60)
+
+        printed = _dry_run("check-frontend", working_directory=tmp_path)
+
+        assert "pnpm install --frozen-lockfile" in printed
+
+    def test_an_interrupted_install_reinstalls_regression(self, tmp_path: Path) -> None:
+        """Regression test: the gate type-checked a half-installed tree.
+
+        Bug reported: vue-tsc ran against an incomplete node_modules.
+        Root cause: the directory was the target, and pnpm creates it before it
+        can fail.
+        Fix: a stamp written only once pnpm succeeds.
+        """
+        _frontend_tree(tmp_path)
         (tmp_path / "node_modules").mkdir()
-        stale = (tmp_path / "node_modules").stat().st_mtime - 60
-        os.utime(tmp_path / "node_modules", (stale, stale))
 
         printed = _dry_run("check-frontend", working_directory=tmp_path)
 

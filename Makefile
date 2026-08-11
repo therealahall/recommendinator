@@ -33,14 +33,16 @@ install-ai:
 install-dev:
 	uv sync --locked --extra ai --extra dev
 
-install-frontend: node_modules
+install-frontend: node_modules/.make-install
 
-# A real target, not a phony one. node_modules is gitignored, so a fresh clone
-# or git worktree has none and the frontend checks would otherwise fail naming a
-# missing vue-tsc binary rather than the cause. A warm tree costs two stats.
-node_modules: package.json pnpm-lock.yaml
+# A real target, not a phony one: node_modules is gitignored, so a fresh clone
+# has none and the frontend checks would fail naming a missing vue-tsc rather
+# than the cause. A stamp and not the directory, because pnpm creates the
+# directory before it can fail — an interrupted install would otherwise look
+# newer than package.json, and .DELETE_ON_ERROR cannot unlink a directory.
+node_modules/.make-install: package.json pnpm-lock.yaml
 	pnpm install --frozen-lockfile
-	@touch node_modules
+	@touch $@
 
 lock:
 	uv lock
@@ -60,10 +62,10 @@ format-check:
 type-check:
 	$(PYTHON) -m mypy src/ scripts/ conftest.py
 
-build-frontend: node_modules
+build-frontend: node_modules/.make-install
 	pnpm build
 
-check-frontend: node_modules
+check-frontend: node_modules/.make-install
 	pnpm vue-tsc --noEmit
 	pnpm vitest run
 

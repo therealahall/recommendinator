@@ -12,7 +12,14 @@ concurrency:
 
 jobs:
   release:
-    if: github.event.workflow_run.conclusion == 'success'
+    # `branches: [main]` above filters workflow_run.head_branch, which for a
+    # fork pull request is the fork's branch name — and a fresh fork's default
+    # branch is `main`. The upstream event and repository are what actually
+    # keep the PAT below out of a job checking out a fork-controlled tree.
+    if: >-
+      github.event.workflow_run.conclusion == 'success'
+      && github.event.workflow_run.event == 'push'
+      && github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
     # Every write here — the branch push, the tag push and the release creation —
     # goes through the GH_TOKEN PAT, which is also what carries the branch
@@ -29,7 +36,12 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GH_TOKEN }}
 
+      # Two commits landing close together produce two workflow_run events, and
+      # the older one no longer describes main. Nothing is wrong — the newer
+      # run releases both — so this reports it rather than failing, which put a
+      # red X on main for an ordinary merge race.
       - name: Release only the commit CI validated
+        id: validated
         env:
           VALIDATED_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
@@ -38,12 +50,13 @@ jobs:
           if [ "$MAIN_TIP" != "$VALIDATED_SHA" ]; then
             echo "CI validated $VALIDATED_SHA but main is now at $MAIN_TIP."
             echo "Releasing would tag code no CI run has passed; the newer commit's own run releases it."
-            exit 1
+            echo "current=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
           # The pinned checkout left HEAD detached, and semantic-release commits
           # and pushes the branch it is standing on.
           git switch -C main "$VALIDATED_SHA"
-          git branch --set-upstream-to=origin/main main
+          echo "current=true" >> "$GITHUB_OUTPUT"
 
       - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4.2.0
         with:
@@ -68,6 +81,7 @@ jobs:
       # step below can attach docker-compose.yml at creation time — the repo has
       # immutable releases enabled, which forbids adding assets afterwards.
       - name: Run semantic-release
+        if: steps.validated.outputs.current == 'true'
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: >-
@@ -77,9 +91,11 @@ jobs:
       # Empty output when no commit since the last tag was releasable, which is
       # an ordinary push rather than a failure. Every step after this one is
       # conditioned on it, so "nothing to release" stays declarative instead of
-      # being a shell exit code somebody has to get right.
+      # being a shell exit code somebody has to get right. Skipped outright on
+      # the overtaken run, which never created a local `main` for the push.
       - name: Identify the release tag
         id: released
+        if: steps.validated.outputs.current == 'true'
         run: |
           TAGS=$(git tag --points-at HEAD | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true)
           TAG=""
