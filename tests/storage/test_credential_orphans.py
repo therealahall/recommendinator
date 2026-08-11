@@ -115,6 +115,50 @@ class TestALiveNamesakeRowIsNotCalledStrandedRegression:
         assert len(caplog.records) == 1
 
 
+class TestBothPathsAskTheSameNamesakeQuestion:
+    """A source called ``gog`` reads that row whatever plugin it runs.
+
+    Split predicates were the reported defect, so the two paths are held to one
+    case neither can answer by accident.
+    """
+
+    def test_a_namesake_on_another_plugin_silences_the_warning(
+        self, storage: StorageManager, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        storage.upsert_source_config(1, "gog", "steam", {}, enabled=True)
+
+        with caplog.at_level(logging.WARNING):
+            warn_about_orphaned_credentials(storage, "gog", "gog_work")
+
+        assert caplog.records == []
+
+        # Anchor: the same call speaks once the namesake goes, so the silence
+        # above is the guard and not a call that reaches no log at all.
+        storage.delete_source_config(1, "gog")
+        with caplog.at_level(logging.WARNING):
+            warn_about_orphaned_credentials(storage, "gog", "gog_work")
+
+        assert len(caplog.records) == 1
+
+    def test_a_namesake_on_another_plugin_keeps_the_row_on_delete(
+        self, storage: StorageManager
+    ) -> None:
+        """No source runs ``gog`` any more, so only the namesake saves it."""
+        storage.upsert_source_config(1, "gog", "steam", {}, enabled=True)
+
+        delete_orphaned_credentials(storage, "gog", {})
+
+        assert storage.get_credential(1, "gog", "refresh_token") == _STRANDED
+
+    def test_an_unmigrated_namesake_keeps_the_row_on_delete(
+        self, storage: StorageManager
+    ) -> None:
+        """The sweep gets a config, so a YAML-only namesake counts there."""
+        delete_orphaned_credentials(storage, "gog", _yaml_inputs(gog="steam"))
+
+        assert storage.get_credential(1, "gog", "refresh_token") == _STRANDED
+
+
 class TestSweepingAStrandedCredentialOnDelete:
     """The row goes only once no configured source could ever read it."""
 

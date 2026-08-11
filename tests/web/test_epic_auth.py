@@ -3,6 +3,7 @@
 import logging
 import traceback
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -229,30 +230,41 @@ class TestSaveEpicToken:
         assert not any(record.exc_info for record in records)
 
 
+def _epic_source(**fields: object) -> dict[str, Any]:
+    """A config whose ``inputs.epic_games`` entry runs the Epic plugin."""
+    return {
+        "inputs": {"epic_games": {"plugin": "epic_games", "enabled": True, **fields}}
+    }
+
+
 class TestIsEpicEnabled:
     """Tests for is_epic_enabled function."""
 
     def test_returns_true_when_enabled(self) -> None:
         """Test returns True when Epic Games is enabled."""
-        config = {"inputs": {"epic_games": {"enabled": True}}}
-
-        assert is_epic_enabled(config) is True
+        assert is_epic_enabled(_epic_source()) is True
 
     def test_returns_false_when_disabled(self) -> None:
         """Test returns False when Epic Games is disabled."""
-        config = {"inputs": {"epic_games": {"enabled": False}}}
+        config = {"inputs": {"epic_games": {"plugin": "epic_games", "enabled": False}}}
 
         assert is_epic_enabled(config) is False
 
     def test_returns_false_when_missing(self) -> None:
         """Test returns False when Epic Games config is missing."""
-        config = {"inputs": {}}
+        config: dict[str, Any] = {"inputs": {}}
 
         assert is_epic_enabled(config) is False
 
     def test_returns_false_when_inputs_missing(self) -> None:
         """Test returns False when inputs section is missing."""
-        config = {}
+        config: dict[str, Any] = {}
+
+        assert is_epic_enabled(config) is False
+
+    def test_returns_false_for_a_source_running_another_plugin(self) -> None:
+        """The id becomes a credential key, so the plugin behind it decides."""
+        config = {"inputs": {"epic_games": {"plugin": "trakt", "enabled": True}}}
 
         assert is_epic_enabled(config) is False
 
@@ -267,40 +279,38 @@ class TestHasEpicToken:
 
     def test_returns_true_when_token_in_config(self) -> None:
         """Config-only token is detected (backwards compat)."""
-        config = {"inputs": {"epic_games": {"refresh_token": "some_token"}}}
-
-        assert has_epic_token(config) is True
+        assert has_epic_token(_epic_source(refresh_token="some_token")) is True
 
     def test_returns_false_when_token_empty(self) -> None:
         """Test returns False when refresh token is empty."""
-        config = {"inputs": {"epic_games": {"refresh_token": ""}}}
-
-        assert has_epic_token(config) is False
+        assert has_epic_token(_epic_source(refresh_token="")) is False
 
     def test_returns_false_when_token_missing(self) -> None:
         """Test returns False when refresh token is missing."""
-        config = {"inputs": {"epic_games": {}}}
-
-        assert has_epic_token(config) is False
+        assert has_epic_token(_epic_source()) is False
 
     def test_returns_false_when_whitespace_only(self) -> None:
         """Test returns False when token is whitespace only."""
-        config = {"inputs": {"epic_games": {"refresh_token": "   "}}}
-
-        assert has_epic_token(config) is False
+        assert has_epic_token(_epic_source(refresh_token="   ")) is False
 
     def test_returns_true_when_token_in_db(self, storage: StorageManager) -> None:
         """DB token detected even when config has no token."""
-        config = {"inputs": {"epic_games": {"refresh_token": ""}}}
         storage.save_credential(1, "epic_games", "refresh_token", "db_token")
 
-        assert has_epic_token(config, storage=storage) is True
+        assert has_epic_token(_epic_source(refresh_token=""), storage=storage) is True
 
     def test_config_fallback_when_no_storage(self) -> None:
         """Without storage, only config is checked."""
-        config = {"inputs": {"epic_games": {"refresh_token": "config_token"}}}
+        assert has_epic_token(_epic_source(refresh_token="config_token")) is True
 
-        assert has_epic_token(config, storage=None) is True
+    def test_another_plugins_source_is_never_reported_connected(
+        self, storage: StorageManager
+    ) -> None:
+        """A Trakt source's token is not Epic's, however the id is spelled."""
+        config = {"inputs": {"epic_games": {"plugin": "trakt", "enabled": True}}}
+        storage.save_credential(1, "epic_games", "refresh_token", "trakt_token")
+
+        assert has_epic_token(config, storage=storage) is False
 
 
 class TestEpicAuthTracebackRegression:

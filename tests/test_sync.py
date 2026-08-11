@@ -1016,20 +1016,20 @@ class TestASyncSaysWhichSourceToReconnectRegression:
         assert caplog.messages
         assert all("stranded-by-an-upgrade" not in msg for msg in caplog.messages)
 
-    def test_a_source_holding_its_own_token_is_not_nagged(
+    def test_a_source_holding_a_token_of_its_own_is_told_anyway(
         self, storage: StorageManager, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """The reconnect already happened; the leftover breaks nothing."""
+        """Holding a copy is not holding a live one, so it earns no silence."""
         storage.save_credential(
             1, "rotating", "refresh_token", "stranded-by-an-upgrade"
         )
-        storage.save_credential(1, "my_source", "refresh_token", "reconnected")
+        storage.save_credential(1, "my_source", "refresh_token", "may-be-spent")
 
         with caplog.at_level(logging.WARNING):
             self._sync({"_source_id": "my_source"}, storage)
 
         assert storage.get_credential(1, "rotating", "refresh_token") is not None
-        assert self._warnings(caplog) == []
+        assert len(self._warnings(caplog)) == 1
 
     def test_a_source_named_after_its_plugin_owns_the_row_outright(
         self, storage: StorageManager, caplog: pytest.LogCaptureFixture

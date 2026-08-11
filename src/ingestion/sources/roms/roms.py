@@ -53,6 +53,7 @@ from src.ingestion.sources.roms._rom_title import (
     normalize_title_key,
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.utils.text import exception_for_log, sanitize_for_log
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
@@ -203,7 +204,9 @@ def _safe_size_bytes(path: Path) -> int | None:
         return path.stat().st_size
     except OSError as error:
         logger.warning(
-            "Failed to read size for %s: %s; skipping size_bytes", path, error
+            "Failed to read size for %s: %s; skipping size_bytes",
+            sanitize_for_log(str(path)),
+            exception_for_log(error),
         )
         return None
 
@@ -397,7 +400,11 @@ class RomScannerPlugin(SourcePlugin):
                 is_file = entry.is_file()
                 is_dir = entry.is_dir()
             except OSError as error:
-                logger.warning("Failed to stat %s: %s; skipping entry", entry, error)
+                logger.warning(
+                    "Failed to stat %s: %s; skipping entry",
+                    sanitize_for_log(str(entry)),
+                    exception_for_log(error),
+                )
                 continue
 
             if absolute in seen_paths:
@@ -408,7 +415,10 @@ class RomScannerPlugin(SourcePlugin):
             # is_file=False and is_dir=False without raising. Skip them — a
             # broken link should not surface as a phantom item.
             if not is_file and not is_dir:
-                logger.debug("Skipping non-file, non-dir entry %s", absolute)
+                logger.debug(
+                    "Skipping non-file, non-dir entry %s",
+                    sanitize_for_log(str(absolute)),
+                )
                 continue
 
             if is_file and entry.suffix.lower() not in active_extensions:
@@ -421,7 +431,11 @@ class RomScannerPlugin(SourcePlugin):
 
             normalized = normalize_title_key(title)
             if normalized in seen_titles:
-                logger.debug("Skipping duplicate title %r at %s", title, absolute)
+                logger.debug(
+                    "Skipping duplicate title '%s' at %s",
+                    sanitize_for_log(title),
+                    sanitize_for_log(str(absolute)),
+                )
                 continue
             seen_titles.add(normalized)
 
@@ -463,7 +477,11 @@ def _collect_entries(scan_roots: list[Path], exclude_names: list[str]) -> list[P
         try:
             children = sorted(root.iterdir(), key=lambda entry: entry.name.lower())
         except OSError as error:
-            logger.warning("Failed to read scan root %s: %s", root, error)
+            logger.warning(
+                "Failed to read scan root %s: %s",
+                sanitize_for_log(str(root)),
+                exception_for_log(error),
+            )
             continue
         for child in children:
             if child.name.startswith("."):

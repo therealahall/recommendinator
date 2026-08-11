@@ -26,17 +26,19 @@ from urllib.parse import urlparse
 
 import requests
 
-from src.web.sync_sources import resolve_inputs
+from src.web.sync_sources import resolve_input_for_plugin
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
 
 logger = logging.getLogger(__name__)
 
+TRAKT_PLUGIN = "trakt"
+
 # The id of the source a plain ``inputs.trakt`` entry gets. Every entry point
 # takes the real source id instead, so a second Trakt source keeps its own
 # client credentials and token.
-TRAKT_SOURCE_ID = "trakt"
+TRAKT_SOURCE_ID = TRAKT_PLUGIN
 TRAKT_API_URL = "https://api.trakt.tv"
 TRAKT_DEVICE_CODE_URL = f"{TRAKT_API_URL}/oauth/device/code"
 TRAKT_DEVICE_TOKEN_URL = f"{TRAKT_API_URL}/oauth/device/token"
@@ -198,18 +200,17 @@ def resolve_trakt_client_credentials(
 ) -> tuple[str, str]:
     """Resolve *source_id*'s ``(client_id, client_secret)``.
 
-    Reuses ``resolve_inputs`` so resolution matches what the plugin sees at
-    sync time.
+    Refuses a source running another plugin: the token this unlocks is stored
+    under the id.
 
     Raises:
         TraktAuthError: If the source is not configured or either credential
             is missing.
     """
-    trakt_config: dict[str, Any] | None = None
-    for resolved in resolve_inputs(config, storage=storage, user_id=user_id):
-        if resolved.source_id == source_id:
-            trakt_config = resolved.config
-            break
+    resolved = resolve_input_for_plugin(
+        source_id, TRAKT_PLUGIN, config, storage, user_id
+    )
+    trakt_config = resolved.config if resolved is not None else None
 
     if trakt_config is None:
         raise TraktAuthError(

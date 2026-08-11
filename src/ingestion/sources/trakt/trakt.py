@@ -42,6 +42,7 @@ from src.ingestion.plugin_base import (
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.utils.dates import local_date_from_iso_timestamp, parse_iso_timestamp
+from src.utils.text import sanitize_for_log
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
@@ -163,7 +164,7 @@ def fetch_list(
         except requests.RequestException as error:
             logger.error(
                 "Error fetching Trakt %s (page %d): %s",
-                endpoint,
+                sanitize_for_log(endpoint),
                 page,
                 type(error).__name__,
             )
@@ -214,7 +215,11 @@ def fetch_show_season_totals(
         response.raise_for_status()
         seasons = response.json()
     except requests.RequestException as error:
-        logger.error("Error fetching Trakt %s: %s", endpoint, type(error).__name__)
+        logger.error(
+            "Error fetching Trakt %s: %s",
+            sanitize_for_log(endpoint),
+            type(error).__name__,
+        )
         raise TraktAPIError(
             f"Failed to fetch {endpoint}: {type(error).__name__}"
         ) from error
@@ -232,7 +237,9 @@ def fetch_show_season_totals(
         # of non-dicts raises here. Surface it as TraktAPIError so callers see
         # the same error type as a failed request, not a raw AttributeError.
         logger.error(
-            "Error parsing Trakt %s response: %s", endpoint, type(error).__name__
+            "Error parsing Trakt %s response: %s",
+            sanitize_for_log(endpoint),
+            type(error).__name__,
         )
         raise TraktAPIError(
             f"Failed to fetch {endpoint}: {type(error).__name__}"

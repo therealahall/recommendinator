@@ -3,6 +3,7 @@
 import logging
 import traceback
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -209,30 +210,39 @@ class TestSaveGogToken:
         assert not any(record.exc_info for record in records)
 
 
+def _gog_source(**fields: object) -> dict[str, Any]:
+    """A config whose ``inputs.gog`` entry runs the GOG plugin."""
+    return {"inputs": {"gog": {"plugin": "gog", "enabled": True, **fields}}}
+
+
 class TestIsGogEnabled:
     """Tests for is_gog_enabled function."""
 
     def test_returns_true_when_enabled(self) -> None:
         """Test returns True when GOG is enabled."""
-        config = {"inputs": {"gog": {"enabled": True}}}
-
-        assert is_gog_enabled(config) is True
+        assert is_gog_enabled(_gog_source()) is True
 
     def test_returns_false_when_disabled(self) -> None:
         """Test returns False when GOG is disabled."""
-        config = {"inputs": {"gog": {"enabled": False}}}
+        config = {"inputs": {"gog": {"plugin": "gog", "enabled": False}}}
 
         assert is_gog_enabled(config) is False
 
     def test_returns_false_when_missing(self) -> None:
         """Test returns False when GOG config is missing."""
-        config = {"inputs": {}}
+        config: dict[str, Any] = {"inputs": {}}
 
         assert is_gog_enabled(config) is False
 
     def test_returns_false_when_inputs_missing(self) -> None:
         """Test returns False when inputs section is missing."""
-        config = {}
+        config: dict[str, Any] = {}
+
+        assert is_gog_enabled(config) is False
+
+    def test_returns_false_for_a_source_running_another_plugin(self) -> None:
+        """The id becomes a credential key, so the plugin behind it decides."""
+        config = {"inputs": {"gog": {"plugin": "trakt", "enabled": True}}}
 
         assert is_gog_enabled(config) is False
 
@@ -247,40 +257,38 @@ class TestHasGogToken:
 
     def test_returns_true_when_token_in_config(self) -> None:
         """Config-only token is detected (backwards compat)."""
-        config = {"inputs": {"gog": {"refresh_token": "some_token"}}}
-
-        assert has_gog_token(config) is True
+        assert has_gog_token(_gog_source(refresh_token="some_token")) is True
 
     def test_returns_false_when_token_empty(self) -> None:
         """Test returns False when refresh token is empty."""
-        config = {"inputs": {"gog": {"refresh_token": ""}}}
-
-        assert has_gog_token(config) is False
+        assert has_gog_token(_gog_source(refresh_token="")) is False
 
     def test_returns_false_when_token_missing(self) -> None:
         """Test returns False when refresh token is missing."""
-        config = {"inputs": {"gog": {}}}
-
-        assert has_gog_token(config) is False
+        assert has_gog_token(_gog_source()) is False
 
     def test_returns_false_when_whitespace_only(self) -> None:
         """Test returns False when token is whitespace only."""
-        config = {"inputs": {"gog": {"refresh_token": "   "}}}
-
-        assert has_gog_token(config) is False
+        assert has_gog_token(_gog_source(refresh_token="   ")) is False
 
     def test_returns_true_when_token_in_db(self, storage: StorageManager) -> None:
         """DB token detected even when config has no token."""
-        config = {"inputs": {"gog": {"refresh_token": ""}}}
         storage.save_credential(1, "gog", "refresh_token", "db_token")
 
-        assert has_gog_token(config, storage=storage) is True
+        assert has_gog_token(_gog_source(refresh_token=""), storage=storage) is True
 
     def test_config_fallback_when_no_storage(self) -> None:
         """Without storage, only config is checked."""
-        config = {"inputs": {"gog": {"refresh_token": "config_token"}}}
+        assert has_gog_token(_gog_source(refresh_token="config_token")) is True
 
-        assert has_gog_token(config, storage=None) is True
+    def test_another_plugins_source_is_never_reported_connected(
+        self, storage: StorageManager
+    ) -> None:
+        """A Trakt source's token is not GOG's, however the id is spelled."""
+        config = {"inputs": {"gog": {"plugin": "trakt", "enabled": True}}}
+        storage.save_credential(1, "gog", "refresh_token", "trakt_token")
+
+        assert has_gog_token(config, storage=storage) is False
 
 
 class TestGogAuthCredentialChainRegression:

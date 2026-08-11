@@ -22,14 +22,21 @@ from unittest.mock import MagicMock, Mock, patch
 
 import anyio.from_thread
 import pytest
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.datastructures import DefaultPlaceholder
 from fastapi.dependencies.models import Dependant
+from fastapi.exception_handlers import http_exception_handler
+from fastapi.exceptions import (
+    RequestValidationError,
+    WebSocketRequestValidationError,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, Field, ValidationError
-from starlette.responses import JSONResponse, Response
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.responses import HTMLResponse, JSONResponse, Response
+from starlette.routing import WebSocketRoute
 
 import src.web.api
 import src.web.chat_api
@@ -62,7 +69,12 @@ from src.web.api import (
     SOURCE_MISCONFIGURED_DETAIL,
     _item_to_response,
 )
-from src.web.app import _LOG_BASE_DIR, _safe_log_path
+from src.web.app import (
+    _LOG_BASE_DIR,
+    _raised_refusal_json_can_carry,
+    _safe_log_path,
+    _validation_refusal_json_can_carry,
+)
 from src.web.auth import UNAUTHORIZED_DETAIL, require_api_token
 from src.web.enrichment_manager import (
     WebEnrichmentManager,
@@ -3113,7 +3125,7 @@ class TestExchangeGogTokenEndpoint:
         self, client: TestClient, mock_components: dict
     ) -> None:
         """Token is saved to DB (not config file) and never returned in response."""
-        app_state.config["inputs"]["gog"] = {"enabled": True}
+        app_state.config["inputs"]["gog"] = {"plugin": "gog", "enabled": True}
 
         with (
             patch("src.web.api.extract_gog_code", return_value="valid_code"),
@@ -3147,7 +3159,7 @@ class TestExchangeGogTokenEndpoint:
         Bug: Docker mounts config read-only, causing OSError when
         update_config_with_token tried to write. Now tokens go to DB.
         """
-        app_state.config["inputs"]["gog"] = {"enabled": True}
+        app_state.config["inputs"]["gog"] = {"plugin": "gog", "enabled": True}
 
         with (
             patch("src.web.api.extract_gog_code", return_value="valid_code"),
@@ -3174,7 +3186,7 @@ class TestExchangeGogTokenEndpoint:
         self, client: TestClient, mock_components: dict
     ) -> None:
         """Auth failure returns generic 400 without leaking error details."""
-        app_state.config["inputs"]["gog"] = {"enabled": True}
+        app_state.config["inputs"]["gog"] = {"plugin": "gog", "enabled": True}
 
         with patch(
             "src.web.api.extract_gog_code",
@@ -3191,7 +3203,7 @@ class TestExchangeGogTokenEndpoint:
         self, client: TestClient, mock_components: dict
     ) -> None:
         """Unexpected exceptions return a generic 500 without leaking error details."""
-        app_state.config["inputs"]["gog"] = {"enabled": True}
+        app_state.config["inputs"]["gog"] = {"plugin": "gog", "enabled": True}
 
         with patch(
             "src.web.api.extract_gog_code",
@@ -3208,7 +3220,7 @@ class TestExchangeGogTokenEndpoint:
         self, client: TestClient, mock_components: dict
     ) -> None:
         """Endpoint rejects requests when GOG is not enabled."""
-        app_state.config["inputs"]["gog"] = {"enabled": False}
+        app_state.config["inputs"]["gog"] = {"plugin": "gog", "enabled": False}
 
         response = client.post("/api/gog/exchange", json={"code_or_url": "some_code"})
 
@@ -4430,7 +4442,10 @@ class TestExchangeEpicTokenEndpoint:
         self, client: TestClient, mock_components: dict
     ) -> None:
         """Token is saved to DB and never returned in response."""
-        app_state.config["inputs"]["epic_games"] = {"enabled": True}
+        app_state.config["inputs"]["epic_games"] = {
+            "plugin": "epic_games",
+            "enabled": True,
+        }
 
         with (
             patch("src.web.api.extract_epic_code", return_value="valid_code"),
@@ -4461,7 +4476,10 @@ class TestExchangeEpicTokenEndpoint:
         self, client: TestClient, mock_components: dict
     ) -> None:
         """Auth failure returns generic 400 without leaking error details."""
-        app_state.config["inputs"]["epic_games"] = {"enabled": True}
+        app_state.config["inputs"]["epic_games"] = {
+            "plugin": "epic_games",
+            "enabled": True,
+        }
 
         with patch(
             "src.web.api.extract_epic_code",
@@ -4478,7 +4496,10 @@ class TestExchangeEpicTokenEndpoint:
         self, client: TestClient, mock_components: dict
     ) -> None:
         """DB save failure returns generic 400."""
-        app_state.config["inputs"]["epic_games"] = {"enabled": True}
+        app_state.config["inputs"]["epic_games"] = {
+            "plugin": "epic_games",
+            "enabled": True,
+        }
 
         with (
             patch("src.web.api.extract_epic_code", return_value="valid_code"),
@@ -4505,7 +4526,10 @@ class TestExchangeEpicTokenEndpoint:
         self, client: TestClient, mock_components: dict
     ) -> None:
         """Requesting exchange when Epic is disabled returns 400."""
-        app_state.config["inputs"]["epic_games"] = {"enabled": False}
+        app_state.config["inputs"]["epic_games"] = {
+            "plugin": "epic_games",
+            "enabled": False,
+        }
 
         response = client.post("/api/epic/exchange", json={"code_or_json": "some_code"})
 
@@ -4519,7 +4543,10 @@ class TestExchangeEpicTokenEndpoint:
         self, client: TestClient, mock_components: dict
     ) -> None:
         """Missing storage returns 503."""
-        app_state.config["inputs"]["epic_games"] = {"enabled": True}
+        app_state.config["inputs"]["epic_games"] = {
+            "plugin": "epic_games",
+            "enabled": True,
+        }
         app_state.storage = None
 
         response = client.post("/api/epic/exchange", json={"code_or_json": "some_code"})
@@ -4531,7 +4558,10 @@ class TestExchangeEpicTokenEndpoint:
         self, client: TestClient, mock_components: dict
     ) -> None:
         """Unexpected errors produce a generic 500 without leaking internals."""
-        app_state.config["inputs"]["epic_games"] = {"enabled": True}
+        app_state.config["inputs"]["epic_games"] = {
+            "plugin": "epic_games",
+            "enabled": True,
+        }
 
         with (
             patch("src.web.api.extract_epic_code", return_value="valid_code"),
@@ -4648,7 +4678,10 @@ class TestExchangeEpicTokenEndpointRegression:
         Fix: tokens are now saved exclusively via save_epic_token() to the
         credential database, which is never a read-only mount.
         """
-        app_state.config["inputs"]["epic_games"] = {"enabled": True}
+        app_state.config["inputs"]["epic_games"] = {
+            "plugin": "epic_games",
+            "enabled": True,
+        }
 
         with (
             patch("src.web.api.extract_epic_code", return_value="valid_code"),
@@ -4737,6 +4770,37 @@ class TestItemToResponseInvalidSeasons:
 
 class TestAuthDisconnectEndpoints:
     """Tests for DELETE /api/gog/token and /api/epic/token (matches CLI auth disconnect)."""
+
+    @pytest.fixture(autouse=True)
+    def oauth_sources(self, mock_components):
+        """Declare the three sources these deletes address.
+
+        The route resolves the id before deleting anything, so an undeclared
+        one is refused ahead of storage.
+        """
+        app_state.config["inputs"].update(
+            {
+                "gog": {"plugin": "gog", "enabled": True},
+                "epic_games": {"plugin": "epic_games", "enabled": True},
+                "trakt": {"plugin": "trakt", "enabled": True},
+            }
+        )
+
+    @pytest.mark.parametrize(
+        ("provider", "source_id"),
+        [("gog", "trakt"), ("epic", "gog"), ("trakt", "epic_games")],
+    )
+    def test_disconnect_refuses_a_source_running_another_plugin(
+        self, client, mock_components, provider, source_id
+    ):
+        """The id is the credential key, so each route owns which ones it may use."""
+        storage = mock_components["storage"]
+        storage.delete_credential.return_value = True
+
+        response = client.delete(f"/api/{provider}/token?source_id={source_id}")
+
+        assert response.status_code == 404, response.text
+        storage.delete_credential.assert_not_called()
 
     def test_gog_disconnect_success(self, client, mock_components):
         """DELETE /api/gog/token removes stored refresh token."""
@@ -5747,7 +5811,7 @@ _GUARDED_ENDPOINTS = [
         ("config", "storage"),
         body={"code_or_url": "code"},
     ),
-    _Endpoint("DELETE", "/api/gog/token", ("storage",)),
+    _Endpoint("DELETE", "/api/gog/token", ("config", "storage")),
     _Endpoint("GET", "/api/epic/status", ("config", "storage")),
     _Endpoint(
         "POST",
@@ -5755,7 +5819,7 @@ _GUARDED_ENDPOINTS = [
         ("config", "storage"),
         body={"code_or_json": "code"},
     ),
-    _Endpoint("DELETE", "/api/epic/token", ("storage",)),
+    _Endpoint("DELETE", "/api/epic/token", ("config", "storage")),
     _Endpoint("GET", "/api/trakt/status", ("config", "storage")),
     _Endpoint("POST", "/api/trakt/start-device-flow", ("config", "storage")),
     _Endpoint(
@@ -5764,7 +5828,7 @@ _GUARDED_ENDPOINTS = [
         ("config", "storage"),
         body={"device_code": "dev1234567"},
     ),
-    _Endpoint("DELETE", "/api/trakt/token", ("storage",)),
+    _Endpoint("DELETE", "/api/trakt/token", ("config", "storage")),
     _Endpoint("POST", "/api/chat", ("conversation_engine",), body={"message": "hi"}),
     _Endpoint("POST", "/api/chat/reset", ("conversation_engine",)),
     _Endpoint("GET", "/api/chat/history", ("memory_manager",)),
@@ -8205,11 +8269,11 @@ class TestNoLogEscapeReachesAResponseBodyRegression:
         )
 
         assert response.status_code == 422, response.text
-        assert response.json()["detail"][0]["input"] == repr(f"Dune{surrogate}")
+        assert response.json()["detail"][0]["input"] == f"Dune{surrogate}"
         mock_components["storage"].complete_content_item.assert_not_called()
 
     def test_an_ordinary_refusal_still_quotes_its_input_verbatim(self, client) -> None:
-        """``repr`` is the unencodable branch, not the shape of every 422."""
+        """The escape above is the response class's, not a reshaped 422."""
         over_long = "D" * 501
 
         response = client.post(
@@ -8318,10 +8382,23 @@ def _dumps_calls(tree: ast.AST) -> list[ast.Call]:
     ]
 
 
-def _dumps_naming_ensure_ascii(tree: ast.AST) -> set[str]:
+def _chunk_dumps_calls(tree: ast.AST) -> list[ast.Call]:
+    """The ``dumps`` calls building an SSE chunk, which Starlette then encodes
+    strictly. A ``dumps`` elsewhere in the module answers at a different
+    boundary, so counting it would report coverage the streams do not have.
+    """
+    builders = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "generate_sse"
+    ]
+    return [call for builder in builders for call in _dumps_calls(builder)]
+
+
+def _dumps_naming_ensure_ascii(calls: list[ast.Call]) -> set[str]:
     return {
         f"line {call.lineno}"
-        for call in _dumps_calls(tree)
+        for call in calls
         if any(keyword.arg == "ensure_ascii" for keyword in call.keywords)
     }
 
@@ -8496,16 +8573,77 @@ class TestAStoredCustomRulePermanently500edThePreferencesPageRegression:
 class TestTheEncodeIsOneBoundary:
     """Eleven call sites was the shape the per-endpoint repair would have had."""
 
-    def test_every_api_route_renders_through_the_app_response_class(
+    def test_every_route_renders_through_the_app_response_class(
         self, mock_components
     ) -> None:
+        """``/`` is the one exemption: its body is a constant or a strict
+        UTF-8 file decode, so no string UTF-8 refuses can reach it.
+        """
         rendering = {
-            _resolved_response_class(route)
+            route.path: _resolved_response_class(route)
             for route in mock_components["app"].routes
-            if isinstance(route, APIRoute) and route.path.startswith("/api")
+            if isinstance(route, APIRoute)
         }
 
-        assert rendering == {SurrogateSafeJSONResponse}
+        assert {
+            path: cls
+            for path, cls in rendering.items()
+            if cls is not SurrogateSafeJSONResponse
+        } == {"/": HTMLResponse}
+
+    def test_every_handler_an_http_request_can_reach_is_the_app_encode(
+        self, mock_components
+    ) -> None:
+        """FastAPI supplies a handler per exception class, and each of its own
+        renders on a stock ``JSONResponse`` the default class never sees.
+        """
+        registered = mock_components["app"].exception_handlers
+
+        assert {
+            raised: handler
+            for raised, handler in registered.items()
+            if raised is not WebSocketRequestValidationError
+        } == {
+            StarletteHTTPException: _raised_refusal_json_can_carry,
+            RequestValidationError: _validation_refusal_json_can_carry,
+        }
+
+    def test_the_handler_left_to_fastapi_answers_a_protocol_never_served(
+        self, mock_components
+    ) -> None:
+        """The exemption above, anchored: nothing routed can raise it."""
+        app = mock_components["app"]
+        routed = {type(route) for route in app.routes}
+
+        assert WebSocketRequestValidationError in app.exception_handlers
+        assert routed and not any(
+            issubclass(kind, WebSocketRoute) for kind in routed
+        ), routed
+
+    def test_the_routes_that_sweep_skips_are_the_ones_named_as_exempt(
+        self, mock_config, tmp_path
+    ) -> None:
+        """Debug opens four routes FastAPI owns. ``/openapi.json`` renders on a
+        stock ``JSONResponse`` — safe only because the schema is built from
+        source text, and unreviewable if a fifth arrives unnoticed.
+        """
+        reset_sync_manager()
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+        config = {**mock_config, "web": {**mock_config["web"], "debug": True}}
+
+        with booted_web_app(storage, config) as app:
+            unswept = {
+                route.path for route in app.routes if not isinstance(route, APIRoute)
+            }
+        reset_sync_manager()
+
+        assert unswept == {
+            "/static",
+            "/openapi.json",
+            "/docs",
+            "/docs/oauth2-redirect",
+            "/redoc",
+        }
 
     def test_the_endpoints_the_defect_was_found_on_are_in_that_sweep(
         self, mock_components
@@ -8529,15 +8667,15 @@ class TestTheEncodeIsOneBoundary:
         is the whole reason neither ever had the defect. ``export.py`` may say
         it: that body goes back through the raw response class.
         """
-        reported = _dumps_naming_ensure_ascii(_API_TREE) | _dumps_naming_ensure_ascii(
-            _CHAT_TREE
+        reported = _dumps_naming_ensure_ascii(
+            _chunk_dumps_calls(_API_TREE) + _chunk_dumps_calls(_CHAT_TREE)
         )
 
         assert reported == set()
 
     def test_that_sweep_reaches_the_chunks_it_exists_for(self) -> None:
-        """Either stream moving elsewhere would empty the sweep silently."""
-        assert _dumps_calls(_API_TREE) and _dumps_calls(_CHAT_TREE)
+        """Either builder moving elsewhere would empty the sweep silently."""
+        assert _chunk_dumps_calls(_API_TREE) and _chunk_dumps_calls(_CHAT_TREE)
 
 
 class TestOnlyTheAppResponseClassMakesTheBodyEncodable:
@@ -8650,3 +8788,65 @@ class TestAnHTTPExceptionDetailBypassesTheAppResponseClassRegression:
 
         assert refused.status_code == 422, refused.text
         assert refused.json()["detail"]["key"] == "nope\ud800"
+
+    @pytest.mark.parametrize("status", [100, 204, 304])
+    def test_a_status_that_may_not_carry_a_body_still_gets_none(
+        self, status: int
+    ) -> None:
+        """Standing in for FastAPI's handler means keeping the rest of its
+        contract: every status it withholds a body from, and the headers that
+        go with it — a challenge dropped here is a 401 nobody can answer.
+        """
+        rendered = asyncio.run(
+            _raised_refusal_json_can_carry(
+                Mock(spec=Request),
+                StarletteHTTPException(
+                    status_code=status,
+                    detail="unsendable",
+                    headers={"WWW-Authenticate": "Bearer"},
+                ),
+            )
+        )
+
+        assert (rendered.status_code, rendered.body) == (status, b"")
+        assert rendered.headers["WWW-Authenticate"] == "Bearer"
+
+    @pytest.mark.parametrize("surrogate", _LONE_SURROGATES)
+    @pytest.mark.parametrize("status", [400, 404, 409, 422, 500])
+    def test_every_status_carries_the_detail_and_its_headers(
+        self, status: int, surrogate: str
+    ) -> None:
+        """The defect was the renderer, not the 422 — one endpoint echoes a
+        caller's key there today, and any status raising a detail built from
+        request text hit the same strict encode.
+        """
+        rendered = asyncio.run(
+            _raised_refusal_json_can_carry(
+                Mock(spec=Request),
+                StarletteHTTPException(
+                    status_code=status,
+                    detail=f"nope{surrogate}",
+                    headers={"WWW-Authenticate": "Bearer"},
+                ),
+            )
+        )
+
+        assert rendered.status_code == status
+        assert json.loads(rendered.body) == {"detail": f"nope{surrogate}"}
+        assert rendered.headers["WWW-Authenticate"] == "Bearer"
+
+    @pytest.mark.parametrize("surrogate", _LONE_SURROGATES)
+    def test_the_handler_it_replaced_still_refuses_that_detail(
+        self, surrogate: str
+    ) -> None:
+        """The counterfactual the app tests cannot show: FastAPI's own handler
+        is what every one of them reached before, and it still raises on the
+        same input — so nothing above passes without the registration.
+        """
+        with pytest.raises(UnicodeEncodeError):
+            asyncio.run(
+                http_exception_handler(
+                    Mock(spec=Request),
+                    StarletteHTTPException(status_code=422, detail=f"nope{surrogate}"),
+                )
+            )

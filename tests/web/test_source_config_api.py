@@ -203,7 +203,7 @@ class TestConfigEndpoint:
     ) -> None:
         """A YAML secret value of False/None/0 must not be reported as set.
 
-        Regression guard for ``_is_nonempty_secret_value``: a naive
+        Regression guard for ``is_nonempty_secret_value``: a naive
         ``str(value).strip()`` truthiness check would mis-classify
         ``False`` (becomes ``"False"``) as a stored secret.
         """

@@ -18,6 +18,7 @@ from src.ingestion.plugin_base import (
     SourcePlugin,
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.utils.text import sanitize_for_log
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
@@ -157,7 +158,7 @@ class StorygraphCsvPlugin(SourcePlugin):
             ContentItem objects for each book in the export
         """
         source = self.get_source_identifier(config)
-        logger.info("Parsing StoryGraph CSV file: %s", file_path)
+        logger.info("Parsing StoryGraph CSV file: %s", sanitize_for_log(str(file_path)))
 
         with open(file_path, encoding="utf-8") as csv_file:
             reader = csv.DictReader(csv_file)

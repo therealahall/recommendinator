@@ -18,6 +18,7 @@ from src.ingestion.plugin_base import (
 )
 from src.ingestion.urls import source_url_error
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.utils.text import sanitize_for_log
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
@@ -631,8 +632,8 @@ def _resolve_next_url(
         logger.warning(
             "Refusing to follow Calibre-Web rel=next link to a different "
             "origin (%s://%s); stopping pagination",
-            next_parts.scheme,
-            next_parts.netloc,
+            sanitize_for_log(next_parts.scheme),
+            sanitize_for_log(next_parts.netloc),
         )
         return None
     return next_parts.geturl()
