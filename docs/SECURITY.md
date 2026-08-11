@@ -37,9 +37,12 @@ completion history sit in the database as plaintext, and so do the embeddings.
 - If the encryption key changes, stale credentials for a source still defined
   in `config.yaml` alone are re-encrypted from it, or purged when there is no
   config fallback.
-- A rotated OAuth refresh token from GOG, Epic Games or Trakt is persisted under
-  its source's id during sync, so you never reconnect by hand. Tokens an earlier
-  release rotated under the plugin's name are not moved by an upgrade.
+- A GOG, Epic Games or Trakt refresh token is persisted under its source's id —
+  both the one the connect flow obtains and the one a sync rotates — so a source
+  reads back what it was connected with and removing it takes the token too.
+- An upgrade does not move tokens an earlier release stored under the plugin's
+  name: several sources can share a plugin, and nothing records which owns the
+  token. The sync warns, names the source, and asks you to reconnect it.
 - **No endpoint returns a credential value.** They are write-only from the API.
 - The test suite never touches the real key. An autouse fixture in the
   repository-root `conftest.py` points `RECOMMENDINATOR_KEY_PATH` at a per-test
@@ -50,7 +53,10 @@ it, stored credentials cannot be decrypted and have to be re-entered.
 
 **Removing a source deletes every credential row stored under its id**, plugin
 installed or not, field still marked sensitive or not. Removal deletes no
-library items.
+library items. Removing the last source on a plugin through the API also clears
+anything stranded under that plugin's own name, since no source can read it any
+more. Another source on the same plugin, enabled or not, keeps it. The CLI's
+`source remove` does not sweep it yet.
 
 **Changing a `credential_bound` field clears that source's stored secrets** —
 `url` on Sonarr, Radarr and Calibre-Web, plus Calibre-Web's `verify_ssl`. A
@@ -191,9 +197,10 @@ name or a status code. None of them attaches a traceback.
 
 Rendering the message is only half of it: a traceback walks `__cause__`, so an
 exception chained from a request error prints that request's URL. `auth connect`
-logs with `exc_info=True`, so GOG's token refresh and code exchange raise
-`from None` — GOG puts the code, refresh token and client secret in the query
-string. Steam, TMDB and RAWG still chain such a URL; no sink prints it today.
+logs with `exc_info=True`, so GOG's token refresh and code exchange and Steam's
+two Web API calls raise `from None`. `tests/test_credential_url_chains.py` fails
+on a source plugin that sends a secret as a query parameter without doing the
+same. TMDB and RAWG still chain such a URL; no sink prints it today.
 
 A refused config write is redacted before logging, but the match is exact, so a
 truncated or encoded form of the secret survives it.

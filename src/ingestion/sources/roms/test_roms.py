@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from collections.abc import Iterator
@@ -861,3 +862,31 @@ class TestRomScannerPathContainmentRegression:
 
         # list() would discard these, leaving the leak half of the name unproven.
         assert collected == []
+
+
+ROMS_LOGGER = "src.ingestion.sources.roms.roms"
+
+
+class TestRomScannerLogInjectionRegression:
+    """Regression: a scanned file name forged log entries.
+
+    Bug: the path and the ``OSError`` quoting it are interpolated raw, and a
+    file name may hold a break. Cause: the sanitiser pass covered the three
+    generic import plugins alone. Fix: ``sanitize_for_log``/``exception_for_log``.
+    """
+
+    def test_a_newline_in_a_scanned_name_cannot_forge_a_log_entry(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        missing = tmp_path / "Chrono Trigger\nImported 9999 items from ROM scan.zip"
+
+        with caplog.at_level(logging.WARNING, logger=ROMS_LOGGER):
+            assert _safe_size_bytes(missing) is None
+
+        messages = [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == ROMS_LOGGER
+        ]
+        assert messages, "nothing was logged, so this proves nothing"
+        assert "\n" not in messages[0], messages

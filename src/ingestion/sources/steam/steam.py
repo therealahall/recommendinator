@@ -16,6 +16,7 @@ from src.ingestion.plugin_base import (
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.utils.request_errors import scrub_request_error
+from src.utils.text import sanitize_for_log
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
@@ -56,7 +57,10 @@ def get_steam_id_from_vanity_url(api_key: str, vanity_url: str) -> str | None:
     except requests.RequestException as error:
         scrubbed = scrub_request_error(error)
         logger.error("Error resolving Steam vanity URL: %s", scrubbed)
-        raise SteamAPIError(f"Failed to resolve Steam ID: {scrubbed}") from error
+        # ``from None``: the Web API key is a query parameter, so the URL on
+        # ``error`` carries it and any caller logging ``exc_info=True`` would
+        # print it out of the traceback.
+        raise SteamAPIError(f"Failed to resolve Steam ID: {scrubbed}") from None
 
 
 def get_owned_games(
@@ -89,7 +93,8 @@ def get_owned_games(
     except requests.RequestException as error:
         scrubbed = scrub_request_error(error)
         logger.error("Error fetching Steam games: %s", scrubbed)
-        raise SteamAPIError(f"Failed to fetch Steam games: {scrubbed}") from error
+        # ``from None`` for the same reason as the vanity-URL call above.
+        raise SteamAPIError(f"Failed to fetch Steam games: {scrubbed}") from None
 
 
 class SteamPlugin(SourcePlugin):
@@ -260,7 +265,10 @@ def _fetch_steam_games(
             )
 
     # Fetch owned games
-    logger.info("Fetching owned games from Steam API for Steam ID: %s", steam_id)
+    logger.info(
+        "Fetching owned games from Steam API for Steam ID: %s",
+        sanitize_for_log(steam_id),
+    )
     games = get_owned_games(api_key, steam_id, include_appinfo=True)
     logger.info("Found %d games in Steam library", len(games))
     if progress_callback:

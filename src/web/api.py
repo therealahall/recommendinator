@@ -48,6 +48,7 @@ from src.utils.sorting import MAX_SEARCH_LENGTH
 from src.utils.text import exception_for_log, humanize_source_id, sanitize_for_log
 from src.web.enrichment_manager import get_enrichment_manager
 from src.web.epic_auth import (
+    EPIC_SOURCE_ID,
     EpicAuthError,
     get_epic_auth_url,
     has_epic_token,
@@ -58,6 +59,7 @@ from src.web.epic_auth import exchange_code_for_tokens as exchange_epic_tokens
 from src.web.epic_auth import extract_code_from_input as extract_epic_code
 from src.web.export import export_items_csv, export_items_json
 from src.web.gog_auth import (
+    GOG_SOURCE_ID,
     GogAuthError,
     get_gog_auth_url,
     has_gog_token,
@@ -73,6 +75,7 @@ from src.web.guards import (
     require_config,
     writable_config,
 )
+from src.web.responses import SurrogateSafeResponse
 from src.web.state import (
     get_config,
     get_embedding_gen,
@@ -83,6 +86,7 @@ from src.web.state import (
 from src.web.stream_limit import bounded_sse
 from src.web.sync_manager import SyncJob, get_sync_manager
 from src.web.sync_sources import (
+    SOURCE_ID_PATTERN,
     SourceConfigError,
     build_config_view,
     build_schema_view,
@@ -100,6 +104,7 @@ from src.web.sync_sources import (
     update_source_config_values,
 )
 from src.web.trakt_auth import (
+    TRAKT_SOURCE_ID,
     DevicePollStatus,
     TraktAuthError,
     is_trakt_connected,
@@ -112,15 +117,6 @@ from src.web.trakt_auth import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["api"])
-
-
-def _json_safe(value: str) -> str:
-    """Render a stored string so ``JSONResponse`` can encode it.
-
-    Nothing validates a title read back from storage, and a lone surrogate
-    there costs the whole response. So it gets the log file's rendering.
-    """
-    return value.encode("utf-8", "backslashreplace").decode("utf-8")
 
 
 def _blank_review_validator(remedy: str) -> Callable[[str], str]:
@@ -1123,7 +1119,9 @@ def export_items(
         content = export_items_json(items, content_type)
         media_type = "application/json"
 
-    return Response(
+    # The app's response class only covers a body FastAPI renders, and this
+    # one arrives serialised, so it names the same encode itself.
+    return SurrogateSafeResponse(
         content=content,
         media_type=media_type,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
@@ -1160,7 +1158,7 @@ def set_item_ignored(
 
     # Not ``sanitize_for_log``: JSON carries a line break as an escape of its
     # own, and the client is not a single-line log file.
-    title = _json_safe(item.title)
+    title = item.title
     return {
         "db_id": db_id,
         "title": title,
@@ -1705,14 +1703,17 @@ def create_source_endpoint(
 
 
 @router.delete("/sync/sources/{source_id}", status_code=204)
-def delete_source_endpoint(source_id: str, storage: RequiredStorage) -> Response:
+def delete_source_endpoint(
+    source_id: str, storage: RequiredStorage, config: RequiredConfig
+) -> Response:
     """Drop a DB-backed source and clear its credentials.
 
-    Storage alone: the row this drops is the database's, and a source YAML
-    still defines is not deletable through here at all.
+    Config is guarded because clearing a credential stranded under the plugin
+    name reads both halves of the source list: unread, a YAML source still on
+    that plugin is indistinguishable from none.
     """
     try:
-        delete_source(source_id, storage)
+        delete_source(source_id, storage, config=config)
     except SourceConfigError as error:
         raise _config_error_to_http(error) from error
     return Response(status_code=204)
@@ -2214,15 +2215,28 @@ def get_default_theme() -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 
+def _source_id_query(default: str) -> Any:
+    """The id of the source being connected, which owns the stored token.
+
+    Defaulted to the plugin's own name so a client written before the
+    parameter existed still addresses the source it used to.
+    """
+    return Query(default, pattern=SOURCE_ID_PATTERN)
+
+
 @router.get("/gog/status")
-def get_gog_status(config: RequiredConfig, storage: RequiredStorage) -> dict[str, Any]:
+def get_gog_status(
+    config: RequiredConfig,
+    storage: RequiredStorage,
+    source_id: str = _source_id_query(GOG_SOURCE_ID),
+) -> dict[str, Any]:
     """Get GOG integration status.
 
     Returns:
         Status of GOG integration (enabled, connected, auth_url).
     """
-    enabled = is_gog_enabled(config)
-    connected = has_gog_token(config, storage=storage)
+    enabled = is_gog_enabled(config, source_id)
+    connected = has_gog_token(config, storage=storage, source_id=source_id)
 
     return {
         "enabled": enabled,
@@ -2233,20 +2247,20 @@ def get_gog_status(config: RequiredConfig, storage: RequiredStorage) -> dict[str
 
 @router.post("/gog/exchange")
 def exchange_gog_token(
-    request: GogExchangeRequest, config: RequiredConfig, storage: RequiredStorage
+    request: GogExchangeRequest,
+    config: RequiredConfig,
+    storage: RequiredStorage,
+    source_id: str = _source_id_query(GOG_SOURCE_ID),
 ) -> dict[str, Any]:
     """Exchange GOG authorization code for tokens.
 
     Accepts either the raw authorization code or the full redirect URL.
-    Saves the refresh token to the encrypted credential database.
-
-    Args:
-        request: Request with code or URL.
+    Saves the refresh token under *source_id*.
 
     Returns:
         Success message. The token is never included in the HTTP response.
     """
-    if not is_gog_enabled(config):
+    if not is_gog_enabled(config, source_id):
         raise HTTPException(
             status_code=400,
             detail="GOG is not enabled. Set inputs.gog.enabled: true in config.yaml first.",
@@ -2261,8 +2275,8 @@ def exchange_gog_token(
         refresh_token = tokens["refresh_token"]
 
         # Save token to encrypted database storage
-        save_gog_token(storage, refresh_token)
-        logger.info("Successfully connected GOG account")
+        save_gog_token(storage, refresh_token, source_id=source_id)
+        logger.info("Connected GOG account for %s", sanitize_for_log(source_id))
 
         return {
             "success": True,
@@ -2285,16 +2299,20 @@ def exchange_gog_token(
 
 @router.delete("/gog/token")
 def disconnect_gog(
-    storage: RequiredStorage, user_id: int = Query(1, ge=1)
+    storage: RequiredStorage,
+    source_id: str = _source_id_query(GOG_SOURCE_ID),
+    user_id: int = Query(1, ge=1),
 ) -> dict[str, Any]:
     """Disconnect GOG by deleting the stored refresh token.
 
     Mirrors the CLI `auth disconnect --source gog` command.
     """
-    deleted = storage.delete_credential(user_id, "gog", "refresh_token")
+    deleted = storage.delete_credential(user_id, source_id, "refresh_token")
     if not deleted:
         raise HTTPException(status_code=404, detail="No active GOG connection found")
-    logger.info("Disconnected GOG account for user %s", user_id)
+    logger.info(
+        "Disconnected GOG account %s for user %s", sanitize_for_log(source_id), user_id
+    )
     return {"success": True, "message": "GOG disconnected."}
 
 
@@ -2304,14 +2322,18 @@ def disconnect_gog(
 
 
 @router.get("/epic/status")
-def get_epic_status(config: RequiredConfig, storage: RequiredStorage) -> dict[str, Any]:
+def get_epic_status(
+    config: RequiredConfig,
+    storage: RequiredStorage,
+    source_id: str = _source_id_query(EPIC_SOURCE_ID),
+) -> dict[str, Any]:
     """Get Epic Games integration status.
 
     Returns:
         Status of Epic Games integration (enabled, connected, auth_url).
     """
-    enabled = is_epic_enabled(config)
-    connected = has_epic_token(config, storage=storage)
+    enabled = is_epic_enabled(config, source_id)
+    connected = has_epic_token(config, storage=storage, source_id=source_id)
 
     auth_url: str | None = None
     if enabled:
@@ -2331,20 +2353,20 @@ def get_epic_status(config: RequiredConfig, storage: RequiredStorage) -> dict[st
 
 @router.post("/epic/exchange")
 def exchange_epic_token(
-    request: EpicExchangeRequest, config: RequiredConfig, storage: RequiredStorage
+    request: EpicExchangeRequest,
+    config: RequiredConfig,
+    storage: RequiredStorage,
+    source_id: str = _source_id_query(EPIC_SOURCE_ID),
 ) -> dict[str, Any]:
     """Exchange Epic Games authorization code for tokens.
 
     Accepts either the raw authorization code or JSON containing it.
-    Saves the refresh token to the encrypted credential database.
-
-    Args:
-        request: Request with code or JSON.
+    Saves the refresh token under *source_id*.
 
     Returns:
         Success message. The token is never included in the HTTP response.
     """
-    if not is_epic_enabled(config):
+    if not is_epic_enabled(config, source_id):
         raise HTTPException(
             status_code=400,
             detail="Epic Games is not enabled in the current configuration.",
@@ -2359,8 +2381,8 @@ def exchange_epic_token(
         refresh_token = tokens["refresh_token"]
 
         # Save token to encrypted database storage
-        save_epic_token(storage, refresh_token)
-        logger.info("Successfully connected Epic Games account")
+        save_epic_token(storage, refresh_token, source_id=source_id)
+        logger.info("Connected Epic Games account for %s", sanitize_for_log(source_id))
 
         return {
             "success": True,
@@ -2385,18 +2407,24 @@ def exchange_epic_token(
 
 @router.delete("/epic/token")
 def disconnect_epic(
-    storage: RequiredStorage, user_id: int = Query(1, ge=1)
+    storage: RequiredStorage,
+    source_id: str = _source_id_query(EPIC_SOURCE_ID),
+    user_id: int = Query(1, ge=1),
 ) -> dict[str, Any]:
     """Disconnect Epic Games by deleting the stored refresh token.
 
     Mirrors the CLI `auth disconnect --source epic` command.
     """
-    deleted = storage.delete_credential(user_id, "epic_games", "refresh_token")
+    deleted = storage.delete_credential(user_id, source_id, "refresh_token")
     if not deleted:
         raise HTTPException(
             status_code=404, detail="No active Epic Games connection found"
         )
-    logger.info("Disconnected Epic Games account for user %s", user_id)
+    logger.info(
+        "Disconnected Epic Games account %s for user %s",
+        sanitize_for_log(source_id),
+        user_id,
+    )
     return {"success": True, "message": "Epic Games disconnected."}
 
 
@@ -2414,7 +2442,10 @@ _TRAKT_POLL_MESSAGES: dict[DevicePollStatus, str] = {
 
 @router.get("/trakt/status")
 def get_trakt_status(
-    config: RequiredConfig, storage: RequiredStorage, user_id: int = Query(1, ge=1)
+    config: RequiredConfig,
+    storage: RequiredStorage,
+    source_id: str = _source_id_query(TRAKT_SOURCE_ID),
+    user_id: int = Query(1, ge=1),
 ) -> dict[str, Any]:
     """Get Trakt integration status.
 
@@ -2425,18 +2456,25 @@ def get_trakt_status(
     """
     enabled = True
     try:
-        resolve_trakt_client_credentials(config, storage, user_id=user_id)
+        resolve_trakt_client_credentials(
+            config, storage, source_id=source_id, user_id=user_id
+        )
     except TraktAuthError:
         enabled = False
 
-    connected = enabled and is_trakt_connected(storage, user_id=user_id)
+    connected = enabled and is_trakt_connected(
+        storage, source_id=source_id, user_id=user_id
+    )
 
     return {"enabled": enabled, "connected": connected}
 
 
 @router.post("/trakt/start-device-flow")
 def start_trakt_device_flow(
-    config: RequiredConfig, storage: RequiredStorage, user_id: int = Query(1, ge=1)
+    config: RequiredConfig,
+    storage: RequiredStorage,
+    source_id: str = _source_id_query(TRAKT_SOURCE_ID),
+    user_id: int = Query(1, ge=1),
 ) -> dict[str, Any]:
     """Begin the Trakt device-code flow.
 
@@ -2452,7 +2490,7 @@ def start_trakt_device_flow(
     """
     try:
         client_id, _ = resolve_trakt_client_credentials(
-            config, storage, user_id=user_id
+            config, storage, source_id=source_id, user_id=user_id
         )
         flow = start_device_auth_flow(client_id)
     except TraktAuthError as error:
@@ -2475,6 +2513,7 @@ def poll_trakt_device_approval(
     request: TraktPollRequest,
     config: RequiredConfig,
     storage: RequiredStorage,
+    source_id: str = _source_id_query(TRAKT_SOURCE_ID),
     user_id: int = Query(1, ge=1),
 ) -> dict[str, Any]:
     """Poll Trakt once for device approval.
@@ -2486,7 +2525,7 @@ def poll_trakt_device_approval(
     """
     try:
         client_id, client_secret = resolve_trakt_client_credentials(
-            config, storage, user_id=user_id
+            config, storage, source_id=source_id, user_id=user_id
         )
         result = poll_device_token(request.device_code, client_id, client_secret)
     except TraktAuthError as error:
@@ -2505,8 +2544,14 @@ def poll_trakt_device_approval(
                 raise HTTPException(
                     status_code=500, detail="Trakt authentication failed"
                 )
-            save_trakt_token(storage, result.refresh_token, user_id=user_id)
-            logger.info("Successfully connected Trakt account for user %s", user_id)
+            save_trakt_token(
+                storage, result.refresh_token, source_id=source_id, user_id=user_id
+            )
+            logger.info(
+                "Connected Trakt account %s for user %s",
+                sanitize_for_log(source_id),
+                user_id,
+            )
             return {
                 "connected": True,
                 "message": (
@@ -2531,14 +2576,20 @@ def poll_trakt_device_approval(
 
 @router.delete("/trakt/token")
 def disconnect_trakt(
-    storage: RequiredStorage, user_id: int = Query(1, ge=1)
+    storage: RequiredStorage,
+    source_id: str = _source_id_query(TRAKT_SOURCE_ID),
+    user_id: int = Query(1, ge=1),
 ) -> dict[str, Any]:
     """Disconnect Trakt by deleting the stored refresh token.
 
     Mirrors the CLI `auth disconnect --source trakt` command.
     """
-    deleted = storage.delete_credential(user_id, "trakt", "refresh_token")
+    deleted = storage.delete_credential(user_id, source_id, "refresh_token")
     if not deleted:
         raise HTTPException(status_code=404, detail="No active Trakt connection found")
-    logger.info("Disconnected Trakt account for user %s", user_id)
+    logger.info(
+        "Disconnected Trakt account %s for user %s",
+        sanitize_for_log(source_id),
+        user_id,
+    )
     return {"success": True, "message": "Trakt disconnected."}

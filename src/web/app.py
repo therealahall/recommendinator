@@ -43,6 +43,7 @@ from src.web.api import APP_VERSION
 from src.web.api import router as api_router
 from src.web.auth import require_api_token
 from src.web.chat_api import router as chat_router
+from src.web.responses import SurrogateSafeJSONResponse
 from src.web.state import app_state, get_config
 
 logger = logging.getLogger(__name__)
@@ -77,16 +78,16 @@ def _renderable(value: str) -> str:
 
 
 async def _refusal_json_can_carry(_request: Request, exc: Exception) -> JSONResponse:
-    """Answer 422 with a body ``JSONResponse`` can actually render.
+    """Answer 422 with a body the encode can carry.
 
-    ``json.loads`` accepts ``Infinity``, ``NaN`` and an unpaired ``\\ud800``
-    escape, and the default handler quotes the rejected input back — so
-    refusing any of them rendered as a 500 instead.
+    ``json.loads`` accepts ``Infinity``, ``NaN`` and an unpaired ``\\ud800``,
+    and the handler quotes the rejected input back, so refusing one answered
+    500. Starlette builds this response, so it names the app's class.
     """
     # Starlette types every handler against bare Exception and dispatches this
     # one on the registered class alone.
     errors = cast(RequestValidationError, exc).errors()
-    return JSONResponse(
+    return SurrogateSafeJSONResponse(
         status_code=422,
         content={
             "detail": jsonable_encoder(
@@ -361,6 +362,10 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         # /openapi.json. Swagger and ReDoc need it, so it tracks debug_mode.
         openapi_url="/openapi.json" if debug_mode else None,
         lifespan=lifespan,
+        # Here rather than per endpoint: a stored lone surrogate reaches every
+        # body echoing that row, and the rows already written — the case with
+        # no door left to correct it by — no write-path check can reach.
+        default_response_class=SurrogateSafeJSONResponse,
     )
 
     # Configure CORS (default to localhost only).

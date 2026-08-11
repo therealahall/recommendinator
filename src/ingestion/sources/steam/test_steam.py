@@ -1,5 +1,7 @@
 """Tests for Steam API integration."""
 
+import logging
+import traceback
 from unittest.mock import Mock, patch
 
 import pytest
@@ -731,3 +733,113 @@ class TestSteamApiKeyScrubbingRegression:
             list(plugin.fetch({"api_key": api_key, "steam_id": "76561198000000000"}))
 
         assert api_key not in str(exc_info.value)
+
+
+STEAM_LOGGER = "src.ingestion.sources.steam.steam"
+
+
+def _connection_error_quoting(api_key: str, path: str) -> requests.ConnectionError:
+    """The fault ``requests`` raises with the whole request URL in its words."""
+    return requests.ConnectionError(
+        "HTTPSConnectionPool(host='api.steampowered.com', port=443): Max retries "
+        f"exceeded with url: {path}?key={api_key}"
+    )
+
+
+class TestSteamCredentialChainRegression:
+    """Regression: the scrubbed message kept the raw fault as ``__cause__``.
+
+    Bug: ``from error`` left the URL, key and all, for any caller rendering a
+    traceback. Cause: scrubbing the message is half the fix. Fix: ``from None``.
+    """
+
+    @patch("src.ingestion.sources.steam.steam.requests.get")
+    def test_vanity_url_failure_leaves_no_key_in_a_traceback(
+        self, mock_get: Mock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        api_key = "steam-web-api-key-3a91"
+        mock_get.side_effect = _connection_error_quoting(
+            api_key, "/ISteamUser/ResolveVanityURL/v0001/"
+        )
+
+        with caplog.at_level(logging.ERROR, logger=STEAM_LOGGER):
+            with pytest.raises(SteamAPIError) as raised:
+                get_steam_id_from_vanity_url(api_key, "user")
+
+        assert api_key not in "".join(traceback.format_exception(raised.value))
+        assert api_key not in caplog.text
+        assert "Error resolving Steam vanity URL: ConnectionError" in caplog.text
+
+    @patch("src.ingestion.sources.steam.steam.requests.get")
+    def test_owned_games_failure_leaves_no_key_in_a_traceback(
+        self, mock_get: Mock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        api_key = "steam-web-api-key-5c02"
+        mock_get.side_effect = _connection_error_quoting(
+            api_key, "/IPlayerService/GetOwnedGames/v0001/"
+        )
+
+        with caplog.at_level(logging.ERROR, logger=STEAM_LOGGER):
+            with pytest.raises(SteamAPIError) as raised:
+                get_owned_games(api_key, "76561198000000000")
+
+        assert api_key not in "".join(traceback.format_exception(raised.value))
+        assert api_key not in caplog.text
+        assert "Error fetching Steam games: ConnectionError" in caplog.text
+
+    @patch("src.ingestion.sources.steam.steam.requests.get")
+    def test_a_caller_logging_with_exc_info_cannot_reach_the_key(
+        self, mock_get: Mock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The shape the fix is for: a sync path that prints what it caught."""
+        api_key = "steam-web-api-key-d47e"
+        mock_get.side_effect = _connection_error_quoting(
+            api_key, "/IPlayerService/GetOwnedGames/v0001/"
+        )
+        plugin = SteamPlugin()
+
+        with pytest.raises(SourceError) as raised:
+            list(plugin.fetch({"api_key": api_key, "steam_id": "76561198000000000"}))
+
+        with caplog.at_level(logging.ERROR, logger="caller"):
+            logging.getLogger("caller").error("Sync failed", exc_info=raised.value)
+
+        assert (
+            "Traceback" in caplog.text
+        ), "nothing was rendered, so this proves nothing"
+        assert api_key not in caplog.text
+
+
+class TestSteamLogInjectionRegression:
+    """Regression: the configured Steam ID was logged raw.
+
+    Bug: ``steam_id`` reaches the sink from source config, which restricts no
+    characters. Cause: no sanitiser on this path. Fix: ``sanitize_for_log``.
+    """
+
+    @patch("src.ingestion.sources.steam.steam.requests.get")
+    def test_a_newline_in_the_steam_id_cannot_forge_a_log_entry(
+        self, mock_get: Mock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        response = Mock(spec=requests.Response)
+        response.json.return_value = {"response": {"games": []}}
+        response.raise_for_status = Mock()
+        mock_get.return_value = response
+
+        with caplog.at_level(logging.INFO, logger=STEAM_LOGGER):
+            list(
+                _fetch_steam_games(
+                    "key", steam_id="76561198000000000\nFound 9999 games"
+                )
+            )
+
+        assert [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == STEAM_LOGGER
+        ] == [
+            "Fetching owned games from Steam API for Steam ID: "
+            "76561198000000000\\nFound 9999 games",
+            "Found 0 games in Steam library",
+            "No games found in Steam library",
+        ]

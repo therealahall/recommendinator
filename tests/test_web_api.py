@@ -14,7 +14,7 @@ from collections.abc import AsyncIterator, Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, fields, replace
 from datetime import UTC, date, datetime
-from math import inf
+from math import inf, nan
 from pathlib import Path
 from secrets import compare_digest
 from typing import Any
@@ -23,13 +23,16 @@ from unittest.mock import MagicMock, Mock, patch
 import anyio.from_thread
 import pytest
 from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi.datastructures import DefaultPlaceholder
 from fastapi.dependencies.models import Dependant
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, Field, ValidationError
+from starlette.responses import JSONResponse, Response
 
 import src.web.api
+import src.web.chat_api
 import src.web.sync_sources
 from src.cli.config import MissingApiTokenError, load_config
 from src.conversation.engine import ConversationEngine
@@ -78,6 +81,7 @@ from src.web.guards import (
     require_storage,
     writable_config,
 )
+from src.web.responses import SurrogateSafeJSONResponse, SurrogateSafeResponse
 from src.web.state import (
     ConfigWatcher,
     _config_lock,
@@ -3132,7 +3136,7 @@ class TestExchangeGogTokenEndpoint:
         assert "refresh_token" not in body
         assert "super_secret_token" not in str(body)
         mock_save.assert_called_once_with(
-            mock_components["storage"], "super_secret_token"
+            mock_components["storage"], "super_secret_token", source_id="gog"
         )
 
     def test_exchange_succeeds_with_readonly_config(
@@ -4450,7 +4454,7 @@ class TestExchangeEpicTokenEndpoint:
         assert "super_secret_token" not in str(body)
         assert "access123" not in str(body)
         mock_save.assert_called_once_with(
-            mock_components["storage"], "super_secret_token"
+            mock_components["storage"], "super_secret_token", source_id="epic_games"
         )
 
     def test_auth_error_returns_generic_400(
@@ -4667,7 +4671,7 @@ class TestExchangeEpicTokenEndpointRegression:
         body = response.json()
         assert body["success"] is True
         mock_save.assert_called_once_with(
-            mock_components["storage"], "super_secret_token"
+            mock_components["storage"], "super_secret_token", source_id="epic_games"
         )
 
 
@@ -4957,7 +4961,7 @@ class TestTraktPollDeviceApproval:
         assert response.status_code == 200
         assert response.json()["connected"] is True
         mock_save.assert_called_once_with(
-            mock_components["storage"], "refresh-xyz", user_id=1
+            mock_components["storage"], "refresh-xyz", source_id="trakt", user_id=1
         )
 
     def test_pending_returns_status(self, client, mock_components) -> None:
@@ -5651,9 +5655,9 @@ _GUARDED_ENDPOINTS = [
     ),
     _Endpoint("POST", "/api/update", ("storage", "config"), body={"source": "all"}),
     _Endpoint("GET", "/api/sync/sources", ("config", "storage")),
-    # Creating reads both halves — the id is refused when YAML already holds
-    # it — and deleting reads neither: ``delete_source`` drops a database row
-    # and never opens the config.
+    # Both read both halves: creating refuses an id YAML already holds, and
+    # deleting decides off the sources left whether a credential stranded
+    # under the plugin name goes with the last one of them.
     _Endpoint(
         "POST",
         "/api/sync/sources",
@@ -5663,7 +5667,7 @@ _GUARDED_ENDPOINTS = [
     _Endpoint(
         "DELETE",
         "/api/sync/sources/{source_id}",
-        ("storage",),
+        ("storage", "config"),
         url="/api/sync/sources/my_books",
     ),
     # Every route below resolves the id through ``require_plugin``, which
@@ -6664,13 +6668,12 @@ class TestSourceCreateReadsBothHalvesRegression:
         assert response.json()["detail"] == _CONFIG_UNAVAILABLE
         storage.upsert_source_config.assert_not_called()
 
-    def test_delete_still_serves_without_config(self, client, mock_components) -> None:
-        """Its sibling reads no config at all, so an outage is not its problem.
-
-        Pins why ``DELETE`` keeps the narrower classification: guard config
-        there too and this 204 becomes a 503 with the matrix still green.
-        """
-        mock_components["storage"].get_source_config.return_value = {
+    def test_delete_refuses_rather_than_sweeping_off_half_a_source_list(
+        self, client, mock_components
+    ) -> None:
+        """Config down, a YAML source on the plugin reads as no source at all."""
+        storage = mock_components["storage"]
+        storage.get_source_config.return_value = {
             "source_id": "my_books",
             "plugin": "goodreads_csv",
             "enabled": 1,
@@ -6681,7 +6684,10 @@ class TestSourceCreateReadsBothHalvesRegression:
 
         response = client.delete("/api/sync/sources/my_books")
 
-        assert response.status_code == 204
+        assert response.status_code == 503
+        assert response.json()["detail"] == _CONFIG_UNAVAILABLE
+        storage.delete_source_config.assert_not_called()
+        storage.delete_credentials_for_source.assert_not_called()
 
 
 # The three plugin-resolving routes that also carry a body, so the order
@@ -8171,11 +8177,10 @@ class TestNoLogEscapeReachesAResponseBodyRegression:
     def test_the_echoed_title_can_never_hold_a_lone_surrogate(
         self, surrogate: str
     ) -> None:
-        """What makes echoing the raw title safe: the model refuses one first.
+        """The door refuses one, so nothing downstream has to read past it.
 
-        ``json.loads`` accepts an unpaired ``\\ud800`` escape, and a response
-        body is rendered with ``ensure_ascii=False``, so a title carrying one
-        would raise where the sanitizer used to stand.
+        ``json.loads`` accepts an unpaired ``\\ud800`` escape, and the model
+        bound is the only thing keeping one out of a stored title.
         """
         with pytest.raises(ValidationError):
             src.web.api.CompletionRequest(content_type="book", title=f"Dune{surrogate}")
@@ -8222,7 +8227,7 @@ class TestNoLogEscapeReachesAResponseBodyRegression:
 
         Bug: ``JSONResponse`` encodes strictly, so the ignore succeeded and
         the caller got a 500.
-        Fix: render the code unit as its escape, as the log handler does.
+        Fix: the app's one response class writes the escape instead.
         """
         mock_components["storage"].get_content_item = Mock(
             return_value=ContentItem(
@@ -8243,11 +8248,10 @@ class TestNoLogEscapeReachesAResponseBodyRegression:
         )
 
         assert response.status_code == 200, response.text
-        rendered = f"Dune\\u{ord(surrogate):04x}"
         body = response.json()
-        assert body["title"] == rendered
+        assert body["title"] == f"Dune{surrogate}"
         # The body interpolates the title twice; the first fix missed one.
-        assert body["message"] == f"Item '{rendered}' ignored"
+        assert body["message"] == f"Item 'Dune{surrogate}' ignored"
 
     @pytest.mark.parametrize("astral", ["\U0001f600", "\U0010ffff", "￿", "Café"])
     def test_the_ignore_body_keeps_a_title_that_encodes(
@@ -8290,3 +8294,359 @@ class TestNoLogEscapeReachesAResponseBodyRegression:
         )
 
         assert response.json()["message"] == f"Marked 'Dune{astral}' as completed"
+
+
+_LONE_SURROGATES = ["\ud800", "\udcff", "\udfff"]
+
+
+_CHAT_TREE = ast.parse(Path(src.web.chat_api.__file__).read_text(encoding="utf-8"))
+
+
+def _resolved_response_class(route: APIRoute) -> type:
+    """Unwrap the placeholder a route keeps when nothing overrode the default."""
+    declared = route.response_class
+    return declared.value if isinstance(declared, DefaultPlaceholder) else declared
+
+
+def _dumps_calls(tree: ast.AST) -> list[ast.Call]:
+    return [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "dumps"
+    ]
+
+
+def _dumps_naming_ensure_ascii(tree: ast.AST) -> set[str]:
+    return {
+        f"line {call.lineno}"
+        for call in _dumps_calls(tree)
+        if any(keyword.arg == "ensure_ascii" for keyword in call.keywords)
+    }
+
+
+def _item_holding(surrogate: str) -> ContentItem:
+    """One item carrying *surrogate* in a column and in the metadata blob.
+
+    The blob is how a real row reaches this code with one: sqlite3 encodes a
+    TEXT bind strictly, while ``json.dumps`` escapes to ASCII first.
+    """
+    return ContentItem(
+        id="ext_1",
+        db_id=42,
+        title=f"Dune{surrogate}",
+        content_type=ContentType.BOOK,
+        status=ConsumptionStatus.UNREAD,
+        metadata={"description": f"Arrakis{surrogate}"},
+    )
+
+
+def _client_reading(mock_components, item: ContentItem) -> TestClient:
+    """A 500-reporting client whose store answers every item read with *item*."""
+    storage = mock_components["storage"]
+    storage.get_content_items = Mock(return_value=[item])
+    storage.get_content_item = Mock(return_value=item)
+    storage.update_item_from_ui = Mock(return_value=True)
+    return authenticated_client(mock_components["app"], raise_server_exceptions=False)
+
+
+@pytest.mark.parametrize("surrogate", _LONE_SURROGATES)
+class TestAStoredLoneSurrogate500edEveryEndpointEchoingItRegression:
+    """Bug: a JSON blob column stores an unpaired ``\\ud800`` escape as ASCII,
+    and every body carrying it back was encoded strictly and answered 500.
+    Fix: one response class for the app, encoding with ``backslashreplace``.
+    """
+
+    def test_listing_items_answers(self, surrogate, mock_components) -> None:
+        client = _client_reading(mock_components, _item_holding(surrogate))
+
+        response = client.get("/api/items")
+
+        assert response.status_code == 200, response.text
+        listed = response.json()[0]
+        assert (listed["title"], listed["description"]) == (
+            f"Dune{surrogate}",
+            f"Arrakis{surrogate}",
+        )
+
+    def test_fetching_one_item_answers(self, surrogate, mock_components) -> None:
+        client = _client_reading(mock_components, _item_holding(surrogate))
+
+        response = client.get("/api/items/42")
+
+        assert response.status_code == 200, response.text
+        fetched = response.json()
+        assert (fetched["title"], fetched["description"]) == (
+            f"Dune{surrogate}",
+            f"Arrakis{surrogate}",
+        )
+
+    def test_editing_an_item_answers(self, surrogate, mock_components) -> None:
+        client = _client_reading(mock_components, _item_holding(surrogate))
+
+        response = client.patch("/api/items/42", json={"status": "unread"})
+
+        assert response.status_code == 200, response.text
+        edited = response.json()
+        assert (edited["title"], edited["description"]) == (
+            f"Dune{surrogate}",
+            f"Arrakis{surrogate}",
+        )
+
+    def test_exporting_the_library_as_json_answers(
+        self, surrogate, mock_components
+    ) -> None:
+        """The export serialises its own body, so it needs the raw encode."""
+        client = _client_reading(mock_components, _item_holding(surrogate))
+
+        response = client.get("/api/items/export?type=book&format=json")
+
+        assert response.status_code == 200, response.text
+        assert json.loads(response.text)[0]["title"] == f"Dune{surrogate}"
+
+    def test_exporting_the_library_as_csv_answers(
+        self, surrogate, mock_components
+    ) -> None:
+        """A CSV cell carries no escape of its own, so the code unit arrives
+        as the six characters ``backslashreplace`` wrote.
+        """
+        client = _client_reading(mock_components, _item_holding(surrogate))
+
+        response = client.get("/api/items/export?type=book&format=csv")
+
+        assert response.status_code == 200, response.text
+        assert f"Dune\\u{ord(surrogate):04x}" in response.text
+
+    def test_the_recommendation_stream_answers(
+        self, surrogate, mock_components
+    ) -> None:
+        """SSE encodes its own chunks, so the response class never sees them.
+
+        ``json.dumps`` defaults to ``ensure_ascii=True`` there, writing the
+        escape before the encode — why this path never had the defect.
+        """
+        mock_components["engine"].generate_recommendations.return_value = [
+            _rec_record(_item_holding(surrogate))
+        ]
+        mock_components["engine"].generate_blurb_for_item.return_value = None
+        mock_components["storage"].get_user_preference_config.return_value = None
+        mock_components["storage"].get_signal_items.return_value = []
+        client = authenticated_client(
+            mock_components["app"], raise_server_exceptions=False
+        )
+
+        with client.stream(
+            "GET", "/api/recommendations/stream?type=book&count=1"
+        ) as response:
+            assert response.status_code == 200
+            body = response.read().decode()
+
+        events = _parse_sse_events(body)
+        streamed = [e for e in events if e["type"] == "recommendations"][0]["items"]
+        assert streamed[0]["title"] == f"Dune{surrogate}"
+
+
+class TestAStoredCustomRulePermanently500edThePreferencesPageRegression:
+    """Bug: a rule stored as ASCII and read back with ``ensure_ascii=False``
+    500ed the page — every later read, for good, with no door left to correct
+    the row by.
+    Fix: the app's one response class encodes the escape instead.
+    """
+
+    RULE = "avoid \ud800"
+
+    def test_the_put_door_refuses_one_rather_than_storing_it(
+        self, settings_app
+    ) -> None:
+        """The rule's length bound makes pydantic read a string it cannot
+        represent, so the row below is the case left — the one with no door to
+        correct it by. Sent raw: ``json=`` declines to encode one.
+        """
+        client, storage = settings_app
+        tolerant = authenticated_client(client.app, raise_server_exceptions=False)
+
+        written = tolerant.put(
+            "/api/users/1/preferences",
+            content='{"custom_rules": ["avoid \\ud800"]}',
+            headers={"Content-Type": "application/json"},
+        )
+
+        assert written.status_code == 422, written.text
+        assert storage.get_user_preference_config(1).custom_rules == []
+
+    def test_a_rule_already_in_the_database_reads_back_twice(
+        self, settings_app
+    ) -> None:
+        """The permanent case: the row is written, and no read may refuse it."""
+        client, storage = settings_app
+        with storage.sqlite_db.connection() as conn:
+            update_user_settings(
+                conn, 1, {"preference_config": {"custom_rules": [self.RULE]}}
+            )
+        tolerant = authenticated_client(client.app, raise_server_exceptions=False)
+
+        first = tolerant.get("/api/users/1/preferences")
+        second = tolerant.get("/api/users/1/preferences")
+
+        assert (first.status_code, second.status_code) == (200, 200)
+        assert first.json()["custom_rules"] == [self.RULE]
+
+
+class TestTheEncodeIsOneBoundary:
+    """Eleven call sites was the shape the per-endpoint repair would have had."""
+
+    def test_every_api_route_renders_through_the_app_response_class(
+        self, mock_components
+    ) -> None:
+        rendering = {
+            _resolved_response_class(route)
+            for route in mock_components["app"].routes
+            if isinstance(route, APIRoute) and route.path.startswith("/api")
+        }
+
+        assert rendering == {SurrogateSafeJSONResponse}
+
+    def test_the_endpoints_the_defect_was_found_on_are_in_that_sweep(
+        self, mock_components
+    ) -> None:
+        """A sweep over no routes would report a boundary nobody stands at."""
+        paths = {
+            route.path
+            for route in mock_components["app"].routes
+            if isinstance(route, APIRoute)
+        }
+
+        assert {
+            "/api/items",
+            "/api/items/{db_id}",
+            "/api/items/{db_id}/ignore",
+            "/api/users/{user_id}/preferences",
+        } <= paths
+
+    def test_no_stream_chunk_turns_ensure_ascii_off(self) -> None:
+        """Both SSE endpoints encode their own chunks, and the default escape
+        is the whole reason neither ever had the defect. ``export.py`` may say
+        it: that body goes back through the raw response class.
+        """
+        reported = _dumps_naming_ensure_ascii(_API_TREE) | _dumps_naming_ensure_ascii(
+            _CHAT_TREE
+        )
+
+        assert reported == set()
+
+    def test_that_sweep_reaches_the_chunks_it_exists_for(self) -> None:
+        """Either stream moving elsewhere would empty the sweep silently."""
+        assert _dumps_calls(_API_TREE) and _dumps_calls(_CHAT_TREE)
+
+
+class TestOnlyTheAppResponseClassMakesTheBodyEncodable:
+    """The two encodes side by side: every endpoint test answers through the
+    booted app, so all of them would still pass if something below the
+    response class were carrying the body.
+    """
+
+    @pytest.mark.parametrize("surrogate", _LONE_SURROGATES)
+    def test_the_stock_json_encode_refuses_the_body_the_app_class_carries(
+        self, surrogate: str
+    ) -> None:
+        content = {"title": f"Dune{surrogate}"}
+
+        with pytest.raises(UnicodeEncodeError):
+            JSONResponse(content)
+
+        assert json.loads(SurrogateSafeJSONResponse(content).body) == content
+
+    @pytest.mark.parametrize("surrogate", _LONE_SURROGATES)
+    def test_the_stock_raw_encode_refuses_the_export_body_ours_carries(
+        self, surrogate: str
+    ) -> None:
+        body = f'[{{"title": "Dune{surrogate}"}}]'
+
+        with pytest.raises(UnicodeEncodeError):
+            Response(content=body, media_type="application/json")
+
+        rendered = SurrogateSafeResponse(content=body, media_type="application/json")
+        assert json.loads(rendered.body)[0]["title"] == f"Dune{surrogate}"
+
+    def test_two_adjacent_surrogates_come_back_as_the_pair_they_escape_to(
+        self,
+    ) -> None:
+        """The one hole in reading back what is stored: JSON recombines an
+        escaped surrogate pair, so this row arrives as U+10000. Documented
+        rather than fixed — it answers 200, and no door can write one.
+        """
+        stored = "\ud800" + "\udc00"
+
+        rendered = SurrogateSafeJSONResponse({"title": stored})
+
+        assert json.loads(rendered.body) == {"title": "\U00010000"}
+
+    def test_a_body_that_is_not_text_takes_the_stock_render(self) -> None:
+        """The export hands over ``str``; every 204 hands over nothing."""
+        assert SurrogateSafeResponse(content=b"\xff\xfe").body == b"\xff\xfe"
+        assert SurrogateSafeResponse(status_code=204).body == b""
+
+    def test_a_non_finite_number_is_still_refused_rather_than_rendered(self) -> None:
+        """``allow_nan`` stays off, and no read path needs it loosened: a
+        stored weight is dropped by ``UserPreferenceConfig`` and no response
+        model carries a free float out of a blob.
+        """
+        with pytest.raises(ValueError):
+            SurrogateSafeJSONResponse({"weight": nan})
+
+
+@pytest.mark.parametrize("surrogate", _LONE_SURROGATES)
+class TestTheChatStreamCarriesALoneSurrogateToo:
+    """The second SSE path. Reported as never having had the defect because
+    ``json.dumps`` escapes to ASCII before Starlette's strict chunk encode —
+    a claim about the chunk builder, so it gets a behavioural test.
+    """
+
+    def test_a_streamed_chat_chunk_holding_one_reaches_the_client(
+        self, surrogate: str, mock_components: dict
+    ) -> None:
+        conversation = Mock(spec=ConversationEngine)
+        conversation.process_message.side_effect = lambda **_kwargs: iter(
+            [
+                ConversationChunk(chunk_type="text", content=f"Dune{surrogate}"),
+                ConversationChunk(chunk_type="done"),
+            ]
+        )
+        app_state.conversation_engine = conversation
+        client = authenticated_client(
+            mock_components["app"], raise_server_exceptions=False
+        )
+
+        response = client.post("/api/chat", json={"message": "hi"})
+
+        assert response.status_code == 200
+        streamed = _parse_sse_events(response.text)
+        assert streamed[0]["content"] == f"Dune{surrogate}"
+
+
+class TestAnHTTPExceptionDetailBypassesTheAppResponseClassRegression:
+    """Bug: FastAPI renders an ``HTTPException`` through its own handler, on a
+    stock ``JSONResponse`` the app's class never sees, so a detail holding a
+    lone surrogate answers 500 rather than the refusal.
+    Fix: that handler names the app's encode too.
+    """
+
+    def test_an_unknown_settings_key_holding_one_is_refused_not_500ed(
+        self, settings_app
+    ) -> None:
+        """``updates`` is a bare ``dict[str, Any]``, so no bound refuses the key
+        at the door and it reaches the 422 detail verbatim. Sent raw because
+        ``json=`` declines to encode one.
+        """
+        client, _storage = settings_app
+        tolerant = authenticated_client(client.app, raise_server_exceptions=False)
+
+        refused = tolerant.put(
+            "/api/settings",
+            content='{"updates": {"nope\\ud800": 1}}',
+            headers={"Content-Type": "application/json"},
+        )
+
+        assert refused.status_code == 422, refused.text
+        assert refused.json()["detail"]["key"] == "nope\ud800"

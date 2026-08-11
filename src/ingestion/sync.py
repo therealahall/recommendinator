@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from src.ingestion.plugin_base import SourcePlugin
 from src.models.content import ContentItem, get_enum_value
+from src.storage.credential_orphans import warn_about_orphaned_credentials
 from src.utils.text import exception_for_log, humanize_source_id, sanitize_for_log
 
 if TYPE_CHECKING:
@@ -114,6 +115,12 @@ def execute_sync(
     # empty one a YAML ``inputs`` key can produce, which ``source_name`` reads
     # as absent.
     credential_owner = plugin.get_source_identifier(plugin_config)
+
+    # Before the fetch that is about to fail to authenticate, so the log says
+    # why rather than leaving the operator with a bare 401.
+    warn_about_orphaned_credentials(
+        storage_manager, plugin.name, credential_owner, user_id=user_id
+    )
 
     # Inject credential rotation callback so plugins can persist rotated tokens
     def on_credential_rotated(key: str, value: str) -> None:

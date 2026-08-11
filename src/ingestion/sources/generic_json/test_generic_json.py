@@ -1,6 +1,7 @@
 """Tests for generic JSON/JSONL import plugin."""
 
 import json
+import logging
 from collections.abc import Callable
 from datetime import date
 from pathlib import Path
@@ -683,3 +684,76 @@ class TestJsonImportPathContainmentRegression:
 
         # list() would discard these, leaving the leak half of the name unproven.
         assert collected == []
+
+
+JSON_LOGGER = "src.ingestion.sources.generic_json.generic_json"
+
+FORGED_TITLE = "Dune\nImported 9999 items from JSON file"
+ESCAPED_TITLE = "Dune\\nImported 9999 items from JSON file"
+
+
+class TestJsonImportLogInjectionRegression:
+    """Regression: an imported field forged log entries.
+
+    Bug: the title and the date were logged raw, and a JSON string carries any
+    character. Cause: no sanitiser on this path. Fix: ``sanitize_for_log`` at
+    every sink.
+    """
+
+    @staticmethod
+    def _messages(caplog: pytest.LogCaptureFixture) -> list[str]:
+        return [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == JSON_LOGGER
+        ]
+
+    def test_a_newline_in_a_title_cannot_forge_a_log_entry(
+        self, plugin: JsonImportPlugin, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        json_file = tmp_path / "books.json"
+        json_file.write_text(
+            json.dumps([{"title": FORGED_TITLE, "date_completed": "yesterday"}])
+        )
+
+        with caplog.at_level(logging.WARNING, logger=JSON_LOGGER):
+            items = list(plugin.fetch({"path": str(json_file), "content_type": "book"}))
+
+        # The item keeps the title it was given; only the log line is escaped.
+        assert [item.title for item in items] == [FORGED_TITLE]
+        assert self._messages(caplog) == [
+            f"Invalid date format for '{ESCAPED_TITLE}': yesterday. "
+            "Expected YYYY-MM-DD."
+        ]
+
+    def test_a_newline_in_a_date_field_cannot_forge_a_log_entry(
+        self, plugin: JsonImportPlugin, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        json_file = tmp_path / "books.json"
+        json_file.write_text(
+            json.dumps(
+                [{"title": "Dune", "date_completed": "2024\nImported 9999 items"}]
+            )
+        )
+
+        with caplog.at_level(logging.WARNING, logger=JSON_LOGGER):
+            list(plugin.fetch({"path": str(json_file), "content_type": "book"}))
+
+        assert self._messages(caplog) == [
+            "Invalid date format for 'Dune': 2024\\nImported 9999 items. "
+            "Expected YYYY-MM-DD."
+        ]
+
+    def test_a_newline_in_the_file_name_cannot_forge_a_log_entry(
+        self, plugin: JsonImportPlugin, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A configured path is operator input, and a file name may hold a break."""
+        json_file = tmp_path / "books\nImported 9999 items.json"
+        json_file.write_text(json.dumps([{"title": "Dune"}]))
+
+        with caplog.at_level(logging.INFO, logger=JSON_LOGGER):
+            list(plugin.fetch({"path": str(json_file), "content_type": "book"}))
+
+        assert self._messages(caplog)[0].endswith(
+            "books\\nImported 9999 items.json"
+        ), self._messages(caplog)

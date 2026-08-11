@@ -1,5 +1,6 @@
 """Tests for generic CSV import plugin."""
 
+import logging
 from collections.abc import Callable
 from datetime import date
 from pathlib import Path
@@ -798,3 +799,84 @@ class TestCsvImportPathContainmentRegression:
 
         # list() would discard these, leaving the leak half of the name unproven.
         assert collected == []
+
+
+CSV_LOGGER = "src.ingestion.sources.generic_csv.generic_csv"
+
+FORGED_TITLE = "Dune\nImported 9999 items from CSV file"
+ESCAPED_TITLE = "Dune\\nImported 9999 items from CSV file"
+
+
+class TestCsvImportLogInjectionRegression:
+    """Regression: an imported cell forged log entries.
+
+    Bug: the title, the date and the unknown-column list were logged raw, and a
+    CSV field carries any character. Cause: no sanitiser on this path. Fix:
+    ``sanitize_for_log`` at every sink.
+    """
+
+    @staticmethod
+    def _messages(caplog: pytest.LogCaptureFixture) -> list[str]:
+        return [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == CSV_LOGGER
+        ]
+
+    def test_a_newline_in_a_title_cannot_forge_a_log_entry(
+        self, plugin: CsvImportPlugin, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        csv_file = tmp_path / "books.csv"
+        csv_file.write_text(f'title,date_completed\n"{FORGED_TITLE}",yesterday\n')
+
+        with caplog.at_level(logging.WARNING, logger=CSV_LOGGER):
+            items = list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
+
+        # The item keeps the title it was given; only the log line is escaped.
+        assert [item.title for item in items] == [FORGED_TITLE]
+        assert self._messages(caplog) == [
+            f"Invalid date format for '{ESCAPED_TITLE}': yesterday. "
+            "Expected YYYY-MM-DD."
+        ]
+
+    def test_a_newline_in_a_date_cell_cannot_forge_a_log_entry(
+        self, plugin: CsvImportPlugin, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        csv_file = tmp_path / "books.csv"
+        csv_file.write_text('title,date_completed\nDune,"2024\nImported 9999 items"\n')
+
+        with caplog.at_level(logging.WARNING, logger=CSV_LOGGER):
+            list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
+
+        assert self._messages(caplog) == [
+            "Invalid date format for 'Dune': 2024\\nImported 9999 items. "
+            "Expected YYYY-MM-DD."
+        ]
+
+    def test_a_newline_in_a_header_cannot_forge_a_log_entry(
+        self, plugin: CsvImportPlugin, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        csv_file = tmp_path / "books.csv"
+        csv_file.write_text('title,"colour\nImported 9999 items"\nDune,blue\n')
+
+        with caplog.at_level(logging.WARNING, logger=CSV_LOGGER):
+            list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
+
+        assert self._messages(caplog) == [
+            "CSV contains unknown columns that will be ignored: "
+            "colour\\nImported 9999 items"
+        ]
+
+    def test_a_newline_in_the_file_name_cannot_forge_a_log_entry(
+        self, plugin: CsvImportPlugin, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A configured path is operator input, and a file name may hold a break."""
+        csv_file = tmp_path / "books\nImported 9999 items.csv"
+        csv_file.write_text("title\nDune\n")
+
+        with caplog.at_level(logging.INFO, logger=CSV_LOGGER):
+            list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
+
+        assert self._messages(caplog)[0].endswith(
+            "books\\nImported 9999 items.csv"
+        ), self._messages(caplog)

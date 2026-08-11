@@ -48,22 +48,19 @@ describe('useDataStore', () => {
     expect(store.enrichmentStats).toBeNull()
   })
 
-  it('loadSyncSources fetches sources and auth status', async () => {
+  it('loadSyncSources fetches the source list alone', async () => {
     const sources = [
       { id: 'steam', display_name: 'Steam', plugin_display_name: 'Steam', enabled: true },
     ]
     mockPost.mockResolvedValue({})
-    mockGet
-      .mockResolvedValueOnce(sources)
-      .mockResolvedValueOnce({ enabled: true, connected: false, auth_url: 'https://gog.com/auth' })
-      .mockResolvedValueOnce({ enabled: false, connected: false })
-      .mockResolvedValueOnce({ enabled: false, connected: false })
+    mockGet.mockResolvedValueOnce(sources)
 
     const store = useDataStore()
     await store.loadSyncSources()
 
     expect(store.syncSources).toEqual(sources)
-    expect(store.gogStatus.authUrl).toBe('https://gog.com/auth')
+    // OAuth status is per source, so it is read when a source is opened.
+    expect(mockGet).toHaveBeenCalledTimes(1)
   })
 
   function steamSource() {
@@ -676,142 +673,193 @@ describe('useDataStore', () => {
     })
   })
 
-  it('disconnectGog calls DELETE /gog/token and reloads sync sources', async () => {
-    mockDelete.mockResolvedValue({})
-    mockPost.mockResolvedValue({})
-    mockGet
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce({ enabled: true, connected: false, auth_url: 'https://gog.com/auth' })
-      .mockResolvedValueOnce({ enabled: false, connected: false })
+  // Every id below is deliberately not the plugin's own name: the token
+  // belongs to the source being connected, not to the plugin.
+  describe('oauth connect flows', () => {
+    it('loadOAuthStatus asks for the named source and caches its flags', async () => {
+      mockGet.mockResolvedValueOnce({
+        enabled: true,
+        connected: true,
+        auth_url: 'https://gog.com/auth',
+      })
 
-    const store = useDataStore()
-    await store.disconnectGog()
+      const store = useDataStore()
+      await store.loadOAuthStatus('gog_work', 'gog')
 
-    expect(mockDelete).toHaveBeenCalledWith('/gog/token')
-    expect(store.gogConnectMessage).toBe('Disconnected. You can reconnect below.')
-    expect(store.gogStatus.connected).toBe(false)
-  })
+      expect(mockGet).toHaveBeenCalledWith('/gog/status', { source_id: 'gog_work' })
+      expect(store.oauthStatusFor('gog_work')).toEqual({
+        enabled: true,
+        connected: true,
+        authUrl: 'https://gog.com/auth',
+      })
+      // A source nobody has loaded reads as disconnected, never as undefined.
+      expect(store.oauthStatusFor('other').connected).toBe(false)
+    })
 
-  it('disconnectEpic calls DELETE /epic/token and reloads sync sources', async () => {
-    mockDelete.mockResolvedValue({})
-    mockPost.mockResolvedValue({})
-    mockGet
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce({ enabled: false, connected: false })
-      .mockResolvedValueOnce({ enabled: true, connected: false, auth_url: 'https://epicgames.com/auth' })
+    it('loadOAuthStatus asks nothing for a plugin with no OAuth flow', async () => {
+      const store = useDataStore()
+      await store.loadOAuthStatus('my_books', 'goodreads_csv')
 
-    const store = useDataStore()
-    await store.disconnectEpic()
+      expect(mockGet).not.toHaveBeenCalled()
+    })
 
-    expect(mockDelete).toHaveBeenCalledWith('/epic/token')
-    expect(store.epicConnectMessage).toBe('Disconnected. You can reconnect below.')
-    expect(store.epicStatus.connected).toBe(false)
-  })
+    it('submitGogCode posts the code for that source and re-reads its status', async () => {
+      mockPost.mockResolvedValueOnce({ message: 'GOG account connected!' })
+      mockGet.mockResolvedValueOnce({ enabled: true, connected: true })
 
-  it('disconnectGog surfaces API error and does not reload sync sources', async () => {
-    mockDelete.mockRejectedValue(new ApiError(500, 'Internal Server Error'))
+      const store = useDataStore()
+      await store.submitGogCode('gog_work', 'auth-code')
 
-    const store = useDataStore()
-    await store.disconnectGog()
+      expect(mockPost).toHaveBeenCalledWith(
+        '/gog/exchange',
+        { code_or_url: 'auth-code' },
+        { source_id: 'gog_work' },
+      )
+      expect(mockGet).toHaveBeenCalledWith('/gog/status', { source_id: 'gog_work' })
+      expect(store.oauthMessages['gog_work']).toBe('GOG account connected!')
+      expect(store.oauthStatusFor('gog_work').connected).toBe(true)
+    })
 
-    expect(store.gogConnectMessage).toBe('Error: server returned 500')
-    // Reload must only run on success — otherwise a failed disconnect
-    // triggers a spurious status fetch that itself may error.
-    expect(mockGet).not.toHaveBeenCalled()
-    expect(mockPost).not.toHaveBeenCalled()
-  })
+    it('submitEpicCode posts the code for that source and re-reads its status', async () => {
+      mockPost.mockResolvedValueOnce({ message: 'Epic account connected!' })
+      mockGet.mockResolvedValueOnce({ enabled: true, connected: true })
 
-  it('disconnectEpic surfaces API error and does not reload sync sources', async () => {
-    mockDelete.mockRejectedValue(new ApiError(500, 'Internal Server Error'))
+      const store = useDataStore()
+      await store.submitEpicCode('epic_work', '{"authorizationCode":"x"}')
 
-    const store = useDataStore()
-    await store.disconnectEpic()
+      expect(mockPost).toHaveBeenCalledWith(
+        '/epic/exchange',
+        { code_or_json: '{"authorizationCode":"x"}' },
+        { source_id: 'epic_work' },
+      )
+      expect(mockGet).toHaveBeenCalledWith('/epic/status', { source_id: 'epic_work' })
+      expect(store.oauthMessages['epic_work']).toBe('Epic account connected!')
+    })
 
-    expect(store.epicConnectMessage).toBe('Error: server returned 500')
-    expect(mockGet).not.toHaveBeenCalled()
-    expect(mockPost).not.toHaveBeenCalled()
-  })
+    it('submitGogCode surfaces an API error against that source alone', async () => {
+      mockPost.mockRejectedValueOnce(new ApiError(500, 'Internal Server Error'))
 
-  it('disconnectGog surfaces generic error with fallback message', async () => {
-    mockDelete.mockRejectedValue(new Error('network timeout'))
+      const store = useDataStore()
+      await store.submitGogCode('gog_work', 'auth-code')
 
-    const store = useDataStore()
-    await store.disconnectGog()
+      expect(store.oauthMessages['gog_work']).toBe('Error: server returned 500')
+      expect(store.oauthMessages['gog']).toBeUndefined()
+      expect(mockGet).not.toHaveBeenCalled()
+    })
 
-    expect(store.gogConnectMessage).toBe('Error: disconnect failed')
-    expect(mockGet).not.toHaveBeenCalled()
-    expect(mockPost).not.toHaveBeenCalled()
-  })
+    it('disconnectGog deletes that source token and re-reads its status', async () => {
+      mockDelete.mockResolvedValue({})
+      mockGet.mockResolvedValueOnce({
+        enabled: true,
+        connected: false,
+        auth_url: 'https://gog.com/auth',
+      })
 
-  it('disconnectEpic surfaces generic error with fallback message', async () => {
-    mockDelete.mockRejectedValue(new Error('network timeout'))
+      const store = useDataStore()
+      await store.disconnectGog('gog_work')
 
-    const store = useDataStore()
-    await store.disconnectEpic()
+      expect(mockDelete).toHaveBeenCalledWith('/gog/token', { source_id: 'gog_work' })
+      expect(mockGet).toHaveBeenCalledWith('/gog/status', { source_id: 'gog_work' })
+      expect(store.oauthMessages['gog_work']).toBe(
+        'Disconnected. You can reconnect below.',
+      )
+      expect(store.oauthStatusFor('gog_work').connected).toBe(false)
+    })
 
-    expect(store.epicConnectMessage).toBe('Error: disconnect failed')
-    expect(mockGet).not.toHaveBeenCalled()
-    expect(mockPost).not.toHaveBeenCalled()
-  })
-
-  it('disconnectGog sets in-progress message before awaiting DELETE', async () => {
-    let rejectDelete: (err: Error) => void = () => {}
-    mockDelete.mockImplementation(
-      () => new Promise((_, reject) => { rejectDelete = reject })
-    )
-
-    const store = useDataStore()
-    const pending = store.disconnectGog()
-    // Synchronous assignment must land before the promise resolves so the
-    // aria-live region announces activity immediately.
-    expect(store.gogConnectMessage).toBe('Disconnecting GOG...')
-
-    rejectDelete(new ApiError(500, 'Internal Server Error'))
-    await pending
-
-    expect(store.gogConnectMessage).toBe('Error: server returned 500')
-  })
-
-  it('disconnectEpic sets in-progress message before awaiting DELETE', async () => {
-    let rejectDelete: (err: Error) => void = () => {}
-    mockDelete.mockImplementation(
-      () => new Promise((_, reject) => { rejectDelete = reject })
-    )
-
-    const store = useDataStore()
-    const pending = store.disconnectEpic()
-    expect(store.epicConnectMessage).toBe('Disconnecting Epic Games...')
-
-    rejectDelete(new ApiError(500, 'Internal Server Error'))
-    await pending
-
-    expect(store.epicConnectMessage).toBe('Error: server returned 500')
-  })
-
-  describe('trakt device-code auth', () => {
-    function reloadMocks(traktConnected: boolean) {
-      // loadSyncSources fires config/reload (POST) then GETs
-      // sources + gog + epic + trakt.
-      mockPost.mockResolvedValue({})
-      mockGet
-        .mockResolvedValueOnce([])
-        .mockResolvedValueOnce({ enabled: false, connected: false })
-        .mockResolvedValueOnce({ enabled: false, connected: false })
-        .mockResolvedValueOnce({ enabled: true, connected: traktConnected })
-    }
-
-    it('loadTraktStatus stores enabled/connected flags', async () => {
+    it('disconnectEpic deletes that source token and re-reads its status', async () => {
+      mockDelete.mockResolvedValue({})
       mockGet.mockResolvedValueOnce({ enabled: true, connected: false })
 
       const store = useDataStore()
-      const result = await store.loadTraktStatus()
+      await store.disconnectEpic('epic_work')
 
-      expect(mockGet).toHaveBeenCalledWith('/trakt/status')
-      expect(result).toEqual({ enabled: true, connected: false })
-      expect(store.traktStatus).toEqual({ enabled: true, connected: false })
+      expect(mockDelete).toHaveBeenCalledWith('/epic/token', {
+        source_id: 'epic_work',
+      })
+      expect(store.oauthMessages['epic_work']).toBe(
+        'Disconnected. You can reconnect below.',
+      )
     })
 
-    it('startTraktFlow POSTs and returns the device-flow payload', async () => {
+    it('disconnectGog surfaces API error and does not re-read status', async () => {
+      mockDelete.mockRejectedValue(new ApiError(500, 'Internal Server Error'))
+
+      const store = useDataStore()
+      await store.disconnectGog('gog_work')
+
+      expect(store.oauthMessages['gog_work']).toBe('Error: server returned 500')
+      // The re-read must only run on success — otherwise a failed disconnect
+      // triggers a spurious status fetch that itself may error.
+      expect(mockGet).not.toHaveBeenCalled()
+    })
+
+    it('disconnectEpic surfaces API error and does not re-read status', async () => {
+      mockDelete.mockRejectedValue(new ApiError(500, 'Internal Server Error'))
+
+      const store = useDataStore()
+      await store.disconnectEpic('epic_work')
+
+      expect(store.oauthMessages['epic_work']).toBe('Error: server returned 500')
+      expect(mockGet).not.toHaveBeenCalled()
+    })
+
+    it('disconnectGog surfaces generic error with fallback message', async () => {
+      mockDelete.mockRejectedValue(new Error('network timeout'))
+
+      const store = useDataStore()
+      await store.disconnectGog('gog_work')
+
+      expect(store.oauthMessages['gog_work']).toBe('Error: disconnect failed')
+      expect(mockGet).not.toHaveBeenCalled()
+    })
+
+    it('disconnectEpic surfaces generic error with fallback message', async () => {
+      mockDelete.mockRejectedValue(new Error('network timeout'))
+
+      const store = useDataStore()
+      await store.disconnectEpic('epic_work')
+
+      expect(store.oauthMessages['epic_work']).toBe('Error: disconnect failed')
+      expect(mockGet).not.toHaveBeenCalled()
+    })
+
+    it('disconnectGog sets in-progress message before awaiting DELETE', async () => {
+      let rejectDelete: (err: Error) => void = () => {}
+      mockDelete.mockImplementation(
+        () => new Promise((_, reject) => { rejectDelete = reject })
+      )
+
+      const store = useDataStore()
+      const pending = store.disconnectGog('gog_work')
+      // Synchronous assignment must land before the promise resolves so the
+      // aria-live region announces activity immediately.
+      expect(store.oauthMessages['gog_work']).toBe('Disconnecting GOG...')
+
+      rejectDelete(new ApiError(500, 'Internal Server Error'))
+      await pending
+
+      expect(store.oauthMessages['gog_work']).toBe('Error: server returned 500')
+    })
+
+    it('disconnectEpic sets in-progress message before awaiting DELETE', async () => {
+      let rejectDelete: (err: Error) => void = () => {}
+      mockDelete.mockImplementation(
+        () => new Promise((_, reject) => { rejectDelete = reject })
+      )
+
+      const store = useDataStore()
+      const pending = store.disconnectEpic('epic_work')
+      expect(store.oauthMessages['epic_work']).toBe('Disconnecting Epic Games...')
+
+      rejectDelete(new ApiError(500, 'Internal Server Error'))
+      await pending
+
+      expect(store.oauthMessages['epic_work']).toBe('Error: server returned 500')
+    })
+  })
+
+  describe('trakt device-code auth', () => {
+    it('startTraktFlow POSTs for the named source and returns the payload', async () => {
       const flow = {
         user_code: 'ABCD-1234',
         verification_url: 'https://trakt.tv/activate',
@@ -822,13 +870,17 @@ describe('useDataStore', () => {
       mockPost.mockResolvedValueOnce(flow)
 
       const store = useDataStore()
-      const result = await store.startTraktFlow()
+      const result = await store.startTraktFlow('trakt_work')
 
-      expect(mockPost).toHaveBeenCalledWith('/trakt/start-device-flow')
+      expect(mockPost).toHaveBeenCalledWith(
+        '/trakt/start-device-flow',
+        undefined,
+        { source_id: 'trakt_work' },
+      )
       expect(result).toEqual(flow)
     })
 
-    it('pollTraktApproval returns pending without reloading sources', async () => {
+    it('pollTraktApproval returns pending without re-reading status', async () => {
       mockPost.mockResolvedValueOnce({
         connected: false,
         status: 'pending',
@@ -836,31 +888,30 @@ describe('useDataStore', () => {
       })
 
       const store = useDataStore()
-      const result = await store.pollTraktApproval('dev-code')
+      const result = await store.pollTraktApproval('trakt_work', 'dev-code')
 
-      expect(mockPost).toHaveBeenCalledWith('/trakt/poll-device-approval', {
-        device_code: 'dev-code',
-      })
+      expect(mockPost).toHaveBeenCalledWith(
+        '/trakt/poll-device-approval',
+        { device_code: 'dev-code' },
+        { source_id: 'trakt_work' },
+      )
       expect(result.connected).toBe(false)
-      expect(store.traktStatus.connected).toBe(false)
-      // No reload triggered while still pending.
+      expect(store.oauthStatusFor('trakt_work').connected).toBe(false)
       expect(mockGet).not.toHaveBeenCalled()
     })
 
-    it('pollTraktApproval marks connected and reloads sources on success', async () => {
-      mockPost.mockResolvedValueOnce({
-        connected: true,
-        message: 'Connected',
-      })
-      reloadMocks(true)
+    it('pollTraktApproval re-reads that source status on success', async () => {
+      mockPost.mockResolvedValueOnce({ connected: true, message: 'Connected' })
+      mockGet.mockResolvedValueOnce({ enabled: true, connected: true })
 
       const store = useDataStore()
-      const result = await store.pollTraktApproval('dev-code')
+      const result = await store.pollTraktApproval('trakt_work', 'dev-code')
 
       expect(result.connected).toBe(true)
-      expect(store.traktStatus.connected).toBe(true)
-      // loadSyncSources ran (config/reload + the four GETs).
-      expect(mockGet).toHaveBeenCalledWith('/trakt/status')
+      expect(mockGet).toHaveBeenCalledWith('/trakt/status', {
+        source_id: 'trakt_work',
+      })
+      expect(store.oauthStatusFor('trakt_work').connected).toBe(true)
     })
 
     it('pollTraktApproval surfaces the expired terminal status', async () => {
@@ -871,10 +922,10 @@ describe('useDataStore', () => {
       })
 
       const store = useDataStore()
-      const result = await store.pollTraktApproval('dev-code')
+      const result = await store.pollTraktApproval('trakt_work', 'dev-code')
 
       expect(result.status).toBe('expired')
-      expect(store.traktStatus.connected).toBe(false)
+      expect(store.oauthStatusFor('trakt_work').connected).toBe(false)
     })
 
     it('pollTraktApproval surfaces the denied terminal status', async () => {
@@ -885,33 +936,42 @@ describe('useDataStore', () => {
       })
 
       const store = useDataStore()
-      const result = await store.pollTraktApproval('dev-code')
+      const result = await store.pollTraktApproval('trakt_work', 'dev-code')
 
       expect(result.status).toBe('denied')
-      expect(store.traktStatus.connected).toBe(false)
+      expect(store.oauthStatusFor('trakt_work').connected).toBe(false)
     })
 
-    it('disconnectTrakt DELETEs the token and reloads sources', async () => {
+    it('disconnectTrakt DELETEs that source token and re-reads its status', async () => {
       mockDelete.mockResolvedValueOnce({})
-      reloadMocks(false)
+      mockGet.mockResolvedValueOnce({ enabled: true, connected: false })
 
       const store = useDataStore()
-      store.$patch({ traktStatus: { enabled: true, connected: true } })
-      await store.disconnectTrakt()
+      await store.disconnectTrakt('trakt_work')
 
-      expect(mockDelete).toHaveBeenCalledWith('/trakt/token')
-      expect(store.traktStatus.connected).toBe(false)
+      expect(mockDelete).toHaveBeenCalledWith('/trakt/token', {
+        source_id: 'trakt_work',
+      })
+      expect(store.oauthStatusFor('trakt_work').connected).toBe(false)
     })
 
-    it('loadTraktStatus propagates the rejection without clobbering state', async () => {
-      mockGet.mockRejectedValueOnce(new ApiError(500, 'Internal Server Error'))
+    it('loadOAuthStatus propagates the rejection without clobbering state', async () => {
+      mockGet
+        .mockResolvedValueOnce({ enabled: true, connected: true })
+        .mockRejectedValueOnce(new ApiError(500, 'Internal Server Error'))
 
       const store = useDataStore()
-      store.$patch({ traktStatus: { enabled: true, connected: true } })
+      await store.loadOAuthStatus('trakt_work', 'trakt')
 
-      await expect(store.loadTraktStatus()).rejects.toBeInstanceOf(ApiError)
+      await expect(
+        store.loadOAuthStatus('trakt_work', 'trakt'),
+      ).rejects.toBeInstanceOf(ApiError)
       // The cached status is untouched — the caller decides how to react.
-      expect(store.traktStatus).toEqual({ enabled: true, connected: true })
+      expect(store.oauthStatusFor('trakt_work')).toEqual({
+        enabled: true,
+        connected: true,
+        authUrl: null,
+      })
     })
 
     it('startTraktFlow propagates a 400 not-configured rejection to the caller', async () => {
@@ -920,20 +980,23 @@ describe('useDataStore', () => {
 
       const store = useDataStore()
 
-      await expect(store.startTraktFlow()).rejects.toBe(error)
+      await expect(store.startTraktFlow('trakt_work')).rejects.toBe(error)
     })
 
     it('disconnectTrakt propagates the rejection and leaves status connected', async () => {
+      mockGet.mockResolvedValueOnce({ enabled: true, connected: true })
       mockDelete.mockRejectedValueOnce(new ApiError(500, 'Internal Server Error'))
 
       const store = useDataStore()
-      store.$patch({ traktStatus: { enabled: true, connected: true } })
+      await store.loadOAuthStatus('trakt_work', 'trakt')
 
-      await expect(store.disconnectTrakt()).rejects.toBeInstanceOf(ApiError)
-      // No reload on failure, and the connected flag stays true so the UI
+      await expect(store.disconnectTrakt('trakt_work')).rejects.toBeInstanceOf(
+        ApiError,
+      )
+      // No re-read on failure, and the connected flag stays true so the UI
       // still shows the account as connected.
-      expect(store.traktStatus.connected).toBe(true)
-      expect(mockGet).not.toHaveBeenCalled()
+      expect(mockGet).toHaveBeenCalledTimes(1)
+      expect(store.oauthStatusFor('trakt_work').connected).toBe(true)
     })
   })
 
@@ -1164,16 +1227,11 @@ describe('useDataStore', () => {
         secret_status: {},
       }
       mockPost.mockResolvedValueOnce(created)
-      // Subsequent loadSyncSources call (config/reload + sources + gog +
-      // epic + trakt).
+      // Subsequent loadSyncSources call (config/reload, then the listing).
       mockPost.mockResolvedValueOnce({})
-      mockGet
-        .mockResolvedValueOnce([
-          { id: 'fresh', display_name: 'Fresh', plugin_display_name: 'Fake File', enabled: true },
-        ])
-        .mockResolvedValueOnce({ enabled: false, connected: false })
-        .mockResolvedValueOnce({ enabled: false, connected: false })
-        .mockResolvedValueOnce({ enabled: false, connected: false })
+      mockGet.mockResolvedValueOnce([
+        { id: 'fresh', display_name: 'Fresh', plugin_display_name: 'Fake File', enabled: true },
+      ])
 
       const store = useDataStore()
       const payload = {

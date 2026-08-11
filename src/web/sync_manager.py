@@ -14,6 +14,8 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
+from src.utils.text import exception_for_log, sanitize_for_log
+
 logger = logging.getLogger(__name__)
 
 
@@ -225,6 +227,11 @@ class SyncManager:
         if job is None:
             return
 
+        # ``source`` is the humanised source id POST /api/update supplies, and
+        # nothing restricts its characters, so every sink below shares one
+        # escaped copy.
+        safe_source = sanitize_for_log(source)
+
         try:
             count = sync_function(job)
             with self._lock:
@@ -243,26 +250,33 @@ class SyncManager:
                 error_count = len(job.errors)
 
             if final_status == SyncStatus.COMPLETED:
-                logger.info("Sync completed for %s: %d items processed", source, count)
+                logger.info(
+                    "Sync completed for %s: %d items processed", safe_source, count
+                )
                 if on_complete is not None:
                     try:
                         on_complete()
                     except Exception as callback_error:
                         logger.error(
-                            "Sync on_complete callback failed: %s", callback_error
+                            "Sync on_complete callback failed: %s",
+                            exception_for_log(callback_error),
                         )
             else:
                 logger.warning(
                     "Sync for %s produced no items; marking failed (%d errors)",
-                    source,
+                    safe_source,
                     error_count,
                 )
-        except Exception:
+        except Exception as error:
             with self._lock:
                 job.status = SyncStatus.FAILED
                 job.completed_at = datetime.now()
                 job.error_message = "Sync failed due to an internal error"
-            logger.error("Sync failed for %s", source, exc_info=True)
+            # No traceback: a plugin fault reaching here can quote the request
+            # URL it failed on, credentials and all.
+            logger.error(
+                "Sync failed for %s: %s", safe_source, exception_for_log(error)
+            )
 
     def update_progress(
         self,

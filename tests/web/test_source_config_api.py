@@ -1155,6 +1155,36 @@ class TestDeleteSourceEndpoint:
         assert response.status_code == 204
         assert storage.get_source_config(1, "ghost") is None
 
+    def test_the_last_source_on_a_plugin_takes_the_stranded_row_with_it(
+        self,
+        client: TestClient,
+        storage: StorageManager,
+        base_config: dict[str, Any],
+    ) -> None:
+        """Drop the config the route hands down and the sweep never runs."""
+        base_config["inputs"].pop("my_games")
+        storage.upsert_source_config(1, "work_games", "fake_api", {}, enabled=True)
+        storage.save_credential(1, "fake_api", "api_key", "stranded-by-an-upgrade")
+
+        response = client.delete("/api/sync/sources/work_games")
+
+        assert response.status_code == 204
+        assert storage.get_credential(1, "fake_api", "api_key") is None
+
+    def test_a_yaml_sibling_on_the_plugin_keeps_the_stranded_row(
+        self, client: TestClient, storage: StorageManager
+    ) -> None:
+        """``my_games`` stays in the config, and it alone may read that row."""
+        storage.upsert_source_config(1, "work_games", "fake_api", {}, enabled=True)
+        storage.save_credential(1, "fake_api", "api_key", "stranded-by-an-upgrade")
+
+        response = client.delete("/api/sync/sources/work_games")
+
+        assert response.status_code == 204
+        assert storage.get_credential(1, "fake_api", "api_key") == (
+            "stranded-by-an-upgrade"
+        )
+
 
 class TestUpdateEndpointDbOnlySourcesRegression:
     """Per-source sync (POST /api/update) must resolve DB-only sources.

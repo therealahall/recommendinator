@@ -8,7 +8,7 @@ Handles the device-code OAuth flow for connecting a Trakt account:
    denied result. Callers (the web endpoint and the CLI loop) decide how to
    repeat the poll rather than blocking inside one HTTP handler.
 3. ``save_trakt_token`` persists the issued ``refresh_token`` to the encrypted
-   credential store under source_id ``"trakt"``.
+   credential store under the id of the source being connected.
 
 The user registers their OWN Trakt API application, so ``client_id`` and
 ``client_secret`` are saved to the source config/credential store before the
@@ -33,6 +33,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# The id of the source a plain ``inputs.trakt`` entry gets. Every entry point
+# takes the real source id instead, so a second Trakt source keeps its own
+# client credentials and token.
 TRAKT_SOURCE_ID = "trakt"
 TRAKT_API_URL = "https://api.trakt.tv"
 TRAKT_DEVICE_CODE_URL = f"{TRAKT_API_URL}/oauth/device/code"
@@ -169,22 +172,18 @@ def poll_device_token(
 
 
 def save_trakt_token(
-    storage: StorageManager, refresh_token: str, user_id: int = 1
+    storage: StorageManager,
+    refresh_token: str,
+    source_id: str = TRAKT_SOURCE_ID,
+    user_id: int = 1,
 ) -> None:
-    """Save a Trakt refresh token to encrypted database storage.
-
-    Args:
-        storage: StorageManager instance.
-        refresh_token: Trakt OAuth refresh token to save.
-        user_id: User ID to associate the token with.
+    """Encrypt and store the refresh token under *source_id*.
 
     Raises:
         TraktAuthError: If saving fails.
     """
     try:
-        storage.save_credential(
-            user_id, TRAKT_SOURCE_ID, "refresh_token", refresh_token
-        )
+        storage.save_credential(user_id, source_id, "refresh_token", refresh_token)
         logger.info("Saved Trakt refresh token to database")
     except Exception as error:
         logger.error("Failed to save Trakt token to database: %s", type(error).__name__)
@@ -194,29 +193,21 @@ def save_trakt_token(
 def resolve_trakt_client_credentials(
     config: dict[str, Any],
     storage: StorageManager | None,
+    source_id: str = TRAKT_SOURCE_ID,
     user_id: int = 1,
 ) -> tuple[str, str]:
-    """Resolve the saved Trakt ``client_id`` and ``client_secret``.
+    """Resolve *source_id*'s ``(client_id, client_secret)``.
 
     Reuses ``resolve_inputs`` so resolution matches what the plugin sees at
-    sync time: ``client_id`` from the source config (YAML or DB) and the
-    sensitive ``client_secret`` merged from the encrypted credential store.
-
-    Args:
-        config: Full application config.
-        storage: StorageManager for DB config/credential lookup.
-        user_id: User ID for credential lookup.
-
-    Returns:
-        ``(client_id, client_secret)``.
+    sync time.
 
     Raises:
-        TraktAuthError: If the Trakt source is not configured or either
-            credential is missing.
+        TraktAuthError: If the source is not configured or either credential
+            is missing.
     """
     trakt_config: dict[str, Any] | None = None
     for resolved in resolve_inputs(config, storage=storage, user_id=user_id):
-        if resolved.source_id == TRAKT_SOURCE_ID:
+        if resolved.source_id == source_id:
             trakt_config = resolved.config
             break
 
@@ -237,17 +228,13 @@ def resolve_trakt_client_credentials(
     return client_id, client_secret
 
 
-def is_trakt_connected(storage: StorageManager | None, user_id: int = 1) -> bool:
-    """Check whether a Trakt refresh token exists in the credential store.
-
-    Args:
-        storage: StorageManager for credential lookup.
-        user_id: User ID for credential lookup.
-
-    Returns:
-        True if a non-empty refresh_token is stored for Trakt.
-    """
+def is_trakt_connected(
+    storage: StorageManager | None,
+    source_id: str = TRAKT_SOURCE_ID,
+    user_id: int = 1,
+) -> bool:
+    """Whether *source_id* has a non-empty refresh token stored."""
     if storage is None:
         return False
-    token = storage.get_credential(user_id, TRAKT_SOURCE_ID, "refresh_token")
+    token = storage.get_credential(user_id, source_id, "refresh_token")
     return bool(token and token.strip())

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 from datetime import date
 from typing import Any
@@ -1089,3 +1090,38 @@ class TestGoodreadsRssPluginSecurity:
         assert "SYSTEM" not in message
         assert "12345" not in message
         assert "goodreads.com" not in message
+
+
+GOODREADS_RSS_LOGGER = "src.ingestion.sources.goodreads_rss.goodreads_rss"
+
+
+class TestGoodreadsRssLogInjectionRegression:
+    """Regression: a configured shelf name forged log entries.
+
+    Bug: ``_fetch_page`` interpolates ``shelf`` raw. Cause: the sanitiser pass
+    covered the three generic import plugins alone. Fix: ``sanitize_for_log``.
+    """
+
+    def test_a_newline_in_a_shelf_name_cannot_forge_a_log_entry(
+        self,
+        plugin: GoodreadsRssPlugin,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        def fail(*_args: Any, **_kwargs: Any) -> None:
+            raise requests.ConnectionError("boom")
+
+        monkeypatch.setattr(goodreads_rss.requests, "get", fail)
+        shelf = "read\nCollected 9999 unique books across 1 Goodreads shelves"
+
+        with caplog.at_level(logging.ERROR, logger=GOODREADS_RSS_LOGGER):
+            with pytest.raises(GoodreadsRssError):
+                list(plugin.fetch({"user_id": "12345", "shelves": [shelf]}))
+
+        messages = [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == GOODREADS_RSS_LOGGER
+        ]
+        assert messages, "nothing was logged, so this proves nothing"
+        assert "\n" not in messages[0], messages

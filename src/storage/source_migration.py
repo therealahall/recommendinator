@@ -124,7 +124,7 @@ def migrate_source_config_plugins(
             )
 
 
-def _configured_source_plugins(
+def configured_source_plugins(
     config: dict[str, Any],
     storage: StorageManager,
     user_id: int,
@@ -240,7 +240,7 @@ def migrate_source_attribution(
     if _is_recorded(storage, migration_name):
         return
 
-    sources = _configured_source_plugins(config, storage, user_id)
+    sources = configured_source_plugins(config, storage, user_id)
     if not sources:
         # ``create_storage_manager`` defaults to the real ``data/`` database
         # whichever config was loaded, so a sourceless example.yaml would

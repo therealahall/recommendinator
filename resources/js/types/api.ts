@@ -282,9 +282,11 @@ export interface AuthStatusResponse {
   auth_url?: string
 }
 
-export interface TraktStatusResponse {
+/** GET /{gog,epic,trakt}/status. Only GOG and Epic carry an auth_url. */
+export interface OAuthStatusResponse {
   enabled: boolean
   connected: boolean
+  auth_url?: string | null
 }
 
 export interface TraktDeviceFlowResponse {

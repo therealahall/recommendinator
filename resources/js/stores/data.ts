@@ -14,12 +14,32 @@ import type {
   SourceMigrationResponse,
   PluginInfoResponse,
   SourceCreateRequest,
-  TraktStatusResponse,
+  OAuthStatusResponse,
   TraktDeviceFlowResponse,
   TraktPollResponse,
 } from '@/types/api'
 
 const ALL_SOURCES_LABEL = 'All Sources'
+
+/** The status/connect/disconnect route prefix for each OAuth-backed plugin. */
+const OAUTH_ROUTE_BY_PLUGIN: Record<string, string> = {
+  gog: 'gog',
+  epic_games: 'epic',
+  trakt: 'trakt',
+}
+
+export interface OAuthStatus {
+  enabled: boolean
+  connected: boolean
+  authUrl: string | null
+}
+
+// Frozen: it is handed to every caller asking about a source nobody has loaded.
+const DISCONNECTED: OAuthStatus = Object.freeze({
+  enabled: false,
+  connected: false,
+  authUrl: null,
+})
 
 export const useDataStore = defineStore('data', () => {
   const api = useApi()
@@ -65,12 +85,14 @@ export const useDataStore = defineStore('data', () => {
     return display ? isLabelRunning(display) : false
   }
 
-  // Auth state
-  const gogStatus = ref<{ authUrl: string | null; connected: boolean }>({ authUrl: null, connected: false })
-  const epicStatus = ref<{ authUrl: string | null; connected: boolean }>({ authUrl: null, connected: false })
-  const traktStatus = ref<TraktStatusResponse>({ enabled: false, connected: false })
-  const gogConnectMessage = ref('')
-  const epicConnectMessage = ref('')
+  // Auth state, per source id — a token belongs to the source it was obtained
+  // for, and two sources can run the same OAuth plugin.
+  const oauthStatus = ref<Record<string, OAuthStatus>>({})
+  const oauthMessages = ref<Record<string, string>>({})
+
+  function oauthStatusFor(sourceId: string): OAuthStatus {
+    return oauthStatus.value[sourceId] ?? DISCONNECTED
+  }
 
   // Enrichment state
   const enrichmentStats = ref<EnrichmentStatsResponse | null>(null)
@@ -87,22 +109,7 @@ export const useDataStore = defineStore('data', () => {
     try {
       // Config reload is best-effort — the endpoint may not be available during init
       await api.post('/config/reload').catch(() => {})
-      const [sources, gog, epic, trakt] = await Promise.all([
-        api.get<SyncSourceResponse[]>('/sync/sources'),
-        api.get<{ enabled: boolean; connected: boolean; auth_url?: string }>('/gog/status').catch(() => null),
-        api.get<{ enabled: boolean; connected: boolean; auth_url?: string }>('/epic/status').catch(() => null),
-        api.get<TraktStatusResponse>('/trakt/status').catch(() => null),
-      ])
-      syncSources.value = sources
-      if (gog) {
-        gogStatus.value = { authUrl: gog.auth_url || null, connected: gog.connected }
-      }
-      if (epic) {
-        epicStatus.value = { authUrl: epic.auth_url || null, connected: epic.connected }
-      }
-      if (trakt) {
-        traktStatus.value = { enabled: trakt.enabled, connected: trakt.connected }
-      }
+      syncSources.value = await api.get<SyncSourceResponse[]>('/sync/sources')
     } catch {
       syncSources.value = []
     } finally {
@@ -252,96 +259,124 @@ export const useDataStore = defineStore('data', () => {
     return `${summary} - Syncing ${running.length} sources in parallel`
   }
 
-  // GOG/Epic auth
-  async function submitGogCode(codeOrUrl: string) {
-    gogConnectMessage.value = 'Connecting to GOG...'
-    try {
-      const data = await api.post<{ message: string }>('/gog/exchange', { code_or_url: codeOrUrl })
-      gogConnectMessage.value = data.message
-      setTimeout(() => loadSyncSources(), 1500)
-    } catch (err) {
-      console.error('GOG connect failed:', err)
-      gogConnectMessage.value = err instanceof ApiError
-        ? `Error: server returned ${err.status}`
-        : 'Error: connection failed'
+  // OAuth connect flows. Every call names the source being connected: the
+  // token is stored under that id and read back from it at sync time.
+  async function loadOAuthStatus(sourceId: string, plugin: string): Promise<void> {
+    const route = OAUTH_ROUTE_BY_PLUGIN[plugin]
+    if (!route) return
+    const status = await api.get<OAuthStatusResponse>(`/${route}/status`, {
+      source_id: sourceId,
+    })
+    oauthStatus.value = {
+      ...oauthStatus.value,
+      [sourceId]: {
+        enabled: status.enabled,
+        connected: status.connected,
+        authUrl: status.auth_url || null,
+      },
     }
   }
 
-  async function submitEpicCode(codeOrJson: string) {
-    epicConnectMessage.value = 'Connecting to Epic Games...'
+  function setOAuthMessage(sourceId: string, message: string): void {
+    oauthMessages.value = { ...oauthMessages.value, [sourceId]: message }
+  }
+
+  function oauthErrorMessage(err: unknown, fallback: string): string {
+    return err instanceof ApiError ? `Error: server returned ${err.status}` : fallback
+  }
+
+  async function submitOAuthCode(
+    sourceId: string,
+    plugin: string,
+    body: Record<string, string>,
+    pendingMessage: string,
+  ): Promise<void> {
+    setOAuthMessage(sourceId, pendingMessage)
     try {
-      const data = await api.post<{ message: string }>('/epic/exchange', { code_or_json: codeOrJson })
-      epicConnectMessage.value = data.message
-      setTimeout(() => loadSyncSources(), 1500)
+      const data = await api.post<{ message: string }>(
+        `/${OAUTH_ROUTE_BY_PLUGIN[plugin]}/exchange`,
+        body,
+        { source_id: sourceId },
+      )
+      setOAuthMessage(sourceId, data.message)
+      await loadOAuthStatus(sourceId, plugin)
     } catch (err) {
-      console.error('Epic connect failed:', err)
-      epicConnectMessage.value = err instanceof ApiError
-        ? `Error: server returned ${err.status}`
-        : 'Error: connection failed'
+      console.error('OAuth connect failed:', err)
+      setOAuthMessage(sourceId, oauthErrorMessage(err, 'Error: connection failed'))
     }
   }
 
-  async function disconnectGog() {
-    gogConnectMessage.value = 'Disconnecting GOG...'
+  function submitGogCode(sourceId: string, codeOrUrl: string) {
+    return submitOAuthCode(
+      sourceId,
+      'gog',
+      { code_or_url: codeOrUrl },
+      'Connecting to GOG...',
+    )
+  }
+
+  function submitEpicCode(sourceId: string, codeOrJson: string) {
+    return submitOAuthCode(
+      sourceId,
+      'epic_games',
+      { code_or_json: codeOrJson },
+      'Connecting to Epic Games...',
+    )
+  }
+
+  async function disconnectOAuth(
+    sourceId: string,
+    plugin: string,
+    pendingMessage: string,
+  ): Promise<void> {
+    setOAuthMessage(sourceId, pendingMessage)
     try {
-      // DELETE /api/gog/token runs the credential delete synchronously and
-      // only returns 200 once the row is gone, so loadSyncSources reads
-      // the post-delete state immediately — no setTimeout needed.
-      await api.delete('/gog/token')
-      gogConnectMessage.value = 'Disconnected. You can reconnect below.'
-      await loadSyncSources()
+      // The DELETE runs the credential delete synchronously and only returns
+      // 200 once the row is gone, so the status re-read below sees the result.
+      await api.delete(`/${OAUTH_ROUTE_BY_PLUGIN[plugin]}/token`, {
+        source_id: sourceId,
+      })
+      setOAuthMessage(sourceId, 'Disconnected. You can reconnect below.')
+      await loadOAuthStatus(sourceId, plugin)
     } catch (err) {
-      console.error('GOG disconnect failed:', err)
-      gogConnectMessage.value = err instanceof ApiError
-        ? `Error: server returned ${err.status}`
-        : 'Error: disconnect failed'
+      console.error('OAuth disconnect failed:', err)
+      setOAuthMessage(sourceId, oauthErrorMessage(err, 'Error: disconnect failed'))
     }
   }
 
-  async function disconnectEpic() {
-    epicConnectMessage.value = 'Disconnecting Epic Games...'
-    try {
-      // DELETE /api/epic/token is synchronous (see disconnectGog comment).
-      await api.delete('/epic/token')
-      epicConnectMessage.value = 'Disconnected. You can reconnect below.'
-      await loadSyncSources()
-    } catch (err) {
-      console.error('Epic disconnect failed:', err)
-      epicConnectMessage.value = err instanceof ApiError
-        ? `Error: server returned ${err.status}`
-        : 'Error: disconnect failed'
-    }
+  function disconnectGog(sourceId: string) {
+    return disconnectOAuth(sourceId, 'gog', 'Disconnecting GOG...')
+  }
+
+  function disconnectEpic(sourceId: string) {
+    return disconnectOAuth(sourceId, 'epic_games', 'Disconnecting Epic Games...')
   }
 
   // Trakt device-code auth
-  async function loadTraktStatus(): Promise<TraktStatusResponse> {
-    const status = await api.get<TraktStatusResponse>('/trakt/status')
-    traktStatus.value = { enabled: status.enabled, connected: status.connected }
-    return status
-  }
-
-  async function startTraktFlow(): Promise<TraktDeviceFlowResponse> {
-    return api.post<TraktDeviceFlowResponse>('/trakt/start-device-flow')
+  async function startTraktFlow(sourceId: string): Promise<TraktDeviceFlowResponse> {
+    return api.post<TraktDeviceFlowResponse>('/trakt/start-device-flow', undefined, {
+      source_id: sourceId,
+    })
   }
 
   async function pollTraktApproval(
+    sourceId: string,
     deviceCode: string,
   ): Promise<TraktPollResponse> {
     const result = await api.post<TraktPollResponse>(
       '/trakt/poll-device-approval',
       { device_code: deviceCode },
+      { source_id: sourceId },
     )
     if (result.connected) {
-      traktStatus.value = { ...traktStatus.value, connected: true }
-      await loadSyncSources()
+      await loadOAuthStatus(sourceId, 'trakt')
     }
     return result
   }
 
-  async function disconnectTrakt(): Promise<void> {
-    await api.delete('/trakt/token')
-    traktStatus.value = { ...traktStatus.value, connected: false }
-    await loadSyncSources()
+  async function disconnectTrakt(sourceId: string): Promise<void> {
+    await api.delete('/trakt/token', { source_id: sourceId })
+    await loadOAuthStatus(sourceId, 'trakt')
   }
 
   // Enrichment actions
@@ -549,11 +584,9 @@ export const useDataStore = defineStore('data', () => {
     // Helpers
     isSourceIdSyncing,
     jobForSourceId,
-    gogStatus,
-    epicStatus,
-    traktStatus,
-    gogConnectMessage,
-    epicConnectMessage,
+    oauthStatus,
+    oauthMessages,
+    oauthStatusFor,
     enrichmentStats,
     enrichmentJob,
     enrichmentEnabled,
@@ -564,11 +597,11 @@ export const useDataStore = defineStore('data', () => {
     loadSyncSources,
     triggerSync,
     checkSyncStatus,
+    loadOAuthStatus,
     submitGogCode,
     submitEpicCode,
     disconnectGog,
     disconnectEpic,
-    loadTraktStatus,
     startTraktFlow,
     pollTraktApproval,
     disconnectTrakt,
