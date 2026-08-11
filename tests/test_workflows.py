@@ -61,6 +61,16 @@ TAG_BUILD_CONDITIONS = {
 # the tag detection finds nothing, so the release silently never happens.
 SEMANTIC_RELEASE_FLAGS = {"--no-push", "--commit", "--tag", "--no-vcs-release"}
 
+# Every spelling GitHub honours in a head commit's message. The tag points at
+# the version commit, so a tag push is a push event carrying whichever is there.
+CI_SKIP_MARKERS = (
+    "[skip ci]",
+    "[ci skip]",
+    "[no ci]",
+    "[skip actions]",
+    "[actions skip]",
+)
+
 # The output every step after the tag detection is conditioned on, and the one
 # the merge-race guard writes. Spelled from the step ids so the conditions and
 # the `id:` they name cannot be moved apart.
@@ -129,6 +139,14 @@ MAIN_TRACKING_REF = "refs/remotes/origin/main"
 
 # Any absolute path naming the seed, however the Dockerfile spells it today.
 _SEED_REFERENCE = re.compile(r"/app/\S*example\.yaml")
+
+
+def _semantic_release_config() -> dict[str, Any]:
+    """The `[tool.semantic_release]` table the release job runs under."""
+    configured: dict[str, Any] = tomllib.loads(
+        (_REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    )["tool"]["semantic_release"]
+    return configured
 
 
 def _workflow(path: Path) -> dict[str, Any]:
@@ -357,13 +375,19 @@ class _StubbedGh(NamedTuple):
         return recorded
 
 
-def _stub_gh(tmp_path: Path, *, release_exists: bool) -> _StubbedGh:
+def _stub_gh(
+    tmp_path: Path, *, release_exists: bool, assets: tuple[str, ...] = ()
+) -> _StubbedGh:
     """Put a recording `gh` on PATH, ahead of any real one.
 
-    It answers `release view`, the call the recovery path branches on, and
-    copies any `--notes-file` where a test can read it — the step names that
-    one with `mktemp`.
+    Every `release view` answers the asset names the step's `--jq` shapes them
+    into. A `--notes-file` is copied where a test can read it.
     """
+    view_response = (
+        "".join(f"  echo {name}\n" for name in assets) + "  exit 0\n"
+        if release_exists
+        else "  exit 1\n"
+    )
     binaries = tmp_path / "stub-bin"
     binaries.mkdir(exist_ok=True)
     stub = _StubbedGh(
@@ -381,7 +405,7 @@ def _stub_gh(tmp_path: Path, *, release_exists: bool) -> _StubbedGh:
         "#!/bin/sh\n"
         f'printf "%s\\n" "$*" >> "{stub.log}"\n'
         'if [ "$1" = "release" ] && [ "$2" = "view" ]; then\n'
-        f"  exit {int(not release_exists)}\n"
+        f"{view_response}"
         "fi\n"
         "while [ $# -gt 0 ]; do\n"
         f'  if [ "$1" = "--notes-file" ]; then cp "$2" "{stub.notes}"; fi\n'
@@ -701,10 +725,7 @@ class TestReleaseIntegrity:
         CONTRIBUTING.md and CLAUDE.md both describe one commit carrying the
         bump, the changelog and the lock; a second commit would not be tagged.
         """
-        semantic_release = tomllib.loads(
-            (_REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
-        )["tool"]["semantic_release"]
-        build_command = semantic_release["build_command"]
+        build_command = _semantic_release_config()["build_command"]
         assert "uv lock" in build_command, build_command
         assert "git add uv.lock" in build_command, build_command
 
@@ -937,6 +958,58 @@ class TestReleaseIsCutFromTheValidatedCommit:
         assert superseded in output and overtaking in output
 
 
+class TestTheVersionCommitReachesTheReleaseJobAgain:
+    """The tag points at the version commit, so a skip marker there skipped the
+    tag push too: 58 releases shipped no image. The cost is one CI run per
+    release, whose own release job must no-op.
+    """
+
+    def test_the_version_commit_message_carries_no_ci_skip_marker(self) -> None:
+        """Regression test: 58 tags shipped no image.
+
+        Bug reported: an anonymous GHCR pull answers NAME_UNKNOWN.
+        Root cause: `[skip ci]` in the version commit GitHub sees the tag push at.
+        Fix: no marker; every spelling GitHub honours is refused here.
+        """
+        message = _semantic_release_config().get("commit_message", "")
+
+        assert message, "nothing configures the message this reads"
+        for marker in CI_SKIP_MARKERS:
+            assert marker not in message.lower(), message
+
+    def test_semantic_release_is_not_told_to_fail_on_an_already_released_version(
+        self,
+    ) -> None:
+        """psr computes an already-released version on that run and exits 2 for
+        it under `--strict`. Without the flag it says so and exits 0, so the
+        re-entry ends green."""
+        command = str(_step_named(RELEASE, "release", "Run semantic-release")["run"])
+
+        assert "semantic_release version" in command, command
+        assert "--strict" not in command, command
+
+    def test_pushing_a_commit_and_tag_that_are_already_there_is_not_a_failure(
+        self, published_repository: Path, tmp_path: Path
+    ) -> None:
+        """The re-entry finds the tag already at HEAD and on origin, so this step
+        pushes what is already there. Git answers "up to date"; anything else
+        would end every release on a red job."""
+        tag = "v1.2.3"
+        _release(published_repository, tag)
+        _git(published_repository, "push", "--quiet", "origin", f"refs/tags/{tag}")
+
+        code, output, _ = _run_step(
+            RELEASE,
+            "release",
+            "Push the version commit and tag",
+            repository=published_repository,
+            tmp_path=tmp_path,
+            environment={"NEW_TAG": tag},
+        )
+
+        assert code == 0, output
+
+
 class TestTheGitHubReleaseCarriesItsAsset:
     """The publishing step, executed against a stubbed `gh`.
 
@@ -1019,6 +1092,27 @@ class TestTheGitHubReleaseCarriesItsAsset:
         assert stub.calls().index(deleted) < stub.calls().index(
             _sole_call(stub, "release create")
         )
+
+    def test_a_release_that_already_carries_its_asset_is_left_alone(
+        self, repository: Path, tmp_path: Path
+    ) -> None:
+        """The version commit's own CI run reaches this step a second time, by
+        which point the release is whole. Recreating it notifies every watcher
+        twice and reissues the asset's id, for a release identical to the one
+        deleted."""
+        (newest, *_) = _changelog_sections()
+        _give_the_repository_its_changelog(repository)
+        stub = _stub_gh(tmp_path, release_exists=True, assets=("docker-compose.yml",))
+
+        output = self._create_release(repository, tmp_path, stub, newest.tag)
+
+        assert [
+            call for call in stub.calls() if call.startswith("release delete")
+        ] == []
+        assert [
+            call for call in stub.calls() if call.startswith("release create")
+        ] == []
+        assert "nothing to do" in output
 
 
 class TestTheGitFixturesIgnoreTheDevelopersConfiguration:

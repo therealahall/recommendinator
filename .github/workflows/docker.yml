@@ -194,9 +194,9 @@ jobs:
             echo "highest_in_minor=$(may_move "$MINOR_PREFIX" "${VERSION%.*}")"
           } >> "$GITHUB_OUTPUT"
 
-  # The gate CI runs, run again on the tagged tree. Nothing else establishes
-  # that what is about to be published was ever checked: the version commit is
-  # created after CI passed on its parent and pushed with [skip ci].
+  # The gate CI runs, run again on the tagged tree. The version commit has its
+  # own CI run, but nothing ties it to this workflow — it may still be running
+  # when publish starts.
   verify:
     needs: guard
     uses: ./.github/workflows/quality-gate.yml
