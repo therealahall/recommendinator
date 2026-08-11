@@ -461,6 +461,11 @@ automatically — it reads this tree, `src/enrichment/providers/` and `src/web/`
 and reports any function naming a credential key beside a `params=` call that
 the list omits.
 
+Raise it from inside the `except` block. `from None` clears `__cause__` but
+leaves `__context__`, and the enrichment manager reads that chain to tell a
+timeout from a rejected API key — raise outside the handler and every failure
+of yours reads as retryable.
+
 Beyond those: raise `SourceError` for recoverable failures, validate every
 required config field, skip items missing required fields rather than yielding
 them, and keep ids unique within a content type.

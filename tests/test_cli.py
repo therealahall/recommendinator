@@ -56,7 +56,7 @@ def mock_components(mock_config):
         patch("src.cli.main.create_storage_manager") as mock_storage,
         patch("src.cli.main.create_llm_components") as mock_llm,
         patch("src.cli.main.create_recommendation_engine") as mock_engine,
-        patch("src.cli.commands.migrate_config_credentials"),
+        patch("src.cli.main.migrate_config_credentials"),
         patch("src.cli.main.migrate_source_labels") as mock_migrate_labels,
         patch("src.cli.main.migrate_source_config_plugins") as mock_migrate_plugins,
         patch("src.cli.main.migrate_source_attribution") as mock_migrate_attribution,
@@ -1056,6 +1056,46 @@ class TestUpdateWorkersFlag:
 
         assert result.exit_code == 0, result.output
         assert captured["max_workers"] == 32
+
+    def test_the_config_reaches_the_executor(self) -> None:
+        """Without it every sync warns that a live YAML token is stranded.
+
+        The stranded-credential check reads ``inputs`` for the sources the
+        database does not hold, so ``update`` has to hand down the config it
+        already loaded.
+        """
+        config = self._config_with_sources()
+
+        captured: dict = {}
+
+        def fake_execute(**kwargs: object) -> list:
+            captured.update(kwargs)
+            sources_arg = kwargs.get("sources") or []
+            return [
+                SyncResult(source_name=plugin.display_name)
+                for plugin, _config in sources_arg  # type: ignore[misc]
+            ]
+
+        with (
+            patch("src.cli.main.load_config", return_value=config),
+            patch(
+                "src.cli.commands.execute_multi_source_sync",
+                side_effect=fake_execute,
+            ),
+            patch(
+                "src.ingestion.sources.steam.SteamPlugin.validate_config",
+                return_value=[],
+            ),
+            patch(
+                "src.ingestion.sources.goodreads_csv.GoodreadsCsvPlugin.validate_config",
+                return_value=[],
+            ),
+        ):
+            runner = CliRunner()
+            result = runner.invoke(cli, ["update"])
+
+        assert result.exit_code == 0, result.output
+        assert captured["config"] is config
 
 
 # ---------------------------------------------------------------------------

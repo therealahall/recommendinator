@@ -145,7 +145,7 @@ class TestOAuthConnectSourceBindingRegression:
         assert client.get("/api/gog/status?source_id=gog_work").json()["connected"]
         assert not client.get("/api/gog/status").json()["connected"]
 
-        delete_source("gog_work", storage, user_id=USER_ID)
+        delete_source("gog_work", storage, config, user_id=USER_ID)
 
         assert storage.get_credential(USER_ID, "gog_work", "refresh_token") is None
 
@@ -172,7 +172,7 @@ class TestOAuthConnectSourceBindingRegression:
         assert client.get("/api/epic/status?source_id=epic_work").json()["connected"]
         assert not client.get("/api/epic/status").json()["connected"]
 
-        delete_source("epic_work", storage, user_id=USER_ID)
+        delete_source("epic_work", storage, config, user_id=USER_ID)
 
         assert storage.get_credential(USER_ID, "epic_work", "refresh_token") is None
 
@@ -201,7 +201,7 @@ class TestOAuthConnectSourceBindingRegression:
         assert client.get("/api/trakt/status?source_id=trakt_work").json()["connected"]
         assert not client.get("/api/trakt/status").json()["connected"]
 
-        delete_source("trakt_work", storage, user_id=USER_ID)
+        delete_source("trakt_work", storage, config, user_id=USER_ID)
 
         assert storage.get_credential(USER_ID, "trakt_work", "refresh_token") is None
 

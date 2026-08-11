@@ -9,6 +9,7 @@ import type { TraktPollResponse } from '@/types/api'
 const props = withDefaults(
   defineProps<{
     sourceId: string
+    sourceName: string
     setTimer?: (handler: () => void, delayMs: number) => number
     clearTimer?: (handle: number) => void
   }>(),
@@ -27,6 +28,12 @@ const data = useDataStore()
 // after a click.
 const canConnect = computed(() => data.oauthStatusFor(props.sourceId).enabled)
 const hintId = computed(() => domId('trakt-connect-hint', props.sourceId))
+// Two expanded Trakt panels render both of these, and NVDA's element list is
+// name-only: without the source name neither entry says which one it drives.
+const connectLabel = computed(
+  () => `Connect Trakt Account for ${props.sourceName}`,
+)
+const resultLabel = computed(() => `${props.sourceName} connection result`)
 
 type FlowState = 'idle' | 'starting' | 'awaiting' | 'connected' | 'error'
 const state = ref<FlowState>('idle')
@@ -99,9 +106,17 @@ async function poll(): Promise<void> {
     // The confirmation belongs to the panel's region, since the status flip
     // unmounts this component. But that re-read is best-effort: when it fails
     // the parent keeps this mounted, and silence here renders an empty box.
-    message.value = data.oauthStatusFor(props.sourceId).connected
-      ? ''
-      : 'Connected to Trakt, but the status could not be re-read. Reload the page to confirm.'
+    if (data.oauthStatusFor(props.sourceId).connected) {
+      message.value = ''
+      return
+    }
+    message.value =
+      'Connected to Trakt, but the status could not be re-read. Reload the page to confirm.'
+    await nextTick()
+    // v-show has just hidden the code panel, so the browser's focus-fixup rule
+    // has already blurred whatever inside it held focus down to <body>. jsdom
+    // implements no fixup rule, so no test can reach that state.
+    resultPanel.value?.focus()
     return
   }
 
@@ -146,6 +161,7 @@ onBeforeUnmount(clearPoll)
         class="btn btn-primary trakt-flow-connect"
         data-testid="trakt-connect-btn"
         :disabled="!canConnect"
+        :aria-label="connectLabel"
         :aria-describedby="canConnect ? undefined : hintId"
         @click="startFlow"
       >Connect Trakt Account</button>
@@ -184,6 +200,9 @@ onBeforeUnmount(clearPoll)
       v-show="state === 'connected' || state === 'error'"
       ref="resultPanel"
       class="trakt-flow-panel"
+      data-testid="trakt-result-panel"
+      role="group"
+      :aria-label="resultLabel"
       tabindex="-1"
     >
       <button
@@ -200,7 +219,8 @@ onBeforeUnmount(clearPoll)
       better than v-if here: display:none takes it out of the accessibility
       tree, so it would still arrive already carrying "Requesting a device
       code…" and JAWS would read that as page content, not a status change
-      (WCAG 4.1.3).
+      (WCAG 4.1.3). The prefix is conditional so the region stays :empty until
+      it has something to say, and aria-atomic reads it with the message.
     -->
     <p
       class="trakt-flow-status"
@@ -208,7 +228,7 @@ onBeforeUnmount(clearPoll)
       role="status"
       aria-live="polite"
       aria-atomic="true"
-    >{{ message }}</p>
+    ><span v-if="message" class="sr-only">{{ sourceName }}: </span>{{ message }}</p>
   </div>
 </template>
 

@@ -1106,6 +1106,30 @@ class TestASyncSeesTheYamlHalfOfTheSourceListRegression:
 
         assert len(caplog.records) == 1
 
+    def test_the_executor_hands_the_config_down(
+        self, storage: StorageManager, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Both interfaces reach the check through here, never directly."""
+        config = {
+            "inputs": {
+                "rotating": {"plugin": "rotating", "enabled": True},
+                "my_source": {"plugin": "rotating", "enabled": True},
+            }
+        }
+
+        with caplog.at_level(logging.WARNING):
+            execute_multi_source_sync(
+                sources=[(RotatingAttributingPlugin(), {"_source_id": "my_source"})],
+                storage_manager=storage,
+                config=config,
+            )
+
+        assert caplog.records == []
+        # Anchored: the sync ran, so the check it would have failed ran too.
+        assert [item.source for item in storage.get_content_items(user_id=1)] == [
+            "my_source"
+        ]
+
 
 class TestTheUpgradeScenarioItselfIsNotSilentRegression:
     """Reported: the case the warning exists for is the one it skips.

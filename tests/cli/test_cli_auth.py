@@ -9,6 +9,7 @@ from click.testing import CliRunner
 
 from src.storage.manager import StorageManager
 from src.web.trakt_auth import DevicePollResult, DevicePollStatus, TraktAuthError
+from tests.web.test_oauth_source_binding import MALFORMED_IDS
 
 from .conftest import _invoke_with_mocks
 
@@ -146,7 +147,7 @@ class TestAuthConnect:
     def test_connect_gog(self, cli_runner: CliRunner) -> None:
         """Test connecting GOG account."""
         mock_storage = MagicMock(spec=StorageManager)
-        config = {"inputs": [{"source": "gog", "enabled": True}]}
+        config = _sources(gog="gog")
         # Auth codes must be >=20 chars to pass extract_code_from_input validation
         auth_code = "test-auth-code-abc123xyz"
         with (
@@ -888,37 +889,140 @@ class TestRevokingATokenNoSourceClaimsRegression:
         assert result.exit_code == 0, result.output
         assert storage.get_credential(USER_ID, plugin, "refresh_token") is None
 
-
-class TestStatusReportsOnlyATokenDisconnectCanDeleteRegression:
-    """Reported: ``auth status`` said connected where disconnect said 404.
-
-    Cause: the token was read off the resolved config, which layers the YAML
-    entry in, while disconnect deletes the credential row. Fix: ask the row.
-    """
-
     @pytest.mark.parametrize(("source", "plugin"), PROVIDERS)
-    def test_a_yaml_only_token_reads_not_connected(
+    def test_an_unclaimed_id_holding_nothing_still_fails(
         self,
         cli_runner: CliRunner,
         storage: StorageManager,
         source: str,
         plugin: str,
     ) -> None:
-        source_id = f"{plugin}_work"
+        """Mirrors the web 404: the row alone separates permitted from empty."""
+        result = _invoke_with_mocks(
+            cli_runner,
+            [
+                "auth",
+                "disconnect",
+                "--source",
+                source,
+                "--source-id",
+                "leftover",
+                "--yes",
+            ],
+            storage,
+            _sources(),
+        )
+
+        assert result.exit_code != 0
+        assert f"No active {source} connection" in result.output
+
+
+class TestBothAuthVerbsValidateTheSourceId:
+    """The id is a credential key here as much as on the ten web routes.
+
+    An unvalidated one files a token under an id no route can address, and
+    ``docs/SECURITY.md`` already promises both interfaces check it.
+    """
+
+    #: The extra flag each verb needs to reach its own body unprompted.
+    _VERB_FLAGS = {"connect": ["--no-browser"], "disconnect": ["--yes"]}
+
+    @pytest.mark.parametrize("verb", sorted(_VERB_FLAGS))
+    @pytest.mark.parametrize("bad_id", MALFORMED_IDS)
+    @pytest.mark.parametrize(("source", "plugin"), PROVIDERS)
+    def test_a_malformed_id_is_refused_before_anything_reads_it(
+        self,
+        cli_runner: CliRunner,
+        storage: StorageManager,
+        verb: str,
+        bad_id: str,
+        source: str,
+        plugin: str,
+    ) -> None:
+        storage.save_credential(USER_ID, plugin, "refresh_token", "the-default-id")
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            [
+                "auth",
+                verb,
+                "--source",
+                source,
+                "--source-id",
+                bad_id,
+                *self._VERB_FLAGS[verb],
+            ],
+            storage,
+            _sources(**{plugin: plugin}),
+        )
+
+        assert result.exit_code != 0
+        assert "--source-id must start with a lowercase letter" in result.output
+        # The row a bare invocation would have hit, untouched: neither verb
+        # falls back to the plugin's own id for an argument it refused.
+        assert storage.get_credential(USER_ID, plugin, "refresh_token") == (
+            "the-default-id"
+        )
+
+
+class TestAFileHeldTokenReachesBothAuthVerbsRegression:
+    """Reported: ``auth status`` said not connected for a config.yaml token.
+
+    Cause: the credential migration ran inside ``update`` alone, so an unsynced
+    install kept the token in the file, not the row status reads. Fix: migrate
+    on every command.
+    """
+
+    @staticmethod
+    def _yaml_held(
+        storage: StorageManager, source_id: str, plugin: str
+    ) -> dict[str, Any]:
+        """A source whose refresh token is still in config.yaml."""
         config = _sources(**{source_id: plugin})
         config["inputs"][source_id]["refresh_token"] = "from-yaml"
         # Trakt is enabled by its client credentials rather than its token, and
-        # the enabled half of the line must not move between the two reads.
+        # the enabled half of the line must not move with the token.
         config["inputs"][source_id]["client_id"] = "cid"
         storage.save_credential(USER_ID, source_id, "client_secret", "secret")
+        return config
 
-        result = _invoke_with_mocks(cli_runner, ["auth", "status"], storage, config)
+    @pytest.mark.parametrize("plugin", [plugin for _source, plugin in PROVIDERS])
+    def test_status_reads_connected_without_a_sync_first(
+        self, cli_runner: CliRunner, storage: StorageManager, plugin: str
+    ) -> None:
+        source_id = f"{plugin}_work"
+        config = self._yaml_held(storage, source_id, plugin)
 
-        assert f"  {source_id} ({plugin}): enabled, not connected" in result.output
-
-        # The anchor: the same source reads connected once the token is
-        # somewhere ``auth disconnect`` can reach it.
-        storage.save_credential(USER_ID, source_id, "refresh_token", "in-the-db")
         result = _invoke_with_mocks(cli_runner, ["auth", "status"], storage, config)
 
         assert f"  {source_id} ({plugin}): enabled, connected" in result.output
+
+    @pytest.mark.parametrize(("source", "plugin"), PROVIDERS)
+    def test_disconnect_deletes_the_token_the_status_reported(
+        self,
+        cli_runner: CliRunner,
+        storage: StorageManager,
+        source: str,
+        plugin: str,
+    ) -> None:
+        """The two verbs agree, which is what reading the row is for."""
+        source_id = f"{plugin}_work"
+        config = self._yaml_held(storage, source_id, plugin)
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            [
+                "auth",
+                "disconnect",
+                "--source",
+                source,
+                "--source-id",
+                source_id,
+                "--yes",
+            ],
+            storage,
+            config,
+        )
+
+        assert result.exit_code == 0, result.output
+        assert storage.get_credential(USER_ID, source_id, "refresh_token") is None

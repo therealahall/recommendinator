@@ -54,7 +54,6 @@ from src.settings.service import (
     set_secret,
     setting_view,
 )
-from src.storage.credential_migration import migrate_config_credentials
 from src.storage.manager import StorageManager, UnknownUserError, unset_if_none
 from src.storage.source_migration import configured_source_plugins
 from src.utils.item_serialization import item_to_dict
@@ -92,6 +91,7 @@ from src.web.trakt_auth import (
 from src.ingestion.plugin_base import ConfigField, SourcePlugin
 from src.web.oauth_sources import REFRESH_TOKEN_KEY, may_revoke
 from src.web.sync_sources import (
+    SOURCE_ID_RULE,
     ResolvedInput,
     SourceConfigError,
     build_config_view,
@@ -100,6 +100,7 @@ from src.web.sync_sources import (
     create_source,
     delete_source,
     get_available_sync_sources,
+    is_valid_source_id,
     list_available_plugins,
     migrate_source,
     resolve_inputs,
@@ -363,10 +364,6 @@ def update(ctx: click.Context, source: str, workers: int | None) -> None:
             status = "enabled" if info.enabled else "disabled"
             click.echo(f"  {info.id:20s} plugin={info.plugin_display_name} [{status}]")
         return
-
-    # Migrate any config-file credentials to encrypted DB storage. The source
-    # label and plugin migrations run once in the top-level ``cli`` callback.
-    migrate_config_credentials(config, storage)
 
     # Check if embeddings are enabled
     use_embeddings = get_feature_flags(config)["use_embeddings"]
@@ -1779,6 +1776,19 @@ _SOURCE_ID_HELP = (
 )
 
 
+def _auth_source_id(source: str, source_id: str | None) -> str:
+    """The id an auth verb acts on, refused unless the routes could address it.
+
+    The id is a credential key, so an unvalidated one files a token where no
+    web route can ever reach it.
+    """
+    if source_id is None:
+        return _AUTH_PLUGINS[source]
+    if not is_valid_source_id(source_id):
+        _abort_with(f"--source-id {SOURCE_ID_RULE}")
+    return source_id
+
+
 def _is_trakt_enabled(
     config: dict[str, Any],
     storage: StorageManager,
@@ -1879,7 +1889,7 @@ def auth_connect(
     """Connect an OAuth source by authenticating in browser."""
     config = ctx.obj["config"]
     storage = _require_storage(ctx)
-    connecting = source_id or _AUTH_PLUGINS[source]
+    connecting = _auth_source_id(source, source_id)
 
     if source == "trakt":
         _connect_trakt(config, storage, connecting, user_id)
@@ -2022,7 +2032,7 @@ def auth_disconnect(
     config = ctx.obj["config"]
     storage = _require_storage(ctx)
     plugin_name = _AUTH_PLUGINS[source]
-    disconnecting = source_id or plugin_name
+    disconnecting = _auth_source_id(source, source_id)
 
     if not yes:
         if not click.confirm(f"Disconnect '{disconnecting}' for user {user_id}?"):

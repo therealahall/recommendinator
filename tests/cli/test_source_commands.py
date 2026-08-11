@@ -237,7 +237,11 @@ class TestSourceMigrate:
             "tags",
             "active",
         }
-        assert body["secrets_migrated"] == ["api_key"]
+        # Empty because the boot hook encrypts a file-held secret before any
+        # command runs, so this call finds none left in YAML to move. The web
+        # answers the same once its own startup migration has run.
+        assert body["secrets_migrated"] == []
+        assert storage.credential_row_exists(1, "my_games", "api_key")
 
 
 @pytest.mark.usefixtures("registry_with_source_fakes")
