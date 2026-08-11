@@ -141,36 +141,43 @@ jobs:
         env:
           TAG: ${{ github.ref_name }}
         run: |
-          RELEASES=$(git tag --list | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V || true)
-          # The prefixes are literals, and escaped as such: unescaped, `v0.29.`
-          # is a pattern that also matches `v0129.`.
+          # Only tags that reached main are releases. A stray `v0.29.1` on a
+          # feature branch published nothing, and counting it would freeze every
+          # alias behind a commit no later release descends from.
+          RELEASES=$(git tag --list --merged refs/remotes/origin/main \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V || true)
           MAJOR_PREFIX="${TAG%%.*}."
           MINOR_PREFIX="${TAG%.*}."
 
-          # Two conditions, because version order is a comparison of tag *names*
-          # and a tag is pushable onto any commit that ever reached main: this
-          # release must be the newest in the alias's scope, and its commit must
-          # descend from the release holding the alias today. On name alone,
-          # `v9.0.0` pushed onto a year-old commit takes `latest` back to it —
-          # and a slow multi-arch backport build wins the same write by racing.
+          # Version order compares tag *names*, and a tag is pushable onto any
+          # commit that reached main. So an alias moves only to a release that
+          # is the newest its scope names and descends from every other release
+          # there — the top-named one is not the holder once a refusal happened.
+
+          # Left open: publishing is not serialised across tags, so a backport
+          # build that finishes later still overwrites the alias in the registry.
           may_move() {
-            SCOPE=$(printf '%s\n' "$RELEASES" | grep -E "^$1" || true)
-            HELD_BY=$(printf '%s\n' "$SCOPE" | grep -vxF "$TAG" | tail -1 || true)
+            # `$1` is a literal prefix: unescaped, `v0.29.` matches `v0129.` too.
+            SCOPE=$(printf '%s\n' "$RELEASES" | grep -E "^${1//./\\.}" || true)
             if [ "$(printf '%s\n' "$SCOPE" | tail -1)" != "$TAG" ]; then
               echo "$2 stays put: $TAG is not the newest release it names." >&2
-            elif [ -n "$HELD_BY" ] && ! git merge-base --is-ancestor "$HELD_BY^{commit}" "$TAG^{commit}"; then
-              echo "$2 stays on $HELD_BY: $TAG does not descend from it." >&2
-            else
-              echo true
+              echo false
               return
             fi
-            echo false
+            for OTHER in $(printf '%s\n' "$SCOPE" | grep -vxF "$TAG" || true); do
+              if ! git merge-base --is-ancestor "$OTHER^{commit}" "$TAG^{commit}"; then
+                echo "$2 stays on $OTHER: $TAG does not descend from it." >&2
+                echo false
+                return
+              fi
+            done
+            echo true
           }
 
           {
             echo "highest_overall=$(may_move '' latest)"
-            echo "highest_in_major=$(may_move "${MAJOR_PREFIX//./\\.}" "${TAG%%.*}")"
-            echo "highest_in_minor=$(may_move "${MINOR_PREFIX//./\\.}" "${TAG%.*}")"
+            echo "highest_in_major=$(may_move "$MAJOR_PREFIX" "${TAG%%.*}")"
+            echo "highest_in_minor=$(may_move "$MINOR_PREFIX" "${TAG%.*}")"
           } >> "$GITHUB_OUTPUT"
 
   # The gate CI runs, run again on the tagged tree. Nothing else establishes

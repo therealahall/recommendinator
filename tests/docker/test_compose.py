@@ -129,6 +129,13 @@ _CHOWN = re.compile(
     r"\bchown\s+(?P<recursive>-R\s+)?(?P<owner>\S+)(?P<paths>(?:\s+[^\s&|;]+)+)"
 )
 
+# `mkdir [-p] <path>...`, bounded the same way.
+_MKDIR = re.compile(r"\bmkdir(?P<arguments>(?:\s+[^\s&|;]+)+)")
+
+# A store path shaped like the sidecar's, for the parse tests that drive the
+# branches the real Dockerfile only ever takes one of.
+_SYNTHETIC_STORE = "/var/lib/ollama/.ollama"
+
 # The entrypoint's fallback for the seed it copies on first run, as `sh`'s
 # assign-if-unset form spells it.
 _SEED_DEFAULT = re.compile(r'^:\s*"\$\{SEED_CONFIG:=(?P<path>[^}"]+)\}"', re.MULTILINE)
@@ -411,17 +418,41 @@ def _chowned_to(user: str) -> re.Pattern[str]:
     return re.compile(rf"chown=?\s*(?:-R\s+)?{re.escape(user)}[:\s]")
 
 
-def _run_gives_directory_to(run: str, directory: str, user: str) -> bool:
-    """Whether *run* leaves *directory* itself owned by *user*.
+def _operands(arguments: str) -> list[str]:
+    """The non-flag operands of a shell command, trailing separators dropped.
 
-    ``mkdir -p <directory> && chown <user> <parent>`` satisfies two independent
-    searches over one RUN while leaving the directory root-owned, so the
-    chown's operands are read rather than its presence noted.
+    ``chown u /srv/store/`` names the directory ``chown u /srv/store`` does.
     """
+    return [
+        posixpath.normpath(word)
+        for word in arguments.split()
+        if not word.startswith("-")
+    ]
+
+
+def _run_creates_directory(run: str, directory: str) -> bool:
+    """Whether *run* creates *directory* itself, rather than an ancestor."""
+    return any(
+        directory in _operands(match.group("arguments"))
+        for match in _MKDIR.finditer(run)
+    )
+
+
+def _run_gives_directory_to(run: str, directory: str, user: str) -> bool:
+    """Whether *run* both creates *directory* and leaves it owned by *user*.
+
+    ``useradd --create-home`` does not create the store beneath the home it
+    makes, so a recursive chown of an ancestor passes for a directory the image
+    never had.
+    """
+    # Split across two RUNs this is a false negative, deliberately: the image
+    # does not split them, and a loud failure beats a weaker claim.
+    if not _run_creates_directory(run, directory):
+        return False
     for chown in _CHOWN.finditer(run):
         if chown.group("owner").split(":")[0] != user:
             continue
-        for path in chown.group("paths").split():
+        for path in _operands(chown.group("paths")):
             if path == directory or (
                 chown.group("recursive") and directory.startswith(f"{path}/")
             ):
@@ -924,6 +955,37 @@ class TestEveryServiceIsConfined:
         } == {"ollama"}
 
 
+class TestTheMountPointParseReadsTheCommand:
+    """The predicate the sidecar assertion rests on, over strings of its own.
+
+    Run against the Dockerfile alone it answers True and nothing says why, so
+    every branch of it is driven here instead.
+    """
+
+    @pytest.mark.parametrize(
+        ("run", "expected"),
+        [
+            (f"mkdir -p {_SYNTHETIC_STORE} && chown ollama {_SYNTHETIC_STORE}", True),
+            (f"mkdir -p {_SYNTHETIC_STORE}/ && chown ollama {_SYNTHETIC_STORE}", True),
+            (f"mkdir -p {_SYNTHETIC_STORE} && chown ollama {_SYNTHETIC_STORE}/", True),
+            (f"mkdir -p {_SYNTHETIC_STORE} && chown -R ollama /var/lib", True),
+            (f"mkdir -p {_SYNTHETIC_STORE} && chown ollama /var/lib/ollama", False),
+            (f"mkdir -p {_SYNTHETIC_STORE} && chown -R ollama /var/lib/ollam", False),
+            (f"mkdir -p {_SYNTHETIC_STORE} && chown -R root {_SYNTHETIC_STORE}", False),
+            (f"chown -R ollama {_SYNTHETIC_STORE}", False),
+            ("chown -R ollama /var/lib/ollam", False),
+            ("useradd --create-home ollama && chown -R ollama /var/lib/ollama", False),
+        ],
+    )
+    def test_a_run_gives_the_directory_away_only_when_it_makes_one(
+        self, run: str, expected: bool
+    ) -> None:
+        """The last case is the regression: `useradd` makes the home and not the
+        store under it, so the recursive chown lands on a path the image does
+        not have. A trailing separator names the same directory, either side."""
+        assert _run_gives_directory_to(run, _SYNTHETIC_STORE, "ollama") is expected
+
+
 class TestTheSidecarImageStandsOnItsOwn:
     """The published image is a supported way to run this, so what keeps the
     sidecar honest belongs in it rather than in a compose file the person running
@@ -977,4 +1039,4 @@ class TestTheSidecarImageStandsOnItsOwn:
         assert runs, "no RUN parsed out of the sidecar Dockerfile"
         assert any(
             _run_gives_directory_to(run, store, user) for run in runs
-        ), f"no RUN gives {store} to {user}; the model volume mounts root-owned"
+        ), f"no RUN creates {store} for {user}; the model volume mounts root-owned"
