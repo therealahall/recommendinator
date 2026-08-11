@@ -304,6 +304,27 @@ def get_sync_handler(
     return None
 
 
+def resolve_input_for_plugin(
+    source_id: str,
+    plugin_name: str,
+    config: dict[str, Any] | None,
+    storage: StorageManager | None = None,
+    user_id: int = 1,
+) -> ResolvedInput | None:
+    """The enabled source *source_id*, or ``None`` unless it runs *plugin_name*.
+
+    An OAuth route's source id arrives from the client and becomes a credential
+    key. Unchecked, ``POST /api/gog/exchange?source_id=trakt_work`` files a GOG
+    token where the Trakt plugin reads one.
+    """
+    resolved = get_sync_handler(
+        source_id, config or {}, storage=storage, user_id=user_id
+    )
+    if resolved is None or resolved.plugin.name != plugin_name:
+        return None
+    return resolved
+
+
 def validate_source_config(
     source_id: str,
     config: dict[str, Any],
@@ -354,7 +375,7 @@ class SourceConfigError(Exception):
         self.message = message
 
 
-def _is_nonempty_secret_value(value: Any) -> TypeGuard[str]:
+def is_nonempty_secret_value(value: Any) -> TypeGuard[str]:
     """Return True when *value* should count as a stored secret.
 
     Sensitive fields are always strings on the wire. Any other type
@@ -501,7 +522,7 @@ def build_config_view(
             user_id, source_id, name
         ):
             is_set = True
-        elif not migrated and _is_nonempty_secret_value(yaml_entry.get(name)):
+        elif not migrated and is_nonempty_secret_value(yaml_entry.get(name)):
             is_set = True
         secret_status[name] = is_set
 
@@ -564,7 +585,7 @@ def migrate_source(
     secrets_migrated: list[str] = []
     for name in sensitive_names:
         value = yaml_entry.get(name)
-        if not _is_nonempty_secret_value(value):
+        if not is_nonempty_secret_value(value):
             continue
         storage.save_credential(user_id, source_id, name, value.strip())
         secrets_migrated.append(name)

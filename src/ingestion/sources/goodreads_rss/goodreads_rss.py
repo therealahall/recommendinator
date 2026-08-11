@@ -39,6 +39,7 @@ from src.ingestion.plugin_base import (
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.utils.request_errors import scrub_request_error
+from src.utils.text import sanitize_for_log
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
@@ -351,7 +352,11 @@ class GoodreadsRssPlugin(SourcePlugin):
             response.raise_for_status()
         except requests.RequestException as error:
             scrubbed = scrub_request_error(error)
-            logger.error("Error fetching Goodreads shelf '%s': %s", shelf, scrubbed)
+            logger.error(
+                "Error fetching Goodreads shelf '%s': %s",
+                sanitize_for_log(shelf),
+                sanitize_for_log(scrubbed),
+            )
             raise GoodreadsRssError(
                 self.name, f"Failed to fetch shelf '{shelf}': {scrubbed}"
             ) from error

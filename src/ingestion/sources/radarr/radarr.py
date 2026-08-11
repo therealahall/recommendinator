@@ -7,6 +7,7 @@ import requests
 
 from src.ingestion.sources.arr_base import ArrPlugin
 from src.models.content import ContentType
+from src.utils.text import exception_for_log
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +98,9 @@ def _fetch_radarr_collections(base_url: str, api_key: str) -> dict[int, dict[str
         response = requests.get(url, headers=headers, timeout=30)
         response.raise_for_status()
     except requests.RequestException as error:
-        logger.warning("Could not fetch Radarr collections: %s", error)
+        logger.warning(
+            "Could not fetch Radarr collections: %s", exception_for_log(error)
+        )
         return {}
 
     data = response.json()

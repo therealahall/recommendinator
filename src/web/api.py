@@ -41,13 +41,19 @@ from src.settings.service import (
     reset_setting,
     set_secret,
 )
-from src.storage.manager import UNSET, VALID_SORT_OPTIONS, UnknownUserError
+from src.storage.manager import (
+    UNSET,
+    VALID_SORT_OPTIONS,
+    StorageManager,
+    UnknownUserError,
+)
 from src.utils.item_serialization import item_to_dict
 from src.utils.series import MAX_SEASONS
 from src.utils.sorting import MAX_SEARCH_LENGTH
 from src.utils.text import exception_for_log, humanize_source_id, sanitize_for_log
 from src.web.enrichment_manager import get_enrichment_manager
 from src.web.epic_auth import (
+    EPIC_PLUGIN,
     EPIC_SOURCE_ID,
     EpicAuthError,
     get_epic_auth_url,
@@ -59,6 +65,7 @@ from src.web.epic_auth import exchange_code_for_tokens as exchange_epic_tokens
 from src.web.epic_auth import extract_code_from_input as extract_epic_code
 from src.web.export import export_items_csv, export_items_json
 from src.web.gog_auth import (
+    GOG_PLUGIN,
     GOG_SOURCE_ID,
     GogAuthError,
     get_gog_auth_url,
@@ -97,6 +104,7 @@ from src.web.sync_sources import (
     list_available_plugins,
     migrate_source,
     redact_credentials,
+    resolve_input_for_plugin,
     resolve_inputs,
     resolve_source_plugin,
     set_source_enabled_state,
@@ -104,6 +112,7 @@ from src.web.sync_sources import (
     update_source_config_values,
 )
 from src.web.trakt_auth import (
+    TRAKT_PLUGIN,
     TRAKT_SOURCE_ID,
     DevicePollStatus,
     TraktAuthError,
@@ -2224,6 +2233,34 @@ def _source_id_query(default: str) -> Any:
     return Query(default, pattern=SOURCE_ID_PATTERN)
 
 
+def _disconnect_source(
+    source_id: str,
+    plugin_name: str,
+    config: dict[str, Any],
+    storage: StorageManager,
+    user_id: int,
+    detail: str,
+) -> None:
+    """Delete *source_id*'s refresh token, or 404 with *detail*.
+
+    An id this route may not act on gets the same refusal as one holding no
+    token: telling them apart names sources the caller did not ask about.
+    """
+    if (
+        resolve_input_for_plugin(source_id, plugin_name, config, storage, user_id)
+        is None
+    ):
+        logger.info(
+            "Disconnect refused for source_id=%s on plugin %s",
+            sanitize_for_log(source_id),
+            sanitize_for_log(plugin_name),
+        )
+        raise HTTPException(status_code=404, detail=detail)
+
+    if not storage.delete_credential(user_id, source_id, "refresh_token"):
+        raise HTTPException(status_code=404, detail=detail)
+
+
 @router.get("/gog/status")
 def get_gog_status(
     config: RequiredConfig,
@@ -2235,7 +2272,7 @@ def get_gog_status(
     Returns:
         Status of GOG integration (enabled, connected, auth_url).
     """
-    enabled = is_gog_enabled(config, source_id)
+    enabled = is_gog_enabled(config, storage=storage, source_id=source_id)
     connected = has_gog_token(config, storage=storage, source_id=source_id)
 
     return {
@@ -2260,10 +2297,10 @@ def exchange_gog_token(
     Returns:
         Success message. The token is never included in the HTTP response.
     """
-    if not is_gog_enabled(config, source_id):
+    if not is_gog_enabled(config, storage=storage, source_id=source_id):
         raise HTTPException(
             status_code=400,
-            detail="GOG is not enabled. Set inputs.gog.enabled: true in config.yaml first.",
+            detail="GOG is not enabled for that source.",
         )
 
     try:
@@ -2299,6 +2336,7 @@ def exchange_gog_token(
 
 @router.delete("/gog/token")
 def disconnect_gog(
+    config: RequiredConfig,
     storage: RequiredStorage,
     source_id: str = _source_id_query(GOG_SOURCE_ID),
     user_id: int = Query(1, ge=1),
@@ -2307,9 +2345,14 @@ def disconnect_gog(
 
     Mirrors the CLI `auth disconnect --source gog` command.
     """
-    deleted = storage.delete_credential(user_id, source_id, "refresh_token")
-    if not deleted:
-        raise HTTPException(status_code=404, detail="No active GOG connection found")
+    _disconnect_source(
+        source_id,
+        GOG_PLUGIN,
+        config,
+        storage,
+        user_id,
+        "No active GOG connection found",
+    )
     logger.info(
         "Disconnected GOG account %s for user %s", sanitize_for_log(source_id), user_id
     )
@@ -2332,7 +2375,7 @@ def get_epic_status(
     Returns:
         Status of Epic Games integration (enabled, connected, auth_url).
     """
-    enabled = is_epic_enabled(config, source_id)
+    enabled = is_epic_enabled(config, storage=storage, source_id=source_id)
     connected = has_epic_token(config, storage=storage, source_id=source_id)
 
     auth_url: str | None = None
@@ -2366,7 +2409,7 @@ def exchange_epic_token(
     Returns:
         Success message. The token is never included in the HTTP response.
     """
-    if not is_epic_enabled(config, source_id):
+    if not is_epic_enabled(config, storage=storage, source_id=source_id):
         raise HTTPException(
             status_code=400,
             detail="Epic Games is not enabled in the current configuration.",
@@ -2407,6 +2450,7 @@ def exchange_epic_token(
 
 @router.delete("/epic/token")
 def disconnect_epic(
+    config: RequiredConfig,
     storage: RequiredStorage,
     source_id: str = _source_id_query(EPIC_SOURCE_ID),
     user_id: int = Query(1, ge=1),
@@ -2415,11 +2459,14 @@ def disconnect_epic(
 
     Mirrors the CLI `auth disconnect --source epic` command.
     """
-    deleted = storage.delete_credential(user_id, source_id, "refresh_token")
-    if not deleted:
-        raise HTTPException(
-            status_code=404, detail="No active Epic Games connection found"
-        )
+    _disconnect_source(
+        source_id,
+        EPIC_PLUGIN,
+        config,
+        storage,
+        user_id,
+        "No active Epic Games connection found",
+    )
     logger.info(
         "Disconnected Epic Games account %s for user %s",
         sanitize_for_log(source_id),
@@ -2576,6 +2623,7 @@ def poll_trakt_device_approval(
 
 @router.delete("/trakt/token")
 def disconnect_trakt(
+    config: RequiredConfig,
     storage: RequiredStorage,
     source_id: str = _source_id_query(TRAKT_SOURCE_ID),
     user_id: int = Query(1, ge=1),
@@ -2584,9 +2632,14 @@ def disconnect_trakt(
 
     Mirrors the CLI `auth disconnect --source trakt` command.
     """
-    deleted = storage.delete_credential(user_id, source_id, "refresh_token")
-    if not deleted:
-        raise HTTPException(status_code=404, detail="No active Trakt connection found")
+    _disconnect_source(
+        source_id,
+        TRAKT_PLUGIN,
+        config,
+        storage,
+        user_id,
+        "No active Trakt connection found",
+    )
     logger.info(
         "Disconnected Trakt account %s for user %s",
         sanitize_for_log(source_id),

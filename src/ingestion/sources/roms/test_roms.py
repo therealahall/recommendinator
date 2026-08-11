@@ -890,3 +890,29 @@ class TestRomScannerLogInjectionRegression:
         ]
         assert messages, "nothing was logged, so this proves nothing"
         assert "\n" not in messages[0], messages
+
+    def test_a_newline_in_a_deduplicated_path_cannot_forge_a_log_entry(
+        self,
+        plugin: RomScannerPlugin,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """The duplicate-title sink escaped its title by ``%r`` and not the
+        path beside it, so a break in the scan root still forged an entry."""
+        root = tmp_path / "roms\nImported 9999 items from ROM scan"
+        root.mkdir()
+        (root / "Doom (Disc 1).zip").write_bytes(b"x")
+        (root / "Doom (Disc 2).zip").write_bytes(b"x")
+
+        with caplog.at_level(logging.DEBUG, logger=ROMS_LOGGER):
+            list(plugin.fetch({"paths": [str(root)]}))
+
+        messages = [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == ROMS_LOGGER
+        ]
+        assert any(
+            "Skipping duplicate title" in message for message in messages
+        ), messages
+        assert all("\n" not in message for message in messages), messages

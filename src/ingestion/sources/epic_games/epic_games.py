@@ -27,6 +27,7 @@ from src.ingestion.plugin_base import (
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.utils.progress import log_progress
+from src.utils.text import sanitize_for_log
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
@@ -367,16 +368,16 @@ def _fetch_epic_games(
         except EpicGamesAPIError:
             logger.warning(
                 "Failed to fetch metadata for %s (%s), skipping.",
-                app_name,
-                catalog_item_id,
+                sanitize_for_log(app_name),
+                sanitize_for_log(catalog_item_id),
             )
             continue
 
         if game_metadata is None:
             logger.warning(
                 "No metadata found for %s (%s), skipping.",
-                app_name,
-                catalog_item_id,
+                sanitize_for_log(app_name),
+                sanitize_for_log(catalog_item_id),
             )
             continue
 

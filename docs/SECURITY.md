@@ -40,9 +40,14 @@ completion history sit in the database as plaintext, and so do the embeddings.
 - A GOG, Epic Games or Trakt refresh token is persisted under its source's id —
   both the one the connect flow obtains and the one a sync rotates — so a source
   reads back what it was connected with and removing it takes the token too.
+- Every OAuth route refuses a source id whose plugin is not the route's own. The
+  id is the credential key, so an unchecked one files a GOG token where Trakt
+  reads its own.
 - An upgrade does not move tokens an earlier release stored under the plugin's
   name: several sources can share a plugin, and nothing records which owns the
-  token. The sync warns, names the source, and asks you to reconnect it.
+  token. The sync warns, names the source, and asks you to reconnect it — a copy
+  the source already holds earns no silence, since these tokens are single-use
+  and that copy may be the spent one.
 - **No endpoint returns a credential value.** They are write-only from the API.
 - The test suite never touches the real key. An autouse fixture in the
   repository-root `conftest.py` points `RECOMMENDINATOR_KEY_PATH` at a per-test

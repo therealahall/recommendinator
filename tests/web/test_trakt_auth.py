@@ -239,34 +239,54 @@ class TestSaveTraktToken:
 class TestResolveTraktClientCredentials:
     """Tests for resolve_trakt_client_credentials."""
 
-    def test_resolves_from_resolved_inputs(self) -> None:
+    @pytest.fixture()
+    def storage(self, tmp_path: Path) -> StorageManager:
+        """Create a StorageManager with a temp DB."""
+        return StorageManager(sqlite_path=tmp_path / "test.db")
+
+    @staticmethod
+    def _trakt_source(source_id: str = "trakt", **fields: str) -> dict[str, Any]:
+        return {"inputs": {source_id: {"plugin": "trakt", "enabled": True, **fields}}}
+
+    def test_resolves_from_resolved_inputs(self, storage: StorageManager) -> None:
         """client_id and client_secret come from the resolved Trakt config."""
-        storage = MagicMock(spec=StorageManager)
-        resolved = MagicMock()
-        resolved.source_id = "trakt"
-        resolved.config = {"client_id": "cid", "client_secret": "secret"}
-        with patch("src.web.trakt_auth.resolve_inputs", return_value=[resolved]):
-            client_id, client_secret = resolve_trakt_client_credentials({}, storage)
+        config = self._trakt_source(client_id="cid", client_secret="secret")
 
-        assert client_id == "cid"
-        assert client_secret == "secret"
+        assert resolve_trakt_client_credentials(config, storage) == ("cid", "secret")
 
-    def test_missing_source_raises(self) -> None:
+    def test_missing_source_raises(self, storage: StorageManager) -> None:
         """When no Trakt source is resolved, an error is raised."""
-        storage = MagicMock(spec=StorageManager)
-        with patch("src.web.trakt_auth.resolve_inputs", return_value=[]):
-            with pytest.raises(TraktAuthError, match="not configured"):
-                resolve_trakt_client_credentials({}, storage)
+        with pytest.raises(TraktAuthError, match="not configured"):
+            resolve_trakt_client_credentials({}, storage)
 
-    def test_missing_secret_raises(self) -> None:
+    def test_missing_secret_raises(self, storage: StorageManager) -> None:
         """When the secret is absent, an actionable error is raised."""
-        storage = MagicMock(spec=StorageManager)
-        resolved = MagicMock()
-        resolved.source_id = "trakt"
-        resolved.config = {"client_id": "cid", "client_secret": ""}
-        with patch("src.web.trakt_auth.resolve_inputs", return_value=[resolved]):
-            with pytest.raises(TraktAuthError, match="client id and secret"):
-                resolve_trakt_client_credentials({}, storage)
+        config = self._trakt_source(client_id="cid")
+
+        with pytest.raises(TraktAuthError, match="client id and secret"):
+            resolve_trakt_client_credentials(config, storage)
+
+    def test_a_source_running_another_plugin_is_refused(
+        self, storage: StorageManager
+    ) -> None:
+        """The device flow's token is stored under the id it is asked about.
+
+        The refusal is "not configured" rather than "client id and secret":
+        unbound, this source resolves and only its missing fields complain.
+        """
+        config = {
+            "inputs": {
+                "my_games": {
+                    "plugin": "gog",
+                    "enabled": True,
+                    "client_id": "cid",
+                    "client_secret": "secret",
+                }
+            }
+        }
+
+        with pytest.raises(TraktAuthError, match="not configured"):
+            resolve_trakt_client_credentials(config, storage, source_id="my_games")
 
 
 class TestIsTraktConnected:

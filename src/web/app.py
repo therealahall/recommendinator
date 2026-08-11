@@ -15,6 +15,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.utils import is_body_allowed_for_status_code
+from starlette.exceptions import HTTPException
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
 from src.cli.config import (
@@ -68,32 +70,38 @@ def _quotable(value: float) -> float | str:
     return value if isfinite(value) else repr(value)
 
 
-def _renderable(value: str) -> str:
-    """``_quotable``'s sibling for text: a lone surrogate will not encode."""
-    try:
-        value.encode("utf-8")
-    except UnicodeEncodeError:
-        return repr(value)
-    return value
+async def _validation_refusal_json_can_carry(
+    _request: Request, exc: Exception
+) -> JSONResponse:
+    """Quote the rejected input back in a body ``json.dumps`` can write.
 
-
-async def _refusal_json_can_carry(_request: Request, exc: Exception) -> JSONResponse:
-    """Answer 422 with a body the encode can carry.
-
-    ``json.loads`` accepts ``Infinity``, ``NaN`` and an unpaired ``\\ud800``,
-    and the handler quotes the rejected input back, so refusing one answered
-    500. Starlette builds this response, so it names the app's class.
+    Only the non-finite float needs quoting: ``json.dumps`` has no
+    representation for it, while the response class encodes a lone surrogate.
     """
     # Starlette types every handler against bare Exception and dispatches this
     # one on the registered class alone.
     errors = cast(RequestValidationError, exc).errors()
     return SurrogateSafeJSONResponse(
         status_code=422,
-        content={
-            "detail": jsonable_encoder(
-                errors, custom_encoder={float: _quotable, str: _renderable}
-            )
-        },
+        content={"detail": jsonable_encoder(errors, custom_encoder={float: _quotable})},
+    )
+
+
+async def _raised_refusal_json_can_carry(_request: Request, exc: Exception) -> Response:
+    """Render the refusals an endpoint raises for itself.
+
+    FastAPI renders ``HTTPException`` on a stock ``JSONResponse``, which
+    ``default_response_class`` never reaches — so a detail quoting a rejected
+    key back answered 500 when the key held a lone surrogate.
+    """
+    refusal = cast(HTTPException, exc)
+    # A 204 or 304 may not carry a body, and FastAPI's handler honours that.
+    if not is_body_allowed_for_status_code(refusal.status_code):
+        return Response(status_code=refusal.status_code, headers=refusal.headers)
+    return SurrogateSafeJSONResponse(
+        status_code=refusal.status_code,
+        content={"detail": refusal.detail},
+        headers=refusal.headers,
     )
 
 
@@ -429,7 +437,14 @@ def create_app(config_path: Path | None = None) -> FastAPI:
 
     app.add_middleware(SecurityHeadersMiddleware)
 
-    app.add_exception_handler(RequestValidationError, _refusal_json_can_carry)
+    # FastAPI supplies both of these, and both of its own render on a stock
+    # JSONResponse that default_response_class never reaches. Keyed on
+    # Starlette's HTTPException so the MRO walk catches FastAPI's subclass and
+    # a 404 raised inside StaticFiles alike.
+    app.add_exception_handler(
+        RequestValidationError, _validation_refusal_json_can_carry
+    )
+    app.add_exception_handler(HTTPException, _raised_refusal_json_can_carry)
 
     # Router-level, so an endpoint is authenticated by being registered rather
     # than by its author remembering. Nothing under /api is exempt — including
