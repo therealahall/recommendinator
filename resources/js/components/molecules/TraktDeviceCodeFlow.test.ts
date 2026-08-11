@@ -48,11 +48,13 @@ function makeTimer() {
 // Not "trakt": the flow belongs to the source being connected, whatever the
 // operator named it.
 const SOURCE_ID = 'trakt_work'
+const SOURCE_NAME = 'Trakt (work)'
 
 function mountFlow(timer: ReturnType<typeof makeTimer>) {
   return mount(TraktDeviceCodeFlow, {
     props: {
       sourceId: SOURCE_ID,
+      sourceName: SOURCE_NAME,
       setTimer: timer.setTimer,
       clearTimer: timer.clearTimer,
     },
@@ -136,7 +138,12 @@ describe('TraktDeviceCodeFlow', () => {
     setTraktEnabled(false)
     const first = mountFlow(makeTimer())
     const second = mount(TraktDeviceCodeFlow, {
-      props: { sourceId: 'trakt_home', setTimer: vi.fn(), clearTimer: vi.fn() },
+      props: {
+        sourceId: 'trakt_home',
+        sourceName: 'Trakt (home)',
+        setTimer: vi.fn(),
+        clearTimer: vi.fn(),
+      },
       attachTo: document.body,
     })
 
@@ -148,6 +155,36 @@ describe('TraktDeviceCodeFlow', () => {
     expect(
       second.get('[data-testid="trakt-connect-btn"]').attributes('aria-describedby'),
     ).toBe(hintId(second))
+    first.unmount()
+    second.unmount()
+  })
+
+  it('names the connect button for its source, not just for Trakt', () => {
+    const first = mountFlow(makeTimer())
+    const second = mount(TraktDeviceCodeFlow, {
+      props: {
+        sourceId: 'trakt_home',
+        sourceName: 'Trakt (home)',
+        setTimer: vi.fn(),
+        clearTimer: vi.fn(),
+      },
+      attachTo: document.body,
+    })
+
+    // Two expanded Trakt panels put two "Connect Trakt Account" entries in an
+    // element list that shows names and nothing else.
+    const button = (wrapper: typeof first) =>
+      wrapper.get('[data-testid="trakt-connect-btn"]')
+    expect(button(first).attributes('aria-label')).toBe(
+      'Connect Trakt Account for Trakt (work)',
+    )
+    expect(button(second).attributes('aria-label')).toBe(
+      'Connect Trakt Account for Trakt (home)',
+    )
+    // The visible words stay inside the accessible name (WCAG 2.5.3).
+    expect(button(first).attributes('aria-label')).toContain(
+      button(first).text(),
+    )
     first.unmount()
     second.unmount()
   })
@@ -236,6 +273,11 @@ describe('TraktDeviceCodeFlow', () => {
     expect(codePanelVisible(wrapper)).toBe(false)
     // No further poll scheduled once connected.
     expect(timer.hasPending()).toBe(false)
+    // The parent unmounts this component on a clean re-read, so grabbing focus
+    // here would only fight the parent's own move.
+    expect(document.activeElement).not.toBe(
+      wrapper.get('[data-testid="trakt-result-panel"]').element,
+    )
   })
 
   it('shows an error with retry on expired', async () => {
@@ -344,6 +386,15 @@ describe('TraktDeviceCodeFlow', () => {
     expect(wrapper.get('.trakt-flow-status').text()).toContain(
       'could not be re-read',
     )
+
+    // In a browser the code panel is now v-show-hidden and the focus-fixup
+    // rule has already dropped its occupant to <body>. jsdom implements no
+    // such rule, so this proves the move, not the loss that motivates it.
+    const result = wrapper.get('[data-testid="trakt-result-panel"]')
+    expect(document.activeElement).toBe(result.element)
+    expect(result.attributes('role')).toBe('group')
+    expect(result.attributes('aria-label')).toBe('Trakt (work) connection result')
+    wrapper.unmount()
   })
 
   it('keeps a single persistent live region across starting → awaiting → connected', async () => {
@@ -381,6 +432,27 @@ describe('TraktDeviceCodeFlow', () => {
     // Same node, now carrying the error styling — colour is not the sole signal.
     expect(wrapper.get('.trakt-flow-status').element).toBe(region)
     expect(region.classList.contains('trakt-flow-status--error')).toBe(true)
+  })
+
+  it('names its source in the live region, which a timer drives', async () => {
+    mockPost.mockResolvedValueOnce(FLOW)
+    const wrapper = mountFlow(makeTimer())
+    const region = wrapper.get('.trakt-flow-status').element
+    // Silent before the flow starts, so the prefix cannot arrive on its own.
+    expect(region.textContent).toBe('')
+
+    await wrapper.get('[data-testid="trakt-connect-btn"]').trigger('click')
+    await flushPromises()
+
+    // The poll announces on a background timer, so a user standing in another
+    // expanded panel hears this. aria-atomic reads the prefix with it.
+    expect(wrapper.get('.trakt-flow-status').element).toBe(region)
+    expect(wrapper.get('.trakt-flow-status .sr-only').text()).toBe(
+      'Trakt (work):',
+    )
+    expect(region.textContent).toContain(
+      'Trakt (work): Waiting for you to approve',
+    )
   })
 
   it('stops polling on unmount', async () => {

@@ -4,6 +4,7 @@ import { domId } from '@/utils/format'
 
 const props = defineProps<{
   sourceId: string
+  sourceName: string
   authUrl: string | null
   expectedOrigin: string
   helpText: string
@@ -17,6 +18,18 @@ const emit = defineEmits<{
 const codeInput = ref('')
 const showCodeStep = ref(false)
 const codeInputId = computed(() => domId('oauth-code', props.sourceId))
+// Two expanded panels of one plugin render each of these twice. The enclosing
+// group disambiguates them on Tab, but NVDA's element list is name-only, so
+// the source name has to be in the name itself.
+const connectLabel = computed(
+  () => `Connect ${props.serviceName} for ${props.sourceName}`,
+)
+const submitLabel = computed(
+  () => `Connect ${props.sourceName} with the pasted code`,
+)
+const codeLabel = computed(
+  () => `${props.serviceName} authorization code for ${props.sourceName}`,
+)
 
 function openAuth() {
   if (!props.authUrl) return
@@ -49,13 +62,13 @@ function submitCode() {
 
 <template>
   <div>
-    <button class="btn btn-primary" @click="openAuth">Connect {{ serviceName }}</button>
+    <button class="btn btn-primary" :aria-label="connectLabel" @click="openAuth">Connect {{ serviceName }}</button>
     <div v-if="showCodeStep">
       <p class="help-text my-2">{{ helpText }}</p>
       <div class="oauth-input-row">
-        <label :for="codeInputId" class="sr-only">{{ serviceName }} authorization code</label>
+        <label :for="codeInputId" class="sr-only">{{ codeLabel }}</label>
         <input :id="codeInputId" type="text" v-model="codeInput" placeholder="Paste authorization code...">
-        <button class="btn btn-primary" @click="submitCode">Connect</button>
+        <button class="btn btn-primary" :aria-label="submitLabel" @click="submitCode">Connect</button>
       </div>
       <!--
         No message rendered here: the panel's region is the one that survives

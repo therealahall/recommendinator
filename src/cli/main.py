@@ -26,6 +26,7 @@ from src.cli.config import (
     create_storage_manager,
     load_config,
 )
+from src.storage.credential_migration import migrate_config_credentials
 from src.storage.global_secrets import migrate_config_secrets
 from src.storage.settings_migration import migrate_config_settings
 from src.storage.source_migration import (
@@ -60,6 +61,10 @@ def cli(ctx: click.Context, config: Path | None) -> None:
         # Assemble the effective global config (const default < YAML < DB) so
         # the database wins over YAML for the rest of the invocation.
         migrate_config_settings(ctx.obj["config"], ctx.obj["storage"])
+        # Per-source credentials, on every command as the web app does it on
+        # every startup: while it ran inside ``update`` alone, ``auth status``
+        # read a file-held token as not connected until a sync had happened.
+        migrate_config_credentials(ctx.obj["config"], ctx.obj["storage"])
         # Relocate global provider secrets (api keys) into encrypted storage,
         # stripping them from the in-memory plaintext config.
         migrate_config_secrets(ctx.obj["config"], ctx.obj["storage"])

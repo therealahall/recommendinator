@@ -139,10 +139,9 @@ class RawRequestErrorProvider(EnrichmentProvider):
 class WrappedRequestErrorProvider(EnrichmentProvider):
     """Provider that wraps a ``requests`` failure in a ``ProviderError``.
 
-    Models the in-tree providers, which raise ``ProviderError(...) from error``.
-    The default message is the undisciplined form a third-party provider is
-    free to write: the raw exception interpolated into the text, request URL
-    and API key included.
+    Raises ``from error``, keeping the original on ``__cause__``. The default
+    message is what a third-party provider is free to write: the raw exception
+    interpolated in, API key and all.
     """
 
     def __init__(self, error: Exception, message: str | None = None) -> None:
@@ -184,6 +183,42 @@ class WrappedRequestErrorProvider(EnrichmentProvider):
             raise ProviderError(
                 self.name, self._message or f"request failed: {error}"
             ) from error
+
+
+class SuppressedContextRequestErrorProvider(WrappedRequestErrorProvider):
+    """The in-tree shape since TMDB and RAWG started raising ``from None``.
+
+    ``__cause__`` is cleared and ``__suppress_context__`` set, to keep the
+    API-key URL off a caller's traceback. Only ``__context__`` is left for the
+    manager to classify the failure from.
+    """
+
+    @property
+    def name(self) -> str:
+        return "suppressed_request"
+
+    @property
+    def display_name(self) -> str:
+        return "Suppressed Context Provider"
+
+    def enrich(
+        self, item: ContentItem, config: dict[str, Any]
+    ) -> EnrichmentResult | None:
+        try:
+            raise self._error
+        except Exception as error:
+            raise ProviderError(
+                self.name, self._message or f"request failed: {error}"
+            ) from None
+
+
+#: Both wrapping doubles, so a classification test proves it for either raise
+#: form. The two are not interchangeable to the manager: one leaves the
+#: ``requests`` failure on ``__cause__``, the other only on ``__context__``.
+WRAPPING_PROVIDERS = [
+    WrappedRequestErrorProvider,
+    SuppressedContextRequestErrorProvider,
+]
 
 
 def http_error(status_code: int, message: str = "") -> requests.HTTPError:
@@ -1569,11 +1604,14 @@ class TestPermanentProviderFailureStopsRetrying:
     retry could never succeed and nothing bounded it.
 
     Fix: the manager classifies a failure from the ``requests`` exception on
-    the exception chain — left there by the explicit ``raise ... from`` the
-    in-tree providers use, or by Python's implicit chaining for any raise
-    inside an ``except`` block, so no provider has to opt in. Transport
-    failures and 5xx/408/429 stay retryable; any other client error settles
-    the item as before, which takes it out of the queue.
+    the exception chain, which every raise form leaves reachable — ``from
+    error`` on ``__cause__``, implicit chaining and ``from None`` on
+    ``__context__``. Transport failures and 5xx/408/429 stay retryable; any
+    other client error settles the item as before, taking it out of the queue.
+
+    Both wrapping forms are exercised: reading ``__suppress_context__`` — the
+    semantically correct reading of the ``from None`` TMDB and RAWG raise —
+    would call every one of their 4xx retryable and re-flood the queue.
     """
 
     @pytest.fixture
@@ -1595,19 +1633,23 @@ class TestPermanentProviderFailureStopsRetrying:
                     "mock": {"enabled": True},
                     "raw_request": {"enabled": True},
                     "wrapped_request": {"enabled": True},
+                    "suppressed_request": {"enabled": True},
                 },
             }
         }
 
+    @pytest.mark.parametrize("provider_class", WRAPPING_PROVIDERS)
     def test_rejected_api_key_settles_the_item_regression(
         self,
         storage_manager: StorageManager,
         registry: EnrichmentRegistry,
         config: dict[str, Any],
+        provider_class: type[WrappedRequestErrorProvider],
     ) -> None:
         """A 401 leaves the queue empty, so the next run does not re-ask."""
         db_id = save_movie(storage_manager)
-        registry.register(WrappedRequestErrorProvider(http_error(401)))
+        provider = provider_class(http_error(401))
+        registry.register(provider)
 
         manager = EnrichmentManager(storage_manager, config, registry)
         manager.start_enrichment(content_type=ContentType.MOVIE)
@@ -1621,7 +1663,7 @@ class TestPermanentProviderFailureStopsRetrying:
         job_status = manager.get_status()
         assert job_status.items_not_found == 1
         assert job_status.items_failed == 0
-        assert any("wrapped_request" in error for error in job_status.errors)
+        assert any(provider.name in error for error in job_status.errors)
 
     def test_unwrapped_client_error_settles_the_item_regression(
         self,
@@ -1645,6 +1687,7 @@ class TestPermanentProviderFailureStopsRetrying:
         assert queued_ids(storage_manager) == set()
         assert manager.get_status().items_not_found == 1
 
+    @pytest.mark.parametrize("provider_class", WRAPPING_PROVIDERS)
     @pytest.mark.parametrize("status_code", [408, 429, 500, 503])
     def test_retryable_status_still_requeues_the_item(
         self,
@@ -1652,6 +1695,7 @@ class TestPermanentProviderFailureStopsRetrying:
         registry: EnrichmentRegistry,
         config: dict[str, Any],
         status_code: int,
+        provider_class: type[WrappedRequestErrorProvider],
     ) -> None:
         """Positive control: throttling and server faults keep their retry.
 
@@ -1659,7 +1703,8 @@ class TestPermanentProviderFailureStopsRetrying:
         failures that really do clear on their own.
         """
         db_id = save_movie(storage_manager)
-        registry.register(WrappedRequestErrorProvider(http_error(status_code)))
+        provider = provider_class(http_error(status_code))
+        registry.register(provider)
 
         manager = EnrichmentManager(storage_manager, config, registry)
         manager.start_enrichment(content_type=ContentType.MOVIE)
@@ -1667,7 +1712,7 @@ class TestPermanentProviderFailureStopsRetrying:
 
         status = storage_manager.get_enrichment_status(db_id)
         assert status is not None
-        assert status["enrichment_error"] == f"wrapped_request: HTTP {status_code}"
+        assert status["enrichment_error"] == f"{provider.name}: HTTP {status_code}"
         assert queued_ids(storage_manager) == {db_id}
         assert manager.get_status().items_failed == 1
 

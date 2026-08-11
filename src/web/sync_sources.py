@@ -880,6 +880,21 @@ def set_source_enabled_state(
 SOURCE_ID_PATTERN = r"^[a-z][a-z0-9_-]*$"
 _SOURCE_ID_RE = re.compile(SOURCE_ID_PATTERN)
 
+#: Said the same way wherever an id is refused, routes and CLI alike.
+SOURCE_ID_RULE = (
+    "must start with a lowercase letter and contain only lowercase letters, "
+    "digits, underscores, and hyphens"
+)
+
+
+def is_valid_source_id(source_id: str) -> bool:
+    """Whether *source_id* is safe as a URL parameter, YAML key and credential key.
+
+    ``fullmatch``, not the pattern's own anchors: ``$`` matches before a
+    trailing newline.
+    """
+    return _SOURCE_ID_RE.fullmatch(source_id) is not None
+
 
 def list_available_plugins() -> list[dict[str, Any]]:
     """Return every registered source plugin's metadata.
@@ -944,12 +959,8 @@ def create_source(
         - ``invalid_values`` — the plugin refused one of the values
         - ``sensitive_in_config`` — values has a sensitive-flagged field
     """
-    if not _SOURCE_ID_RE.fullmatch(source_id):
-        raise SourceConfigError(
-            "invalid_id",
-            "Source id must start with a lowercase letter and contain only "
-            "lowercase letters, digits, underscores, and hyphens",
-        )
+    if not is_valid_source_id(source_id):
+        raise SourceConfigError("invalid_id", f"Source id {SOURCE_ID_RULE}")
 
     if storage.get_source_config(user_id, source_id) is not None:
         raise SourceConfigError("conflict", f"Source '{source_id}' already exists")
@@ -998,8 +1009,8 @@ def create_source(
 def delete_source(
     source_id: str,
     storage: StorageManager,
+    config: dict[str, Any],
     user_id: int = 1,
-    config: dict[str, Any] | None = None,
 ) -> None:
     """Remove a DB-backed source and every credential stored for it.
 
@@ -1008,12 +1019,8 @@ def delete_source(
 
     Raises ``SourceConfigError`` — ``invalid_id`` or ``not_migrated``.
     """
-    if not _SOURCE_ID_RE.fullmatch(source_id):
-        raise SourceConfigError(
-            "invalid_id",
-            "Source id must start with a lowercase letter and contain only "
-            "lowercase letters, digits, underscores, and hyphens",
-        )
+    if not is_valid_source_id(source_id):
+        raise SourceConfigError("invalid_id", f"Source id {SOURCE_ID_RULE}")
 
     db_row = storage.get_source_config(user_id, source_id)
     if db_row is None:
@@ -1025,8 +1032,7 @@ def delete_source(
     storage.delete_credentials_for_source(user_id, source_id)
     storage.delete_source_config(user_id, source_id)
 
-    # Swept after the row is gone, so "who is left" reads as it now is. A
-    # caller without *config* sees half the source list, and would read a
-    # YAML-only source as gone and its live token as an orphan.
-    if config is not None:
-        delete_orphaned_credentials(storage, db_row["plugin"], config, user_id)
+    # Swept after the row is gone, so "who is left" reads as it now is.
+    # *config* is required rather than defaulted: half a source list would
+    # read a YAML-only source as gone and revoke the live token it holds.
+    delete_orphaned_credentials(storage, db_row["plugin"], config, user_id)

@@ -35,10 +35,10 @@ _NON_TEXT_LOG_ARGUMENTS = {
     "file_format": "'JSON' or 'JSONL', chosen from literals in the module",
 }
 
-#: Where each logger-taking helper puts its text, by ``src/utils/progress.py``'s
-#: signature. It is the package's only one; a second must be enrolled here or
-#: ``test_every_log_helper_names_its_text_slot`` fails.
-_LOG_HELPER_TEXT_SLOT = {"log_progress": 1}
+#: Where each logger-taking helper puts its text — name and position, since
+#: either spelling reaches the sink. It is the package's only one; a second must
+#: be enrolled here or ``test_every_log_helper_names_its_text_slot`` fails.
+_LOG_HELPER_TEXT_SLOT = {"log_progress": ("label", 1)}
 
 #: The modules that log at all. Named so discovery finding nothing fails here
 #: rather than reporting a clean sweep over an empty package.
@@ -161,6 +161,11 @@ def _unsanitized_text_arguments(tree: ast.AST) -> set[str]:
     return reported
 
 
+def _call_arguments(call: ast.Call) -> list[ast.expr]:
+    """Both halves of the call: ``logger=logger`` hands over the same sink."""
+    return [*call.args, *(keyword.value for keyword in call.keywords)]
+
+
 def _logger_helper_calls(tree: ast.AST) -> list[ast.Call]:
     """Calls handed the module logger, which then log on the caller's behalf.
 
@@ -173,7 +178,7 @@ def _logger_helper_calls(tree: ast.AST) -> list[ast.Call]:
         if isinstance(node, ast.Call)
         and any(
             isinstance(argument, ast.Name) and argument.id == "logger"
-            for argument in node.args
+            for argument in _call_arguments(node)
         )
     ]
 
@@ -185,10 +190,14 @@ def _label_argument(call: ast.Call) -> ast.expr | None:
     """
     if not isinstance(call.func, ast.Name):
         return None
-    index = _LOG_HELPER_TEXT_SLOT.get(call.func.id)
-    if index is None or index >= len(call.args):
+    slot = _LOG_HELPER_TEXT_SLOT.get(call.func.id)
+    if slot is None:
         return None
-    return call.args[index]
+    name, index = slot
+    for keyword in call.keywords:
+        if keyword.arg == name:
+            return keyword.value
+    return call.args[index] if index < len(call.args) else None
 
 
 def _cannot_end_an_entry(label: ast.expr, sanitized_names: set[str]) -> bool:
@@ -656,9 +665,31 @@ class TestTheSweepFailsOnANewRawSink:
 
         assert _unsanitized_text_handed_to_a_log_helper(tree) == {"label (line 2)"}
 
+    @pytest.mark.parametrize(
+        "call",
+        [
+            "log_progress(logger=logger, label=source_name, current=i, total=n)",
+            "log_progress(logger, label=source_name)",
+        ],
+        ids=["every argument by keyword", "the label by keyword"],
+    )
+    def test_a_keyword_call_is_swept_like_a_positional_one(self, call: str) -> None:
+        """``logger=logger`` hid the whole call from both predicates."""
+        assert _unsanitized_text_handed_to_a_log_helper(ast.parse(call)) == {
+            "source_name (line 1)"
+        }
+
     def test_a_helper_with_no_known_text_slot_is_reported(self) -> None:
         """Until a second helper is enrolled, nothing judges what it is handed."""
         source = "log_batch(logger, f'{title} rows')"
+        tree = ast.parse(source)
+
+        assert _log_helpers_with_no_known_text_slot(tree) == {f"{source} (line 1)"}
+        assert _unsanitized_text_handed_to_a_log_helper(tree) == set()
+
+    def test_a_keyword_call_to_an_unenrolled_helper_is_reported(self) -> None:
+        """The enrolment check is the one a keyword bypass silences entirely."""
+        source = "log_batch(logger=logger, label=f'{title} rows')"
         tree = ast.parse(source)
 
         assert _log_helpers_with_no_known_text_slot(tree) == {f"{source} (line 1)"}

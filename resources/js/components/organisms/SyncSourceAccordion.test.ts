@@ -434,8 +434,9 @@ describe('SyncSourceAccordion', () => {
       expect(wrapper.find('[data-testid="trakt-connect-btn"]').exists()).toBe(
         false,
       )
-      const connected = wrapper.find('[data-testid="trakt-connected"]')
+      const connected = wrapper.find('[data-testid="oauth-connected"]')
       expect(connected.exists()).toBe(true)
+      expect(connected.text()).toBe('Trakt account connected.')
       // Not a live region of its own: it is inserted already populated, which
       // announces nothing, and it repeats what the panel's region carries.
       expect(connected.attributes('role')).toBeUndefined()
@@ -604,6 +605,30 @@ describe('SyncSourceAccordion', () => {
       wrapper.unmount()
     })
 
+    it('tracks the visible Retrying… wording in the accessible name', async () => {
+      const { wrapper, loadOAuthStatus } = await expandWithFailedStatus()
+      const retry = wrapper.get('[data-testid="oauth-status-retry"]')
+      expect(retry.attributes('aria-label')).toBe(
+        'Retry the connection status check for Trakt (work)',
+      )
+
+      let release: () => void = () => {}
+      loadOAuthStatus.mockImplementation(
+        () => new Promise<void>((resolve) => { release = resolve }),
+      )
+      await retry.trigger('click')
+
+      // Speech-input users say the word they can see, so a name still saying
+      // "Retry" while the button reads "Retrying…" no longer matches it.
+      expect(retry.text()).toBe('Retrying…')
+      expect(retry.attributes('aria-label')).toBe(
+        'Retrying the connection status check for Trakt (work)',
+      )
+      release()
+      await flushPromises()
+      wrapper.unmount()
+    })
+
     it('ignores a second Retry click while the first is in flight', async () => {
       const { wrapper, loadOAuthStatus } = await expandWithFailedStatus()
       let release: () => void = () => {}
@@ -766,13 +791,45 @@ describe('SyncSourceAccordion', () => {
       await flushPromises()
 
       const region = wrapper.get('[data-testid="oauth-message"]')
-      expect(region.text()).toBe('Connecting to GOG...')
+      expect(region.text()).toBe('GOG (work): Connecting to GOG...')
       // Visible, not sr-only: with no other rendering site, a refused
       // disconnect reached screen readers and nobody else.
       expect(region.classes()).not.toContain('sr-only')
       expect(wrapper.findComponent(OAuthConnectFlow).text()).not.toContain(
         'Connecting to GOG',
       )
+    })
+
+    it('gives the focus target a visible line naming the connected account', async () => {
+      const { wrapper } = await expandGog(true)
+
+      // GOG and Epic had no connected line at all, so focus landed on a group
+      // with zero children: nothing on screen said where Tab resumes.
+      const panel = wrapper.get('.source-accordion-oauth')
+      const connected = wrapper.get('[data-testid="oauth-connected"]')
+      expect(panel.element.contains(connected.element)).toBe(true)
+      expect(connected.text()).toBe('GOG account connected.')
+      // Not a live region: it is inserted already populated.
+      expect(connected.attributes('role')).toBeUndefined()
+    })
+
+    it('names the source in the live region several panels announce into', async () => {
+      const { wrapper, store } = await expandGog(false)
+      const region = wrapper.get('[data-testid="oauth-message"]').element
+      // Empty before, so the prefix cannot be read as standing page content.
+      expect(region.textContent).toBe('')
+
+      store.oauthMessages['gog_work'] = 'Connecting to GOG...'
+      await flushPromises()
+
+      // Same node throughout — a re-created region is skipped entirely.
+      expect(wrapper.get('[data-testid="oauth-message"]').element).toBe(region)
+      expect(region.textContent).toBe('GOG (work): Connecting to GOG...')
+      // Nothing collapses the other accordions, so an announcement from a
+      // panel the user is not standing in has to say which source it is.
+      expect(
+        wrapper.get('[data-testid="oauth-message"] .sr-only').text(),
+      ).toBe('GOG (work):')
     })
 
     it('lands focus on the panel when a successful connect unmounts Submit', async () => {

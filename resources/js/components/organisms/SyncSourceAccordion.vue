@@ -171,10 +171,10 @@ const disconnectLabel = computed(
     `Disconnect ${props.source.display_name} from ` +
     `${OAUTH_SERVICE_NAME[plugin.value]}`,
 )
-const retryStatusLabel = computed(
-  () => `Retry the connection status check for ${props.source.display_name}`,
-)
 const oauthPanelLabel = computed(() => `${props.source.display_name} connection`)
+const connectedLabel = computed(
+  () => `${OAUTH_SERVICE_NAME[plugin.value]} account connected.`,
+)
 const oauth = computed(() => data.oauthStatusFor(props.source.id))
 const oauthMessage = computed(() => data.oauthMessages[props.source.id] ?? '')
 const showOAuthConnect = computed(
@@ -198,6 +198,12 @@ const showDisconnect = computed(
 
 const oauthPanel = ref<HTMLElement | null>(null)
 const oauthRetrying = ref(false)
+// Tracks the visible label, which speech-input users say back (WCAG 2.5.3).
+const retryStatusLabel = computed(
+  () =>
+    `${oauthRetrying.value ? 'Retrying' : 'Retry'} the connection status ` +
+    `check for ${props.source.display_name}`,
+)
 
 // Connect, disconnect and a recovered status read each swap out part of the
 // panel, and each can take the control holding focus with it — dropping the
@@ -389,10 +395,22 @@ const errorBadgeAriaLabel = computed<string>(
             :aria-label="oauthPanelLabel"
             tabindex="-1"
           >
+            <!--
+              The panel is where focus lands, so the connected state needs
+              something in it: an empty group gives a sighted keyboard user
+              nothing on screen to read the announcement against.
+            -->
+            <p
+              v-if="oauth.connected"
+              class="source-accordion-oauth-connected"
+              data-testid="oauth-connected"
+            >{{ connectedLabel }}</p>
+
             <template v-if="showOAuthConnect">
               <OAuthConnectFlow
                 v-if="isGog"
                 :source-id="source.id"
+                :source-name="source.display_name"
                 :auth-url="oauth.authUrl"
                 expected-origin="https://login.gog.com"
                 help-text="Paste the redirect URL after logging in:"
@@ -402,6 +420,7 @@ const errorBadgeAriaLabel = computed<string>(
               <OAuthConnectFlow
                 v-else-if="isEpic"
                 :source-id="source.id"
+                :source-name="source.display_name"
                 :auth-url="oauth.authUrl"
                 expected-origin="https://www.epicgames.com"
                 help-text="Paste the authorization code from the JSON response:"
@@ -410,7 +429,11 @@ const errorBadgeAriaLabel = computed<string>(
               />
             </template>
 
-            <TraktDeviceCodeFlow v-if="showTraktConnect" :source-id="source.id" />
+            <TraktDeviceCodeFlow
+              v-if="showTraktConnect"
+              :source-id="source.id"
+              :source-name="source.display_name"
+            />
 
             <!--
               Plain content, not role="alert": it can only appear as the body
@@ -434,11 +457,10 @@ const errorBadgeAriaLabel = computed<string>(
           </div>
 
           <!--
-            The one live region for the whole OAuth lifecycle — connect,
-            disconnect, retry and every refusal. Visible, because a refused
-            disconnect leaves the button in place and changes nothing else on
-            screen. Outside the focus target above, so landing there does not
-            read these words a second time.
+            The one live region for the whole OAuth lifecycle. Visible: a
+            refused disconnect changes nothing else on screen. Outside the
+            focus target, so landing there does not repeat it. Named, since
+            several panels announce and nothing collapses the others.
           -->
           <p
             class="source-accordion-oauth-message"
@@ -446,7 +468,7 @@ const errorBadgeAriaLabel = computed<string>(
             role="status"
             aria-live="polite"
             aria-atomic="true"
-          >{{ oauthMessage }}</p>
+          ><span v-if="oauthMessage" class="sr-only">{{ source.display_name }}: </span>{{ oauthMessage }}</p>
         </template>
 
         <SourceConfigForm
@@ -465,13 +487,6 @@ const errorBadgeAriaLabel = computed<string>(
           @toggle-enabled="onEnabledChange"
         >
           <template #actions-extra>
-            <span
-              v-if="showDisconnect && isTrakt"
-              class="source-accordion-connected"
-              data-testid="trakt-connected"
-            >
-              Trakt account connected.
-            </span>
             <button
               v-if="showDisconnect"
               type="button"
@@ -572,12 +587,6 @@ const errorBadgeAriaLabel = computed<string>(
   margin-bottom: var(--space-3);
 }
 
-/* A connected source keeps this panel mounted purely as that focus target,
-   with nothing in it to space away from the form below. */
-.source-accordion-oauth:not(:has(*)) {
-  margin-bottom: 0;
-}
-
 .source-accordion-oauth-error {
   display: flex;
   align-items: center;
@@ -590,10 +599,10 @@ const errorBadgeAriaLabel = computed<string>(
   margin: 0;
 }
 
-.source-accordion-connected {
+.source-accordion-oauth-connected {
+  margin: 0;
   font-size: var(--text-sm);
   color: var(--text-secondary);
-  margin-right: var(--space-2);
 }
 
 .source-accordion-progress {

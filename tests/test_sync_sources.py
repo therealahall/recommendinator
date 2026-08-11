@@ -996,7 +996,7 @@ class TestDeleteSourceOrphanedCredentialsRegression:
         )
         storage.save_credential(1, "ghost", "api_key", "still-valid-upstream")
 
-        delete_source("ghost", storage)
+        delete_source("ghost", storage, {})
 
         assert storage.get_credentials_for_source(1, "ghost") == {}
         assert storage.get_source_config(1, "ghost") is None
@@ -1009,7 +1009,7 @@ class TestDeleteSourceOrphanedCredentialsRegression:
         storage.save_credential(1, "my_games", "api_key", "secret")
         storage.save_credential(1, "my_games", "legacy_token", "was-sensitive-once")
 
-        delete_source("my_games", storage)
+        delete_source("my_games", storage, {})
 
         assert storage.get_credentials_for_source(1, "my_games") == {}
 
@@ -1018,7 +1018,7 @@ class TestDeleteSourceOrphanedCredentialsRegression:
         storage.save_credential(1, "my_games", "api_key", "secret")
         storage.save_credential(1, "other", "api_key", "untouched")
 
-        delete_source("my_games", storage)
+        delete_source("my_games", storage, {})
 
         assert storage.get_credential(1, "other", "api_key") == "untouched"
 
@@ -1315,7 +1315,7 @@ class TestRotatedCredentialSurvivesTheRealConfigAssemblyRegression:
     ) -> None:
         self._sync_a_rotating_source(plugin_name, storage)
 
-        delete_source("work_games", storage)
+        delete_source("work_games", storage, {})
 
         assert storage.get_credentials_for_source(1, "work_games") == {}
         assert storage.get_credential(1, plugin_name, "refresh_token") is None
@@ -1363,7 +1363,7 @@ class TestRemovingASourceTakesItsStrandedTokenWithItRegression:
     def test_the_last_source_on_the_plugin_takes_the_row_with_it(
         self, storage: StorageManager
     ) -> None:
-        delete_source("work_games", storage, config={"inputs": {}})
+        delete_source("work_games", storage, {"inputs": {}})
 
         assert storage.get_credential(1, "fake_games", "api_key") is None
 
@@ -1372,7 +1372,7 @@ class TestRemovingASourceTakesItsStrandedTokenWithItRegression:
     ) -> None:
         storage.upsert_source_config(1, "home_games", "fake_games", {}, enabled=True)
 
-        delete_source("work_games", storage, config={"inputs": {}})
+        delete_source("work_games", storage, {"inputs": {}})
 
         assert storage.get_credential(1, "fake_games", "api_key") == (
             "stranded-by-an-upgrade"
@@ -1382,7 +1382,7 @@ class TestRemovingASourceTakesItsStrandedTokenWithItRegression:
         """The database is half the source list, so a sweep reading it alone lies."""
         config = {"inputs": {"home_games": {"plugin": "fake_games", "enabled": True}}}
 
-        delete_source("work_games", storage, config=config)
+        delete_source("work_games", storage, config)
 
         assert storage.get_credential(1, "fake_games", "api_key") == (
             "stranded-by-an-upgrade"
@@ -1394,17 +1394,7 @@ class TestRemovingASourceTakesItsStrandedTokenWithItRegression:
         """That row is not stranded at all — it is that source's, live."""
         config = {"inputs": {"fake_games": {"plugin": "fake_books", "enabled": True}}}
 
-        delete_source("work_games", storage, config=config)
-
-        assert storage.get_credential(1, "fake_games", "api_key") == (
-            "stranded-by-an-upgrade"
-        )
-
-    def test_a_caller_that_cannot_read_the_config_leaves_the_row_alone(
-        self, storage: StorageManager
-    ) -> None:
-        """Half the source list is invisible, so the sweep is skipped, not guessed."""
-        delete_source("work_games", storage)
+        delete_source("work_games", storage, config)
 
         assert storage.get_credential(1, "fake_games", "api_key") == (
             "stranded-by-an-upgrade"
@@ -1415,7 +1405,7 @@ class TestRemovingASourceTakesItsStrandedTokenWithItRegression:
     ) -> None:
         storage.save_credential(1, "work_games", "api_key", "its-own")
 
-        delete_source("work_games", storage, config={"inputs": {}})
+        delete_source("work_games", storage, {"inputs": {}})
 
         assert storage.get_credentials_for_source(1, "work_games") == {}
 

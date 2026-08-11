@@ -57,11 +57,9 @@ class _ProviderFailure:
 def _underlying_request_error(error: Exception) -> requests.RequestException | None:
     """Find the ``requests`` failure underneath a provider's exception.
 
-    Providers wrap transport failures in ``ProviderError``. Both the explicit
-    ``raise ... from error`` the in-tree providers use and the implicit
-    chaining Python applies to any raise inside an ``except`` block leave the
-    original on the chain, so a provider does not have to opt in to anything
-    for the manager to tell a timeout from a rejected API key.
+    Every raise form leaves it reachable: ``from error`` on ``__cause__``,
+    implicit chaining and ``from None`` on ``__context__``. TMDB and RAWG
+    raise ``from None``, so a suppressed chain is still read.
     """
     seen: set[int] = set()
     current: BaseException | None = error

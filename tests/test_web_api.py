@@ -3881,6 +3881,33 @@ class TestUpdateEndpointParallelSync:
         assert response.status_code == 200, response.text
         assert captured_kwargs.get("max_workers") == 8
 
+    def test_the_config_reaches_the_executor(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """Without it every sync warns that a live YAML token is stranded.
+
+        The stranded-credential check reads ``inputs`` for the sources the
+        database does not hold, so the executor has to be handed the config
+        this endpoint already resolved from.
+        """
+        captured_kwargs: dict = {}
+        completion = threading.Event()
+        with (
+            patch(
+                "src.web.api.execute_multi_source_sync",
+                side_effect=self._make_capture(captured_kwargs, completion),
+            ),
+            patch(
+                "src.ingestion.sources.goodreads_csv.GoodreadsCsvPlugin.validate_config",
+                return_value=[],
+            ),
+        ):
+            response = client.post("/api/update", json={"source": "all"})
+            assert completion.wait(timeout=5.0), "background sync did not run"
+
+        assert response.status_code == 200
+        assert captured_kwargs.get("config") is app_state.config
+
     def test_request_body_max_workers_above_ceiling_rejected(
         self, client: TestClient, mock_components: dict
     ) -> None:
