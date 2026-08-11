@@ -3,8 +3,9 @@ import { mount } from '@vue/test-utils'
 import OAuthConnectFlow from './OAuthConnectFlow.vue'
 
 // Not "gog": the flow belongs to the source being connected, and a second GOG
-// source is exactly the configuration that duplicated ids break.
-const SOURCE_IDS = ['gog', 'gog_work']
+// source is exactly the configuration that duplicated ids break. `gog_work` and
+// `gog-work` are the realistic collision — both are valid source ids.
+const SOURCE_IDS = ['gog', 'gog_work', 'gog-work']
 
 function mountFlow(sourceId: string) {
   return mount(OAuthConnectFlow, {
@@ -12,7 +13,6 @@ function mountFlow(sourceId: string) {
       sourceId,
       authUrl: 'https://login.gog.com/auth',
       expectedOrigin: 'https://login.gog.com',
-      connectMessage: '',
       helpText: 'Paste the redirect URL after logging in:',
       serviceName: 'GOG Account',
     },
@@ -55,7 +55,6 @@ describe('OAuthConnectFlow', () => {
         sourceId: 'gog_work',
         authUrl: 'https://evil.example.com/auth',
         expectedOrigin: 'https://login.gog.com',
-        connectMessage: '',
         helpText: '',
         serviceName: 'GOG Account',
       },
@@ -79,15 +78,12 @@ describe('OAuthConnectFlow', () => {
     wrapper.unmount()
   })
 
-  it('leaves the connect message out of the accessibility tree as a live region', async () => {
+  it('renders no status of its own, so the panel is the only voice', async () => {
     vi.spyOn(window, 'open').mockReturnValue(null)
     const wrapper = await openCodeStep('gog_work')
-    await wrapper.setProps({ connectMessage: 'GOG account connected!' })
 
-    // The panel owns the live region: this component is unmounted by the
-    // status flip that follows a successful connect, and two regions carrying
-    // the same words would announce twice.
-    expect(wrapper.text()).toContain('GOG account connected!')
+    // A copy here would put the panel's words on screen and into the
+    // accessibility tree twice, and would be unmounted before announcing.
     expect(wrapper.find('[aria-live]').exists()).toBe(false)
     expect(wrapper.find('[role="status"]').exists()).toBe(false)
     wrapper.unmount()

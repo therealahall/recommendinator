@@ -4879,37 +4879,10 @@ class TestAuthDisconnectEndpoints:
 class TestTraktStatus:
     """Tests for GET /api/trakt/status.
 
-    Driven through a real credential store: patching the two helpers made the
-    handler answer whatever the patches said, whichever way it asked them.
+    Only the 503 lives here. Both flags are proved against a real credential
+    store in ``tests/web/test_oauth_source_binding.py``; a mocked pair with
+    ``enabled == connected`` passed a handler returning one flag for both.
     """
-
-    def test_enabled_and_connected(self, client, mock_components) -> None:
-        """Configured client creds + stored token returns enabled+connected."""
-        with (
-            patch(
-                "src.web.api.resolve_trakt_client_credentials",
-                return_value=("cid", "secret"),
-            ),
-            patch("src.web.api.has_trakt_token", return_value=True),
-        ):
-            response = client.get("/api/trakt/status")
-
-        assert response.status_code == 200
-        assert response.json() == {"enabled": True, "connected": True}
-
-    def test_not_configured(self, client, mock_components) -> None:
-        """Missing client creds returns enabled=False, connected=False."""
-        with (
-            patch(
-                "src.web.api.resolve_trakt_client_credentials",
-                side_effect=TraktAuthError("not configured"),
-            ),
-            patch("src.web.api.has_trakt_token", return_value=False),
-        ):
-            response = client.get("/api/trakt/status")
-
-        assert response.status_code == 200
-        assert response.json() == {"enabled": False, "connected": False}
 
     def test_no_storage_returns_503(self, client, mock_components) -> None:
         """Storage down is 503, not a fabricated ``enabled: false``.

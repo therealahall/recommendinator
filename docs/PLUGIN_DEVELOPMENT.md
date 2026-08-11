@@ -457,8 +457,9 @@ A plugin that sends a credential as a query parameter owes two things, and
 `tests/test_credential_url_chains.py` fails until it has both: a handler that
 neither logs the raw error, renders a traceback, nor keeps it as `__cause__`,
 and an entry in that file's `_CREDENTIAL_URL_FUNCTIONS`. The scan enrols you
-automatically — it reads this tree and `src/web/`, and reports any function
-naming a credential key beside a `params=` call that the list omits.
+automatically — it reads this tree, `src/enrichment/providers/` and `src/web/`,
+and reports any function naming a credential key beside a `params=` call that
+the list omits.
 
 Beyond those: raise `SourceError` for recoverable failures, validate every
 required config field, skip items missing required fields rather than yielding

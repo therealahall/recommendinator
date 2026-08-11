@@ -6,7 +6,6 @@ const props = defineProps<{
   sourceId: string
   authUrl: string | null
   expectedOrigin: string
-  connectMessage: string
   helpText: string
   serviceName: string
 }>()
@@ -59,11 +58,9 @@ function submitCode() {
         <button class="btn btn-primary" @click="submitCode">Connect</button>
       </div>
       <!--
-        Deliberately NOT a live region: this component unmounts the moment the
-        connect succeeds, so the panel owns the region that announces it. Two
-        regions carrying the same words announce twice.
+        No message rendered here: the panel's region is the one that survives
+        the connect, and a second copy of the same words would be read twice.
       -->
-      <div class="mt-2">{{ connectMessage }}</div>
     </div>
   </div>
 </template>

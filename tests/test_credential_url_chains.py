@@ -13,16 +13,29 @@ import pytest
 # parents[1] resolves /tests/test_credential_url_chains.py -> repo root.
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
-# Both halves of the registry are scanned. The OAuth modules put a client
-# secret in a query string exactly as a plugin does, and only the plugin tree
-# was ever checked for completeness.
-_SCANNED_TREES = (Path("src/ingestion/sources"), Path("src/web"))
+# Every registry that reaches a third party is scanned. The OAuth modules put a
+# client secret in a query string exactly as a plugin does, and the enrichment
+# providers send their api key the same way.
+_SCANNED_TREES = (
+    Path("src/enrichment/providers"),
+    Path("src/ingestion/sources"),
+    Path("src/web"),
+)
 
 _FUNCTION_NODES = (ast.FunctionDef, ast.AsyncFunctionDef)
 
 # GOG's token endpoint takes the refresh token, the authorization code and the
-# client secret as query parameters; Steam's Web API takes ``key``.
+# client secret as query parameters; Steam's Web API takes ``key``, TMDB
+# ``api_key`` and RAWG ``key``.
 _CREDENTIAL_URL_FUNCTIONS = (
+    ("src/enrichment/providers/rawg/rawg.py", "_fetch_game_details"),
+    ("src/enrichment/providers/rawg/rawg.py", "_fetch_game_series"),
+    ("src/enrichment/providers/rawg/rawg.py", "_search_game"),
+    ("src/enrichment/providers/tmdb/tmdb.py", "_fetch_keywords"),
+    ("src/enrichment/providers/tmdb/tmdb.py", "_fetch_movie_details"),
+    ("src/enrichment/providers/tmdb/tmdb.py", "_fetch_tv_details"),
+    ("src/enrichment/providers/tmdb/tmdb.py", "_get_movie_position_in_collection"),
+    ("src/enrichment/providers/tmdb/tmdb.py", "_search_media"),
     ("src/ingestion/sources/gog/gog.py", "refresh_access_token"),
     ("src/ingestion/sources/steam/steam.py", "get_owned_games"),
     ("src/ingestion/sources/steam/steam.py", "get_steam_id_from_vanity_url"),

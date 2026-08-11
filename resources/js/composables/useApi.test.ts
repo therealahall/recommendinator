@@ -97,6 +97,52 @@ describe('useApi ApiError', () => {
   })
 })
 
+describe('useApi query parameters', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    setActivePinia(createPinia())
+    vi.stubGlobal('fetch', vi.fn())
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  function requestedUrl(call = 0): string {
+    return String(vi.mocked(fetch).mock.calls[call][0])
+  }
+
+  it('carries params on the URL of a POST that already has a body', async () => {
+    // The OAuth writes key on ``source_id`` here and nowhere else: a store test
+    // asserting the mock's arguments passes just as well with the query string
+    // dropped, and every token then lands on the wrong source.
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(200, { message: 'ok' }))
+
+    await useApi().post('/gog/exchange', { code_or_url: 'abc' }, { source_id: 'gog_work' })
+
+    expect(requestedUrl()).toBe('/api/gog/exchange?source_id=gog_work')
+    expect(vi.mocked(fetch).mock.calls[0][1]?.body).toBe(
+      JSON.stringify({ code_or_url: 'abc' }),
+    )
+  })
+
+  it('carries them on a DELETE, which has no body to put them in', async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(200, { message: 'ok' }))
+
+    await useApi().delete('/gog/token', { source_id: 'gog_work' })
+
+    expect(requestedUrl()).toBe('/api/gog/token?source_id=gog_work')
+  })
+
+  it('percent-encodes a param value rather than splicing it into the URL', async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(200, {}))
+
+    await useApi().get('/trakt/status', { source_id: 'trakt&admin=1' })
+
+    expect(requestedUrl()).toBe('/api/trakt/status?source_id=trakt%26admin%3D1')
+  })
+})
+
 function headersOf(call: number): Record<string, string> {
   return vi.mocked(fetch).mock.calls[call][1]?.headers as Record<string, string>
 }

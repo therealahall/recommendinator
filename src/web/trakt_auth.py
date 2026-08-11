@@ -195,8 +195,6 @@ def resolve_trakt_client_credentials(
     storage: StorageManager | None,
     source_id: str = TRAKT_SOURCE_ID,
     user_id: int = 1,
-    *,
-    require_enabled: bool = True,
 ) -> tuple[str, str]:
     """Resolve *source_id*'s ``(client_id, client_secret)``.
 
@@ -207,9 +205,7 @@ def resolve_trakt_client_credentials(
         TraktAuthError: If the source is not configured or either credential
             is missing.
     """
-    trakt_config = _TRAKT.resolve(
-        config, storage, source_id, user_id, require_enabled=require_enabled
-    )
+    trakt_config = _TRAKT.resolve(config, storage, source_id, user_id)
 
     if trakt_config is None:
         raise TraktAuthError(

@@ -258,31 +258,27 @@ class TestHasGogToken:
         """Create a StorageManager with a temp DB."""
         return StorageManager(sqlite_path=tmp_path / "test.db")
 
-    def test_returns_true_when_token_in_config(self) -> None:
-        """Config-only token is detected (backwards compat)."""
-        assert has_gog_token(_gog_source(refresh_token="some_token")) is True
-
-    def test_returns_false_when_token_empty(self) -> None:
-        """Test returns False when refresh token is empty."""
-        assert has_gog_token(_gog_source(refresh_token="")) is False
-
-    def test_returns_false_when_token_missing(self) -> None:
-        """Test returns False when refresh token is missing."""
-        assert has_gog_token(_gog_source()) is False
-
-    def test_returns_false_when_whitespace_only(self) -> None:
-        """Test returns False when token is whitespace only."""
-        assert has_gog_token(_gog_source(refresh_token="   ")) is False
-
     def test_returns_true_when_token_in_db(self, storage: StorageManager) -> None:
         """DB token detected even when config has no token."""
         storage.save_credential(1, "gog", "refresh_token", "db_token")
 
         assert has_gog_token(_gog_source(refresh_token=""), storage=storage) is True
 
-    def test_config_fallback_when_no_storage(self) -> None:
-        """Without storage, only config is checked."""
-        assert has_gog_token(_gog_source(refresh_token="config_token")) is True
+    def test_returns_false_when_no_row_is_stored(self, storage: StorageManager) -> None:
+        assert has_gog_token(_gog_source(), storage=storage) is False
+
+    def test_a_config_only_token_is_not_reported_connected(
+        self, storage: StorageManager
+    ) -> None:
+        """Disconnect deletes the stored row, and cannot reach config.yaml."""
+        assert (
+            has_gog_token(_gog_source(refresh_token="some_token"), storage=storage)
+            is False
+        )
+
+    def test_returns_false_without_storage(self) -> None:
+        """No credential store is no revocable token, whatever config says."""
+        assert has_gog_token(_gog_source(refresh_token="config_token")) is False
 
     def test_another_plugins_source_is_never_reported_connected(
         self, storage: StorageManager

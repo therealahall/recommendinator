@@ -80,11 +80,12 @@ export function capitalize(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1)
 }
 
-/** A DOM id keyed on the source that owns the element. Two panels for the same
- *  plugin sit on the page at once, and `for`/`aria-describedby` resolve a
- *  duplicated id to the first match, leaving the second control unnamed. */
+/** Keyed on the source because `for`/`aria-describedby` resolve a duplicated id
+ *  to the first match, unnaming the second panel's control. `_` survives: a
+ *  source id may carry either separator, so collapsing it collided
+ *  `gog_work` with `gog-work`. */
 export function domId(prefix: string, sourceId: string): string {
-  return `${prefix}-${sourceId.replace(/[^a-zA-Z0-9-]/g, '-')}`
+  return `${prefix}-${sourceId.replace(/[^a-zA-Z0-9_-]/g, '-')}`
 }
 
 /** Truncate a string to a max length, appending ellipsis if needed */

@@ -337,9 +337,11 @@ class RAWGProvider(EnrichmentProvider):
             return int(results[0]["id"])
 
         except requests.RequestException as error:
+            # ``from None``: the key is a query parameter, so the URL on
+            # ``__cause__`` is a credential a caller's traceback would print.
             raise ProviderError(
                 self.name, f"Failed to search RAWG: {scrub_request_error(error)}"
-            ) from error
+            ) from None
 
     def _fetch_game_details(self, game_id: int, api_key: str) -> EnrichmentResult:
         """Fetch detailed game information.
@@ -436,7 +438,7 @@ class RAWGProvider(EnrichmentProvider):
             raise ProviderError(
                 self.name,
                 f"Failed to fetch game details: {scrub_request_error(error)}",
-            ) from error
+            ) from None
 
     def _fetch_game_series(
         self,

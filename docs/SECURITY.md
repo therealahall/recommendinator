@@ -44,12 +44,18 @@ completion history sit in the database as plaintext, and so do the embeddings.
   the plugin's own name so an older client still addresses the source it used
   to, and validated against the source-id pattern before anything reads it.
   `auth connect` and `auth disconnect` take `--source-id` to match.
-- A route refuses an id whose plugin is not its own. The id is the credential
-  key, so an unchecked one files a GOG token where Trakt reads its own.
+- A connect route refuses an id whose plugin is not its own. The id is the
+  credential key, so an unchecked one files a GOG token where Trakt reads its
+  own.
+- Revoking asks the weaker question deliberately: only a source running another
+  plugin puts an id out of reach. An id no source claims is nobody's to protect,
+  and refusing it would leave the credential with no verb left to delete it.
 - Running a plugin and being enabled are separate questions, and each verb gates
-  on the one it needs: connecting requires an enabled source, while
-  disconnecting and a status read's `connected` require only ownership. A
-  credential you cannot delete is worse than one you cannot use.
+  on the one it needs: connecting requires an enabled source, disconnecting does
+  not. A credential you cannot delete is worse than one you cannot use.
+- A status read's `connected` reports the stored credential row, not the
+  resolved config, so it never offers a control that answers 404. A token left
+  in `config.yaml` reads as not connected: no verb can delete it.
 - Trakt's `enabled` also means its client credentials resolve. Clearing the
   client secret leaves `connected` true and the token revocable.
 - An upgrade does not move tokens an earlier release stored under the plugin's
@@ -211,12 +217,13 @@ name or a status code. None of them attaches a traceback.
 
 Rendering the message is only half of it: a traceback walks `__cause__`, so an
 exception chained from a request error prints that request's URL. `auth connect`
-logs with `exc_info=True`, so GOG's token refresh and code exchange and Steam's
-two Web API calls raise `from None`. `tests/test_credential_url_chains.py` holds
-every such caller to both halves — a chain-free handler and an entry in its
-`_CREDENTIAL_URL_FUNCTIONS` list — and enrols new ones by scanning
+logs with `exc_info=True`, so GOG's token refresh and code exchange, Steam's two
+Web API calls and every TMDB and RAWG request raise `from None`.
+`tests/test_credential_url_chains.py` holds every such caller to both halves — a
+chain-free handler and an entry in its `_CREDENTIAL_URL_FUNCTIONS` list — and
+enrols new ones by scanning `src/enrichment/providers/`,
 `src/ingestion/sources/` and `src/web/` for a credential key beside a `params=`
-call. TMDB and RAWG still chain such a URL; no sink prints it today.
+call.
 
 A refused config write is redacted before logging, but the match is exact, so a
 truncated or encoded form of the secret survives it.

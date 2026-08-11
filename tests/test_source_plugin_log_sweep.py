@@ -35,6 +35,11 @@ _NON_TEXT_LOG_ARGUMENTS = {
     "file_format": "'JSON' or 'JSONL', chosen from literals in the module",
 }
 
+#: Where each logger-taking helper puts its text, by ``src/utils/progress.py``'s
+#: signature. It is the package's only one; a second must be enrolled here or
+#: ``test_every_log_helper_names_its_text_slot`` fails.
+_LOG_HELPER_TEXT_SLOT = {"log_progress": 1}
+
 #: The modules that log at all. Named so discovery finding nothing fails here
 #: rather than reporting a clean sweep over an empty package.
 _MODULES_THAT_LOG = {
@@ -173,39 +178,52 @@ def _logger_helper_calls(tree: ast.AST) -> list[ast.Call]:
     ]
 
 
-def _text_arguments(call: ast.Call) -> list[ast.expr]:
-    """The arguments that are unambiguously text, an f-string by its values.
+def _label_argument(call: ast.Call) -> ast.expr | None:
+    """Keyed on the callee, so a bare name in the text slot is judged too.
 
-    A bare name is not one: without the callee's signature a counter and a
-    label read alike, and reporting ``total`` would retire the check.
+    An unregistered helper answers ``None`` and is reported separately.
     """
-    values: list[ast.expr] = []
-    for argument in call.args:
-        if isinstance(argument, ast.JoinedStr):
-            values.extend(
-                node.value
-                for node in ast.walk(argument)
-                if isinstance(node, ast.FormattedValue)
-            )
-        elif isinstance(argument, ast.BinOp) and isinstance(argument.op, ast.Mod):
-            values.append(argument)
-        elif (
-            isinstance(argument, ast.Call)
-            and isinstance(argument.func, ast.Attribute)
-            and argument.func.attr == "format"
-        ):
-            values.append(argument)
-    return values
+    if not isinstance(call.func, ast.Name):
+        return None
+    index = _LOG_HELPER_TEXT_SLOT.get(call.func.id)
+    if index is None or index >= len(call.args):
+        return None
+    return call.args[index]
+
+
+def _cannot_end_an_entry(label: ast.expr, sanitized_names: set[str]) -> bool:
+    """Whether *label* is fixed text, waived, or escaped before it gets here."""
+    if isinstance(label, ast.Constant):
+        return True
+    if ast.unparse(label) in _NON_TEXT_LOG_ARGUMENTS:
+        return True
+    if _is_escaped(label, sanitized_names):
+        return True
+    if isinstance(label, ast.JoinedStr):
+        return all(
+            _cannot_end_an_entry(node.value, sanitized_names)
+            for node in ast.walk(label)
+            if isinstance(node, ast.FormattedValue)
+        )
+    return False
 
 
 def _unsanitized_text_handed_to_a_log_helper(tree: ast.AST) -> set[str]:
     sanitized_names = _names_bound_to_a_sanitizer(tree)
     return {
-        f"{ast.unparse(value)} (line {value.lineno})"
+        f"{ast.unparse(label)} (line {label.lineno})"
         for call in _logger_helper_calls(tree)
-        for value in _text_arguments(call)
-        if ast.unparse(value) not in _NON_TEXT_LOG_ARGUMENTS
-        and not _is_escaped(value, sanitized_names)
+        if (label := _label_argument(call)) is not None
+        and not _cannot_end_an_entry(label, sanitized_names)
+    }
+
+
+def _log_helpers_with_no_known_text_slot(tree: ast.AST) -> set[str]:
+    """Otherwise tomorrow's second one hands its label to nobody's check."""
+    return {
+        f"{ast.unparse(call)} (line {call.lineno})"
+        for call in _logger_helper_calls(tree)
+        if _label_argument(call) is None
     }
 
 
@@ -326,13 +344,17 @@ def _is_logger_expression(value: ast.expr) -> bool:
 
 
 def _logger_binding_names(tree: ast.AST) -> set[str]:
-    """The names a logger, or anything reached through one, is bound to."""
+    """The names a logger, or anything reached through one, is bound to.
+
+    Attribute targets included: ``self.logger.warning(title)`` is a sink every
+    predicate here reads past, so the binding is where it has to be caught.
+    """
     return {
-        target.id
+        ast.unparse(target)
         for node in ast.walk(tree)
         if isinstance(node, ast.Assign) and _is_logger_expression(node.value)
         for target in node.targets
-        if isinstance(target, ast.Name)
+        if isinstance(target, (ast.Name, ast.Attribute))
     }
 
 
@@ -399,6 +421,10 @@ class TestNoSourcePluginInterpolatesAValueRaw:
     def test_no_log_helper_is_handed_raw_text(self, module: str) -> None:
         """``log_progress(logger, label, …)`` ends an entry the same way."""
         assert _unsanitized_text_handed_to_a_log_helper(_TREES[module]) == set()
+
+    def test_every_log_helper_names_its_text_slot(self, module: str) -> None:
+        """An unenrolled helper's label is judged by the check above's silence."""
+        assert _log_helpers_with_no_known_text_slot(_TREES[module]) == set()
 
 
 class TestTheSweptPopulationIsNotEmpty:
@@ -570,6 +596,8 @@ class TestTheSweepFailsOnANewRawSink:
             ("audit = getLogger('audit')", "audit"),
             ("_LOG = logger", "_LOG"),
             ("warn = logger.warning", "warn"),
+            ("self._log = logging.getLogger('audit')", "self._log"),
+            ("self.logger = logging.getLogger(__name__)", "self.logger"),
         ],
     )
     def test_a_second_logger_binding_is_reported(self, source: str, bound: str) -> None:
@@ -602,22 +630,39 @@ class TestTheSweepFailsOnANewRawSink:
         assert _unsanitized_text_arguments(tree) == set()
 
     @pytest.mark.parametrize(
-        ("label", "reported"),
+        "label",
         [
-            ("f'{source_name} items'", "source_name"),
-            ("'%s items' % source_name", "'%s items' % source_name"),
-            ("'{} items'.format(source_name)", "'{} items'.format(source_name)"),
+            "source_name",
+            "f'{source_name} items'",
+            "'%s items' % source_name",
+            "'{} items'.format(source_name)",
         ],
+        ids=["a bare name", "an f-string", "a % expression", "a .format call"],
     )
-    def test_raw_text_handed_to_a_log_helper_is_reported(
-        self, label: str, reported: str
-    ) -> None:
+    def test_raw_text_handed_to_a_log_helper_is_reported(self, label: str) -> None:
         """The sink the sweep above cannot see: the logger is the argument."""
         source = f"log_progress(logger, {label}, current, total)"
 
         assert _unsanitized_text_handed_to_a_log_helper(ast.parse(source)) == {
-            f"{reported} (line 1)"
+            f"{label} (line 1)"
         }
+
+    def test_a_label_bound_before_the_call_is_reported(self) -> None:
+        """One assignment used to lose it: the call site alone is not enough."""
+        tree = ast.parse(
+            "label = f'{source_name} items'\n"
+            "log_progress(logger, label, current, total)"
+        )
+
+        assert _unsanitized_text_handed_to_a_log_helper(tree) == {"label (line 2)"}
+
+    def test_a_helper_with_no_known_text_slot_is_reported(self) -> None:
+        """Until a second helper is enrolled, nothing judges what it is handed."""
+        source = "log_batch(logger, f'{title} rows')"
+        tree = ast.parse(source)
+
+        assert _log_helpers_with_no_known_text_slot(tree) == {f"{source} (line 1)"}
+        assert _unsanitized_text_handed_to_a_log_helper(tree) == set()
 
     @pytest.mark.parametrize(
         "label",
