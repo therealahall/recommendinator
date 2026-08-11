@@ -1,56 +1,25 @@
-# Git
-.git
-.gitignore
+# Deny by default: nothing reaches the builder unless named below, so private/,
+# .env and config/config.yaml cannot ride in on a widened COPY. The exceptions
+# are exactly what Dockerfile copies; tests/docker/test_compose.py holds them equal.
+*
 
-# Node.js (frontend built inside Docker)
-node_modules
+!.python-version
+!config/example.yaml
+!docker/entrypoint.sh
+!env.d.ts
+!index.html
+!package.json
+!pnpm-lock.yaml
+!pyproject.toml
+!resources
+!src
+!templates
+!tsconfig.json
+!uv.lock
+!vite.config.ts
 
-# Python
-__pycache__
-*.py[cod]
-*$py.class
-*.so
-.Python
-.venv
-venv
-ENV
-env
-.eggs
-*.egg-info
-.pytest_cache
-.mypy_cache
-.ruff_cache
-
-# IDE
-.vscode
-.idea
-*.swp
-*.swo
-.cursor
-
-# Data (mounted as volume instead)
-data/*
-!data/.gitkeep
-
-# Config with secrets (mounted as volume)
-config/config.yaml
-
-# Inputs (mounted as volume)
-inputs/*
-!inputs/.gitkeep
-
-# Tests (not needed in production image)
-tests/
-
-# Development files
-*.md
-!README.md
-Makefile
-requirements-dev.txt
-phase-7-plan.md
-docs/
-
-# Docker files (avoid recursion)
-Dockerfile
-docker-compose.yml
-.dockerignore
+# Narrowing only, inside the trees above: the image builds its own frontend
+# bundle and its own bytecode, and a host copy of either only ages.
+src/web/static/dist
+**/__pycache__
+**/*.py[cod]

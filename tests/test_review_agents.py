@@ -41,6 +41,7 @@ CLAUDE_MD = _REPO_ROOT / "CLAUDE.md"
 CONTRIBUTING_MD = _REPO_ROOT / "CONTRIBUTING.md"
 MAKEFILE_PATH = _REPO_ROOT / "Makefile"
 CI_WORKFLOW_PATH = _REPO_ROOT / ".github" / "workflows" / "ci.yml"
+GATE_WORKFLOW_PATH = _REPO_ROOT / ".github" / "workflows" / "quality-gate.yml"
 SETTINGS_JSON_PATH = _REPO_ROOT / ".claude" / "settings.json"
 LOCAL_SETTINGS_RELATIVE_PATH = Path(".claude") / "settings.local.json"
 COMMITTED_AGENTS_DIR = _REPO_ROOT / ".claude" / "agents"
@@ -251,27 +252,22 @@ def _makefile_prerequisites(target: str) -> list[str]:
     return match.group("prerequisites").split()
 
 
-def _ci_commands() -> list[str]:
-    """Return every shell command CI's `check` job runs.
+def _gate_steps() -> list[dict[str, object]]:
+    """Return the steps of the reusable workflow CI calls.
 
-    Parsed rather than substring-matched, so a commented-out step, a step moved
-    to another job, or a path that only appears as a linter argument does not
-    read as the step being present.
+    Parsed rather than substring-matched, so a commented-out step or a path that
+    only appears as a linter argument does not read as the step being present.
     """
-    workflow = yaml.safe_load(CI_WORKFLOW_PATH.read_text(encoding="utf-8"))
-    steps = workflow["jobs"]["check"]["steps"]
-    return [step["run"] for step in steps if "run" in step]
+    workflow = yaml.safe_load(GATE_WORKFLOW_PATH.read_text(encoding="utf-8"))
+    steps: list[dict[str, object]] = workflow["jobs"]["check"]["steps"]
+    return steps
 
 
-def _ci_steps_running(program: str) -> list[dict[str, object]]:
-    """Return CI `check` steps that execute `program` as a command, not as an argument."""
-    workflow = yaml.safe_load(CI_WORKFLOW_PATH.read_text(encoding="utf-8"))
-    invocation = re.compile(rf"python[\d.]*\s+{re.escape(program)}(\s|$)")
-    return [
-        step
-        for step in workflow["jobs"]["check"]["steps"]
-        if "run" in step and invocation.search(step["run"])
-    ]
+def _gate_commands() -> list[str]:
+    """Return every shell command that reusable workflow runs."""
+    commands = [str(step["run"]) for step in _gate_steps() if "run" in step]
+    assert commands, "the gate runs no commands; every sweep over it would be empty"
+    return commands
 
 
 class TestFindAgentProblems:
@@ -1026,24 +1022,34 @@ class TestQualityGateWiring:
         for line in _makefile_recipe(target):
             assert "scripts/" in line, f"`make {target}` skips scripts/: {line}"
 
-    def test_ci_runs_the_checker_in_exactly_one_step(self) -> None:
-        """CI spells the tools out rather than calling make, so it can drift from it."""
-        steps = _ci_steps_running("scripts/check_review_agents.py")
+    def test_ci_reaches_the_checker_through_the_makefile(self) -> None:
+        """CI runs the gate `make check` defines, so the two cannot disagree.
+
+        `make check`'s own prerequisites are pinned above, which is what makes
+        one `make check` step enough to know the review-agent check ran.
+        """
+        workflow = yaml.safe_load(CI_WORKFLOW_PATH.read_text(encoding="utf-8"))
+        assert (
+            workflow["jobs"]["check"]["uses"] == "./.github/workflows/quality-gate.yml"
+        )
+
+        steps = [step for step in _gate_steps() if "make check" in str(step.get("run"))]
         assert len(steps) == 1, (
-            "CI must run the review-agent check in exactly one step, or a branch "
-            f"could delete a mandated agent and still go green: {steps}"
+            "CI must run `make check` in exactly one step, or a branch could "
+            f"delete a mandated agent and still go green: {steps}"
         )
         assert (
             steps[0].get("continue-on-error") is not True
-        ), "the review-agent step is allowed to fail, which makes it advisory"
+        ), "the quality-gate step is allowed to fail, which makes it advisory"
 
     @pytest.mark.parametrize("tool", _SCRIPTS_AWARE_TOOLS)
-    def test_ci_runs_every_tool_over_the_scripts_directory(self, tool: str) -> None:
-        """Drop `scripts/` from CI's mypy step and the checker goes untypechecked."""
-        commands = [command for command in _ci_commands() if tool in command.split()]
-        assert commands, f"CI no longer runs {tool}"
-        for command in commands:
-            assert "scripts/" in command, f"CI runs {tool} without scripts/: {command}"
+    def test_ci_never_restates_a_tool_the_makefile_owns(self, tool: str) -> None:
+        """A second copy of the gate in YAML is a copy that goes stale unnoticed."""
+        for command in _gate_commands():
+            assert tool not in command.split(), (
+                f"CI invokes {tool} itself instead of through `make check`, which "
+                f"is how the two lists drift: {command}"
+            )
 
 
 class TestReviewAgentGateRegression:

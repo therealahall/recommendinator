@@ -1,5 +1,9 @@
-.PHONY: help install install-ai install-dev lock test lint format type-check clean run
-.PHONY: install-frontend build-frontend check-frontend check-agents
+.PHONY: help install install-ai install-dev lock test lint format format-check
+.PHONY: type-check clean run install-frontend build-frontend check-frontend check-agents check
+
+# CI overrides this with the interpreter uv provisioned into .venv; locally the
+# project's pinned version is on PATH.
+PYTHON ?= python3.11
 
 help:
 	@echo "Available commands:"
@@ -11,10 +15,11 @@ help:
 	@echo "  make test              - Run Python tests"
 	@echo "  make lint              - Run linters"
 	@echo "  make format            - Format code with black"
+	@echo "  make format-check      - Check formatting without rewriting"
 	@echo "  make type-check        - Run type checker (mypy)"
 	@echo "  make build-frontend    - Build Vue frontend (Vite + vue-tsc)"
-	@echo "  make check-frontend    - Run frontend type-check and tests (requires install-frontend)"
-	@echo "  make check             - Run all checks (Python + frontend + agents; requires install-frontend)"
+	@echo "  make check-frontend    - Run frontend type-check and tests"
+	@echo "  make check             - Run all checks (Python + frontend + agents)"
 	@echo "  make check-agents      - Verify every mandated review agent can be launched"
 	@echo "  make clean             - Clean build artifacts"
 	@echo "  make run               - Run the application"
@@ -28,31 +33,37 @@ install-ai:
 install-dev:
 	uv sync --locked --extra ai --extra dev
 
-install-frontend:
+install-frontend: node_modules
+
+# A real target, not a phony one. node_modules is gitignored, so a fresh clone
+# or git worktree has none and the frontend checks would otherwise fail naming a
+# missing vue-tsc binary rather than the cause. A warm tree costs two stats.
+node_modules: package.json pnpm-lock.yaml
 	pnpm install --frozen-lockfile
+	@touch node_modules
 
 lock:
 	uv lock
 
 test:
-	python3.11 -m pytest
+	$(PYTHON) -m pytest
 
 lint:
-	python3.11 -m ruff check src/ tests/ scripts/ conftest.py
+	$(PYTHON) -m ruff check src/ tests/ scripts/ conftest.py
 
 format:
-	python3.11 -m black src/ tests/ scripts/ conftest.py
+	$(PYTHON) -m black src/ tests/ scripts/ conftest.py
 
 format-check:
-	python3.11 -m black --check src/ tests/ scripts/ conftest.py
+	$(PYTHON) -m black --check src/ tests/ scripts/ conftest.py
 
 type-check:
-	python3.11 -m mypy src/ scripts/ conftest.py
+	$(PYTHON) -m mypy src/ scripts/ conftest.py
 
-build-frontend:
+build-frontend: node_modules
 	pnpm build
 
-check-frontend:
+check-frontend: node_modules
 	pnpm vue-tsc --noEmit
 	pnpm vitest run
 
@@ -65,7 +76,7 @@ check: check-agents format-check lint type-check test check-frontend
 # declares the name it is launched by. An agent that never loads reviews nothing
 # and says nothing, so the gate would otherwise report success without it.
 check-agents:
-	python3.11 scripts/check_review_agents.py
+	$(PYTHON) scripts/check_review_agents.py
 
 clean:
 	find . -type d -name __pycache__ -exec rm -r {} +

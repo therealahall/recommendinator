@@ -5,10 +5,14 @@
 #   default - Base app without AI dependencies (smaller image)
 #   ai      - Full app with AI dependencies (ollama, chromadb)
 
+# Bases are pinned tag@digest so two builds of one commit are one image. Use the
+# index digest from `docker buildx imagetools inspect` — a per-platform digest
+# breaks the arm64 build.
+
 # =============================================================================
 # Frontend builder (Vue 3 + Vite)
 # =============================================================================
-FROM node:20-slim AS frontend-builder
+FROM node:20-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0 AS frontend-builder
 
 RUN corepack enable && corepack prepare pnpm@9.7.0 --activate
 
@@ -30,9 +34,9 @@ RUN pnpm build
 # =============================================================================
 # Shared build base
 # =============================================================================
-FROM python:3.11-slim AS builder-base
+FROM python:3.11-slim@sha256:90744cff8f32887f075c47d747a173ff333e9e98801667af93c357fa9f5e28ff AS builder-base
 
-COPY --from=ghcr.io/astral-sh/uv:0.10.7 /uv /bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.10.7@sha256:edd1fd89f3e5b005814cc8f777610445d7b7e3ed05361f9ddfae67bebfe8456a /uv /bin/uv
 
 WORKDIR /app
 
@@ -70,7 +74,9 @@ RUN uv sync --locked --extra ai
 # =============================================================================
 # Runtime base (shared between both targets)
 # =============================================================================
-FROM python:3.11-slim AS runtime-base
+# Same digest as builder-base: the venv copied in below was built against that
+# interpreter and its shared libraries.
+FROM python:3.11-slim@sha256:90744cff8f32887f075c47d747a173ff333e9e98801667af93c357fa9f5e28ff AS runtime-base
 
 WORKDIR /app
 
