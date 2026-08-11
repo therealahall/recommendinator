@@ -162,12 +162,18 @@ onBeforeUnmount(clearPoll)
 <template>
   <div class="trakt-flow">
     <template v-if="state === 'idle'">
+      <!--
+        aria-disabled, not disabled: a natively disabled button leaves the tab
+        order, so the hint describing it is never announced to the
+        screen-reader or Voice Control user it was written for. startFlow
+        already refuses the activation this leaves reachable.
+      -->
       <button
         ref="startButton"
         type="button"
-        class="btn btn-primary trakt-flow-connect"
+        class="btn btn-primary"
         data-testid="trakt-connect-btn"
-        :disabled="!canConnect"
+        :aria-disabled="!canConnect || undefined"
         :aria-label="connectLabel"
         :aria-describedby="canConnect ? undefined : hintId"
         @click="startFlow"
@@ -245,15 +251,6 @@ onBeforeUnmount(clearPoll)
 </template>
 
 <style scoped>
-/* Disabled connect button: convey "unavailable" via reduced emphasis + the
-   not-allowed cursor. The native ``disabled`` attribute announces the state to
-   assistive tech and the adjacent hint states why, so colour is never the sole
-   signal (WCAG 1.4.1). */
-.trakt-flow-connect:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
 /* Pointer focus only, mirroring .main-content in base.css. A keyboard-driven
    flow propagates :focus-visible through the programmatic focus() below, and
    the ring is the only thing telling that user where they now stand (2.4.7). */

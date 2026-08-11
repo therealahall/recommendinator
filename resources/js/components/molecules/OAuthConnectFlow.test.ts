@@ -100,6 +100,21 @@ describe('OAuthConnectFlow', () => {
     wrapper.unmount()
   })
 
+  it('enables Connect and omits the hint when the auth URL is there', () => {
+    const wrapper = mountFlow('gog_work')
+
+    // The sibling of the case below, and the anchor under it: without this,
+    // dropping the `v-if` would render the remedy beside a working button and
+    // dropping the ternary would point an enabled control at a missing id.
+    const button = wrapper.get('button')
+    expect(button.attributes('aria-disabled')).toBeUndefined()
+    expect(button.attributes('aria-describedby')).toBeUndefined()
+    expect(wrapper.find('[data-testid="oauth-connect-hint"]').exists()).toBe(
+      false,
+    )
+    wrapper.unmount()
+  })
+
   it('disables Connect and shows the remedy it was given when there is no auth URL', () => {
     const wrapper = mount(OAuthConnectFlow, {
       props: {
@@ -117,11 +132,41 @@ describe('OAuthConnectFlow', () => {
     // openAuth already returned silently on a null URL, so the button was live
     // and did nothing at all — the failure reached no user (WCAG 3.3.1).
     const button = wrapper.get('button')
-    expect((button.element as HTMLButtonElement).disabled).toBe(true)
+    expect(button.attributes('aria-disabled')).toBe('true')
+    // Not the native attribute: that takes the button out of the tab order,
+    // and the hint below is only announced to someone who can land on it.
+    expect((button.element as HTMLButtonElement).disabled).toBe(false)
     const hint = wrapper.get('[data-testid="oauth-connect-hint"]')
     // A literal here told a disabled-but-connectable source to enable itself.
     expect(hint.text()).toBe(HINT)
     expect(button.attributes('aria-describedby')).toBe(hint.attributes('id'))
+    // base.css greys `.btn[aria-disabled='true']`; off that class the button
+    // renders pixel-identically to a working one (WCAG 1.3.1).
+    expect(button.classes()).toContain('btn')
+    wrapper.unmount()
+  })
+
+  it('opens nothing when the reachable Connect is activated without an auth URL', async () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null)
+    const wrapper = mount(OAuthConnectFlow, {
+      props: {
+        sourceId: 'gog_work',
+        sourceName: 'GOG (work)',
+        authUrl: null,
+        expectedOrigin: 'https://login.gog.com',
+        helpText: '',
+        serviceName: 'GOG Account',
+        connectHint: HINT,
+      },
+      attachTo: document.body,
+    })
+
+    // aria-disabled does not block activation the way `disabled` did, so the
+    // null-URL guard in openAuth is now the only thing refusing this click.
+    await wrapper.get('button').trigger('click')
+
+    expect(open).not.toHaveBeenCalled()
+    expect(wrapper.find('input').exists()).toBe(false)
     wrapper.unmount()
   })
 

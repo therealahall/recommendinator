@@ -366,11 +366,13 @@ def yaml_held_token_config(source_id: str, plugin: str) -> dict[str, Any]:
     }
 
 
-class TestAFileHeldTokenReachesBothWebVerbs:
-    """The startup credential pass and the two row-reading verbs, end to end.
+class TestAFileHeldTokenReachesBothWebVerbsRegression:
+    """Regression: a file-held token was stranded under the plugin's name.
 
-    Both ``connected`` and disconnect answer from the credential row, so what
-    boot does with a config.yaml token decides what either one can say.
+    Bug reported: ``gog_work`` could not revoke its token.
+    Root cause: the migrated row is keyed on the source id, the verbs read
+    the plugin's.
+    Fix: both read that row.
     """
 
     @pytest.mark.parametrize(("provider", "source_id", "plugin"), YAML_HELD_SOURCES)
